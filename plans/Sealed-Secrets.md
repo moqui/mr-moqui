@@ -8,10 +8,12 @@ test and updates the threat model.
 The goal: MR Moqui keeps its keys the way HashiCorp Vault does. No usable key is on disk. A server starts **sealed**.
 It opens its listeners only after it is unsealed, and its keys then exist only in memory. A stolen disk, `.env`,
 database dump or backup gives ciphertext only. The plan also closes the attack classes that hit Vault and Bitwarden in
-practice: sign-in bypass at the edges, a feature that turns into code execution, tampering and side channels.
+practice: sign-in bypass at the edges, a feature that turns into code execution, tampering and side channels. An
+operator can see at any time who has access to which secret, can rotate every key, and has a runbook for a breach.
 
 Sections: [1 deployment zones](#1-deployment-zones) · [2 what is there now](#2-what-is-there-now) ·
-[3 design](#3-design) · [4 phases](#4-phases) · [5 tests](#5-tests) · [6 decisions](#6-decisions) ·
+[3 design](#3-design) ([3.9 less surface](#39-less-attack-surface), [3.10 access](#310-who-has-access-to-what),
+[3.11 keys](#311-key-inventory-and-rotation), [3.12 incidents](#312-incident-response)) · [4 phases](#4-phases) · [5 tests](#5-tests) · [6 decisions](#6-decisions) ·
 [7 not in scope](#7-not-in-scope) · [8 inspiration](#8-inspiration)
 
 ## 1. Deployment zones
@@ -198,6 +200,91 @@ On every instance, start refuses an empty `crypt-pass` while an entity has `encr
 `webapp_allow_origins=*`, a secret still at `CHANGEME` that the generator cannot replace, the tarpits off, a public bind
 with no TLS and no believed proxy, and `create#InitialAdminAccount` reachable from other than loopback.
 
+### 3.9 Less attack surface
+
+What is not built, not bound or not reachable cannot be attacked. Apply these in this order:
+
+1. **Build less.** A node gets only the cargo features its role needs ([Packages](../docs/Build-Test.md#packages)). A
+   BOSS node without phones, chat or mail hosting leaves out `ssh`, `sip`, `xmpp`, `rtc`, `inbound-smtp`, `channels`
+   and `devtools`.
+2. **Bind less.** Every optional listener stays off until its port is set. This is the default now; a test keeps it so.
+3. **Split by role.** Only PASS or the edge node faces the internet. BOSS dials out to it and opens no inbound port
+   ([Edge-Node](Edge-Node.md)).
+4. **One public port.** A reverse proxy on 443, with `webapp_trusted_proxies` set. The cluster port stays on a private
+   network.
+5. **Fewer privileged accounts.** An administrator uses a separate admin account with a second factor.
+6. **A role report.** `moqui operator surface` lists, for the running node, each feature built in, each listener bound
+   (address and port), each enabled integration and each account with a privileged group. An operator compares it with
+   what the node's role needs.
+
+### 3.10 Who has access to what
+
+An operator can answer at any time, and for any past date: who can read this secret, and who did?
+
+- **What exists:** `AccessServices.get#GrantReview` (groups, grants, app gates and members as of a date, for print and
+  CSV), `get#Capabilities` and the Capabilities screen, `IdentityServices.get#AccountCredentials` (each user's keys,
+  app passwords, SSH keys and sessions, metadata only), and the audit rows of grants and secret changes.
+- **A secret access map.** For each secret in the inventory (§3.11, and each `encrypt="true"` field): the entity that
+  holds it, the permissions and artifact groups that can read that entity, the services that decrypt it, and then the
+  users, groups, jobs, agents, PASS clients and edge nodes that hold those permissions. As of a date, from the same
+  dated grants `get#GrantReview` reads.
+- **A decrypt log.** Each decrypt of an encrypted field writes one line: user, session or job, service, entity, field
+  and primary key, and the key version. The line never holds the value. A line of a secret's own value is HMAC-SHA256
+  under the `audit` purpose key, as Vault's audit devices write, so a known value can be matched without being stored.
+  The log is kept as long as the audit log, not seven days.
+- **The Access report screen** in System joins the map, the decrypt log and the credentials, with "as of", a filter by
+  secret, by user and by machine identity, and a CSV export. It needs `ADMIN_ACCESS_VIEW`; a secret's value is never
+  shown.
+
+### 3.11 Key inventory and rotation
+
+Every key and credential is one row of an inventory: what it protects, its zone, its current and previous versions,
+its age, its rotation policy, and what a rotation breaks.
+
+| Key | Rotation now | What a rotation breaks now | Target |
+|---|---|---|---|
+| Field key (`entity_ds_crypt_pass`) | Set `_old` by hand, re-save rows | Nothing if done right | Keyring version; rewrap job |
+| `session_cookie_key` and its derived keys | Change it | Every session and every derived signature | Current and previous (S2) |
+| `git_lfs_token_key` | `_previous` | Nothing | Already the model |
+| `ssh_host_key` | Replace it | Clients warn of a changed host key | Publish the new key first; keep both for a period |
+| Cluster TLS key and certificate | Replace on every member | Members must match | Keyring id check (§3.4) |
+| `edge_link_key` | Replace it | Every local node pairs again | A second link key announced over the link before the change |
+| `mail_dkim_key` | New selector in DNS first | DKIM fails if DNS lags | Two selectors; switch after DNS answers |
+| `web_push_vapid_key` | Replace it | Browser subscriptions stop | Clients subscribe again on their next visit |
+| External credentials (OAuth, SMTP, API keys, FCM) | At the provider, then Admin's write-only field | That integration until updated | A reminder from the policy age |
+
+- **Every key gets a current and a previous version**, as `git_lfs_token_key` has. New use takes the current one;
+  checks accept both until the previous one expires.
+- `moqui operator rotate <name>|all` rotates in one step and starts the rewrap job where there is one.
+- **The Keys screen** in System shows the inventory: version, age, last rotation, policy, and a warning past the
+  policy. Rotation needs a sealed permission and a recent sign-in, and writes an audit row with no value.
+- **Emergency rotation.** `moqui operator rotate all --emergency` rotates every generated key with no grace period
+  for the previous version, ends every session, and lists the external credentials to change at their providers.
+
+### 3.12 Incident response
+
+**Before an incident** (a runbook in `docs/security/Incident-Response.md`):
+
+1. Who decides, who acts, and how to reach them outside MR Moqui.
+2. Offline copies: backups, recovery shares, the key inventory and the runbook.
+3. Alerts to a channel outside the server, so a compromised server cannot silence them: failed sign-ins of one
+   account across protocols, a new privileged member, a deploy, a seal or unseal, a rotation, a decrypt-log rate above
+   normal.
+
+**During an incident:**
+
+1. **Contain.** `moqui operator seal`, or stop the service. `revoke#AllAccess` ends every session and login key and
+   pauses jobs and agent triggers (today `revoke#AccountAccess` does this for one account).
+2. **Preserve.** Take a disk snapshot and copy the logs and the decrypt log off the host before anything changes.
+3. **Scope.** The access report and the decrypt log (§3.10) for the window: which secrets were read, by whom.
+4. **Rotate by zone:**
+   - BOSS process: every key (emergency rotation) and every external credential at its provider.
+   - BOSS disk or backup only, after S3: nothing secret, since all of it was ciphertext; before S3, everything.
+   - PASS or edge node only: the outer zone's keys and the PASS credential. BOSS keys are safe (S6).
+5. **Recover** from a known-good binary and backup on a clean host. Do not clean a compromised host.
+6. **Notify** the users and the authorities the law names, within its deadline (72 hours under the GDPR).
+7. **Learn.** A review, a test for the hole, and a change to the threat model.
+
 ## 4. Phases
 
 Each phase is done when its regression tests pass, `./moq test-framework` passes, and the threat model in
@@ -217,9 +304,14 @@ Attack-Surface says what changed.
 | **S9** | Unsafe production starts (§3.8); an empty `crypt-pass` while an entity has `encrypt="true"` fields is refused on every instance | Unsafe settings | One test for each refusal (regression) |
 | **S10** | Outside review of the design and of `crypto.rs`, the keyring and the seal code; publish the result in `docs/security/` | Trust you can check | – |
 | **S11** | `kms` and `transit` methods; remove DES and the `:` and hex formats once the count is zero for one release | Legacy cipher | The old formats are refused (regression) |
+| **S12** | Less attack surface (§3.9): `moqui operator surface`; a test that every optional listener is off by default | Unneeded surface | The default conf binds no optional listener; the report names each bound listener (regression) |
+| **S13** | Access (§3.10): the secret access map, the decrypt log with HMAC'd values, the Access report screen | Not knowing who can read or did read a secret | A decrypt writes one line with no value; the map names a user who gains the permission and drops one who loses it, as of each date; a user without `ADMIN_ACCESS_VIEW` is refused (regression) |
+| **S14** | Key inventory and rotation (§3.11): current and previous for every generated key, `operator rotate`, the Keys screen, emergency rotation | Keys that cannot be rotated without an outage | For each key: a value signed by the previous version is accepted until it expires; emergency rotation refuses the previous one at once and ends every session (regression) |
+| **S15** | Incident response (§3.12): `revoke#AllAccess`, the alerts, the runbook | No way to contain and scope a breach | `revoke#AllAccess` ends every session and key and pauses jobs (regression). A tabletop run of the runbook on a scratch server (acceptance, by hand) |
 
 Order: S1 and S2 make the stored data safe even before sealing. S3 and S4 remove keys from disk. S6 follows S3,
-because the outer zone needs its own seal. S7 and S8 do not depend on the others and can run beside them.
+because the outer zone needs its own seal. S7 and S8 do not depend on the others and can run beside them. S12 and S13
+need nothing else. S14 follows S2. S15 follows S3 (for `seal`), S13 (to scope) and S14 (to rotate).
 
 ## 5. Tests
 
@@ -245,6 +337,8 @@ because the outer zone needs its own seal. S7 and S8 do not depend on the others
 - Root on a running, unsealed BOSS process. No design protects against it. Vault states the same limit.
 - Business rows that are not encrypted fields. Use disk encryption.
 - A personal password manager. MR Moqui is not one, and this plan does not make it one.
+- Provenance of data: the source of each write, a hash-chained audit log, signed imports. The decrypt log (§3.10)
+  records reads of secrets only.
 
 ## 8. Inspiration
 
