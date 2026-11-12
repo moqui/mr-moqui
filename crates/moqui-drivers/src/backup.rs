@@ -27,7 +27,7 @@ use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use moqui_core::backup::{
     archive_name, is_archive_name, parse_archive_name, retain, ArchiveIn, BackupMode, BackupOutcome, BackupRequest,
-    KeptArchive, RetainPlan, Tier,
+    KeptArchive, RetainPlan, Tier, SIDECAR,
 };
 use moqui_core::driver::DbConnection;
 use moqui_core::entity::EntityFacade;
@@ -38,8 +38,6 @@ use super::embedded::ToolTarget;
 use super::entity_db::EntityDb;
 use super::postgres::{PostgresConn, PostgresDriver};
 
-const SIDECAR: &str = "moqui-backup.txt";
-
 struct PrefixBackup {
     path: PathBuf,
     kind: String,
@@ -47,6 +45,7 @@ struct PrefixBackup {
     promoted: Vec<String>,
     removed: Vec<String>,
     renames: Vec<(String, String)>,
+    rewritten: Vec<String>,
 }
 
 struct IncrementalFrom {
@@ -92,6 +91,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
     let mut promoted = Vec::new();
     let mut removed = Vec::new();
     let mut renames = Vec::new();
+    let mut rewritten = Vec::new();
     let mut archive_path = PathBuf::new();
     let mut backup_kind = String::new();
     let mut copied: Vec<&Path> = Vec::new();
@@ -111,6 +111,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
                 promoted.extend(one.promoted);
                 removed.extend(one.removed);
                 renames.extend(one.renames);
+                rewritten.extend(one.rewritten);
                 if target.prefix == "moqui" || archive_path.as_os_str().is_empty() {
                     archive_path = one.path;
                     backup_kind = one.kind;
@@ -135,6 +136,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
         removed,
         keep,
         renames,
+        rewritten,
         errors,
     })
 }
@@ -156,7 +158,7 @@ fn backup_one(
     };
     let archives = archives_for_retain(dir, &target.prefix);
     let plan = retain(&archives, stamp, &TimeZone::system(), request);
-    let (renames, removed) = apply_plan(dir, &plan);
+    let (renames, removed, rewritten) = apply_plan(dir, &plan);
     let path = published_path(dir, &name, &renames);
     let bytes = bytes_of(&path);
     let promoted = renames.iter().map(|(old, new)| format!("{old} -> {new}")).collect();
@@ -167,6 +169,7 @@ fn backup_one(
         promoted,
         removed,
         renames,
+        rewritten,
     })
 }
 
@@ -452,7 +455,8 @@ fn scan_keep(dir: &Path) -> Vec<KeptArchive> {
     keep
 }
 
-fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<String>) {
+/// Renames, deletes and sidecar rewrites on disk. Returns what was renamed, removed and rewritten.
+fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
     let mut renames = Vec::new();
     for (old, new) in &plan.renames {
         if let Err(err) = std::fs::rename(dir.join(old), dir.join(new)) {
@@ -461,8 +465,11 @@ fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<Stri
         }
         renames.push((old.clone(), new.clone()));
     }
+    let mut rewritten = Vec::new();
     for (child, parent) in &plan.parent_updates {
-        rewrite_parent(dir, child, parent);
+        if rewrite_parent(dir, child, parent) {
+            rewritten.push(child.clone());
+        }
     }
     let mut removed = Vec::new();
     for name in &plan.deletes {
@@ -472,10 +479,10 @@ fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<Stri
         }
         removed.push(name.clone());
     }
-    (renames, removed)
+    (renames, removed, rewritten)
 }
 
-fn rewrite_parent(dir: &Path, child: &str, parent: &str) {
+fn rewrite_parent(dir: &Path, child: &str, parent: &str) -> bool {
     let path = dir.join(child).join(SIDECAR);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let mut kind = "incremental".to_string();
@@ -488,7 +495,9 @@ fn rewrite_parent(dir: &Path, child: &str, parent: &str) {
     }
     if let Err(err) = std::fs::write(&path, format!("kind={kind}\nparent={parent}\n")) {
         tracing::error!("could not update the parent of {child}: {err}");
+        return false;
     }
+    true
 }
 
 fn read_sidecar(dir: &Path) -> (String, Option<String>) {

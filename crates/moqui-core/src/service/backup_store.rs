@@ -196,7 +196,13 @@ pub(super) fn mirror(
     }
     let remote_names: Vec<String> = remote.keys().cloned().collect();
     let keep_names: Vec<String> = outcome.keep.iter().map(|kept| kept.name.clone()).collect();
-    let plan = backup::mirror_plan(&keep_names, &remote_names, &outcome.renames, backup::is_archive_name);
+    let plan = backup::mirror_plan(
+        &keep_names,
+        &remote_names,
+        &outcome.renames,
+        &outcome.rewritten,
+        backup::is_archive_name,
+    );
     let mut failed = false;
     for (old, new) in &plan.renames {
         let Some((from, size)) = remote.get(old).cloned() else {
@@ -210,7 +216,8 @@ pub(super) fn mirror(
         }
     }
     let mut sent = 0_u64;
-    for name in &plan.uploads {
+    // an archive whose sidecar changed goes up again whole: it is one object
+    for name in plan.uploads.iter().chain(&plan.resends) {
         let Some(kept) = outcome.keep.iter().find(|kept| &kept.name == name) else {
             continue;
         };
@@ -232,8 +239,9 @@ pub(super) fn mirror(
         }
     }
     tracing::info!(
-        "backup mirror {shown}: {} uploaded ({sent} bytes), {} renamed, {} deleted",
+        "backup mirror {shown}: {} uploaded and {} sent again ({sent} bytes), {} renamed, {} deleted",
         plan.uploads.len(),
+        plan.resends.len(),
         plan.renames.len(),
         plan.deletes.len()
     );

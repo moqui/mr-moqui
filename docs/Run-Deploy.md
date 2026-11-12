@@ -553,8 +553,10 @@ in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
   with `chainIncrementals=true` it is taken from the archive before it, which holds only a day's changed blocks.
 - **Mirror**: set `systemMessageRemoteId` (the seed job's is `EmbeddedDbBackup`) and on that remote `sendUrl`, the
   user, and a password or key. The remote directory or key prefix is its message type's `sendPath`. Only the archives
-  the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. With
-  `incremental` and `chainIncrementals`, a night sends one incremental. Two job parameters shape it:
+  the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. An
+  incremental whose parent a promotion renamed is sent again (over plain SFTP only its `moqui-backup.txt`), so every
+  copy names its parent as it is now called. With `incremental` and `chainIncrementals`, a night sends one
+  incremental. Two job parameters shape it:
   - `mirrorTransport`: `sftp` or `s3`. Empty picks `s3` for a `sendUrl` of `s3://<bucket>`, else `sftp`. For S3 add
     `?region=<region>` (default `us-east-1`) and, for a store other than AWS (MinIO, R2, B2),
     `&endpoint=https://<host>`; the username is the access key, the password the secret key.
