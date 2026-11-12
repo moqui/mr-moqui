@@ -15,22 +15,25 @@
 //! The embedded TURN server's sockets (plans/Comms-Framework.md §6.5, W4; docs/interfaces/TURN.md), on the media node:
 //! UDP and TCP on `turn_port`, TLS on `turn_tls_port` and on 443 of `turn_tls443_host` (an address of its own, since the
 //! HTTPS listener does not share its port), all off while their setting is empty, and the UDP relay sockets in
-//! `turn_relay_ports`. One thread owns the [`Turn`] and the UDP sockets; a thread per TCP or TLS connection reads its
-//! stream a message at a time and writes what the server sends it. TLS uses the host's certificates (`runtime/cert`).
+//! `turn_relay_ports`. One thread owns the [`Turn`] and the UDP sockets, and waits on its bounded input queue when
+//! there is nothing to do; the TCP and TLS listeners and each of their connections are tasks on the edge runtime
+//! ([`crate::edge::handle`]), which read a stream a message at a time for the server and write back what it sends. TLS
+//! uses the host's certificates (`runtime/cert`).
 //!
 //! The TCP and TLS connections are bounded ([`StreamLimits`], plans/High-Level-Review.md HL-031): at most
-//! `max_connections` at once and `per_source` from one source (an IPv6 /64 is one), so the threads they take are
-//! bounded too; one must send a whole message (after its TLS handshake) within `handshake`, and one with nothing read
-//! or written for `idle` is closed; and what waits to be written to a client is at most `max_queued` messages, past
-//! which the client is not reading and its connection is closed (its allocations end with it, as on any close).
+//! `max_connections` at once and `per_source` from one source (an IPv6 /64 is one); one must send a whole message
+//! (after its TLS handshake) within `handshake`, and one with nothing read or written for `idle` is closed; and what
+//! waits to be written to a client is at most `max_queued` messages, past which the client is not reading and its
+//! connection is closed (its allocations end with it, as on any close). A client that sends faster than the server
+//! takes its messages waits on its own connection, since the server's queue is bounded. A task never blocks: a write
+//! that does not finish in [`WRITE_TIMEOUT`] closes its connection. Dropping the [`TurnNode`] closes every connection.
 //! The media node revokes a leg's credential when the leg leaves ([`TurnNode::revoke`]).
 
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -38,9 +41,26 @@ use std::time::{Duration, Instant};
 use moqui_lib::source_guard::SourceSlots;
 use moqui_rtc::turn::{frame_len, Turn, TurnConfig, TurnOutput};
 use moqui_rtc::Proto;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, watch};
+use tokio_rustls::TlsAcceptor;
 
 /// The most bytes a stream may buffer without a whole message.
 const MAX_STREAM_BUFFER: usize = 64 * 1024;
+
+/// The messages from the TCP and TLS connections waiting for the server's thread.
+const MAX_INPUT: usize = 4_096;
+
+/// How often the server's thread reads its UDP sockets while it has nothing else to do, and how often a connection
+/// tries a full input queue again.
+const POLL_UDP: Duration = Duration::from_millis(1);
+
+/// The longest the server's thread waits on its queue with no UDP socket open, so it sees a stop.
+const MAX_WAIT: Duration = Duration::from_millis(50);
+
+/// How long a write to a client may take before its connection is closed.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The bounds of the TCP and TLS client connections.
 #[derive(Debug, Clone, Copy)]
@@ -252,7 +272,7 @@ enum In {
     Opened {
         listen: SocketAddr,
         remote: SocketAddr,
-        tx: SyncSender<Vec<u8>>,
+        tx: mpsc::Sender<Vec<u8>>,
     },
     Closed {
         listen: SocketAddr,
@@ -261,17 +281,21 @@ enum In {
     Revoke(String),
 }
 
-/// The TURN listeners and their threads, stopped when dropped.
+/// The TURN listeners, their tasks on the edge runtime and the thread of the server, stopped when dropped.
 pub(crate) struct TurnNode {
-    tx: Sender<In>,
+    tx: SyncSender<In>,
     stop: Arc<AtomicBool>,
-    threads: Vec<JoinHandle<()>>,
+    /// Tells the accept loops and every connection to end.
+    stop_streams: watch::Sender<bool>,
+    accepts: Vec<tokio::task::JoinHandle<()>>,
+    thread: Option<JoinHandle<()>>,
     pub bound: Bound,
 }
 
 impl TurnNode {
     /// The leg left: its credential is refused from now on, and its relays close.
     pub(crate) fn revoke(&self, leg: &str) {
+        // waits only while the server's queue is full, which its thread drains
         let _ = self.tx.send(In::Revoke(leg.to_string()));
     }
 }
@@ -279,18 +303,28 @@ impl TurnNode {
 impl Drop for TurnNode {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        for t in self.threads.drain(..) {
-            let _ = t.join();
+        let _ = self.stop_streams.send(true);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
+        // the listeners close as their loops end
+        let accepts = std::mem::take(&mut self.accepts);
+        let _ = crate::edge::block_on(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(2), async move {
+                for accept in accepts {
+                    let _ = accept.await;
+                }
+            })
+            .await;
+        });
     }
 }
 
 /// Starts the listeners. One that does not bind is an error: the media node logs it and goes on without TURN.
 pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, String> {
     let stop = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = channel::<In>();
+    let (tx, rx) = sync_channel::<In>(MAX_INPUT);
     let mut bound = Bound::default();
-    let mut threads = Vec::new();
     let udp = match s.port {
         Some(p) => {
             let socket = UdpSocket::bind((s.bind, p)).map_err(|e| format!("turn_port {p} did not bind: {e}"))?;
@@ -308,23 +342,25 @@ pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, St
         let mut config = crate::tls::server_config(crate::tls::CertStore::new(runtime_dir.join("cert")))
             .map_err(|e| format!("TURN TLS: {}", e.message()))?;
         config.alpn_protocols = Vec::new();
-        Some(Arc::new(config))
+        Some(TlsAcceptor::from(Arc::new(config)))
     } else {
         None
     };
-    let mut stream_listeners: Vec<(TcpListener, Option<Arc<rustls::ServerConfig>>)> = Vec::new();
+    let mut stream_listeners: Vec<(std::net::TcpListener, Option<TlsAcceptor>)> = Vec::new();
     if let Some(p) = s.port {
-        let l = TcpListener::bind((s.bind, p)).map_err(|e| format!("turn_port {p} (TCP) did not bind: {e}"))?;
+        let l =
+            std::net::TcpListener::bind((s.bind, p)).map_err(|e| format!("turn_port {p} (TCP) did not bind: {e}"))?;
         bound.tcp = l.local_addr().ok();
         stream_listeners.push((l, None));
     }
     if let Some(p) = s.tls_port {
-        let l = TcpListener::bind((s.bind, p)).map_err(|e| format!("turn_tls_port {p} did not bind: {e}"))?;
+        let l = std::net::TcpListener::bind((s.bind, p)).map_err(|e| format!("turn_tls_port {p} did not bind: {e}"))?;
         bound.tls = l.local_addr().ok();
         stream_listeners.push((l, tls_config.clone()));
     }
     if let Some(ip) = s.tls443 {
-        let l = TcpListener::bind((ip, 443)).map_err(|e| format!("turn_tls443_host {ip}:443 did not bind: {e}"))?;
+        let l = std::net::TcpListener::bind((ip, 443))
+            .map_err(|e| format!("turn_tls443_host {ip}:443 did not bind: {e}"))?;
         bound.tls443 = l.local_addr().ok();
         stream_listeners.push((l, tls_config.clone()));
     }
@@ -335,27 +371,43 @@ pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, St
     }
     let turn = Turn::new(s.config.clone(), &listeners);
     let slots = SourceSlots::new(s.limits.max_connections, s.limits.per_source);
+    let (stop_streams, stopped) = watch::channel(false);
+    let runtime = crate::edge::handle();
+    let mut accepts = Vec::new();
     for (listener, tls) in stream_listeners {
-        let (tx, stop, slots, limits) = (tx.clone(), Arc::clone(&stop), slots.clone(), s.limits);
-        threads.push(
-            std::thread::Builder::new()
-                .name("moqui-turn-accept".to_string())
-                .spawn(move || accept(listener, tls, tx, &stop, &slots, limits))
-                .map_err(|e| e.to_string())?,
-        );
+        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+        // registered with the edge runtime's reactor
+        let listener = {
+            let _entered = runtime.enter();
+            TcpListener::from_std(listener).map_err(|e| e.to_string())?
+        };
+        let streams = Streams {
+            tx: tx.clone(),
+            stop: stopped.clone(),
+            slots: slots.clone(),
+            limits: s.limits,
+        };
+        accepts.push(runtime.spawn(accept(listener, tls, streams)));
     }
     let (bind, public_ip, range) = (s.bind, s.public_ip, s.relay_ports);
     let stop_main = Arc::clone(&stop);
-    threads.push(
-        std::thread::Builder::new()
-            .name("moqui-turn".to_string())
-            .spawn(move || run(turn, udp, rx, bind, public_ip, range, &stop_main))
-            .map_err(|e| e.to_string())?,
-    );
+    let thread = std::thread::Builder::new()
+        .name("moqui-turn".to_string())
+        .spawn(move || run(turn, udp, rx, bind, public_ip, range, &stop_main))
+        .map_err(|e| e.to_string());
+    let thread = match thread {
+        Ok(thread) => thread,
+        Err(e) => {
+            let _ = stop_streams.send(true);
+            return Err(e);
+        }
+    };
     Ok(TurnNode {
         tx,
         stop,
-        threads,
+        stop_streams,
+        accepts,
+        thread: Some(thread),
         bound,
     })
 }
@@ -373,14 +425,16 @@ fn run(
     let listen_udp = udp.as_ref().and_then(|u| u.local_addr().ok());
     // by the address the server reports (the public one), the socket bound on `bind`
     let mut relays: HashMap<SocketAddr, UdpSocket> = HashMap::new();
-    let mut streams: HashMap<(SocketAddr, SocketAddr), SyncSender<Vec<u8>>> = HashMap::new();
+    let mut streams: HashMap<(SocketAddr, SocketAddr), mpsc::Sender<Vec<u8>>> = HashMap::new();
     let mut cursor = range.0;
     let mut buf = vec![0u8; 2_048];
     let mut next = Instant::now();
+    // a message the wait below took
+    let mut waited: Option<In> = None;
     while !stop.load(Ordering::Acquire) {
         let mut busy = false;
         let now = Instant::now();
-        while let Ok(message) = rx.try_recv() {
+        while let Some(message) = waited.take().or_else(|| rx.try_recv().ok()) {
             busy = true;
             match message {
                 In::Stream { from, listen, data } => turn.handle_client(now, Proto::Tcp, from, listen, &data),
@@ -433,11 +487,11 @@ fn run(
                         match tx.try_send(data) {
                             Ok(()) => {}
                             // the client does not read what it is sent: dropping its sender closes the connection
-                            Err(TrySendError::Full(_)) => {
+                            Err(mpsc::error::TrySendError::Full(_)) => {
                                 tracing::debug!("TURN: {to} does not read what it is sent; its connection is closed");
                                 streams.remove(&(from, to));
                             }
-                            Err(TrySendError::Disconnected(_)) => {
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
                                 streams.remove(&(from, to));
                             }
                         }
@@ -465,7 +519,18 @@ fn run(
             }
         }
         if !busy {
-            std::thread::sleep(Duration::from_millis(1));
+            // UDP is read by polling its sockets, so with any open the wait is as short as before; with only TCP and
+            // TLS clients, what they send ends the wait at once and the server's own timers end it otherwise
+            let wait = if udp.is_some() || !relays.is_empty() {
+                POLL_UDP
+            } else {
+                next.saturating_duration_since(Instant::now()).clamp(POLL_UDP, MAX_WAIT)
+            };
+            match rx.recv_timeout(wait) {
+                Ok(message) => waited = Some(message),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
         }
     }
 }
@@ -488,143 +553,197 @@ fn bind_relay(bind: IpAddr, range: (u16, u16), cursor: &mut u16) -> Option<(UdpS
     None
 }
 
-fn accept(
-    listener: TcpListener,
-    tls: Option<Arc<rustls::ServerConfig>>,
-    tx: Sender<In>,
-    stop: &Arc<AtomicBool>,
-    slots: &SourceSlots,
+/// What the accept loops and connection tasks share.
+#[derive(Clone)]
+struct Streams {
+    tx: SyncSender<In>,
+    stop: watch::Receiver<bool>,
+    slots: SourceSlots,
     limits: StreamLimits,
-) {
-    let Ok(listen) = listener.local_addr() else { return };
-    if listener.set_nonblocking(true).is_err() {
-        return;
-    }
-    while !stop.load(Ordering::Acquire) {
-        match listener.accept() {
-            Ok((stream, remote)) => {
-                let Ok(slot) = slots.take(remote.ip()) else {
-                    tracing::debug!("TURN: a connection from {remote} closed: too many from there or in all");
-                    continue;
-                };
-                let (tls, tx, stop) = (tls.clone(), tx.clone(), Arc::clone(stop));
-                let spawned = std::thread::Builder::new()
-                    .name("moqui-turn-conn".to_string())
-                    .spawn(move || {
-                        let _ = stream.set_nonblocking(false);
-                        let _ = stream.set_read_timeout(Some(Duration::from_millis(5)));
-                        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-                        let _ = stream.set_nodelay(true);
-                        let (out_tx, out_rx) = sync_channel::<Vec<u8>>(limits.max_queued);
-                        let _ = tx.send(In::Opened {
-                            listen,
-                            remote,
-                            tx: out_tx,
-                        });
-                        let link = Link {
-                            listen,
-                            remote,
-                            tx: &tx,
-                            out: &out_rx,
-                            stop: &stop,
-                            limits,
-                        };
-                        match tls {
-                            Some(config) => match rustls::ServerConnection::new(config) {
-                                Ok(conn) => serve(rustls::StreamOwned::new(conn, stream), &link),
-                                Err(e) => tracing::debug!("TURN TLS did not start: {e}"),
-                            },
-                            None => serve(stream, &link),
-                        }
-                        let _ = tx.send(In::Closed { listen, remote });
-                        drop(slot);
-                    });
-                if let Err(e) = spawned {
-                    tracing::warn!("TURN: no thread for a connection from {remote}: {e}");
-                }
+}
+
+/// Put `message` on the server's queue, waiting while it is full (the server's thread drains it) so a client that
+/// sends faster than the server reads is held back by its own connection. False once the server has stopped.
+async fn deliver(tx: &SyncSender<In>, mut message: In) -> bool {
+    loop {
+        match tx.try_send(message) {
+            Ok(()) => return true,
+            Err(TrySendError::Full(back)) => {
+                message = back;
+                tokio::time::sleep(POLL_UDP).await;
             }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
-            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+            Err(TrySendError::Disconnected(_)) => return false,
         }
     }
 }
 
-/// What one connection's thread serves it with.
+/// True once `stop` says so, or its sender is gone.
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    let _ = stop.wait_for(|stop| *stop).await;
+}
+
+/// One TCP or TLS listener: each connection within the slots of [`StreamLimits`] is a task of its own, until a stop.
+async fn accept(listener: TcpListener, tls: Option<TlsAcceptor>, streams: Streams) {
+    let Ok(listen) = listener.local_addr() else { return };
+    let mut stop = streams.stop.clone();
+    loop {
+        let accepted = tokio::select! {
+            () = stopped(&mut stop) => return,
+            accepted = listener.accept() => accepted,
+        };
+        let (stream, remote) = match accepted {
+            Ok(accepted) => accepted,
+            Err(e) => {
+                // out of file descriptors and the like: try again shortly
+                tracing::debug!("TURN: an accept on {listen} failed: {e}");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                continue;
+            }
+        };
+        let Ok(slot) = streams.slots.take(remote.ip()) else {
+            tracing::debug!("TURN: a connection from {remote} closed: too many from there or in all");
+            continue;
+        };
+        let (tls, streams) = (tls.clone(), streams.clone());
+        tokio::spawn(async move {
+            connection(stream, listen, remote, tls, streams).await;
+            drop(slot);
+        });
+    }
+}
+
+/// One connection, from its open to its close: told to the server at both ends whatever ends it, so its allocations
+/// end with it.
+async fn connection(
+    stream: TcpStream,
+    listen: SocketAddr,
+    remote: SocketAddr,
+    tls: Option<TlsAcceptor>,
+    streams: Streams,
+) {
+    let _ = stream.set_nodelay(true);
+    let opened = Instant::now();
+    let (out_tx, mut out) = mpsc::channel::<Vec<u8>>(streams.limits.max_queued.max(1));
+    if !deliver(
+        &streams.tx,
+        In::Opened {
+            listen,
+            remote,
+            tx: out_tx,
+        },
+    )
+    .await
+    {
+        return;
+    }
+    let mut stop = streams.stop.clone();
+    let link = Link {
+        listen,
+        remote,
+        tx: &streams.tx,
+        limits: streams.limits,
+        opened,
+    };
+    match tls {
+        Some(acceptor) => {
+            let handshake = tokio::select! {
+                () = stopped(&mut stop) => None,
+                done = tokio::time::timeout(streams.limits.handshake, acceptor.accept(stream)) => Some(done),
+            };
+            match handshake {
+                Some(Ok(Ok(stream))) => serve(stream, &link, &mut out, &mut stop).await,
+                Some(Ok(Err(e))) => tracing::debug!("TURN TLS with {remote} did not start: {e}"),
+                Some(Err(_)) => tracing::debug!(
+                    "TURN: {remote} did not finish its TLS handshake within {:?}",
+                    streams.limits.handshake
+                ),
+                None => {}
+            }
+        }
+        None => serve(stream, &link, &mut out, &mut stop).await,
+    }
+    deliver(&streams.tx, In::Closed { listen, remote }).await;
+}
+
+/// What one connection's task serves it with.
 struct Link<'a> {
     listen: SocketAddr,
     remote: SocketAddr,
-    tx: &'a Sender<In>,
-    out: &'a Receiver<Vec<u8>>,
-    stop: &'a AtomicBool,
+    tx: &'a SyncSender<In>,
     limits: StreamLimits,
+    opened: Instant,
 }
 
 /// One TCP or TLS client: its stream split into messages for the server, and what the server sends it written back,
-/// until it closes, misses its handshake or idle deadline, or stops reading (its queue's sender dropped).
-fn serve<S: Read + Write>(mut stream: S, link: &Link<'_>) {
+/// until it closes, misses its handshake or idle deadline, stops reading (its queue's sender dropped, or a write that
+/// does not finish in [`WRITE_TIMEOUT`]) or the listeners stop.
+async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    link: &Link<'_>,
+    out: &mut mpsc::Receiver<Vec<u8>>,
+    stop: &mut watch::Receiver<bool>,
+) {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 4_096];
-    let opened = Instant::now();
     let mut spoke = false;
-    let mut active = opened;
-    while !link.stop.load(Ordering::Acquire) {
-        match stream.read(&mut chunk) {
-            Ok(0) => return,
-            Ok(n) => {
+    let mut active = link.opened;
+    loop {
+        // the first whole message is due within the handshake deadline, and something read or written within idle
+        let idle_end = active + link.limits.idle;
+        let deadline = if spoke {
+            idle_end
+        } else {
+            idle_end.min(link.opened + link.limits.handshake)
+        };
+        tokio::select! {
+            () = stopped(stop) => return,
+            read = stream.read(&mut chunk) => {
+                let n = match read {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => n,
+                };
                 active = Instant::now();
                 buf.extend_from_slice(&chunk[..n]);
-            }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
-                ) => {}
-            Err(_) => return,
-        }
-        while let Some(len) = frame_len(&buf) {
-            if buf.len() < len {
-                break;
-            }
-            spoke = true;
-            let data: Vec<u8> = buf.drain(..len).collect();
-            if link
-                .tx
-                .send(In::Stream {
-                    from: link.remote,
-                    listen: link.listen,
-                    data,
-                })
-                .is_err()
-            {
-                return;
-            }
-        }
-        if buf.len() > MAX_STREAM_BUFFER {
-            return;
-        }
-        loop {
-            match link.out.try_recv() {
-                Ok(data) => {
-                    if stream.write_all(&data).is_err() || stream.flush().is_err() {
+                while let Some(len) = frame_len(&buf) {
+                    if buf.len() < len {
+                        break;
+                    }
+                    spoke = true;
+                    let data: Vec<u8> = buf.drain(..len).collect();
+                    let message = In::Stream {
+                        from: link.remote,
+                        listen: link.listen,
+                        data,
+                    };
+                    if !deliver(link.tx, message).await {
                         return;
                     }
-                    active = Instant::now();
                 }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return,
+                if buf.len() > MAX_STREAM_BUFFER {
+                    return;
+                }
             }
-        }
-        if !spoke && opened.elapsed() >= link.limits.handshake {
-            tracing::debug!(
-                "TURN: {} sent no message within {:?}",
-                link.remote,
-                link.limits.handshake
-            );
-            return;
-        }
-        if active.elapsed() >= link.limits.idle {
-            tracing::debug!("TURN: {} was idle for {:?}", link.remote, link.limits.idle);
-            return;
+            sent = out.recv() => {
+                // None: the server dropped the sender, as for a client that does not read what it is sent
+                let Some(data) = sent else { return };
+                let written = tokio::time::timeout(WRITE_TIMEOUT, async {
+                    stream.write_all(&data).await?;
+                    stream.flush().await
+                })
+                .await;
+                if !matches!(written, Ok(Ok(()))) {
+                    return;
+                }
+                active = Instant::now();
+            }
+            () = tokio::time::sleep_until(deadline.into()) => {
+                if spoke || Instant::now() >= idle_end {
+                    tracing::debug!("TURN: {} was idle for {:?}", link.remote, link.limits.idle);
+                } else {
+                    tracing::debug!("TURN: {} sent no message within {:?}", link.remote, link.limits.handshake);
+                }
+                return;
+            }
         }
     }
 }
