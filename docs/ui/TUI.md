@@ -68,6 +68,7 @@ SSH channel, in the server's process, for any user, as the browser is for any us
 ssh -p <ssh_port> <user>@<host>             the apps; with SSH_SHELL and a key or password login, the admin shell first
 ssh -t -p <ssh_port> <user>@<host> apps     the apps, for any account
 moqui> apps                                 from the admin shell; quitting the apps (Ctrl+Q) comes back to the prompt
+moqui> attach <id>                          one of your kept terminal sessions (sessions lists them); Ctrl+\ detaches
 ```
 
 - **Login.** A key (an active `UserSshKey`) logs in at the SSH level and goes straight in. With no key, the client is

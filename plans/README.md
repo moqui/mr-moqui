@@ -34,7 +34,9 @@ Design, status and review documents for MR Moqui. User guides for built features
   operating system (bash, zsh, any program on a pty) behind permissions on a dev instance, floating panels as a layer of
   the shell (terminals, and the Assist drawer and the tray's tabs undocked) that stay across screens, attention from
   agents' sessions, and the Desktop and Mobile apps and the edge node as ways in. Built Nov 11, 2026 (P0–P9; guide
-  [Terminal](../docs/ui/Terminal.md)); live device and edge checks and the §15 items are in Remaining-Work.
+  [Terminal](../docs/ui/Terminal.md)), and a second round the same evening (§13.1: SSH `attach`, dialogs by touch,
+  dock by drag, live runs); the hand checks are in Mobile-Desktop-Exit-Checks, and the rest of §15 waits for a
+  focused effort (Remaining-Work).
 
 - [LoadRunner.md](LoadRunner.md): a general load runner in place of the Tools app's Service Load Runner screen: load scripts in JavaScript on the `moqui test-client` harness, kept in a component's `test/load/` and run from Tools › Load, from `moqui test-load` or from a client spec, against services in process or any server over HTTP, with runs kept as result files and compared; the first script is order to cash on Moqui Java and MR Moqui. Research and plan; nothing built.
 

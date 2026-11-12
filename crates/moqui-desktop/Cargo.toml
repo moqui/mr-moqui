@@ -19,7 +19,9 @@ name = "moqui-desktop"
 path = "src/main.rs"
 
 [features]
-default = ["maximal"]
+# With the dev tools, as the server's own build: the Dev AIDE and the browser terminal's command line and shells, used
+# when the tray's Developer tools makes the node a dev instance (off by default).
+default = ["maximal", "devtools"]
 # The package of the node, as in crates/moqui. Maximal has the edge link and calls.
 maximal = ["moqui-app/maximal"]
 # The Dev package, commented out: the release build (Maximal with the dev tools) is the default now; likely to be

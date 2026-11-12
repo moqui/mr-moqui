@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{choose_port, save_port, saved_port};
+use super::{choose_port, dev_purpose, purpose_properties, save_port, saved_port, set_dev_tools, PURPOSE_FILE};
 use std::net::{Ipv4Addr, TcpListener};
 
 #[test]
@@ -91,4 +91,24 @@ fn both_modes_listen_on_loopback_only() {
     assert_eq!(get("webapp_http_port"), Some("51234"));
     assert_eq!(get("webapp_https_listen_port"), Some("off"));
     assert_eq!(get("cluster_bind_address"), Some("127.0.0.1"));
+}
+
+#[test]
+fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_default() {
+    assert!(!dev_purpose(None, None), "off by default");
+    assert!(dev_purpose(None, Some("dev\n")));
+    assert!(!dev_purpose(None, Some("production")));
+    assert!(dev_purpose(Some("dev"), None));
+    assert!(!dev_purpose(Some("production"), Some("dev")), "the variable is taken first");
+    assert!(dev_purpose(Some(" "), Some("dev")), "an empty variable is passed over");
+    assert_eq!(purpose_properties(true), vec![("instance_purpose", "dev".to_string())]);
+    assert!(purpose_properties(false).is_empty(), "off leaves the conf's own purpose");
+
+    let dir = std::env::temp_dir().join(format!("moqui-desktop-purpose-{}", std::process::id()));
+    set_dev_tools(&dir, true).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join(PURPOSE_FILE)).unwrap().trim(), "dev");
+    set_dev_tools(&dir, false).unwrap();
+    assert!(!dir.join(PURPOSE_FILE).exists());
+    set_dev_tools(&dir, false).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
 }

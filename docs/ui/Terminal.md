@@ -16,7 +16,7 @@ Contents: [kinds](#kinds-of-session) · [the screen](#the-terminal-screen) · [k
 | Kind | What | Who |
 | --- | --- | --- |
 | Apps | The terminal client of the apps (`moqui tui`'s), as the signed-in user | Every user, every purpose |
-| Command line | The `moqui>` prompt of SSH's admin shell: `service`, `entity`, `js`, `cache clear`, `status`, `apps`, `sh`, `profiles`, `sessions` | `SSH_SHELL`, on a dev instance |
+| Command line | The `moqui>` prompt of SSH's admin shell: `service`, `entity`, `js`, `cache clear`, `status`, `apps`, `sh`, `profiles`, `sessions`, and over SSH `attach` | `SSH_SHELL`, on a dev instance |
 | Host | A program on the server's operating system on a pseudo-terminal: the server user's shell, bash, zsh, an agent, a log | `TERMINAL_HOST`, on a dev instance |
 
 With nothing open, the Terminal opens the command line for a user who has it, else the apps (Settings › Opens first
@@ -63,7 +63,8 @@ Gather terminals, Tile and Cascade.
 ## Floating terminals
 
 Float on a pane moves its session into a window of the shell's float layer ([Qvt-Client](Qvt-Client.md#floats)) that
-stays while you go to other screens and comes back after a reload. Dock puts it back in a pane; Close puts it back in
+stays while you go to other screens and comes back after a reload. Dock, or on the Terminal screen dragging the window
+onto its tab strip, puts it back in a pane; Close puts it back in
 the session list and ends nothing; End session and Pop out are on its title bar. Arrange › Gather terminals docks them
 all. Ctrl+\` is the quick terminal: the last floating terminal shown or hidden, else one floated, else a new one. The
 header's terminal button, while you have sessions, lists them, with a count of those that want you. Pop out opens the
@@ -105,7 +106,11 @@ account, so `TERMINAL_HOST` goes only to people trusted with it.
   a UTF-8 locale, `TERM_PROGRAM=mr-moqui`, `MOQUI_TERMINAL_SESSION`, `MOQUI_RUNTIME` and `MOQUI_USER` set. No credential
   of the Moqui user is in it.
 - **At the prompt.** `sh [profile]` runs a host program on the command line's own stream and the prompt comes back
-  when it ends, in the browser and over SSH; `profiles` lists them and `sessions` your sessions.
+  when it ends, in the browser and over SSH; `profiles` lists them and `sessions` your sessions. Over SSH, `attach
+  <id>` (the id or its start; Tab completes it) makes the SSH window the session's, as a page's would be: the session's
+  output is replayed, the window it was shown in is told "opened elsewhere", and Ctrl+\ detaches with the session
+  still running. A command line or a host session asks what an attach from the browser asks, by the SSH peer's
+  address; another user's id is no such session.
 - **The pty.** `moqui term-exec` (a hidden mode of every server binary, the Desktop app's too) makes itself the session
   leader with the pty as its terminal and then becomes the program. Windows servers have no host sessions yet.
 
@@ -133,23 +138,28 @@ prompt and command and OSC 7 with the directory, which gives jump to prompt, the
 command's status on the dot and "command finished". macOS's own `/bin/bash` is left alone. A shell whose prompt already
 writes these (starship and the like) needs no script.
 
-**Hooks for agents** that do not send OSC 7501 themselves, writing to the session's terminal (not their own output):
+**Hooks for agents** that do not send OSC 7501 themselves. A hook runs with no terminal of its own (`/dev/tty` fails), so
+each line writes to the terminal of the agent that runs it (`ps -o tty=` of its parent), and always succeeds: Claude
+Code takes a `UserPromptSubmit` hook that fails as a refusal of the prompt.
 
 ```jsonc
 // Claude Code: .claude/settings.json
 {"hooks": {
-  "Notification": [{"hooks": [{"type": "command", "command": "printf '\\033]7501;state=blocked;kind=permission\\007' > /dev/tty"}]}],
-  "Stop": [{"hooks": [{"type": "command", "command": "printf '\\033]7501;state=done\\007' > /dev/tty"}]}],
-  "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "printf '\\033]7501;state=working\\007' > /dev/tty"}]}]
+  "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=working\\007' > \"$t\"; true"}]}],
+  "PermissionRequest": [{"hooks": [{"type": "command", "command": "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=blocked;kind=permission\\007' > \"$t\"; true"}]}],
+  "Stop": [{"hooks": [{"type": "command", "command": "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=done\\007' > \"$t\"; true"}]}]
 }}
 ```
 
 ```toml
 # Codex: ~/.codex/config.toml (notify runs at the end of each turn)
-notify = ["sh", "-c", "printf '\\033]7501;state=done\\007' > /dev/tty"]
+notify = ["sh", "-c", "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=done\\007' > \"$t\"; true"]
 ```
 
-These hook lines follow each agent's documented hook settings; they were not run against the agents here.
+Claude Code's lines were run against Claude Code 2.1 in a host session on Nov 11, 2026: working at a prompt, blocked
+(permission) at a tool's permission request, done at the end of a turn. A `claude` started with the environment of
+another Claude Code session (a server started from one passes it on) runs as that session's child and does not run its
+permission hooks: start the server outside it, or `claude` with those variables cleared. Codex's line was not run.
 
 ## Who may open what, and from where
 
@@ -187,7 +197,8 @@ off, and empty turns it on for any purpose. To reach them from another machine, 
 
 ## The Desktop and Mobile apps, and phones
 
-- The Desktop app's node in process carries the terminal as a browser does, and is local.
+- The Desktop app's node in process carries the terminal as a browser does, and is local. The command line and shells
+  need its tray's Developer tools on, which makes the node a dev instance.
 - As a client of a remote server, the Desktop and Android apps' host carries `/termws` with binary frames, signed in by
   the device's login key. A key is never a recent sign-in, so a command line or a shell from another machine first asks
   for your password (and code) in the app: Confirm it is you, which answers a ticket for a few minutes.

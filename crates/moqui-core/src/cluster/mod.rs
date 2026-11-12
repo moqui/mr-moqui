@@ -885,7 +885,7 @@ fn rejoin(state: &ClusterState, facade: &EntityFacade, now: i64) {
 }
 
 /// Run `factory`'s heartbeat every `every` instead of the scheduler interval. Call before [`start`].
-#[cfg(test)]
+#[cfg(all(test, feature = "cluster-tls"))]
 pub(crate) fn set_heartbeat_interval(factory: &ExecutionContextFactory, every: Duration) {
     *lock(&ClusterState::of(factory).heartbeat_every) = Some(every);
 }

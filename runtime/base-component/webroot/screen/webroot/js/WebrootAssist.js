@@ -1596,6 +1596,12 @@
                 minSize: { w: 320, h: 320 }, place: "right", inReach: false,
                 badge: () => (S().taskCount ? (S().taskCount > 99 ? "99+" : String(S().taskCount)) : ""),
                 dock: (shown) => { if (shown) assist.openDrawer(true); else assist.closeDrawer(); },
+                // dragged to the right edge it docks: the drawer's strip there
+                home: () => {
+                    const area = moqui.floats.state.area;
+                    const w = Math.min(S().width || 420, area.w);
+                    return { edge: "right", rect: { x: area.x + area.w - w, y: area.y, w, h: area.h } };
+                },
                 focus: () => { assist.focusComposer(); } });
         },
         focusComposer() {

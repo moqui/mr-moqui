@@ -1,8 +1,10 @@
 # Terminal: sessions, the command line, server shells and floating panels
 
-Nov 11, 2026 · **Built** the same day, P0 to P9 ([§13](#13-phases)); the guide is [Terminal](../docs/ui/Terminal.md),
-and what is left (live checks on devices and through a deployed edge node, zsh's integration against a real zsh, the
-Later items of §15) is in [Remaining-Work](Remaining-Work.md#browser-terminal). The decisions are in
+Nov 11, 2026 · **Built** the same day, P0 to P9 ([§13](#13-phases)), and a second round that evening
+([§13.1](#131-the-second-round)): three items of §15, the leftovers, and live runs on this machine. The guide is
+[Terminal](../docs/ui/Terminal.md). What is left (the hand checks on installed apps, a phone and a deployed edge node in
+[Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node), Codex's
+hook line, the rest of §15) is in [Remaining-Work](Remaining-Work.md#browser-terminal). The decisions are in
 [§4](#4-decisions); those that want the user's word were all answered the same day ([§16](#16-open-questions)); none is
 open. Remote access is off by default
 (D7); the order of the phases stands with the holder fifth (D14); the command line is behind `SSH_SHELL` and host
@@ -50,7 +52,7 @@ Contents: [1 today](#1-what-is-there-today) · [2 server sessions](#2-server-sid
 | xterm.js | 6.0.0 with the fit addon 0.11.0, vendored; no other addon | `webroot/libs/xterm`, `libs/refresh.mjs`, `libs/MANIFEST.json` |
 | The socket | `GET /termws`: origin, then the session cookie only (no key header). Binary messages are the terminal's bytes both ways; one text message, `{"type":"resize","cols","rows"}`, and the session starts on the first. A ping each 30 s, the HTTP session checked each minute, a close frame with the reason | `host/termws.rs` |
 | The apps session | `term::serve` runs `moqui_tui::run_session` on a thread of its own, as the user, with the request pool behind it. Limits: `terminal` `max-sessions` 16 and `max-sessions-per-user` 4, over SSH and the browser together; 10 minutes without input ends it. A session is its transport's: nothing has an id, nothing is kept when the stream closes | `host/term.rs` |
-| The `moqui>` prompt | SSH only, for a key or password login with `SSH_SHELL` (`ADMIN_ADV`, sealed). A loop generic over any byte stream: it echoes, takes backspace, Ctrl+C and Ctrl+D, and has no history, cursor keys or completion. Commands: `help`, `status`, `service`, `entity`, `cache clear`, `js`, `apps`, `exit`, each run as the user | `host/ssh/server.rs` `interactive`, `host/ssh/shell.rs` |
+| The `moqui>` prompt | SSH only, for a key or password login with `SSH_SHELL` (`ADMIN_ADV`, sealed). A loop generic over any byte stream: it echoes, takes backspace, Ctrl+C and Ctrl+D, and has no history, cursor keys or completion (all three since P2). Commands: `help`, `status`, `service`, `entity`, `cache clear`, `js`, `apps`, `exit`, each run as the user | `host/ssh/server.rs` `interactive`, `host/ssh/shell.rs` |
 | Sessions kept between connections | Only `agent-apps`: the server holds a session by id between one `ssh` and the next, found by its own user, ended after 10 idle minutes | `host/ssh/agent.rs` |
 | Processes | The host starts Chromium, OpenSearch, `git` and an external agent adapter with pipes. Nothing opens a pseudo-terminal | `host/pdf.rs`, `host/search.rs`, `moqui-devkit`, `moqui-core` `service/external_agent.rs` |
 | A window that stays across screens | The call dock: the shell's root holds `m-call-dock` in its canvas, over a store (`moqui.call`), so a call's small window stays while the user navigates. `m-dialog` drags by its header, with the mouse only, and is modal | `webroot/js/WebrootCall.js`, `WebrootVue.qvt.js` |
@@ -719,7 +721,8 @@ Places, sizes, order and which things float are kept in the browser's storage, p
   "claude in mr-mantle is waiting". Per session and in Settings: on blocked, on done, on a command that ran longer
   than a set time, on a bell. By default only blocked notifies.
 - **Hooks.** The guide gives hook lines for Claude Code and Codex that write OSC 7501 to the terminal when the agent
-  stops or asks, for agents that do not send it themselves; written and checked against each agent in P6.
+  stops or asks, for agents that do not send it themselves. Claude Code's were run in the second round (§13.1): a hook
+  has no terminal, so a line writes to its agent's, and a failing one would refuse the prompt. Codex's was not run.
 
 ### 11.2 Shell integration
 
@@ -730,7 +733,8 @@ with the user's own kept and read. The script writes OSC 133 around each prompt 
 directory change. With it: the directory in the title and on new sessions "here", jump to the previous and next
 prompt in the scrollback (markers the page sets from the server's `state`, since xterm.js does not read OSC 133
 itself), the last command's status on the dot, and "command finished". Shells that already write these (starship
-and the like) need no script.
+and the like) need no script. zsh's script was not run against a real zsh (none where it was built), by decision: bash's
+is tested and zsh's is the same few hooks.
 
 ---
 
@@ -789,6 +793,37 @@ Each phase ends with its focused tests green; the whole framework suite runs onc
 | **P8** Edge | Checks through an edge node in both modes; the docs | A shell through the edge node survives a dropped link |
 | **P9** Polish | Palettes and fonts, the palette's actions, an administrator's list of all sessions in System, "Open a terminal here" from the Dev AIDE, file and line links into its Workspace | |
 
+### 13.1 The second round
+
+Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a focused effort of its own.
+
+- **§15, three items built.** `attach <id>` at the SSH prompt (`command/attach.rs`; Ctrl+\ detaches; SSH only, so a
+  command line never feeds itself); `m-dialog` drags by touch and pen on `moqui.pointer` (MoquiLib.js), the helper the
+  floats' bars and grips use too; a float dragged to its kind's home docks, with a dashed Dock outline before the drop
+  (`home` of a kind: Assist and a tray tab the right edge, a terminal the Terminal screen's tab strip).
+- **Leftovers.** `scripts/check-packages.sh` passes again: imap-only code in `moqui-mail` and a cluster test helper are
+  gated as their callers are. The Desktop crate builds with its `terminal_helper` call.
+- **Found by the live runs, and fixed.** The guide's Claude Code hook lines wrote to `/dev/tty`, which a hook has not
+  got; the failing `UserPromptSubmit` line refused every prompt. They now write to the agent's own terminal and always
+  succeed, with `PermissionRequest` for blocked (`Notification` did not run). The Terminal offered a device key's
+  client (the Desktop or Android app) the command line and shells that opening then refused: a device key's listing
+  is now placed as its opening is.
+- **Run here.** The Desktop app's node in process, in a build with `devtools`: the command line, `sh`, a host shell
+  through the app's own executable and its holder, a float kept across screens and a reload, Ctrl+C, dock by drag. As a
+  client of this machine's server: an apps session over the client's bridge (the command line and shells are remote
+  for a device key, by design). Chrome on the moqui-36 emulator, through `adb reverse` (local): the command line and a
+  shell, the key bar's Esc, Tab, Ctrl+C and Ctrl+D by touch, the fit above the keyboard, a long press that selects and
+  copies the line, pinch in and out. `adb shell input text` doubled characters where taps on the keyboard did not: an
+  artifact of the injection, not of the terminal.
+- **Not done here**, as hand checks in [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node):
+  installed bundles, a real phone and the Android app against a remote dev server over HTTPS, and a deployed edge node.
+- **The Desktop app and the dev tools.** Its default build had no `devtools` (`maximal` alone, the server's `maximal,
+  devtools`), so its node in process offered only the apps. Decided with the user: the app carries the dev tools and
+  the bundle `dev-component`, and the tray's Developer tools (off by default) makes the node a dev instance, with the
+  Dev AIDE, the command line and shells (`node-purpose`, `MOQUI_DESKTOP_PURPOSE`).
+- **Open.** Claude Code 2.1 asks `OSC 7501 ; ?` itself: answering as Rex does may let it send its status with no
+  hooks (§15). A long press on a phone also opens the terminal's context menu beside the copy.
+
 ---
 
 ## 14. Tests and docs
@@ -824,7 +859,8 @@ Each phase ends with its focused tests green; the whole framework suite runs onc
   list, send keys, wait for a state and read events; capture with the emulator above.
 - The kitty keyboard protocol, with the xterm.js release that has it.
 - Mirrored viewers of one session, and a session shown to another user.
-- Attaching to a session from SSH (`attach <id>` at the prompt).
+- ~~Attaching to a session from SSH (`attach <id>` at the prompt).~~ Built Nov 11, 2026 (§13.1).
+- Answering Claude Code's `OSC 7501 ; ?` as Rex does, so the agent sends its status with no hooks.
 - A per-person OS account for host sessions on a shared dev server.
 - Named workspaces: an arrangement saved with the profiles it starts.
 - A git worktree per agent session, with the Dev AIDE's repositories.
@@ -833,8 +869,8 @@ Each phase ends with its focused tests green; the whole framework suite runs onc
 - Recording a session.
 - More kinds of float: the live call window, the record panels (Chatter, Files), and any screen from its page
   menu ("Open in a float", the `screen` kind of §10.1).
-- Docking a float by dragging it to the edge it came from.
-- `m-dialog`'s drag on the layer's pointer helper, so a dialog moves by touch too.
+- ~~Docking a float by dragging it to the edge it came from.~~ Built Nov 11, 2026 (§13.1): to its kind's home.
+- ~~`m-dialog`'s drag on the layer's pointer helper, so a dialog moves by touch too.~~ Built Nov 11, 2026 (§13.1).
 
 ---
 

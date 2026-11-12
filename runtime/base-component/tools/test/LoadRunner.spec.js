@@ -332,10 +332,7 @@ feature("a run on this server keeps the server's samples and notes that its gene
         // (decimals where they are reported: a condition's parts are shown by their values, and a decimal has no valueOf, so
         // the comparison is made on plain numbers and the condition is a boolean)
         const memory = ec.factory.getStatusMap().Process.MemoryUsed
-        const sampleMb = done.server.samples[0].memoryMb
-        const plain = value => (value === null || value === undefined ? null : typeof value === "number" ? value : value.toNumber())
-        const memoryAgrees = plain(memory) === null ? plain(sampleMb) === null : plain(sampleMb) > 0
-        memoryAgrees
+        memory == null ? done.server.samples[0].memoryMb == null : done.server.samples[0].memoryMb.toNumber() > 0
         done.server.samples[0].cpu == null
         done.generator.where == "in-target"
         done.generator.note.includes("server")

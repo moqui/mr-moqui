@@ -146,9 +146,10 @@ impl Facts {
     }
 
     /// The facts of a same-origin GET, which carries no `Origin`: taken as the request's own. For what is offered only;
-    /// opening and attaching carry their origin.
+    /// opening and attaching carry their origin. A device key's request carries none at all and is placed by its peer
+    /// alone (never local), so it is left as it is: what is offered to an app is what it may open.
     pub fn listing(mut self) -> Self {
-        if self.origin.is_none() {
+        if self.origin.is_none() && !self.device_key {
             self.origin = self
                 .site
                 .as_ref()

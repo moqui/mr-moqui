@@ -277,6 +277,27 @@ fn a_listing_with_no_origin_is_taken_as_its_own() {
     assert_ne!(get.place(), Place::Local, "opening carries its origin");
 }
 
+/// The Desktop app as a client of a server on its own machine: its requests come from loopback with a device key and no
+/// origin, so they are not local, and the listing offers what opening allows (it offered the command line, then
+/// refused it).
+#[test]
+fn a_device_keys_listing_offers_what_it_may_open() {
+    let all = |_: &str| true;
+    let app = facts(
+        "127.0.0.1",
+        RequestVia::Direct,
+        false,
+        &[("host", "localhost:8091"), ("login_key", "k")],
+    );
+    let listed = app.clone().listing();
+    assert_ne!(listed.place(), Place::Local);
+    assert_eq!(offered(ON, &listed, &all), vec![Kind::Apps]);
+    assert_eq!(
+        check(ON, Kind::Command, &app, &all, &|_| true),
+        Err(Refusal::NotAvailable)
+    );
+}
+
 #[test]
 fn a_device_key_with_no_origin_is_taken_and_its_place_is_its_peers() {
     let all = |_: &str| true;

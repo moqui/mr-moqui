@@ -22,18 +22,20 @@ use moqui_core::context::ExecutionContextFactory;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(all(feature = "devtools", feature = "tui", unix))]
+pub(crate) mod attach;
+#[cfg(all(feature = "devtools", feature = "tui", unix))]
 pub(crate) mod host;
 pub(crate) mod line;
 pub(crate) mod shell;
 
-/// What `sh`, `profiles` and `sessions` need at a prompt: a build with host sessions and a transport that offers them.
+/// What `sh`, `profiles`, `sessions` and `attach` need at a prompt: a build with host sessions and a transport that offers them.
 #[cfg(all(feature = "devtools", feature = "tui", unix))]
 pub(crate) type HostCommand = Option<host::HostAccess>;
 #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
 #[derive(Default)]
 pub(crate) struct HostCommand;
 
-/// `sh`, `profiles` or `sessions`, when `text` is one: what it printed. `None` for any other line.
+/// `sh`, `profiles`, `sessions` or `attach`, when `text` is one: what it printed. `None` for any other line.
 #[cfg(all(feature = "devtools", feature = "tui", unix))]
 async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     stream: &mut S,
@@ -46,12 +48,19 @@ async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     let (command, rest) = text.trim().split_once(char::is_whitespace).unwrap_or((text.trim(), ""));
     match command {
         "sessions" => Some(host::sessions(factory, username)),
-        "profiles" | "sh" => {
+        "profiles" | "sh" | "attach" => {
             let Some(access) = host.as_mut() else {
                 return Some(format!("{command}: not available here"));
             };
             if command == "profiles" {
                 return Some(host::profiles(access).await);
+            }
+            if command == "attach" {
+                let _ = stream.write_all(PASTE_OFF).await;
+                let printed = attach::run(stream, access, rest.trim()).await;
+                let _ = stream.write_all(b"\x1b]2;moqui>\x07").await;
+                let _ = stream.write_all(PASTE_ON).await;
+                return Some(printed);
             }
             let _ = stream.write_all(PASTE_OFF).await;
             let status = host::run(stream, access, rest.trim(), newline).await;
@@ -68,7 +77,7 @@ async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     }
 }
 
-/// `sh`, `profiles` or `sessions`: not in a build without host sessions.
+/// `sh`, `profiles`, `sessions` or `attach`: not in a build without host sessions.
 #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
 async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     _stream: &mut S,
@@ -79,7 +88,7 @@ async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     _newline: &str,
 ) -> Option<String> {
     let command = text.split_whitespace().next().unwrap_or_default();
-    matches!(command, "sh" | "profiles" | "sessions").then(|| format!("{command}: not available in this build"))
+    matches!(command, "sh" | "profiles" | "sessions" | "attach").then(|| format!("{command}: not available in this build"))
 }
 
 /// The longest command line, and the longest `js` block.
@@ -127,8 +136,8 @@ pub(crate) fn with_newlines(text: &str, newline: &str) -> String {
 }
 
 /// The commands, for completion.
-const COMMANDS: [&str; 10] = [
-    "apps", "cache", "entity", "exit", "help", "js", "service", "sessions", "sh", "status",
+const COMMANDS: [&str; 12] = [
+    "apps", "attach", "cache", "entity", "exit", "help", "js", "profiles", "service", "sessions", "sh", "status",
 ];
 /// The history kept for a user (a preference), and its longest.
 const HISTORY_PREFERENCE: &str = "TERMINAL_HISTORY";
@@ -203,6 +212,7 @@ async fn choices(
             .unwrap_or_default()
         }
         (1, Some("sh")) => sh_profiles(host).await,
+        (1, Some("attach")) => session_ids(factory, username, host),
         _ => Vec::new(),
     };
     let matching = all.into_iter().filter(|choice| choice.starts_with(&word)).collect();
@@ -220,6 +230,20 @@ async fn sh_profiles(host: &HostCommand) -> Vec<String> {
 
 #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
 async fn sh_profiles(_host: &HostCommand) -> Vec<String> {
+    Vec::new()
+}
+
+/// The session ids `attach` completes: over SSH only, as `attach` runs.
+#[cfg(all(feature = "devtools", feature = "tui", unix))]
+fn session_ids(factory: &Weak<ExecutionContextFactory>, username: &str, host: &HostCommand) -> Vec<String> {
+    match host {
+        Some(access) if access.facts.ssh => attach::session_ids(factory, username),
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
+fn session_ids(_factory: &Weak<ExecutionContextFactory>, _username: &str, _host: &HostCommand) -> Vec<String> {
     Vec::new()
 }
 

@@ -21,7 +21,14 @@
 use std::path::{Path, PathBuf};
 
 /// The parts of a bundled runtime that come with the app: what `./moq archive --no-data` puts in, less the binary.
-pub(crate) const READ_ONLY: [&str; 5] = ["base-component", "component", "ecomponent", "conf", "MoquiConf.xml"];
+pub(crate) const READ_ONLY: [&str; 6] = [
+    "base-component",
+    "component",
+    "ecomponent",
+    "dev-component",
+    "conf",
+    "MoquiConf.xml",
+];
 
 /// Where the runtime is, before any of it is made.
 #[derive(Debug, PartialEq, Eq)]
