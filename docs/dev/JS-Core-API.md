@@ -1043,6 +1043,7 @@ The test of `makeTest()` renders as the current user. A failed render does not t
 | `header(name, value)` | A request header of every render |
 | `clientModes(modes)` | The `X-Moqui-Client-Modes` header, such as `"qvue,qjs"` |
 | `withStaticData()` | A qvt render of a server-static screen also gets the text of the screen's data in its output |
+| `agent()` | Every render as an agent's screen session renders it: an agent's origin, fenced, every write held, so an `ai-opt-out` field, section or screen is its placeholder ([Assist, AI opt-out](../ai/Assist.md#ai-opt-out)) |
 | `render(screenPath, parameters, requestMethod)` | One render; a result (below) |
 | `renderAll(screenPaths, parameters, requestMethod)` | A render of each path |
 | `getNoRequiredParameterPaths(screensToSkip)` | The paths below the base of the screens with no required parameters |
@@ -1311,7 +1312,7 @@ Members Moqui Java does not have.
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `send`; response `bytes` |
-| `ec.screen` | `render(options)`, `renderBytes`, `isRenderModeBinary`, `staticReport`, `getTransitionInfo`; a screen test's `header`, `clientModes`, `withStaticData`, and a result's `status`, `headers`, `header` |
+| `ec.screen` | `render(options)`, `renderBytes`, `isRenderModeBinary`, `staticReport`, `getTransitionInfo`; a screen test's `header`, `clientModes`, `withStaticData`, `agent`, and a result's `status`, `headers`, `header` |
 | `ec.web` | `rotateSession`, `declineSession`, `getPageMessages`, `request.bodyText`, `request.bodyBytes`, `request.headerPairs`, `response.write`, `response.forward` |
 | `ec.factory` | `hasFeature`, `getStartupReport`, `getInstanceId`, `getThreadList` |
 | `ec.makeNotificationMessage()` | `reason`, `reasonEnumId`, `record`, `recordEntityName`, `recordId`, `actorUserId`, `appName` |

@@ -117,6 +117,8 @@ pub struct ScreenTest {
     render_mode: Option<String>,
     /// Request headers of every render, such as `X-Moqui-Client-Modes`.
     headers: Vec<(String, String)>,
+    /// Render as an agent's screen session does ([`ScreenTest::agent`]).
+    agent: bool,
     base_screen_path: String,
     stats: Arc<std::sync::Mutex<ScreenTestStats>>,
     start_time_ms: i64,
@@ -130,6 +132,7 @@ impl ScreenTest {
             base_url: String::new(),
             render_mode: None,
             headers: Vec::new(),
+            agent: false,
             base_screen_path: String::new(),
             stats: Arc::new(std::sync::Mutex::new(ScreenTestStats::default())),
             start_time_ms: crate::user::now_millis(),
@@ -302,7 +305,24 @@ impl ScreenTest {
         for (name, value) in &self.headers {
             render = render.header(name.clone(), value.clone());
         }
+        if self.agent {
+            render = render
+                .origin(super::RenderOrigin::Agent {
+                    agent_id: "test".to_string(),
+                    run_id: None,
+                })
+                .transition_gate(super::TransitionGate::Hold)
+                .write_fence(true);
+        }
         render
+    }
+
+    /// Every render as an agent's screen session renders (`RenderOrigin::Agent`, under the read fence, every write
+    /// held), so a test sees what reaches a model: an `ai-opt-out` field, section or screen as its placeholder.
+    #[must_use]
+    pub fn agent(mut self) -> Self {
+        self.agent = true;
+        self
     }
 
     /// Location of the root screen. The default is `webroot.xml`.

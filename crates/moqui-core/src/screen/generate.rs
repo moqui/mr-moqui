@@ -499,6 +499,9 @@ fn unit_root(def: &ScreenDef, section: &str, fail: bool) -> Result<Option<MNode>
     let widgets = fragment.node()?;
     if section.is_empty() && !fail {
         let screen = MNode::new("screen");
+        if def.ai_opt_out {
+            screen.set_attribute("ai-opt-out", "true");
+        }
         screen.append_node(widgets);
         Ok(Some(screen))
     } else {

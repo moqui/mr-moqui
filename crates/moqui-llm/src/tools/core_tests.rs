@@ -100,6 +100,7 @@ fn tree(name: &str) -> PathBuf {
                 <subscreens-item name="Things" menu-title="Things" menu-index="1" location="{dir}/Apps/ToolTest/Things.xml"/>
                 <subscreens-item name="Board" menu-title="Widget Board" menu-index="2" location="{dir}/Apps/ToolTest/Board.xml"/>
                 <subscreens-item name="Thing" menu-include="false" location="{dir}/Apps/ToolTest/Thing.xml"/>
+                <subscreens-item name="Cases" menu-include="false" location="{dir}/Apps/ToolTest/Cases.xml"/>
             </subscreens>
             <shell-providers>
                 <palette-action label="Find things" screen="tooltest/Things"/>
@@ -127,6 +128,24 @@ fn tree(name: &str) -> PathBuf {
                 </form-list>
                 <form-list name="Notes" list="[{note: 'one'}, {note: 'two'}]">
                     <field name="note"><default-field><display/></default-field></field>
+                </form-list>
+            </widgets>
+        </screen>"#,
+    );
+    // design-people PE-21: a list whose description column is opted out of AI, with a find field for it
+    write(
+        "Apps/ToolTest/Cases.xml",
+        r#"<screen require-authentication="false" default-menu-title="Cases">
+            <actions>
+                <entity-find entity-name="moqui.basic.Enumeration" list="enumList">
+                    <search-form-inputs default-order-by="enumId"/>
+                    <econdition field-name="enumTypeId" value="TestType"/>
+                </entity-find>
+            </actions>
+            <widgets>
+                <form-list name="CaseList" list="enumList" id-field="enumId">
+                    <field name="enumId"><default-field title="Case"><display/></default-field></field>
+                    <field name="description" ai-opt-out="true"><header-field><text-find/></header-field><default-field><display/></default-field></field>
                 </form-list>
             </widgets>
         </screen>"#,
@@ -165,6 +184,8 @@ fn bed_with_cap(name: &str, cap: usize) -> Bed {
                 <endpoint id="{endpoint}" protocol="fake"/>
                 <model id="{endpoint}" endpoint="{endpoint}" name="fake-1" context-window="32768" result-cap-chars="{cap}"/>
                 <bind feature="assist" model="{endpoint}" reasoning="none"/>
+                <data-entity package="moqui.basic"/>
+                <data-entity package="moqui.test" entity="TestEntity"/>
             </llm-facade></moqui-conf>"#,
         root = dir.join("Root.xml").display()
     );
@@ -860,4 +881,72 @@ fn a_spilled_result_of_a_run_that_lost_its_lease_leaves_no_artifact() {
         1,
         "the run went no further on this node"
     );
+}
+
+/// design-people PE-21: an `ai-opt-out` list column reads as its placeholder and data neither finds nor sorts by it; an
+/// `ai-opt-out` entity field (moqui.test.TestEntity's testLong) is never read, found or sorted by.
+#[test]
+fn data_reads_no_text_of_ai_opt_out_columns_and_entity_fields() {
+    let bed = bed("aioff");
+    let _entered = bed._ctx.enter();
+    row(
+        &bed.facade,
+        "moqui.test.TestEntity",
+        &[
+            ("testId", "AIOFF1"),
+            ("testMedium", "plain text"),
+            ("testLong", "Secret long text"),
+        ],
+    );
+    let (_, results) = run_turn(
+        &bed,
+        request("Read the cases"),
+        vec![
+            calls(vec![
+                tool("o1", "data", json!({"path": "/apps/tooltest/Cases", "limit": 3})),
+                tool(
+                    "o2",
+                    "data",
+                    json!({"path": "/apps/tooltest/Cases", "where": {"description": "%number 7 %"}}),
+                ),
+                tool(
+                    "o3",
+                    "data",
+                    json!({"path": "/apps/tooltest/Cases", "order": "-description"}),
+                ),
+                tool(
+                    "o4",
+                    "data",
+                    json!({"entity": "moqui.test.TestEntity", "where": {"testId": "AIOFF1"}}),
+                ),
+                tool(
+                    "o5",
+                    "data",
+                    json!({"entity": "moqui.test.TestEntity", "where": {"testLong": "%Secret%"}}),
+                ),
+            ]),
+            fake::Reply::text("Done."),
+        ],
+        RunState::Completed,
+    );
+    assert_eq!(results.len(), 5, "{results:?}");
+    let first: Vec<&str> = results[0].lines().collect();
+    assert_eq!(
+        first[0], "CaseList on /apps/tooltest/Cases (showing 3 of 30)",
+        "{}",
+        results[0]
+    );
+    assert_eq!(first[2], "E01 | Not shared with AI", "{}", results[0]);
+    assert!(!results[0].contains("Thing number"), "{}", results[0]);
+    for refused in &results[1..3] {
+        assert!(refused.starts_with("{\"error\":\"ai_opt_out\""), "{refused}");
+        assert!(!refused.contains("Thing number"), "{refused}");
+    }
+    assert!(results[3].contains("plain text"), "{}", results[3]);
+    assert!(
+        !results[3].contains("testLong") && !results[3].contains("Secret long text"),
+        "{}",
+        results[3]
+    );
+    assert!(results[4].starts_with("{\"error\":\"unknown_field\""), "{}", results[4]);
 }

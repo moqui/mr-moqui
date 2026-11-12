@@ -393,6 +393,16 @@ test("follow.unsaved: the changed values by qvt id, never a secret (not even rea
     assert.deepEqual(assist.follow.unsaved([{ values: { a: "1" }, original: {} }]), [], "a form with no qvt id");
 });
 
+test("ai-opt-out: an opted-out field's value is not in the page state and is never filled, nor is a form in an opted-out section", () => {
+    const forms = [{ id: "EditCase", name: "EditCase", inReach: true, fields: ["subject", "note"], types: {}, aiOff: ["note", "reason"],
+        values: { subject: "New subject", note: "Confidential", reason_0: "Row secret", reasonable: "kept" }, original: {} },
+    { id: "Statement", name: "Statement", inReach: true, fields: ["text"], types: {}, aiOffAll: true, values: { text: "Confidential" }, original: {} }];
+    assert.deepEqual(assist.follow.unsaved(forms), [{ domId: "EditCase", values: { subject: "New subject", reasonable: "kept" }, dirty: ["subject", "reasonable"] }]);
+    assert.equal(assist.follow.locate({ scope: "page", form: "EditCase", field: "subject" }, forms).ok, true);
+    assert.deepEqual(assist.follow.locate({ scope: "page", form: "EditCase", field: "note" }, forms), { ok: false, reason: "aiOff" });
+    assert.deepEqual(assist.follow.locate({ scope: "page", form: "Statement", field: "text" }, forms), { ok: false, reason: "aiOff" });
+});
+
 test("safePath: an application path with flat parameters; Java's validator cases and the rest refused", () => {
     const sp = (p, params) => assist.safePath(p, params);
     assert.deepEqual(sp("/apps/system/Security/UserAccount", { username: "john", active: true, page: 2 }),

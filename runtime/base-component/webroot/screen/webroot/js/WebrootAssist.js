@@ -112,6 +112,18 @@
             try { if (storage) storage.setItem("moqui.assist.clientId", id); } catch (err) { /* without storage the id lasts as long as the page */ }
             return id;
         },
+        // Whether a field of a gathered form is opted out of AI (design-people PE-21): every field of a form in an ai-opt-out section
+        // or screen (aiOffAll), else a name in its aiOff list, or that name with a multi row's _<n>.
+        isAiOff(form, name) {
+            if (!form || !name) return false;
+            if (form.aiOffAll) return true;
+            const text = String(name);
+            return (form.aiOff || []).some((off) => text === off || (text.startsWith(off + "_") && /^\d+$/.test(text.slice(off.length + 1))));
+        },
+        // Whether the page shows a screen opted out of AI: the drawer then does not dictate.
+        pageAiOff(doc) {
+            return !!(doc && doc.querySelector && doc.querySelector('[data-ai-opt-out="screen"]'));
+        },
         // Whether a field's value never leaves the browser: its name in lower case contains a secret word, ends with one of the
         // endings, or is one of the names (bootstrap.secretFields; the server drops them too).
         isSecret(name, secretFields) {
@@ -954,7 +966,8 @@
             //   - else by name: the name or <name>_<n> (a merged render appends the section entry index), the occurrence-th in DOM
             //     order, within the scope (a dialog's forms for dialog, the page's outside dialogs first for page and find).
             // Answers {ok: true, form, index, field} or {ok: false, reason}: none, reach (outside assistReach), closed (a hidden,
-            // password or file field), secret or field (the form has no such field).
+            // password or file field), secret, aiOff (an ai-opt-out field, or a form in an ai-opt-out section or screen) or field
+            // (the form has no such field).
             locate(target, forms, secretFields) {
                 const t = target || {};
                 const list = (forms || []).map((form, index) => Object.assign({ index }, form));
@@ -989,29 +1002,32 @@
                 }
                 if (!found) return { ok: false, reason: "none" };
                 if (!found.inReach) return { ok: false, reason: "reach" };
+                if (found.aiOffAll) return { ok: false, reason: "aiOff" };
                 if (!field) return { ok: true, form: found, index: found.index, field: "" };
                 if (assist.isSecret(field, secretFields) || assist.isSecret(t.field, secretFields)) return { ok: false, reason: "secret" };
+                if (assist.isAiOff(found, field) || assist.isAiOff(found, t.field)) return { ok: false, reason: "aiOff" };
                 const type = (found.types || {})[field];
                 if (type && CLOSED_TYPES.indexOf(String(type).toLowerCase()) >= 0) return { ok: false, reason: "closed" };
                 if (Array.isArray(found.fields) && found.fields.length && found.fields.indexOf(field) < 0) return { ok: false, reason: "field" };
                 return { ok: true, form: found, index: found.index, field };
             },
             // The forms part of the page state (docs/ai/Assist.md): for each form the values the user changed (compared with the
-            // values it came with) and their names in dirty. A secret name is never read; a hidden, password or file field, a
+            // values it came with) and their names in dirty. A secret name is never read; an ai-opt-out field (form.aiOff, or every
+            // field of a form with aiOffAll), a hidden, password or file field, a
             // transition parameter and a value that is not text, a number, a boolean or a list of them are left out. Capped at
             // limits {maxForms, maxFormValues, maxValueChars}; a form with nothing changed is not listed.
             unsaved(forms, secretFields, limits) {
                 const caps = Object.assign({}, DEFAULT_LIMITS, limits);
                 const out = [];
                 (forms || []).forEach((form) => {
-                    if (out.length >= caps.maxForms || !form || !form.id) return;
+                    if (out.length >= caps.maxForms || !form || !form.id || form.aiOffAll) return;
                     const values = {};
                     const dirty = [];
                     const now = form.values || {};
                     const original = form.original || {};
                     Object.keys(now).forEach((name) => {
                         if (dirty.length >= caps.maxFormValues) return;
-                        if (META_FIELDS.indexOf(name) >= 0 || assist.isSecret(name, secretFields)) return;
+                        if (META_FIELDS.indexOf(name) >= 0 || assist.isSecret(name, secretFields) || assist.isAiOff(form, name)) return;
                         const type = (form.types || {})[name];
                         if (type && CLOSED_TYPES.indexOf(String(type).toLowerCase()) >= 0) return;
                         const text = assist.valueText(now[name]);
@@ -2151,10 +2167,17 @@
                 });
                 const fields = Object.keys(form.fields || {});
                 Object.keys(types).forEach((fieldName) => { if (fields.indexOf(fieldName) < 0) fields.push(fieldName); });
+                // ai-opt-out (the macros' data-ai-opt-out): a form in an opted-out section or screen, and the opted-out fields' names
+                const aiOffAll = !!el.closest("[data-ai-opt-out]");
+                const aiOff = [];
+                el.querySelectorAll("[data-ai-field]").forEach((box) => {
+                    const fieldName = box.getAttribute("data-ai-field");
+                    if (fieldName && aiOff.indexOf(fieldName) < 0) aiOff.push(fieldName);
+                });
                 // never Assist's own content, wherever it is (data-assist-self, below)
                 const inReach = !el.closest(SELF) && (reach.some((area) => area.contains(el)) ||
                     (!!dialogEl && !dialogEl.querySelector("#m-palette, #m-keys-help")));
-                out.push({ name, id: el.id || String(attrs.id || name), dialog: dialogEl ? assist.dialogIdOf(dialogEl) : null, inReach, fields, types,
+                out.push({ name, id: el.id || String(attrs.id || name), dialog: dialogEl ? assist.dialogIdOf(dialogEl) : null, inReach, fields, types, aiOff, aiOffAll,
                     multi: !!(form.fields && form.fields._isMulti === "true"), kind: type === "mFormLink" ? "link" : type === "mFormList" ? "list" : "form",
                     values: form.fields || {}, original: form.fieldsOriginal || {}, action: form.action || attrs.action || "", vm: form, el });
             });
@@ -2441,8 +2464,10 @@
             });
         },
         removeAttachment(key) { S().attachments = S().attachments.filter((one) => one.key !== key); },
-        // how this browser dictates now (dictationMode with what it has); a transcribe the server refused is off
+        // how this browser dictates now (dictationMode with what it has); a transcribe the server refused is off, and so is all
+        // dictation on a screen opted out of AI (data-ai-opt-out="screen", design-people PE-21)
         dictationNow() {
+            if (assist.pageAiOff(root.document)) return null;
             const features = S().available ? assist.features() : {};
             const nav = root.navigator;
             return assist.dictationMode(Object.assign({}, features, { transcribe: features.transcribe && !S().off.transcribe }),

@@ -119,7 +119,8 @@ fn form_single_with_every_field_type() {
         "{out}"
     );
     assert!(
-        out.contains(r#"<div class="q-ma-sm invoice-idle"><m-text-area name="bio""#),
+        // an ai-opt-out field's box is marked for the Assist client (design-people PE-21)
+        out.contains(r#"<div class="q-ma-sm invoice-idle" data-ai-opt-out="field" data-ai-field="bio"><m-text-area name="bio""#),
         "{out}"
     );
     assert!(

@@ -217,6 +217,7 @@ Writing and the render:
 | `write(text)` | Writes to the output: a string as it is, anything else as its plain text |
 | `encodeHtml(value)` | The value HTML-encoded; `null` and `undefined` are empty text |
 | `getRenderMode()` | The mode's name, `html-print` for `xsl-fo` |
+| `isAgentRender()` | Whether the render is an agent's (an Assist screen session, the data tool, the canvas read proxy, `agent-apps`) or runs inside one; the `tui` macros then write a placeholder for an `ai-opt-out` field, section or screen ([Assist, AI opt-out](../ai/Assist.md#ai-opt-out)) |
 | `doBoundaryComments()` | Whether the screen facade's `boundary-comments` is on |
 | `once(key)` | True the first time this render sees the key, for output a page needs once |
 | `stamp(src)` | Sets the source stamp of the next element written, in a render that writes stamps; `null` clears it |

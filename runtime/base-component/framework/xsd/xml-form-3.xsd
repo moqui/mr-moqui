@@ -860,6 +860,16 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>A unique name for this field. Used for the parameter name, referencing
                 the field in other places, etc.</xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>True for a field whose text no AI model may read or write, such as a
+                confidential note: in the browser its rich-text editor offers no text actions (Rewrite, Shorten,
+                Translate, Fix grammar) and Assist leaves its value out of the page state it reads and never fills
+                it; in an agent's render (an Assist screen session, the data tool, agent-apps) the field shows
+                "Not shared with AI" in place of its value, posts no hidden value, has no find field, and data
+                neither finds nor sorts by it. The person's own browser and terminal show it as always. Mark the
+                entity field too (entity-definition field ai-opt-out), which keeps the text out of the data tool's
+                entity reads and Update with AI. See docs/ai/Assist.md "AI opt-out".</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="after" type="xs:string">
             <xs:annotation><xs:documentation>For a field a form extension adds (a screen-extend's form-single or
                 form-list, or a form that extends another): the name of the field it goes after. In a form with a

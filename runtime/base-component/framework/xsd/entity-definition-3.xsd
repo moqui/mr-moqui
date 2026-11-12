@@ -194,6 +194,15 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="is-pk" default="false" type="boolean"/>
             <xs:attribute name="not-null" default="false" type="boolean"/>
             <xs:attribute name="encrypt" default="false" type="boolean"/>
+            <xs:attribute name="ai-opt-out" default="false" type="boolean">
+                <xs:annotation><xs:documentation>
+                    True for a field whose text no AI model may read or write, such as a confidential note: the
+                    agents' data tool never reads, finds or sorts by it, Update with AI (propose#AiFieldValue)
+                    refuses it and leaves it out of the record it sends, and an approval's record snapshot leaves
+                    it out, as for an encrypted field. A screen field that shows it is marked too, with the form
+                    field's ai-opt-out. See docs/ai/Assist.md "AI opt-out".
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="enable-audit-log" default="false" type="audit-log-options">
                 <xs:annotation><xs:documentation>
                     Defaults to false. If true whenever the value for this field on a record changes the Entity Facade

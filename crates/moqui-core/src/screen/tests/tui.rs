@@ -2457,3 +2457,59 @@ fn an_empty_column_title_the_lines_of_a_cell_and_millis_under_a_date_format() {
     assert_eq!(edit["w"]["value"], json!("1709647629000"), "{edit:?}");
     client_model(&output.body_text());
 }
+
+/// An agent's render (design-people PE-21): an `ai-opt-out` field of a list's row form (an input and a value it posts
+/// hidden) and of a board card shows the placeholder, a section in a cell is the placeholder, and the document is one
+/// the terminal client the screen tool draws with reads; the person's render of the same screen shows the text.
+#[test]
+fn an_agents_render_leaves_out_the_text_of_ai_opt_out_fields_of_row_forms_and_views() {
+    let xml = r#"<screen require-authentication="false" default-menu-title="Cases">
+        <transition name="save"><default-response type="none"/></transition>
+        <actions><script>rows = [{caseId: 'C1', title: 'Visible title', reason: 'Secret reason', ref: 'Secret ref', status: 'Open'}]</script></actions>
+        <widgets><form-list name="Cases" list="rows" transition="save" multi="true" id-field="caseId" views="list,board">
+            <view-board group-field="status" card-title-field="title" card-fields="reason"/>
+            <field name="caseId"><default-field><hidden/></default-field></field>
+            <field name="title"><default-field><display/></default-field></field>
+            <field name="reason" ai-opt-out="true"><default-field><text-line/></default-field></field>
+            <field name="ref" ai-opt-out="true"><default-field><display also-hidden="true"/></default-field></field>
+            <field name="note"><default-field><section name="Note" ai-opt-out="true"><widgets><label text="Secret note"/></widgets></section></default-field></field>
+            <field name="status"><default-field><display/></default-field></field>
+            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+        </form-list></widgets></screen>"#;
+    let path = std::env::temp_dir().join(format!("moqui-tui-{}-ai-opt-out.xml", std::process::id()));
+    std::fs::write(&path, xml).unwrap();
+    let context = ExecutionContextFactory::test_context();
+    let render = |origin: crate::screen::RenderOrigin| {
+        make_render(context.factory())
+            .root_screen(path.to_string_lossy().into_owned())
+            .render_mode("tui")
+            .origin(origin)
+            .render()
+            .unwrap_or_else(|err| panic!("{err}"))
+            .body_text()
+    };
+    let person = render(crate::screen::RenderOrigin::Internal);
+    let agent = render(crate::screen::RenderOrigin::Agent {
+        agent_id: "assist".to_string(),
+        run_id: None,
+    });
+    let _ = std::fs::remove_file(&path);
+    for secret in ["Secret reason", "Secret ref", "Secret note"] {
+        assert!(person.contains(secret), "{secret}: {person}");
+        assert!(!agent.contains(secret), "{secret}: {agent}");
+    }
+    assert!(agent.contains("Visible title"), "{agent}");
+    let doc: Json = serde_json::from_str(&agent).unwrap();
+    let list = list_named(&doc, "Cases");
+    assert_eq!(list["aiOff"], json!(["reason", "ref"]));
+    let row = &list["rows"][0];
+    // the row form posts its key, never the opted-out value it holds hidden
+    assert_eq!(
+        hidden_map(&row["hidden"]).get("caseId_0").map(String::as_str),
+        Some("C1")
+    );
+    assert!(!hidden_map(&row["hidden"]).contains_key("ref_0"), "{row}");
+    assert!(row["cells"].to_string().contains("Not shared with AI"), "{row}");
+    assert_eq!(list["views"]["board"]["rows"][0]["f0"], json!("Not shared with AI"));
+    client_model(&agent);
+}

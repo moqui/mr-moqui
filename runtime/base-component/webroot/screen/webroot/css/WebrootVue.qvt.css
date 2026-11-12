@@ -625,6 +625,8 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 
 /* m-rich-text (js/README.md, Rich text): an outlined box like the Quasar fields, the toolbar over the Tiptap content; the light
    form for notes and chat is lower. The mention list is teleported to the body, above dialogs, and placed by Tiptap. */
+/* an ai-opt-out section or screen (design-people PE-21): a marker for Assist that adds no box of its own */
+.m-ai-opt-out { display:contents; }
 .m-rich-text { position:relative; width:100%; }
 .m-rich-text-label { margin:0 0 2px 2px; line-height:1.2; }
 .m-rich-text-box { position:relative; border:1px solid rgba(0,0,0,0.24); border-radius:4px; transition:border-color .2s, box-shadow .2s; }

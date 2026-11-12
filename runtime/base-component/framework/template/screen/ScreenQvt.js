@@ -1370,10 +1370,12 @@
             pop();
         };
 
-        const fieldBox = (when, containerStyle, big) => {
+        // aiOff: the name of an ai-opt-out field, so the page's Assist leaves it alone (m-rich-text's text actions, the page state)
+        const aiOffAttrs = (aiOff) => (aiOff ? { "data-ai-opt-out": "field", "data-ai-field": String(aiOff) } : {});
+        const fieldBox = (when, containerStyle, big, aiOff) => {
             const style = visibleStyle(when);
             const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
-            w("<div" + A({ class: box, ":style": style }) + ">");
+            w("<div" + A(Object.assign({ class: box, ":style": style }, aiOffAttrs(aiOff))) + ">");
         };
 
         const rowOpen = (kind, style) => w("<div" + A({ class: cls(kind, xn(style) || null) }) + ">");
@@ -1945,8 +1947,8 @@
         };
 
         // A list cell for one field. The final row of a multi form has none.
-        const rowCellOpen = (style, align, final) => {
-            if (!final) w('<div class="form-group' + (style ? " " + e(style) : "") + (align === "right" ? " text-right" : align === "center" ? " text-center" : "") + '">');
+        const rowCellOpen = (style, align, final, aiOff) => {
+            if (!final) w('<div class="form-group' + (style ? " " + e(style) : "") + (align === "right" ? " text-right" : align === "center" ? " text-center" : "") + '"' + A(aiOffAttrs(aiOff)) + ">");
         };
         const rowCellClose = (final) => {
             if (!final) w("</div>");
@@ -2465,6 +2467,14 @@
     // cell themselves, so the field names its source to the render just before it.
     const stampCode = (node) => (node.src ? `sri.stamp(${lit(node.src)});\n` : "");
 
+    // ai-opt-out (design-people PE-21): a field's box and cell carry data-ai-opt-out="field", a section and a screen are in a
+    // display:contents div with data-ai-opt-out="section" or "screen"; m-rich-text offers no text actions inside one, and
+    // Assist's page state leaves their values out (docs/ai/Assist.md "AI opt-out").
+    const aiOff = (node) => !!node && attr(node, "ai-opt-out") === "true";
+    const aiOffArg = (field) => (aiOff(field) ? ", " + lit(attr(field, "name") || "field") : "");
+    const aiOffWrap = (node, kind, code) => (aiOff(node) && code
+        ? `sri.write('<div class="m-ai-opt-out" data-ai-opt-out="${kind}">');\n${code}\nsri.write("</div>");\n` : code);
+
     const singleFieldCode = (field, bigRow) => {
         const code = fieldChain(field, (sub) => {
             if (child(sub, "ignored")) return "";
@@ -2472,7 +2482,7 @@
             const style = attr(sub, "container-style");
             const when = child(sub, "visible-when");
             return stampCode(field) + js`
-                $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, ${!!bigRow});
+                $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, ${!!bigRow}${aiOffArg(field)});
                 sri.pushContext();
                 try {
                     ${setCode(sub)}
@@ -2600,11 +2610,11 @@
         const style = attr(sub, "container-style");
         const align = attr(field, "align");
         const inner = isHidden ? subWidgets(sub) : !S.cellNeedsContext(sub) ? stampCode(field) + js`
-            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
+            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2${aiOffArg(field)});
             ${subWidgets(sub)}
             $v.rowCellClose($m === 2);
         ` : stampCode(field) + js`
-            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
+            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2${aiOffArg(field)});
             sri.pushContext();
             try {
                 ${setCode(sub)}
@@ -2648,7 +2658,7 @@
         const style = attr(sub, "container-style");
         const when = child(sub, "visible-when");
         const body = isHidden ? subWidgets(sub) : js`
-            $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, false);
+            $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, false${aiOffArg(field)});
             sri.pushContext();
             try {
                 ${setCode(sub)}
@@ -2992,10 +3002,11 @@
 
     const sectionIterateMacro = stmt((node) => {
         const name = attr(node, "name");
-        const code = `sri.renderSection(${lit(name)});\n`;
+        const code = aiOffWrap(node, "section", `sri.renderSection(${lit(name)});\n`);
         if (attr(node, "paginate") !== "true") return code;
         return `$v.sectionPaginate(${lit(attr(node, "list"))});\n${code}`;
     });
+    const sectionMacro = stmt((node) => aiOffWrap(node, "section", `sri.renderSection(${lit(attr(node, "name"))});`));
 
     const sectionIncludeMacro = stmt((node) => js`
         {
@@ -3008,13 +3019,14 @@
     const tableOfFormNoops = noops(S.allElements);
 
     const macros = Object.assign({}, tableOfFormNoops, S.anyMacros(MODE), {
-        "screen": stmt((node, children) => children),
+        "screen": stmt((node, children) => aiOffWrap(node, "screen", children)),
         "widgets": widgetsMacro("widgets"),
         "fail-widgets": widgetsMacro("fail-widgets"),
         "dynamic-form": stmt((node, children) => children),
         "subscreens-menu": widget("subscreensTabs", false),
         "subscreens-panel": widget("subscreensPanel", false),
         "subscreens-active": stmt(() => `sri.write("<m-subscreens-active></m-subscreens-active>");\n`),
+        "section": sectionMacro,
         "section-iterate": sectionIterateMacro,
         "section-include": sectionIncludeMacro,
 
