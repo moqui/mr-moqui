@@ -138,23 +138,28 @@ prompt and command and OSC 7 with the directory, which gives jump to prompt, the
 command's status on the dot and "command finished". macOS's own `/bin/bash` is left alone. A shell whose prompt already
 writes these (starship and the like) needs no script.
 
-**Hooks for agents** that do not send OSC 7501 themselves, writing to the session's terminal (not their own output):
+**Hooks for agents** that do not send OSC 7501 themselves. A hook runs with no terminal of its own (`/dev/tty` fails), so
+each line writes to the terminal of the agent that runs it (`ps -o tty=` of its parent), and always succeeds: Claude
+Code takes a `UserPromptSubmit` hook that fails as a refusal of the prompt.
 
 ```jsonc
 // Claude Code: .claude/settings.json
 {"hooks": {
-  "Notification": [{"hooks": [{"type": "command", "command": "printf '\\033]7501;state=blocked;kind=permission\\007' > /dev/tty"}]}],
-  "Stop": [{"hooks": [{"type": "command", "command": "printf '\\033]7501;state=done\\007' > /dev/tty"}]}],
-  "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "printf '\\033]7501;state=working\\007' > /dev/tty"}]}]
+  "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=working\\007' > \"$t\"; true"}]}],
+  "PermissionRequest": [{"hooks": [{"type": "command", "command": "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=blocked;kind=permission\\007' > \"$t\"; true"}]}],
+  "Stop": [{"hooks": [{"type": "command", "command": "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=done\\007' > \"$t\"; true"}]}]
 }}
 ```
 
 ```toml
 # Codex: ~/.codex/config.toml (notify runs at the end of each turn)
-notify = ["sh", "-c", "printf '\\033]7501;state=done\\007' > /dev/tty"]
+notify = ["sh", "-c", "t=/dev/$(ps -o tty= -p $PPID | tr -d ' '); [ -w \"$t\" ] && printf '\\033]7501;state=done\\007' > \"$t\"; true"]
 ```
 
-These hook lines follow each agent's documented hook settings; they were not run against the agents here.
+Claude Code's lines were run against Claude Code 2.1 in a host session on Nov 11, 2026: working at a prompt, blocked
+(permission) at a tool's permission request, done at the end of a turn. A `claude` started with the environment of
+another Claude Code session (a server started from one passes it on) runs as that session's child and does not run its
+permission hooks: start the server outside it, or `claude` with those variables cleared. Codex's line was not run.
 
 ## Who may open what, and from where
 
