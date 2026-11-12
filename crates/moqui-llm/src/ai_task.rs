@@ -899,7 +899,7 @@ struct FieldRecord {
 fn field_record(facade: &EntityFacade, parameters: &Parameters) -> Result<FieldRecord, String> {
     let entity = param(parameters, "entityName").ok_or("propose#AiFieldValue needs an entityName")?;
     let field = param(parameters, "fieldName").ok_or("propose#AiFieldValue needs a fieldName")?;
-    let (pk, is_field, hidden) = facade
+    let (pk, is_field, hidden, opted_out) = facade
         .with_entity(&entity, |definition, _, _| {
             let pk: Vec<String> = definition.pk_field_names().into_iter().map(str::to_string).collect();
             let found = definition.fields.iter().find(|candidate| candidate.name == field);
@@ -907,11 +907,16 @@ fn field_record(facade: &EntityFacade, parameters: &Parameters) -> Result<FieldR
                 pk,
                 found.is_some(),
                 found.is_some_and(|found| found.encrypt || crate::tools::data::secret_name(&found.name)),
+                found.is_some_and(|found| found.ai_opt_out),
             ))
         })
         .map_err(|error| error.to_string())?;
     if !is_field {
         return Err(format!("{entity} has no field {field}"));
+    }
+    // design-people PE-21: no Update with AI on a field whose text reaches no model
+    if opted_out {
+        return Err(format!("{field} of {entity} is opted out of AI (ai-opt-out)"));
     }
     if pk.contains(&field) || hidden {
         return Err(format!(

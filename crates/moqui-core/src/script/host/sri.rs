@@ -121,7 +121,7 @@ const SRI_JS: &str = r#"(function (global, hidden) {
         "htmlText", "write", "stamp", "renderSection", "renderSectionValue", "renderSectionInclude", "renderSubscreen", "renderIncludeScreen",
         "renderDynamicForm", "renderUserColumnsForm", "renderText", "renderTextValue", "renderInlineText",
         "writeInlineText", "takeTemplateWrite",
-        "doBoundaryComments", "getRenderMode", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
+        "doBoundaryComments", "getRenderMode", "isAgentRender", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
         "popContext", "setInContext", "pushSingleFormMapContext", "getSingleFormMap", "holdNodeLits",
         "getFieldValueString", "getFieldValue", "getFieldValuePlainString", "getFieldValueClass", "getFieldValueTexts",
         "getNamedValuePlain", "getFieldEntityValue", "getFieldOptions", "openFormList", "startFormListRow",
@@ -198,6 +198,7 @@ static SRI: &[Method] = &[
     method!("sri", "takeTemplateWrite", [], None, leaf, take_template_write),
     method!("sri", "doBoundaryComments", [], Keep, leaf, do_boundary_comments),
     method!("sri", "getRenderMode", [], Keep, leaf, get_render_mode),
+    method!("sri", "isAgentRender", [], Keep, leaf, is_agent_render),
     method!("sri", "encodeHtml", [OptValue], None, leaf, encode_html),
     method!("sri", "getActiveScreenDef", [], Keep, leaf, get_active_screen_def),
     method!("sri", "getScreenUrlInfo", [], Keep, leaf, get_screen_url_info),
@@ -576,6 +577,12 @@ fn do_boundary_comments(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn get_render_mode(_: &mut Call<'_>) -> Result<Ret, HostError> {
     read_render(|state| state.render_mode.clone()).map(Ret::from)
+}
+
+/// `sri.isAgentRender()`: the render is an agent's or runs inside one ([`crate::screen::agent_render`]), so an
+/// `ai-opt-out` field, section or screen writes a placeholder in place of its text.
+fn is_agent_render(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    read_render(|_| crate::screen::agent_render()).map(Ret::from)
 }
 
 /// `sri.encodeHtml(text)`: null-safe as Java's `WebUtilities.encodeHtml`, so a null or undefined argument is empty

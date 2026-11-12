@@ -261,6 +261,7 @@ is not counted against tarpits. The builder methods return the test:
 | `header(name, value)` | A request header of every render |
 | `clientModes("qvue,qjs")` | The `X-Moqui-Client-Modes` header `moqui.loadComponent` sends (a text, or an array), so a spec checks the best client mode: `render("Gallery/QuickTask.qvt").header("X-Moqui-Qvt") == "qvue"` |
 | `withStaticData()` | A qvt render of a server-static screen answers its data-free template. With this the output also has the text of the screen's data (its `/actions` and each form-list's `/actions/<form>`), so a spec can look for both |
+| `agent()` | Every render as an agent's screen session renders it (an agent's origin, fenced, writes held), so a spec sees what reaches a model: `framework/test/AiOptOut.spec.js` |
 | `render(path, parameters, method)` | One render; the result below |
 | `renderAll(paths, parameters, method)` | Each path in turn, for the counts |
 | `getNoRequiredParameterPaths(screensToSkip)` | The paths below the base screen of the screens with no required parameters |

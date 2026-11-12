@@ -12,18 +12,19 @@ $columns.push({title:[String(ec.l10n.localize("Status") || "")].filter(($part) =
 $columns.push({title:[String(ec.l10n.localize("Open") || "")].filter(($part) => $part).join(" / "),fields:["link"]});
 $columns.push({title:[String(ec.l10n.localize("Do") || "")].filter(($part) => $part).join(" / "),fields:["b"]});
 const $headerFields = [];
-        $headerFields.push((() => {
+        if (!$isAgent()) {
+$headerFields.push((() => {
             let $required = false;
             const $max = 0;
-            const $hint = sri.getFieldValidation({"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}});
+            const $hint = sri.getFieldValidation({"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}});
             if ($hint && String($hint.classes || "").split(/\s+/).indexOf("required") >= 0) $required = true;
             const $rules = [];
-            const $found = sri.getFieldValidationRules({"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}) || [];
+            const $found = sri.getFieldValidationRules({"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}) || [];
             for (let $ri = 0; $ri < $found.length; $ri++) {
                 if ($found[$ri].kind === "required") $required = true;
                 else $rules.push($found[$ri]);
             }
-            const $field = {t:"field",id:$uid("Rows.id"),name:"id",title:String(ec.l10n.localize("ID") || ""),w:{kind:"textFind",value:String(sri.getFieldValueString({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || "" || ""),op:(() => { const $v = ec.context.get("id_op"); return $v == null || $v === "" || $v === "null" ? String("contains") : String($v); })(),not:(() => { const $v = ec.context.get("id_not"); return $v == null || $v === "" || $v === "null" ? String("N") : String($v); })() === "Y",ic:(() => { const $v = ec.context.get("id_ic"); return $v == null || $v === "" || $v === "null" ? String("Y") : String($v); })() === "Y"}};
+            const $field = {t:"field",id:$uid("Rows.id"),name:"id",title:String(ec.l10n.localize("ID") || ""),w:{kind:"textFind",value:String(sri.getFieldValueString({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || "" || ""),op:(() => { const $v = ec.context.get("id_op"); return $v == null || $v === "" || $v === "null" ? String("contains") : String($v); })(),not:(() => { const $v = ec.context.get("id_not"); return $v == null || $v === "" || $v === "null" ? String("N") : String($v); })() === "Y",ic:(() => { const $v = ec.context.get("id_ic"); return $v == null || $v === "" || $v === "null" ? String("Y") : String($v); })() === "Y"}};
             if ($required) $field.required = true;
             if ($max > 0) $field.maxlength = $max;
             if ($rules.length) $field.rules = $rules;
@@ -31,6 +32,7 @@ const $headerFields = [];
             
             return $field;
         })());
+}
 const $rows = [];
         for (let $index = 0; $index < $info.count; $index++) {
             sri.startFormListRow($info, $index);
@@ -41,11 +43,17 @@ const $rows = [];
 let $start = 0;
 $parts = [];
 $start = $parts.length;
-$addPart($parts, $start, String(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || ""));
+if ($isAgent()) $addPart($parts, $start, $aiOffText());
+else {
+$addPart($parts, $start, String(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || ""));
+}
 $cells.push($cellOf($parts));
 $parts = [];
 $start = $parts.length;
-$addPart($parts, $start, String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{"title":"The Title"},"parent":{"name":"field","attrs":{"name":"title","print-width":"30","print-width-type":"characters"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || "" || ""));
+if ($isAgent()) $addPart($parts, $start, $aiOffText());
+else {
+$addPart($parts, $start, String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{"title":"The Title"},"parent":{"name":"field","attrs":{"name":"title","ai-opt-out":"true","print-width":"30","print-width-type":"characters"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || "" || ""));
+}
 $cells.push($cellOf($parts));
 $parts = [];
 $start = $parts.length;
@@ -114,6 +122,7 @@ const $row = {id:$rowKey,cells:$cells};
             if ($value != null && $value !== "") $paging[$key] = $whole($value);
         }
         const $list = {t:"formList",id:$uid("Rows"),name:"Rows",domId:(String("Rows" ?? "") + $sec()),columns:$columns,rows:$rows,paging:$paging,headerFields:$headerFields};
+        if ($isAgent()) $list.aiOff = ["id","title"];
         $emit($list);
     } finally {
         sri.safeCloseList($info);

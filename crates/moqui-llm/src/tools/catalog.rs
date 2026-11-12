@@ -634,8 +634,8 @@ fn plain(value: &Json) -> String {
 }
 
 /// The current values of the record an entity-auto write names, by its primary key in `parameters`: the key, the
-/// fields (encrypted ones and those named like secrets left out) and its `lastUpdatedStamp` as text. `None` when the key
-/// is not all there or the record is not found.
+/// fields (encrypted ones, `ai-opt-out` ones and those named like secrets left out) and its `lastUpdatedStamp` as
+/// text. `None` when the key is not all there or the record is not found.
 ///
 /// # Errors
 ///
@@ -650,7 +650,7 @@ pub fn entity_record(
         let hidden: Vec<String> = definition
             .fields
             .iter()
-            .filter(|field| field.encrypt || super::data::secret_name(&field.name))
+            .filter(|field| field.encrypt || field.ai_opt_out || super::data::secret_name(&field.name))
             .map(|field| field.name.clone())
             .collect();
         Ok((pk, hidden))
@@ -704,7 +704,7 @@ pub struct EntityRecord {
     pub key: Json,
     pub fields: Json,
     pub stamp: Option<String>,
-    /// Field names never shown (encrypted, or named like secrets).
+    /// Field names never shown (encrypted, `ai-opt-out`, or named like secrets).
     pub hidden: Vec<String>,
 }
 

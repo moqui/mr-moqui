@@ -85,6 +85,8 @@ const SCREEN_JS: &str = r#"(function (proto) {
             // a request header of every render; clientModes("qvue,qjs") is X-Moqui-Client-Modes, as moqui.loadComponent sends it
             header: (name, value) => { o.headers = Object.assign({}, o.headers, { [String(name)]: String(value) }); return t; },
             clientModes: (modes) => t.header("X-Moqui-Client-Modes", Array.isArray(modes) ? modes.join(",") : modes),
+            // every render as an agent's screen session renders it (its origin, fenced, writes held): what reaches a model
+            agent: () => { o.agent = true; return t; },
             // a qvt render of a server-static screen answers its data-free template: with this, the output also gets the text
             // of the screen's data (its /actions package and each form-list's /actions/<form>), so a spec can look for both
             withStaticData: () => { o.withStaticData = true; return t; },
@@ -267,7 +269,8 @@ fn xsl_fo_transform(call: &mut Call<'_>) -> Result<Ret, HostError> {
     }
 }
 
-/// `ec.screen.testRender({screenPath, parameters, method, rootScreen, baseScreenPath, renderMode, baseLinkUrl, headers})`,
+/// `ec.screen.testRender({screenPath, parameters, method, rootScreen, baseScreenPath, renderMode, baseLinkUrl, headers,
+/// agent})`,
 /// the host side of `makeTest().render()`: `{output, errorMessages, renderTime, status, headers}` (the request headers in,
 /// the response's out). It does not throw for a failed
 /// render; the failure is in `errorMessages`.
@@ -298,6 +301,9 @@ fn test_render(call: &mut Call<'_>) -> Result<Ret, HostError> {
             for (name, value) in headers {
                 test = test.header(name.clone(), moqui_lib::object::to_plain_string(value));
             }
+        }
+        if matches!(options.get("agent"), Some(Value::Bool(true))) {
+            test = test.agent();
         }
         let method = text("method");
         let rendered = test.test_render(&text("screenPath"), parameters, Some(method.as_str()));

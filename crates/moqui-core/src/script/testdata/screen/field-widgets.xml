@@ -1,7 +1,7 @@
 <widgets>
     <form-single name="AllFields" map="fv">
         <field name="firstName"><default-field><text-line size="20"/></default-field></field>
-        <field name="bio"><default-field title="About"><text-area rows="3"/></default-field></field>
+        <field name="bio" ai-opt-out="true"><default-field title="About"><text-area rows="3"/></default-field></field>
         <field name="userGroupId"><default-field><text-find hide-options="true"/></default-field></field>
         <field name="status"><default-field>
             <drop-down no-current-selected-key="N/A"><option key="A" text="Active"/><option key="${k}"/></drop-down></default-field></field>
@@ -19,7 +19,7 @@
         <field name="pw"><default-field><password/></default-field></field>
         <field name="range"><default-field><range-find/></default-field></field>
         <field name="clear"><default-field><reset/></default-field></field>
-        <field name="secret"><default-field><hidden/></default-field></field>
+        <field name="secret" ai-opt-out="true"><default-field><hidden/></default-field></field>
         <field name="skip"><default-field><ignored/></default-field></field>
         <field name="go"><default-field title="Go Now"><submit/></default-field></field>
         <field name="sel"><default-field>

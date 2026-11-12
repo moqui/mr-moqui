@@ -23,7 +23,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="testMedium" type="text-medium"/>
         <!-- VALUE is reserved in H2 2 and is not rewritten on Postgres. Overlay SQL must use THE_VALUE. -->
         <field name="value" type="text-short"/>
-        <field name="testLong" type="text-long"/>
+        <!-- ai-opt-out for the AiOptOut spec and the data tool's test: its text reaches no model tool -->
+        <field name="testLong" type="text-long" ai-opt-out="true"/>
         <field name="testIndicator" type="text-indicator"/>
         <field name="testDate" type="date"/>
         <field name="testDateTime" type="date-time"/>

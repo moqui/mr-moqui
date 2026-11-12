@@ -744,6 +744,9 @@ pub struct ScreenDef {
     pub screen_theme_type: String,
     /// `density`: `handheld`, or None for the user's density preference. The screens below inherit it in the shell.
     pub density: Option<String>,
+    /// `ai-opt-out`: an agent's render shows a placeholder in place of the screen's widgets (design-people PE-21); the
+    /// root unit's `screen` element carries it to the mode macros.
+    pub ai_opt_out: bool,
     /// `all`, or the render modes this screen supports.
     pub render_modes: Vec<String>,
     /// The `location` of each `render-mode` `text` in the screen's widgets that names a file (not an expression): the
@@ -1161,6 +1164,7 @@ impl ScreenDef {
                 .attribute("density")
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty()),
+            ai_opt_out: node.attribute("ai-opt-out").is_some_and(|text| text.trim() == "true"),
             render_modes,
             text_locations: text_locations(node),
             server_static,

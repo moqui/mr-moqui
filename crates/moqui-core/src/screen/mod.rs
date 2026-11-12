@@ -77,8 +77,8 @@ pub use definition::{
     SectionDef, SectionKind, Subscreens, SubscreensItem, TransitionDef, TreeDef, WebSettings, XmlFragment,
 };
 pub use gate::{
-    clear_transition_observer, held_write_hash, install_transition_observer, interactive_request, HeldWrite,
-    InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,
+    agent_render, clear_transition_observer, held_write_hash, install_transition_observer, interactive_request,
+    HeldWrite, InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,
 };
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]

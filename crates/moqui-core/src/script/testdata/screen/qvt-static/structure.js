@@ -46,12 +46,18 @@ sri.write("</div>\n");
 $s.label({"name":"label","attrs":{"text":"in dialog"}});
     sri.write($c ? "</m-container-dialog></template>\n" : "</m-container-dialog>\n");
 }
+sri.write('<div class="m-ai-opt-out" data-ai-opt-out="section">');
 $s.label({"name":"label","attrs":{"text":"first"}});
+
+sri.write("</div>");
+sri.write('<div class="m-ai-opt-out" data-ai-opt-out="section">');
 {
-sri.write($s.sectionIterateOpen({"name":"section-iterate","attrs":{"name":"Each","list":"rows","entry":"row"}}));
+sri.write($s.sectionIterateOpen({"name":"section-iterate","attrs":{"name":"Each","list":"rows","entry":"row","ai-opt-out":"true"}}));
 $s.label({"name":"label","attrs":{"text":"${row}"}});
 sri.write("</m-scope></template>");
 }
+
+sri.write("</div>");
 sri.staticNote("section-include", "section-include", "section-include First was not resolved");
 $s.subscreensTabs({"name":"subscreens-menu","attrs":{}});
 sri.write("<m-subscreens-active></m-subscreens-active>");
