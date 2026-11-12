@@ -539,6 +539,7 @@ fn worker_units_follow_the_suite_chain_and_depends_on() {
 }
 
 /// A live agent evaluation takes only the `llm_*` entries of the runtime's `.env` into the scratch runtime's process.
+#[cfg(all(feature = "llm", feature = "embedded-postgres"))]
 #[test]
 fn a_live_agent_run_carries_only_the_llm_settings_of_the_dotenv() {
     let text = "# secrets\nentity_ds_crypt_pass=secret\nllm_anthropic_api_key=sk-ant-test\nllm_dev_model=claude-haiku\nllm_empty=\n";
