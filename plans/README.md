@@ -26,6 +26,9 @@ Design, status and review documents for MR Moqui. User guides for built features
 **After performance: monitoring**
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md). Monitor › Settings is built and archived ([Monitor-Settings](archive/Monitor-Settings.md)).
 
+**Administration apps**
+- [Admin-Screens-Down.md](Admin-Screens-Down.md): the framework-generic screens of IronStone Admin and Insights (mr-boss) moved into the framework's System and Dashboards apps, with the old raw System screens folded in as parts for the instance administrator, and BOSS mounting them under a mount contract and keeping only its business parts. The plan, the per-screen tables and the record of each phase (A0 to A6, I0 to I4) with its findings; every phase is built. Guides: [Mounting the administration screens](../runtime/base-component/tools/README.md#mounting-the-administration-screens), [Mounting the report screens](../docs/tools/Monitoring.md#mounting-the-report-screens).
+
 **Dev tools**
 - [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent. §21 (Nov 11, 2026, not built) is the Dev AIDE as a client of a group server: a connection, merge requests and reviews in the Workspace, checks, issues, the contributor agreement and a `hosting` tool for agents.
 

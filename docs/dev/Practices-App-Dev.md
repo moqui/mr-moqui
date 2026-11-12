@@ -355,6 +355,49 @@ References: [JS-Screen-Scripts](JS-Screen-Scripts.md) (actions, transitions and 
 - **Links:** `target-window="_blank"`, not `target`. Other screens of the app through `sharedLinks`, not literal
   paths.
 
+### A framework screen under an app's root
+
+An app shows a framework screen (System's administration screens, the Dashboards screens) under its own root instead
+of copying it, as IronStone Admin and Insights do. The two contracts are
+[Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)
+and [Mounting the report screens](../tools/Monitoring.md#mounting-the-report-screens); the record of the two moves,
+with the findings behind these rules, is [plans/Admin-Screens-Down.md](../../plans/Admin-Screens-Down.md).
+
+- **Three ways**, chosen by what the app's authorization rows name, what the framework screen has and what the app
+  adds:
+  - **By location:** a `subscreens-item` of the app's area names the framework file, and the app has no file. Only when
+    no grant of the app names the screen or a transition of it, the screen has no transition that is the instance
+    administrator's alone, and the app adds nothing.
+  - **A thin wrapper** at the app's own location: `include-screen share-scope="true"` and one `transition-include` for
+    each transition the app offers. A transition that is not taken in does not exist on the app's route. This is the
+    way when a grant of the app names the screen or its transitions, and when the framework screen has transitions
+    the app must not offer.
+  - **A screen of the app's own**, with its own `actions` and transitions, around the framework screen's named
+    sections and forms (`section-include`, `form extends`). This is the way when the app adds something inside the
+    screen: an organization as a filter or a scope, a column, a box, a check before an action.
+- **A grant names the app's own screen, never a framework location.** A grant on a framework location opens it under
+  the framework's own app too, past that app's check. An app's inheritable always-allow on its area skips every check
+  below it (transition, service, entity), so a transition the app must not offer is kept off its route, not refused
+  on it.
+- **Mount context is data, never authority.** The app's root sets the map (`adminMount`; `reportLinks` and
+  `reportPolicy`) in its `always-actions`, so that transitions read it too, and the framework's own roots set it to
+  null, so a request parameter never supplies one. It says where links go and which values of the app's policy apply.
+  What a value allows is enforced by the transition, which reads the map and never a parameter, or by the service it
+  calls; a list of what is offered gives no right. A service's context is its own: a module function an app calls
+  from a service sees no mount, so the service passes it what it needs (a range, fixed variables).
+- **What the engine does** that an author of such a screen meets:
+  - A form nested in a field of an extended form is the other screen's and is not found: override that field with a
+    form of the app's own. A field of an extended form-list is replaced whole by a field of the same name, and
+    `section-include` reaches a section nested in another.
+  - Two paginated lists on one page share `pageIndex`. Show the second in place of the first, by a parameter, not
+    beside it.
+  - A link carries every parameter its target declares that is in the linking screen's context (a page index, a range
+    of dates, a find value), and a screen mounted by location declares all of its parameters on the app's route. An
+    empty value in the link's own parameters leaves one out: a list that links another screen's record sends its own
+    find values empty, as a link that leaves a mode does.
+  - A screen path that names the app's root (`//Admin/...`) does not resolve where a spec renders with the app's root
+    file as the root. A mount's routes are relative to a screen of an area, which holds under any root.
+
 ### The archetypes
 
 Follow the style guide's archetype for each screen, as the Projects app does. In particular:

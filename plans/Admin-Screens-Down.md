@@ -2,7 +2,8 @@
 
 Plan and record of moving the framework-generic screens of IronStone Admin and Insights (mr-boss) into the framework's
 System and Dashboards apps (`runtime/base-component/tools`), with BOSS mounting them and adding only its business parts.
-Started Nov 11, 2026. The record of each phase is at the end.
+Started Nov 11, 2026. Every phase (A0 to A6, I0 to I4) is built; the record of each phase is at the end, the
+finishing phase last.
 
 Paths: `T` = `runtime/base-component/tools`, `F` = `runtime/base-component/framework`,
 `B` = `runtime/component/mr-boss` (its own repository).
@@ -30,7 +31,7 @@ record has one screen.
    protocols) with the same sibling screen names, so one file works under both mounts with its relative links.
 2. **Replace, and fold the raw parts in.** The nicer screen becomes the only one; what only the old System screen
    could do becomes sections shown only to the instance administrator.
-3. **The registries move to the framework, last** (reverses design-admin §14; droppable).
+3. **The registries move to the framework, last** (reverses design-admin §14; done in A6).
 4. **Insights' engine screens move to Dashboards**: dataset stewardship, scheduled delivery, business alerts, and
    drill, wall display, share and Analysis.
 
@@ -66,7 +67,7 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
   `url(key, own)` is a transition's response. It is the one reader of both maps. `policyWith(fields)` is the root's
   policy with an area's fields, which the area sets as `reportPolicy` in its own `always-actions` (I2: the recipient
   cap); with no mount it is null.
-- `T/template/AdminMount.js`: `state()` gives `{mounted, raw, routes}`, `raw()` is a transition's condition. `raw` is
+- `T/template/AdminMount.js`: `state()` gives `{mounted, raw, routes, hidden}`, `raw()` is a transition's condition. `raw` is
   true when there is no mount and the user opens System by its own grant. Every raw transition carries the condition.
   `link(routes, key, id, more)` is one record's link, and `systemPlace(key, id, more)` a framework route as System's
   own absolute place, for the home's attention service (A6).
@@ -133,8 +134,10 @@ skills are changed; no aliases are kept.
 Moving down: `B/template/AdminConnectionParts.xml` to `T/template/ConnectionParts.xml`; `getUserList` to
 `T/template/UserChoiceTransitions.xml`; `CapabilityServices.get#MatrixContext`/`apply#MatrixChanges` to
 `org.moqui.admin.AccessServices` (`AccessMatrix.js`); the generic parts of `Data.js` and `DataImport.js` to
-`DataTransferExports.js` and `DataTransferImports.js`.
-Deleted: `get#AppAccess`, `find#ToolLinks`, BOSS `AdminCalls.js`.
+`DataTransferExports.js` and `DataTransferImports.js`; the three registry entities and most of `Registry.js` to
+`moqui.server` and `org.moqui.admin.ReadinessServices` (`Readiness.js`, A6).
+Deleted: `get#AppAccess`, `find#ToolLinks`, BOSS `AdminCalls.js` (the framework's now), `find#ChangeEvidence` (A4),
+`ironstone.admin.DataServices` (A5).
 
 Stays in BOSS: Admin Home, LogNote, Organizations, OrganizationDetail, the Users screens, ReferenceData, Devices (every
 call is Mantle's), Constitution (already shares `ConstitutionParts.xml`), AccessLog (a BOSS dataset with an organization
@@ -153,7 +156,7 @@ Each phase is a mr-moqui commit, then a mr-boss commit; both repositories work a
 | A1 Operations | `System/Operations/**` with raw sections; delete `ServiceJob/**`; home links, `navCatalog`; cargo paths | area items re-pointed; fix paths | `AdminMounts` (raw transition refused under a mount, allowed under System); `AdminJobRuns`, `AdminRegistries`, `SystemAttention` |
 | A2 Integrations, Mail | `System/Integrations/**`, `System/Protocols/**`, `ConnectionParts.xml`; delete `SystemMessage/**` | D/W/S per the table; mr-marble's SystemMessageDetail link | `AdminSystemMessages`, `AdminRelays`, `AdminMailQueue` |
 | A3 Access, Security | `System/Access/**`, `AccessMatrix.js`, `Security/Sessions` and the sign-in screens; delete `UserGroup/**`, `ActiveUsers` | area files; matrix services deleted | `F/test/AdminAccessCapabilities`; `AdminGroups`, `AdminSecurity`, `AdminCapabilities` |
-| A4 Settings, Audit | `System/Settings/**`, `System/Audit/**`; delete `Localization/**`, `AuditLog.xml` | wrappers | `AdminSettings`, `AdminAudit` |
+| A4 Settings, Audit | `System/Settings/**`, `System/Audit/**`; delete `Localization/**`, `AuditLog.xml` | two wrappers, AuditChanges by location; `find#ChangeEvidence` deleted | `AdminSettings`, `AdminAudit` |
 | A5 Data | `System/Data/**`; five `DataTransferServices` operations | area file, two screens by location, two S screens, Backups wrapper; `DataServices` deleted | `F/test/AdminDataExport`, `AdminDataTransfer`; `AdminExports`, `AdminImports` |
 | A6 Registry (after track I) | `moqui.server.ReadinessProvider`, `RefreshOperation`, `SettingsEntry`; `org.moqui.admin.ReadinessServices`; the framework's own checks and settings entries as seed rows; `get#SystemAttention` lists the instance's checks of `get#Readiness` that are not ready beside its own readings; `Operations/Health`, `SupportSummary`, `Settings/SettingsHome`; `AdminReadiness.js` | entities and most of `Registry.js` deleted; the Mantle adapters are one contract service the rows name, `check#OwnerReadiness` (People's `people.setup` names Mantle's own); rows re-seeded with route keys; Health S, SupportSummary D, SettingsHome W | `F/test/AdminReadiness`; `SystemAttention`, `AdminMounts`, `AdminRegistries`, `AdminAccess`, `PeopleAccess`, `InsightsSettings` |
 
@@ -1415,3 +1418,56 @@ attention list as ADMIN; 26 s); `moqui lint --screens` with no parse failure and
 before), `moqui lint` of the six changed service files. Changed and not run: mr-boss's acceptance
 `AdminRegistriesWalk` (the mail server's fix place; the finance reader refused Admin's contract service and answered
 no Accounting check) and `AdminReviewWalk` (the two service names).
+
+### Finishing (Nov 11, 2026)
+
+State: every phase above is built and committed on branch `admin-screens-down` of mr-moqui, mr-boss, mr-mantle and
+mr-marble. The finishing phase is three things:
+
+- **The documents.** In mr-boss: `plan/design-admin.md` (§1.4 on which screens are the framework's and what Admin
+  keeps, §13 without the Developer tools area, §14 with the registries as the framework's, and a line in each moved
+  screen's section), `plan/impl-admin.md` §9, `plan/design-insights.md` §4.2 and `plan/impl-insights.md` §9,
+  `plan/design-crosscut.md` (§3.30, §4.9's Z5 and Z9 rows, §5, §7, §8), the registry statements of `impl-people`,
+  `impl-sales`, `impl-marketing` and `impl-maintenance`, two rows of `ss-inventory`, and the README. Here:
+  [Practices-App-Dev](../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root) §5 (the three ways an
+  app shows a framework screen, the grant and mount rules, and the engine behaviours of F16, F18, F24, F36, F101 and
+  F102), [Attack-Surface](../docs/security/Attack-Surface.md#tools-and-system) ("Screens another app shows": the mount
+  rule for both tracks and the engine's rules of F54 and F94), `plans/README.md`, and this plan's own tables read
+  against the Record (the A4 row, `state()`'s `hidden`, the registries among what moved down).
+- **The acceptance specs changed by path**, run one by one: mr-boss's `AdminFoundationWalk`, `AdminRegistriesWalk`,
+  `AdminJobsUsable`, `AdminReviewWalk`, `AdminCapabilitiesUsable`, `AdminAuditUsable`, `InsightsDatasetsUsable`,
+  `InsightsDeliveryUsable`, `InsightsAlertsUsable`, `InsightsWallDisplayUsable`, `InsightsReviewWalk`, and the sweeps
+  whose screen lists changed (`AdminTui`, `AdminServerStatic`, `InsightsTui`, `InsightsServerStatic`); the framework's
+  `acceptance/client/LoadBasic`; the opt-in `tui_screens` cargo test (A1). `PeopleFoundationWalk` reads "People
+  setup" on Health (F123).
+- **The full suites, once:** `./moq test-framework` and `./moq test-apps`.
+
+Results:
+
+- **Acceptance, one by one.** The fifteen of mr-boss pass. Three expectations written with the phases and not run then
+  were corrected to what the screens do: `AdminAuditUsable` (a membership change's record is its group, the
+  `adminGroup` route, not the user), `AdminJobsUsable` (the run's trace link is a screen path of System's, read under
+  the web root as a browser asks for the page; under Admin as a spec's root it does not resolve) and
+  `AdminRegistriesWalk` (an anchor's ampersand is escaped in html). The framework's `LoadBasic` passes. The opt-in
+  `tui_screens` passes after two gallery snapshots took the registries' four enumeration types of A6 (a count, the
+  first rows of a list). The acceptance specs over changed screens that the phases did not change were not run
+  (`InsightsDrillUsable`, `AdminDevicesUsable`, `AdminExportsUsable`, `AdminImportsUsable`, `PeopleFoundationWalk`, the
+  client `InsightsDashboardsUsable`).
+- **`./moq test-framework`:** every suite passes but `cargo test --workspace`, by one test of `moqui-git`
+  (`the_tree_refs_compare_and_merge_methods_through_services`: a git update's ECA finds no report service in that
+  crate's runtime), which passes alone and failed in one of two more runs of the crate; nothing here touches
+  `moqui-git` or `Git.gitecas.xml`. The specs: framework 532 features, 16.1 s of 17 s; tools 3.8 s of 4 s (3.3 to 3.6 s
+  alone and warm, 4.8 and 5.4 s in the first two runs after a build).
+- **`./moq test-apps`**, three runs: 3,626 features, 3,618 then 3,622 then 3,624 passing; the client suite passes each
+  time. What failed, none of it this work's:
+  - mr-mantle's `AccountingRecurringAging` and `SupportCases` fail while the UTC date is ahead of the local one (the
+    evening: failed at 23:59:57, passed at 00:00:07).
+  - `AdminDevices` found the device Mantle's `SharedDevices` spec leaves under the same name when a run puts both on
+    one worker's database; its setup now removes its own names first, and it passes in the full run.
+  - `PeopleAccess` ("No department is set up") and `PeoplePositions` (a pay grade "Pos spec shared grade") read rows
+    other People specs leave on the same database; both pass alone. Left for the People work.
+  - mr-boss's client suite reads 62 s of its 57 s budget; this work changed no client spec, and the People hire walk
+    (6.6 s) is new since the budget was set.
+- Known and not this work's, seen in the phases: `AdminAccessServices` "a membership change is seen at once by the
+  session it changes" and `AdminBackups`' lock check each fail about one run in six; three `gate3` and four
+  `gate3_browser` tests fail before and after (F22).
