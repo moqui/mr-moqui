@@ -461,6 +461,106 @@ fn write_fixture(name: &str, body: &str) -> PathBuf {
     path
 }
 
+/// plans/High-Level-Review.md HL-015: an edit reads only its file and resolves again only its services, the services of
+/// other files that implement one of them (through an include alias too) and the include aliases of them; a changed
+/// interface reaches its implementer in another file, and a service of another file keeps its definition.
+#[test]
+fn an_edit_resolves_again_only_its_services_their_implementers_and_include_aliases() {
+    let interface = |extra: &str| {
+        format!(
+            r#"<services>
+                <service verb="run" noun="Base"><in-parameters><parameter name="fromBase"/>{extra}</in-parameters></service>
+                <service verb="run" noun="Shared"><in-parameters><parameter name="shared"/>{extra}</in-parameters></service>
+                <service verb="run" noun="Alone"/>
+            </services>"#
+        )
+    };
+    let root = lazy_framework(
+        "narrowed",
+        &[
+            ("A.xml", &interface("")),
+            (
+                "B.xml",
+                r#"<services><service verb="run" noun="Impl"><implements service="test.lazy.A.run#Base"/></service></services>"#,
+            ),
+            ("D.xml", r#"<services><service verb="run" noun="Other"/></services>"#),
+        ],
+    );
+    let a = root.join("service/test/lazy/A.xml");
+    std::fs::write(
+        root.join("service/test/lazy/C.xml"),
+        format!(
+            r#"<services>
+                <service-include verb="run" noun="Shared" location="{}"/>
+                <service verb="run" noun="UsesAlias"><implements service="test.lazy.C.run#Shared"/></service>
+            </services>"#,
+            a.display()
+        ),
+    )
+    .unwrap();
+    let ctx = lazy_context(root);
+    let _entered = ctx.enter();
+    let has = |name: &str, parameter: &str| {
+        super::find(name)
+            .unwrap_or_else(|| panic!("{name}"))
+            .in_params
+            .iter()
+            .any(|param| param.name == parameter)
+    };
+    assert!(has("test.lazy.B.run#Impl", "fromBase"));
+    assert!(has("test.lazy.C.run#UsesAlias", "shared"));
+    let other = super::find("test.lazy.D.run#Other").unwrap();
+    super::PARSED.with(|parsed| parsed.borrow_mut().clear());
+
+    std::fs::write(&a, interface(r#"<parameter name="added"/>"#)).unwrap();
+    let reload = super::reload(std::slice::from_ref(&a)).unwrap();
+    assert_eq!(
+        reload.resolved,
+        [
+            "test.lazy.A.run#Alone",
+            "test.lazy.A.run#Base",
+            "test.lazy.A.run#Shared",
+            "test.lazy.B.run#Impl",
+            "test.lazy.C.run#Shared",
+            "test.lazy.C.run#UsesAlias",
+        ]
+    );
+    assert_eq!(reload.defined, 3);
+    assert!(reload.added.is_empty() && reload.removed.is_empty(), "{reload:?}");
+    for name in ["A.xml", "B.xml", "C.xml", "D.xml"] {
+        assert_eq!(parsed_count(name), usize::from(name == "A.xml"), "{name}");
+    }
+    assert!(has("test.lazy.A.run#Base", "added"));
+    assert!(
+        has("test.lazy.B.run#Impl", "added"),
+        "the interface reaches its implementer"
+    );
+    assert!(has("test.lazy.C.run#Shared", "added"), "and its include alias");
+    assert!(
+        has("test.lazy.C.run#UsesAlias", "added"),
+        "and what implements the alias"
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &other,
+        &super::find("test.lazy.D.run#Other").unwrap()
+    ));
+
+    // a service gone takes its implementer with it, as a boot would
+    std::fs::write(&a, r#"<services><service verb="run" noun="Shared"/></services>"#).unwrap();
+    let reload = super::reload(std::slice::from_ref(&a)).unwrap();
+    assert_eq!(reload.removed, ["test.lazy.A.run#Alone", "test.lazy.A.run#Base"]);
+    assert!(super::find("test.lazy.B.run#Impl").is_none());
+    assert!(
+        reload
+            .failures
+            .iter()
+            .chain(super::snapshot(&super::entered().unwrap()).failures.iter())
+            .any(|failure| failure.contains("test.lazy.B.run#Impl implements unknown service test.lazy.A.run#Base")),
+        "{reload:?}"
+    );
+    assert!(super::find("test.lazy.D.run#Other").is_some());
+}
+
 /// plans/High-Level-Review.md HL-015: a reload takes the changed file's root the caller parsed to check it, and does not
 /// read that file again; the files loaded before are read once each, with no duplicate from the changed path.
 #[test]
@@ -486,7 +586,8 @@ fn a_reload_takes_the_checked_root_of_a_changed_file_instead_of_reading_it_again
     let reload = super::reload_parsed(std::slice::from_ref(&a), vec![(a.clone(), checked)]).unwrap();
     assert_eq!(reload.defined, 1);
     assert_eq!(parsed_count("A.xml"), 0, "the changed file is not read again");
-    assert_eq!(parsed_count("B.xml"), 1, "a file loaded before is read once");
+    assert_eq!(parsed_count("B.xml"), 0, "a file of another group is not read");
+    assert_eq!(reload.phases.files, 1);
     let one = super::find("test.lazy.A.run#One").unwrap();
     assert!(one.actions.contains("checked"), "{}", one.actions);
 }

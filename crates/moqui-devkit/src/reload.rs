@@ -253,7 +253,7 @@ fn run(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadRepor
     reload_conf(factory, &mut files);
     let relinked = reload_entities(factory, &mut files);
     let services_changed = reload_services(factory, &mut files);
-    // a SECA rule naming a service not defined when the rules were read was left out: read them again when services
+    // a SECA rule naming a service not defined when the rules were read was left out: check them again when services
     // came or went, an entity's own (entity-auto) among them
     reload_secas(factory, &mut files, relinked || services_changed);
     reload_eecas(factory, &mut files);
@@ -501,17 +501,21 @@ fn reload_services(factory: &ExecutionContextFactory, files: &mut [FileReload]) 
     let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
     match moqui_core::service::reload_parsed_definitions(&paths, parsed) {
         Ok(reload) => {
-            // forms built from a service's parameters (auto-fields-service) read the new ones on next use
-            let cleared = std::time::Instant::now();
-            moqui_core::screen::ScreenFacade::of(factory).clear();
+            // the screens whose forms or code looked up a service resolved again (auto-fields-service, validation
+            // hints, an implicit entity-auto name) are made again on next use; the others stay
+            // (plans/High-Level-Review.md HL-015)
+            let forgot = std::time::Instant::now();
+            let screens = moqui_core::screen::ScreenFacade::of(factory).forget_services(&reload.resolved);
             let phases = &reload.phases;
             tracing::debug!(
                 check_ms = checked.as_secs_f64() * 1000.0,
                 collect_ms = phases.collect.as_secs_f64() * 1000.0,
                 load_ms = phases.load.as_secs_f64() * 1000.0,
                 resolve_ms = phases.resolve.as_secs_f64() * 1000.0,
-                screen_clear_ms = cleared.elapsed().as_secs_f64() * 1000.0,
+                screen_forget_ms = forgot.elapsed().as_secs_f64() * 1000.0,
                 files = phases.files,
+                resolved = phases.resolved,
+                screens = screens.len(),
                 "service reload phases"
             );
             for &at in &changed {
@@ -547,7 +551,8 @@ fn reload_secas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]
     let changed = indexes(files, &[ArtifactKind::Seca]);
     if changed.is_empty() {
         if services_changed {
-            moqui_core::service::reload_eca_rules(factory);
+            // the rules as read, checked again for the services defined now (HL-015)
+            moqui_core::service::recheck_eca_rules(factory);
         }
         return;
     }

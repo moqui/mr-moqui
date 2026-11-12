@@ -38,7 +38,7 @@ mod edge;
 mod edge_claims;
 mod external_agent;
 mod fcm;
-pub use eca_rules::{reload as reload_eca_rules, EcaRuleCounts};
+pub use eca_rules::{recheck as recheck_eca_rules, reload as reload_eca_rules, EcaRuleCounts};
 mod email_eca;
 #[cfg(test)]
 mod fence_tests;

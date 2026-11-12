@@ -58,9 +58,10 @@ fn a_rule_for_an_entity_auto_service_is_kept_and_one_for_no_service_is_not() {
                 .unwrap();
         super::seca_rule_from(&node).unwrap()
     };
-    assert!(rule("update#moqui.basic.Enumeration").service_defined(Some(&facade), &mut None));
-    assert!(!rule("update#moqui.basic.NoSuchEntity").service_defined(Some(&facade), &mut None));
-    assert!(!rule("no.such.Services.do#Nothing").service_defined(Some(&facade), &mut None));
+    let known = &mut super::KnownServices::default();
+    assert!(rule("update#moqui.basic.Enumeration").service_defined(Some(&facade), known));
+    assert!(!rule("update#moqui.basic.NoSuchEntity").service_defined(Some(&facade), known));
+    assert!(!rule("no.such.Services.do#Nothing").service_defined(Some(&facade), known));
 }
 
 #[test]

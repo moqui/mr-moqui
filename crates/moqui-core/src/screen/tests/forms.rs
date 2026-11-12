@@ -1883,3 +1883,100 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// plans/High-Level-Review.md HL-015: a service reload drops only the screens whose forms looked up a service it
+/// resolved again. A screen with a form of the changed service is made again with its new parameters; one that uses
+/// no service is kept; one whose form took an implicit entity-auto name is made again when a service of that name is
+/// added, since the lookup that found none is kept too.
+#[test]
+fn a_service_reload_makes_again_only_the_screens_that_looked_up_its_services() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-service-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let services = dir.join("ReloadServices.xml");
+    let widget_service = |parameters: &str| {
+        format!(
+            r#"<services><service verb="save" noun="Widget" authenticate="false"><in-parameters>{parameters}</in-parameters></service></services>"#
+        )
+    };
+    std::fs::write(&services, widget_service(r#"<parameter name="first"/>"#)).unwrap();
+    let screen = |name: &str, form: &str| {
+        let path = dir.join(format!("{name}.xml"));
+        std::fs::write(
+            &path,
+            format!(r#"<screen require-authentication="false"><widgets>{form}</widgets></screen>"#),
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let uses = screen(
+        "Uses",
+        r#"<form-single name="Run"><auto-fields-service service-name="save#Widget" field-type="edit"/></form-single>"#,
+    );
+    let plain = screen(
+        "Plain",
+        r#"<form-single name="Run"><field name="title"><default-field><text-line/></default-field></field></form-single>"#,
+    );
+    let auto = screen(
+        "Auto",
+        r#"<form-single name="Run"><auto-fields-service service-name="create#moqui.basic.Enumeration" field-type="edit"/></form-single>"#,
+    );
+    let world = World::open("");
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    assert!(crate::service::lint(std::slice::from_ref(&services))
+        .unwrap()
+        .is_empty());
+    let facade = crate::screen::ScreenFacade::of(&world.factory);
+    let assembled = |location: &str| {
+        let def = facade.screen_def(&world.factory, location).unwrap();
+        let form = crate::screen::form::assemble(&facade, &world.factory, &def, "Run").unwrap();
+        (def, form.xml.clone())
+    };
+    let (_, uses_form) = assembled(&uses);
+    assert!(
+        uses_form.contains("first") && !uses_form.contains("second"),
+        "{uses_form}"
+    );
+    let (plain_def, _) = assembled(&plain);
+    let (auto_def, auto_form) = assembled(&auto);
+    assert!(auto_form.contains("enumId"), "an entity-auto form: {auto_form}");
+    let kept = |location: &str, def: &std::sync::Arc<crate::screen::ScreenDef>| {
+        std::sync::Arc::ptr_eq(def, &facade.screen_def(&world.factory, location).unwrap())
+    };
+
+    // the service gains a parameter: the screen that used it is made again with it, the others stay
+    std::fs::write(
+        &services,
+        widget_service(r#"<parameter name="first"/><parameter name="second"/>"#),
+    )
+    .unwrap();
+    let reload = crate::service::define::reload(std::slice::from_ref(&services)).unwrap();
+    let dropped = facade.forget_services(&reload.resolved);
+    assert_eq!(dropped, std::slice::from_ref(&uses), "{reload:?}");
+    assert!(kept(&plain, &plain_def) && kept(&auto, &auto_def));
+    let (_, uses_form) = assembled(&uses);
+    assert!(uses_form.contains("second"), "{uses_form}");
+
+    // a service named as the implicit one is added: the screen whose form found none is made again
+    let named = dir.join("ReloadEntityAuto.xml");
+    std::fs::write(
+        &named,
+        r#"<services><service verb="create" noun="moqui.basic.Enumeration" authenticate="false"><in-parameters><parameter name="ownField"/></in-parameters></service></services>"#,
+    )
+    .unwrap();
+    let reload = crate::service::define::reload(std::slice::from_ref(&named)).unwrap();
+    assert!(
+        reload
+            .resolved
+            .iter()
+            .any(|name| name == "create#moqui.basic.Enumeration"),
+        "{reload:?}"
+    );
+    let dropped = facade.forget_services(&reload.resolved);
+    assert!(dropped.contains(&auto), "{dropped:?}");
+    assert!(kept(&plain, &plain_def));
+    let (_, auto_form) = assembled(&auto);
+    assert!(auto_form.contains("ownField"), "{auto_form}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

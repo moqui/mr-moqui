@@ -157,7 +157,7 @@ fn a_changed_seca_file_rebuilds_the_rule_set() {
 #[test]
 fn a_seca_rule_on_a_service_added_since_runs_after_the_service_file_reloads() {
     let bed = bed("seca-new-service");
-    let rule = r#"<seca id="onNew" service="devtest.Things.add#Thing" when="post-service"><actions><log message="x"/></actions></seca>"#;
+    let rule = r#"<seca id="onNew" service="devtest.Things.add#Thing" when="post-service"><actions><script>ec.message.addMessage("onNew ran")</script></actions></seca>"#;
     let path = bed.write("service/devtest/Things.xml", &services(&service("run", "first")));
     bed.write("service/Things.secas.xml", &format!("<secas>{rule}</secas>"));
     let _entered = bed.ctx.enter();
@@ -166,13 +166,29 @@ fn a_seca_rule_on_a_service_added_since_runs_after_the_service_file_reloads() {
     assert!(moqui_core::service::info::seca_rule_texts("devtest.Things.add#Thing").is_empty());
     bed.write(
         "service/devtest/Things.xml",
-        &services(&format!("{}{}", service("run", "first"), service("add", "first"))),
+        &services(&format!(
+            "{}{}",
+            service("run", "first"),
+            service("add", "first").replace("<service ", r#"<service authenticate="false" "#)
+        )),
     );
     let report = reload_paths(bed.factory(), &[path]);
     assert_eq!(report.files[0].added, ["devtest.Things.add#Thing"], "{report:?}");
     assert_eq!(
         moqui_core::service::info::seca_rule_texts("devtest.Things.add#Thing").len(),
         1
+    );
+    // the rule was kept as read and checked again (HL-015): it runs on a call of the new service
+    bed.factory().set_entity(moqui_core::testing::open());
+    moqui_core::service::sync("devtest.Things.add#Thing", &std::collections::BTreeMap::new()).unwrap();
+    assert!(
+        bed.ctx
+            .message()
+            .messages()
+            .iter()
+            .any(|message| message == "onNew ran"),
+        "{:?}",
+        bed.ctx.message().messages()
     );
 }
 
@@ -329,13 +345,16 @@ fn the_services_register_at_the_locations_the_service_file_names() {
 }
 
 /// plans/High-Level-Review.md HL-015, opt-in: the phases of a service reload of one changed file as the loaded files
-/// grow: the reload's own parse check, path collection, reading and parsing, resolution, the screen cache clear and
-/// the artifact index update. Run: `cargo test -p moqui-devkit --lib service_reload_phases -- --ignored --nocapture`.
+/// grow: the reload's own parse check, path collection, reading and parsing, resolution, the screens dropped for the
+/// services resolved again and the artifact index update, with the files read and services resolved. Run:
+/// `cargo test -p moqui-devkit --lib service_reload_phases -- --ignored --nocapture`.
 #[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
 fn service_reload_phases_as_loaded_files_grow() {
     let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
-    println!("files | check(ms) collect(ms) load(ms) resolve(ms) screen-clear(ms) index(ms) | whole reload(ms)");
+    println!(
+        "files | read resolved | check(ms) collect(ms) load(ms) resolve(ms) screen-forget(ms) index(ms) | whole reload(ms)"
+    );
     for count in [100_usize, 400, 1600] {
         let bed = bed(&format!("reload-phases-{count}"));
         let _entered = bed.ctx.enter();
@@ -364,10 +383,11 @@ fn service_reload_phases_as_loaded_files_grow() {
         )
         .unwrap();
         assert_eq!(reload.defined, 5);
-        assert_eq!(reload.phases.files, count);
+        assert_eq!(reload.phases.files, 1, "only the changed file is read");
+        assert_eq!(reload.phases.resolved, 5, "only its services resolve again");
         let started = std::time::Instant::now();
-        moqui_core::screen::ScreenFacade::of(bed.factory()).clear();
-        let screen_clear = started.elapsed();
+        moqui_core::screen::ScreenFacade::of(bed.factory()).forget_services(&reload.resolved);
+        let screen_forget = started.elapsed();
         bed.factory().set_entity(moqui_core::testing::open());
         let started = std::time::Instant::now();
         let index = crate::index::update_files(bed.factory(), std::slice::from_ref(&changed));
@@ -377,12 +397,14 @@ fn service_reload_phases_as_loaded_files_grow() {
         assert!(whole.problems().next().is_none(), "{:?}", whole.summary());
         let phases = &reload.phases;
         println!(
-            "{count:>5} | {:>9.2} {:>11.2} {:>8.2} {:>11.2} {:>16.3} {:>9} | {:>16}",
+            "{count:>5} | {:>4} {:>8} | {:>9.2} {:>11.2} {:>8.2} {:>11.2} {:>17.3} {:>9} | {:>16}",
+            phases.files,
+            phases.resolved,
             ms(check),
             ms(phases.collect),
             ms(phases.load),
             ms(phases.resolve),
-            ms(screen_clear),
+            ms(screen_forget),
             index_ms.map_or_else(|err| format!("({err})"), |ms| format!("{ms:.2}")),
             whole.millis,
         );
