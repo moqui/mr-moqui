@@ -1128,9 +1128,12 @@ try {
         }
         ` : "";
         const exports = exportCode(node);
+        // a list's exports render it in another mode (text, csv, xlsx, pdf), which writes every field's value: an agent's
+        // render of a list with an ai-opt-out field offers none but Show all (design-people PE-21)
+        const exportsOff = aiOffNames(fields).length ? `if ($isAgent()) $exports.splice(0, $exports.length, ...$exports.filter(($e) => $e.kind === "all"));\n            ` : "";
         const exportsBlock = exports ? `try {
             const $exports = [];
-            ${exports}if ($exports.length) $list.exports = $exports;
+            ${exports}${exportsOff}if ($exports.length) $list.exports = $exports;
         } catch ($err) {
             ${fail("exports")}
         }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- The AiOptOut spec's screen (test only, never mounted): a form field, a hidden value, a list column and a section opted
-    out of AI (ai-opt-out, design-people PE-21), beside a field and a column that are not. -->
+    out of AI (ai-opt-out, design-people PE-21), beside a field and a column that are not; the list's text and CSV exports. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" default-menu-title="AI opt-out">
     <transition name="save"><default-response type="none"/></transition>
@@ -16,7 +16,7 @@
             <field name="caseRef" ai-opt-out="true"><default-field><hidden/></default-field></field>
             <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
         </form-single>
-        <form-list name="CaseList" list="caseList" skip-form="true">
+        <form-list name="CaseList" list="caseList" skip-form="true" show-text-button="true" show-csv-button="true">
             <field name="title"><default-field title="Title"><display/></default-field></field>
             <field name="reason" ai-opt-out="true"><header-field><text-find/></header-field><default-field title="Reason"><display/></default-field></field>
         </form-list>

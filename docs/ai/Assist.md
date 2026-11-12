@@ -104,8 +104,9 @@ statements, review text. It goes on a form field (`form-single` and `form-list`)
 - **An agent's render** (`RenderOrigin::Agent`: an Assist screen session, `data`'s screen lists, the canvas read proxy;
   and `agent-apps` over SSH; `sri.isAgentRender()`, also inside a render one of these started) writes "Not shared with
   AI" in place of an opted-out field's value (a form field as a display, a list cell, a board or calendar card's field),
-  posts no hidden value of it, has no find field for it, and runs nothing of an opted-out section or screen (its
-  widgets and the subscreens in them). The `tui` macros do this (`ScreenTui.js`); the person's own terminal and browser
+  posts no hidden value of it, has no find field for it, offers no export of a list with one (CSV, XLS, Text or Print
+  render the list in another mode, with every value; Show all stays), and runs nothing of an opted-out section or
+  screen (its widgets and the subscreens in them). The `tui` macros do this (`ScreenTui.js`); the person's own terminal and browser
   show everything as always.
 - **`data`** names a list's opted-out fields from the render (`aiOff`) and answers `ai_opt_out` for a `where` or
   `order` on one, so a filter cannot tell the text by the rows it keeps. Its entity reads never read, find or sort by an

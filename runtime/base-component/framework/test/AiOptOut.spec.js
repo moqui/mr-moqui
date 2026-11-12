@@ -1,7 +1,7 @@
 // The per-field AI opt-out (design-people PE-21; docs/ai/Assist.md "AI opt-out"): an opted-out field's text reaches no
 // model tool. An agent's render (what Assist's screen and data tools and agent-apps read) shows a placeholder for an
 // ai-opt-out form field, hidden value, list column and section, and for an ai-opt-out screen, with no find field for the
-// column, while the person's own render shows them; the browser's render marks them for the Assist client (no text actions
+// column and no export of its list, while the person's own render shows them; the browser's render marks them for the Assist client (no text actions
 // in m-rich-text, nothing of them in the page state); and Update with AI refuses an ai-opt-out entity field before any
 // model is asked. The data tool's refusal of a find or sort by such a column and its entity reads are cargo's
 // (moqui-llm tools::core_tests), the client's handling of the marks the client spec's (WebrootAssist).
@@ -49,10 +49,11 @@ feature("an agent's render shows a placeholder for each opted-out field, hidden 
         const person = render(ROOT, "tui", false)
         const agent = render(ROOT, "tui", true)
         const all = nodes(JSON.parse(agent.text))
+        const personList = nodes(JSON.parse(person.text)).find((node) => node.t === "formList" && node.name === "CaseList")
         return {person, agent, all, list: all.find((node) => node.t === "formList" && node.name === "CaseList"),
-            note: all.find((node) => node.t === "field" && node.name === "note")}
+            note: all.find((node) => node.t === "field" && node.name === "note"), personList}
     },
-    then({person, agent, all, list, note}) {
+    then({person, agent, all, list, note, personList}) {
         person.status == 200 && person.errors == ""
         agent.status == 200 && agent.errors == ""
         SECRETS.every((text) => person.text.includes(text))
@@ -63,6 +64,9 @@ feature("an agent's render shows a placeholder for each opted-out field, hidden 
         JSON.stringify(list.rows[0].cells).includes(PLACEHOLDER)
         list.headerFields.length == 0
         list.aiOff.join() == "reason"
+        // an export renders the list in another mode, with every value: the agent is offered none, the person both
+        list.exports == null
+        personList.exports.map((e) => e.kind).join() == "csv,text"
         all.some((node) => node.t === "section" && node.name === "Statement" && JSON.stringify(node.c).includes(PLACEHOLDER))
     }
 })
