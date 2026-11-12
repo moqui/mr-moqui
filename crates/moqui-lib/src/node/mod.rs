@@ -20,7 +20,7 @@
 
 mod parse;
 
-pub use parse::{FlatElement, XmlEvent, XmlEvents};
+pub use parse::{malformed_comments, FlatElement, XmlEvent, XmlEvents};
 
 use std::cell::RefCell;
 use std::collections::HashSet;

@@ -1792,7 +1792,7 @@
                     w('<div class="thead"><div class="tr">');
                     if (rowSel) {
                         w('<div class="th"><span class="q-my-auto"><q-checkbox dense size="sm" v-model="formProps.checkboxAllState" @update:model-value="formProps.setCheckboxAllState"><q-tooltip>{{formProps.checkboxAllState ? ' + sq(L("Unselect All")) + " : " + sq(L("Select All")) +
-                            '}}</q-tooltip></q-checkbox><q-btn flat round dense size="sm" icon="more_vert" :color="formProps.checkboxStates && formProps.checkboxStates.includes(true) ? \'primary\' : \'grey-7\'"><q-tooltip>' + t(L("Row Actions")) + '</q-tooltip><q-menu anchor="top left" self="bottom left">');
+                            '}}</q-tooltip></q-checkbox><q-btn flat round dense size="sm" icon="more_vert" :color="formProps.checkboxStates && formProps.checkboxStates.includes(true) ? \'primary\' : \'grey-7\'" aria-label="' + e(L("Row Actions")) + '"><q-tooltip>' + t(L("Row Actions")) + '</q-tooltip><q-menu anchor="top left" self="bottom left">');
                         selectedRowCard(cfg);
                         w("</q-menu></q-btn></span></div>");
                     }

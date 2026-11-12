@@ -232,8 +232,8 @@
         template: `
 <div class="m-dev-artifact-browser column no-wrap" id="DevArtifactBrowser">
   <div class="row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs">
-    <q-btn dense flat round icon="arrow_back" :disable="at <= 0" @click="back"><q-tooltip>Back</q-tooltip></q-btn>
-    <q-btn dense flat round icon="arrow_forward" :disable="at >= trail.length - 1" @click="forward"><q-tooltip>Forward</q-tooltip></q-btn>
+    <q-btn dense flat round icon="arrow_back" aria-label="Back" :disable="at <= 0" @click="back"><q-tooltip>Back</q-tooltip></q-btn>
+    <q-btn dense flat round icon="arrow_forward" aria-label="Forward" :disable="at >= trail.length - 1" @click="forward"><q-tooltip>Forward</q-tooltip></q-btn>
     <span class="text-subtitle2 ellipsis" v-if="center">{{center.artifact.kind}} {{center.artifact.shortName}}</span>
     <q-space></q-space>
     <q-select dense outlined multiple emit-value map-options options-dense v-model="filter.kinds" :options="allKinds" label="Kinds" style="min-width: 9rem"></q-select>

@@ -87,6 +87,42 @@ pub(crate) fn parse_flat<'a>(location: Option<&str>, text: &'a str) -> Result<Op
     }))
 }
 
+/// The line of each comment in `text` that XML does not allow: one holding `--` (a `<!--` nested in it among them) or
+/// ending `--->`. This reader skips a comment to its first `-->` and takes such a comment; other XML parsers, Java's
+/// among them, refuse the whole file, so the lints report it. CDATA sections are passed over.
+pub fn malformed_comments(text: &str) -> Vec<u32> {
+    let mut lines = Vec::new();
+    let (mut counted, mut line) = (0, 1u32);
+    let mut at = 0;
+    while let Some(offset) = text[at..].find("<!") {
+        let start = at + offset;
+        let rest = &text[start..];
+        if rest.starts_with("<![CDATA[") {
+            at = text[start..].find("]]>").map_or(text.len(), |end| start + end + 3);
+        } else if rest.starts_with("<!--") {
+            let body = start + 4;
+            let Some(end) = text[body..].find("-->").map(|end| body + end) else {
+                break;
+            };
+            let inner = &text[body..end];
+            let bad = inner.find("--").or_else(|| inner.strip_suffix('-').map(str::len));
+            if let Some(dash) = bad {
+                let place = body + dash;
+                line += text.as_bytes()[counted..place]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count() as u32;
+                counted = place;
+                lines.push(line);
+            }
+            at = end + 3;
+        } else {
+            at = start + 2;
+        }
+    }
+    lines
+}
+
 struct StartTag<'a> {
     name: &'a str,
     attributes: Vec<(&'a str, Cow<'a, str>)>,

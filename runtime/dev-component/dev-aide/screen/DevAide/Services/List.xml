@@ -11,6 +11,7 @@ warranty.
 You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <!-- The services of the artifact index (plans/design-dev-aide.md 9.3): by name, with their component, how many SECA rules
     run on each and how often the last spec run called it; a name opens the service view, the file the Workspace. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

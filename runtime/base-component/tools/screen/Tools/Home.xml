@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     what is running, and everything else. Every block is read in the actions as data, so the permission flags and
     the counts are in the screen package of a server-static template; the page writes nothing (the database picker
     keeps the choice, as on the other Tools screens). The navigation is the catalog of template/HomeParts.xml. The
-    server-static report (moqui lint --screens --qvt-static) names nothing here. -->
+    server-static report of the screen lint (its qvt-static form) names nothing here. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 

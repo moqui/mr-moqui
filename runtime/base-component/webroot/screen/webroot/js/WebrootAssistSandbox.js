@@ -128,7 +128,7 @@
             data() { return { open: this.initialOpen }; },
             template: '<q-card flat bordered class="q-ma-xs"><q-card-section class="row items-center no-wrap q-py-sm">' +
                 '<div v-if="title" class="text-subtitle1">{{title}}</div><q-space></q-space><slot name="toolbar"></slot>' +
-                '<q-btn flat round dense size="sm" :icon="open ? \'expand_less\' : \'expand_more\'" @click="open = !open"></q-btn></q-card-section>' +
+                '<q-btn flat round dense size="sm" :icon="open ? \'expand_less\' : \'expand_more\'" :aria-label="(open ? \'Collapse \' : \'Expand \') + (title || \'\')" :aria-expanded="open ? \'true\' : \'false\'" @click="open = !open"></q-btn></q-card-section>' +
                 '<q-card-section v-show="open" class="q-pt-none"><slot></slot></q-card-section></q-card>',
         });
         app.component("m-text-line", {

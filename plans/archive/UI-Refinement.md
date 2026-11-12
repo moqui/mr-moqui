@@ -1,5 +1,17 @@
 # Framework UI review and refinement
 
+> Archived Nov 12, 2026: every finding, UI-001 to UI-107, is fixed (batches 1 to 17, Nov 4 and 5). The two left on
+> the review of Nov 12 were fixed that day: XML comments holding `--` that other parsers refuse (16 Dev AIDE files and
+> 4 others; `moqui lint` and `moqui lint --screens` now report one), and icon-only buttons with no accessible name
+> (Dev AIDE's tab close, task and file menus, Git rows, entity, service and screen editors; the shared calendar,
+> peek, pagination, Markdown preview, list row actions, Assist and printer buttons). The review stopped before its
+> six waves were covered. What is open is in [Remaining-Work](../Remaining-Work.md#framework-ui-review): walks of the
+> screens built after it, the access-limited walk, the activities the ledgers leave pending, and the charts' repaint
+> on a scheme change within a mode. The inventory names the screens as of this date, those built after the review
+> marked "not walked here"; the batch notes keep the routes and names of their time (Monitor was `/qapps/monitor`
+> until [Tools-Fancy](Tools-Fancy.md) P1 made it a section of System), and their `/tmp`, `/Users/...` and screenshot
+> paths were on the machine the review ran on. The guide this review produced is [UI-Review](../../docs/dev/UI-Review.md).
+
 ## Plan
 
 ### Summary and working record
@@ -127,7 +139,7 @@ The user ended this review after the alert configuration batch. **This is a comp
 not completion of the original six-wave plan.** No whole wave met its full coverage criteria. All unperformed
 activities, unresolved findings and private follow-up patches are deferred; no additional batch is scheduled.
 The detailed ledger and historical notes below retain the distinction between implementation, automated checks
-and activities actually observed. The reusable guide is [UI-Review.md](../docs/dev/UI-Review.md).
+and activities actually observed. The reusable guide is [UI-Review.md](../../docs/dev/UI-Review.md).
 
 | Wave | Delivered scope | Deferred scope |
 |---|---|---|
@@ -352,7 +364,7 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 ### Batch 1 — shared readability, list workflows and administration/reporting entry points
 
 Intent: correct shared contrast and dialog hierarchy before applying the same patterns to the individual apps.
-The reusable method is in [UI-Review.md](../docs/dev/UI-Review.md).
+The reusable method is in [UI-Review.md](../../docs/dev/UI-Review.md).
 
 - Separate semantic text foregrounds from brand fills; measure default light/dark text on plain panels, chips and
   tonal buttons. All seven semantic roles plus secondary text pass the focused 4.5:1 browser check.
@@ -404,7 +416,7 @@ The first framework gate identified expected generated-render/golden updates and
 chat assertion; the script harness also inherited MOQUI_RUNTIME and failed its own path expectation. Regenerate
 only affected artifacts, inspect their diffs, and rerun the gate without that inherited override.
 
-Selected inspected screenshots are retained in [ui-refinement-evidence](ui-refinement-evidence/README.md), including
+Selected inspected screenshots were kept in the ignored `plans/ui-refinement-evidence/` directory of the machine the review ran on (no longer present), including
 same-size before/after Find Options and Saved Finds. No wave is closed yet. The complete inventory below is a work
 ledger, not a coverage claim.
 
@@ -1678,28 +1690,38 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 
 | XML file / logical route | Presentation and companions | Activity | Review status |
 |---|---|---|---|
-| `System/Audit/AuditChanges.xml` | XML widgets | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4), whose list is its instance administrator's part (`log=Y`); not walked here since |
-| `System/Audit.xml` | Container → AuditChanges | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4); not walked here since |
+| `System/Access/AccessReview.xml` | hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/ArtifactGroupDetail.xml` | hidden menu | S03 | S/P; moved from `System/Security/ArtifactGroup/` ([Admin-Screens-Down](Admin-Screens-Down.md) A3) |
+| `System/Access/ArtifactGroups.xml` | XML widgets | S03 | P; was `System/Security/ArtifactGroup/ArtifactGroupList.xml` ([Admin-Screens-Down](Admin-Screens-Down.md) A3) |
+| `System/Access/Capabilities.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/GroupDetail.xml` | hidden menu | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Access/Groups.xml` | XML widgets | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Access/RowRules.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access.xml` | Container → Groups | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Audit/AuditChanges.xml` | XML widgets | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose list is its instance administrator's part (`log=Y`); not walked here since |
+| `System/Audit.xml` | Container → AuditChanges | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
 | `System/Cache/CacheElements.xml` | XML widgets | S01 | V/P: native count-only and reported-empty states explained; generic populated entries/clear pending |
 | `System/Cache/CacheList.xml` | XML widgets | S01 | V/P: valid/literal-fallback filter and recovery, summary→detail/back; cache clearing pending |
 | `System/Cache.xml` | Container → CacheList | S01 | V/P: normal parent navigation |
 | `System/Components.xml` | XML widgets | S02 | V/P; parent observation |
+| `System/Conf/Changes.xml` | XML widgets | — | New with [Component-Deploy](Component-Deploy.md) (Nov 3); missed by the inventory; not walked here |
+| `System/Conf/EditTui.xml` | XML widgets; hidden menu | — | New with System › Conf's merged view and editor (Nov 9); not walked here |
+| `System/Conf/Edit.xml` | modes vue,qvue,tui; `Edit.qvue` | — | New with System › Conf's merged view and editor (Nov 9); not walked here |
+| `System/Conf/Logging.xml` | XML widgets | — | New with [Tools-Fancy](Tools-Fancy.md) P6; not walked here |
+| `System/Conf/View.xml` | modes vue,qvue,tui; `View.qvue` | — | New with System › Conf's merged view and editor (Nov 9); not walked here |
 | `System/Conf.xml` | XML widgets | S02 | P |
-| `System/Data/Backups.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/DataExport.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/Exports.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/ImportDetail.xml` | XML widgets; hidden menu | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/Imports.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
-| `System/Data.xml` | Container → Imports | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5 (the links to Tools' Data export, Data load and Snapshots); not walked here |
-| `System/DataDocument/Edit/DataDocFields/FieldList.xml` | hidden menu | S08 | P |
-| `System/DataDocument/Edit/DataDocFields.xml` | XML widgets | S08 | P |
-| `System/DataDocument/Edit/EditDataDocument.xml` | XML widgets | S08 | P |
-| `System/DataDocument/Edit/FindDataDocument.xml` | hidden menu | S08 | P |
-| `System/DataDocument/Edit/ViewDataDocument.xml` | XML widgets | S08 | P |
-| `System/DataDocument/Edit.xml` | Container → FindDataDocument | S08 | P |
-| `System/DataDocument/Index.xml` | XML widgets | S08 | P |
-| `System/DataDocument/ViewDocument.xml` | hidden menu | S08 | P |
-| `System/DataDocument.xml` | Container → Search | S08 | P |
+| `System/Constitution/Edit.xml` | XML widgets | — | New with [LLM-A2A-Assist](../LLM-A2A-Assist.md) 13.15 (Nov 7); not walked here |
+| `System/Constitution/Json.xml` | XML widgets | — | New with [LLM-A2A-Assist](../LLM-A2A-Assist.md) 13.15 (Nov 7); not walked here |
+| `System/Constitution/Origins.xml` | XML widgets | — | New with [LLM-A2A-Assist](../LLM-A2A-Assist.md) 13.15 (Nov 7); not walked here |
+| `System/Constitution/Preview.xml` | XML widgets | — | New with [LLM-A2A-Assist](../LLM-A2A-Assist.md) 13.15 (Nov 7); not walked here |
+| `System/Constitution/Rules.xml` | XML widgets | — | New with [LLM-A2A-Assist](../LLM-A2A-Assist.md) 13.15 (Nov 7); not walked here |
+| `System/Constitution.xml` | Container → Rules | — | New with [LLM-A2A-Assist](../LLM-A2A-Assist.md) 13.15 (Nov 7); not walked here |
+| `System/Data/Backups.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/DataExport.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/Exports.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/ImportDetail.xml` | XML widgets; hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/Imports.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
+| `System/Data.xml` | Container → Imports | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5 (the links to Tools' Data export, Data load and Snapshots); not walked here |
 | `System/EdgeClients.xml` | XML widgets | S16 | V/P: wrong-role guidance and recovery link inspected; local peer success pending |
 | `System/EdgeNode/Pair/Apply.xml` | XML widgets | S16 | P |
 | `System/EdgeNode/Pair/Connect.xml` | XML widgets | S16 | P |
@@ -1713,9 +1735,18 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/EntitySync/EntitySyncHistory.xml` | XML widgets | S07 | P |
 | `System/EntitySync/EntitySyncList.xml` | hidden menu | S07 | P |
 | `System/EntitySync.xml` | Container → EntitySyncList | S07 | P |
+| `System/Home.xml` | XML widgets | S01 | The old dashboard was V/P (focused rule passed); renamed from `System/dashboard.xml` and rebuilt as the System home with the navigation catalog, meters and auto refresh ([Tools-Fancy](Tools-Fancy.md) P1, P4, F5); not walked here |
 | `System/Instance/InstanceDetail.xml` | XML widgets | S01 | P |
 | `System/Instance/InstanceList.xml` | hidden menu | S01 | V/P: empty state and creation dialog cancellation; no provisioning |
 | `System/Instance.xml` | Container → InstanceList | S01 | P |
+| `System/Integrations/ConnectionDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/Connections.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/MessageTypeDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/MessageTypes.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessageDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessages.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations.xml` | Container → Connections | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
 | `System/Llm/Approvals/ApprovalDetail.xml` | hidden menu | S14 | P |
 | `System/Llm/Approvals/ApprovalList.xml` | XML widgets | S14 | P |
 | `System/Llm/Approvals.xml` | Container → ApprovalList | S14 | P |
@@ -1726,6 +1757,14 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Conversations/ConversationList.xml` | XML widgets | S11 | P |
 | `System/Llm/Conversations.xml` | Container → ConversationList | S11 | P |
 | `System/Llm/Dashboard.xml` | XML widgets | S11 | V/P: zero-use default state inspected; recorded-call fixture and limited role pending |
+| `System/Llm/Evals/Compare.xml` | XML widgets; hidden menu | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals/DatasetDetail.xml` | XML widgets; hidden menu | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals/Datasets.xml` | XML widgets | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals/ExperimentDetail.xml` | XML widgets; hidden menu | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals/Experiments.xml` | XML widgets | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals/Runs.xml` | XML widgets | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals/Scorers.xml` | XML widgets | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
+| `System/Llm/Evals.xml` | Container → Experiments | — | Agent evals (Nov 10), moved from Monitor to System › LLM and Agents by [Tools-Fancy](Tools-Fancy.md) P1; not walked here |
 | `System/Llm/Gateway/AliasList.xml` | XML widgets | S12 | P |
 | `System/Llm/Gateway/ClientDetail.xml` | hidden menu | S12 | P |
 | `System/Llm/Gateway/ClientList.xml` | XML widgets | S12 | P |
@@ -1753,36 +1792,40 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Tools/ExposureList.xml` | XML widgets | S13 | P |
 | `System/Llm/Tools/Policies.xml` | XML widgets | S13 | P |
 | `System/Llm/Tools.xml` | Container → ExposureList | S13 | P |
+| `System/Llm/Traces.xml` | XML widgets | — | New with [Tools-Fancy](Tools-Fancy.md) P6; not walked here |
 | `System/Llm/Triggers/TriggerDetail.xml` | hidden menu | S14 | P |
 | `System/Llm/Triggers/TriggerList.xml` | XML widgets | S14 | P |
 | `System/Llm/Triggers.xml` | Container → TriggerList | S14 | P |
 | `System/Llm/Usage.xml` | XML widgets | S11 | V/P: empty/valid quota check and no-use state; UI-033 |
 | `System/Llm.xml` | Container → Dashboard | S11 | P |
-| `System/Settings/InstanceSettings.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A4; not walked here |
-| `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
-| `System/Settings/SettingsHome.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A6; not walked here |
-| `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4); not walked here since |
+| `System/Operations/Health.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
+| `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/JobRuns.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/Jobs.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/SupportSummary.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
+| `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Print/PrintJob/PrintJobDetail.xml` | XML widgets | S05 | P |
 | `System/Print/PrintJob/PrintJobList.xml` | hidden menu | S05 | P |
 | `System/Print/PrintJob.xml` | Container → PrintJobList | S05 | P |
 | `System/Print/Printer/PrinterList.xml` | hidden menu | S05 | P |
 | `System/Print/Printer.xml` | Container → PrinterList | S05 | P |
 | `System/Print.xml` | Container → Printer | S05 | P |
+| `System/Protocols/Home.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailQueue.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailRelayDetail.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailRelays.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/ServerConfiguration.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols.xml` | Container → Home | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
 | `System/Resource/GitRepositoryDetail.xml` | hidden menu | S10 | P |
 | `System/Resource/GitRepositoryList.xml` | XML widgets | S10 | P |
 | `System/Resource.xml` | Container → GitRepositoryList | S10 | P |
-| `System/Access/AccessReview.xml` | hidden menu | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
-| `System/Access/ArtifactGroupDetail.xml` | hidden menu | S03 | S/P; moved from `System/Security/ArtifactGroup/` ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3) |
-| `System/Access/ArtifactGroups.xml` | XML widgets | S03 | P; was `System/Security/ArtifactGroup/ArtifactGroupList.xml` ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3) |
-| `System/Access/Capabilities.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
-| `System/Access/GroupDetail.xml` | hidden menu | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
-| `System/Access/Groups.xml` | XML widgets | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
-| `System/Access/RowRules.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
-| `System/Access.xml` | Container → Groups | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
-| `System/Security/IdentityProviderDetail.xml` | hidden menu | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
-| `System/Security/IdentityProviders.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
-| `System/Security/Sessions.xml` | XML widgets | S03 | Replaces the Active Users screen S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
-| `System/Security/SignInPolicy.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/IdentityProviderDetail.xml` | hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/IdentityProviders.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/Sessions.xml` | XML widgets | S03 | Replaces the Active Users screen S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Security/SignInPolicy.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
 | `System/Security/UserAccount/UserAccountDetail/VerifyEmail.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail/VerifySms.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail/VerifyTotp.xml` | hidden menu | S04 | P |
@@ -1790,35 +1833,16 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Security/UserAccount/UserAccountList.xml` | hidden menu | S03 | P |
 | `System/Security/UserAccount.xml` | Container → UserAccountList | S03 | P |
 | `System/Security.xml` | Container → UserAccount | S03 | P |
-| `System/Operations/Health.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A6; not walked here |
-| `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/JobRuns.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/Jobs.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/SupportSummary.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A6; not walked here |
-| `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
-| `System/Integrations/ConnectionDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/Connections.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/MessageTypeDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/MessageTypes.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/SystemMessageDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/SystemMessages.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations.xml` | Container → Connections | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
-| `System/Protocols/Home.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/MailQueue.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/MailRelayDetail.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/MailRelays.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/ServerConfiguration.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols.xml` | Container → Home | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
+| `System/Settings/InstanceSettings.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A4; not walked here |
+| `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
+| `System/Settings/SettingsHome.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
+| `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
+| `System/TerminalSessions.xml` | XML widgets | — | New with [Terminal-Fancy](../Terminal-Fancy.md) P9; not walked here |
 | `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable state/localized scheduler verified at 1920 light/dark and 390; Linux details pending |
 | `System/Visit/VisitDetail.xml` | hidden menu | S06 | P |
 | `System/Visit/VisitList.xml` | XML widgets | S06 | P |
 | `System/Visit.xml` | Container → VisitList | S06 | P |
-| `System/dashboard.xml` | XML widgets | S01 | V/P; focused rule passed |
-| `System.xml` | Container → dashboard | S01 | P |
+| `System.xml` | Container → Home | S01 | P |
 | `Tools/ArtifactStats.xml` | XML widgets | T07 | P |
 | `Tools/Data/Browse/AutoEdit/AutoEditDetail.xml` | XML widgets | T02 | P |
 | `Tools/Data/Browse/AutoEdit/AutoEditMaster.xml` | XML widgets | T02 | P |
@@ -1826,6 +1850,15 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `Tools/Data/Browse/AutoFind.xml` | XML widgets | T02 | P |
 | `Tools/Data/Browse/MainEntityList.xml` | XML widgets | T02 | P |
 | `Tools/Data/Browse.xml` | Container → MainEntityList | T02 | P |
+| `Tools/Data/Documents/Edit/DataDocFields/FieldList.xml` | XML widgets; hidden menu | S08 | P; moved from `System/DataDocument/Edit/DataDocFields/FieldList.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/Edit/DataDocFields.xml` | XML widgets | S08 | P; moved from `System/DataDocument/Edit/DataDocFields.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/Edit/EditDataDocument.xml` | XML widgets | S08 | P; moved from `System/DataDocument/Edit/EditDataDocument.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/Edit/FindDataDocument.xml` | XML widgets; hidden menu | S08 | P; moved from `System/DataDocument/Edit/FindDataDocument.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/Edit/ViewDataDocument.xml` | XML widgets | S08 | P; moved from `System/DataDocument/Edit/ViewDataDocument.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/Edit.xml` | Container → FindDataDocument | S08 | P; moved from `System/DataDocument/Edit.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/Index.xml` | XML widgets | S08 | P; moved from `System/DataDocument/Index.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents/ViewDocument.xml` | XML widgets; hidden menu | S08 | P; moved from `System/DataDocument/ViewDocument.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
+| `Tools/Data/Documents.xml` | Container → Index | S08 | P; moved from `System/DataDocument.xml` ([Tools-Fancy](Tools-Fancy.md) P1) |
 | `Tools/Data/Export.xml` | XML widgets | T03 | P |
 | `Tools/Data/Grid.xml` | XML widgets | T02 | V/P: create/filter/edit/duplicate correction passed; CSV mismatch found (UI-036), deletion unverified |
 | `Tools/Data/Load.xml` | XML widgets | T03 | P |
@@ -1835,26 +1868,45 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `Tools/Data/Views/FindDbView.xml` | XML widgets | T04 | P |
 | `Tools/Data/Views/ViewDbView.xml` | XML widgets | T04 | P |
 | `Tools/Data/Views.xml` | Container → FindDbView | T04 | P |
+| `Tools/Database/Activity.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Database/Connections.xml` | XML widgets; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Database/JobDetailTui.xml` | XML widgets; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Database/JobDetail.xml` | modes vue,qvue,tui; `JobDetail.qvue`; `JobDetail.tui.json`; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Database/Jobs.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
 | `Tools/Database/Overview.xml` | XML widgets | T07 | P |
 | `Tools/Database/Queries.xml` | XML widgets | T07 | P |
+| `Tools/Database/Settings.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
 | `Tools/Database/SpeedTest.xml` | XML widgets | T07 | P |
 | `Tools/Database/Tables.xml` | XML widgets | T07 | P |
 | `Tools/Database.xml` | Container → Overview | T07 | P |
 | `Tools/Data.xml` | Container → Grid | T02 | P |
+| `Tools/Etl/Mappings.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Etl/Mapping.xml` | modes vue,qvue,tui; `Mapping.qvue`; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Etl/Runs.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Etl/Run.xml` | XML widgets; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/Etl/ValueMaps.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
 | `Tools/Etl.xml` | hidden menu | T03 | P |
 | `Tools/GroovyShell.xml` | removed | T01 | No longer applicable; web console/Terminal UI and SSH JS executor replace it. Old route returns 404. |
+| `Tools/Home.xml` | XML widgets | T01 | The old dashboard was S/P; renamed from `Tools/dashboard.xml` and rebuilt as the Tools home ([Tools-Fancy](Tools-Fancy.md) P1, P5); not walked here |
+| `Tools/Load/Compare.xml` | XML widgets; hidden menu | — | New with [LoadRunner](LoadRunner.md) L4; not walked here |
+| `Tools/Load/Runs.xml` | XML widgets | — | New with [LoadRunner](LoadRunner.md) L4; not walked here |
+| `Tools/Load/Run.xml`, `Tools/Load/NewRun.xml` | modes vue,qvue,tui | T07 | P |
+| `Tools/Load/Scripts.xml` | XML widgets | — | New with [LoadRunner](LoadRunner.md) L4; not walked here |
+| `Tools/Load.xml` | Container → Scripts | — | New with [LoadRunner](LoadRunner.md) L4; not walked here |
+| `Tools/RestApi.xml` | XML widgets | — | New with [Tools-Fancy](Tools-Fancy.md) P5; not walked here |
 | `Tools/Schema/Entities.xml` | XML widgets | T02 | V/P: exact entity filter and Find navigation passed; maintenance controls inspected only |
 | `Tools/Schema/Entity.xml` | XML widgets | T02 | P |
+| `Tools/Schema/IndexesKeys.xml` | XML widgets | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
 | `Tools/Schema.xml` | Container → Entities | T02 | P |
 | `Tools/Service/ServiceDetail.xml` | hidden menu | T01 | V/P; focused rule passed |
-| `Tools/Load/Run.xml`, `Tools/Load/NewRun.xml` | modes vue,qvue,tui | T07 | P |
 | `Tools/Service/ServiceReference.xml` | XML widgets | T01 | P |
 | `Tools/Service/ServiceRun.xml` | XML widgets | T06 | V/P; parent observation |
 | `Tools/Service.xml` | Container → ServiceReference | T01 | P |
+| `Tools/SqlDownload.xml` | modes xlsx; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
+| `Tools/SqlTui.xml` | XML widgets; hidden menu | — | New with [Tools-Database](Tools-Database.md) (Nov 5); not walked here |
 | `Tools/Sql.xml` | XML widgets | T05 | V/P; parent observation |
 | `Tools/StatusFlows.xml` | XML widgets | T01 | P |
-| `Tools/dashboard.xml` | XML widgets | T01 | S/P |
-| `Tools.xml` | Container → dashboard | T01 | P |
+| `Tools.xml` | Container → Home | T01 | P |
 
 ### basic-comms: prefix `runtime/base-component/basic-comms/screen/`
 
@@ -1928,6 +1980,40 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Voice/Status.xml` | XML widgets | B12 | V/P: supported/configured/active and server availability inspected; fake trunk flow pending |
 | `System/Voice/Trunks.xml` | XML widgets | B12 | V/P: empty guidance inspected; no provider configured |
 | `System/Voice.xml` | Container → Status | B12 | P |
+
+### webroot (shell, sign-in and errors): prefix `runtime/base-component/webroot/screen/`
+
+Added at archiving: wave 1 covered sign-in and recovery, but these screens were not listed. Rows marked endpoint are transitions the client calls, with no page of their own.
+
+| XML file / logical route | Presentation and companions | Activity | Review status |
+|---|---|---|---|
+| `webroot/ChangePassword.xml` | XML widgets; hidden menu; Change or expired password | Wave 1 recovery | not walked here |
+| `webroot/ChatKeys.xml` | XML widgets; hidden menu; Endpoint: chat devices and keys | B07 | Not a page |
+| `webroot/Device.xml` | XML widgets; hidden menu; Shared-device registration code page | — | not walked here |
+| `webroot/Login.xml` | XML widgets; hidden menu; Sign-in, password reset | Wave 1 sign-in | not walked here |
+| `webroot/PublicShell.xml` | XML widgets; hidden menu; Public shell of token routes (`/s/`, `/u/`, `/call/`) | G03 public share, B08 guest | not walked here |
+| `webroot/ReAuth.xml` | XML widgets; hidden menu; Recent sign-in check | Wave 1 sign-in | not walked here |
+| `webroot/SecondFactor.xml` | XML widgets; hidden menu; Second factor at sign-in | Wave 1 sign-in | not walked here |
+| `webroot/WebPush.xml` | XML widgets; hidden menu; Endpoint: Web Push subscription | — | Not a page |
+| `webroot/apps/AppList.xml` | XML widgets; Launcher | Wave 1 launcher | not walked here |
+| `webroot/apps/ScreenTree/ScreenTreeNested.xml` | XML widgets; hidden menu; Screen tree, nested | — | not walked here |
+| `webroot/apps/ScreenTree.xml` | XML widgets; hidden menu; Screen tree | — | not walked here |
+| `webroot/apps/Terminal.xml` | modes qvue,tui,html,qvt; `Terminal.qvue`; hidden menu; Browser terminal (`/apps/Terminal`) | Embedded TUI | Embedded TUI rows of the ledger |
+| `webroot/apps.xml` | Container → AppList; Standard shell (`/apps`) and color scheme CSS | Wave 1 shell | not walked here |
+| `webroot/assist.xml` | XML widgets; hidden menu; Endpoint: Assist drawer calls | — | Not a page |
+| `webroot/echopath.xml` | XML widgets; hidden menu; Endpoint: path echo for tests | — | Not a page |
+| `webroot/emailOAuth.xml` | XML widgets; hidden menu; Endpoint: mail sign-in redirect | B04 | Not a page |
+| `webroot/error/Forbidden.xml` | XML widgets; 403 page | Wave 1 recovery | not walked here |
+| `webroot/error/InternalError.xml` | XML widgets; 500 page | Wave 1 recovery | not walked here |
+| `webroot/error/NotFound.xml` | XML widgets; 404 page | Wave 1 recovery | not walked here |
+| `webroot/error/TooMany.xml` | XML widgets; 429 page | Wave 1 recovery | not walked here |
+| `webroot/error/Unauthorized.xml` | XML widgets; 401 page | Wave 1 recovery | not walked here |
+| `webroot/error.xml` | XML widgets; hidden menu; Error pages container | Wave 1 recovery | not walked here |
+| `webroot/qapps.xml` | XML widgets; Material shell (`/qapps`) | Wave 1 shell | Shell observed throughout the batches; not inventoried |
+| `webroot/rest.xml` | XML widgets; hidden menu; Endpoint: REST API | — | Not a page |
+| `webroot/rum.xml` | XML widgets; hidden menu; Endpoint: browser telemetry and replay | M08 | Not a page |
+| `webroot/sso.xml` | XML widgets; hidden menu; Endpoint: SSO sign-in, callback, sign-out | Wave 1 sign-in | Not a page |
+| `webroot.xml` | Container → qapps; Root of the web tree | — | not walked here |
 
 ### Optional public-demo override (not enabled merely by loading demo data)
 
@@ -2286,7 +2372,7 @@ No complete DA activity is closed: the original definitions include alternate ro
 
 - `/tmp/moqui-ui-framework-gate3.log`: exact passed `devaide::autodoc_shows_a_doc_and_exports_a_tree_into_the_site`, `the_index_follows_reloads_and_extensions`, `the_workspace_saves_checks_commits_and_publishes`, `the_git_depth_writes_on_scratch_repositories`, `tasks_from_mantle_and_rest`, `the_screen_tree_orders_moves_and_removes`, `a_try_saved_as_a_spec_passes`, `a_site_seca_runs_after_its_save`, and `an_entity_save_relinks_and_adds_its_column`. These are individual successful backend results in a gate that also had other failures; no whole-gate pass is claimed here.
 - `/tmp/moqui-ui-framework-final.log`: ArtifactDocs 7 passed feature lines; ArtifactIndex 6; ServiceWriter 7. Server renders are supporting regression evidence, not human visual inspection.
-- Coordinator's `plans/UI-Refinement.md` UI-014 and observed-activity table: limited Home/search/Go to artifact visual results. Its exact fresh-client and focus retest gaps remain applicable.
+- This record's UI-014 and observed-activity table: limited Home/search/Go to artifact visual results. Its exact fresh-client and focus retest gaps remain applicable.
 - `/tmp/ui-devaide-acceptance/latest-results.json`: all eight functional browser journeys with exact logs, initial failures and successful retests. Harness default 1280×900; screenshot branches were unset. Alternate themes, 390px, 200% zoom and full keyboard-only operation are not implicitly covered.
 
 ### Small next UI checks, without another broad render sweep
@@ -2505,35 +2591,35 @@ Use a disposable administrator for setup, then an operator granted the needed Mo
 
 ## Complete Monitor/Dashboards screen-to-activity mapping
 
-All paths below are relative to `runtime/base-component/tools/screen/`. Monitor and Dashboards have **25 and 16 XML definitions including their roots**, respectively. Neither tree has separate QVue files. Detail screens and non-menu helpers remain explicit entries because bookmarks, row links or included widgets reach them.
+All paths below are relative to `runtime/base-component/tools/screen/`. Monitor and Dashboards have **25 and 25 XML definitions including their roots**, respectively. Monitor is a section of System since [Tools-Fancy](Tools-Fancy.md) P1 (`/qapps/system/Monitor`, its dashboard is Overview, and `MONITOR_APP` is gone: its datasets, services and entities are members of `SYSTEM_APP`); the rows name the current files, and the batch notes the `/qapps/monitor` routes of their time. Neither tree has separate QVue files. Detail screens and non-menu helpers remain explicit entries because bookmarks, row links or included widgets reach them.
 
 | XML definition | Primary route/role in UI | Activities | Current acceptance evidence |
 |---|---|---|---|
-| `Monitor.xml` | `/qapps/monitor` → dashboard; shell | M01–M11 | Root navigation itself P |
-| `Monitor/dashboard.xml` | Monitor overview; includes Dashboard engine | M01 | A10 F |
-| `Monitor/Logs.xml` | Monitor mount of Explore plus local context links | M02 | A03 R, A09 F, A17 R |
-| `Monitor/LogContext.xml` | Hidden Monitor mount of shared surrounding-entry view | M02 | A09 F |
-| `Monitor/Traces.xml` | Trace search | M02, M04 | A14 F |
-| `Monitor/TraceDetail.xml` | Trace waterfall/flame; traceId required | M02, M04, M06, M07, M08 | A09 route/link R within F navigation |
-| `Monitor/Metrics.xml` | Metric picker/chart + Explore | M03 | A13 F/R |
-| `Monitor/Services.xml` | Included `monitor-services` dashboard | M03 | A12 F, A15 R |
-| `Monitor/Artifacts.xml` | Included `monitor-artifacts` dashboard | M03 | P |
-| `Monitor/Errors.xml` | Error groups/chart | M04 | A15 R |
-| `Monitor/ErrorDetail.xml` | Error fingerprint → logs/sample traces | M04 | P |
-| `Monitor/Split.xml` | Monitor-owned mount of Dashboards/Split | M03, M04 | A09 link, A15 R |
-| `Monitor/Sources.xml` | Ingest keys, counters, source/partition administration | M05 | A07/A11 F, A18 R |
-| `Monitor/Checks.xml` | Synthetic checks and scrape targets | M06 | A17 success F |
-| `Monitor/AgentTraces.xml` | AI/agent filters, trace and usage links | M07 | A17 R |
-| `Monitor/Browser.xml` | Included browser-experience dashboard | M08 | A18 R |
-| `Monitor/Replays.xml` | Replay list/filter | M08 | A18 Standard R |
-| `Monitor/ReplayDetail.xml` | Hidden replay playback/events/linked traces | M08 | P |
-| `Monitor/Operations.xml` | Included business-operations dashboard | M09 | A19 R |
-| `Monitor/Releases.xml` | Release list/filter | M09 | A19 Standard R |
-| `Monitor/ReleaseDetail.xml` | Hidden release errors/regressions | M09 | P |
-| `Monitor/Incidents.xml` | Create/filter/list incidents | M10 | A19 Standard R; live create/invalid/filter/resolved recovery, UI102 pending |
-| `Monitor/IncidentDetail.xml` | Hidden incident evidence/decisions/actions | M10 | Live note/status/resolve, refuse/approve/cancel manual action, missing/denied bookmark; UI103/104/107 pending |
-| `Monitor/Recovery.xml` | Stop/policies/adapters/recovery action status | M10 | A19 Standard R; live Manual adapter/policy create/invalid/edit/disable and canceled-action link; UI105/106 pending |
-| `Monitor/Settings.xml` | Temporary diagnostic settings/overrides | M11 | A19 Standard R |
+| `System/Monitor.xml` | `/qapps/system/Monitor` → Overview; shell | M01–M11 | Root navigation itself P |
+| `System/Monitor/Overview.xml` | Monitor overview; includes Dashboard engine | M01 | A10 F |
+| `System/Monitor/Logs.xml` | Monitor mount of Explore plus local context links | M02 | A03 R, A09 F, A17 R |
+| `System/Monitor/LogContext.xml` | Hidden Monitor mount of shared surrounding-entry view | M02 | A09 F |
+| `System/Monitor/Traces.xml` | Trace search | M02, M04 | A14 F |
+| `System/Monitor/TraceDetail.xml` | Trace waterfall/flame; traceId required | M02, M04, M06, M07, M08 | A09 route/link R within F navigation |
+| `System/Monitor/Metrics.xml` | Metric picker/chart + Explore | M03 | A13 F/R |
+| `System/Monitor/Services.xml` | Included `monitor-services` dashboard | M03 | A12 F, A15 R |
+| `System/Monitor/Artifacts.xml` | Included `monitor-artifacts` dashboard | M03 | P |
+| `System/Monitor/Errors.xml` | Error groups/chart | M04 | A15 R |
+| `System/Monitor/ErrorDetail.xml` | Error fingerprint → logs/sample traces | M04 | P |
+| `System/Monitor/Split.xml` | Monitor-owned mount of Dashboards/Split | M03, M04 | A09 link, A15 R |
+| `System/Monitor/Sources.xml` | Ingest keys, counters, source/partition administration | M05 | A07/A11 F, A18 R |
+| `System/Monitor/Checks.xml` | Synthetic checks and scrape targets | M06 | A17 success F |
+| `System/Monitor/AgentTraces.xml` | AI/agent filters, trace and usage links | M07 | A17 R |
+| `System/Monitor/Browser.xml` | Included browser-experience dashboard | M08 | A18 R |
+| `System/Monitor/Replays.xml` | Replay list/filter | M08 | A18 Standard R |
+| `System/Monitor/ReplayDetail.xml` | Hidden replay playback/events/linked traces | M08 | P |
+| `System/Monitor/Operations.xml` | Included business-operations dashboard | M09 | A19 R |
+| `System/Monitor/Releases.xml` | Release list/filter | M09 | A19 Standard R |
+| `System/Monitor/ReleaseDetail.xml` | Hidden release errors/regressions | M09 | P |
+| `System/Monitor/Incidents.xml` | Create/filter/list incidents | M10 | A19 Standard R; live create/invalid/filter/resolved recovery, UI102 pending |
+| `System/Monitor/IncidentDetail.xml` | Hidden incident evidence/decisions/actions | M10 | Live note/status/resolve, refuse/approve/cancel manual action, missing/denied bookmark; UI103/104/107 pending |
+| `System/Monitor/Recovery.xml` | Stop/policies/adapters/recovery action status | M10 | A19 Standard R; live Manual adapter/policy create/invalid/edit/disable and canceled-action link; UI105/106 pending |
+| `System/Monitor/Settings.xml` | Temporary diagnostic settings/overrides | M11 | A19 Standard R |
 | `Dashboards.xml` | `/qapps/dashboards` → Home; shell | D01–D08 | Root navigation itself P |
 | `Dashboards/Home.xml` | Dashboard library, stars/recent/folders/tags | D01 | A06 F |
 | `Dashboards/Panels.xml` | Panel library + optional embed; includes Home | D01, D02, D04 | A16 embed R/F |
@@ -2553,6 +2639,13 @@ All paths below are relative to `runtime/base-component/tools/screen/`. Monitor 
 | `Dashboards/Reports.xml` | Compose/preview/schedule/send/playlist creation | D07 | A08 preview endpoint helper F; actual page flow P |
 | `Dashboards/Playlist.xml` | Saved playlist playback and fallback list | D07 | P |
 | `Dashboards/GitSync.xml` | Folder/repository synchronization | D08 | P |
+| `Dashboards/Analysis.xml` | An aggregate over a dataset from typed choices, saved as a library panel | D03 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I4; not walked here |
+| `Dashboards/Drill.xml` | Hidden: from a saved panel's value to a breakdown and its records | D02 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I4; not walked here |
+| `Dashboards/Playlists.xml` | The dashboard playlists the viewer reads, and a new playlist | D07 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I4; not walked here |
+| `Dashboards/ReportDelivery.xml` | Hidden: one run of a schedule and each recipient's outcome | D07 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I2; not walked here |
+| `Dashboards/ScheduledReportDetail.xml` | Hidden: one schedule, its timing, format and audience | D07 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I2; not walked here |
+| `Dashboards/Schedules.xml` | The viewer's scheduled reports: mine, shared and received | D07 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I2; not walked here |
+| `Dashboards/WallDisplay.xml` | Hidden: one playlist full screen on a page of its own | D07 | New with [Admin-Screens-Down](Admin-Screens-Down.md) I4; not walked here |
 
 **Shared/mode implementation accounting:** Monitor mounts of Dashboard/Explore/Split/LogContext are not separate copies of the engine, but their authorization, local links and contextual headings need route-specific checks. `Definition.xml` contains QVT/TUI/Standard render sections; `TraceDetail.xml` has QVT/TUI waterfall and Standard text; Explore has query editor/tail/value-filter render sections; ReplayDetail and Playlist have specialized rendering. Inspect these implementations within the same activities, not as fictitious extra screen routes. Shared client implementation is `webroot/screen/webroot/js/WebrootReport.js`; no additional application screen should be counted for its components.
 
@@ -2679,7 +2772,7 @@ Gallery is a framework fixture over real framework data. A successful demo messa
 
 ## Complete Gallery screen-to-activity mapping
 
-Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root plus descendants contain **31 XML definitions**, **3 QVue templates** and **2 external TUI JSON twins**. The table accounts for every file. The last column lists **available test coverage**, not a new passing result. Coordinator browser execution is recorded separately in the bounded-batch notes; G05, G08 and parts of G04/G10 now have explicit live outcomes there.
+Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root plus descendants contain **32 XML definitions**, **3 QVue templates** and **2 external TUI JSON twins**. The table accounts for every file. The last column lists **available test coverage**, not a new passing result. Coordinator browser execution is recorded separately in the bounded-batch notes; G05, G08 and parts of G04/G10 now have explicit live outcomes there.
 
 `GS` = entry appears in `acceptance/Gallery.spec.js`'s general render list; `GB` = entry appears in `acceptance/client/GallerySmoke.spec.js`'s browser render list. `Targeted` means the existing server acceptance has additional stated assertions. The general lists have23 entries; they do not cover all31XML routes, every variant or every user action.
 
@@ -2715,13 +2808,14 @@ Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root 
 | `Gallery/Settings.xml` | General and grouped settings archetype | G11 | GS/GB |
 | `Gallery/Report.xml` | Parameters, chart/table report | G11 | GS/GB |
 | `Gallery/Widgets.xml` | Fields/actions/labels/dialogs/markdown/code/lists guide | G02, G12 | GS/GB; targeted row/chip/editable binding |
+| `Gallery/NavCards.xml` | `nav-card` reference: cards with counts, sparklines and links | G01, G12 | New with [Tools-Fancy](Tools-Fancy.md) P3; menu entry and terminal snapshot added Nov 10; not walked here |
 | `Gallery/Message.xml` | HTML/plain-text reader fixture | G13 | GS/GB; expected blocked-frame-script allowance |
 
 **Non-Gallery helper:** `PublicLink.xml` is present in the example component but is **not mounted by default** and is not a Gallery route. It is an anonymous token-route fixture configured explicitly by a webapp token-route. Record it as a conditional public-share inspection attached to G03 only when a disposable token-route/share fixture is configured; do not claim it was reachable or tested through Gallery. Its files transition checks the token again. This accounts for the component's remaining XML without inventing a default application activity.
 
 ## Remaining coverage and next bounded review choices
 
-1. UI-038/039/041–044 are corrected and retested in batch4; UI-040 did not reproduce. Batch5 addresses query labels (UI-037), code-editor names (UI-045), Editor Home/comparison/line-ending recovery (UI-046/048/049), guide text (UI-050), and Material confirmation. Next refine shared list-control names/sorting (UI-051), Visit Detail metadata (UI-052), trace readability (UI-053) and model configuration grouping (UI-054).
+1. *Done by batch 16:* UI-038/039/041–044 are corrected and retested in batch4; UI-040 did not reproduce. Batch5 addresses query labels (UI-037), code-editor names (UI-045), Editor Home/comparison/line-ending recovery (UI-046/048/049), guide text (UI-050), and Material confirmation. Next refine shared list-control names/sorting (UI-051), Visit Detail metadata (UI-052), trace readability (UI-053) and model configuration grouping (UI-054).
 2. Complete **G02/G04/G09/G10** keyboard/responsive coverage, including hidden Contact/EditExample/CodeField. G05 scanning, G08 wizard and portions of G04/G06/G07/G10 have now been exercised; retest the identified fixes and complete the remaining recovery/input modes. Carry shared fixes back to actual System/Tools/Monitor pages.
 3. Give **D06 alerts**, **D07 reports/playlists/schedules**, **M08 replay**, **M09 release detail**, **M10 incident/recovery** and **M11 diagnostic settings** separate bounded fixtures and activity reviews. Their administrative lists currently have little or no functional acceptance coverage.
 4. Verify one **Monitor-only** actor can follow Monitor-local trace/context/compare/export paths, and one denied dataset yields useful refusal. The admin19-feature run is not permission-isolation proof.

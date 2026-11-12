@@ -263,6 +263,9 @@ pub struct FileReport {
     /// Containers, boxes, rows and sections of a screen with no `name` or `id`, which a `screen-extend` cannot anchor
     /// to (plans/design-dev-aide.md F16). Information: an upstream screen names the places sites extend.
     pub unnamed_anchors: Vec<(u32, String)>,
+    /// Lines of comments that hold `--` (a nested `<!--` among them), which this reader takes and other XML parsers
+    /// refuse the whole file for ([`moqui_lib::node::malformed_comments`]).
+    pub malformed_comments: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -309,6 +312,13 @@ impl ScreenLintReport {
             }
             for (line, error) in file.generated_errors.iter().chain(&file.template_errors) {
                 out.push(format!("{}:{line} {error}", file.path.display()));
+            }
+            for line in &file.malformed_comments {
+                out.push(format!(
+                    "{}:{line} a comment holds `--` (or opens another `<!--` before it ends), which other XML parsers \
+                     refuse the file for",
+                    file.path.display()
+                ));
             }
         }
         out
@@ -369,7 +379,7 @@ impl ScreenLintReport {
             .sum();
         let _ = writeln!(
             out,
-            "parse failures: {} (site: {site_failures}, generated action script or template body: {})",
+            "parse failures: {} (site: {site_failures}, other: {})",
             failures.len(),
             failures.len() - site_failures
         );
@@ -561,6 +571,7 @@ fn scan_screen_text(
     }
     let mut file = FileReport {
         path,
+        malformed_comments: moqui_lib::node::malformed_comments(text),
         ..FileReport::default()
     };
     scan_node(&root, false, &mut file);

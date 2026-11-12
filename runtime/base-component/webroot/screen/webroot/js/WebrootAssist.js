@@ -3032,7 +3032,7 @@
                                 ' :data-assist-file="file.attachmentId" :title="file.mediaType"><q-icon name="sym_o_attach_file" size="xs"></q-icon>{{file.fileName}} <span class="m-muted">{{sizeText(file.size)}}</span></a></div>' +
                         '<div v-if="row.local === \'sending\'" class="text-caption m-muted text-right">{{labels.sending}}</div>' +
                         '<div v-else-if="row.local === \'failed\'" class="text-caption text-negative text-right">{{labels.notSent}}{{row.error ? \': \' + row.error : \'\'}}' +
-                            '<q-btn flat dense no-caps size="sm" :label="labels.retry" data-assist-action="resend" @click="resend(row)"></q-btn><q-btn flat dense round size="sm" icon="sym_o_close" @click="drop(row)"></q-btn></div>' +
+                            '<q-btn flat dense no-caps size="sm" :label="labels.retry" data-assist-action="resend" @click="resend(row)"></q-btn><q-btn flat dense round size="sm" icon="sym_o_close" :aria-label="labels.discard" @click="drop(row)"><q-tooltip>{{labels.discard}}</q-tooltip></q-btn></div>' +
                     '</div>' +
                     '<div v-else-if="row.kind === \'text\'" class="m-assist-answer q-mb-sm" data-assist-item="assistant" :data-message-id="row.messageId">' +
                         '<m-assist-markdown :text="row.text" :invented="row.invented" :chips="row.chips" :streaming="row.streaming" :run-id="row.runId ? String(row.runId) : null"></m-assist-markdown>' +
