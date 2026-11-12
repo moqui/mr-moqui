@@ -1,5 +1,5 @@
 {
-  "cacheHit": 0.653,
+  "cacheHit": 0.67,
   "invented": 0,
   "passAt1": 1.0,
   "profile": "replay",
@@ -55,7 +55,7 @@
     },
     "assist/multi-step-with-a-rejected-approval": {
       "passAt1": 1.0,
-      "tokens": 21674
+      "tokens": 30093
     },
     "assist/multi-step-with-a-service-tool": {
       "passAt1": 1.0,
@@ -63,11 +63,11 @@
     },
     "assist/multi-step-with-an-edited-approval": {
       "passAt1": 1.0,
-      "tokens": 21679
+      "tokens": 30092
     },
     "assist/multi-step-with-approval": {
       "passAt1": 1.0,
-      "tokens": 22748
+      "tokens": 31163
     },
     "assist/navigate-and-filter": {
       "passAt1": 1.0,
@@ -99,9 +99,9 @@
     },
     "headless/headless-write-approved-in-the-app": {
       "passAt1": 1.0,
-      "tokens": 16027
+      "tokens": 23638
     }
   },
-  "tokens": 15386,
-  "wrongCalls": 0.122
+  "tokens": 16755,
+  "wrongCalls": 0.113
 }

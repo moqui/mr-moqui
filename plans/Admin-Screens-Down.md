@@ -365,12 +365,15 @@ Findings:
   list by `text`; the "New custom group" dialog's Identifier and Description (CreateGroup) for the hand-off; Name and
   Find for the follow-up; and for the writes GroupDetail's "All settings" form (Description, "Update group",
   `updateUserGroup`), since a group a task makes has no type, is neither a registered bundle nor a custom group, and so
-  has no Profile form. Their `user`, `model` and `tool` lines are the transcripts' of the replay that played them, the
-  headers kept. Both sets pass (24 of 24, 9 of 9) and the rewritten recordings replay with no drift; the task files'
-  checks are unchanged. The baselines were stale before this phase: at the commit before it all 24 passed and the run
-  still failed against `baseline-replay.json`, every task's tokens 32 to 78 percent over the baseline's (22 to 78 percent
-  over in `replay/` and 67 to 83 in `replay-small/` with the rewritten recordings). Both are written again from the
-  passing replays (`--write-baseline`, at the user's word), and each set then replays with exit 0.
+  has no Profile form. That form is below the rows a screen answer shows, so in the five write recordings the model
+  first moves to it (`find` "Update group", which shows its Description field and button) and sets and presses in the
+  next call, one model call more than each had. Their `user`, `model` and `tool` lines are the transcripts' of the
+  replay that played them, the headers kept. Both sets pass (24 of 24, 9 of 9) and the rewritten recordings replay with
+  no drift; the task files' checks are unchanged. The baselines were stale before this phase: at the commit before it
+  all 24 passed and the run still failed against `baseline-replay.json`, every task's tokens 32 to 78 percent over the
+  baseline's (22 to 78 percent over in `replay/` and 67 to 83 in `replay-small/` with the rewritten recordings). Both
+  are written again from the passing replays (`--write-baseline`, at the user's word), and each set then replays with
+  exit 0.
 - F22. The opt-in `gate3` and `gate3_browser` tests had failures before this phase that are not its own: three of
   `gate3` (goldens of SYSTEM_APP's and TOOLS_APP's members, an html page read with its chunk size) and four of
   `gate3_browser` (the gallery's dialog and tray, Dev AIDE's service writer and screen builder), the same before and

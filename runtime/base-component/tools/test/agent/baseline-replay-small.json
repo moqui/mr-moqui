@@ -1,5 +1,5 @@
 {
-  "cacheHit": 0.605,
+  "cacheHit": 0.622,
   "invented": 0,
   "passAt1": 1.0,
   "profile": "replay-small",
@@ -27,7 +27,7 @@
     },
     "assist/multi-step-with-approval": {
       "passAt1": 1.0,
-      "tokens": 20060
+      "tokens": 26852
     },
     "assist/navigate-and-filter": {
       "passAt1": 1.0,
@@ -42,6 +42,6 @@
       "tokens": 8117
     }
   },
-  "tokens": 11852,
-  "wrongCalls": 0.133
+  "tokens": 12607,
+  "wrongCalls": 0.125
 }
