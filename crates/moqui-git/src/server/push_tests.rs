@@ -18,7 +18,10 @@
 use std::io::BufWriter;
 use std::net::TcpStream;
 
-use super::push::{self, mapped, parse_ref_maps, parse_ssh_url, receive_pack_command, PushOutcome, RefMap, SshUrl};
+use super::push::{
+    self, mapped, parse_ref_maps, parse_ssh_url, read_advertisement, receive_pack_command, requested, PushOutcome,
+    RefMap, SshUrl,
+};
 use super::tests::{daemon, define, fixture, settled, Fixture, WRITER};
 
 fn map(from: &str, to: &str) -> RefMap {
@@ -85,6 +88,39 @@ fn ssh_urls_in_both_forms() {
     assert!(parse_ssh_url("https://github.com/owner/repo.git").is_err());
     assert!(parse_ssh_url("github.com").is_err());
     assert_eq!(receive_pack_command("a'b.git"), r"git-receive-pack 'a'\''b.git'");
+}
+
+#[test]
+fn an_advertisement_skips_shallow_lines_and_the_agent_follows_the_servers() {
+    let id = "1111111111111111111111111111111111111111";
+    let mut wire = Vec::new();
+    super::pktline::data(
+        &mut wire,
+        format!("{id} refs/heads/main\0report-status ofs-delta\n").as_bytes(),
+    )
+    .unwrap();
+    super::pktline::data(&mut wire, format!("shallow {id}\n").as_bytes()).unwrap();
+    super::pktline::flush(&mut wire).unwrap();
+    let remote = read_advertisement(&mut wire.as_slice()).unwrap();
+    assert_eq!(remote.refs.len(), 1);
+    assert_eq!(requested(&remote).unwrap(), "report-status ofs-delta");
+
+    let mut wire = Vec::new();
+    super::pktline::data(
+        &mut wire,
+        format!("{id} capabilities^{{}}\0report-status agent=git/2.47\n").as_bytes(),
+    )
+    .unwrap();
+    super::pktline::flush(&mut wire).unwrap();
+    let remote = read_advertisement(&mut wire.as_slice()).unwrap();
+    assert!(remote.refs.is_empty());
+    let asked = requested(&remote).unwrap();
+    assert!(asked.starts_with("report-status agent="), "{asked}");
+
+    let mut wire = Vec::new();
+    super::pktline::data(&mut wire, format!("{id} refs/heads/main\0ofs-delta\n").as_bytes()).unwrap();
+    super::pktline::flush(&mut wire).unwrap();
+    assert!(requested(&read_advertisement(&mut wire.as_slice()).unwrap()).is_err());
 }
 
 /// Push `maps` of repository `src` to `dst` over a fresh connection to `base`.

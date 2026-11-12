@@ -91,13 +91,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastFetchDate" type="date-time"/>
         <field name="lastFetchError" type="text-long"/>
         <field name="pushMirrorRemoteId" type="id"><description>A push mirror: the SystemMessageRemote whose sendUrl
-            is the SSH URL (ssh://git@host/owner/repo.git or git@host:owner/repo.git) push#GitMirror pushes to after
-            each change, with its privateKey and publicKey (or password) and sshHostKeyFingerprint</description></field>
+            is the SSH URL (ssh://git@host/owner/repo.git or git@host:owner/repo.git) push#GitMirror pushes to (async)
+            after each change, with its privateKey and publicKey (or password) and sshHostKeyFingerprint</description></field>
         <field name="pushMirrorRefs" type="text-medium"><description>The refs pushed, as from:to pairs separated by
             spaces (master:mirror; refs/tags/*:refs/tags/*); every branch and tag when empty. Each is forced to the
             local one; nothing is deleted.</description></field>
         <field name="lastPushMirrorDate" type="date-time"/>
-        <field name="lastPushMirrorError" type="text-long"/>
+        <field name="lastPushMirrorError" type="text-long"><description>Why the last push to the push mirror failed;
+            empty after one that worked. The next change, or Push Mirror Now, pushes again.</description></field>
         <field name="headCommitId" type="text-short"><description>The branch head after the last write, push or fetch</description></field>
         <field name="lastUpdateDate" type="date-time"><description>When a write, push or fetch last changed a ref</description></field>
         <field name="objectCount" type="number-integer"><description>For db: GitObject rows after the last

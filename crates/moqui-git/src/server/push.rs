@@ -129,7 +129,8 @@ pub(crate) fn read_advertisement(input: &mut dyn Read) -> Result<RemoteRefs, Err
                 if let Some(message) = line.strip_prefix("ERR ") {
                     return Err(Error::new(format!("the server refused the push: {message}")));
                 }
-                if line.starts_with("version ") {
+                // a shallow repository lists its shallow commits after its refs
+                if line.starts_with("version ") || line.starts_with("shallow ") {
                     continue;
                 }
                 let Some((id, name)) = line.split_once(' ') else {
@@ -181,19 +182,13 @@ pub(crate) fn push(
         output.flush().map_err(io_error)?;
         return Ok(outcome);
     }
-    let offered: Vec<&str> = ["report-status", "ofs-delta"]
-        .into_iter()
-        .filter(|cap| remote.caps.contains(*cap))
-        .collect();
-    if !offered.contains(&"report-status") {
-        return Err(Error::new("the server does not offer report-status"));
-    }
+    let requested = requested(&remote)?;
     let zero = ObjectId::null(gix::hash::Kind::Sha1);
     for (index, (old, new, name)) in commands.iter().enumerate() {
         let mut line = format!("{} {new} {name}", old.unwrap_or(zero)).into_bytes();
         if index == 0 {
             line.push(0);
-            line.extend_from_slice(format!("{} agent={}", offered.join(" "), super::agent()).as_bytes());
+            line.extend_from_slice(requested.as_bytes());
         }
         line.push(b'\n');
         pktline::data(output, &line).map_err(io_error)?;
@@ -205,13 +200,29 @@ pub(crate) fn push(
     let planned = plan::plan(store, &wants, &haves, &[], &HashSet::new(), &[])?;
     outcome.objects = planned.objects.len();
     let deltas = pack_out::Deltas {
-        ofs: offered.contains(&"ofs-delta"),
+        ofs: remote.caps.contains("ofs-delta"),
         thin: None,
     };
     pack_out::write_pack(store, &planned.objects, deltas, super::pack_threads(), output)?;
     output.flush().map_err(io_error)?;
     read_report(input, &mut outcome)?;
     Ok(outcome)
+}
+
+/// The capabilities a push asks for, of those the server offers: `report-status` (required), `ofs-delta`, and, as git
+/// does, the client's `agent` only when the server names its own.
+pub(crate) fn requested(remote: &RemoteRefs) -> Result<String, Error> {
+    if !remote.caps.contains("report-status") {
+        return Err(Error::new("the server does not offer report-status"));
+    }
+    let mut requested = String::from("report-status");
+    if remote.caps.contains("ofs-delta") {
+        requested.push_str(" ofs-delta");
+    }
+    if remote.caps.iter().any(|cap| cap.starts_with("agent=")) {
+        requested.push_str(&format!(" agent={}", super::agent()));
+    }
+    Ok(requested)
 }
 
 /// `unpack ok` (or why the server could not read the pack), then `ok <ref>` or `ng <ref> <reason>` each.
@@ -279,6 +290,14 @@ pub(crate) fn parse_ssh_url(url: &str) -> Result<SshUrl, Error> {
 /// The command a push runs on the server, its path quoted as git quotes it.
 pub(crate) fn receive_pack_command(path: &str) -> String {
     format!("git-receive-pack '{}'", path.replace('\'', "'\\''"))
+}
+
+/// End a push as git does: close the command's input and read to its end. The server runs its `post-receive` hooks
+/// after the report, and a connection closed under them can cut them short. The exit status, when the server sent it.
+pub(crate) fn finish(exec: &mut dyn moqui_core::sftp::SshExec) -> Result<Option<u32>, Error> {
+    exec.finish_input()?;
+    while !exec.read(64 * 1024)?.is_empty() {}
+    Ok(exec.exit_status())
 }
 
 /// A command on an SSH server as the two ends of a conversation: `&ExecIo` reads its output and writes its input.

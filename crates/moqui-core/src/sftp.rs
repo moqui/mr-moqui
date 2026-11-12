@@ -315,6 +315,29 @@ impl SftpClient {
         })
     }
 
+    /// A client for a `SystemMessageRemote`: to `host` (`host` or `host:port`) as `username`, with the remote's
+    /// `privateKey` (and `publicKey`) when it has one, else its `password`, and the host key pinned to its
+    /// `sshHostKeyFingerprint` when set. The SFTP sync, the backup mirror, and a git push mirror connect so.
+    ///
+    /// # Errors
+    ///
+    /// A bad port in `host`.
+    pub fn for_remote(remote: &crate::entity::EntityValue, host: &str, username: &str) -> Result<Self, Error> {
+        let field = |name: &str| match remote.get(name) {
+            None | Some(moqui_lib::object::Value::Null) => String::new(),
+            Some(value) => moqui_lib::object::to_plain_string(value),
+        };
+        let mut client = Self::new(host, username, None)?;
+        let private_key = field("privateKey");
+        if private_key.is_empty() {
+            client.password(&field("password"));
+        } else {
+            client.public_key_pkcs8(&private_key, Some(&field("publicKey")));
+        }
+        client.host_key_fingerprint(&field("sshHostKeyFingerprint"));
+        Ok(client)
+    }
+
     /// Authenticate with a password.
     pub fn password(&mut self, password: &str) -> &mut Self {
         self.config.password = Some(password.to_string());
