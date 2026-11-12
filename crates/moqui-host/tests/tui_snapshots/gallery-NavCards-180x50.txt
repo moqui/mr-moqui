@@ -22,18 +22,18 @@
    ▶ Nav cards           │ or whose link the user
  ▾ Home                  │ may not follow, is plain
                          │ From a list
-                         │ Agent Message Part Kind
+                         │ Admin Health group
                          │ Enumerations of the type
-                         │ AgentPartKind
-                         │ Agent Run Input Kind
+                         │ AdminHealthGroup
+                         │ Admin refresh source kin
                          │ Enumerations of the type
-                         │ AgentInputKind
-                         │ Agent Run Pause Kind
+                         │ AdminRefreshSource
+                         │ Admin registration scope
                          │ Enumerations of the type
-                         │ AgentPauseKind
-                         │ Agent Scorer Type
+                         │ AdminRegistryScope
+                         │ Admin settings index gro
                          │ Enumerations of the type
-                         │ AgentScorerType
+                         │ AdminSettingsGroup
                          │
                          │
                          │
