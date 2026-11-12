@@ -31,7 +31,8 @@
 //!    minutes and an expunge is found by comparing the UIDs. Only the local rows of the UIDs involved are read (all of
 //!    them on a first sync, a flag scan, or an expunge found by count). The bodies are fetched by count and by bytes,
 //!    from the sizes the header fetch read, a large message alone; a message whose store keeps failing is read again
-//!    in at most [`STORE_TRIES`] sessions, then skipped and logged.
+//!    in at most [`STORE_TRIES`] sessions, counted on the folder row (`storeFailUid`, `storeFailCount`), then skipped,
+//!    logged and reported in the account's `lastSyncError`.
 //! 4. A message is stored once: one already kept under its folder and UID is not fetched again; one whose
 //!    Message-ID is a row that left another folder in this session is that row, moved (its links and labels kept);
 //!    one whose Message-ID is a local copy waiting for its UID (a sent copy, a move made without UIDPLUS) is that
@@ -83,7 +84,7 @@ const FETCH_CHUNK: usize = 25;
 const FETCH_BYTES: u64 = 8 * 1024 * 1024;
 /// The size counted for a message whose size the server did not give.
 const UNKNOWN_SIZE: u64 = 1024 * 1024;
-/// Sessions that read a message whose store fails again, before it is skipped (logged).
+/// Sessions that read a message whose store fails again, before it is skipped (logged and in `lastSyncError`).
 const STORE_TRIES: u32 = 5;
 const HEADER_CHUNK: usize = 100;
 
@@ -256,6 +257,8 @@ pub(super) struct FolderInfo {
     pub(super) sequence: i64,
     /// A user chose the kind (`update#EmailFolder`): no server folder takes it by its special use or name.
     pub(super) kind_by_user: bool,
+    /// The lowest new UID whose store failed and in how many sessions (`storeFailUid`, `storeFailCount`).
+    pub(super) store_failure: Option<(u32, u32)>,
 }
 
 fn as_u32(value: Option<&Value>) -> Option<u32> {
@@ -287,6 +290,7 @@ fn folder_info(row: &EntityValue) -> FolderInfo {
         removed: row.get("remoteRemovedDate").is_some_and(|value| !value.is_null()),
         sequence: value_number(row.get("sequenceNum")).unwrap_or(999_999),
         kind_by_user: field_text(row, "kindByUser") == "Y",
+        store_failure: as_u32(row.get("storeFailUid")).map(|uid| (uid, as_u32(row.get("storeFailCount")).unwrap_or(0))),
     }
 }
 
@@ -1134,7 +1138,7 @@ fn record_outcome(
                     format!("Synced {} new messages", report.new_count)
                 } else {
                     format!(
-                        "Synced {} new messages; {} folders failed",
+                        "Synced {} new messages; {} folder errors",
                         report.new_count,
                         report.folder_errors.len()
                     )
@@ -2396,7 +2400,12 @@ fn sync_folder(
         usize::try_from(folder.total.unwrap_or(0)).unwrap_or(0)
     };
     progress.new_mail(wanted.len(), pending, kept);
-    let mut failed_from: Option<u32> = None;
+    // The store failure the folder row counts, from earlier sessions of this UIDVALIDITY (plans/High-Level-Review.md
+    // HL-038): kept in the row, so a restart or another node goes on counting.
+    let known_failure = folder.store_failure.filter(|_| folder.uid_validity == Some(validity));
+    // The lowest UID whose store failed this session and was not skipped, which the next session starts from, with
+    // the sessions it failed in and why.
+    let mut failed: Option<(u32, u32, String)> = None;
     for chunk in wanted.chunks(HEADER_CHUNK) {
         session.lease.keep(session.facade)?;
         let heads = conn.session.uid_fetch(
@@ -2467,7 +2476,6 @@ fn sync_folder(
                 };
                 match store_new(session, folder, *uid, raw, flags, *internal, *size, keywords) {
                     Ok(id) => {
-                        store_failed(&folder.id, *uid, false);
                         report.new_count += 1;
                         progress.fetched_one();
                         if folder.kind == "EfkInbox" {
@@ -2507,7 +2515,11 @@ fn sync_folder(
                     }
                     Err(StoreFailure::Write(text)) => {
                         report.skipped_messages += 1;
-                        if store_failed(&folder.id, *uid, true) {
+                        let tries = match known_failure {
+                            Some((known, count)) if known == *uid => count.saturating_add(1),
+                            _ => 1,
+                        };
+                        if tries >= STORE_TRIES {
                             tracing::error!(
                                 account = %session.account.id,
                                 folder = %folder.path,
@@ -2517,6 +2529,10 @@ fn sync_folder(
                                 folder.path,
                                 session.account.id
                             );
+                            report.folder_errors.push(format!(
+                                "{}: UID {uid} could not be stored in {STORE_TRIES} syncs and was skipped: {text}",
+                                folder.path
+                            ));
                         } else {
                             tracing::error!(
                                 account = %session.account.id,
@@ -2526,19 +2542,21 @@ fn sync_folder(
                                 folder.path,
                                 session.account.id
                             );
-                            failed_from = Some(failed_from.map_or(*uid, |known| known.min(*uid)));
+                            if failed.as_ref().is_none_or(|(lowest, _, _)| *uid < *lowest) {
+                                failed = Some((*uid, tries, text));
+                            }
                         }
                     }
                 }
             }
         }
     }
-    if capped || failed_from.is_some() {
+    if capped || failed.is_some() {
         session.incomplete.insert(folder.id.clone());
     }
     // where the next session starts
-    let next = match failed_from {
-        Some(uid) => uid,
+    let next = match &failed {
+        Some((uid, _, _)) => *uid,
         None if capped => wanted.last().map_or(start, |uid| uid + 1),
         None => mailbox.uid_next.unwrap_or_else(|| {
             wanted
@@ -2567,6 +2585,20 @@ fn sync_folder(
     if scanned || first {
         fields.push(("lastFlagScanDate", stamp_millis(now)));
     }
+    // the failure counted from now on: the lowest that failed (a new UIDVALIDITY or a skip starts its count again)
+    match failed {
+        Some((uid, tries, text)) => fields.extend([
+            ("storeFailUid", Value::I64(i64::from(uid))),
+            ("storeFailCount", Value::I64(i64::from(tries))),
+            ("storeFailError", Value::string(clip(&text, 4000))),
+        ]),
+        None if folder.store_failure.is_some() => fields.extend([
+            ("storeFailUid", Value::Null),
+            ("storeFailCount", Value::Null),
+            ("storeFailError", Value::Null),
+        ]),
+        None => {}
+    }
     force_new(session.facade, || update_folder(session.facade, &folder.id, &fields))?;
     Ok(())
 }
@@ -2590,33 +2622,6 @@ fn fetch_batches(sizes: &[Option<i64>], count: usize, budget: u64) -> Vec<std::o
         out.push(start..sizes.len());
     }
     out
-}
-
-/// The messages whose store failed, by folder and UID, with the sessions it failed in. Kept in memory: a restart
-/// tries each again, at most [`STORE_TRIES`] sessions more, and an entry goes when its message is stored or skipped.
-fn store_failures() -> &'static std::sync::Mutex<HashMap<(String, u32), u32>> {
-    static FAILURES: std::sync::OnceLock<std::sync::Mutex<HashMap<(String, u32), u32>>> = std::sync::OnceLock::new();
-    FAILURES.get_or_init(Default::default)
-}
-
-/// Note a message's store failing (`failed`) or done. True when it has failed in [`STORE_TRIES`] sessions: it is
-/// skipped from now on, so one message the store cannot take is not downloaded again in every session.
-fn store_failed(folder_id: &str, uid: u32, failed: bool) -> bool {
-    let mut failures = moqui_lib::sync::lock(store_failures());
-    if !failed {
-        if !failures.is_empty() {
-            failures.remove(&(folder_id.to_string(), uid));
-        }
-        return false;
-    }
-    let key = (folder_id.to_string(), uid);
-    let tries = failures.entry(key.clone()).or_insert(0);
-    *tries += 1;
-    if *tries >= STORE_TRIES {
-        failures.remove(&key);
-        return true;
-    }
-    false
 }
 
 /// The Message-ID in a `HEADER.FIELDS (MESSAGE-ID)` fetch.
@@ -2767,6 +2772,12 @@ fn sync_labels(
     Ok(changed)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's Message-IDs whose store fails on this thread, as a write error.
+    pub(super) static FAIL_STORE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 enum StoreFailure {
     /// The message is not mail: logged and skipped for good.
     Malformed(String),
@@ -2786,6 +2797,10 @@ fn store_new(
     keywords: bool,
 ) -> Result<String, StoreFailure> {
     let parsed = parse_message(raw).map_err(StoreFailure::Malformed)?;
+    #[cfg(test)]
+    if FAIL_STORE.with(|ids| ids.borrow().contains(&parsed.message_id)) {
+        return Err(StoreFailure::Write("the store failed for the test".to_string()));
+    }
     let status = match folder.kind.as_str() {
         "EfkSent" => "ES_SENT",
         "EfkDrafts" => "ES_DRAFT",

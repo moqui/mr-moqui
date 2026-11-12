@@ -1092,6 +1092,122 @@ fn a_malformed_message_is_skipped_and_the_rest_are_stored() {
     assert_eq!(out_number(&again, "skippedCount"), 0, "{again:?}");
 }
 
+/// The Message-IDs whose store fails on this thread while the guard lives.
+struct FailStore;
+
+impl FailStore {
+    fn on(message_ids: &[&str]) -> Self {
+        super::sync::FAIL_STORE
+            .with(|ids| *ids.borrow_mut() = message_ids.iter().map(|id| (*id).to_string()).collect());
+        Self
+    }
+}
+
+impl Drop for FailStore {
+    fn drop(&mut self) {
+        super::sync::FAIL_STORE.with(|ids| ids.borrow_mut().clear());
+    }
+}
+
+/// A message whose store keeps failing is read again from its UID, counted on the folder row so a restart goes on
+/// counting, and in the fifth session skipped and reported in the account's lastSyncError; the folder moves past it
+/// (plans/High-Level-Review.md HL-038).
+#[test]
+fn a_store_failing_in_five_sessions_is_skipped_and_reported() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    for id in ["<bad@example.com>", "<good@example.com>"] {
+        imap.add(
+            "INBOX",
+            &mail(id, "x@example.com", "alice@example.com", "Hi", "", "b"),
+            &[],
+        );
+    }
+    let _fail = FailStore::on(&["<bad@example.com>"]);
+    let account = imap_account(imap.port, "app-password");
+    let inbox_id = folder_id(&facade, &account, "EfkInbox");
+    for session in 1..=4 {
+        let out = sync(&account);
+        assert_eq!(out_number(&out, "skippedCount"), 1, "{session}: {out:?}");
+        let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+        assert_eq!(field(&inbox, "storeFailUid"), "1", "{session}");
+        assert_eq!(field(&inbox, "storeFailCount"), session.to_string());
+        assert!(field(&inbox, "storeFailError").contains("failed for the test"));
+        assert_eq!(field(&inbox, "remoteUidNext"), "1", "read again from the failing UID");
+        let account_row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+        assert!(field(&account_row, "lastSyncError").is_empty(), "{session}");
+    }
+    assert!(by_message_id(&facade, &account, "<good@example.com>").is_some());
+    let out = sync(&account);
+    assert_eq!(out_number(&out, "skippedCount"), 1, "{out:?}");
+    let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+    assert_eq!(field(&inbox, "storeFailUid"), "");
+    assert_eq!(field(&inbox, "storeFailCount"), "");
+    assert_eq!(field(&inbox, "remoteUidNext"), "3");
+    let account_row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    let error = field(&account_row, "lastSyncError");
+    assert!(error.contains("UID 1") && error.contains("skipped"), "{error}");
+    // not read again
+    let again = sync(&account);
+    assert_eq!(out_number(&again, "skippedCount"), 0, "{again:?}");
+    assert!(by_message_id(&facade, &account, "<bad@example.com>").is_none());
+}
+
+/// A UIDVALIDITY change voids the count of a failing store: the UID it counted is another message's now.
+#[test]
+fn a_uid_validity_change_resets_the_store_failure_count() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<flaky@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Hi",
+            "",
+            "b",
+        ),
+        &[],
+    );
+    let account = imap_account(imap.port, "app-password");
+    let inbox_id = folder_id(&facade, &account, "EfkInbox");
+    {
+        let _fail = FailStore::on(&["<flaky@example.com>"]);
+        sync(&account);
+        // the count of the UID the message has after the change, as though four sessions had failed on it before
+        update(
+            &facade,
+            FOLDER,
+            ("emailFolderId", &inbox_id),
+            &[("storeFailUid", Value::I64(100)), ("storeFailCount", Value::I64(4))],
+        );
+        imap.reset_validity("INBOX");
+        let out = sync(&account);
+        assert_eq!(out_number(&out, "skippedCount"), 1, "{out:?}");
+        let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+        assert_eq!(field(&inbox, "storeFailUid"), "100");
+        assert_eq!(
+            field(&inbox, "storeFailCount"),
+            "1",
+            "counted from the start again, not skipped"
+        );
+    }
+    // the store works again: the message is stored and the count goes
+    let out = sync(&account);
+    assert_eq!(out_number(&out, "newCount"), 1, "{out:?}");
+    let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+    assert_eq!(field(&inbox, "storeFailUid"), "");
+}
+
 /// A sign-in the server refuses marks the account EasAuthFailed with the reason; the job leaves it; new settings make
 /// it Active again.
 #[test]
