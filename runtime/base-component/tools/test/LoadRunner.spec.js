@@ -330,7 +330,7 @@ feature("a run on this server keeps the server's samples and notes that its gene
         done.server.samples.length >= 1
         // the process's memory is read where the platform reports it (/proc, Linux); elsewhere the sample says so
         const memory = ec.factory.getStatusMap().Process.MemoryUsed
-        memory == null ? done.server.samples[0].memoryMb == null : done.server.samples[0].memoryMb > 0
+        memory == null ? done.server.samples[0].memoryMb == null : done.server.samples[0].memoryMb.toNumber() > 0
         done.server.samples[0].cpu == null
         done.generator.where == "in-target"
         done.generator.note.includes("server")
