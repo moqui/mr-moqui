@@ -1067,11 +1067,11 @@ Two designs show what MR Moqui does not do yet.
 
 | Improvement | From | Closes |
 | --- | --- | --- |
-| A v2 stored format: AEAD (AES-256-GCM or XChaCha20-Poly1305), a random nonce, and a key id, such as `v2:<kid>:<nonce>:<ct+tag>`. Decrypt keeps the old forms for migration | Vault barrier, Bitwarden EncString | Determinism, no MAC, AES-128, weak PBE |
+| A v2 stored format: AEAD (AES-256-GCM or XChaCha20-Poly1305), a random nonce, and a key id, such as `v2:<kid>:<nonce>:<ct+tag>`. Decrypt keeps the Java forms, decrypt-only | Vault barrier, Bitwarden EncString | Determinism, no MAC, AES-128, weak PBE |
 | A blind index for a lookup-by-value field: an HMAC of the value under its own key, in a separate column | Vault convergent Transit | Lookup by value without deterministic ciphertext |
 | Envelope keys: random data keys wrapped by a root key from a KMS, OpenBao or Vault Transit, a TPM, or `systemd-creds`, never from `.env` | Vault seal | The key beside the data |
 | A versioned keyring with rotation, and a rewrap job that rewrites old rows to the newest key | Vault rotate and rewrap | One unversioned key; `session_cookie_key` with no `_old` |
-| Remove PBEWithMD5AndDES and the public `_old` sentinel after a migration job | Vault keyring terms | DES; planted values under the public pass |
+| Skip a `decrypt-alt` whose pass is the public `_old` sentinel; PBEWithMD5AndDES decrypt-only, and whether to drop it decided after the first release | Vault keyring terms | DES; planted values under the public pass |
 | Refuse to start when an entity has `encrypt="true"` fields and `crypt-pass` is empty | Vault seal (no storage until unsealed) | Encryption off with no error |
 | `zeroize` (and `secrecy` types) for passes, keys and decrypted values; `mlock` where available | Vault `mlock` | Secrets left in memory |
 | An optional client-side vault for personal secrets: a user key wrapped by a key from the user's password (Argon2id), items AEAD-encrypted in the client | Bitwarden | The server sees plaintext |
