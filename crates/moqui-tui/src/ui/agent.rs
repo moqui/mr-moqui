@@ -401,11 +401,55 @@ impl<L: ScreenLink> Agent<L> {
         let result = if self.login().is_some() {
             self.set_login(&format!("{element} {value}"))
         } else {
+            // a find field of a list whose find is closed: open it first, as a person does before typing in it
+            if let Some(list) = self.closed_find_of(element.trim()) {
+                let _ = self.open_find(&list);
+            }
             self.resolve_one(element.trim())
                 .and_then(|key| self.set_key(&key, value.to_string()))
         };
         self.settle();
         self.answer(result, self.json)
+    }
+
+    /// The list whose find holds the field `name` names (its label or id), when that find is closed.
+    fn closed_find_of(&self, name: &str) -> Option<String> {
+        let wanted = name.trim().to_lowercase();
+        if wanted.is_empty() || !matches!(self.named(name), Named::None) {
+            return None;
+        }
+        let open = match self.session().top_overlay() {
+            Some(Overlay::Find(list)) => Some(list.clone()),
+            _ => None,
+        };
+        let index = self.session().index();
+        index.order.iter().find_map(|item| {
+            let named = self.label(item).trim_end_matches('…').trim().to_lowercase() == wanted
+                || item.key.to_lowercase() == wanted;
+            match &item.scope {
+                Scope::Find(list) if named && open.as_deref() != Some(list.as_str()) => Some(list.clone()),
+                _ => None,
+            }
+        })
+    }
+
+    /// A text find field's value written as `data` takes it: `john%` begins with john, `%acme%` contains acme. The
+    /// field's operator is set to match and the `%` taken off; any other value, or another field, is left as it is.
+    fn find_pattern(&mut self, key: &str, value: String) -> String {
+        let text_find = self.item(key).is_some_and(|item| {
+            matches!(
+                self.session().index().fields.get(&item.node).map(|field| &field.widget),
+                Some(Widget::TextFind { .. })
+            )
+        });
+        let inner = value.trim_matches('%');
+        if !text_find || inner.is_empty() || inner.contains('%') || !value.ends_with('%') {
+            return value;
+        }
+        let op = if value.starts_with('%') { "contains" } else { "begins" };
+        let field = key.split('#').next().unwrap_or(key);
+        self.view.session_mut().set_buffer(&format!("{field}#op"), op.to_string());
+        inner.to_string()
     }
 
     fn set_key(&mut self, key: &str, value: String) -> Result<(), String> {
@@ -414,6 +458,7 @@ impl<L: ScreenLink> Agent<L> {
         self.view.session_mut().focus_key(&key);
         match kind {
             Some(FocusKind::Text) => {
+                let value = self.find_pattern(&key, value);
                 self.view.session_mut().set_buffer(&key, value);
                 Ok(())
             }
@@ -508,8 +553,30 @@ impl<L: ScreenLink> Agent<L> {
                 let list = text.trim().get("find".len()..).unwrap_or_default();
                 self.open_find(list.trim())
             }
+            // a row's text (its id, say) names the row: move to it as `find` does, then open it with Enter
+            Named::None if self.open_row(text) => Ok(()),
             _ => self.resolve_one(text).map(|_| ()),
         }
+    }
+
+    /// A list row whose text holds `text`: moved to as `find` moves, and opened with Enter when the move lands on a list.
+    /// False, with nothing pressed, when no list row holds it (the search is closed again).
+    fn open_row(&mut self, text: &str) -> bool {
+        let text = undecorated(text);
+        let lists = self.session().focus_order().iter().any(|item| item.kind == FocusKind::List);
+        if text.is_empty() || !lists {
+            return false;
+        }
+        self.view.session_mut().open_text_search();
+        self.type_text(text);
+        self.press(KeyPress::plain(Key::Enter));
+        let found = self.session().message().starts_with("Found");
+        let on_list = self.session().focus_kind() == Some(FocusKind::List);
+        if !(found && on_list) {
+            return false;
+        }
+        self.press(KeyPress::plain(Key::Enter));
+        true
     }
 
     /// Open the find fields of the list `which` (its id or label), else of the first list that has them, as `f` on the
@@ -683,7 +750,8 @@ impl<L: ScreenLink> Agent<L> {
         if let Some(item) = order.iter().find(|item| item.key == text) {
             return Named::One(item.key.clone());
         }
-        let lower = text.trim().to_lowercase();
+        // a button as the screen draws it, `< Find >` or `[Find]`, names the button
+        let lower = undecorated(text).to_lowercase();
         if lower.is_empty() {
             return Named::None;
         }
@@ -1517,4 +1585,17 @@ fn holds_words(label: &str, words: &str) -> bool {
         let ends = after.is_none_or(|c| !is_word(c)) || !found.chars().next_back().is_some_and(is_word);
         starts && ends
     })
+}
+
+/// `text` without the brackets the screen draws around a button (`< Find >`, `[Find]`), trimmed.
+fn undecorated(text: &str) -> &str {
+    let text = text.trim();
+    for (open, close) in [('<', '>'), ('[', ']')] {
+        if let Some(inner) = text.strip_prefix(open).and_then(|rest| rest.strip_suffix(close)) {
+            if !inner.trim().is_empty() {
+                return inner.trim();
+            }
+        }
+    }
+    text
 }

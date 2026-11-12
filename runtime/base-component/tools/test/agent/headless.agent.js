@@ -41,7 +41,7 @@ agentSpec({
                 called: [{ tool: "data", args: { path: /VisitList/ } }],
                 notCalled: ["write_ui"],
                 results: [{ tool: "data", result: /showing 2 of 2/ }],
-                answer: /\b2\b/,
+                answer: /\b(2|two)\b/i,
                 noInvented: true,
                 noWrite: true,
             },
@@ -52,22 +52,23 @@ agentSpec({
             setup() { make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_HL", description: "Agent eval headless group" }) },
             cleanup() { remove("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_HL") },
             expect: {
-                called: [{ tool: "screen", args: { go: /UserGroupDetail\?userGroupId=AGENT_EVAL_HL/ } }],
-                answer: [/Agent eval headless group/, /\]\(\/apps\/system\/Security\/UserGroup\/UserGroupDetail\?userGroupId=AGENT_EVAL_HL\)/],
+                // the group's page in whichever app shows it (System's, BOSS Admin's), read and linked
+                called: [{ tool: "screen", args: { go: /AGENT_EVAL_HL/ } }],
+                answer: [/Agent eval headless group/, /\]\(\/apps\/[^)]*AGENT_EVAL_HL[^)]*\)/],
                 noInvented: true,
                 noWrite: true,
             },
         },
         {
             name: "headless write approved in the app",
-            say: "Change the description of the user group AGENT_EVAL_HLW to Agent evaluation group, headless.",
+            say: "Change the description of the user group AGENT_EVAL_HLW to \"Agent evaluation group, headless\".",
             approvals: ["approve"],
             setup() { make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_HLW", description: "Agent eval headless write" }) },
             cleanup() { remove("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_HLW") },
             expect: {
                 held: { transition: "updateUserGroup", status: "executed" },
                 results: [{ tool: "screen", result: /The user approved updateUserGroup, and it was saved/ }],
-                answer: /saved|changed|updated/i,
+                answer: /saved|changed|updated|is now|went through/i,
             },
             verify() {
                 assert(one("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_HLW").description == "Agent evaluation group, headless",

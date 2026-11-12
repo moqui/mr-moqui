@@ -754,6 +754,9 @@ fn the_drawer_calls_over_http_on_postgres() {
         json!({"label": "Red", "recommended": true}),
         "{read}"
     );
+    // the drawer shows a question card while its status is open: the word, as a live question.asked has it, not the row's
+    // status id (a reload of the drawer once hid every question)
+    assert_eq!(question["status"], "open", "{read}");
     let question_id = str_of(&question["questionId"]);
     let (status, _) = ann.post(
         "answer",
@@ -771,6 +774,24 @@ fn the_drawer_calls_over_http_on_postgres() {
     );
     assert_eq!(status, 200, "{answered}");
     assert_eq!(wait(&factory, &ask_run), RunState::Completed);
+    // every event of the run is stored, those flushed on a thread that runs as the user too (an answer)
+    {
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let stored: Vec<String> = facade
+            .find("moqui.agent.AgentRunEvent")
+            .unwrap()
+            .eq("runId", Value::string(&ask_run))
+            .disable_authz()
+            .list()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row.get("eventType").map(to_plain_string))
+            .collect();
+        for wanted in ["question.asked", "question.answered", "run.done"] {
+            assert!(stored.iter().any(|event| event == wanted), "{wanted} not stored: {stored:?}");
+        }
+    }
 
     // a hand-off's outcome is a signal: the watch's status as the server has it; another user's is not found
     {

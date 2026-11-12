@@ -255,7 +255,7 @@ fixes its tier), `contextVersion` (the tab's page version), `state` (the page).
   its page **syncs into** the conversation's screen session (a new conversation's first session opens on it).
 - A new run counts one hit of the user's AT_LLM tarpit (`agent:<agentId>`; the seed allows 30 a minute), where the run is
   made under the conversation's lock (so a send that finds the run active, or a second send of the same moment, counts none); a queued
-  message counts none. Over the limit is 429 with `Retry-After`. A user over their daily quota gets a run in state
+  message counts none. Over the limit is 429 with `Retry-After`. A user over their daily quota (a token quota counts cached prompt tokens as a tenth) gets a run in state
   `TASK_STATE_REJECTED` (200; its `run.done` says `quota_exhausted`).
 - 404 for another user's conversation or an agent the user may not use in the drawer.
 - 13.14: `attachments` (a list of attachment ids, JSON text in a form) carries files `POST attachments` stored: each

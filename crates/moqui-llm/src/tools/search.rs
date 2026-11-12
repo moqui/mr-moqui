@@ -96,13 +96,17 @@ impl AgentTool for Search {
         if wants("screens", "Screens") || wants("actions", "Actions") {
             let entries = apps::shell_entries(ctx);
             if wants("screens", "Screens") {
-                add_group(
-                    &mut lines,
-                    "Screens",
-                    &rank(&entries.screens, &text, &index),
-                    limit,
-                    &text,
-                );
+                let every = rank(&entries.screens, &text, &index);
+                if every.is_empty() {
+                    // a word no title has (a name, "metrics") would hide every screen: the closest, said as such
+                    let near = closest(&entries.screens, &text, &index);
+                    if !near.is_empty() {
+                        lines.push(format!("No screen has every word of \"{text}\"; these have the most of them:"));
+                        add_group(&mut lines, "Screens", &near, limit, &text);
+                    }
+                } else {
+                    add_group(&mut lines, "Screens", &every, limit, &text);
+                }
             }
             if wants("actions", "Actions") {
                 add_group(
@@ -257,51 +261,37 @@ fn word_weight(word: &str, title_words: &[String], name: &str, trail: &str) -> i
 /// The entries that match every word of `text` (or an alias of it), best first; ties keep the menu order.
 pub fn rank(entries: &[ShellEntry], text: &str, index: &SkillIndex) -> Vec<Hit> {
     let query = words(text);
+    ranked(entries, text, index, |matched| matched == query.len())
+}
+
+/// When no entry has every word: those that have the most of them, at least half (and one), best first. "user accounts
+/// john" finds Users by two of its three words, "artifact metrics" the Artifacts screens by one of two.
+pub fn closest(entries: &[ShellEntry], text: &str, index: &SkillIndex) -> Vec<Hit> {
+    let query = words(text);
+    let least = query.len().div_ceil(2).max(1);
+    let best = entries
+        .iter()
+        .map(|entry| score(entry, &query, &text.trim().to_lowercase(), index).0)
+        .max()
+        .unwrap_or(0);
+    if best < least || best == query.len() {
+        return Vec::new();
+    }
+    ranked(entries, text, index, |matched| matched == best)
+}
+
+/// The entries `keep` takes by their count of matched words, best score first; ties keep the menu order.
+fn ranked(entries: &[ShellEntry], text: &str, index: &SkillIndex, keep: impl Fn(usize) -> bool) -> Vec<Hit> {
+    let query = words(text);
     if query.is_empty() {
         return Vec::new();
     }
     let phrase = text.trim().to_lowercase();
     let mut scored: Vec<(i64, usize, Hit)> = Vec::new();
     for (at, entry) in entries.iter().enumerate() {
-        let title_words = words(&entry.title);
-        let name = entry
-            .path
-            .split('?')
-            .next()
-            .unwrap_or_default()
-            .rsplit('/')
-            .next()
-            .unwrap_or_default()
-            .to_lowercase();
-        let trail = entry.trail.to_lowercase();
-        let mut score = 0;
-        let mut all = true;
-        for word in &query {
-            // the word, else its stem (the query's only: the entries are matched by prefix and containment)
-            let forms = word_forms(word);
-            let own = forms
-                .iter()
-                .map(|form| word_weight(form, &title_words, &name, &trail))
-                .max()
-                .unwrap_or(0);
-            let alias = forms
-                .iter()
-                .flat_map(|form| index.alias_words(form))
-                .map(|alias| word_weight(&alias, &title_words, &name, &trail) / 2)
-                .max()
-                .unwrap_or(0);
-            let weight = own.max(alias);
-            if weight == 0 {
-                all = false;
-                break;
-            }
-            score += weight;
-        }
-        if !all {
+        let (matched, score) = score(entry, &query, &phrase, index);
+        if matched == 0 || !keep(matched) {
             continue;
-        }
-        if entry.title.to_lowercase().contains(&phrase) {
-            score += 200;
         }
         scored.push((
             score,
@@ -317,6 +307,48 @@ pub fn rank(entries: &[ShellEntry], text: &str, index: &SkillIndex) -> Vec<Hit> 
     scored.into_iter().map(|(_, _, hit)| hit).collect()
 }
 
+/// How many of the `query` words `entry` matches (the word, its stem or an alias), and its score: each matched word's
+/// weight, and 200 more when its title holds the whole `phrase`.
+fn score(entry: &ShellEntry, query: &[String], phrase: &str, index: &SkillIndex) -> (usize, i64) {
+    let title_words = words(&entry.title);
+    let name = entry
+        .path
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_lowercase();
+    let trail = entry.trail.to_lowercase();
+    let mut matched = 0;
+    let mut score = 0;
+    for word in query {
+        // the word, else its stem (the query's only: the entries are matched by prefix and containment)
+        let forms = word_forms(word);
+        let own = forms
+            .iter()
+            .map(|form| word_weight(form, &title_words, &name, &trail))
+            .max()
+            .unwrap_or(0);
+        let alias = forms
+            .iter()
+            .flat_map(|form| index.alias_words(form))
+            .map(|alias| word_weight(&alias, &title_words, &name, &trail) / 2)
+            .max()
+            .unwrap_or(0);
+        let weight = own.max(alias);
+        if weight > 0 {
+            matched += 1;
+            score += weight;
+        }
+    }
+    if entry.title.to_lowercase().contains(phrase) {
+        score += 200;
+    }
+    (matched, score)
+}
+
 crate::submit_tool!(Search);
 
 #[cfg(test)]
@@ -329,6 +361,27 @@ mod tests {
             trail: trail.to_string(),
             path: path.to_string(),
         }
+    }
+
+    #[test]
+    /// A word no screen has (a name, "metrics") hides nothing: with no screen that has every word, the closest are
+    /// those with the most words, at least half; a query that every-word ranking answers has no closest.
+    fn the_closest_screens_have_the_most_words_when_none_has_all() {
+        let entries = vec![
+            entry("User Accounts", "System › Security", "/apps/system/Security/UserAccount"),
+            entry("Artifacts", "System › Monitor", "/apps/system/Monitor/Artifacts"),
+            entry("Artifact Groups", "System › Security", "/apps/system/Security/ArtifactGroup"),
+            entry("Customers", "Sales", "/apps/sales/Party"),
+        ];
+        let index = SkillIndex::default();
+        assert!(rank(&entries, "user accounts john", &index).is_empty());
+        let near = closest(&entries, "user accounts john", &index);
+        assert_eq!(near.len(), 1, "{near:?}");
+        assert_eq!(near[0].path, "/apps/system/Security/UserAccount");
+        let artifacts = closest(&entries, "artifact metrics", &index);
+        assert_eq!(artifacts.len(), 2, "{artifacts:?}");
+        assert!(closest(&entries, "the john smith", &index).is_empty(), "one word of three is not half");
+        assert!(closest(&entries, "user accounts", &index).is_empty(), "every word matched: rank answers");
     }
 
     #[test]

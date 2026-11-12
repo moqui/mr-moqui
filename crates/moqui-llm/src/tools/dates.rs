@@ -103,6 +103,33 @@ pub fn resolve(phrase: &str, now: &Zoned, week_start: Weekday, end: bool) -> Opt
     Some(day(if at_end { last } else { first }, at_end))
 }
 
+/// The span a date phrase names as a whole, for a date field given it with no comparison: `last 7 days` (or `past`,
+/// in days, weeks, months or years) from that long before `now` to `now`; a day (`2026-11-04`, `yesterday`, `3 days
+/// ago`) or a period (`last week`, `this month`) from its first moment to its last. `None` for a moment (`now`, `start
+/// of last week`) or text that is no date, which stay a value to match.
+pub fn range(phrase: &str, now: &Zoned, week_start: Weekday) -> Option<(String, String)> {
+    let lower = phrase.trim().to_ascii_lowercase();
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    if let ["last" | "past", count, unit] = words.as_slice() {
+        let count: i64 = count.parse().ok()?;
+        let from = shift(now.date(), unit, -count)?;
+        let from = from.to_datetime(now.time());
+        return Some((
+            from.strftime("%Y-%m-%d %H:%M").to_string(),
+            now.strftime("%Y-%m-%d %H:%M").to_string(),
+        ));
+    }
+    if let Ok(day) = lower.parse::<Date>() {
+        return Some((
+            format!("{} 00:00", day.strftime("%Y-%m-%d")),
+            format!("{} 23:59:59", day.strftime("%Y-%m-%d")),
+        ));
+    }
+    let first = resolve(phrase, now, week_start, false)?;
+    let last = resolve(phrase, now, week_start, true)?;
+    (first != last && first.ends_with(" 00:00") && last.ends_with(" 23:59:59")).then_some((first, last))
+}
+
 /// `date` moved by `count` of `unit` (day, week, month, year).
 fn shift(date: Date, unit: &str, count: i64) -> Option<Date> {
     let span = match unit.trim_end_matches('s') {
@@ -152,6 +179,21 @@ mod tests {
     fn now() -> Zoned {
         // a Wednesday
         "2026-10-21T14:30:00[America/Los_Angeles]".parse().unwrap()
+    }
+
+    #[test]
+    fn a_whole_span_is_a_range_and_a_moment_is_not() {
+        let now = now();
+        let monday = Weekday::Monday;
+        let range = |phrase: &str| super::range(phrase, &now, monday).map(|(from, thru)| format!("{from} – {thru}"));
+        assert_eq!(range("last 7 days").unwrap(), "2026-10-14 14:30 – 2026-10-21 14:30");
+        assert_eq!(range("past 2 weeks").unwrap(), "2026-10-07 14:30 – 2026-10-21 14:30");
+        assert_eq!(range("2026-11-04").unwrap(), "2026-11-04 00:00 – 2026-11-04 23:59:59");
+        assert_eq!(range("yesterday").unwrap(), "2026-10-20 00:00 – 2026-10-20 23:59:59");
+        assert_eq!(range("last month").unwrap(), "2026-09-01 00:00 – 2026-09-30 23:59:59");
+        assert_eq!(range("now"), None);
+        assert_eq!(range("start of last week"), None);
+        assert_eq!(range("Open"), None);
     }
 
     #[test]

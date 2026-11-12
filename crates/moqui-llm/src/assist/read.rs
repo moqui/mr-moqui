@@ -448,7 +448,14 @@ pub(super) fn question_card(row: &EntityValue, budget: bool) -> Json {
         "fields": json_of("schemaJson").as_array().cloned().unwrap_or_default(),
         "freeText": !budget,
         "kind": if budget { "budget" } else { "ask" },
-        "status": text_of(row, "statusId"),
+        // the drawer's word, as a live question.asked has it: a card shows while it is open
+        "status": text_of(row, "statusId").map(|status| match status.as_str() {
+            "AgqOpen" => "open",
+            "AgqAnswered" => "answered",
+            "AgqExpired" => "expired",
+            "AgqCanceled" => "canceled",
+            _ => "unknown",
+        }),
         "createdDate": millis(row, "createdDate"),
         "expiresAt": millis(row, "expireDate"),
     })

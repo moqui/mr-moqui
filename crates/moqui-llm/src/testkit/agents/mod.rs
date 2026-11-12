@@ -236,6 +236,7 @@ fn run_spec(
         if let Some(target) = target {
             let reasoning = profile::feature_reasoning(factory, &feature);
             rows.bind(factory, &feature, &target.model_id, reasoning.as_str())?;
+            rows.lift_quota(factory)?;
         }
         if let Err(error) = spec::phase(None, "setup") {
             fail_all(format!("the spec's setup failed: {error}"), on_result);

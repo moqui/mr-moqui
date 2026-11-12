@@ -308,6 +308,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
 | `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
 | `llm_openai_url`, `llm_openai_api_key`, `llm_openai_model` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
+| `llm_anthropic_api_key`, `llm_dev_model` | empty, `default` | Dev conf only: the Claude API key of its `claude-haiku` model (Claude Haiku 5.5), and the model id its features (Assist, titles, summaries, classify, AI fields) are bound to; `llm_dev_model=claude-haiku` in `runtime/.env` puts Assist on Claude. The startup report's LLM line names the model Assist is on |
 
 The database properties are in [Database and search](#database-and-search), and the cluster properties in
 [Cluster](#cluster).

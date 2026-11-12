@@ -700,6 +700,66 @@ fn redaction_takes_secret_keys_and_token_shaped_words() {
     assert_eq!(usage::redact("key sk-0123456789abcdefghijkl.", &[]), "key [redacted].");
 }
 
+/// A token quota counts the prompt read from the cache as a tenth: a conversation's cached prefix, read on every step,
+/// does not spend the day's quota as if it were new.
+#[test]
+fn cached_prompt_tokens_count_a_tenth_against_a_token_quota() {
+    let usage = Usage {
+        input: 10_000,
+        cached_input: 9_000,
+        output: 200,
+        ..Usage::default()
+    };
+    assert_eq!(usage.quota_tokens(), 1_000 + 900 + 200);
+    assert_eq!(usage.total(), 10_200, "the total stays the whole prompt and the output");
+    let odd = Usage { input: 5, cached_input: 5, ..Usage::default() };
+    assert_eq!(odd.quota_tokens(), 1, "a part of a token counts as one");
+
+    let facade = facade();
+    let conf = LlmConf::from_conf_text(CONF).unwrap();
+    let now = jiff::Timestamp::now().as_millisecond();
+    let prices = conf.model("hosted-sonnet").unwrap().prices.clone();
+    // 2,200 tokens of prompt and output, 2,000 of the prompt cached: 200 + 200 + 200 = 600 of the conf's 1000
+    usage::record_call(
+        &facade,
+        &conf.content_log,
+        &prices,
+        &call(
+            "U_CACHED",
+            "hosted-sonnet",
+            CallSource::Agent,
+            now - 10,
+            Usage {
+                input: 2_000,
+                cached_input: 2_000,
+                output: 200,
+                ..Usage::default()
+            },
+        ),
+    )
+    .unwrap();
+    usage::record_call(
+        &facade,
+        &conf.content_log,
+        &prices,
+        &call(
+            "U_CACHED",
+            "hosted-sonnet",
+            CallSource::Agent,
+            now - 5,
+            Usage {
+                input: 200,
+                output: 0,
+                ..Usage::default()
+            },
+        ),
+    )
+    .unwrap();
+    let status = usage::check_quota(&facade, &conf.limits, "U_CACHED", "all", now).unwrap();
+    assert!(status.is_within(), "{:?}", status.exceeded);
+    assert_eq!(status.used.counted_tokens(), 600);
+}
+
 #[test]
 fn the_quota_is_the_users_row_else_the_largest_group_row_else_the_conf() {
     let facade = facade();

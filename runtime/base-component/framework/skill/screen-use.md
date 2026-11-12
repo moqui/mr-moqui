@@ -25,9 +25,10 @@ in `[[ ]]`, then `--- ok` or `--- error` and why. Use the paths, labels and ids 
 - Elements marked `[needs approval]` write; pressing one asks the user (see the `approvals` skill).
 
 ## Lists
-- `find` moves to text on the screen, a list row's included; `do` on a row's link opens the record.
-- To filter: `do Find` opens the list's find fields, `set` them, then `do Find` again. Each find field has its own
-  operator; an empty field adds nothing.
+- `do` with a row's text (its id, say) opens that row's record; `find` only moves to text, a list row's included.
+- To filter: `set` the list's find fields (its find opens by itself), then `do Find`, in one call:
+  `set={"Username": "john%"}, do="Find"`. `john%` begins with john, `%acme%` contains acme, other text is the field's
+  own operator. An empty field adds nothing.
 - A list shows a page of rows with `(showing 25 of 312)`; page on before you say something is not there, or count and
   total with `data` instead (see `data-reads`).
 - `rows` (at most 100) shows more of a long screen.
