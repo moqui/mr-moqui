@@ -131,3 +131,33 @@ feature("entity values chain, lists change in place and conditions join, as in J
         seen.gone;
     }
 });
+
+feature("a direct-only notification goes to its named users alone, never to a subscriber of the whole topic", {
+    when() {
+        seen = {};
+        const authzOff = ec.artifactExecution.disableAuthz();
+        const began = ec.transaction.begin(null);
+        try {
+            // john.doe subscribes to every message of the topic, as a Tools user can
+            ec.entity.makeValue("moqui.security.user.NotificationTopicUser")
+                .setAll({ topic: "EcApiDirectOnly", userId: "EX_JOHN_DOE", allNotifications: "Y" }).create();
+            const sent = (direct) => {
+                const note = ec.makeNotificationMessage().topic("EcApiDirectOnly").userId("EC_API_NAMED")
+                    .message({ n: 1 }).title("Named").persistOnSend(false);
+                if (direct !== undefined) direct === null ? note.directOnly() : note.directOnly(direct);
+                return note.send().getNotifyUserIds().slice().sort().join();
+            };
+            seen.open = sent(undefined);
+            seen.direct = sent(null);
+            seen.directFalse = sent(false);
+        } finally {
+            ec.transaction.rollback(began, "EcApi spec leaves no rows", null);
+        }
+        if (!authzOff) ec.artifactExecution.enableAuthz();
+    },
+    then() {
+        seen.open === "EC_API_NAMED,EX_JOHN_DOE";
+        seen.direct === "EC_API_NAMED";
+        seen.directFalse === "EC_API_NAMED,EX_JOHN_DOE";
+    }
+});
