@@ -820,6 +820,7 @@ pub(super) fn force_new<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<
 /// [`force_new`] as a transaction-cache frame (plans/archive/TX-Cache.md): its writes go to the database at the commit, in one
 /// batch, and a row it read or wrote is not read again. For a message stored with its attachments and labels, and the
 /// change rows every one of those writes makes for the users who keep a cursor.
+#[cfg(feature = "imap")]
 pub(super) fn force_cache<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, LibError>) -> Result<T, LibError> {
     let tx = facade.transactions_for(MESSAGE)?;
     tx.run(TransactionAttribute::ForceCache, None, body)
@@ -1567,6 +1568,8 @@ fn own_listener(server: &EntityValue) -> bool {
 /// What an SMTP session sends: a message lettre formats, or one formatted already (DKIM-signed, a built notice).
 enum Payload {
     Message(lettre::Message),
+    /// Built only by the inbound half: a DKIM-signed message, a delivery notice.
+    #[cfg(feature = "imap")]
     Raw(lettre::address::Envelope, Vec<u8>),
 }
 
@@ -1574,6 +1577,7 @@ impl Payload {
     fn send(&self, transport: &lettre::SmtpTransport) -> Result<(), lettre::transport::smtp::Error> {
         match self {
             Self::Message(message) => lettre::Transport::send(transport, message).map(|_| ()),
+            #[cfg(feature = "imap")]
             Self::Raw(envelope, raw) => lettre::Transport::send_raw(transport, envelope, raw).map(|_| ()),
         }
     }
@@ -1589,17 +1593,17 @@ thread_local! {
 }
 
 /// A shorter SMTP session limit for the sends of this thread while the guard lives.
-#[cfg(test)]
+#[cfg(all(test, feature = "imap"))]
 pub(crate) struct SessionLimitGuard(Option<Duration>);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "imap"))]
 impl SessionLimitGuard {
     pub(crate) fn set(limit: Duration) -> Self {
         Self(SESSION_LIMIT.with(|slot| slot.replace(Some(limit))))
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "imap"))]
 impl Drop for SessionLimitGuard {
     fn drop(&mut self) {
         SESSION_LIMIT.with(|slot| slot.set(self.0));
