@@ -102,8 +102,8 @@ along with this software (see the LICENSE.md file). If not, see
             authenticate="false" transaction="ignore">
         <description>
             Live backup of each embedded Postgres cluster this process runs, then the retention ladder, then an
-            optional SFTP mirror of the archives that remain. The schedule is the ServiceJob cron.
-            See plans/PostgresBackup.md.
+            optional mirror of the archives that remain to the systemMessageRemoteId's sendUrl, over SFTP or to S3,
+            plain or encrypted to an age recipient. The schedule is the ServiceJob cron. See docs/Run-Deploy.md#backups.
         </description>
         <in-parameters>
             <parameter name="dailyCount" type="Integer" default="7"/>
@@ -113,9 +113,19 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="backupMode" type="String" default="dump"/>
             <parameter name="backupDir" type="String"/>
             <parameter name="fullEvery" type="Integer" default="7"/>
+            <parameter name="chainIncrementals" type="Boolean" default="false">
+                <description>In incremental mode, take each incremental from the archive before it rather than from the
+                    full: the smallest archives to keep and send; a restore combines the whole chain.</description></parameter>
             <parameter name="fastCheckpoint" type="Boolean" default="false"/>
             <parameter name="timeoutMinutes" type="Integer" default="120"/>
             <parameter name="systemMessageRemoteId" type="String"/>
+            <parameter name="mirrorTransport" type="String">
+                <description>sftp or s3; empty is s3 for a sendUrl of s3://bucket, else sftp.</description></parameter>
+            <parameter name="mirrorEncrypt" type="Boolean" default="false">
+                <description>Seal each archive to mirrorRecipient (age format) before it leaves the host; S3 and SFTP
+                    both. Restore with age -d and the matching identity, which the host does not hold.</description></parameter>
+            <parameter name="mirrorRecipient" type="String">
+                <description>The age recipient (age1..., as age-keygen prints) when mirrorEncrypt is on.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="archivePath" type="String"/>

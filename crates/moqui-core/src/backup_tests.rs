@@ -27,6 +27,7 @@ fn counts(daily: u32, weekly: u32, monthly: u32, yearly: Option<u32>) -> BackupR
         monthly,
         yearly,
         full_every: 7,
+        chain_incrementals: false,
         fast_checkpoint: false,
         timeout: Duration::from_secs(60),
     }
@@ -140,7 +141,7 @@ fn the_mirror_renames_then_uploads_then_drops_archives_it_does_not_own() {
         "moqui-20260311T020000Z-d.dump".to_string(),
         "moqui-20260311T020000Z-w.dump".to_string(),
     )];
-    let plan = mirror_plan(&keep, &remote, &renames, is_archive_name);
+    let plan = mirror_plan(&keep, &remote, &renames, &[], is_archive_name);
     assert_eq!(plan.renames, renames);
     assert_eq!(plan.uploads, vec!["moqui-20260318T020000Z-d.dump".to_string()]);
     assert_eq!(plan.deletes, vec!["moqui-20200101T000000Z-d.dump".to_string()]);
@@ -157,10 +158,45 @@ fn a_remote_name_already_promoted_is_not_renamed_again() {
         "moqui-20260311T020000Z-d.dump".to_string(),
         "moqui-20260311T020000Z-w.dump".to_string(),
     )];
-    let plan = mirror_plan(&keep, &remote, &renames, is_archive_name);
+    let plan = mirror_plan(&keep, &remote, &renames, &[], is_archive_name);
     assert!(plan.renames.is_empty());
     assert!(plan.uploads.is_empty());
     assert_eq!(plan.deletes, vec!["moqui-20260311T020000Z-d.dump".to_string()]);
+}
+
+/// An incremental whose parent was promoted has a new sidecar: the remote copy is sent again, after the renames, by
+/// its new name. One the remote lacks is an upload, and one no longer kept is not sent.
+#[test]
+fn a_kept_incremental_whose_parent_was_renamed_is_sent_again() {
+    let keep = vec![
+        "moqui-20261102T020000Z-w".to_string(),
+        "moqui-20261103T020000Z-w".to_string(),
+        "moqui-20261110T020000Z-d".to_string(),
+    ];
+    let remote = vec![
+        "moqui-20261102T020000Z-d".to_string(),
+        "moqui-20261103T020000Z-d".to_string(),
+    ];
+    let renames = vec![
+        (
+            "moqui-20261102T020000Z-d".to_string(),
+            "moqui-20261102T020000Z-w".to_string(),
+        ),
+        (
+            "moqui-20261103T020000Z-d".to_string(),
+            "moqui-20261103T020000Z-w".to_string(),
+        ),
+    ];
+    let rewritten = vec![
+        "moqui-20261103T020000Z-w".to_string(),
+        "moqui-20261110T020000Z-d".to_string(),
+        "moqui-20261001T020000Z-d".to_string(),
+    ];
+    let plan = mirror_plan(&keep, &remote, &renames, &rewritten, is_archive_name);
+    assert_eq!(plan.renames, renames);
+    assert_eq!(plan.uploads, vec!["moqui-20261110T020000Z-d".to_string()]);
+    assert_eq!(plan.resends, vec!["moqui-20261103T020000Z-w".to_string()]);
+    assert!(plan.deletes.is_empty());
 }
 
 #[test]

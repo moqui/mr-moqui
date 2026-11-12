@@ -47,6 +47,9 @@ pub struct BackupRequest {
     pub yearly: Option<u32>,
     /// Incrementals in one generation before the next one is a full. The full counts as one.
     pub full_every: u32,
+    /// Take each incremental from the archive before it, not from the generation's full: the smallest archives, and a
+    /// restore combines the full with every incremental up to the one restored.
+    pub chain_incrementals: bool,
     /// `pg_basebackup --checkpoint=fast`: the backup starts after an immediate checkpoint, not the server's spread one,
     /// which can take minutes on an idle server. Off by default, so a scheduled backup does not add an I/O burst.
     pub fast_checkpoint: bool,
@@ -73,8 +76,14 @@ pub struct BackupOutcome {
     pub keep: Vec<KeptArchive>,
     /// Net renames from this run, old name to new name, for the remote mirror.
     pub renames: Vec<(String, String)>,
+    /// Kept incrementals whose [`SIDECAR`] this run rewrote because their parent was renamed, by their names after
+    /// the run. The mirror sends them again, so a remote copy names its parent as it is now called.
+    pub rewritten: Vec<String>,
     pub errors: Vec<String>,
 }
+
+/// The file in a physical backup directory that names its kind and, for an incremental, its parent archive.
+pub const SIDECAR: &str = "moqui-backup.txt";
 
 /// The host's backup. Core calls it and does not start a postmaster itself.
 pub type BackupRunner = Arc<dyn Fn(&BackupRequest) -> Result<BackupOutcome, Error> + Send + Sync>;
@@ -159,11 +168,13 @@ pub struct RetainPlan {
     pub parent_updates: Vec<(String, String)>,
 }
 
-/// What the mirror should do, in that order: rename, upload, then delete.
+/// What the mirror should do, in that order: rename, upload, then delete. `resends` are archives the remote has
+/// whose [`SIDECAR`] changed: a store sends the archive again, plain SFTP only its sidecar.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MirrorPlan {
     pub renames: Vec<(String, String)>,
     pub uploads: Vec<String>,
+    pub resends: Vec<String>,
     pub deletes: Vec<String>,
 }
 
@@ -267,13 +278,14 @@ pub fn retain(archives: &[ArchiveIn], now: Timestamp, zone: &TimeZone, counts: &
     plan
 }
 
-/// Remote names against the local keep set. `renames` are this run's promotions. A remote name that
-/// is not an archive is left in place.
+/// Remote names against the local keep set. `renames` are this run's promotions and `rewritten` the kept archives
+/// whose sidecar this run changed. A remote name that is not an archive is left in place.
 #[must_use]
 pub fn mirror_plan(
     keep: &[String],
     remote: &[String],
     renames: &[(String, String)],
+    rewritten: &[String],
     is_archive: impl Fn(&str) -> bool,
 ) -> MirrorPlan {
     let keep_set: HashSet<&str> = keep.iter().map(String::as_str).collect();
@@ -293,6 +305,14 @@ pub fn mirror_plan(
         .collect();
     uploads.sort();
     plan.uploads = uploads;
+    let mut resends: Vec<String> = rewritten
+        .iter()
+        .filter(|name| keep_set.contains(name.as_str()) && remote_set.contains(*name))
+        .cloned()
+        .collect();
+    resends.sort();
+    resends.dedup();
+    plan.resends = resends;
     let mut deletes: Vec<String> = remote_set
         .into_iter()
         .filter(|name| is_archive(name) && !keep_set.contains(name.as_str()))

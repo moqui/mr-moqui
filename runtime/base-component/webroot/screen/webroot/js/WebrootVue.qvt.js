@@ -2303,7 +2303,7 @@
             '<q-form v-if="!formList || (formList.paginate && formList.paginate.pageMaxIndex > 4)" @submit.prevent="goPage" class="q-mx-xs">' +
                 '<q-input dense outlined hide-bottom-space v-model="pageIndex" type="text" name="pageIndex" placeholder="Page #" style="width:96px;" input-class="text-center"' +
                     ' :rules="[val => /^\\d*$/.test(val) || \'digits only\', val => !val || ((formList && +val <= formList.paginate.pageMaxIndex + 1) || (maxIndex && +val <= maxIndex + 1)) || \'higher than max\']">' +
-                    '<template v-slot:append><q-btn flat round dense size="sm" type="submit" icon="arrow_forward"></q-btn></template>' +
+                    '<template v-slot:append><q-btn flat round dense size="sm" type="submit" icon="arrow_forward" aria-label="Go to page"></q-btn></template>' +
                 '</q-input>' +
             '</q-form>',
         methods: {
@@ -3346,7 +3346,7 @@
             '<div v-else-if="editorType === \'md\'" class="m-text-area-editor">' +
                 '<q-input type="textarea" dense outlined stack-label hide-bottom-space :label="label" :model-value="local" @update:model-value="onInput" :name="name" :for="id" :rows="rows"' +
                     ' :readonly="readonly" :disable="disable" :form="form" :bg-color="bg" autogrow v-bind="errorAttrs">' +
-                    '<template v-slot:after><q-btn flat round dense size="sm" :icon="preview ? \'edit\' : \'visibility\'" @click="togglePreview"><q-tooltip>Preview</q-tooltip></q-btn></template>' +
+                    '<template v-slot:after><q-btn flat round dense size="sm" :icon="preview ? \'edit\' : \'visibility\'" :aria-label="preview ? \'Edit\' : \'Preview\'" :aria-pressed="preview ? \'true\' : \'false\'" @click="togglePreview"><q-tooltip>{{preview ? \'Edit\' : \'Preview\'}}</q-tooltip></q-btn></template>' +
                 '</q-input>' +
                 '<div v-if="preview" class="q-pa-sm markdown-preview" v-html="previewHtml"></div>' +
             '</div>' +
@@ -6083,8 +6083,8 @@
                     '<div class="m-calendar-bar row items-center no-wrap">' +
                         '<q-btn unelevated dense no-caps class="m-btn-tonal q-px-sm" :label="labels.today" @click="goToday"></q-btn>' +
                         '<template v-if="calMode !== \'list\'">' +
-                            '<q-btn flat dense round icon="chevron_left" class="m-cal-prev" @click="shift(-1)"><q-tooltip>{{labels.previous}}</q-tooltip></q-btn>' +
-                            '<q-btn flat dense round icon="chevron_right" class="m-cal-next" @click="shift(1)"><q-tooltip>{{labels.next}}</q-tooltip></q-btn>' +
+                            '<q-btn flat dense round icon="chevron_left" class="m-cal-prev" :aria-label="labels.previous" @click="shift(-1)"><q-tooltip>{{labels.previous}}</q-tooltip></q-btn>' +
+                            '<q-btn flat dense round icon="chevron_right" class="m-cal-next" :aria-label="labels.next" @click="shift(1)"><q-tooltip>{{labels.next}}</q-tooltip></q-btn>' +
                         '</template>' +
                         '<div class="m-calendar-title ellipsis q-ml-sm" :class="phone ? \'text-subtitle1 text-weight-medium\' : \'text-h6\'">{{rangeTitle}}</div>' +
                         '<q-space></q-space>' +
@@ -6185,7 +6185,7 @@
                     '<div class="m-peek-bar row items-center no-wrap">' +
                         '<q-space></q-space>' +
                         '<q-btn v-if="peekKey" flat dense no-caps icon="sym_o_open_in_full" class="m-peek-full" :label="labels.openFull" @click="openFull"></q-btn>' +
-                        '<q-btn flat dense round icon="sym_o_close" class="m-peek-close" @click="peekSelect(\'\')"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
+                        '<q-btn flat dense round icon="sym_o_close" class="m-peek-close" :aria-label="labels.close" @click="peekSelect(\'\')"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
                     '</div>' +
                     '<m-dynamic-container v-if="peekSrc" :key="peekSrc" :id="uid + \'_peek\'" :url="peekSrc"></m-dynamic-container>' +
                     '<div v-else class="m-peek-empty m-muted q-pa-md">{{labels.peekEmpty}}</div>' +

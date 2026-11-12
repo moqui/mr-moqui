@@ -506,7 +506,7 @@
             <tr :class="{ 'm-muted': parameter.implied }"><td class="m-dev-mono">{{parameter.name}}<span v-if="parameter.implied" class="q-ml-xs text-caption">(auto)</span></td>
               <td>{{parameter.type}}</td><td>{{parameter.required === 'true' ? 'yes' : ''}}</td><td>{{parameter.default || ''}}</td>
               <td class="text-caption">{{parameter.checks.length || ''}}</td><td class="ellipsis" style="max-width: 18rem">{{parameter.description || ''}}</td>
-              <td><q-btn v-if="!parameter.implied" dense flat round size="xs" icon="delete" :disable="!canEdit" @click="removeParameter(which + '-parameters', parameter.name)"></q-btn></td></tr>
+              <td><q-btn v-if="!parameter.implied" dense flat round size="xs" icon="delete" :aria-label="'Remove ' + parameter.name" :disable="!canEdit" @click="removeParameter(which + '-parameters', parameter.name)"><q-tooltip>Remove parameter</q-tooltip></q-btn></td></tr>
             <tr v-for="child in parameter.children" :key="parameter.name + '.' + child.name"><td class="m-dev-mono q-pl-lg">{{child.name}}</td><td>{{child.type}}</td><td>{{child.required === 'true' ? 'yes' : ''}}</td><td></td><td></td><td>{{child.description || ''}}</td><td></td></tr>
           </template></tbody></table></div>
       </div>
@@ -658,16 +658,16 @@
 <div class="m-dev-eca-view row no-wrap q-pa-sm" id="DevEcaView">
   <div class="m-dev-eca-rules q-pr-sm">
     <div class="row items-center"><span class="text-subtitle2">Rules {{rules.length}}</span><q-space></q-space>
-      <q-btn dense flat round size="sm" icon="add" :disable="!canEdit" @click="addRule"><q-tooltip>Add a rule</q-tooltip></q-btn></div>
+      <q-btn dense flat round size="sm" icon="add" aria-label="Add a rule" :disable="!canEdit" @click="addRule"><q-tooltip>Add a rule</q-tooltip></q-btn></div>
     <q-list dense><q-item v-for="node in rules" :key="node.path.join('.')" clickable :active="rule === node" @click="selected = node.path">
       <q-item-section><q-item-label class="ellipsis">{{labelOf(node)}}</q-item-label><q-item-label caption>line {{node.line}}</q-item-label></q-item-section></q-item></q-list>
     <div v-if="!rules.length" class="m-muted text-caption">No rules yet.</div>
   </div>
   <div class="col" v-if="rule">
     <div class="row items-center q-gutter-x-xs"><span class="text-subtitle2">{{labelOf(rule)}}</span><q-space></q-space>
-      <q-btn dense flat round size="sm" icon="arrow_upward" :disable="!canEdit" @click="moveRule(-1)"></q-btn>
-      <q-btn dense flat round size="sm" icon="arrow_downward" :disable="!canEdit" @click="moveRule(1)"></q-btn>
-      <q-btn dense flat round size="sm" icon="delete" :disable="!canEdit" @click="removeRule"></q-btn></div>
+      <q-btn dense flat round size="sm" icon="arrow_upward" aria-label="Move rule up" :disable="!canEdit" @click="moveRule(-1)"><q-tooltip>Move up</q-tooltip></q-btn>
+      <q-btn dense flat round size="sm" icon="arrow_downward" aria-label="Move rule down" :disable="!canEdit" @click="moveRule(1)"><q-tooltip>Move down</q-tooltip></q-btn>
+      <q-btn dense flat round size="sm" icon="delete" aria-label="Remove rule" :disable="!canEdit" @click="removeRule"><q-tooltip>Remove rule</q-tooltip></q-btn></div>
     <div class="row q-col-gutter-sm q-mb-sm" v-if="spec">
       <div v-for="attribute in spec.attributes" :key="attribute.name" class="col-6 col-md-4">
         <select v-if="attribute.values && attribute.values.length" class="m-dev-cell m-dev-prop" :disabled="!canEdit" :value="pure.attr(rule, attribute.name) || ''" @change="setAttr(attribute.name, $event.target.value)">

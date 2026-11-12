@@ -325,8 +325,8 @@
         <q-input dense outlined autogrow v-model="tagText" label="Opening tag" class="m-dev-mono" :disable="!canEdit" @keyup.ctrl.enter="applyTag" id="DevQvueTag"></q-input>
         <div class="row q-gutter-xs q-mt-xs">
           <q-btn dense flat no-caps size="sm" label="Apply tag" :disable="!canEdit" @click="applyTag"></q-btn>
-          <q-btn dense flat no-caps size="sm" icon="arrow_upward" :disable="!canEdit" @click="act('up')"><q-tooltip>Move up</q-tooltip></q-btn>
-          <q-btn dense flat no-caps size="sm" icon="arrow_downward" :disable="!canEdit" @click="act('down')"><q-tooltip>Move down</q-tooltip></q-btn>
+          <q-btn dense flat no-caps size="sm" icon="arrow_upward" aria-label="Move up" :disable="!canEdit" @click="act('up')"><q-tooltip>Move up</q-tooltip></q-btn>
+          <q-btn dense flat no-caps size="sm" icon="arrow_downward" aria-label="Move down" :disable="!canEdit" @click="act('down')"><q-tooltip>Move down</q-tooltip></q-btn>
           <q-btn dense flat no-caps size="sm" label="Remove" :disable="!canEdit" @click="act('remove')" id="DevQvueRemove"></q-btn>
           <q-btn dense flat no-caps size="sm" label="Open in Text" @click="openInText"></q-btn>
         </div>

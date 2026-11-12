@@ -947,13 +947,17 @@ pub fn lint(paths: &[PathBuf]) -> Result<Vec<String>, Error> {
 /// Returns an error when a file cannot be read.
 pub fn check(paths: &[PathBuf]) -> Result<Vec<String>, Error> {
     if paths.is_empty() {
-        return Ok(build(&configured_paths()?)?.failures);
+        let registry = build(&configured_paths()?)?;
+        let mut failures = registry.failures;
+        failures.extend(comment_failures(&registry.loaded.files));
+        return Ok(failures);
     }
     // The files given, then the files of the services they implement, found by name as a server finds them (an
     // interface of another file, such as the framework's EmailServices.xml): only the failures of the given files'
     // services, and of the files themselves, are theirs to report.
     let mut registry = build(paths)?;
     let own = registry.failures.clone();
+    let comments = comment_failures(&registry.loaded.files);
     let names: Vec<String> = registry
         .loaded
         .defined
@@ -968,7 +972,28 @@ pub fn check(paths: &[PathBuf]) -> Result<Vec<String>, Error> {
         .filter(|failure| {
             own.contains(failure) || names.iter().any(|name| failure.contains(&format!("service {name} ")))
         })
+        .chain(comments)
         .collect())
+}
+
+/// The comments of `files` that hold `--`, which this reader takes and other XML parsers refuse the file for
+/// ([`moqui_lib::node::malformed_comments`]), one failure per comment. A file that cannot be read again is skipped:
+/// reading it for the registry already reported it.
+fn comment_failures(files: &BTreeSet<PathBuf>) -> Vec<String> {
+    let mut failures = Vec::new();
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in moqui_lib::node::malformed_comments(&text) {
+            failures.push(format!(
+                "{}:{line} a comment holds `--` (or opens another `<!--` before it ends), which other XML parsers \
+                 refuse the file for",
+                path.display()
+            ));
+        }
+    }
+    failures
 }
 
 /// What [`reload`] changed for the service files it was given (plans/design-dev-aide.md 6.1, F3).

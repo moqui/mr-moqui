@@ -144,7 +144,7 @@ Found by grep for the screen paths; repeat the grep after the move. The componen
     stubs), and the new rows of §14.
   - `docs/security/Proof-Tests.md:57` and `:78` name the SQL Runner proof.
   - `plans/Monitoring.md:363` and `plans/archive/Profiling.md:12` and `:393` name `Tools/Entity/SpeedTest.xml`.
-  - `plans/UI-Refinement.md`'s screen inventory (lines 1652–1916) names the Tools screens.
+  - `plans/archive/UI-Refinement.md`'s screen inventory names the Tools screens.
 
 ## 3. Tools layout
 

@@ -549,12 +549,33 @@ in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 
 - **Modes**: `backupMode=dump`, the default, writes a `pg_dump` file of each database: `moqui-<stamp>-d.dump` and
   `moqui_content-<stamp>-d.dump`, with the same stamp. `incremental` takes `pg_basebackup` fulls and block
-  incrementals of the whole cluster, both databases in one copy.
-- **Mirror**: archives can be copied to an SFTP server. Set `sendUrl`, the user and a password or key on the
-  `EmbeddedDbBackup` system message remote.
+  incrementals of the whole cluster, both databases in one copy. Each incremental is taken from the generation's full;
+  with `chainIncrementals=true` it is taken from the archive before it, which holds only a day's changed blocks.
+- **Mirror**: set `systemMessageRemoteId` (the seed job's is `EmbeddedDbBackup`) and on that remote `sendUrl`, the
+  user, and a password or key. The remote directory or key prefix is its message type's `sendPath`. Only the archives
+  the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. An
+  incremental whose parent a promotion renamed is sent again (over plain SFTP only its `moqui-backup.txt`), so every
+  copy names its parent as it is now called. With `incremental` and `chainIncrementals`, a night sends one
+  incremental. Two job parameters shape it:
+  - `mirrorTransport`: `sftp` or `s3`. Empty picks `s3` for a `sendUrl` of `s3://<bucket>`, else `sftp`. For S3 add
+    `?region=<region>` (default `us-east-1`) and, for a store other than AWS (MinIO, R2, B2),
+    `&endpoint=https://<host>`; the username is the access key, the password the secret key.
+  - `mirrorEncrypt`: `true` seals each archive to `mirrorRecipient`, an [age](https://age-encryption.org) recipient
+    (`age1...`, from `age-keygen`), before it leaves the server, which holds no key that reads it; keep the identity
+    (`AGE-SECRET-KEY-1...`) off the server. Off by default.
+
+  | | plain | encrypted |
+  |---|---|---|
+  | `sftp` | files and directories as they are | `<name>.age`, `<name>.tar.gz.age` |
+  | `s3` | `<name>`, `<name>.tar.gz` | `<name>.age`, `<name>.tar.gz.age` |
+
+  A `.tar.gz` holds the backup directory's contents at the top. Changing `mirrorEncrypt` sends every archive again in
+  the new form and leaves the old-form objects alone.
 - **Restore**: restore a dump with `moqui load-save` while the server is stopped. It also restores the content dump
   of the same name beside it (`moqui_content-<stamp>-d.dump` for `moqui-<stamp>-d.dump`). A physical backup is put
-  together with `pg_combinebackup`.
+  together with `pg_combinebackup`: the full, then each incremental in order up to the one restored (each names its
+  parent in `moqui-backup.txt`). An encrypted archive is decrypted first: `age -d -i key.txt <name>.age > <name>`, or for a directory
+  `mkdir <name> && age -d -i key.txt <name>.tar.gz.age | tar xz -C <name>` (`tar xz` alone for a plain `.tar.gz`).
 - **Not included**: `.env` and the field-encryption key are not in the archive. Keep them with the backup.
 
 The details are in [plans/archive/PostgresBackup.md](../plans/archive/PostgresBackup.md). The job does not back up an

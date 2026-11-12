@@ -13,7 +13,10 @@
  */
 
 //! `backup#EmbeddedDatabase`. The host takes the local archive. This service mirrors it over SFTP when
-//! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`.
+//! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`. Two flags shape the mirror: `mirrorTransport`
+//! (`sftp` or `s3`, by default `s3` for an `s3://bucket` sendUrl) and `mirrorEncrypt` (each archive sealed to the age
+//! recipient `mirrorRecipient`). S3, and SFTP encrypted, send each archive as one object (`backup_store.rs`); SFTP
+//! plain copies files and directories as they are.
 //!
 //! Two properties let a deployment set the backup up without editing its job row (plans/archive/PostgresBackup.md):
 //! `embedded_db_backup_dir` is the archive directory when the call names no `backupDir`, and
@@ -72,6 +75,7 @@ pub(super) fn backup_embedded_database(
                 removed: Vec::new(),
                 keep: Vec::new(),
                 renames: Vec::new(),
+                rewritten: Vec::new(),
                 errors: Vec::new(),
             },
             "N",
@@ -83,7 +87,7 @@ pub(super) fn backup_embedded_database(
     let mirrored = if remote_id.is_empty() {
         "N".to_string()
     } else {
-        match mirror(facade, &remote_id, &outcome) {
+        match mirror_options(parameters).and_then(|options| mirror(facade, &remote_id, &options, &outcome)) {
             Ok(flag) => flag,
             Err(err) => {
                 outcome.errors.push(err.to_string());
@@ -116,9 +120,8 @@ fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {
         monthly: count_param(parameters, "monthlyCount", 12),
         yearly: optional_count(parameters, "yearlyCount"),
         full_every: count_param(parameters, "fullEvery", 7),
-        fast_checkpoint: parameters
-            .get("fastCheckpoint")
-            .is_some_and(|value| matches!(basic_convert(value, "Boolean").value, Value::Bool(true))),
+        chain_incrementals: flag_param(parameters, "chainIncrementals"),
+        fast_checkpoint: flag_param(parameters, "fastCheckpoint"),
         timeout: Duration::from_secs(u64::from(minutes) * 60),
     }
 }
@@ -169,7 +172,50 @@ pub(crate) fn apply_schedule_property(facade: &EntityFacade) {
     }
 }
 
-fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcome) -> Result<String, LibError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Transport {
+    Sftp,
+    S3,
+}
+
+/// How the archives are mirrored: the transport (none: by the sendUrl), and the age recipient when encrypted.
+#[derive(Debug, PartialEq, Eq)]
+struct MirrorOptions {
+    transport: Option<Transport>,
+    recipient: Option<String>,
+}
+
+fn mirror_options(parameters: &BTreeMap<String, Value>) -> Result<MirrorOptions, LibError> {
+    let transport = match param_text(parameters, "mirrorTransport")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" => None,
+        "sftp" => Some(Transport::Sftp),
+        "s3" => Some(Transport::S3),
+        other => return Err(LibError::new(format!("mirrorTransport is {other:?}; it is sftp or s3"))),
+    };
+    let recipient = param_text(parameters, "mirrorRecipient").trim().to_string();
+    let recipient = if flag_param(parameters, "mirrorEncrypt") {
+        if recipient.is_empty() {
+            return Err(LibError::new(
+                "mirrorEncrypt is on and mirrorRecipient is empty; set it to an age recipient (age1...)",
+            ));
+        }
+        Some(recipient)
+    } else {
+        None
+    };
+    Ok(MirrorOptions { transport, recipient })
+}
+
+fn mirror(
+    facade: &EntityFacade,
+    remote_id: &str,
+    options: &MirrorOptions,
+    outcome: &backup::BackupOutcome,
+) -> Result<String, LibError> {
     let Some(remote) = find_one(facade, REMOTE, "systemMessageRemoteId", remote_id)? else {
         return Err(LibError::new(format!("no SystemMessageRemote with id {remote_id}")));
     };
@@ -177,6 +223,21 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
     if send_url.is_empty() {
         tracing::info!("embedded database backup mirror is off, SystemMessageRemote {remote_id} has no sendUrl");
         return Ok("N".to_string());
+    }
+    let transport = options.transport.unwrap_or(if send_url.starts_with("s3://") {
+        Transport::S3
+    } else {
+        Transport::Sftp
+    });
+    if transport == Transport::S3 {
+        let send_path = send_path(facade, &remote, remote_id)?;
+        let s3 = super::backup_store::S3Remote {
+            send_url: &send_url,
+            access_key: &field(&remote, "username"),
+            secret_key: &field(&remote, "password"),
+            prefix: &send_path,
+        };
+        return super::backup_store::mirror_s3(&s3, options.recipient.as_deref(), outcome);
     }
     if field(&remote, "username").is_empty() {
         return Err(LibError::new(format!(
@@ -195,7 +256,23 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
             "SystemMessageRemote {remote_id} has a private key and no public key"
         )));
     }
-    let type_id = field(&remote, "systemMessageTypeId");
+    let send_path = send_path(facade, &remote, remote_id)?;
+    let mut client = client_for(&remote, &send_url, &private_key, &public_key)?;
+    if field(&remote, "remoteAttributes") == "N" {
+        client.preserve_attributes(false);
+    }
+    client.connect()?;
+    let mirrored = match &options.recipient {
+        Some(recipient) => super::backup_store::mirror_sftp_encrypted(&mut client, &send_path, recipient, outcome),
+        None => mirror_with(&mut client, &send_path, outcome),
+    };
+    client.close();
+    mirrored
+}
+
+/// The remote directory or key prefix of the mirror: its message type's `sendPath`.
+fn send_path(facade: &EntityFacade, remote: &EntityValue, remote_id: &str) -> Result<String, LibError> {
+    let type_id = field(remote, "systemMessageTypeId");
     let Some(message_type) = find_one(facade, MESSAGE_TYPE, "systemMessageTypeId", &type_id)? else {
         return Err(LibError::new(format!(
             "SystemMessageRemote {remote_id} has no SystemMessageType"
@@ -207,14 +284,7 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
             "SystemMessageType {type_id} has no sendPath for the backup mirror"
         )));
     }
-    let mut client = client_for(&remote, &send_url, &private_key, &public_key)?;
-    if field(&remote, "remoteAttributes") == "N" {
-        client.preserve_attributes(false);
-    }
-    client.connect()?;
-    let mirrored = mirror_with(&mut client, &send_path, outcome);
-    client.close();
-    mirrored
+    Ok(send_path)
 }
 
 fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::BackupOutcome) -> Result<String, LibError> {
@@ -231,7 +301,13 @@ fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::Backu
         .map(|(path, _)| path.rsplit('/').next().unwrap_or(path).to_string())
         .collect();
     let keep_names: Vec<String> = outcome.keep.iter().map(|kept| kept.name.clone()).collect();
-    let plan = backup::mirror_plan(&keep_names, &remote_names, &outcome.renames, backup::is_archive_name);
+    let plan = backup::mirror_plan(
+        &keep_names,
+        &remote_names,
+        &outcome.renames,
+        &outcome.rewritten,
+        backup::is_archive_name,
+    );
     let mut failed = false;
     for (old, new) in &plan.renames {
         let from = child(send_path, old);
@@ -253,6 +329,21 @@ fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::Backu
         };
         if let Err(err) = put {
             tracing::error!("backup mirror could not upload {name}: {err}");
+            failed = true;
+        }
+    }
+    // a directory as it is: only its sidecar changed
+    for name in &plan.resends {
+        let Some(kept) = outcome.keep.iter().find(|kept| &kept.name == name) else {
+            continue;
+        };
+        let local = kept.path.join(backup::SIDECAR);
+        if !local.is_file() {
+            continue;
+        }
+        let remote = child(&child(send_path, name), backup::SIDECAR);
+        if let Err(err) = client.put_file(&remote, &local) {
+            tracing::error!("backup mirror could not update {remote}: {err}");
             failed = true;
         }
     }
@@ -331,6 +422,12 @@ fn count_param(parameters: &BTreeMap<String, Value>, name: &str, default: u32) -
             _ => default,
         },
     }
+}
+
+fn flag_param(parameters: &BTreeMap<String, Value>, name: &str) -> bool {
+    parameters
+        .get(name)
+        .is_some_and(|value| matches!(basic_convert(value, "Boolean").value, Value::Bool(true)))
 }
 
 fn optional_count(parameters: &BTreeMap<String, Value>, name: &str) -> Option<u32> {

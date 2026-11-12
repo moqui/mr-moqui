@@ -19,6 +19,11 @@ pub(crate) mod rust_services;
 #[cfg(test)]
 mod anonymous_tests;
 pub(crate) mod backup;
+#[cfg(feature = "backup-s3")]
+mod backup_store;
+#[cfg(not(feature = "backup-s3"))]
+#[path = "backup_store_off.rs"]
+mod backup_store;
 pub mod call;
 mod call_media;
 mod chat;

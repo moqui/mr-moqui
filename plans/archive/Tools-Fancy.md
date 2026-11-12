@@ -538,7 +538,7 @@ Framework work: `./moq test-framework` before each commit.
   `docs/tools/Monitoring.md` ("The Monitor app" becomes a section of System without a grant of its own; "Monitor › X"
   stays the short name of its screens; a line under Upgrading), `docs/security/Attack-Surface.md` (the `MONITOR_APP`
   row folds into `SYSTEM_APP`; the routes), the four guides that name the old home routes, `docs/Run-Deploy.md` (the
-  `resource-watch` thresholds), `docs/ui/Qvt-Client.md` and the gallery for `nav-card`. `plans/UI-Refinement.md`'s
+  `resource-watch` thresholds), `docs/ui/Qvt-Client.md` and the gallery for `nav-card`. `plans/archive/UI-Refinement.md`'s
   inventory is a record of its time and stays.
 
 ## 8. Phases

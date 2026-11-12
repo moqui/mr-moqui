@@ -2,7 +2,7 @@
 
 Review applications through the work people do in them. A successful render is a prerequisite; the review also asks
 whether the next action is discoverable, the information is understandable, the result is clear, and the screen is
-comfortable to use. The first framework review is recorded in [UI-Refinement](../../plans/UI-Refinement.md).
+comfortable to use. The first framework review is recorded in [UI-Refinement](../../plans/archive/UI-Refinement.md).
 
 ## Prepare an isolated review
 

@@ -27,7 +27,7 @@ use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use moqui_core::backup::{
     archive_name, is_archive_name, parse_archive_name, retain, ArchiveIn, BackupMode, BackupOutcome, BackupRequest,
-    KeptArchive, RetainPlan, Tier,
+    KeptArchive, RetainPlan, Tier, SIDECAR,
 };
 use moqui_core::driver::DbConnection;
 use moqui_core::entity::EntityFacade;
@@ -38,8 +38,6 @@ use super::embedded::ToolTarget;
 use super::entity_db::EntityDb;
 use super::postgres::{PostgresConn, PostgresDriver};
 
-const SIDECAR: &str = "moqui-backup.txt";
-
 struct PrefixBackup {
     path: PathBuf,
     kind: String,
@@ -47,6 +45,7 @@ struct PrefixBackup {
     promoted: Vec<String>,
     removed: Vec<String>,
     renames: Vec<(String, String)>,
+    rewritten: Vec<String>,
 }
 
 struct IncrementalFrom {
@@ -92,6 +91,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
     let mut promoted = Vec::new();
     let mut removed = Vec::new();
     let mut renames = Vec::new();
+    let mut rewritten = Vec::new();
     let mut archive_path = PathBuf::new();
     let mut backup_kind = String::new();
     let mut copied: Vec<&Path> = Vec::new();
@@ -111,6 +111,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
                 promoted.extend(one.promoted);
                 removed.extend(one.removed);
                 renames.extend(one.renames);
+                rewritten.extend(one.rewritten);
                 if target.prefix == "moqui" || archive_path.as_os_str().is_empty() {
                     archive_path = one.path;
                     backup_kind = one.kind;
@@ -135,6 +136,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
         removed,
         keep,
         renames,
+        rewritten,
         errors,
     })
 }
@@ -151,12 +153,12 @@ fn backup_one(
         dump_one(dir, target, &name, request.timeout)?;
         "dump".to_string()
     } else {
-        let from = next_incremental(dir, target, request.full_every)?;
+        let from = next_incremental(dir, target, request.full_every, request.chain_incrementals)?;
         take_physical(dir, target, &name, from, request.fast_checkpoint, request.timeout)?
     };
     let archives = archives_for_retain(dir, &target.prefix);
     let plan = retain(&archives, stamp, &TimeZone::system(), request);
-    let (renames, removed) = apply_plan(dir, &plan);
+    let (renames, removed, rewritten) = apply_plan(dir, &plan);
     let path = published_path(dir, &name, &renames);
     let bytes = bytes_of(&path);
     let promoted = renames.iter().map(|(old, new)| format!("{old} -> {new}")).collect();
@@ -167,6 +169,7 @@ fn backup_one(
         promoted,
         removed,
         renames,
+        rewritten,
     })
 }
 
@@ -262,7 +265,12 @@ fn take_physical(
     Ok(kind.to_string())
 }
 
-fn next_incremental(dir: &Path, target: &ToolTarget, full_every: u32) -> Result<Option<IncrementalFrom>, Error> {
+fn next_incremental(
+    dir: &Path,
+    target: &ToolTarget,
+    full_every: u32,
+    chain: bool,
+) -> Result<Option<IncrementalFrom>, Error> {
     let shown = show_summarize_wal(target)?;
     if !shown.eq_ignore_ascii_case("on") {
         tracing::info!(
@@ -275,21 +283,41 @@ fn next_incremental(dir: &Path, target: &ToolTarget, full_every: u32) -> Result<
     let Some(full) = newest_full(&archives) else {
         return Ok(None);
     };
-    if generation_len(&archives, &full.name) >= full_every {
+    let generation = generation(&archives, &full.name);
+    if u32::try_from(generation.len()).unwrap_or(u32::MAX) >= full_every {
         tracing::info!(
             "the backup generation for {} holds {full_every} archives, so this one is a full",
             target.prefix
         );
         return Ok(None);
     }
-    let manifest = dir.join(&full.name).join("backup_manifest");
+    let parent = incremental_parent(&archives, full, &generation, chain);
+    let manifest = dir.join(&parent.name).join("backup_manifest");
     if !manifest.is_file() {
         return Ok(None);
     }
     Ok(Some(IncrementalFrom {
         manifest,
-        parent: full.name.clone(),
+        parent: parent.name.clone(),
     }))
+}
+
+/// What the next incremental is taken from: the generation's full, or with `chain` its newest archive, so each
+/// incremental holds only the blocks changed since the one before it.
+fn incremental_parent<'a>(
+    archives: &'a [Physical],
+    full: &'a Physical,
+    generation: &HashSet<String>,
+    chain: bool,
+) -> &'a Physical {
+    if !chain {
+        return full;
+    }
+    archives
+        .iter()
+        .filter(|item| generation.contains(&item.name))
+        .max_by_key(|item| item.stamp)
+        .unwrap_or(full)
 }
 
 fn show_summarize_wal(target: &ToolTarget) -> Result<String, Error> {
@@ -348,7 +376,8 @@ fn newest_full(archives: &[Physical]) -> Option<&Physical> {
     archives.iter().filter(|item| item.full).max_by_key(|item| item.stamp)
 }
 
-fn generation_len(archives: &[Physical], full_name: &str) -> u32 {
+/// The names of the full `full_name` and of every archive taken from it, directly or through another.
+fn generation(archives: &[Physical], full_name: &str) -> HashSet<String> {
     let mut reached = HashSet::new();
     reached.insert(full_name.to_string());
     loop {
@@ -364,7 +393,7 @@ fn generation_len(archives: &[Physical], full_name: &str) -> u32 {
             break;
         }
     }
-    u32::try_from(reached.len()).unwrap_or(u32::MAX)
+    reached
 }
 
 /// A stamp no archive of `prefixes` has yet: one for every target of a run, so the archives of one cluster's databases
@@ -426,7 +455,8 @@ fn scan_keep(dir: &Path) -> Vec<KeptArchive> {
     keep
 }
 
-fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<String>) {
+/// Renames, deletes and sidecar rewrites on disk. Returns what was renamed, removed and rewritten.
+fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
     let mut renames = Vec::new();
     for (old, new) in &plan.renames {
         if let Err(err) = std::fs::rename(dir.join(old), dir.join(new)) {
@@ -435,8 +465,11 @@ fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<Stri
         }
         renames.push((old.clone(), new.clone()));
     }
+    let mut rewritten = Vec::new();
     for (child, parent) in &plan.parent_updates {
-        rewrite_parent(dir, child, parent);
+        if rewrite_parent(dir, child, parent) {
+            rewritten.push(child.clone());
+        }
     }
     let mut removed = Vec::new();
     for name in &plan.deletes {
@@ -446,10 +479,10 @@ fn apply_plan(dir: &Path, plan: &RetainPlan) -> (Vec<(String, String)>, Vec<Stri
         }
         removed.push(name.clone());
     }
-    (renames, removed)
+    (renames, removed, rewritten)
 }
 
-fn rewrite_parent(dir: &Path, child: &str, parent: &str) {
+fn rewrite_parent(dir: &Path, child: &str, parent: &str) -> bool {
     let path = dir.join(child).join(SIDECAR);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let mut kind = "incremental".to_string();
@@ -462,7 +495,9 @@ fn rewrite_parent(dir: &Path, child: &str, parent: &str) {
     }
     if let Err(err) = std::fs::write(&path, format!("kind={kind}\nparent={parent}\n")) {
         tracing::error!("could not update the parent of {child}: {err}");
+        return false;
     }
+    true
 }
 
 fn read_sidecar(dir: &Path) -> (String, Option<String>) {

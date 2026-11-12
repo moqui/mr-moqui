@@ -252,6 +252,18 @@ private or link-local address is refused unless `git-server` `webhook-private-ne
 network). Pushes and tags are queued by the framework's post-receive rule (`framework/service/Git.gitecas.xml`), merge
 request events by the review services.
 
+### Push mirrors
+
+A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
+fetch, import or write, by the framework's post-receive rule (`push#GitMirror`; Push Mirror Now on the repository's
+screen). The `SystemMessageRemote` holds where and how: `sendUrl` the SSH URL (`git@github.com:owner/repo.git` or
+`ssh://git@host:port/owner/repo.git`), `privateKey` and `publicKey` (a deploy key with write access), and
+`sshHostKeyFingerprint` to pin the host key, else it is trusted on first use (`runtime/conf/ssh_known_hosts`), as the
+backup's SFTP mirror does. `pushMirrorRefs` names the refs as `from:to` pairs (`master:mirror` pushes master to the
+mirror's `mirror` branch; `refs/tags/*:refs/tags/*`), every branch and tag when empty. Each is forced to the local one,
+and nothing is deleted. `lastPushMirrorDate` and `lastPushMirrorError` are on the row; a failed push fails its
+`GitUpdate`'s rules, which can be run again from the push log.
+
 ### Merge requests
 
 `org.moqui.git.GitReviewServices` keeps a merge request of a source branch into a target branch of one repository
@@ -414,7 +426,7 @@ one commit) can so live in a `db` repository, with their history, in the databas
 - The framework's rules make a `GitUpdate` of every `git://` write (a wiki save), to keep merge requests and webhooks
   current.
 
-- No push from a repository to another server; publish a `db` repository with `export#GitRepository`.
+- A push mirror pushes over SSH only, deletes no ref on the mirror, and sends no LFS objects.
 - A push made directly to a `local` repository's directory on the host runs no gitECA rules.
 - `gc#GitRepositories` repacks a `local` repository into one pack without delta compression of its own: deltas the
   pushes sent are kept, and objects written through Moqui are packed whole (run `git gc --aggressive` in the
