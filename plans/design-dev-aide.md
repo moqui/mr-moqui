@@ -1,7 +1,8 @@
 # Dev AIDE: the assisted IDE
 
 Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 to P9 on Oct 28, 2026; what is not built yet is listed
-in "Built so far" at the end of §18. P10 is later. The first questions were answered the same day (§20: 1, 4 and 5, and the
+in "Built so far" at the end of §18. P10 is later. Nov 11, 2026: §21, the Dev AIDE with a group server (D20 to D22,
+F17 to F19, P11 to P13, questions 17 to 20), was added with [Dogfood](Dogfood.md); none of it is built. The first questions were answered the same day (§20: 1, 4 and 5, and the
 Projects point of 13), and D1, D7, D15 and D16 record what they decided. A review the same day, for users from
 experienced coders to technical business users (who mostly extend entities and screens and let the agent do the
 typing), added D17 to D19, amended D10 and D11, and re-phased the work around them (§18); its findings are recorded
@@ -30,7 +31,7 @@ The plan has the decisions (0), what it looks like (1), where it starts (2), the
 repositories (4), the editor (5), live reload (6), the artifact index and browser (7), the entity modeler (8), the
 service writer (9), ECA rules (10), the screen builder (11), data files and new components (12), Assist and agents
 (13), tasks (14), security (15), data and configuration (16), the framework changes (17), the phases (18), tests (19),
-and the risks and open questions (20).
+the risks and open questions (20), and the Dev AIDE with a group server (21).
 
 ---
 
@@ -57,6 +58,9 @@ and the risks and open questions (20).
 | D17 | Extension first. The conf and Settings name a *site component* (`site-component`); roots whose components the site does not own are *upstream*: shown, searchable, read-only with a lock chip, and every Save on them reads "Extend in my-site". Every gesture that adds something writes an extension in the site component: `extend-entity` for a field, relationship, index or seed data; a `screen-extend` file for a form field, a list column, a widget at a named anchor, an action, a subscreen or a transition override; a new SECA or EECA file for a rule on an upstream service or entity. A Settings toggle, "Allow editing upstream components", turns the lock off for framework developers, with a warning. The agent follows the same rule (§13.1), and `check` reports an in-place edit of an upstream component as a problem while the lock is on. | Added by the review. For a site, editing mr-mantle or mr-marble in place is a fork that every upgrade fights; the framework already has `extend-entity` and `screen-extend`, and the IronStone plans defer "custom fields on any entity" to these tools. |
 | D18 | Two arrangements of one model. Guided: "Customize this screen" from any app page, Entities, Screens and Services as tools of their own (the artifact in its visual view, the file status strip, Save, Text one click away, Problems and the Assist drawer, nothing else), a site Home with "Your customizations" and one-click Publish (stage the site component's changes, commit with a message Assist drafts and the task trailer, push). Workspace: the full IDE, with Branches, Tags, Stashes and hunk staging under an Advanced toggle. The same buffers, operations, save pipeline and approvals serve both. | Added by the review. Business users start on an app screen and want "what did I customize, and ship it"; coders want the IDE. A layout choice, not a second implementation. |
 | D19 | A local dev instance per developer is the primary case; a shared team dev server is a mode from the first version (`dev-aide shared="true"`): commits carry the logged-in user as author, network git commands on a non-loopback listener are off unless an admin enables them with a token, presence shows who edits what, and one working tree with last save wins by hash and Compare on conflict until co-editing (F15). | Decided with the user at the review. Business users rarely run a server themselves, and the identity and conflict questions are cheap to answer up front and costly to retrofit. |
+| D20 | A group server is a **connection** of the dev instance (§21.2): one record with the server's address and the user's token, from which the addons repository, the task source, the task app's paths and the model gateway follow. A dev instance may have several (a team's server and moqui.org). | Added Nov 11, 2026 with [Dogfood](Dogfood.md). docs/Run-Deploy.md lists four things a developer sets by hand, each with the same address and token. |
+| D21 | The merge requests, reviews and checks of a working tree's hosted origin show in the Workspace (§21.4, §21.5), through the group server's REST as the connected user. The Dev AIDE opens, reads and comments; merging stays on the server's page (question 17). | A developer reviews where the code is open and runnable. The server's rules (rights, branch rules, required checks) are applied there, once. |
+| D22 | Nothing in production runs code or has a working tree, on any app of a group server. Smithy may commit an edit of a text file made on its page, through the hosting services and their checks ([Dogfood](Dogfood.md#57-editing-a-file-on-its-page)): the file is not loaded, reloaded or run there. What runs code is the dev-aide on a dev instance and a CI runner; a review agent on the server reads and comments, and is the hosting app's, not the dev-aide's. | The dev-aide loads on dev instances only (D1, D15), and a group server is a production instance with real data. The edit on a page was decided with the user, Nov 11, 2026; it is a commit as a push is, so D7's reason, no code execution in production, still holds. Whether Projects' Code takes the same edit is its plan's call. |
 
 ---
 
@@ -398,7 +402,8 @@ places and puts an IDE in them:
   **publish branch** is set (question 15): per repository in its Settings, or per user by an admin (the
   `DEV_AIDE_PUBLISH_BRANCH` preference, set on the User screen in System and not shown to the user), as a name or a
   pattern such as `publish/{user}`; then Publish pushes there and opens a merge request on the hosting side when the
-  origin is a hosted repository (Projects, or a known host), else names the branch to merge. Off by default; an admin
+  origin is a hosted repository (Projects, or a known host), else names the branch to merge (the merge request side is
+  designed in §21.4). Off by default; an admin
   may require it for a user or a repository, which hides the plain push.
 - **Tabs**: Code, Changes, Commits, Settings (remotes, `.gitignore`, the root's components, the publish branch and
   whether it is required, Open on the hosting site when the origin is a known host); Branches, Tags and Stashes under
@@ -509,6 +514,15 @@ and they link: a working tree whose origin is a hosted repository of a Projects 
 Editing a hosted repository's files in the browser (each save a commit through `git://`), the editing §7 left to the
 developer tools, is a later root kind of the dev-aide (§18, P10), on dev instances only. Code search, read only, is a
 safe feature by the same rule; whether Projects takes it back from "the coming developer tools" is its plan's call.
+
+Smithy (Nov 11, 2026; [Dogfood](Dogfood.md#5-smithy)) is a third face of the same hosting services: a PASS app in
+mr-pass for public accounts and anonymous readers, with groups, forks, issues and pipelines. It runs no code and has
+no working tree (D22), and it keeps the same independence: it shares the framework's services and widgets with
+Projects' Code and with the dev-aide, and depends on neither. It goes one step past Projects' Code: a text file is
+edited on its page and saved as a commit, or as a merge request, through the hosting services (Dogfood §5.7), one
+file at a time. Editing many files of a hosted repository with the IDE's tools stays the dev-aide's later root kind
+(P10), on dev instances only. A working tree whose origin is a repository of a Smithy or a Projects server is served
+the same way by §21.
 
 ---
 
@@ -1221,6 +1235,7 @@ such a proposal on the drawer's canvas, and the agent's `screen` session sees a 
 | `propose_edit` | WRITE | A change set: edits by artifact (operations of §5.2 on an element an id or path names), by text (an exact old text and its new text, as coding agents edit), or new files; a `target` of `extend` (the default: the site component's extension) or `in-place`; each checked first, an in-place edit of an upstream component a problem while the lock is on (§5.6); an approval (§13.3). The one write path for every agent edit (D11) |
 | `try_service` | READ in sim, WRITE for real | §9.4's run; a real run is an approval, as any service call |
 | `vcs` | READ, WRITE, EXTERNAL | status, diff and log; commit with its message and files (the card shows them); push (the card names the remote and the commits) |
+| `hosting` (§21.8, P13) | READ, EXTERNAL | On a connected group server: merge requests, review threads, commit statuses, a pipeline job's log and failed tests, an issue's text; open a merge request, comment and reply (the card shows the text and where it goes). Never approve or merge |
 | `screen` | READ | The existing screen session: the agent sees a screen it is building as text, on the tui model, as it sees any screen |
 | `write_ui` | READ | The existing tool, with the dev dialects (§13.5) |
 
@@ -1334,6 +1349,8 @@ the git-depth phase (P8), since a developer's tasks live in the team's tools alr
   | IronStone Projects | `/qapps/Projects/Projects/ProjectDetail?workEffortId={projectId}` | `/qapps/Projects/WorkItems/WorkItemDetail?workEffortId={taskId}` |
   | MarbleERP | `/qapps/marble/Project/ProjectSummary?workEffortId={projectId}` | `/qapps/marble/Task/TaskSummary?workEffortId={taskId}` |
 
+- With a group server connected (§21.6), its `moqui-rest` source is made by the connection, lists the issues of the
+  current repository as well as the user's, and writes `Fixes #12` for a repository whose issues have numbers.
 - Nothing more: planning, boards and time are the project app's.
 
 ---
@@ -1433,6 +1450,9 @@ framework's:
 | F14 | A request-scoped location overlay: a screen renders from unsaved or proposed text standing at its location for one request (the Preview of §13.3, the builder's buffer of §11.2, the dialects of §13.5), in P4; services from proposed text later | `core/context/resource.rs`, `core/screen/cache.rs` |
 | F15 | Later: Yjs out of the Tiptap bundle into its own, for co-editing code with `y-codemirror.next` on the existing rooms | `webroot/libs/refresh.mjs`, `core/collab/` |
 | F16 | `screen-extend` strengthened (D17): `widgets-extend where="prepend|append"` inside a named container (the XSD's FUTURE); a form merge that places a merged field in the form's `field-layout`, and a merged `form-list-column`, by `after="fieldName"`; the order of several components' extensions of one screen stated (component load order, as entities); stamps carry the writing file (F10); a `moqui lint --screens` rule for unnamed containers in base screens, so upstream authors add anchors | `core/screen/definition.rs`, `core/screen/form.rs`, `fw/xsd/xml-screen-3.xsd`, `core/script/screen_lint.rs` |
+| F17 | §21.2: a dev instance signs in to a group server as an installed app does (`core/service/sso_app.rs`), with a loopback redirect URI, and after the server's own login where it has no identity provider; it gets a login key as the Desktop app gets a device key | `core/service/sso_app.rs`, `crates/moqui-host/src/sso.rs` |
+| F18 | §21.3, §21.7: REST on the hosting side for what a client asks first: what the server offers, the repository of a clone URL with the caller's rights and its settings, and whether an author has signed a repository's agreement. The merge request, thread and pipeline resources are [Dogfood](Dogfood.md#12-framework-changes) F9 | `runtime/base-component/tools/service/moqui.rest.xml`, `crates/moqui-git/src/service/hosting.rs` |
+| F19 | §21.5, §21.7: `ci.xml` in the XSD digest and in `moqui check`; `moqui check --agreement` for a pre-commit hook | `crates/moqui-devkit/src/schema.rs`, `check.rs` |
 
 ---
 
@@ -1514,6 +1534,20 @@ are independent of P4 and may run beside it.
   composer's blocks; co-editing code (F15); a TypeScript checker; hosted roots (`git://`, a commit per save); the
   three-way data load; the rebuild from the app; tests of ECA rules against recorded contexts; "Convert to site
   extension" for DbForm rows.
+- **P11. A group server: connect and merge requests** (§21.2 to §21.4, §21.6; F17, F18, and Dogfood's F5 and F9). The
+  connection and what it sets; the hosted repository of a working tree; Publish and Push open a merge request;
+  push-to-review; Fork; the merge request list and check out; the connection's task source. **Check**: on an instance
+  that is its own group server over loopback, Connect makes the task source and the addons repository; Publish to a
+  protected branch opens a merge request; a user who may not push proposes through `refs/for/main`; a merge request
+  is checked out as a branch.
+- **P12. Review and checks** (§21.4, §21.5, §21.7; F19). Review threads in the diff and the gutter, reply, resolve
+  and a review; statuses on commits and branches; a job's log and its failed tests as links; `ci.xml` checked; the
+  agreement warning and Sign. **Check**: a thread made on the server shows on its line and a reply reaches the server;
+  a failed status shows on the commit; a failed test's link opens its file at the line; an unsigned author is warned
+  and Sign makes a commit with only the signature.
+- **P13. Agents and local runs** (§21.5, §21.8). The `hosting` tool; a worktree for an agent's session; Run locally.
+  **Check**: the dev agent reads a failed job's log and proposes a change set; it is refused the diff of an unsigned
+  merge request; two sessions edit two worktrees of one repository; Run locally runs a job's steps in a host session.
 
 **Built so far** (Oct 24, 2026): P1a, P1b and P2, with these differences from the text above.
 
@@ -1528,7 +1562,7 @@ are independent of P4 and may run beside it.
 - **Settings.** The site components and network git are stored in `DevAideSetting` rows.
 - **Not built yet:**
   - the System User screen field for `DEV_AIDE_PUBLISH_BRANCH`, which is a preference an admin can set;
-  - opening a merge request on a hosted origin: Publish names the branch to merge;
+  - opening a merge request on a hosted origin: Publish names the branch to merge (now §21.4, P11);
   - keeping the app drawer closed on the Workspace, which takes the window's height by CSS;
   - unsaved text is kept in `localStorage`, not IndexedDB.
 
@@ -1810,7 +1844,7 @@ design mode needs (P9).
   (`create#TaskBranch`: `KEY-first-words`, switched to, and made the root's current task); Quick create makes a task
   on this instance through Mantle's `create#Task`, assigned to the user (a remote source's tasks are made in its own
   app). A source that cannot be reached answers its error and no tasks. Projects linked to the repository are not put
-  first yet: a working tree knows no hosted repository id.
+  first yet: a working tree knows no hosted repository id (§21.3, P11).
 
 **P9, the rest of the canvases and LSP** (Oct 28, 2026), with these differences:
 
@@ -1990,6 +2024,8 @@ the `.qvue` buffer, not an unsaved sibling XML.
      behind an admin's token, presence and announced saves; one working tree with Compare on conflict; co-editing F15.
 7. **Tasks**: whether `moqui-rest` against a team server is enough, or GitHub and Gitea issues are wanted as sources too.
    - Reviewed Oct 24, 2026: deferred with the panel to P8 (§14); the first version keeps the current task's trailer.
+   - Reviewed Nov 11, 2026, with [Dogfood](Dogfood.md): the project's own issues move from GitHub to work items on
+     moqui.org, which a `moqui-rest` source reads (§21.6), so GitHub and Gitea sources are not planned.
 8. **Git operations**: whether rebase, reset and force push belong in the first version (proposed: only
    `--force-with-lease` behind a confirm).
    - Reviewed Oct 24, 2026: none in the first version; `--force-with-lease` behind its confirm with the git-depth phase
@@ -2031,3 +2067,161 @@ the `.qvue` buffer, not an unsaved sibling XML.
     that must reach production without a deploy. Proposed: both stay, the views show the origin, the converter is one
     way.
     - Answered Oct 24, 2026: agreed.
+17. **Merging from the Workspace** (§21.4, D21). The server's page shows the branch rules, the required checks and the
+    merge methods, and a merge is one click there. Proposed: the Dev AIDE links to it and does not merge.
+18. **The connection's token** (§21.2, §21.9). It is a login key of the user, with all of the user's rights on the
+    group server. A token limited to git, tasks and the gateway would be safer on a shared dev-aide server. Proposed:
+    later, with scoped tokens on the hosting side; until then a shared server's users each connect as themselves.
+19. **Worktrees and live reload** (§21.8). A second working tree of a component cannot be loaded beside the first, so
+    an agent's worktree is edited, checked and committed but not run live. Proposed: accept it; a session that needs
+    the running server works in the main tree.
+20. **Run locally** (§21.5) runs a job's steps on the developer's machine, not in the job's image. Proposed: say so on
+    the run, and add a run in a local container when the `docker` driver of Dogfood F8 is there.
+
+---
+
+## 21. Dev AIDE with a group server
+
+Nov 11, 2026 · Design, added with [Dogfood](Dogfood.md); not built. The decisions are D20 to D22 (§0), the framework
+changes F17 to F19 (§17), the phases P11 to P13 (§18) and the questions 17 to 20 (§20). This section is last so that
+the numbers of the sections before it, which other documents cite, stay as they are.
+
+### 21.1 The group server
+
+A **group server** is a production instance that a team's dev instances share. It hosts the components' repositories,
+the work items and the LLM gateway with the team's model keys. The guide is docs/Run-Deploy.md, "Dev instances with a
+dev group server"; this plan had only the shared dev-aide server (D19), which is a dev instance and a client of the
+group server as a laptop is. There are two kinds, and to the Dev AIDE they are one:
+
+| | A team's group server | A public one |
+| --- | --- | --- |
+| Example | `team.example.com`, a dev shop's | moqui.org |
+| Apps | BOSS Projects, with its Code screens | Smithy in mr-pass, and Projects for the maintainers |
+| Accounts | internal | public accounts, and internal ones |
+| Repositories | by `repositoryId`, linked to projects | by path, `group/repo`, with forks |
+| Issues | work items | work items, shown publicly with numbers |
+
+What the Dev AIDE has for it today, and what this section adds:
+
+| The group server gives | Today | With §21 |
+| --- | --- | --- |
+| Repositories | `git` to its URL, with git's own credentials; `component-get` through a hand-written `myaddons.xml` | The connection writes the repository entry; a working tree knows its hosted repository (§21.3) |
+| Merge requests and reviews | none: Publish names the branch to merge | Opened, listed, checked out and reviewed in the Workspace (§21.4) |
+| Checks | none | Statuses, logs and failed tests; Run locally (§21.5) |
+| Work items | a `moqui-rest` task source, set by hand | Made by the connection, with the repository's issues (§21.6) |
+| The contributor agreement | none | A warning and Sign (§21.7) |
+| The LLM gateway | the endpoint's properties, set by hand | Offered by the connection |
+| Agents | the dev agent's `vcs` tool | A `hosting` tool, and worktrees (§21.8) |
+
+Nothing of the group server itself is in the dev-aide (D22): it is production, and the dev-aide does not load there.
+
+### 21.2 Connect
+
+- **A connection** (D20) is a `DevAideServer` row: a label, the base URL, what the server offers (asked of it: F18),
+  and the user's token, kept as the network git tokens are (`DevAideCredential`, encrypted, sent only to the host it
+  was stored for). On a local instance it is the developer's; on a shared server each user has their own, and an admin
+  may add one for the server's deploy token (§4.2, shared mode).
+- **Signing in.** Connect opens the group server in the browser, the user signs in and confirms, and the dev instance
+  gets a login key: the installed-app handoff the Desktop and Mobile apps use, with a loopback redirect (F17). Pasting
+  an access token made on the server's Git access page works too, and works today.
+- **What Connect sets**, each shown and confirmed:
+  - the repository entry of `myaddons.xml` for the server's git URL, and whether it is the default repository;
+  - the task source (`moqui-rest`) and the task app's paths (§14);
+  - the model endpoint: the gateway's URL, the token and an alias, as the lines for `runtime/.env`;
+  - git's credential for that host: git's own helpers by default (D5), or the stored token, as shared mode does.
+- **Settings › Group servers** lists the connections with their state (reachable, the token valid, what is offered),
+  Reconnect and Remove. Removing one removes what it set, after a confirm.
+- A dev instance may connect to several servers: a team's and moqui.org.
+
+### 21.3 The hosted repository of a working tree
+
+P8 left this open: "a working tree knows no hosted repository id".
+
+- A remote's URL that belongs to a connection (its `/git/` URL, its page URL, or its SSH host and port) is resolved
+  on the server (F18): the repository's id and path, its default branch, the caller's rights (view, create, update,
+  delete), whether it is a fork and of what, its merge request settings, and whether its agreement is on.
+- It is kept on the root (`DevAideRoot`) and asked again on a fetch.
+- It gives: the projects linked to the repository first in the task panel (P8's item); "Open on the server" for a
+  file, a commit and a branch; and the push right known before a push, so the bar offers Push or Propose.
+
+### 21.4 Merge requests
+
+- **Opening one.** Publish and Push open a merge request when the publish branch says so (§4.3) or the branch rule
+  requires one: the branch is pushed, and the request is made through the server's REST with a title from the commit,
+  a description Assist drafts, and the current task. This is P2's "Not built yet" item.
+- **Propose.** A user who may view and not push pushes `HEAD:refs/for/<branch>`, and the server opens the merge
+  request (Dogfood F5). The bar shows Propose in place of Push.
+- **Fork.** On Repositories and in the bar: the server makes the fork in the user's namespace, the Dev AIDE adds it as
+  a remote and pushes there.
+- **The list**, a tab of a root that has a hosted repository: mine, those asking for my review, and all open, each
+  with its state, checks and approvals.
+- **Check out.** `git fetch <remote> refs/merge-requests/<n>/head` into a local branch, in the main tree or in a
+  worktree (§21.8).
+- **Review.** The Changes of a merge request in the merge view (`m-diff-view`), with the server's threads on their
+  lines; reply, resolve, a new comment on a line, and a review (approve, comment, request changes). When the merge
+  request's branch is checked out, open threads mark the gutter of the editor. A comment is an EXTERNAL write, made on
+  the server as the user.
+- **Merging** stays on the server's page (question 17).
+
+### 21.5 Checks
+
+- **Statuses.** The combined state of a commit's statuses is a chip on each commit of Commits, on each branch of
+  Branches, and in the bar for the upstream's head, from the status REST that exists. A chip opens the checks.
+- **Runs.** A pipeline job's log shows in Output and follows a running job. The tests that failed are listed with
+  their files and lines, which open in the editor as the Terminal's file and line links do. Re-run, for a user who may.
+- **Run locally** runs one job's steps of the working tree's `ci.xml` in a host session of the Terminal
+  ([Terminal-Fancy](Terminal-Fancy.md)), under that session's permission. It is the developer's machine, not the
+  job's image (question 20).
+- **`ci.xml`** is edited with the schema's completion and checked by `moqui check` (F19).
+
+### 21.6 Issues
+
+- The connection's task source lists the user's work items and, with §21.3, the open issues of the current
+  repository.
+- Use in commit writes `Fixes #12` where the repository's issues have numbers, or the work item's key.
+- Quick create files an issue in the repository's tracker. Branch names a branch for it.
+- Other sources are not planned (question 7).
+
+### 21.7 The contributor agreement
+
+For a repository whose agreement is on (docs/dev/Contributions.md; Dogfood §10):
+
+- Changes and Commit warn when the commit's author has not signed, as the server reports it (F18).
+- **Sign** opens the repository's `AUTHORS.md` with the line to add under both lists, and commits it alone, by the
+  user. An agent has no tool for it: a person signs. The same signature can be made on the file's page on the server
+  (Dogfood §10), with no clone.
+- `moqui check --agreement` does the same check for a pre-commit hook and for coding agents in a terminal (F19).
+
+### 21.8 Agents
+
+- **The `hosting` tool** (§13.2), an add-on of the lazy catalog as `vcs` is. It reads merge requests, review threads,
+  statuses, a job's log and failed tests, and an issue. It opens a merge request and writes comments, each an
+  approval card. It never approves or merges.
+- **What it is for**: "fix the failing check" (the log and the failed tests, then a change set through
+  `propose_edit`) and "address the review" (the threads, then a change set and drafted replies).
+- **Unsigned merge requests.** The tool gives the description of an unsigned merge request and refuses its diff and
+  commits, as the server's tools do (Dogfood §10).
+- **Worktrees.** An agent's session may work in a git worktree of a repository, on a branch of its own, so sessions
+  do not share uncommitted changes ([Terminal-Fancy](Terminal-Fancy.md) §15 names it). The worktree shows as a
+  temporary root, "worktree of X". It is not loaded (question 19): its files are checked by `moqui check` and
+  committed, and merged or proposed from there.
+- **Review agents on the server** are the hosting app's (D22).
+
+### 21.9 Security
+
+- The Dev AIDE calls the group server as the connected user, and the server decides everything: a right the user
+  lacks there is not gained here.
+- A connection's token is a login key with the user's rights (question 18). It is encrypted, never in an argv, and
+  sent only to its host.
+- The extend tier (§3.4) opens merge requests for site components only, as its Publish pushes only there.
+- A header login reads and never connects, writes or comments (§15).
+- Comments, merge requests and forks made by an agent are EXTERNAL approvals in an interactive session.
+
+### 21.10 Tests
+
+- Specs with the instance as its own group server over loopback: the connection, the resolve, opening a merge
+  request, push-to-review against a scratch hosted repository, threads and statuses read and written.
+- The `hosting` tool's classes and refusals, and the tier's limits.
+- A browser smoke for a review thread in the merge view, as P8's smokes are.
+- Signing in through the browser handoff has its test with F17.
+
