@@ -6,7 +6,8 @@
     editor; Tools' Dashboards app sets none and keeps its own screens. A mount whose links have no editor (the viewer does not
     author there) shows no New or edit links, and one may leave out the definitions of components it names
     (reportHiddenComponents). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboards" default-menu-index="1">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboards" default-menu-index="1"
+        menu-image="sym_o_dashboard" menu-image-type="icon">
     <parameter name="definitionType"/><parameter name="folder"/><parameter name="tag"/><parameter name="starredOnly"/>
     <transition name="dashboard" method="post" authz-action="view">
         <actions><script><![CDATA[

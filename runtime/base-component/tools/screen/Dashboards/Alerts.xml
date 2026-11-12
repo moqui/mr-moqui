@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6"
+        menu-image="sym_o_notifications_active" menu-image-type="icon">
     <transition name="rule"><default-response url="//apps/dashboards/AlertRule"/></transition>
     <transition name="shared"><default-response url="//apps/dashboards/AlertShared"/></transition>
     <transition name="delete" method="post" authz-action="delete">

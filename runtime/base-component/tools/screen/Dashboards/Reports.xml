@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Reports" default-menu-index="7">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Reports" default-menu-index="7"
+        menu-image="sym_o_summarize" menu-image-type="icon">
     <transition name="createPlaylist" method="post" authz-action="create">
         <actions><script><![CDATA[
             const ids=String(playlistDashboardIds || '').split(',').map(id=>id.trim()).filter(Boolean)
