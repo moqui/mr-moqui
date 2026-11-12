@@ -369,3 +369,28 @@ fn a_delete_statement_stays_within_the_bind_limits() {
     assert_eq!(delete_rows_per_statement(3), 666);
     assert_eq!(delete_rows_per_statement(4000), 1);
 }
+
+/// A chunk deleted in a transaction removes its rows at commit by their keys, also a row another transaction changed
+/// meanwhile: the tests' database replays the delete by the key columns of its IN list, as a database deletes the rows
+/// it names.
+#[test]
+fn a_chunk_deleted_in_a_transaction_goes_through_another_changed_a_row_meanwhile() {
+    let (facade, _tape) = seeded(3);
+    let tx = facade.transactions_for(TEST).unwrap();
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        assert_eq!(count(&facade, "bulk"), 3);
+        let other = facade.clone();
+        std::thread::spawn(move || {
+            let mut row = other.make_value(TEST).unwrap();
+            row.set("testId", Value::string("B01"));
+            row.set("testLong", Value::string("changed by another transaction"));
+            row.update(&other).unwrap();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(bulk(&facade).delete_all()?, 3);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count(&facade, "bulk"), 0);
+}
