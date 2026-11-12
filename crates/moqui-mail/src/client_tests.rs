@@ -41,11 +41,17 @@ fn setup() -> (ExecutionContext, EntityFacade) {
 
 /// [`setup`] with the conf text `conf`.
 fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
-    let ctx = ExecutionContextFactory::test_context_in(
-        conf,
-        moqui_core::service::ServicePools::idle(),
-        moqui_core::context::framework_dir(),
-    );
+    setup_pools(conf, moqui_core::service::ServicePools::idle())
+}
+
+/// [`setup`] with the inline executor: a send registered for a commit (an automatic reply's) waits for
+/// `ctx.factory().run_pending()` on this thread, where the test's sink keeps the mail.
+fn setup_inline() -> (ExecutionContext, EntityFacade) {
+    setup_pools("", moqui_core::service::ServicePools::inline())
+}
+
+fn setup_pools(conf: &str, pools: moqui_core::service::ServicePools) -> (ExecutionContext, EntityFacade) {
+    let ctx = ExecutionContextFactory::test_context_in(conf, pools, moqui_core::context::framework_dir());
     let facade = moqui_core::testing::open();
     ctx.factory().set_entity(facade.clone());
     (ctx, facade)
@@ -2295,7 +2301,7 @@ fn new_mail_wakes_its_snoozed_thread() {
 #[test]
 fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     for id in ["alice", "bob"] {
@@ -2384,12 +2390,17 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
     );
     received("O11", "spam@x.example.org", "EfkJunk", &[]);
     let sink = crate::SinkGuard::install();
+    // the replies go once their transactions commit
     let reply = |ids: &[&str]| {
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-        ok(
-            "send#OutOfOfficeReplies",
-            &[("emailAccountId", text(&account)), ("emailMessageIdList", list(ids))],
-        )
+        let out = {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            ok(
+                "send#OutOfOfficeReplies",
+                &[("emailAccountId", text(&account)), ("emailMessageIdList", list(ids))],
+            )
+        };
+        ctx.factory().run_pending();
+        out
     };
     let out = reply(&["O1", "O2", "O3", "O4", "O5", "O6", "O7", "O8", "O9", "O10", "O11"]);
     assert_eq!(out_number(&out, "sentCount"), 3, "{out:?}");
@@ -2866,7 +2877,7 @@ fn the_index_search_pages_past_one_read_of_the_index() {
 #[test]
 fn the_automatic_reply_counts_its_own_domains_as_internal() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     user(&facade, "alice");
@@ -2942,8 +2953,110 @@ fn the_automatic_reply_counts_its_own_domains_as_internal() {
         )
     };
     assert_eq!(out_number(&out, "sentCount"), 2, "{out:?}");
+    ctx.factory().run_pending();
     let sent = sink.sent();
     let to: Vec<String> = sent.iter().map(|mail| mail.to.join(",")).collect();
     assert_eq!(to, ["Pat@Partner.example.org", "sam@ally.example.com"]);
     assert!(sent.iter().all(|mail| mail.body.contains("ask Dave")), "{sent:?}");
+}
+
+/// Automatic replies asked for in a caller's transaction that runs out while the server is slow: each reply is made,
+/// claimed and logged in a transaction of its own and sent by a service worker once that commits, so the caller's
+/// rollback takes none of them back, each goes once and the senders are not answered again
+/// (plans/High-Level-Review.md HL-028). A worker, since the inline executor runs no transaction deadline.
+#[test]
+fn a_slow_automatic_reply_takes_none_of_the_others_back() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup_pools(
+        r#"<moqui-conf><email-client allowed-hosts="127.0.0.1"/></moqui-conf>"#,
+        moqui_core::service::ServicePools::bounded(1, 16),
+    );
+    let _entered = ctx.enter();
+    install();
+    let account = shared_account(&facade, "127.0.0.1");
+    let smtp = FakeSmtp::start("team@example.com");
+    lock(&smtp.state)
+        .passwords
+        .push(("team@example.com".to_string(), "secret".to_string()));
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let server = find_one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account)
+            .and_then(|row| row.get("emailServerId").map(to_plain_string))
+            .unwrap();
+        let mut row = find_one(&facade, "moqui.basic.email.EmailServer", "emailServerId", &server).unwrap();
+        row.set("smtpPort", text(&smtp.port.to_string()));
+        row.set("mailUsername", text("team@example.com"));
+        row.set("mailPassword", text("secret"));
+        row.update(&facade).unwrap();
+    }
+    ok(
+        "store#EmailOutOfOffice",
+        &[
+            ("emailAccountId", text(&account)),
+            ("fromDate", stamp(now() - DAY)),
+            ("bodyHtml", text("<p>Away until Monday</p>")),
+        ],
+    );
+    let received = |id: &str, from: &str| {
+        message(
+            &facade,
+            &account,
+            id,
+            "EfkInbox",
+            now() - 60_000,
+            &[
+                ("fromAddress", text(from)),
+                ("toAddresses", text("team@example.com")),
+                ("receivedDate", stamp(now() - 60_000)),
+                ("messageId", text(&format!("<{id}@mail.example.org>"))),
+            ],
+        );
+    };
+    let reply = |ids: &[&str]| {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        call(
+            "send#OutOfOfficeReplies",
+            &[("emailAccountId", text(&account)), ("emailMessageIdList", list(ids))],
+        )
+    };
+    received("W1", "ada@x.example.org");
+    received("W2", "bea@y.example.org");
+    // each session is slower than the caller's whole transaction
+    lock(&smtp.state).data_reply_delay = Duration::from_millis(700);
+    let tx = facade.default_transactions().unwrap();
+    let _ = tx.run(
+        TransactionAttribute::UseOrBegin,
+        Some(Duration::from_millis(400)),
+        || Ok(reply(&["W1", "W2"])),
+    );
+    let _ = errors();
+    let answers = || -> Vec<String> {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find(MESSAGE)
+            .unwrap()
+            .eq("emailAccountId", text(&account))
+            .condition(moqui_core::entity::Condition::is_not_null("inReplyTo"))
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .map(|row| row.get("statusId").map(to_plain_string).unwrap_or_default())
+            .collect()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while answers() != ["ES_SENT", "ES_SENT"] && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(answers(), ["ES_SENT", "ES_SENT"], "the replies were kept and sent");
+    assert_eq!(lock(&smtp.state).messages.len(), 2, "each reply went once");
+    // their logs were kept too: the senders are not answered again
+    lock(&smtp.state).data_reply_delay = Duration::ZERO;
+    received("W3", "ada@x.example.org");
+    received("W4", "bea@y.example.org");
+    let again = reply(&["W3", "W4"]);
+    assert_eq!(errors(), "");
+    assert_eq!(out_number(&again, "sentCount"), 0, "{again:?}");
+    assert!(ctx.factory().wait_worker_pool_empty(50));
+    assert_eq!(lock(&smtp.state).messages.len(), 2, "not sent again");
 }

@@ -37,11 +37,17 @@ pub(super) fn setup() -> (ExecutionContext, EntityFacade) {
 
 /// [`setup`] with the conf text `conf`.
 pub(super) fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
-    let ctx = ExecutionContextFactory::test_context_in(
-        conf,
-        moqui_core::service::ServicePools::idle(),
-        moqui_core::context::framework_dir(),
-    );
+    setup_pools(conf, moqui_core::service::ServicePools::idle())
+}
+
+/// [`setup`] with the inline executor: what a commit registers (a forward's or an automatic reply's send) waits for
+/// `ctx.factory().run_pending()` on this thread, where a test's sink keeps the mail.
+pub(super) fn setup_inline() -> (ExecutionContext, EntityFacade) {
+    setup_pools("", moqui_core::service::ServicePools::inline())
+}
+
+fn setup_pools(conf: &str, pools: moqui_core::service::ServicePools) -> (ExecutionContext, EntityFacade) {
+    let ctx = ExecutionContextFactory::test_context_in(conf, pools, moqui_core::context::framework_dir());
     let facade = moqui_core::testing::open();
     // the attachments are DbResource files; the in-memory database has every table
     facade.assume_db_tables();
@@ -1641,7 +1647,7 @@ fn conditions(items: &[&[(&str, &str)]]) -> Value {
 #[test]
 fn rules_conditions_actions_block_and_spam() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     alice(&facade);
@@ -1849,6 +1855,12 @@ fn rules_conditions_actions_block_and_spam() {
     );
     assert!(label_names(&facade, &id(5)).is_empty());
     assert_eq!(label_names(&facade, &id(7)), vec!["AnyHit".to_string()]);
+    // their server side went at the end of the session
+    assert_eq!(changes(&facade, &account), 0);
+    // the forward is claimed in the rules' transaction and goes once it commits (plans/High-Level-Review.md HL-028),
+    // its copy to Sent at the next sync
+    assert!(sink.sent().is_empty(), "not sent in the rules' transaction");
+    ctx.factory().run_pending();
     let forwarded = sink.sent();
     assert_eq!(forwarded.len(), 1);
     assert_eq!(forwarded[0].to, vec!["keep@example.org".to_string()]);
@@ -1861,8 +1873,7 @@ fn rules_conditions_actions_block_and_spam() {
         ),
         "1"
     );
-    // their server side went at the end of the session
-    assert_eq!(changes(&facade, &account), 0);
+    assert_eq!(changes(&facade, &account), 1, "the forward's copy to Sent");
     assert!(
         imap.messages("Newsletters")
             .iter()
@@ -2458,7 +2469,7 @@ fn drafts_go_to_the_servers_drafts_are_replaced_and_leave_when_sent() {
 #[test]
 fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     alice(&facade);
@@ -2487,6 +2498,8 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
         &[],
     );
     sync(&account);
+    // the reply goes once its transaction commits, and its copy to Sent at the next sync
+    ctx.factory().run_pending();
     let sent = sink.sent();
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].to, ["ada@x.example.org"]);
@@ -2496,6 +2509,7 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
         "{}",
         sent[0].mime
     );
+    sync(&account);
     let copies = imap.raw_messages("Sent Mail");
     assert_eq!(copies.len(), 1, "the reply is appended to Sent");
     assert!(copies[0].1.contains("Auto-Submitted: auto-replied"), "{}", copies[0].1);
@@ -2523,6 +2537,7 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
         &[],
     );
     sync(&account);
+    ctx.factory().run_pending();
     assert_eq!(
         field(&one(&facade, MESSAGE, "emailMessageId", &root_id), "snoozedThruDate"),
         ""
