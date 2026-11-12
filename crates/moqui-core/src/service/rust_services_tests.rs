@@ -78,6 +78,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::edge_claims::check_replica_claim",
         "moqui_core::service::edge_claims::get_replica_conflicts",
         "moqui_core::service::edge_claims::recheck_replica_conflicts",
+        "moqui_core::service::expressions::evaluate_decimal_expression",
+        "moqui_core::service::expressions::validate_decimal_expression",
         "moqui_core::service::external_agent::request",
         "moqui_core::service::images::convert_image",
         "moqui_core::service::images::get_rich_text_image",

@@ -26,6 +26,7 @@ pub mod collection;
 pub mod context_stack;
 pub mod cron;
 pub mod datefmt;
+pub mod decimal_expr;
 pub mod env;
 pub mod error;
 pub mod etl;

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- The decimal evaluator (IronStone People design PE-09; docs/dev/JS-Framework-Services.md "Expressions"). The bodies are
+        Rust (crates/moqui-core/src/service/expressions.rs over crates/moqui-lib/src/decimal_expr.rs): a declared grammar over
+        named decimal inputs with an allowlist of functions, in exact decimal, with no context, entity, service or I/O access by
+        construction. A refused expression is answered in valid, errorCode, errorMessage and errorPosition and is not a service
+        error. Error codes: EXPRESSION_REQUIRED, EXPRESSION_TOO_LONG, EXPRESSION_TOO_DEEP, SYNTAX_ERROR, NUMBER_INVALID,
+        UNKNOWN_NAME, UNKNOWN_FUNCTION, ARGUMENT_COUNT, TYPE_MISMATCH, MISSING_INPUT, INPUT_INVALID, DIVIDE_BY_ZERO, OVERFLOW,
+        ROUNDING_PLACES_INVALID. -->
+
+    <service verb="validate" noun="DecimalExpression" type="rust" location="moqui_core::service::expressions::validate_decimal_expression">
+        <description>Parse and type-check a decimal expression: numbers, input names, + - * /, unary minus, the comparisons
+            &lt; &lt;= &gt; &gt;= == !=, and, or, not, parentheses and the functions if, min, max, abs, round, floor and ceil; the whole
+            expression is an amount. With inputNames, a name outside them is refused (UNKNOWN_NAME). Answers the names it
+            reads and the functions it calls, or the refusal with its code, message and 1-based position.</description>
+        <in-parameters>
+            <parameter name="expression" allow-html="any"><description>Empty is refused as EXPRESSION_REQUIRED, in the out-parameters.</description></parameter>
+            <parameter name="inputNames" type="List"><description>The names the expression may read; when not given, any name.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="names" type="List"><description>The input names the expression reads, sorted, each once</description></parameter>
+            <parameter name="functions" type="List"><description>The functions it calls, sorted, each once</description></parameter>
+            <parameter name="errorCode"/>
+            <parameter name="errorMessage"/>
+            <parameter name="errorPosition" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <service verb="evaluate" noun="DecimalExpression" type="rust" location="moqui_core::service::expressions::evaluate_decimal_expression">
+        <description>Evaluate a decimal expression (as validate#DecimalExpression parses it) over inputs, a map of each name to a
+            decimal (a BigDecimal, a whole number, a script number or decimal text; anything else INPUT_INVALID). Every name it
+            reads must have a value (else MISSING_INPUT, with missingNames), checked before evaluating. + - * are exact, / keeps
+            the decimal type's full precision, and nothing is rounded but by round, floor and ceil.</description>
+        <in-parameters>
+            <parameter name="expression" allow-html="any"><description>Empty is refused as EXPRESSION_REQUIRED, in the out-parameters.</description></parameter>
+            <parameter name="inputs" type="Map"/>
+            <parameter name="inputNames" type="List"><description>The names the expression may read; when not given, any name.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="result" type="BigDecimal"/>
+            <parameter name="names" type="List"/>
+            <parameter name="missingNames" type="List"/>
+            <parameter name="errorCode"/>
+            <parameter name="errorMessage"/>
+            <parameter name="errorPosition" type="Integer"/>
+        </out-parameters>
+    </service>
+</services>

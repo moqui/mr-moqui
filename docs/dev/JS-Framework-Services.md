@@ -212,6 +212,31 @@ The other DbForm services (`update#DbFormField`, `end#DbFormField`, `create#DbFo
 
 The image services need the `image` feature.
 
+### ExpressionServices: decimal formulas
+
+The decimal evaluator of payroll formulas (IronStone People design PE-09): a formula a user writes over named decimal inputs, checked and computed in exact decimal. Its sandbox holds by construction, not by filtering: the Rust parser (`crates/moqui-lib/src/decimal_expr.rs`) builds a tree of numbers, input names, operators and the listed functions, and the evaluator computes over a map of decimals. There is no script engine, ExecutionContext, entity, service or I/O behind it, and neither service reads anything but its parameters.
+
+| Service | |
+|---|---|
+| `ExpressionServices.validate#DecimalExpression` | `expression`, `inputNames` (a list; a name outside it is refused) → `valid`, `names` (the inputs it reads), `functions` (those it calls), `errorCode`, `errorMessage`, `errorPosition` |
+| `ExpressionServices.evaluate#DecimalExpression` | `expression`, `inputs` (a map of name to decimal: a BigDecimal, a whole number, a script number or decimal text), `inputNames` → `valid`, `result` (a BigDecimal), `names`, `missingNames`, `errorCode`, `errorMessage`, `errorPosition` |
+
+The language:
+- numbers `12` and `12.50` (no sign, exponent or leading point; up to 28 digits); input names `[A-Za-z_][A-Za-z0-9_]*`, case-sensitive;
+- `+ - * /`, unary `-`, parentheses; the comparisons `< <= > >= == !=`; `and`, `or`, `not` (reserved words);
+- the functions `if(condition, then, else)`, `min(a, b, ...)`, `max(a, b, ...)`, `abs(x)`, `round(x, places)` (half away from zero), `floor(x, places)` (toward negative infinity) and `ceil(x, places)` (toward positive infinity), places a whole number from 0 to 28;
+- two types, an amount and a condition: arithmetic and comparisons take amounts, `and`, `or`, `not` and `if`'s first argument take conditions, and the whole formula is an amount. `if` evaluates only the branch taken, and `and` and `or` stop at the operand that decides, so `if(days == 0, 0, amount / days)` never divides by zero;
+- `+`, `-` and `*` are exact while the result fits the decimal type, 28 significant digits and at most 28 places (a product keeps the sum of the scales: `1000.10 * 12` is `12001.20`; past 28 places it rounds to the type, as `/` does), `/` keeps the type's full precision, and nothing else is rounded but by `round`, `floor` and `ceil`; zero has no sign (`-0` is `0`);
+- at most 2000 characters and 32 levels of nesting.
+
+A refused formula is answered, `valid` false with the code, a message and the 1-based character position where one applies; it is not a service error, so a caller checking a user's formula keeps its transaction. The codes: `EXPRESSION_REQUIRED`, `EXPRESSION_TOO_LONG`, `EXPRESSION_TOO_DEEP`, `SYNTAX_ERROR` (anything outside the grammar: text, `=`, `;`, `.`, `[`), `NUMBER_INVALID`, `UNKNOWN_NAME`, `UNKNOWN_FUNCTION`, `ARGUMENT_COUNT`, `TYPE_MISMATCH`, `MISSING_INPUT` (every name read must have a value, checked before evaluating; `missingNames` lists them), `INPUT_INVALID` (an input that is not a decimal, or a parameter of the wrong shape), `DIVIDE_BY_ZERO`, `OVERFLOW` and `ROUNDING_PLACES_INVALID`. The formula's records, units, dependencies and rounding stages are the application's (Mantle's payroll components).
+
+```js
+const out = ec.service.sync().name("org.moqui.impl.ExpressionServices.evaluate#DecimalExpression")
+    .parameters({expression: "round(if(hours > 40, (hours - 40) * rate * 1.5, 0), 2)", inputs: {hours, rate}}).call()
+if (!out.valid) throw new Error(out.errorCode + ": " + out.errorMessage)
+```
+
 ### ServerServices, ServiceServices
 
 Housekeeping jobs: `ServerServices.clean#PrintJobData` and `ServiceServices.clean#ServiceJobRun` (`daysToKeep`, `maxSeconds`), `ServerServices.backup#EmbeddedDatabase` (`dailyCount`, `weeklyCount`, `monthlyCount`, `backupDir`, `systemMessageRemoteId` → `archivePath`, `backupKind`, `bytesWritten`), and `ServerServices.get#VisitClientIpData` (`visitId*`).

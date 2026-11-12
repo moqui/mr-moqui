@@ -77,6 +77,7 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
     for result in [
         super::backup::register(&mut map),
         super::content::register(&mut map),
+        super::expressions::register(&mut map),
         super::external_agent::register(&mut map),
         super::contacts::register(&mut map),
         super::system_sync::register(&mut map),

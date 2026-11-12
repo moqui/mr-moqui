@@ -137,6 +137,14 @@ along with this software (see the LICENSE.md file). If not, see
         account's lifecycle uses when the owner leaves (the owned-resource contract of org.moqui.admin.IdentityServices). Their
         owner may hand them over; another user's need these permissions, granted to ADMIN (an app grants them to its identity
         operators). The services check the permission and the new owner themselves, so ALL_USERS may call them. -->
+    <!-- The decimal evaluator (ExpressionServices.xml, IronStone People design PE-09): every signed-in user may call it, as
+        any application's formula does. It reads nothing but its parameters, so the grant is not inheritable and reaches no data. -->
+    <moqui.security.ArtifactGroup artifactGroupId="ExpressionServices" description="Decimal expression services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="ExpressionServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
+            artifactName="org\.moqui\.impl\.ExpressionServices\.(validate|evaluate)#DecimalExpression"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="ExpressionServicesALL" userGroupId="ALL_USERS" artifactGroupId="ExpressionServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
     <moqui.security.UserPermission userPermissionId="DRIVE_OWNER_CHANGE" description="Drives: change the owner of another user's shared drive"/>
     <moqui.security.UserPermission userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" description="Mail: change the owner of another user's shared mail account"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DRIVE_OWNER_CHANGE" fromDate="0"/>
