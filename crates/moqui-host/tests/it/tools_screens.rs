@@ -530,8 +530,8 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         "/apps/dashboards/Schedules?view=received",
         &["Monitor overview", "Open my report"],
     );
-    // One schedule: its timing, its recipients, the viewer's own preview and its runs; an owner-mode one is not changed
-    // here, and a screen schedule has its timing alone.
+    // One schedule: its timing, its recipients, the viewer's own preview and its runs; an owner-mode one has its timing
+    // and output changed here (its location kept), and a screen schedule has its timing alone.
     assert_page(
         address,
         &john,
@@ -545,11 +545,43 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
             "/apps/dashboards/ScheduledReportDetail/storeSchedule",
         ],
     );
+    let owner_mode = "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_OWNER_MODE";
     assert_page(
         address,
         &john,
-        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_OWNER_MODE",
-        &["Owner mode", "This schedule delivers in owner mode"],
+        owner_mode,
+        &[
+            "· PDF · Owner mode",
+            "As now:",
+            "This schedule delivers in owner mode",
+            "Its timing and output change here",
+            "/apps/dashboards/ScheduledReportDetail/storeSchedule",
+        ],
+    );
+    let store = "/apps/dashboards/ScheduledReportDetail/storeSchedule";
+    let (status, page) = post(
+        address,
+        &john,
+        store,
+        &[
+            ("screenScheduledId", "GATE_OWNER_MODE"),
+            ("expectedRevision", "0"),
+            ("cronSelected", "0 0 6 ? * MON-FRI"),
+            ("renderMode", "csv"),
+            ("noResultsAbort", "Y"),
+            ("emailSubject", "Gate owner mode"),
+        ],
+    );
+    ran(store, status, &page);
+    // the new format in the heading, and the new time one of the presets (no "As now" choice); still in owner mode
+    let (status, page) = get(address, &john, owner_mode);
+    assert!(
+        status == 200
+            && page.contains("· CSV · Owner mode")
+            && !page.contains("As now:")
+            && page.contains("This schedule delivers in owner mode"),
+        "{}",
+        failure(owner_mode, status, &page)
     );
     assert_page(
         address,

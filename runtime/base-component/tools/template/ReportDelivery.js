@@ -481,8 +481,7 @@ function detail(screenScheduledId) {
                 noResultsAbort: own.noResultsAbort ? "Y" : "N",
                 fromDate: own.fromDate == null ? null : new Date(Number(own.fromDate)),
                 thruDate: own.thruDate == null ? null : new Date(Number(own.thruDate)),
-                emailSubject: own.emailSubject,
-                editable: true
+                emailSubject: own.emailSubject
             }),
             options: {formats: screenFormats, cronPresets, groups: []}
         })
@@ -502,9 +501,9 @@ function detail(screenScheduledId) {
         emailSubject: row.emailSubject,
         deliveryMode: row.deliveryMode,
         group,
-        // an owner-mode schedule (create#Schedule) is paused, resumed and sent here: saving it here would make it a
-        // business schedule and drop its location and its group
-        editable: !!row.deliveryMode,
+        // an owner-mode schedule (create#Schedule): its timing and output change here, and the engine keeps its
+        // recipients, template and location (storeTiming)
+        ownerMode: !row.deliveryMode,
         recipientUserIds: group ? Array.from(row.recipientUserIds || []) : [],
         recipientGroupIds: group ? Array.from(row.recipientGroupIds || []) : [],
         expectedRevision: row.revision
@@ -593,7 +592,9 @@ function create(p) {
 }
 // storeSchedule: the timing, format, active interval, subject and skipping of a schedule of the viewer's, a report
 // schedule through store#Schedule (its recipients kept) and a screen schedule of theirs through store#ScreenSchedule.
-// The form posts every field, so one left empty is cleared.
+// An owner-mode schedule keeps its own template, recipients and location: the request carries no recipient list, so the
+// engine changes its timing and output alone, and the mount's template and cap are not put on it. The form posts every
+// field, so one left empty is cleared.
 function storeTiming(p) {
     const request = {
         screenScheduledId: p.screenScheduledId,
@@ -606,11 +607,12 @@ function storeTiming(p) {
         clearFields: ["emailSubject", "fromDate", "thruDate"].filter(name => p[name] == null || p[name] === "")
     }
     const row = ownSchedule(p.screenScheduledId)
-    if (row && !row.deliveryMode)
-        return refuse("This schedule delivers in owner mode: it is paused, resumed and sent here, and made again to change it")
-    const stored = row
-        ? save(mountLib.state().policy, Object.assign(request, {expectedRevision: revisionOf(p.expectedRevision)}))
-        : ask("store#ScreenSchedule", request)
+    if (row) request.expectedRevision = revisionOf(p.expectedRevision)
+    const stored = !row
+        ? ask("store#ScreenSchedule", request)
+        : row.deliveryMode
+          ? save(mountLib.state().policy, request)
+          : ask("store#Schedule", request)
     if (stored.failure) return refuse(stored.failure)
     return done("Schedule saved")
 }

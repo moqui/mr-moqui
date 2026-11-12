@@ -91,9 +91,13 @@ function list() {
 }
 // createPlaylist: a playlist of one to fifty dashboards the viewer reads (under a mount none of a component it hides),
 // each for five to 3600 seconds, saved as the viewer's own through the engine. Answers its id, or null with the refusal.
+// Refused where the mount gives no editor to order it in, the condition list() offers the form by: the engine's save
+// alone would not hold it, since an app may grant the save to users who author nothing (Insights' distributor, for
+// alert rules). Tools always has its editor.
 function create(p) {
     return attempt(() => {
         const mount = mountLib.state()
+        if (!mount.links.definition) fail("Making a playlist is not offered to you here")
         const hidden = hiddenComponents(mount)
         const id = text(p.playlistId)
         if (!id) fail("Give the playlist an ID")

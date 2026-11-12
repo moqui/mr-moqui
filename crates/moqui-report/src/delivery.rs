@@ -852,6 +852,17 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         }
         Some(row)
     };
+    // the recipients: those given, else the ones the schedule has
+    // an empty list names nobody (the owner alone); a list not sent keeps the recipients as they are
+    let sent = |name: &str| p.get(name).is_some_and(|value| !value.is_null());
+    let given = sent("recipientUserIds") || sent("recipientGroupIds");
+    // an owner-mode schedule changed without recipients is changed in its timing and output alone
+    let existing = match existing {
+        Some(row) if field(&row, "deliveryMode").is_empty() && !given => {
+            return store_owner_timing(ec, &facade, p, row, &owner);
+        }
+        other => other,
+    };
     let or_existing = |name: &str, existing_name: &str| -> String {
         let given = text(p, name);
         if given.is_empty() {
@@ -870,10 +881,6 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| "pdf".to_owned());
     schedule::validate_mode(&mode)?;
-    // the recipients: those given, else the ones the schedule has
-    // an empty list names nobody (the owner alone); a list not sent keeps the recipients as they are
-    let sent = |name: &str| p.get(name).is_some_and(|value| !value.is_null());
-    let given = sent("recipientUserIds") || sent("recipientGroupIds");
     let (users, groups) = match &existing {
         Some(row) if !given => schedule_recipients(ec, &facade, row)?,
         _ => (ids(p, "recipientUserIds"), ids(p, "recipientGroupIds")),
@@ -929,18 +936,7 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
             &template
         }),
     );
-    if matches!(text(p, "noResultsAbort"), "Y" | "N") {
-        row.set("noResultsAbort", Value::string(text(p, "noResultsAbort")));
-    }
-    // a value not sent is kept; clearFields names the ones to empty (a form posts an emptied field as no value)
-    let clear = ids(p, "clearFields");
-    for name in ["emailSubject", "fromDate", "thruDate"] {
-        if clear.iter().any(|cleared| cleared == name) {
-            row.set(name, Value::Null);
-        } else if let Some(value) = p.get(name).filter(|value| !value.is_null()) {
-            row.set(name, value.clone());
-        }
-    }
+    set_kept_fields(&mut row, p);
     let id = field(&row, "screenScheduledId").to_owned();
     if creating {
         row.create(&facade)?;
@@ -949,23 +945,7 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         lock.create(&facade)?;
     } else {
         row.update(&facade)?;
-        // what the earlier revision had not yet sent is not sent under it
-        for occurrence in facade
-            .find(OCCURRENCE)?
-            .eq("screenScheduledId", Value::string(&id))
-            .eq("statusId", Value::string(RUNNING))
-            .list()?
-            .iter()
-        {
-            facade
-                .find(DELIVERY)?
-                .eq("occurrenceId", Value::string(field(occurrence, "occurrenceId")))
-                .eq("statusId", Value::string(PENDING))
-                .update_all([
-                    ("statusId".into(), Value::string(SKIPPED)),
-                    ("reasonCode".into(), Value::string("schedule-changed")),
-                ])?;
-        }
+        skip_unsent(&facade, &id)?;
     }
     facade
         .find(RECIPIENT)?
@@ -987,6 +967,86 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     Ok(out(
         json!({"screenScheduledId": id, "deliveryMode": audience.mode, "revision": next,
         "recipientCount": audience.verdicts.len()}),
+    ))
+}
+
+/// The fields a save sets only when sent: skipping when empty (`Y` or `N`), and the subject and the dates, which
+/// `clearFields` names to empty (a form posts an emptied field as no value).
+fn set_kept_fields(row: &mut EntityValue, p: &Parameters) {
+    if matches!(text(p, "noResultsAbort"), "Y" | "N") {
+        row.set("noResultsAbort", Value::string(text(p, "noResultsAbort")));
+    }
+    let clear = ids(p, "clearFields");
+    for name in ["emailSubject", "fromDate", "thruDate"] {
+        if clear.iter().any(|cleared| cleared == name) {
+            row.set(name, Value::Null);
+        } else if let Some(value) = p.get(name).filter(|value| !value.is_null()) {
+            row.set(name, value.clone());
+        }
+    }
+}
+
+/// What a schedule's earlier revision had not yet sent is not sent under it: its pending deliveries are skipped.
+fn skip_unsent(facade: &EntityFacade, id: &str) -> Result<(), Error> {
+    for occurrence in facade
+        .find(OCCURRENCE)?
+        .eq("screenScheduledId", Value::string(id))
+        .eq("statusId", Value::string(RUNNING))
+        .list()?
+        .iter()
+    {
+        facade
+            .find(DELIVERY)?
+            .eq("occurrenceId", Value::string(field(occurrence, "occurrenceId")))
+            .eq("statusId", Value::string(PENDING))
+            .update_all([
+                ("statusId".into(), Value::string(SKIPPED)),
+                ("reasonCode".into(), Value::string("schedule-changed")),
+            ])?;
+    }
+    Ok(())
+}
+
+/// `store#Schedule` of an owner-mode schedule (one `create#Schedule` made: no delivery mode, its recipient the owner's
+/// `userId`, a `userGroupId` or a `saveToLocation`, with a template of its own) when no recipient list is sent: its
+/// timing and output alone. The cron expression, the render mode, skipping when empty, the subject and the dates change
+/// as for any schedule, the revision is raised and the earlier revision's unsent deliveries are skipped; its
+/// definition, recipients, template and location are kept, so the change does not make it a business schedule. The
+/// caller is its owner (`schedule::owned`) at the revision read, as for any change.
+fn store_owner_timing(
+    ec: &ExecutionContext,
+    facade: &EntityFacade,
+    p: &Parameters,
+    mut row: EntityValue,
+    owner: &Account,
+) -> Result<Parameters, Error> {
+    let definition_id = field(&row, "reportDefinitionId").to_owned();
+    schedulable(ec, &definition_id)?;
+    let given_or = |name: &str| -> String {
+        Some(text(p, name))
+            .filter(|given| !given.is_empty())
+            .unwrap_or_else(|| field(&row, name))
+            .to_owned()
+    };
+    let cron = given_or("cronExpression");
+    moqui_lib::cron::Cron::parse(&cron).map_err(fail)?;
+    let mode = Some(given_or("renderMode"))
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or_else(|| "pdf".to_owned());
+    schedule::validate_mode(&mode)?;
+    let _authz = ec.disable_authz();
+    let next = revision(&row) + 1;
+    row.set("cronExpression", Value::string(&cron));
+    row.set("renderMode", Value::string(&mode));
+    row.set("versionNumber", Value::I64(next));
+    set_kept_fields(&mut row, p);
+    let id = field(&row, "screenScheduledId").to_owned();
+    row.update(facade)?;
+    skip_unsent(facade, &id)?;
+    tracing::info!(target: "moqui.report.audit", user = %owner.user_id, schedule = %id, definition = %definition_id,
+        mode = "owner", revision = next, "report schedule timing stored");
+    Ok(out(
+        json!({"screenScheduledId": id, "deliveryMode": "", "revision": next}),
     ))
 }
 

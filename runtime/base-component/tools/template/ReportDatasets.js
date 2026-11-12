@@ -6,8 +6,9 @@
 // every row; no entity is read here. Another app shows the screens under its own root (BOSS Insights › Report builder):
 // the mount's policy (template/ReportMount.js) gives what a dataset created there is named with, the words of the scope
 // field and the default range, as data; the engine decides what is allowed.
-const R = "org.moqui.report.ReportServices."
 const mountLib = ec.resource.script("component://tools/template/ReportMount.js")
+// an engine operation as the viewer, {out, failure}: the report screens' one engine call (ReportDelivery.js)
+const {ask} = ec.resource.script("component://tools/template/ReportDelivery.js")
 const minute = 60 * 1000
 const statusNames = {admitted: "Admitted", review: "Needs review", retired: "Retired", unavailable: "Unavailable"}
 const statusColors = {admitted: "positive", review: "warning", retired: "grey-8", unavailable: "negative"}
@@ -18,39 +19,8 @@ const telemetry = ["otel_spans", "otel_logs", "otel_metrics", "otel_errors", "mo
 const exportCap = 10000
 const exportDefault = 1000
 const viewPageSize = 25
-const refusalLength = 300
 
 const text = value => (value == null ? "" : String(value))
-// A refusal's own words: the first line of the engine's message, without the service's name before it.
-function reason(message) {
-    const line = text(message)
-        .split("\n")[0]
-        .replace(/^service \S+ failed: /, "")
-        .replace(/^Error: /, "")
-        .trim()
-    return line.length <= refusalLength ? line : line.slice(0, refusalLength) + "…"
-}
-// An engine operation as the viewer, in a transaction and an error frame of its own: {out, failure}, failure the
-// refusal's words (the engine's own checks decide, and a screen shows why).
-function ask(name, parameters) {
-    ec.message.pushErrors()
-    try {
-        const out =
-            ec.service
-                .sync()
-                .name(R + name)
-                .parameters(parameters || {})
-                .requireNewTransaction(true)
-                .call() || {}
-        if (!ec.message.hasError()) return {out, failure: null}
-        return {out: null, failure: reason(ec.message.getErrorsString())}
-    } catch (error) {
-        return {out: null, failure: reason(error?.message ?? error)}
-    } finally {
-        ec.message.clearErrors()
-        ec.message.popErrors()
-    }
-}
 // The same for a transition, whose refusal is its error.
 function must(name, parameters) {
     const asked = ask(name, parameters)

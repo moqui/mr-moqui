@@ -154,6 +154,9 @@ function mode() {
 // Whether the viewer may set a rule here: the mount's policy says so (with no mount, Tools does) and their own grant
 // opens the engine's save. The first is what a transition holds (requireSet); the second the engine checks itself.
 const canSet = m => m.maySet && offered("save#Definition")
+// Whether an audience may be told by email here: with no mount of audiences always (a rule naming no template is sent the
+// engine's own, REPORT_ALERT), under one only where it names its template (fixedParts writes it).
+const emailOffered = m => !m.audienceOnly || !!m.fixed.emailTemplateId
 function requireSet(m = mode()) {
     if (!m.maySet) fail("Setting an alert is not offered to you here")
     return m
@@ -622,8 +625,9 @@ function detail(p) {
         recipientGroupIds: named.groupIds,
         selectedRecipients: named.userIds.join(","),
         emailChannel: email ? "Y" : "N",
-        // email is offered where a template is known: the mount's, else the one the rule already has
-        emailOffered: !!(m.fixed.emailTemplateId || audience.emailTemplateId),
+        // email is offered with no mount of audiences (the rule's own template, else the engine's REPORT_ALERT), and
+        // under one where it names a template
+        emailOffered: emailOffered(m),
         userGroupId: definition.userGroupId || "",
         pausedReason: body.pausedReason || ""
     })
@@ -890,8 +894,8 @@ function unaccepted(policy, users, groups, shareGroupId) {
     return null
 }
 // storeAudience: whom a business rule of the viewer's tells (themselves alone, or people and groups, each accepted
-// first), how (in the app, and at each recipient's own account address where a template is known), and the group of the
-// viewer's own it is shared with, so its recipients read it. The engine then checks every recipient of an active rule.
+// first), how (in the app, and at each recipient's own account address where email is offered: the mount's template, else
+// the rule's own, else the engine's), and the group of the viewer's own it is shared with, so its recipients read it. The engine then checks every recipient of an active rule.
 function storeAudience(p) {
     return attempt(() => {
         const m = requireSet()
@@ -906,7 +910,7 @@ function storeAudience(p) {
         const body = clone(existing.body)
         const before = body.audience || {}
         const template = m.fixed.emailTemplateId || before.emailTemplateId || null
-        const email = flag(p.emailChannel) && !!template
+        const email = flag(p.emailChannel) && emailOffered(m)
         // each series is its own notification, so nothing is gained by waiting to group; a state still firing is told
         // again after the engine's repeat interval
         const audience = {
@@ -917,7 +921,7 @@ function storeAudience(p) {
         }
         for (const name of ["topic", "recipientCap", "repeatSeconds", "groupBy"])
             if (before[name] != null) audience[name] = before[name]
-        if (email) audience.emailTemplateId = template
+        if (email && template) audience.emailTemplateId = template
         body.audience = audience
         const saved = ask("save#Definition", {
             definition: {

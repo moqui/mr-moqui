@@ -4,10 +4,11 @@
     report definition of kind playlist), each with its dashboards, its seconds and the group it is shared with. A playlist
     plays in the app (Playlist) or full screen on a page of its own (WallDisplay); it is ordered in the definition editor.
     NewPlaylist: a playlist of dashboards the viewer reads, for one whose own grant opens the engine's save where there is
-    an editor (createPlaylist). SharePlaylist: its owner shares a playlist with a group of their own, or one the mount
-    offers (reportPolicy.shareGroups: an app's wall displays), or makes it private, where the mount's policy lets the
-    viewer share (sharePlaylist; template/ReportShare.js: the transition holds features.share and the engine's save checks
-    the owner and the group). What the screen shows is template/ReportPlaylists.js, over ReportServices as the viewer.
+    an editor (createPlaylist, which refuses where the mount gives none). SharePlaylist: its owner shares a playlist with a
+    group of their own, or one the mount offers (reportPolicy.shareGroups: an app's wall displays), or makes it private,
+    where the mount's policy lets the viewer share (sharePlaylist; template/ReportShare.js: the transition holds
+    features.share and the engine's save checks the owner and the group). What the screen shows is
+    template/ReportPlaylists.js, over ReportServices as the viewer.
     Another app shows it in a screen of its own around these sections (BOSS Insights › Wall display, with its devices),
     taking in the transitions it offers. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Playlists" default-menu-index="9"
@@ -19,7 +20,8 @@
         <error-response url="."/>
     </transition>
     <transition name="play"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('playlist')}"/></transition>
-    <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
+    <!-- the editor the playlist is ordered in; where the mount gives none, this page -->
+    <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').state().links.definition || '.'}"/></transition>
     <!-- the owner shares a playlist with a group offered here, or makes it private: refused without the mount's share
         feature, and the engine's save checks the owner and the group -->
     <transition name="sharePlaylist" method="post">

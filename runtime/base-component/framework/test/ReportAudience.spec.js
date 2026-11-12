@@ -3,7 +3,8 @@
 // fingerprint for the definition equals the owner's: check#ReportAudience and store#Schedule refuse one whose row filter
 // differs, each run checks every recipient again and skips one who changed (scope-differs), each recipient gets a message of
 // their own, one render serves a locale, the cap holds, a retry sends the failed recipient alone, and a disabled owner's
-// schedule pauses until a qualified owner takes it and passes the same check. A recipient reads their own report again, never
+// schedule pauses until a qualified owner takes it and passes the same check. An owner-mode schedule (create#Schedule)
+// changed with no recipient list keeps its group, location and template. A recipient reads their own report again, never
 // another's. What the delivery screens read and write beside the engine's own (ReportReads.js, ReportWrites.js): recipients
 // are proposed and accepted by the engine's rule or among a permission's holders, whatever a caller passes, and a screen
 // schedule is read and changed by its own user alone. The group a definition is shared with is the saver's own or one
@@ -642,29 +643,65 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
     }
 })
 
-feature("a schedule over a business dataset made by create#Schedule is held to the same check at its run", {
-    when() {
-        // owner mode, as Tools writes it: another user named unchecked, whose scope differs from the owner's
-        const created = as("rda.next", "create#Schedule", schedule({userId: "RDA_OTHER"}))
-        capture.clear()
-        const sent = as("rda.next", "send#Report", {screenScheduledId: created.out?.screenScheduledId})
-        const found = as("rda.next", "find#ReportOccurrences", {screenScheduledId: created.out?.screenScheduledId})
-        return {
-            createdError: created.error || "",
-            sent,
-            messages: capture.count(),
-            occurrence: Array.from(found.out?.occurrences || [])[0] || {}
+feature(
+    "a schedule over a business dataset made by create#Schedule is held to the same check at its run, and changed in its timing alone",
+    {
+        when() {
+            // owner mode, as Tools writes it: another user named unchecked, whose scope differs from the owner's
+            const created = as("rda.next", "create#Schedule", schedule({userId: "RDA_OTHER"}))
+            capture.clear()
+            const sent = as("rda.next", "send#Report", {screenScheduledId: created.out?.screenScheduledId})
+            const found = as("rda.next", "find#ReportOccurrences", {screenScheduledId: created.out?.screenScheduledId})
+            // an owner-mode schedule to a group and a location, its timing changed with no recipient list: the cron, format
+            // and subject change, its group, location and template stay, and it stays in owner mode; another user is refused
+            const grouped = as("rda.next", "create#Schedule", schedule({userGroupId: "RDA_TEAM"}))
+            const groupedId = grouped.out?.screenScheduledId || "_NA_"
+            sys(() => {
+                const row = ec.entity
+                    .find("moqui.screen.ScreenScheduled")
+                    .condition("screenScheduledId", groupedId)
+                    .useCache(false)
+                    .one()
+                row.saveToLocation = "dbresource://spec/reports"
+                row.update()
+            })
+            const timing = {
+                screenScheduledId: groupedId,
+                cronExpression: "0 0 7 ? * TUE",
+                renderMode: "xlsx",
+                emailSubject: "Spec timing",
+                emailTemplateId: "DASHBOARD_REPORT",
+                expectedRevision: 0
+            }
+            const byOther = as("rda.equal", "store#Schedule", timing)
+            const changed = as("rda.next", "store#Schedule", timing)
+            return {
+                createdError: created.error || "",
+                sent,
+                messages: capture.count(),
+                occurrence: Array.from(found.out?.occurrences || [])[0] || {},
+                byOther: byOther.error || "",
+                changed,
+                timed: one("moqui.screen.ScreenScheduled", {screenScheduledId: groupedId})
+            }
+        },
+        then({createdError, sent, messages, occurrence, byOther, changed, timed}) {
+            createdError == ""
+            sent.error == undefined
+            messages == 0
+            occurrence.skippedCount == 1
+            occurrence.sentCount == 0
+            occurrence.deliveryMode == ""
+            byOther.includes("report schedule not found for this owner")
+            changed.error == undefined && changed.out.revision == 1
+            timed.cronExpression == "0 0 7 ? * TUE" && timed.renderMode == "xlsx" && timed.emailSubject == "Spec timing"
+            timed.userGroupId == "RDA_TEAM" &&
+                timed.saveToLocation == "dbresource://spec/reports" &&
+                timed.emailTemplateId == "RDA_REPORT"
+            !timed.deliveryMode && !timed.userId && timed.versionNumber == 1
         }
-    },
-    then({createdError, sent, messages, occurrence}) {
-        createdError == ""
-        sent.error == undefined
-        messages == 0
-        occurrence.skippedCount == 1
-        occurrence.sentCount == 0
-        occurrence.deliveryMode == ""
     }
-})
+)
 
 feature(
     "recipients are proposed and accepted by the engine's rule or among a permission's holders, and a screen schedule is its user's alone",

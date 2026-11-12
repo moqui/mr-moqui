@@ -4,7 +4,8 @@
 // schedule's (at save and again at each notification) and told separately, one whose scope differs is skipped, the recipient
 // cap holds, No Data and Error are never Normal, and nobody but the owner and an equivalent recipient reads a value: not the
 // delivery rows, not the administrative list. A copy is paused until its owner activates it, and a rule whose owner left is
-// paused and handed to a qualified owner. The dataset, its scope groups and the users are ReportDrill's and ReportAudience's
+// paused and handed to a qualified owner. An audience told by email that names no template is sent the framework's
+// REPORT_ALERT. The dataset, its scope groups and the users are ReportDrill's and ReportAudience's
 // (after it rda.next owns, rda.equal and rda.french read what rda.next reads, rda.other reads another scope and may not deliver
 // to a group, RDA_OWNER is disabled). Run: ./moq test framework --spec BusinessAlerts
 const R = "org.moqui.report.ReportServices."
@@ -526,3 +527,55 @@ feature("a copy waits for its owner, and a leaving owner's rule is paused and ha
         after == "false,,group"
     }
 })
+
+feature(
+    "an audience told by email that names no template is sent the framework's REPORT_ALERT, at each recipient's own address",
+    {
+        when() {
+            const mail = ec.factory.getTool("MailCapture")
+            mail.enable()
+            // the instance's sender and mail server, which an administrator sets on the template (Admin's mail readiness asks
+            // for them): here ReportAudience's server, whose sends the capture keeps
+            const sender = (from, emailServerId) =>
+                sys(() => {
+                    const row = ec.entity
+                        .find("moqui.basic.email.EmailTemplate")
+                        .condition("emailTemplateId", "REPORT_ALERT")
+                        .one()
+                    row.fromAddress = from
+                    row.emailServerId = emailServerId
+                    row.update()
+                })
+            sender("alerts@example.test", "RDA_MAIL")
+            try {
+                const audience = {recipientUserIds: ["RDA_EQUAL"], channels: ["notification", "email"], groupWaitSeconds: 0}
+                const saved = as("rda.next", "save#Definition", rule("rba-email", {audience}))
+                mail.clear()
+                const run = evaluate("rda.next", "rba-email")
+                const sent = Array.from(mail.getMessages()).map(message => ({
+                    to: Array.from(message.toList).join("+"),
+                    subject: String(message.subject),
+                    body: String(message.body)
+                }))
+                return {
+                    savedError: saved.error || "",
+                    stored: saved.out?.definition?.body?.audience || {},
+                    runError: run.error || "",
+                    sent
+                }
+            } finally {
+                sender("", "SYSTEM")
+                mail.reset()
+            }
+        },
+        then({savedError, stored, runError, sent}) {
+            savedError == ""
+            stored.emailTemplateId == "REPORT_ALERT" && Array.from(stored.channels).join(",") == "notification,email"
+            runError == ""
+            sent.length == 1 && sent[0].to == "rda.equal@example.test"
+            sent[0].subject.startsWith("Alert: ")
+            sent[0].body.includes("Open the alert") && sent[0].body.includes("/apps/test/AlertDetail?definitionId=rba-email")
+            sent[0].body.includes("north")
+        }
+    }
+)

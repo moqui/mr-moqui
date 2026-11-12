@@ -8,8 +8,9 @@
     mode: personal with no other recipient, a group otherwise. OwnPreview: the report's panels as the viewer reads them
     now, and the file. ScheduleRuns: each run's safe counters, opening ReportDelivery. The primary action is Resume while
     paused, else Send now. A screen schedule the viewer set up for themselves (a saved list's delivery) changes its
-    timing, format and subject here (store#ScreenSchedule); an owner-mode schedule (made on Reports) is paused, resumed
-    and sent here. Every read and write is through template/ReportDelivery.js, which reads no entity.
+    timing, format and subject here (store#ScreenSchedule); an owner-mode schedule (made on Reports) changes its timing and
+    output here too, keeping its recipients, message and location as they were made, and is paused, resumed and sent.
+    Every read and write is through template/ReportDelivery.js, which reads no entity.
     Another app shows the screen under its own root, by location (BOSS Insights › Scheduled reports): the people
     proposed and accepted as recipients, the EmailTemplate of a save and its recipient cap are the mount's policy
     (template/ReportMount.js), read by the transitions here and never from a request. -->
@@ -114,11 +115,8 @@
                     <container-box>
                         <box-header title="Timing and output"/>
                         <box-body>
-                            <section name="OwnerModeTiming" condition="!schedule.editable"><widgets>
-                                <label type="p" text="${schedule.cronText} · ${schedule.formatText}"/>
-                                <label type="p" style="m-muted" text="This schedule delivers in owner mode, as it was set when it was made: to one address line or a server location, without the check of each recipient that a schedule made here has. It is paused, resumed and sent here; to change it, make it again."/>
-                            </widgets></section>
-                            <section name="ScheduleTiming" condition="schedule.editable"><widgets>
+                            <label type="p" style="m-muted" condition="schedule.ownerMode" text="This schedule delivers in owner mode, as it was set when it was made: to one address line or a server location, without the check of each recipient that a schedule made here has. Its timing and output change here; its recipients, message and location stay as they were made."/>
+                            <section name="ScheduleTiming"><widgets>
                                 <form-single name="EditScreenScheduled" transition="storeSchedule" map="editValues">
                                     <field name="screenScheduledId"><default-field><hidden/></default-field></field>
                                     <field name="expectedRevision"><default-field><hidden/></default-field></field>
@@ -172,7 +170,7 @@
                                 </container-dialog>
                             </box-toolbar>
                             <box-body>
-                                <label type="p" text="${schedule.group ? 'Sent to each of these separately, one message each.' : schedule.editable ? 'Sent to you alone.' : 'Sent to ' + schedule.audienceText + ', in owner mode.'}"/>
+                                <label type="p" text="${schedule.group ? 'Sent to each of these separately, one message each.' : !schedule.ownerMode ? 'Sent to you alone.' : 'Sent to ' + schedule.audienceText + ', in owner mode.'}"/>
                                 <label type="p" style="m-muted" text="${found.audienceNote}" condition="found.audienceNote"/>
                             </box-body>
                             <box-body-nopad>

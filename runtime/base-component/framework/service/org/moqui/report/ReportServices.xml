@@ -277,7 +277,10 @@
             (expectedRevision, STALE_REVISION), and cancels the deliveries of the earlier revision not yet sent. A value not
             sent is kept: recipient lists not sent keep the recipients (an empty list names the owner alone), and
             clearFields names which of emailSubject, fromDate and thruDate to empty. At each run the check repeats and a
-            recipient whose scope changed is skipped (scope-differs).</description>
+            recipient whose scope changed is skipped (scope-differs). An owner-mode schedule (made by create#Schedule, with no
+            delivery mode) changed with no recipient list is changed in its timing and output alone (cronExpression,
+            renderMode, noResultsAbort, emailSubject and the dates, at the revision read): its definition, userId,
+            userGroupId, saveToLocation and template are kept, and it stays an owner-mode schedule.</description>
         <in-parameters>
             <parameter name="screenScheduledId"/><parameter name="definitionId"/><parameter name="cronExpression"/>
             <parameter name="renderMode"/><parameter name="noResultsAbort"/><parameter name="fromDate" type="Timestamp"/>

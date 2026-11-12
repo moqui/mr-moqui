@@ -9,8 +9,8 @@
 //!
 //! - it has no contact points: no address, no webhook and no notification to a group as a whole. Its `audience` names
 //!   internal users and groups and the channels `notification` (a private in-app notification) and `email` (the
-//!   recipient's own account address, through an email template). The server sets its `deliveryMode`, personal when the
-//!   owner is the only recipient;
+//!   recipient's own account address, through the email template it names, else the framework's `REPORT_ALERT`). The
+//!   server sets its `deliveryMode`, personal when the owner is the only recipient;
 //! - an active rule is saved only when every recipient passes the check and the audience is within the recipient cap
 //!   (delivery.rs [`delivery::caps`]); recipients other than the owner need the group delivery artifact;
 //! - at each notification every recipient is checked again and told separately; one whose scope changed is skipped
@@ -42,6 +42,8 @@ const INSTANCE: &str = "moqui.report.AlertInstance";
 const RULE_LOCK: &str = "moqui.report.AlertRuleLock";
 const SAVE_SERVICE: &str = "org.moqui.report.ReportServices.save#Definition";
 const DEFAULT_TOPIC: &str = "ReportAlert";
+/// The email template of an audience told by email that names none (framework/data/ReportEmailData.xml).
+const DEFAULT_EMAIL_TEMPLATE: &str = "REPORT_ALERT";
 const CHANNELS: [&str; 2] = ["notification", "email"];
 /// What an audience may hold. Anything else (an address, a URL, a header) is refused, not dropped.
 const AUDIENCE_KEYS: [&str; 10] = [
@@ -205,13 +207,12 @@ pub(super) fn prepare(ec: &ExecutionContext, body: &mut Json) -> Result<bool, Er
                 .ok_or_else(|| fail(format!("alert audience {key} is not a name"))),
         }
     };
-    let template = name("emailTemplateId")?;
+    let mut template = name("emailTemplateId")?;
     if chosen.contains(&"email") {
-        let Some(template) = template.as_deref() else {
-            return Err(fail("an alert audience told by email needs an emailTemplateId"));
-        };
-        if !exists(ec, "moqui.basic.email.EmailTemplate", "emailTemplateId", template)? {
-            return Err(fail(format!("email template {template} does not exist")));
+        // an audience told by email that names no template is sent the framework's
+        let named = template.get_or_insert_with(|| DEFAULT_EMAIL_TEMPLATE.to_owned());
+        if !exists(ec, "moqui.basic.email.EmailTemplate", "emailTemplateId", named)? {
+            return Err(fail(format!("email template {named} does not exist")));
         }
     }
     let topic = name("topic")?.unwrap_or_else(|| DEFAULT_TOPIC.to_owned());
