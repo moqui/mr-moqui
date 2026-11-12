@@ -404,6 +404,9 @@ impl TaskJob<'_> {
             out.finish();
             return;
         }
+        // the telemetry of the setup and the tasks before, stored before the model looks for it (a task on Monitor's
+        // Traces reads spans that would otherwise wait in the export queue)
+        moqui_core::telemetry::for_factory(self.factory).flush();
         let turns = self.turns(&mut failures, &mut result.notes, &mut out);
         let observed = json!({"turns": turns.iter().map(observe::TurnSeen::to_check).collect::<Vec<_>>()});
         if failures.is_empty() || !turns.is_empty() {
