@@ -146,6 +146,19 @@ const SERVICES: &str = r#"<services>
         <out-parameters><parameter name="rows" type="List"/></out-parameters>
         <actions><script>rows = []</script></actions>
     </service>
+    <service verb="offer" noun="Mine" authenticate="false">
+        <description>a quick-create condition: offered to plain alone, as the app that declares it</description>
+        <in-parameters><parameter name="kind"/></in-parameters>
+        <out-parameters><parameter name="offer" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            offer = kind == 'offered' && ec.user.username == 'plain' && ec.artifactExecution.getStackNameString().includes('Apps/Open.xml')
+        ]]></script></actions>
+    </service>
+    <service verb="offer" noun="Down" authenticate="false">
+        <in-parameters><parameter name="kind"/></in-parameters>
+        <out-parameters><parameter name="offer" type="Boolean"/></out-parameters>
+        <actions><script>throw new Error('the condition is down')</script></actions>
+    </service>
     <service verb="search" noun="Secret" authenticate="false">
         <in-parameters><parameter name="text"/></in-parameters>
         <out-parameters><parameter name="rows" type="List"/></out-parameters>
@@ -198,6 +211,9 @@ fn tree(name: &str) -> PathBuf {
                 <quick-create kind="secret" label="Secret thing" screen="secret"/>
                 <quick-create kind="lost" label="Lost" screen="open/NoSuchScreen"/>
                 <quick-create kind="activity" label="Activity" requires-record="true" sequence="30"/>
+                <quick-create kind="offered" label="Offered" screen="open/QuickNote" condition-service="test.Shell.offer#Mine" sequence="40"/>
+                <quick-create kind="failing" label="Failing" screen="open/QuickNote" condition-service="test.Shell.offer#Down" sequence="41"/>
+                <quick-create kind="missing" label="Missing" condition-service="test.Shell.offer#NoSuchCondition" sequence="42"/>
                 <today-source service="test.Shell.get#TodayItems" label="Open items"/>
                 <palette-action label="Open the list" icon="sym_o_list" screen="open/List"/>
                 <palette-type doc-type="OpenDoc"/>
@@ -523,7 +539,8 @@ fn shell_data_lists_the_apps_the_user_may_open_with_their_menus_providers_theme_
             {"kind": "note", "label": "Quick note (en)", "icon": "sym_o_note_add", "url": "/qapps/open/QuickNote?from=the+shell",
                 "requiresRecord": false, "sequence": 20},
             {"kind": "activity", "label": "Activity", "icon": null, "url": "/qapps/open/QuickCreate?kind=activity", "requiresRecord": true,
-                "sequence": 30}
+                "sequence": 30},
+            {"kind": "offered", "label": "Offered", "icon": null, "url": "/qapps/open/QuickNote", "requiresRecord": false, "sequence": 40}
         ]),
         "{data}"
     );
@@ -1933,6 +1950,57 @@ fn providers_of_the_apps_the_user_may_open_answer_and_a_failing_one_is_left_out(
     assert!(
         bad["errors"].as_str().unwrap_or("").contains("not a provider hook"),
         "{bad}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_quick_create_with_a_condition_is_offered_only_where_its_service_says_so_and_a_failing_one_hides_only_itself() {
+    let dir = tree("condition");
+    let world = world(&dir);
+    let root = root_of(&dir);
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let kinds = |user: &str| {
+        let (status, data) = get(&world, &root, Some(user), "/shellData", &[]);
+        assert_eq!(status, 200, "{data}");
+        let open = data["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|app| app["name"] == "open")
+            .cloned()
+            .unwrap_or_else(|| panic!("no open app: {data}"));
+        names(&open["providers"]["quickCreate"], "kind")
+    };
+    let (plain, admin) = tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+        (kinds("plain"), kinds("admin"))
+    });
+    // the service, run as the app that declares the kind, offers it to plain and not to admin; the failing and the missing
+    // condition leave out their own kinds alone, and the kinds with no condition stay
+    assert_eq!(plain, ["task", "note", "activity", "offered"], "{plain:?}");
+    assert_eq!(admin, ["secret", "task", "note", "activity"], "{admin:?}");
+    let text = logged(&lines);
+    assert!(
+        text.contains("the condition service test.Shell.offer#Down of quick-create failing failed")
+            && text.contains("the condition is down"),
+        "{text}"
+    );
+    assert!(
+        text.contains("the condition service test.Shell.offer#NoSuchCondition of quick-create missing failed"),
+        "{text}"
+    );
+    // the shell providers read for the tray answer the same
+    let (_, providers) = get(
+        &world,
+        &root,
+        Some("plain"),
+        "/shellProviders",
+        &[("kind", "quickCreate")],
+    );
+    assert_eq!(
+        names(&providers["first"]["apps"][0]["providers"]["quickCreate"], "kind"),
+        ["task", "note", "activity", "offered"],
+        "{providers}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
