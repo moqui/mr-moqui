@@ -86,6 +86,8 @@ const DETAILS: &[&str] = &[
     "/System/Security/IdentityProviderDetail?authFlowId=GATE_FLOW",
     // the instance administrator's view of Sessions: the visits by user
     "/System/Security/Sessions?visits=Y",
+    // and of the changes: the whole audit log, here an account's rows
+    "/System/Audit/AuditChanges?log=Y&changedEntityName=moqui.security.UserAccount",
     "/System/Integrations/MessageTypeDetail?systemMessageTypeId=GateSmsg",
     "/System/Integrations/ConnectionDetail?adapterKey=remote&connectionKey=GateRemote",
     "/System/Integrations/SystemMessageDetail?systemMessageId=GATE_MSG",
@@ -401,12 +403,25 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         "/System/Cache/CacheElements?orderByField=key&cacheName=l10n.message&pageSize=1000",
         &["::en_US", "Cache entries", "l10n.message"],
     );
-    assert_page(address, &john, "/System/Localization/Messages", &["Add", "Añadir"]);
+    // The instance administrator's stored rows of Settings › Localization (`rows=Y`), messages and labels.
     assert_page(
         address,
         &john,
-        "/System/Localization/EntityFields?entityName=moqui.basic.Enumeration&pkValue=GEOT_STATE",
-        &["moqui.basic.Enumeration", "GEOT_STATE"],
+        "/System/Settings/Localization?rows=Y&original=Add&original_op=equals",
+        &["Add", "Añadir", "Instance administrator", "New message row"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Settings/Localization?rows=Y&kind=labels&entityName=moqui.basic.Enumeration&pkValue=GEOT_STATE",
+        &["moqui.basic.Enumeration", "GEOT_STATE", "New label row"],
+    );
+    // The conf is System's own: its link is shown to a user who opens System by their own grant.
+    assert_page(
+        address,
+        &john,
+        "/System/Settings/InstanceSettings",
+        &["Instance preferences", "Open the conf"],
     );
     assert_page(
         address,

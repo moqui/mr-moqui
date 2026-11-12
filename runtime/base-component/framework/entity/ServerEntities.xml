@@ -817,7 +817,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A registered projection of the audit log (moqui.entity.EntityAuditLog) for
             org.moqui.admin.AuditServices.find#Changes: one field of one entity whose changes may be shown, and how. Its
             owner seeds a row; a change of an entity or a field with no row is never found, listed or counted there
-            (Tools' AuditLog stays the instance administrator's). valueMode is show (the values before and after, as
+            (the whole audit log is the instance administrator's, in Tools System's Audit). valueMode is show (the values before and after, as
             text) or marker (only that a value was set, changed or cleared; the default for anything else); a field the
             entity definition encrypts, or whose name reads as a secret, is a marker whatever its row says. sourceService
             is empty for a record of the whole instance (read here, by a holder of ADMIN_AUDIT_VIEW), or the service of

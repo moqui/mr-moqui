@@ -6,10 +6,11 @@
 // supplies one there. The map is data only, never authority:
 //
 //     routes   {key: {url, idParameter, parameters, plain}}: where a link to a record goes under this mount. The keys are
-//              the registrations' own (a recovery descriptor's or transfer target's ownerRoute, a provider's linkKey: "a
-//              key the application showing it resolves", framework/entity/ServerEntities.xml) and the framework's below; a
-//              mount adds its apps' and may replace the framework's (the user's page). A route is a screen path, or with
-//              plain: true a URL used as it is (another app's page). A key with no route is no link.
+//              the registrations' own (a recovery descriptor's or transfer target's ownerRoute, a provider's or an audit
+//              projection's linkKey: "a key the application showing it resolves", framework/entity/ServerEntities.xml),
+//              one key for a screen; the framework's are below. A mount adds its apps' and may replace the framework's
+//              (the user's page). A route is a screen path, or with plain: true a URL used as it is (another app's
+//              page). A key with no route is no link.
 //     hide     the part keys a mount leaves out of the screens it shows
 //
 // state() answers {mounted, raw, routes, hidden} for a screen's actions. raw is whether the instance administrator's
@@ -21,13 +22,28 @@
 const systemLocation = "component://tools/screen/System.xml"
 
 // Where the framework's own records open, relative to a screen of an area (System/<Area>/<Screen> and a mount's
-// <Root>/<Area>/<Screen> alike); each phase of the move adds the keys its screens link. The screens also ask for places
-// that are not the framework's, linked only where a mount gives the route: mailAccount (a mail account's own screens: the
-// mail queue's owner link, the protocols' home), voice (the phone system's own screens: the protocols' home) and
-// supportSummary (a readiness and support summary: the server configuration).
+// <Root>/<Area>/<Screen> alike); each phase of the move adds the keys its screens link. The keys are the linkKey values of
+// the framework's audit projections (framework/data/AdminAuditData.xml), which the changes list links by and the other
+// screens use for the same places: a member's or a session's user (adminUser, System's own account page), a run's item
+// that is a system message (adminSystemMessage). A key with no id parameter opens a list or a screen of one record. The
+// registered keys with no route here have no System screen: the exports, imports and backups (adminExports,
+// adminImport, adminBackups) and what only an app has (invitations, lifecycle operations, organizations), which a mount
+// gives. The screens also ask for places that are not the framework's, linked only where a mount gives the route:
+// mailAccount (a mail account's own screens: the mail queue's owner link, the protocols' home), voice (the phone
+// system's own screens: the protocols' home) and supportSummary (a readiness and support summary: the server
+// configuration).
 const frameworkRoutes = {
-    user: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"},
-    systemMessage: {url: "../../Integrations/SystemMessageDetail", idParameter: "systemMessageId"}
+    adminUser: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"},
+    adminGroup: {url: "../../Access/GroupDetail", idParameter: "userGroupId"},
+    adminIdentityProvider: {url: "../../Security/IdentityProviderDetail", idParameter: "authFlowId"},
+    adminInstanceSettings: {url: "../../Settings/InstanceSettings"},
+    adminLocalization: {url: "../../Settings/Localization"},
+    adminMessageType: {url: "../../Integrations/MessageTypeDetail", idParameter: "systemMessageTypeId"},
+    adminConnection: {url: "../../Integrations/Connections"},
+    adminMailRelay: {url: "../../Protocols/MailRelays"},
+    adminSystemMessage: {url: "../../Integrations/SystemMessageDetail", idParameter: "systemMessageId"},
+    adminJob: {url: "../../Operations/JobDetail", idParameter: "jobName"},
+    adminTopic: {url: "../../Operations/TopicDetail", idParameter: "topic"}
 }
 
 // The mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a mount with

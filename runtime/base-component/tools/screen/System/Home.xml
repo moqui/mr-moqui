@@ -307,7 +307,7 @@ along with this software (see the LICENSE.md file). If not, see
             // ---- navigation: the catalog of template/HomeParts.xml (a component adds entries with an actions-extend) ----
             const featured = (path, title, text, links) => ({path, title, text, links, featured: true})
             const entry = (group, path, title, icon) => ({group, path, title, icon})
-            const server = L('Server'), monitor = L('Monitor'), security = L('Security and history'), integration = L('Integration'),
+            const server = L('Server'), monitor = L('Monitor'), integration = L('Integration'),
                 administration = L('Administration'),
                 ai = L('AI'), content = L('Content')
             navOptions = {otherTitle: L('More')}
@@ -328,12 +328,13 @@ along with this software (see the LICENSE.md file). If not, see
                 entry(administration, 'Security/IdentityProviders', '', 'sym_o_passkey'), entry(administration, 'Security/Sessions', '', 'sym_o_devices'),
                 entry(administration, 'Operations/Jobs', '', 'sym_o_schedule'), entry(administration, 'Operations/JobRuns', '', 'sym_o_history'),
                 entry(administration, 'Operations/Topics', '', 'sym_o_notifications'),
+                entry(administration, 'Settings/InstanceSettings', L('Instance settings'), 'sym_o_tune'),
+                entry(administration, 'Settings/Localization', '', 'sym_o_translate'),
+                entry(administration, 'Audit/AuditChanges', L('Audit changes'), 'sym_o_history_edu'), entry(administration, 'Visit'),
 
                 entry(monitor, 'Monitor/Services'), entry(monitor, 'Monitor/Traces'), entry(monitor, 'Monitor/Logs'), entry(monitor, 'Monitor/Errors'),
                 entry(monitor, 'Monitor/Metrics'), entry(monitor, 'Monitor/Incidents'), entry(monitor, 'Monitor/Checks'), entry(monitor, 'Monitor/Settings'),
                 entry(monitor, 'Monitor', L('All of Monitor')),
-
-                entry(security, 'AuditLog'), entry(security, 'Visit'),
 
                 entry(integration, 'Integrations/Connections', '', 'sym_o_hub'), entry(integration, 'Integrations/SystemMessages', '', 'sym_o_swap_horiz'),
                 entry(integration, 'Integrations/MessageTypes', '', 'sym_o_schema'),
@@ -347,8 +348,7 @@ along with this software (see the LICENSE.md file). If not, see
                 entry(ai, 'Llm/Approvals', '', 'sym_o_approval'), entry(ai, 'Llm/Usage', '', 'sym_o_payments'),
                 entry(ai, 'Llm/Traces', '', 'sym_o_timeline'), entry(ai, 'Llm/Evals', '', 'sym_o_grading'), entry(ai, 'Constitution'),
 
-                entry(content, 'Localization/Messages', L('Localized messages'), 'sym_o_translate'),
-                entry(content, 'Localization/EntityFields', L('Localized entity fields'), 'sym_o_text_fields'), entry(content, 'Resource')
+                entry(content, 'Resource')
             ]
         ]]></script>
     </actions>

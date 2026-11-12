@@ -6,10 +6,10 @@
 // the stack lets through. A mount's routes replace and add to the framework's, a plain one (another app's page) answered as
 // a URL with its query string; a value that is not a map is a mount with nothing in it. A System screen's own raw
 // transition (JobDetail's updateJob, an entity-auto update the mount's always-allow would pass) is refused under a mount
-// that mounts the screen by location, and runs under System, as another area's does (GroupDetail's updateUserGroup). And
-// the rule that keeps it so, read from the screens' sources at no render's cost: every transition of an area's screens
-// that acts either calls only org.moqui.admin services, which check the delegated permissions themselves, or carries
-// raw() as its condition.
+// that mounts the screen by location, and runs under System, as other areas' do (GroupDetail's updateUserGroup,
+// Localization's createLocalizedMessage). And the rule that keeps it so, read from the screens' sources at no render's
+// cost: every transition of an area's screens that acts either calls only org.moqui.admin services, which check the
+// delegated permissions themselves, or carries raw() as its condition.
 // Run: ./moq test tools --spec AdminMounts
 const mount = "component://tools/test/screen/AdminMount.xml"
 const probe = "component://tools/test/screen/AdminMount/Probe.xml"
@@ -21,9 +21,11 @@ const PREFERENCE = "AdminMountsSpec.raw"
 const system = "component://tools/screen/System.xml"
 const JOB = "moqui.service.job.ServiceJob"
 const jobName = "AdminMountsSpec_job"
+const MESSAGE = "moqui.basic.LocalizedMessage"
+const original = "AdminMountsSpec message"
 // The areas of System that another app may show under its root (screen/System/<Area>/): each phase of
 // plans/Admin-Screens-Down.md adds its own.
-const AREAS = ["Operations", "Integrations", "Protocols", "Access", "Security"]
+const AREAS = ["Operations", "Integrations", "Protocols", "Access", "Security", "Settings", "Audit"]
 // What an area's directory holds that the rule does not read, as a path under screen/System (a screen and the screens below
 // it), with why.
 const NOT_AREA_SCREENS = {
@@ -136,6 +138,7 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         sys(() => ec.entity.find(JOB).condition("jobName", jobName).deleteAll())
+        sys(() => ec.entity.find(MESSAGE).condition("original", original).deleteAll())
         ec.artifactExecution.enableAuthz()
     }
 })
@@ -272,6 +275,14 @@ feature("a System screen's raw transition is refused under a mount that mounts i
         const groupDescription = sys(
             () => ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GROUP).one().description
         )
+        // and a stored translation row created directly on Settings › Localization
+        const ownMessage = screen(
+            system,
+            "Settings/Localization/createLocalizedMessage",
+            {original, locale: "es", localized: "directly"},
+            "post"
+        )
+        const messageText = sys(() => ec.entity.find(MESSAGE).condition({original, locale: "es"}).one()?.localized)
         return {
             mounted,
             afterMount,
@@ -281,7 +292,9 @@ feature("a System screen's raw transition is refused under a mount that mounts i
             afterOwn: description(),
             forged,
             ownGroup,
-            groupDescription
+            groupDescription,
+            ownMessage,
+            messageText
         }
     },
     then({
@@ -293,7 +306,9 @@ feature("a System screen's raw transition is refused under a mount that mounts i
         afterOwn,
         forged,
         ownGroup,
-        groupDescription
+        groupDescription,
+        ownMessage,
+        messageText
     }) {
         mounted.errors.includes("Condition failed for transition")
         afterMount == "before"
@@ -303,6 +318,7 @@ feature("a System screen's raw transition is refused under a mount that mounts i
         forged.errors == ""
         afterOwn == "past a forged mount"
         ownGroup.errors == "" && groupDescription == "directly"
+        ownMessage.errors == "" && messageText == "directly"
     }
 })
 
@@ -329,9 +345,9 @@ feature("every acting transition of an area's screens calls only org.moqui.admin
         // a transition named here acts past the delegated services with no raw() condition: under an app's inheritable
         // always-allow it would run for everyone the app lets into the area
         problems == ""
-        // the rule read something of each kind: JobDetail's saveJob and updateJob among them, and GroupDetail's storeGroup and
-        // updateUserGroup
-        delegated >= 30
-        raw >= 50
+        // the rule read something of each kind: JobDetail's saveJob and updateJob among them, GroupDetail's storeGroup and
+        // updateUserGroup, and Localization's storeMessage and createLocalizedMessage
+        delegated >= 34
+        raw >= 56
     }
 })

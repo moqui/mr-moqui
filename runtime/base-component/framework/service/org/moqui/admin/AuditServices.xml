@@ -24,8 +24,8 @@ along with this software (see the LICENSE.md file). If not, see
     sourceService, implementing find#OwnedChanges, called as the caller through call#ChangeSource, whose ALL_USERS
     ALLOW is not inheritable): the owner answers only the ids of the audit rows within the caller's own scope, and the
     rows are read and masked here. ALL_USERS may call find#Changes and call#ChangeSource (data/AdminAuditData.xml);
-    each checks ADMIN_AUDIT_VIEW itself. Tools' System › AuditLog stays the instance administrator's. No dependency on
-    Mantle or an app. -->
+    each checks ADMIN_AUDIT_VIEW itself. The whole audit log is the instance administrator's part of Tools' System ›
+    Audit, whose list is find#Changes. No dependency on Mantle or an app. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="find" noun="OwnedChanges" type="interface">

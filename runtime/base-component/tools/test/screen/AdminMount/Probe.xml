@@ -12,7 +12,7 @@
     <actions>
         <set field="adminMountLib" from="ec.resource.script('component://tools/template/AdminMount.js')"/>
         <set field="mount" from="adminMountLib.state()"/>
-        <set field="userLink" from="adminMountLib.link(mount.routes, 'user', 'U1')"/>
+        <set field="userLink" from="adminMountLib.link(mount.routes, 'adminUser', 'U1')"/>
         <set field="storeLink" from="adminMountLib.link(mount.routes, 'storeIntegration', 'S1')"/>
         <set field="mailLink" from="adminMountLib.link(mount.routes, 'mailAccount', 'A 1', {view:'queue', empty:''})"/>
         <!-- what the stack answers for System here: true under any inheritable always-allow, which is why raw asks the

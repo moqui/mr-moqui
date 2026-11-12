@@ -1,7 +1,7 @@
 // The localization part of org.moqui.admin.ConfigurationServices (mr-boss plan/design-admin.md §7 Localization, §17.2; impl-admin
 // P8): delegated translation of messages (moqui.basic.LocalizedMessage) and of registered labels
 // (moqui.basic.LocalizedEntityField), for a holder of ADMIN_SETTINGS_VIEW (reads) and ADMIN_SETTINGS_MANAGE (changes) who is not
-// an instance administrator; ADMIN keeps Tools System > Localization, which writes the rows directly.
+// an instance administrator; the instance administrator's part of Tools System > Settings > Localization writes the rows directly.
 //
 // - A translation keeps its placeholders: the ${...} expressions of the translation must be exactly those of the original,
 //   so a translator neither loses a value nor adds an expression the server would evaluate; the values are read as the

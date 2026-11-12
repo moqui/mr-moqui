@@ -1678,7 +1678,8 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 
 | XML file / logical route | Presentation and companions | Activity | Review status |
 |---|---|---|---|
-| `System/AuditLog.xml` | XML widgets | S06 | P |
+| `System/Audit/AuditChanges.xml` | XML widgets | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose list is its instance administrator's part (`log=Y`); not walked here since |
+| `System/Audit.xml` | Container → AuditChanges | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
 | `System/Cache/CacheElements.xml` | XML widgets | S01 | V/P: native count-only and reported-empty states explained; generic populated entries/clear pending |
 | `System/Cache/CacheList.xml` | XML widgets | S01 | V/P: valid/literal-fallback filter and recovery, summary→detail/back; cache clearing pending |
 | `System/Cache.xml` | Container → CacheList | S01 | V/P: normal parent navigation |
@@ -1751,9 +1752,9 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Triggers.xml` | Container → TriggerList | S14 | P |
 | `System/Llm/Usage.xml` | XML widgets | S11 | V/P: empty/valid quota check and no-use state; UI-033 |
 | `System/Llm.xml` | Container → Dashboard | S11 | P |
-| `System/Localization/EntityFields.xml` | XML widgets | S09 | P |
-| `System/Localization/Messages.xml` | XML widgets | S09 | P |
-| `System/Localization.xml` | Container → Messages | S09 | P |
+| `System/Settings/InstanceSettings.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A4; not walked here |
+| `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
+| `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
 | `System/Print/PrintJob/PrintJobDetail.xml` | XML widgets | S05 | P |
 | `System/Print/PrintJob/PrintJobList.xml` | hidden menu | S05 | P |
 | `System/Print/PrintJob.xml` | Container → PrintJobList | S05 | P |

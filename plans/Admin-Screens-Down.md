@@ -113,7 +113,7 @@ skills are changed; no aliases are kept.
 | | Localization | create/update/delete any row | W |
 | Data | Backups | | W (`BOSS_ADM_DATA_BACKUPS`) |
 | | Exports, DataExport, Imports, ImportDetail | | S: transfer check, organization filter |
-| Audit | AuditChanges | all audit rows (old AuditLog list) | D if `find#Changes` alone carries the scope, else S |
+| Audit | AuditChanges | all audit rows (old AuditLog list) | D: `find#Changes` alone carries the scope (the record's A4) |
 
 Moving down: `B/template/AdminConnectionParts.xml` to `T/template/ConnectionParts.xml`; `getUserList` to
 `T/template/UserChoiceTransitions.xml`; `CapabilityServices.get#MatrixContext`/`apply#MatrixChanges` to
@@ -393,3 +393,80 @@ the 3 of F22 fail as before) and `--test gate3_browser` (25 pass, the 4 of F22 f
 site in the new screens, `moqui lint` of the changed service files. Changed and not run: the acceptance
 `AdminFoundationWalk`, `AdminReviewWalk` and `AdminCapabilitiesUsable` of mr-boss and the framework's
 `acceptance/client/LoadBasic`.
+
+### A4 Settings, Audit (Nov 11, 2026)
+
+Built: `System/Settings.xml` (index 5, tabs, InstanceSettings first) with Admin's InstanceSettings and Localization,
+their BOSS references gone, and `System/Audit.xml` (index 8, tabs) with Admin's AuditChanges, which now reads
+`org.moqui.admin.AuditServices.find#Changes` itself (through `AdminCalls.read`, so a refusal shows as its reason), makes
+the texts before and after of a masked value, and links a record by the mount's route for the change's `linkKey` with
+its `linkId`. The instance administrator's parts folded in: Localization (RawRows, what the Localization screens did:
+the stored rows of `LocalizedMessage` and `LocalizedEntityField` found, created, changed and deleted directly; six
+transitions, each with `raw()` as its condition) and AuditChanges (RawLog, the Audit Log screen's list: every row of the
+audit log, read only, nothing listed until something is asked for). Each is shown in place of the screen's own list, by
+a parameter (`rows=Y`, with `kind` for messages or labels; `log=Y`), as Sessions' visits are (F18). InstanceSettings has
+no such part; its link to the conf is System's Conf, for a user who opens System by their own grant.
+`System/Localization.xml`, `System/Localization/**` and `System/AuditLog.xml` are deleted. `AdminMount.js`'s framework
+routes are the linkKey values of the framework's audit projections that have a System screen: `adminUser` (System's own
+account page), `adminGroup`, `adminIdentityProvider`, `adminInstanceSettings`, `adminLocalization`, `adminMessageType`,
+`adminConnection`, `adminMailRelay`, `adminSystemMessage`, `adminJob` and `adminTopic`; the exports, imports and backups
+get theirs in A5, and what only an app has (invitations, lifecycle operations, organizations) is a mount's. The home's
+catalog (the Administration group gains Instance settings, Localization, Audit changes and Visits; the "Security and
+history" group and the two Localization entries of Content are gone), the gallery's settings link, the framework's
+comments that named the old screens, the cargo tests and the UI-Refinement inventory name the new paths. In mr-boss:
+InstanceSettings and Localization include the System screens at their own locations (`BOSS_ADM_ORGANIZATIONS` names
+both) and take in `valueOptions`, `storePreference`, `storeMessage` and `storeLabel`; AuditChanges is mounted by
+location and its file deleted (no grant names it, it has no transition, Admin adds nothing: F25);
+`ironstone.admin.AuditServices.find#ChangeEvidence` and what only it used are gone (`Audit.js` is the access log's); its
+`recordRoutes` are `mountRoutes` in `Admin.js`, as relative routes, for what differs from the framework's or is Admin's
+own (`adminUser`, `adminInvitations`, `adminLifecycle`, `adminOrganization`, `adminExports`, `adminImport`,
+`adminBackups`). Settings' other screens and AccessLog are untouched; Constitution links neither removed screen.
+
+Findings:
+
+- F23. One key for a screen. The mount's routes had `user` and `systemMessage`, keys of the screens' own, and the audit
+  registrations name the same places `adminUser` and `adminSystemMessage`. The registrations' keys are data in two
+  components, so the two older keys are renamed to them, in `AdminMount.js`, Sessions, GroupDetail, JobRunDetail, the
+  test mount and its probe, the AdminOverview spec and mr-boss's `mountRoutes`.
+- F24. A link carries what its target declares as parameters of the linking screen's context, and an empty value in the
+  link's own parameters is what leaves one out. Three places: Sessions' link back from the visits (A3) kept `visits=Y`
+  and never left them, fixed with `{visits:''}`; AuditChanges' "Show all" and its narrowing links kept the user, record
+  or session they were to drop, as they did in mr-boss, fixed in `clearValues`; and a record's link from the changes
+  list would carry the list's page and dates to a target that declares the same names (Exports, Imports, Connections,
+  Localization), so it sends the list's own find values empty.
+- F25. AuditChanges holds mounted by location. `find#Changes` checks `ADMIN_AUDIT_VIEW` and finds an organization's
+  records through their owner within the caller's scope, by a direct call too (mr-boss's AdminAudit asks it as the audit
+  reader: its own organization's person found, the other's not found or counted). What mr-boss added is held so: only an
+  Admin user opens the route (the area's grant) and the service refuses without the permission; a record's place is a
+  screen path, which the link widget disables for a user that screen does not open to: the audit reader, who holds no
+  other area, sees each record named in a disabled anchor in html (`href="#"`, `aria-disabled`) and as muted text in
+  qvt, with no path in the page, and the administrator sees links to Access, Users and Settings; the sentence that named
+  whose changes are shown is one caption true under both roots ("what belongs to the whole instance, and what belongs to
+  an organization within those you administer"). ADMIN through Admin sees no part of the instance administrator's.
+- F26. The screen lint reads a name that ends in Rows as a collection and flags its truthiness, so Localization's flag
+  is `showStored`.
+- F27. InstanceSettings' "Open the conf" is a screen path to System's Conf (`//apps/system/Conf`), shown when the
+  user's own records open System, as JobRunDetail's Monitor links are. Under a spec's root the path does not resolve
+  and the link renders disabled; the cargo test, on a server, holds its text for ADMIN, and mr-boss's AdminSettings that
+  the configuration administrator has none.
+- F28. The stored rows' list takes the screen's `locale`, which is also the find's, so it is narrowed by a locale chosen
+  among the translations, and after a row is created or deleted directly it shows that row's locale.
+- F29. mr-l10n holds translations of strings only the removed screens and the old catalog showed ("Audit Log", "New
+  Message", "New Field L10n", "Entity Fields", "Localized messages", "Localized entity fields", "Security and
+  history"), and none of the moved screens' strings (Admin is not in the pack). It is not changed here.
+- F30. No recorded agent replay names a removed screen. Both sets replay (24 of 24, 9 of 9, exit 0 against the
+  baselines, which are not written again); none of their drift notes is about these screens.
+
+Tests: `./moq test tools --nobuild` (71 features, 3.3 s of 4 s; `AdminMounts` reads Settings and Audit in its static
+rule, at least 34 delegated and 56 raw transitions, and posts Localization's `createLocalizedMessage` under System,
+applied); `./moq test framework --nobuild --spec AdminAuditChanges --spec AdminConfiguration` (6 features, 0.3 s);
+`./moq test mr-boss --nobuild --spec AdminSettings --spec AdminAudit --spec AdminAccess --spec AdminRegistries --spec
+AdminGroups --spec AdminUsers --spec AdminJobRuns --spec AdminSecurity` (31 features; AdminSettings posts
+`createLocalizedMessage` and `deleteLocalizedMessage` through Admin as the configuration administrator and as ADMIN:
+nothing created, nothing deleted; AdminAudit's one render holds the masked text, the reader's organization and the
+disabled record link); `cargo test -p moqui-host --test it tools_screens -- --ignored` (the stored rows of both kinds,
+the whole audit log and the conf link's text added; 25 s); `moqui test tools --agents --replay` on both sets (F30);
+`moqui lint --screens` with no parse failure and no flagged site in the changed screens, `moqui lint` of the two changed
+service files. Changed and not run: mr-boss's acceptance `AdminAuditUsable` (System's audit path among what stays closed
+to the audit reader; the record link present for the administrator and absent for the reader) and the sweeps' screen
+list comment in `AdminSpecLib.js` (`AdminTui`, `AdminServerStatic`).

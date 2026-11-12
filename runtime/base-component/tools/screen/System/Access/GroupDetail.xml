@@ -252,7 +252,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const mountLib = ec.resource.script('component://tools/template/AdminMount.js')
                     const routes = mountLib.state().routes
                     const userLink = userId => {
-                        const link = mountLib.link(routes, 'user', userId) || {}
+                        const link = mountLib.link(routes, 'adminUser', userId) || {}
                         return {userHref: link.plain ? link.href : '', userUrl: link.plain ? '' : link.url || '',
                             userParameters: link.plain ? {} : link.parameters || {}}
                     }

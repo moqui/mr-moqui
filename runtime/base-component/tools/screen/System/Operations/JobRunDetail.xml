@@ -58,7 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
             traceParameters = {traceId: run.traceId, from: isoTime(run.startTime, -60000) || 'now-7d', thru: isoTime(run.endTime, 60000) || 'now'}
             logParameters = {queryString: run.runThread ? 'thread.name:' + JSON.stringify(String(run.runThread)) : '',
                 from: isoTime(run.startTime, 0) || 'now-1d', thru: isoTime(run.endTime, 1000) || 'now'}
-            const itemRoute = mount.routes.systemMessage
+            const itemRoute = mount.routes.adminSystemMessage
             evidence = recordFound ? [
                 {label: 'Job', value: run.title + (run.title !== run.jobName ? ' (' + run.jobName + ')' : '')},
                 {label: 'Owner', value: run.ownerApp || 'Not registered'},

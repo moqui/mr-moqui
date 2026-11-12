@@ -440,7 +440,7 @@ feature("a job run's trace and log windows surround the run, and an item links b
             runInContext(actions, state)
             return state
         }
-        const messageRoute = {systemMessage: {url: "//Mount/Messages/Detail", idParameter: "messageId", parameters: {tab: "recovery"}}}
+        const messageRoute = {adminSystemMessage: {url: "//Mount/Messages/Detail", idParameter: "messageId", parameters: {tab: "recovery"}}}
         const complete = inspect(run({}), messageRoute)
         assert.equal(complete.traceParameters.from, "2026-11-04T18:27:00.123Z")
         assert.equal(complete.traceParameters.thru, "2026-11-04T18:29:00.130Z")

@@ -6,7 +6,7 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Admin mount">
     <always-actions>
-        <set field="adminMount" from="{routes:{user:{url:'../Staff', idParameter:'staffUserId'}, storeIntegration:{url:'../Store', idParameter:'storeId', parameters:{tab:'messages'}},
+        <set field="adminMount" from="{routes:{adminUser:{url:'../Staff', idParameter:'staffUserId'}, storeIntegration:{url:'../Store', idParameter:'storeId', parameters:{tab:'messages'}},
                 mailAccount:{url:'/elsewhere/Mail', idParameter:'accountId', plain:true}}, hide:['scheduler']}"/>
     </always-actions>
     <subscreens default-item="Probe">

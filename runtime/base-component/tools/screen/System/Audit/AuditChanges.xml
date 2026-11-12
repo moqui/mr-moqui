@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- AuditChanges (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §12 AuditChanges, §16 "Audit
+    evidence"): the changes the audit log recorded of the registered records, newest first, from
+    org.moqui.admin.AuditServices.find#Changes, which needs ADMIN_AUDIT_VIEW, answers only registered projections, never a
+    secret's value, and finds a record that belongs to an organization through its owner, within the caller's own scope:
+    so the screen carries no scope of its own and an app shows it by location. AuditFind: the area, what changed (a
+    registered projection, never an entity or a field), whether a data load's own changes are listed beside people's,
+    and a range of dates; a row's own links narrow to its actor, its record's place or its session. AuditList: when, who,
+    what changed, the record, the values before and after where the registration shows them (a credential and anything
+    not registered to be shown reads "not shown"), the reason given and the session. A record opens at its owner's place
+    by the mount's route for the registration's linkKey (template/AdminMount.js), a screen path the link widget disables
+    for a user it does not open to; a key with no route is no link. The print (this screen in html-print) and the CSV
+    (the list's export) are the same projection, one bounded page of it. Nothing is changed here: the screen has no
+    transition.
+    For the instance administrator (README, "Mounting the administration screens"): RawLog, every row of the audit log
+    (moqui.entity.EntityAuditLog) by entity, field, key, value, user and visit, registered or not and with its values as
+    stored, as the Audit Log screen this one replaced did, shown in place of the changes with log=Y (one list at a time:
+    two lists on a page would share pageIndex); read only, and nothing is listed until something is asked for. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Changes" default-menu-index="1" menu-image="sym_o_history_edu" menu-image-type="icon">
+    <parameter name="category"/>
+    <parameter name="auditProjectionId"/>
+    <parameter name="changedByUserId"/>
+    <parameter name="recordKey"/>
+    <parameter name="correlation"/>
+    <parameter name="fromDate"/>
+    <parameter name="thruDate"/>
+    <parameter name="madeBy"/>
+    <parameter name="pageIndex"/>
+    <parameter name="pageNoLimit"/>
+    <!-- Y: the whole audit log in place of the changes, for the instance administrator -->
+    <parameter name="log"/>
+
+    <actions>
+        <set field="mount" from="ec.resource.script('component://tools/template/AdminMount.js').state()"/>
+        <set field="showLog" from="mount.raw &amp;&amp; log === 'Y'"/>
+        <set field="renderMode" from="sri.getRenderMode()"/>
+        <set field="printing" from="renderMode === 'html-print'"/>
+        <!-- the print and the file are one bounded page of the same projection -->
+        <set field="exporting" from="printing || pageNoLimit === 'true' || ['csv', 'xlsx', 'text'].includes(renderMode)"/>
+        <set field="findValues" from="{category:category, auditProjectionId:auditProjectionId, changedByUserId:changedByUserId,
+            recordKey:recordKey, correlation:correlation, fromDate:fromDate, thruDate:thruDate, madeBy:(madeBy || 'people')}"/>
+        <if condition="mount.raw &amp;&amp; showLog">
+            <entity-find entity-name="moqui.entity.EntityAuditLog" list="entityAuditLogList" limit="50" use-clone="true">
+                <search-form-inputs default-order-by="-changedDate" require-parameters="true"/>
+            </entity-find>
+            <else>
+                <!-- a refusal is shown as its reason (AdminCalls.read; ignore-error would clear it); by default what people
+                    changed: a data load's own rows, which name no user, are listed only when asked for -->
+                <set field="called" from="ec.resource.script('component://framework/service/org/moqui/admin/AdminCalls.js').read('org.moqui.admin.AuditServices.find#Changes',
+                        Object.assign({category:(category || null), auditProjectionId:(auditProjectionId || null), changedByUserId:(changedByUserId || null),
+                            recordKey:(recordKey || null), correlation:(correlation || null), fromDate:(fromDate || null), thruDate:(thruDate || null),
+                            actorOnly:(madeBy !== 'all')}, exporting ? {forExport:true} : {pageIndex:Math.max(Number(pageIndex) || 0, 0), pageSize:50}),
+                        'Changes are not available to you.')"/>
+                <set field="found" from="called.out"/>
+                <set field="failure" from="called.failure"/>
+            </else>
+        </if>
+        <set field="available" from="!!found?.changeList"/>
+        <script><![CDATA[
+            // a record's place, by the mount's route for the registration's linkKey: a plain route by its href, a screen path
+            // by its url and parameters. A link carries what its target declares of this screen's context, so this screen's
+            // own find values are sent empty: only the record's key goes with it
+            const mountLib = ec.resource.script('component://tools/template/AdminMount.js')
+            const ownEmpty = {category: '', auditProjectionId: '', changedByUserId: '', recordKey: '', correlation: '', fromDate: '',
+                thruDate: '', madeBy: '', pageIndex: '', pageNoLimit: '', log: ''}
+            const recordLink = row => {
+                const link = (row.linkKey ? mountLib.link(mount.routes, row.linkKey, row.linkId) : null) || {}
+                return {recordHref: link.plain ? link.href : '', recordUrl: link.plain ? '' : link.url || '',
+                    recordParameters: link.plain ? {} : Object.assign({}, ownEmpty, link.parameters || {})}
+            }
+            changeList = Array.from(found?.changeList || []).map(row => Object.assign({}, row, recordLink(row), {
+                whatText: row.description,
+                // a value the registration does not show reads as its marker (set, changed, cleared), never the value
+                beforeText: row.masked ? row.before || '' : (row.before ?? ''),
+                afterText: row.masked ? row.after || '(' + row.marker + '; not shown)' : (row.after ?? ''),
+                sessionText: row.correlation || ''}))
+            // the list's paging is the service's (changeListCount and its page fields)
+            changeListCount = Number(found?.changeListCount || 0)
+            changeListPageIndex = Number(found?.changeListPageIndex || 0)
+            changeListPageSize = Number(found?.changeListPageSize || 50)
+            changeListPageMaxIndex = Number(found?.changeListPageMaxIndex || 0)
+            changeListPageRangeLow = Number(found?.changeListPageRangeLow || 0)
+            changeListPageRangeHigh = Number(found?.changeListPageRangeHigh || 0)
+            categoryOptions = Array.from(found?.categoryList || []).map(row => ({value: row.category, label: row.description}))
+            projectionOptions = Array.from(found?.projectionList || []).map(row => ({value: row.auditProjectionId, label: row.description}))
+            narrowed = [changedByUserId && 'one user', recordKey && 'one record', correlation && 'one session'].filter(Boolean).join(', ')
+            // what a narrowing link keeps of the find: the rest, and the page, is sent empty
+            clearValues = {category: category, auditProjectionId: auditProjectionId, fromDate: fromDate, thruDate: thruDate, madeBy: madeBy,
+                changedByUserId: '', recordKey: '', correlation: '', pageIndex: ''}
+            madeByOptions = [{value: 'people', label: 'People'}, {value: 'all', label: 'Anyone, data loads too'}]
+            problemText = Array.from(found?.sourceProblems || []).join(', ')
+        ]]></script>
+    </actions>
+    <widgets>
+        <container style="row items-center q-col-gutter-sm q-mb-sm">
+            <container style="col">
+                <label text="Changes" type="h5"/>
+                <label type="p" style="text-caption m-muted q-mb-none" condition="available"
+                        text="Who changed what, when and why, for the records registered as administrative evidence: what belongs to the whole instance, and what belongs to an organization within those you administer. A credential, and any value not registered to be shown, reads as not shown. Prepared ${ec.l10n.format(ec.user.nowTimestamp, 'yyyy-MM-dd HH:mm')} by ${ec.user.username}."/>
+            </container>
+            <container style="col-auto">
+                <link url="." text="Print" icon="sym_o_print" target-window="_blank" condition="available &amp;&amp; !printing"
+                        parameter-map="Object.assign({}, findValues, {renderMode:'html-print'})"/>
+            </container>
+            <container style="col-auto">
+                <section name="RawLogLinks" condition="mount.raw &amp;&amp; !printing">
+                    <widgets>
+                        <link url="." text="Whole audit log" icon="sym_o_history" link-type="anchor" condition="!showLog" parameter-map="{log:'Y', pageIndex:''}"/>
+                        <link url="." text="Changes" icon="sym_o_history_edu" link-type="anchor" condition="showLog" parameter-map="{log:'', pageIndex:''}"/>
+                    </widgets>
+                </section>
+            </container>
+        </container>
+        <label type="p" style="text-negative" condition="failure" text="${failure}"/>
+        <section name="ChangesSection" condition="available">
+            <widgets>
+                <section name="AuditFindSection" condition="!printing">
+                    <widgets>
+                        <form-single name="AuditFind" transition="." map="findValues">
+                            <field name="changedByUserId"><default-field><hidden/></default-field></field>
+                            <field name="recordKey"><default-field><hidden/></default-field></field>
+                            <field name="correlation"><default-field><hidden/></default-field></field>
+                            <field name="category">
+                                <default-field title="Area"><drop-down allow-empty="true"><list-options list="categoryOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                            </field>
+                            <field name="auditProjectionId">
+                                <default-field title="What changed"><drop-down allow-empty="true"><list-options list="projectionOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                            </field>
+                            <field name="madeBy">
+                                <default-field title="Changed by" tooltip="A data load's own changes name no user"><drop-down><list-options list="madeByOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                            </field>
+                            <field name="fromDate"><default-field title="From"><date-time type="date"/></default-field></field>
+                            <field name="thruDate"><default-field title="Before"><date-time type="date"/></default-field></field>
+                            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                            <field-layout>
+                                <field-row-big><field-ref name="category"/><field-ref name="auditProjectionId"/><field-ref name="madeBy"/><field-ref name="fromDate"/><field-ref name="thruDate"/><field-ref name="submitButton"/></field-row-big>
+                            </field-layout>
+                        </form-single>
+                    </widgets>
+                </section>
+                <container style="row items-center q-gutter-sm" condition="!!narrowed">
+                    <label type="span" text="Narrowed to ${narrowed}."/>
+                    <link url="." text="Show all" link-type="anchor" condition="!printing" parameter-map="clearValues"/>
+                </container>
+                <label type="p" style="text-warning" condition="!!found.notice" text="${found.notice}"/>
+                <label type="p" style="text-warning" condition="!!problemText" text="Not answered just now, so not listed: ${problemText}."/>
+                <label type="p" style="text-warning" condition="found.truncated" text="Only the newest ${found.exportRows} changes are in this print or file: narrow the dates for the rest."/>
+                <label type="p" style="m-muted" condition="!changeList.length &amp;&amp; !found.notice" text="No change matches."/>
+                <form-list name="AuditList" list="changeList" skip-form="true" paginate="true" show-csv-button="true">
+                    <field name="changedDateText"><default-field title="When"><display/></default-field></field>
+                    <field name="actorName">
+                        <conditional-field condition="!!changedByUserId &amp;&amp; !exporting" title="Who">
+                            <link url="." text="${actorName}" link-type="anchor" tooltip="Only this user's changes"
+                                    parameter-map="Object.assign({}, clearValues, {changedByUserId:changedByUserId})"/>
+                        </conditional-field>
+                        <default-field title="Who"><display/></default-field>
+                    </field>
+                    <field name="categoryLabel"><default-field title="Area"><display/></default-field></field>
+                    <field name="whatText"><default-field title="What changed"><display/></default-field></field>
+                    <field name="recordText">
+                        <conditional-field condition="!exporting &amp;&amp; (!!recordHref || !!recordUrl)" title="Record">
+                            <link url="${recordHref}" url-type="plain" text="${recordText}" link-type="anchor" condition="recordHref"/>
+                            <link url="${recordUrl}" text="${recordText}" link-type="anchor" condition="recordUrl" parameter-map="recordParameters"/>
+                        </conditional-field>
+                        <default-field title="Record"><display/></default-field>
+                    </field>
+                    <field name="beforeText"><default-field title="Before"><display/></default-field></field>
+                    <field name="afterText"><default-field title="After"><display/></default-field></field>
+                    <field name="reason"><default-field title="Reason"><display/></default-field></field>
+                    <field name="sessionText">
+                        <conditional-field condition="!!correlation &amp;&amp; !exporting" title="Session">
+                            <link url="." text="${sessionText}" link-type="anchor" tooltip="Everything changed in this session"
+                                    parameter-map="Object.assign({}, clearValues, {correlation:correlation})"/>
+                        </conditional-field>
+                        <default-field title="Session"><display/></default-field>
+                    </field>
+                    <columns type="mobile">
+                        <column><field-ref name="changedDateText"/><field-ref name="whatText"/><field-ref name="recordText"/></column>
+                        <column><field-ref name="actorName"/><field-ref name="afterText"/><field-ref name="reason"/></column>
+                    </columns>
+                </form-list>
+            </widgets>
+        </section>
+        <section name="RawLog" condition="mount.raw &amp;&amp; showLog">
+            <widgets>
+                <label text="Instance administrator" type="h6" style="q-mt-md q-mb-none"/>
+                <label type="p" style="text-caption m-muted"
+                        text="The whole audit log: every audited field of every entity, registered or not, with its values as stored. Nothing is listed until something is asked for (Find options)."/>
+                <form-list name="EntityAuditLogList" list="entityAuditLogList" skip-form="true" header-dialog="true">
+                    <field name="log"><header-field><hidden/></header-field></field>
+                    <field name="changedDate">
+                        <header-field title="Date" show-order-by="true"><date-period time="true"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="changedEntityName">
+                        <header-field title="Entity" show-order-by="true"><text-find size="80" default-operator="equals"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="changedFieldName">
+                        <header-field title="Field" show-order-by="true"><text-find size="30" default-operator="equals"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="pkPrimaryValue">
+                        <header-field title="PK 1" show-order-by="true"><text-find size="30" default-operator="equals"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="pkSecondaryValue">
+                        <header-field title="PK 2"><text-find size="30" default-operator="equals"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="oldValueText">
+                        <header-field title="Old" show-order-by="true"><text-find size="60" default-operator="begins"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="newValueText">
+                        <header-field title="New" show-order-by="true"><text-find size="60" default-operator="begins"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="changedByUserId">
+                        <header-field title="User" show-order-by="true"><text-find size="20" default-operator="begins"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="changedInVisitId">
+                        <header-field title="Visit" show-order-by="true"><text-find size="20" default-operator="begins"/></header-field>
+                        <default-field><display also-hidden="false"/></default-field>
+                    </field>
+                    <field name="find">
+                        <header-field title="Find"><submit/></header-field>
+                        <default-field><display text=" "/></default-field>
+                    </field>
+                </form-list>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

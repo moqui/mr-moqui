@@ -64,14 +64,21 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   System's own Artifact groups and an artifact group (ArtifactGroupDetail), which no app shows. **Security**
   (`System/Security/`): Users (`UserAccount/`, System's own account administration, with the Verify screens of a user's own
   factors, which other apps mount by location), the Sign-in policy, Identity providers and a provider
-  (IdentityProviderDetail) and Sessions. **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run
-  (JobRunDetail), Notification topics and a topic (TopicDetail). **Integrations** (`System/Integrations/`): Connections and a connection (ConnectionDetail: a
+  (IdentityProviderDetail) and Sessions. **Settings** (`System/Settings/`): the Instance settings (the registered
+  preferences, and where each value of the configuration comes from) and Localization (the translations of messages and
+  of registered labels). **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run
+  (JobRunDetail), Notification topics and a topic (TopicDetail). **Audit** (`System/Audit/`): Changes (AuditChanges: the
+  audit log's registered projections, `AuditServices.find#Changes`, each record linked to its place by the mount's
+  routes). **Integrations** (`System/Integrations/`): Connections and a connection (ConnectionDetail: a
   gateway, a remote system, a mail sign-in provider, a printer), Message types and a type (MessageTypeDetail), System
   messages and a message (SystemMessageDetail). **Mail and protocols** (`System/Protocols/`): what each protocol is doing
   (Home), Mail relays and a relay (MailRelayDetail), the Mail queue and the Server configuration. The connection screens
   share `template/ConnectionParts.xml`. A screen's part for the instance administrator (a group's, a job's, a remote's,
   a message type's or a message's record changed directly, a group of any id and type created, a run or a message as it
-  is stored, every produced message sent now, the visits by user) shows only here.
+  is stored, every produced message sent now, the visits by user, the stored translation rows changed directly, the
+  whole audit log) shows only here. Where that part is a list of its own it is shown in place of the screen's list, by a
+  parameter (`visits=Y` on Sessions, `rows=Y` on Localization, `log=Y` on Changes): two paginated lists on a page would
+  share `pageIndex`.
 - **Monitor** (`System/Monitor.xml`, `System/Monitor/`): the telemetry screens, Overview first
   ([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md#monitor)).
 - **Configuration** (`System/Conf/`) shows the merged conf with the file each value came from (Settings), edits one
@@ -122,13 +129,16 @@ one. The map is data only, never authority:
 
 | Key | What it does |
 |---|---|
-| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's `linkKey`), the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `supportSummary`) and the framework's (`user`, `systemMessage`), which default to the System screens beside the one shown; a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
+| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's or an audit projection's `linkKey`), one key for a screen, and the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `supportSummary`). The framework's records have routes by default, to the System screens beside the one shown (`frameworkRoutes` in `template/AdminMount.js`: `adminUser`, `adminGroup`, `adminIdentityProvider`, `adminInstanceSettings`, `adminLocalization`, `adminMessageType`, `adminConnection`, `adminMailRelay`, `adminSystemMessage`, `adminJob`, `adminTopic`); a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root, and the link widget disables it for a user its screen does not open to; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
 | `hide` | The part keys the mount leaves out |
 
 `template/AdminMount.js` answers where a screen stands: `state()` gives `{mounted, raw, routes, hidden}` in a screen's
 actions, and `link(routes, key, id, more)` one record's `{url, parameters, plain, href}` (`more` is what else the link
 carries; `href` is the URL with its query string). A screen shows it with two `link` widgets, one for each kind of route:
-a plain one by its `href` (`url-type="plain"`), a screen path by its `url` and `parameters`.
+a plain one by its `href` (`url-type="plain"`), a screen path by its `url` and `parameters`. A link to a screen carries
+what that screen declares as parameters of the linking screen's context too (a page index, a range of dates), so a list
+that links another screen's record sends its own find values empty (AuditChanges), as a link that leaves a mode does
+(`{visits:''}`).
 
 `raw` is whether the instance administrator's parts are shown: what only System does (any field of a record, records no
 registration covers, artifact authorization). They are never shown under a mount, and with none only to a user who opens

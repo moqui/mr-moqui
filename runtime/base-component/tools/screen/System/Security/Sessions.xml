@@ -78,7 +78,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const mountLib = ec.resource.script('component://tools/template/AdminMount.js')
                     const routes = mountLib.state().routes
                     const userLink = userId => {
-                        const link = mountLib.link(routes, 'user', userId) || {}
+                        const link = mountLib.link(routes, 'adminUser', userId) || {}
                         return {userHref: link.plain ? link.href : '', userUrl: link.plain ? '' : link.url || '',
                             userParameters: link.plain ? {} : link.parameters || {}}
                     }
@@ -100,7 +100,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <section name="RawVisitsLinks" condition="mount.raw">
                     <widgets>
                         <link url="." text="Visits by user" icon="sym_o_person_check" link-type="anchor" condition="!showVisits" parameter-map="{visits:'Y'}"/>
-                        <link url="." text="Sessions" icon="sym_o_devices" link-type="anchor" condition="showVisits"/>
+                        <!-- a link carries what its target declares of the context: visits is sent empty to leave the visits -->
+                        <link url="." text="Sessions" icon="sym_o_devices" link-type="anchor" condition="showVisits" parameter-map="{visits:''}"/>
                     </widgets>
                 </section>
             </container>

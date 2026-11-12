@@ -2,7 +2,7 @@
 //
 // A home lists its entries once, in its actions, as `navCatalog`:
 //
-//     {path: "Security/UserAccount", group: "Security and history"}          a screen in a group of icon links
+//     {path: "Security/UserAccount", group: "Administration"}          a screen in a group of icon links
 //     {path: "Monitor", featured: true, text: "Traces, logs, errors",        a featured card, with up to three
 //         links: [{path: "Monitor/Traces"}, {path: "Monitor/Logs"}]}         secondary links
 //     {url: "//apps/Terminal", title: "Terminal UI", group: "Elsewhere"}     a link to something outside the menus
