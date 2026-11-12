@@ -197,7 +197,8 @@ off, and empty turns it on for any purpose. To reach them from another machine, 
 
 ## The Desktop and Mobile apps, and phones
 
-- The Desktop app's node in process carries the terminal as a browser does, and is local.
+- The Desktop app's node in process carries the terminal as a browser does, and is local. The command line and shells
+  need its tray's Developer tools on, which makes the node a dev instance.
 - As a client of a remote server, the Desktop and Android apps' host carries `/termws` with binary frames, signed in by
   the device's login key. A key is never a recent sign-in, so a command line or a shell from another machine first asks
   for your password (and code) in the app: Confirm it is you, which answers a ticket for a few minutes.

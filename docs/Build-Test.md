@@ -342,7 +342,8 @@ cargo install tauri-cli --version 3.0.0-alpha.5 --locked
 A bundle carries the `moqui` binary for the sidecar node: `./moq desktop build` builds the Maximal release binary (the
 package the app links), stages it as `target/desktop-bin/moqui-<host triple>` and passes it as `bundle.externalBin`,
 which puts it beside the app's executable as `moqui`. A development run uses `target/release/moqui` or
-`target/debug/moqui` from `./moq build`. The bundle also carries Chromium's notices, CEF's `CREDITS.html` from the
+`target/debug/moqui` from `./moq build`. The bundle's runtime has `dev-component` (the Dev AIDE and the example), which
+load only when the tray's Developer tools makes the node a dev instance. The bundle also carries Chromium's notices, CEF's `CREDITS.html` from the
 `tauri-cef` cache, as `notices/chromium-credits.html` (`target/desktop-notices`). The checks on installed bundles are in
 [Mobile-Desktop-Exit-Checks](../plans/Mobile-Desktop-Exit-Checks.md).
 

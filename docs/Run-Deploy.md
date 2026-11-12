@@ -235,7 +235,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 
 | Property | Default | What it does |
 |---|---|---|
-| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component) |
+| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
 | `default_locale`, `default_time_zone`, `database_time_zone` | `en_US`, `UTC`, `UTC` | |
 | `webapp_http_host` | empty: the request's host | The host in generated URLs |
 | `webapp_http_bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |

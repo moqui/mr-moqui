@@ -53,7 +53,7 @@ fn moqui_runtime_wins_then_the_repository_runtime_in_a_dev_run_then_one_found() 
 fn a_bundled_runtime_links_the_read_only_parts_and_keeps_the_rest() {
     let root = temp("bundled");
     let resources = root.join("resources");
-    for name in ["base-component", "component", "conf"] {
+    for name in ["base-component", "component", "dev-component", "conf"] {
         std::fs::create_dir_all(resources.join(name)).unwrap();
     }
     std::fs::write(resources.join("MoquiConf.xml"), "<moqui-conf/>").unwrap();

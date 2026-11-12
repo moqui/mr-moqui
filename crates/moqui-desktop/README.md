@@ -65,6 +65,11 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
 - **Event streams** cannot pass a scheme that answers whole bodies: 503, so the Assist drawer polls its `events.json`.
 - **Ports:** the tray's "Open ports for other devices" (`node-ports` in the config directory) restarts the node with its
   ports, as `moqui tui --serve` does, for a browser or another device; the window stays on the scheme.
+- **Developer tools:** the tray's "Developer tools (Dev AIDE)" (`node-purpose` in the config directory, `dev`; or
+  `MOQUI_DESKTOP_PURPOSE=dev` for a run) restarts the node as a dev instance (`instance_purpose=dev`, in process or the
+  sidecar): the Dev AIDE (`/qapps/dev`) and the example component load from the bundle's `dev-component`, and the
+  browser terminal offers the command line and shells, local to this computer. Off by default, when the conf says
+  (production for a bundle). The default build carries the dev tools (`devtools`); a build without them has no item.
 - **PDF:** where the node finds no Chromium of its own (`moqui_chromium_path`, `runtime/chromium` or an installed one),
   it prints on the app's own CEF (`src/pdf.rs`): a hidden window with no capability, driven over the DevTools Protocol
   with the server's page sequence (`moqui_host::pdf::print_page`), its requests failed. The bundle carries Chromium's
