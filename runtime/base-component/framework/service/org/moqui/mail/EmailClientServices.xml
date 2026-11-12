@@ -845,12 +845,13 @@ along with this software (see the LICENSE.md file). If not, see
             }
         ]]></script></actions>
     </service>
-    <service verb="send" noun="TestMessage">
+    <service verb="send" noun="TestMessage" transaction="ignore">
         <description>Send a test message from an account to its own address (send permission; not the Internal account),
             through its SMTP server as a message the user sends (deliver#DraftMessage), from its default identity. The
             subject starts with "[Test]". Sent, it is in Sent, and the next sync brings it to the Inbox, which shows the
             account both sends and receives. A send that fails answers sent false with sendError and leaves nothing in the
-            Outbox: the test message is removed.</description>
+            Outbox: the test message is removed. The message is made in a transaction of its own and sent with none held
+            (a caller's is suspended), so the answer is the send's.</description>
         <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="sent" type="Boolean"/>
@@ -894,15 +895,18 @@ along with this software (see the LICENSE.md file). If not, see
                 fromAddress: identity?.emailAddress || account.emailAddress, fromName: identity ? (identity.displayName ?? null) : (account.accountName ?? null),
                 toAddresses: account.emailAddress, subject: subject, contentType: 'text/html', body: body, bodyText: bodyText,
                 snippet: bodyText.substring(0, 137), isRead: 'Y', messageDate: ec.user.nowTimestamp, hasAttachment: 'N'}, true, null, null)
-            message.create()
+            // committed before the send, which then claims, sends and records it with no transaction held
+            ec.transaction.runRequireNew(null, 'The test message could not be made', () => message.create())
             const result = ec.service.sync().name('org.moqui.mail.EmailClientServices.deliver#DraftMessage')
-                    .parameters({emailMessageId: message.emailMessageId, fromStatusIdList: ['ES_DRAFT']}).disableAuthz().call()
+                    .parameters({emailMessageId: message.emailMessageId, fromStatusIdList: ['ES_DRAFT']})
+                    .ignoreTransaction(true).requireNewTransaction(true).disableAuthz().call()
             if (ec.message.hasError()) return
             sent = result.sent === true
             if (sent) { emailMessageId = message.emailMessageId; return }
             sendError = result.sendError || ec.l10n.localize('The message was not sent')
             // a test that failed leaves nothing waiting in the Outbox
-            ec.entity.find(MESSAGE).condition('emailMessageId', message.emailMessageId).deleteAll()
+            ec.transaction.runRequireNew(null, 'The test message could not be removed',
+                    () => ec.entity.find(MESSAGE).condition('emailMessageId', message.emailMessageId).deleteAll())
         ]]></script></actions>
     </service>
 
@@ -3614,10 +3618,14 @@ along with this software (see the LICENSE.md file). If not, see
             stopped and shows it in the Outbox. An error of the send itself, or a session whose outcome is not known, is
             its sendError: it waits in the Outbox and is not sent again on its own. claimDate is a claim made already
             (deliver#ClaimedDraft): the message is sent only while that claim is its own. deliveryOutcome is
-            send#EmailMessage's (retryable, permanent, uncertain) when the send failed. Called in a transaction (by a
-            service that made the message in it: a rule's forward, an unsubscribe, an automatic reply, a test message),
-            the claim, the send and its result are all in that transaction, which alone sees the message; send#Draft
-            instead claims in its caller's transaction and sends after the commit.</description>
+            send#EmailMessage's (retryable, permanent, uncertain) when the send failed. Called in a transaction with no
+            claimDate (by a service that made the message in it, which alone sees it: a rule's forward, an automatic
+            reply), the message is claimed in that transaction and sent once it commits (deliver#ClaimedDraft, as
+            send#Draft does), with no transaction held during the session: the answer is claimed true and sent false.
+            A rollback takes the message, its claim and the send with it, so a caller that rolls back and runs again
+            sends once. If the process stops between the commit and the send, send#DueDrafts gives the claim a sendError
+            after 15 minutes (fail#StoppedSend), as for any send that stopped. A caller that needs the send's answer
+            (send#TestMessage, unsubscribe#Message) commits the message first and calls this with no transaction.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="fromStatusIdList" type="List"/>
@@ -3641,24 +3649,16 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('deliver#DraftMessage is internal')); return }
             const MESSAGE = 'moqui.basic.email.EmailMessage'
             if (ec.transaction.isTransactionInPlace() && claimDate == null) {
-                // a caller's transaction, which may hold the message it made (a rule's forward, an automatic reply): the
-                // claim, the send and its result all in it, as only that transaction sees the message
+                // a caller's transaction, which may hold the message it made (a rule's forward, an automatic reply): claimed
+                // in it, and sent once it commits with no transaction held during the session; a rollback sends nothing
                 const claim = ec.service.sync().name('org.moqui.mail.EmailClientServices.claim#DraftSend').parameters({
                     emailMessageId: emailMessageId, fromStatusIdList: fromStatusIdList, toStatusId: 'ES_READY'}).call()
                 if (ec.message.hasError()) return
                 claimed = claim.claimed === true
                 if (!claimed) return
-                const result = ec.service.sync().name('org.moqui.mail.EmailServices.send#EmailMessage').parameter('emailMessageId', emailMessageId).call()
-                if (ec.message.hasError()) return
-                messageId = result?.messageId || null
-                sendError = result?.sendError || (messageId ? null : 'The message was not sent')
-                deliveryOutcome = sendError ? (result?.deliveryOutcome || null) : null
-                const recorded = ec.service.sync().name('org.moqui.mail.EmailClientServices.record#SendResult').parameters({
-                    emailMessageId: emailMessageId, messageId: messageId, sendError: sendError, deliveryOutcome: deliveryOutcome}).call()
-                if (ec.message.hasError()) return
-                sent = sendError == null
-                statusId = recorded.statusId ?? null
-                if (!sent) ec.logger.warn(`Email message ${emailMessageId} was not sent: ${sendError}`)
+                ec.service.special().name('org.moqui.mail.EmailClientServices.deliver#ClaimedDraft')
+                        .parameters({emailMessageId: emailMessageId, claimDate: claim.sendClaimDate}).registerOnCommit()
+                statusId = 'ES_READY'
                 return
             }
             // 1. the claim, committed before the session, so a send that goes out is never claimed again
@@ -3709,9 +3709,10 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
     <service verb="deliver" noun="ClaimedDraft" transaction="ignore" allow-remote="false">
-        <description>Internal: for send#Draft called in a transaction, registered to run once it commits, the send of the
-            message it claimed (deliver#DraftMessage with claimDate, the claim's sendClaimDate). Nothing is sent when the
-            claim is no longer the message's.</description>
+        <description>Internal: for send#Draft and deliver#DraftMessage called in a transaction, registered to run once it
+            commits, the send of the message it claimed (deliver#DraftMessage with claimDate, the claim's sendClaimDate).
+            Nothing is sent when the claim is no longer the message's. The call is checked when it is registered and runs
+            as the user who registered it, or as none (the sync, the SMTP listener's delivery).</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="claimDate" type="Timestamp" required="true"/>
@@ -4562,10 +4563,11 @@ along with this software (see the LICENSE.md file). If not, see
                         fileSize: file.fileSize, contentType: file.contentType, contentId: file.contentId, isInline: file.isInline}, false, null, null)
                     copy.create()
                 }
+                // claimed in the rules' transaction and sent once it commits; a send that fails waits in the Outbox
                 const sent = ec.service.sync().name('org.moqui.mail.EmailClientServices.deliver#DraftMessage')
                         .parameters({emailMessageId: draft.emailMessageId, fromStatusIdList: ['ES_DRAFT']}).disableAuthz().call()
                 if (ec.message.hasError()) throw new Error(ec.message.errorsString)
-                if (!sent.sent) ec.logger.warn(`Email rule forward of message ${message.emailMessageId} to ${to} waits in the Outbox: ${sent.sendError}`)
+                if (!sent.claimed) ec.logger.warn(`Email rule forward of message ${message.emailMessageId} to ${to} could not be claimed to send`)
             }
             // the actions apps add: the service an EmailRuleAction enumeration names (enumCode, else enumId)
             const appActions = {}
@@ -4848,7 +4850,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="unsubscribe" noun="Message">
+    <service verb="unsubscribe" noun="Message" transaction="ignore">
         <description>
             Unsubscribe from the list a message came from, by its List-Unsubscribe header (RFC 2369), the way it offers:
             - oneClick: with List-Unsubscribe-Post: List-Unsubscribe=One-Click (RFC 8058) and an https address, a POST of
@@ -4858,7 +4860,9 @@ along with this software (see the LICENSE.md file). If not, see
               sent from the message's account (send permission); it is in Sent after.
             - url: the http or https address for the client to open (the list's own page), when neither of the others
               could be done.
-            Read permission for the url, send permission for the others. A message without the header is an error.
+            Read permission for the url, send permission for the others. A message without the header is an error. No
+            transaction is held during the POST or the send: the mailto message is made in a transaction of its own and
+            sent with none, so unsubscribed is the send's answer.
         </description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
@@ -4970,9 +4974,10 @@ along with this software (see the LICENSE.md file). If not, see
                         fromAddress: identity?.emailAddress || account.emailAddress, fromName: identity ? (identity.displayName ?? null) : (account.accountName ?? null),
                         fromUserId: ec.user.userId, toAddresses: to, subject: params.subject || 'unsubscribe', contentType: 'text/plain',
                         bodyText: body, snippet: body.substring(0, 137), isRead: 'Y', messageDate: ec.user.nowTimestamp, hasAttachment: 'N'}, true, null, null)
-                    draft.create()
+                    ec.transaction.runRequireNew(null, 'The unsubscribe message could not be made', () => draft.create())
                     const sent = ec.service.sync().name('org.moqui.mail.EmailClientServices.deliver#DraftMessage')
-                            .parameters({emailMessageId: draft.emailMessageId, fromStatusIdList: ['ES_DRAFT']}).disableAuthz().call()
+                            .parameters({emailMessageId: draft.emailMessageId, fromStatusIdList: ['ES_DRAFT']})
+                            .ignoreTransaction(true).requireNewTransaction(true).disableAuthz().call()
                     if (ec.message.hasError()) return
                     method = 'mailto'
                     mailtoAddress = to
@@ -5189,7 +5194,7 @@ along with this software (see the LICENSE.md file). If not, see
             ec.entity.find('moqui.basic.email.EmailOutOfOfficeSent').condition('emailAccountId', emailAccountId).deleteAll()
         ]]></script></actions>
     </service>
-    <service verb="send" noun="OutOfOfficeReplies">
+    <service verb="send" noun="OutOfOfficeReplies" transaction="ignore">
         <description>
             Internal (authorization disabled), for the sync after the rules: the account's automatic reply
             (EmailOutOfOffice, while it is enabled and between its dates) to the senders of its new Inbox mail, through the
@@ -5213,7 +5218,10 @@ along with this software (see the LICENSE.md file). If not, see
               value STRT_EMAIL_CONTACT_SERVICE; with no hook every sender counts as a contact, and a hook that fails
               counts none, logged); or internal senders only (EraInternal).
             The subject is the reply's own, else "Automatic reply: " and the mail's subject. Each message is on its own:
-            one that fails is logged and the rest go on.
+            one that fails is logged and the rest go on. Each reply is made, claimed to send and logged in
+            EmailOutOfOfficeSent in a transaction of its own, and sent once that commits (deliver#DraftMessage), so a
+            reply that fails or a slow server takes nothing of the others back, and a sync run again does not answer the
+            sender twice; sentCount counts the replies claimed to send. A send that fails waits in the Outbox.
         </description>
         <in-parameters>
             <parameter name="emailAccountId" required="true"/>
@@ -5379,18 +5387,20 @@ along with this software (see the LICENSE.md file). If not, see
                         messageDate: ec.user.nowTimestamp, inReplyTo: message.messageId ?? null,
                         referencesHeader: references.length ? references.slice(-20).join(' ') : null, hasAttachment: 'N',
                         headersString: 'Auto-Submitted: auto-replied\nX-Auto-Response-Suppress: All'}, true, null, null)
-                    answer.create()
-                    const sent = ec.service.sync().name('org.moqui.mail.EmailClientServices.deliver#DraftMessage')
-                            .parameters({emailMessageId: answer.emailMessageId, fromStatusIdList: ['ES_DRAFT']}).call()
-                    if (!ec.message.hasError()) {
-                        if (!sent.sent) ec.logger.warn(`The automatic reply of email account ${emailAccountId} to ${sender} waits in the Outbox: ${sent.sendError}`)
+                    // the reply, its claim and the log of it commit together; the send goes after the commit
+                    ec.transaction.runRequireNew(null, `The automatic reply of email account ${emailAccountId} to ${sender} failed`, () => {
+                        answer.create()
+                        const sent = ec.service.sync().name('org.moqui.mail.EmailClientServices.deliver#DraftMessage')
+                                .parameters({emailMessageId: answer.emailMessageId, fromStatusIdList: ['ES_DRAFT']}).call()
+                        if (ec.message.hasError()) throw new Error(ec.message.errorsString)
+                        if (!sent.claimed) throw new Error(`the reply ${answer.emailMessageId} could not be claimed to send`)
                         const log = ec.entity.makeValue('moqui.basic.email.EmailOutOfOfficeSent')
                         log.setFields({emailAccountId: emailAccountId, toAddress: sender, lastSentDate: ec.user.nowTimestamp,
                             emailMessageId: message.emailMessageId}, false, null, null)
                         log.createOrUpdate()
-                        replied.add(sender)
-                        sentCount++
-                    }
+                    })
+                    replied.add(sender)
+                    sentCount++
                 } catch (err) {
                     ec.message.addError(String(err.message || err))
                 }

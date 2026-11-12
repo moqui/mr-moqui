@@ -1314,8 +1314,9 @@ tasks, `ec.llm.summarize`/`classify`/`extract`/`startRun`, `propose#AiFieldValue
   and runs the task on a service worker (`execute#AiTask`); `get#AiTask` gives its state and output; its user gets an
   inbox message and, with `webhookUrl` (https, public addresses only), a POST of `{taskId, taskType, state, output |
   error}`.
-- **`ec.llm`**: `summarize(text, {maxWords})`, `classify(text, labels)`, `extract(text, fields)`, `startRun(agentId,
-  text)` (a job-surface run as the current user, which needs `AgentUse` and `AgentAdmin`, as `start#AgentRun` does).
+- **`ec.llm`**: `summarize(text, {maxWords, allowInTransaction})`, `classify(text, labels, {allowInTransaction})`,
+  `extract(text, fields, {allowInTransaction})`, `startRun(agentId, text)` (a job-surface run as the current user,
+  which needs `AgentUse` and `AgentAdmin`, as `start#AgentRun` does).
 - **`propose#AiFieldValue`** (entityName, the key as `pk` or `recordId`, fieldName, instructions): the `ai-field`
   feature's model (else `assist`) proposes `proposedValue` with a `reason`; nothing is written. `mode=approval` ("Update
   with AI") starts a drawer run attached to the record whose first step is a seeded `set_field` call (the tool exists

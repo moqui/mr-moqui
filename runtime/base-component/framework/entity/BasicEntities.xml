@@ -1035,6 +1035,12 @@ along with this software (see the LICENSE.md file). If not, see
             on a server without CONDSTORE</description></field>
         <field name="remoteRemovedDate" type="date-time"><description>When the folder was no longer on the server: its
             local messages are kept, and it is synced again if it comes back</description></field>
+        <field name="storeFailUid" type="number-integer"><description>The lowest new UID whose message could not be
+            stored here, which the next sync starts from; empty when none failed</description></field>
+        <field name="storeFailCount" type="number-integer"><description>In how many syncs the store of storeFailUid
+            failed: at five it is skipped (logged and in the account's lastSyncError) and the sync moves past it; reset
+            when the folder's UIDVALIDITY changes</description></field>
+        <field name="storeFailError" type="text-long"><description>Why the store of storeFailUid failed last</description></field>
         <field name="sequenceNum" type="number-integer"/>
         <relationship type="one" related="moqui.basic.email.EmailAccount" short-alias="account"/>
         <relationship type="one" title="Parent" related="moqui.basic.email.EmailFolder" short-alias="parent">

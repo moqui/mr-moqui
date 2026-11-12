@@ -37,11 +37,17 @@ pub(super) fn setup() -> (ExecutionContext, EntityFacade) {
 
 /// [`setup`] with the conf text `conf`.
 pub(super) fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
-    let ctx = ExecutionContextFactory::test_context_in(
-        conf,
-        moqui_core::service::ServicePools::idle(),
-        moqui_core::context::framework_dir(),
-    );
+    setup_pools(conf, moqui_core::service::ServicePools::idle())
+}
+
+/// [`setup`] with the inline executor: what a commit registers (a forward's or an automatic reply's send) waits for
+/// `ctx.factory().run_pending()` on this thread, where a test's sink keeps the mail.
+pub(super) fn setup_inline() -> (ExecutionContext, EntityFacade) {
+    setup_pools("", moqui_core::service::ServicePools::inline())
+}
+
+fn setup_pools(conf: &str, pools: moqui_core::service::ServicePools) -> (ExecutionContext, EntityFacade) {
+    let ctx = ExecutionContextFactory::test_context_in(conf, pools, moqui_core::context::framework_dir());
     let facade = moqui_core::testing::open();
     // the attachments are DbResource files; the in-memory database has every table
     facade.assume_db_tables();
@@ -1092,6 +1098,122 @@ fn a_malformed_message_is_skipped_and_the_rest_are_stored() {
     assert_eq!(out_number(&again, "skippedCount"), 0, "{again:?}");
 }
 
+/// The Message-IDs whose store fails on this thread while the guard lives.
+struct FailStore;
+
+impl FailStore {
+    fn on(message_ids: &[&str]) -> Self {
+        super::sync::FAIL_STORE
+            .with(|ids| *ids.borrow_mut() = message_ids.iter().map(|id| (*id).to_string()).collect());
+        Self
+    }
+}
+
+impl Drop for FailStore {
+    fn drop(&mut self) {
+        super::sync::FAIL_STORE.with(|ids| ids.borrow_mut().clear());
+    }
+}
+
+/// A message whose store keeps failing is read again from its UID, counted on the folder row so a restart goes on
+/// counting, and in the fifth session skipped and reported in the account's lastSyncError; the folder moves past it
+/// (plans/High-Level-Review.md HL-038).
+#[test]
+fn a_store_failing_in_five_sessions_is_skipped_and_reported() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    for id in ["<bad@example.com>", "<good@example.com>"] {
+        imap.add(
+            "INBOX",
+            &mail(id, "x@example.com", "alice@example.com", "Hi", "", "b"),
+            &[],
+        );
+    }
+    let _fail = FailStore::on(&["<bad@example.com>"]);
+    let account = imap_account(imap.port, "app-password");
+    let inbox_id = folder_id(&facade, &account, "EfkInbox");
+    for session in 1..=4 {
+        let out = sync(&account);
+        assert_eq!(out_number(&out, "skippedCount"), 1, "{session}: {out:?}");
+        let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+        assert_eq!(field(&inbox, "storeFailUid"), "1", "{session}");
+        assert_eq!(field(&inbox, "storeFailCount"), session.to_string());
+        assert!(field(&inbox, "storeFailError").contains("failed for the test"));
+        assert_eq!(field(&inbox, "remoteUidNext"), "1", "read again from the failing UID");
+        let account_row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+        assert!(field(&account_row, "lastSyncError").is_empty(), "{session}");
+    }
+    assert!(by_message_id(&facade, &account, "<good@example.com>").is_some());
+    let out = sync(&account);
+    assert_eq!(out_number(&out, "skippedCount"), 1, "{out:?}");
+    let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+    assert_eq!(field(&inbox, "storeFailUid"), "");
+    assert_eq!(field(&inbox, "storeFailCount"), "");
+    assert_eq!(field(&inbox, "remoteUidNext"), "3");
+    let account_row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    let error = field(&account_row, "lastSyncError");
+    assert!(error.contains("UID 1") && error.contains("skipped"), "{error}");
+    // not read again
+    let again = sync(&account);
+    assert_eq!(out_number(&again, "skippedCount"), 0, "{again:?}");
+    assert!(by_message_id(&facade, &account, "<bad@example.com>").is_none());
+}
+
+/// A UIDVALIDITY change voids the count of a failing store: the UID it counted is another message's now.
+#[test]
+fn a_uid_validity_change_resets_the_store_failure_count() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<flaky@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Hi",
+            "",
+            "b",
+        ),
+        &[],
+    );
+    let account = imap_account(imap.port, "app-password");
+    let inbox_id = folder_id(&facade, &account, "EfkInbox");
+    {
+        let _fail = FailStore::on(&["<flaky@example.com>"]);
+        sync(&account);
+        // the count of the UID the message has after the change, as though four sessions had failed on it before
+        update(
+            &facade,
+            FOLDER,
+            ("emailFolderId", &inbox_id),
+            &[("storeFailUid", Value::I64(100)), ("storeFailCount", Value::I64(4))],
+        );
+        imap.reset_validity("INBOX");
+        let out = sync(&account);
+        assert_eq!(out_number(&out, "skippedCount"), 1, "{out:?}");
+        let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+        assert_eq!(field(&inbox, "storeFailUid"), "100");
+        assert_eq!(
+            field(&inbox, "storeFailCount"),
+            "1",
+            "counted from the start again, not skipped"
+        );
+    }
+    // the store works again: the message is stored and the count goes
+    let out = sync(&account);
+    assert_eq!(out_number(&out, "newCount"), 1, "{out:?}");
+    let inbox = one(&facade, FOLDER, "emailFolderId", &inbox_id);
+    assert_eq!(field(&inbox, "storeFailUid"), "");
+}
+
 /// A sign-in the server refuses marks the account EasAuthFailed with the reason; the job leaves it; new settings make
 /// it Active again.
 #[test]
@@ -1525,7 +1647,7 @@ fn conditions(items: &[&[(&str, &str)]]) -> Value {
 #[test]
 fn rules_conditions_actions_block_and_spam() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     alice(&facade);
@@ -1733,6 +1855,12 @@ fn rules_conditions_actions_block_and_spam() {
     );
     assert!(label_names(&facade, &id(5)).is_empty());
     assert_eq!(label_names(&facade, &id(7)), vec!["AnyHit".to_string()]);
+    // their server side went at the end of the session
+    assert_eq!(changes(&facade, &account), 0);
+    // the forward is claimed in the rules' transaction and goes once it commits (plans/High-Level-Review.md HL-028),
+    // its copy to Sent at the next sync
+    assert!(sink.sent().is_empty(), "not sent in the rules' transaction");
+    ctx.factory().run_pending();
     let forwarded = sink.sent();
     assert_eq!(forwarded.len(), 1);
     assert_eq!(forwarded[0].to, vec!["keep@example.org".to_string()]);
@@ -1745,8 +1873,7 @@ fn rules_conditions_actions_block_and_spam() {
         ),
         "1"
     );
-    // their server side went at the end of the session
-    assert_eq!(changes(&facade, &account), 0);
+    assert_eq!(changes(&facade, &account), 1, "the forward's copy to Sent");
     assert!(
         imap.messages("Newsletters")
             .iter()
@@ -2342,7 +2469,7 @@ fn drafts_go_to_the_servers_drafts_are_replaced_and_leave_when_sent() {
 #[test]
 fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     alice(&facade);
@@ -2371,6 +2498,8 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
         &[],
     );
     sync(&account);
+    // the reply goes once its transaction commits, and its copy to Sent at the next sync
+    ctx.factory().run_pending();
     let sent = sink.sent();
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].to, ["ada@x.example.org"]);
@@ -2380,6 +2509,7 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
         "{}",
         sent[0].mime
     );
+    sync(&account);
     let copies = imap.raw_messages("Sent Mail");
     assert_eq!(copies.len(), 1, "the reply is appended to Sent");
     assert!(copies[0].1.contains("Auto-Submitted: auto-replied"), "{}", copies[0].1);
@@ -2407,6 +2537,7 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
         &[],
     );
     sync(&account);
+    ctx.factory().run_pending();
     assert_eq!(
         field(&one(&facade, MESSAGE, "emailMessageId", &root_id), "snoozedThruDate"),
         ""
