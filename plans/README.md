@@ -27,7 +27,7 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md). Monitor › Settings is built and archived ([Monitor-Settings](archive/Monitor-Settings.md)).
 
 **Dev tools**
-- [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent.
+- [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent. §21 (Nov 11, 2026, not built) is the Dev AIDE as a client of a group server: a connection, merge requests and reviews in the Workspace, checks, issues, the contributor agreement and a `hosting` tool for agents.
 
 - [Terminal-Fancy.md](Terminal-Fancy.md): the Terminal screen as the terminal form of the development environment: many
   sessions with tabs and splits that outlive a page, the `moqui>` command line in the browser and shells on the server's
@@ -37,6 +37,9 @@ Design, status and review documents for MR Moqui. User guides for built features
   [Terminal](../docs/ui/Terminal.md)); live device and edge checks and the §15 items are in Remaining-Work.
 
 - [LoadRunner.md](LoadRunner.md): a general load runner in place of the Tools app's Service Load Runner screen: load scripts in JavaScript on the `moqui test-client` harness, kept in a component's `test/load/` and run from Tools › Load, from `moqui test-load` or from a client spec, against services in process or any server over HTTP, with runs kept as result files and compared; the first script is order to cash on Moqui Java and MR Moqui. Research and plan; nothing built.
+
+**Project infrastructure**
+- [Dogfood.md](Dogfood.md): the Moqui project's own infrastructure on mr-moqui at moqui.org, in place of GitHub (repositories, issues, pull requests), Discourse, Google Groups and the `moqui-site` web site: Smithy, a git hosting app in mr-pass with groups, public and private repositories, forks, issues as Mantle work items and merge requests, over the framework's git hosting; the forum inside it and the mailing lists as categories; CI with pipelines in the repository and runners started through a container API; the GitHub push mirror and importer; the contributor agreement as a check; and the phases to cutover. General, so a dev shop runs the same as its group server. Research and plan; nothing built.
 
 **Maps**
 - [Maps.md](Maps.md): shared OpenLayers Maps app and address dialogs in Tools, OpenFreeMap, ResourceFacade-backed PMTiles, global/personal configuration, postal-code coordinate lookup and Rust server work for BOSS, HOME and other consumers.
