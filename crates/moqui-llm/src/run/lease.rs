@@ -44,6 +44,10 @@ use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::EntityFacade;
 use moqui_core::transaction::TransactionAttribute;
 
+/// The most runs one [`sweep`] takes over, and the most expired pauses one [`expire_pauses`] ends: the oldest first, the
+/// rest on the next pass, so a backlog does not hold the scheduler thread (plans/High-Level-Review.md HL-020).
+pub(crate) const SWEEP_MAX: i64 = 200;
+
 /// The lease of a run, from the conf's `lease-seconds` (60; at least 5).
 pub(crate) fn lease_millis(factory: &ExecutionContextFactory) -> i64 {
     i64::from(crate::facade(factory).conf().limits.lease_seconds.max(5)) * 1000
@@ -239,7 +243,8 @@ pub(crate) fn sweep_logged(factory: &Arc<ExecutionContextFactory>) {
 /// Take over every Submitted or Working run whose lease lapsed (or that was never leased, a lease's time after it was
 /// submitted) and that this node does not work:
 /// claim it, count the attempt, and queue its next step; a run past its attempts fails, one asked to cancel is
-/// Canceled. Each run is handled on its own: one that fails is logged and the sweep goes on. Out: the runs taken over.
+/// Canceled. At most [`SWEEP_MAX`] a sweep, the longest lapsed first. Each run is handled on its own: one that fails is
+/// logged and the sweep goes on. Out: the runs taken over.
 ///
 /// # Errors
 ///
@@ -267,6 +272,10 @@ pub fn sweep(factory: &Arc<ExecutionContextFactory>) -> Result<usize, Error> {
                     Condition::less("submittedDate", stamp(now - lease_millis(factory))),
                 ]),
             ]))
+            // the longest lapsed first, a bounded number a pass; the rest the next pass (HL-020)
+            .order_by("leaseExpireDate", false)
+            .order_by("runId", false)
+            .limit(SWEEP_MAX)
             .disable_authz()
             .list()?
             .values()
@@ -361,8 +370,8 @@ fn take_over(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, run:
 
 /// End every paused run whose `pauseExpireDate` has passed: Failed `pause_expired`, as the state table has it, the
 /// question it waited on expired, and its approval expired (in the transition, [`crate::approval::expire_for_run`]);
-/// a hand-off that expired is abandoned instead and the run resumes with that. Each run is handled on its own. Out:
-/// the runs handled.
+/// a hand-off that expired is abandoned instead and the run resumes with that. At most [`SWEEP_MAX`] a call, the
+/// longest expired first. Each run is handled on its own. Out: the runs handled.
 ///
 /// # Errors
 ///
@@ -380,6 +389,9 @@ pub fn expire_pauses(factory: &Arc<ExecutionContextFactory>) -> Result<usize, Er
                 ],
             ))
             .condition(Condition::less("pauseExpireDate", stamp(now_millis())))
+            .order_by("pauseExpireDate", false)
+            .order_by("runId", false)
+            .limit(SWEEP_MAX)
             .disable_authz()
             .list()?
             .values()

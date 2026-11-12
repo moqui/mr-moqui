@@ -209,6 +209,17 @@ fn jobs_world_with(
     extra: Option<&str>,
     register: impl FnOnce(&ExecutionContextFactory),
 ) -> Jobs {
+    jobs_world_on(workers, queue, extra, register, crate::testing::open())
+}
+
+/// [`jobs_world_with`] over `facade` (one whose statements go on a tape, say).
+fn jobs_world_on(
+    workers: usize,
+    queue: usize,
+    extra: Option<&str>,
+    register: impl FnOnce(&ExecutionContextFactory),
+    facade: EntityFacade,
+) -> Jobs {
     // a file for each harness: tests in parallel would otherwise write and lint one shared file
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -217,7 +228,6 @@ fn jobs_world_with(
     let pools = ServicePools::bounded(workers, queue);
     let ctx = ExecutionContextFactory::test_context_with("", pools);
     register(ctx.factory());
-    let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
     {
         let _entered = ctx.enter();
@@ -1198,4 +1208,63 @@ fn a_pass_reads_only_the_queued_calls_its_free_slots_can_take() {
     assert_eq!(all.len(), 43);
     assert_eq!(all[..2], ["S_FIRST".to_string(), "ASYNC_QUEUE_000".to_string()]);
     assert_eq!(all[41..], ["ASYNC_QUEUE_NULL".to_string(), "S_NONE".to_string()]);
+}
+
+/// The statements on `tape` from `from` on that read `table` (its quoted name).
+fn reads_of(tape: &Mutex<Vec<String>>, from: usize, table: &str) -> Vec<String> {
+    let quoted = format!("\"{table}\"");
+    tape.lock().unwrap()[from..]
+        .iter()
+        .filter(|sql| sql.starts_with("SELECT") && sql.contains(&quoted))
+        .cloned()
+        .collect()
+}
+
+/// plans/High-Level-Review.md HL-020: a pass reads the lock rows of the jobs it may start in one query. A job that is
+/// not due (it ran after its schedule's last occurrence), one whose lock a live run holds, and one whose schedule names
+/// nothing before now cost no query of their own: no run history, no repeat count, no member liveness.
+#[test]
+fn a_pass_reads_locks_in_one_query_and_a_job_not_due_costs_none_of_its_own() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = crate::testing::open_with_tape(Arc::clone(&tape));
+    let world = jobs_world_on(2, 8, None, |_| {}, facade);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    let now = moqui_lib::object::basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond()), "Timestamp").value;
+    // Every first of January: each ran just now, after that occurrence.
+    let yearly = "0 0 0 1 1 ?";
+    add_job(&world, "RAN", "echo#Note", yearly, &[]);
+    add_job(&world, "RAN_COUNTED", "echo#Note", yearly, &[("repeatCount", "5")]);
+    add_job(&world, "RUNNING", "echo#Note", yearly, &[]);
+    add_job(&world, "LATER", "echo#Note", "0 0 0 1 1 ? 2099", &[]);
+    for job in ["RAN", "RAN_COUNTED", "RUNNING"] {
+        let mut lock = world.facade.make_value("moqui.service.job.ServiceJobRunLock").unwrap();
+        lock.set("jobName", Value::string(job));
+        lock.set("lastRunTime", now.clone());
+        if job == "RUNNING" {
+            lock.set("jobRunId", Value::string("RUNNING_RUN"));
+            lock.set("instanceId", Value::string("another-member"));
+        }
+        lock.create(&world.facade).unwrap();
+    }
+    let before = tape.lock().unwrap().len();
+    let report = world.ctx.factory().service_pools().tick();
+    assert_eq!(
+        (report.jobs_run, report.jobs_active, report.jobs_failed),
+        (0, 4, 0),
+        "{report:?}"
+    );
+    let locks = reads_of(&tape, before, "service_job_run_lock");
+    assert_eq!(locks.len(), 1, "one read of the lock rows: {locks:?}");
+    assert!(locks[0].contains(" IN "), "{locks:?}");
+    assert_eq!(
+        reads_of(&tape, before, "service_job_run"),
+        Vec::<String>::new(),
+        "no run history or count"
+    );
+    assert_eq!(
+        reads_of(&tape, before, "cluster_member"),
+        Vec::<String>::new(),
+        "no liveness read"
+    );
 }

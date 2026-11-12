@@ -20,6 +20,10 @@
 //! to the service pool. It never runs the service body. A worker does, and records the outcome.
 //! A job with `errorHistoryOnly` Y removes that row when the run succeeds. Java keeps every run.
 //!
+//! A pass finds which jobs may start before any query (dates, paused, a free slot, the cron's last occurrence), then
+//! reads the lock rows of all of them in one query; only a due job has its repeat count and run history read
+//! (plans/High-Level-Review.md HL-020).
+//!
 //! A pass claims locks only for job workers that are idle, and a lock records the instance that
 //! holds it. A lock whose instance is gone (not a live cluster member, or this instance with no run
 //! of this process holding it) is taken over before `expireLockTime`, and a worker checks that its
@@ -35,7 +39,7 @@
 //! as JSON in `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass
 //! submits it when a slot is free and deletes it when it has run.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -268,6 +272,10 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
     let plan = LockPlan::new(&facade)?;
 
     let jobs = discover(&facade, slots)?;
+    // First, with no query: the jobs that can run now, each scheduled one with its cron's last occurrence. A job whose
+    // schedule names nothing before now, or whose pattern does not parse, costs no query (plans/High-Level-Review.md
+    // HL-020).
+    let mut candidates = Vec::new();
     for job in &jobs {
         let job_name = field_text(job, "jobName");
         let queued = job_name.starts_with(QUEUE_PREFIX);
@@ -283,39 +291,62 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             continue;
         }
         // With no slot left nothing more can start, so the lock and history queries are not made: under a saturated
-        // queue they would cost a query per queued call on every pass (`plans/High-Level-Review.md` HL-020). Jobs come
-        // in priority order, so those left are the lower ones, checked on a later pass.
+        // queue they would cost a query per queued call on every pass (HL-020). Jobs come in priority order, so those
+        // left are the lower ones, checked on a later pass.
         if slots <= 0 {
             report.jobs_not_checked += 1;
             continue;
         }
         // As in Java's `ScheduledJobRunner`, a job that cannot be checked or started is logged and the pass goes on
         // with the next job.
-        let exhausted = if queued {
-            Ok(false)
+        let occurrence = if queued {
+            None
         } else {
-            repeat_exhausted(&facade, job, &job_name, &now_stamp)
+            match last_occurrence(&cron_text, now) {
+                Ok(Some(at)) => Some(at),
+                // A schedule with nothing before now has not come due yet.
+                Ok(None) => {
+                    report.jobs_active += 1;
+                    continue;
+                }
+                Err(err) => {
+                    tracing::error!(job = %job_name, cron = %cron_text, error = %err, "Error checking scheduled job, skipping it");
+                    report.jobs_failed += 1;
+                    continue;
+                }
+            }
         };
-        match exhausted {
-            Ok(true) => continue,
-            Ok(false) => {}
+        candidates.push(Candidate {
+            job,
+            job_name,
+            queued,
+            occurrence,
+        });
+    }
+    // Then the lock rows of all of them in one read, so a job that is not due, or whose lock is held, costs no query of
+    // its own; the run history and the repeat count are read only for a job that is due.
+    let locks = read_locks(&facade, candidates.iter().map(|candidate| candidate.job_name.as_str()))?;
+    for candidate in &candidates {
+        if slots <= 0 {
+            report.jobs_not_checked += 1;
+            continue;
+        }
+        let job_name = &candidate.job_name;
+        let ready = match readiness(factory, &facade, candidate, locks.get(job_name), now, &now_stamp) {
+            Ok(Due::Ready(ready)) => ready,
+            Ok(Due::Exhausted) => continue,
+            Ok(Due::NotNow) => {
+                report.jobs_active += 1;
+                continue;
+            }
             Err(err) => {
                 tracing::error!(job = %job_name, error = %err, "Error checking scheduled job, skipping it");
                 report.jobs_failed += 1;
                 continue;
             }
-        }
-        report.jobs_active += 1;
-        let ready = match readiness(factory, &facade, job, &job_name, &cron_text, now) {
-            Ok(Some(ready)) => ready,
-            Ok(None) => continue,
-            Err(err) => {
-                tracing::error!(job = %job_name, cron = %cron_text, error = %err, "Error checking scheduled job, skipping it");
-                report.jobs_failed += 1;
-                continue;
-            }
         };
-        match dispatch(shared, factory, &facade, &plan, job, ready, &now_stamp) {
+        report.jobs_active += 1;
+        match dispatch(shared, factory, &facade, &plan, candidate.job, ready, &now_stamp) {
             Ok(true) => {
                 report.jobs_run += 1;
                 slots -= 1;
@@ -328,6 +359,45 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
         }
     }
     Ok(report)
+}
+
+/// A job a pass may start, found before any query: its row, name, whether it is a queued call, and for a scheduled job
+/// the last time at or before now that its cron names, in epoch milliseconds.
+struct Candidate<'a> {
+    job: &'a EntityValue,
+    job_name: String,
+    queued: bool,
+    occurrence: Option<i64>,
+}
+
+/// The last time at or before `now` that `cron_text` names, in epoch milliseconds: None when it names none yet.
+fn last_occurrence(cron_text: &str, now: jiff::Timestamp) -> Result<Option<i64>, Error> {
+    let cron = super::schedule::cached_cron(cron_text)?;
+    Ok(cron
+        .last_at_or_before(&now.to_zoned(job_time_zone()))
+        .map(|at| at.timestamp().as_millisecond()))
+}
+
+/// The most job names one lock read names, so its `IN` list stays well under every database's bind limit.
+const LOCK_READ_CHUNK: usize = 500;
+
+/// The lock rows of the jobs `names`, by job name: one query for each [`LOCK_READ_CHUNK`] names, none for no name.
+fn read_locks<'a>(
+    facade: &EntityFacade,
+    names: impl Iterator<Item = &'a str>,
+) -> Result<HashMap<String, EntityValue>, Error> {
+    let names: Vec<Value> = names.map(Value::string).collect();
+    let mut locks = HashMap::new();
+    for chunk in names.chunks(LOCK_READ_CHUNK) {
+        let rows = facade
+            .find(JOB_LOCK)?
+            .condition(Condition::is_in("jobName", chunk.to_vec()))
+            .list()?;
+        for row in rows.into_values() {
+            locks.insert(field_text(&row, "jobName"), row);
+        }
+    }
+    Ok(locks)
 }
 
 /// The jobs a pass looks at, in priority order: every scheduled job (one with a cron expression), and the queued calls
@@ -390,24 +460,41 @@ struct Ready {
     reclaimed: Option<String>,
 }
 
-/// `None` when the job is not due, is running, or failed too recently.
+/// What [`readiness`] found for a job.
+enum Due {
+    /// Start it, as the lock row allows.
+    Ready(Ready),
+    /// Not due, running, or failed too recently.
+    NotNow,
+    /// It has run its `repeatCount` and is paused now.
+    Exhausted,
+}
+
+/// Whether `candidate` starts now, from its lock row (`lock`, read by the pass). A scheduled job whose last occurrence
+/// is before its last run is not due, which needs no query; only a due job has its repeat count and run history read.
 fn readiness(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
-    job: &EntityValue,
-    job_name: &str,
-    cron_text: &str,
+    candidate: &Candidate,
+    lock: Option<&EntityValue>,
     now: jiff::Timestamp,
-) -> Result<Option<Ready>, Error> {
-    let lock = facade.find(JOB_LOCK)?.eq("jobName", Value::string(job_name)).one()?;
+    now_stamp: &Value,
+) -> Result<Due, Error> {
+    let (job, job_name) = (candidate.job, candidate.job_name.as_str());
+    let last_run_time = lock
+        .and_then(|lock| lock.get("lastRunTime").cloned())
+        .unwrap_or(Value::Null);
+    let last_run_ms = millis_of(&last_run_time);
+    // A held lock's lastRunTime is when its run was claimed, so a running job is not due either.
+    if let Some(occurrence) = candidate.occurrence {
+        if last_run_ms.is_some_and(|last_run| occurrence < last_run) {
+            return Ok(Due::NotNow);
+        }
+    }
     let mut expect = Expect::Absent;
-    let mut last_run_time = Value::Null;
-    let mut last_run_ms = None;
     let mut reclaimed = None;
-    if let Some(lock) = &lock {
+    if let Some(lock) = lock {
         let run_id = field_text(lock, "jobRunId");
-        last_run_time = lock.get("lastRunTime").cloned().unwrap_or(Value::Null);
-        last_run_ms = millis_of(&last_run_time);
         expect = if run_id.is_empty() {
             Expect::Free
         } else {
@@ -426,20 +513,14 @@ fn readiness(
                 reclaimed = Some(run_id.clone());
             } else {
                 tracing::info!(job = job_name, run = %run_id, "lock held, not running");
-                return Ok(None);
+                return Ok(Due::NotNow);
             }
         }
     }
-    if !cron_text.is_empty() {
-        let cron = super::schedule::cached_cron(cron_text)?;
-        let zoned = now.to_zoned(job_time_zone());
-        // A schedule with nothing before now has not come due yet.
-        let Some(last_schedule) = cron.last_at_or_before(&zoned) else {
-            return Ok(None);
-        };
-        if last_run_ms.is_some_and(|last_run| last_schedule.timestamp().as_millisecond() < last_run) {
-            return Ok(None);
-        }
+    if !candidate.queued && repeat_exhausted(facade, job, job_name, lock, now_stamp)? {
+        return Ok(Due::Exhausted);
+    }
+    if candidate.occurrence.is_some() {
         // After an error, wait the minimum retry time.
         let runs = facade
             .find(JOB_RUN)?
@@ -458,12 +539,12 @@ fn readiness(
                 let ran_since = last_run_ms.is_some_and(|last_run| last_run >= stamp);
                 if !ran_since && stamp > now.as_millisecond().saturating_sub(retry.saturating_mul(60_000)) {
                     tracing::info!(job = job_name, "not retrying after an error yet");
-                    return Ok(None);
+                    return Ok(Due::NotNow);
                 }
             }
         }
     }
-    Ok(Some(Ready {
+    Ok(Due::Ready(Ready {
         expect,
         last_run_time,
         reclaimed,
@@ -1291,12 +1372,6 @@ fn error_history_only(job: &EntityValue) -> bool {
     field_text(job, "errorHistoryOnly") == "Y"
 }
 
-/// The lock's `runCount`, when the row and the count are there.
-fn stored_run_count(facade: &EntityFacade, job_name: &str) -> Result<Option<i64>, Error> {
-    let lock = facade.find(JOB_LOCK)?.eq("jobName", Value::string(job_name)).one()?;
-    Ok(lock.as_ref().and_then(|row| number(row, "runCount")))
-}
-
 /// Count a run whose success row will not stay. Called after the run row exists and, for a scheduled run, after the
 /// lock is held.
 ///
@@ -1328,8 +1403,15 @@ fn note_started(facade: &EntityFacade, job_name: &str) -> Result<(), Error> {
     Err(Error::new(format!("could not count a run of {job_name}")))
 }
 
-/// Stop a repeating job that has run `repeatCount` times. True when it was stopped.
-fn repeat_exhausted(facade: &EntityFacade, job: &EntityValue, job_name: &str, now: &Value) -> Result<bool, Error> {
+/// Stop a repeating job that has run `repeatCount` times. True when it was stopped. `lock` is the job's lock row, as the
+/// pass read it.
+fn repeat_exhausted(
+    facade: &EntityFacade,
+    job: &EntityValue,
+    job_name: &str,
+    lock: Option<&EntityValue>,
+    now: &Value,
+) -> Result<bool, Error> {
     let Some(limit) = number(job, "repeatCount") else {
         return Ok(false);
     };
@@ -1337,7 +1419,7 @@ fn repeat_exhausted(facade: &EntityFacade, job: &EntityValue, job_name: &str, no
     // is new and the rows still there are the history, so they decide. This does not insert a lock: the run that is
     // accepted writes the count, after its row exists.
     let runs = if error_history_only(job) {
-        match stored_run_count(facade, job_name)? {
+        match lock.and_then(|row| number(row, "runCount")) {
             Some(count) => count,
             None => facade.find(JOB_RUN)?.eq("jobName", Value::string(job_name)).count()?,
         }
@@ -1565,7 +1647,6 @@ impl Shared {
         true
     }
 }
-
 
 #[cfg(test)]
 #[path = "jobs_tests.rs"]

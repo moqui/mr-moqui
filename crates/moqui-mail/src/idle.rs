@@ -124,31 +124,48 @@ pub(crate) fn stop_all(factory: &ExecutionContextFactory) {
     }
 }
 
-/// The accounts IDLE should watch: active, with an IMAP server, the first `email-client` `idle-max` by id.
+/// The accounts IDLE should watch: active, with an IMAP server, the first `email-client` `idle-max` by id. The
+/// accounts are read `idle-max` at a time, by id, until that many are found, so a pass over many accounts reads only
+/// those it needs (plans/High-Level-Review.md HL-020).
 fn wanted_accounts(facade: &EntityFacade) -> Result<Vec<(String, String)>, moqui_lib::error::Error> {
-    let rows = facade
-        .find(ACCOUNT)?
-        .condition(Condition::is_not_null("emailServerId"))
-        .condition(Condition::not_equals("accountKindEnumId", Value::string("EakInternal")))
-        .condition(Condition::or(vec![
-            Condition::is_null("statusId"),
-            Condition::equals("statusId", Value::string("EasActive")),
-        ]))
-        .order_by("emailAccountId", false)
-        .list()?;
+    let max = max_workers();
     let mut out = Vec::new();
-    for row in rows.values() {
-        if out.len() >= max_workers() {
+    let mut after: Option<String> = None;
+    while out.len() < max {
+        let mut find = facade
+            .find(ACCOUNT)?
+            .condition(Condition::is_not_null("emailServerId"))
+            .condition(Condition::not_equals("accountKindEnumId", Value::string("EakInternal")))
+            .condition(Condition::or(vec![
+                Condition::is_null("statusId"),
+                Condition::equals("statusId", Value::string("EasActive")),
+            ]));
+        if let Some(after) = &after {
+            find = find.condition(Condition::greater("emailAccountId", Value::string(after)));
+        }
+        let rows = find
+            .order_by("emailAccountId", false)
+            .limit(i64::try_from(max).unwrap_or(i64::MAX))
+            .list()?;
+        let page = rows.values();
+        for row in page {
+            if out.len() >= max {
+                break;
+            }
+            // An account that cannot be read is logged and the others are still watched.
+            match account_info(facade, row) {
+                Ok(account) => {
+                    if let Some(server) = account.server.filter(super::sync::ServerInfo::is_imap) {
+                        out.push((account.id, server.fingerprint()));
+                    }
+                }
+                Err(err) => tracing::warn!("Email account {}: {err}", field_text(row, "emailAccountId")),
+            }
+        }
+        if page.len() < max {
             break;
         }
-        match account_info(facade, row) {
-            Ok(account) => {
-                if let Some(server) = account.server.filter(super::sync::ServerInfo::is_imap) {
-                    out.push((account.id, server.fingerprint()));
-                }
-            }
-            Err(err) => tracing::warn!("Email account {}: {err}", field_text(row, "emailAccountId")),
-        }
+        after = page.last().map(|row| field_text(row, "emailAccountId"));
     }
     Ok(out)
 }

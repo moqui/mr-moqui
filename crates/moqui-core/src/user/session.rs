@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, MutexGuard};
+use std::time::Duration;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
@@ -126,6 +127,8 @@ pub struct SessionTable {
     flushed: Arc<Condvar>,
     /// Sessions that expired since the listeners last heard, for their `sessionDestroyed` ([`take_expired`]).
     expired: Vec<String>,
+    /// The last id a bounded flush reached; the next one starts after it ([`flush_dirty_bounded`]).
+    flush_cursor: Option<String>,
 }
 
 impl SessionTable {
@@ -138,6 +141,7 @@ impl SessionTable {
             flushing: BTreeSet::new(),
             flushed: Arc::new(Condvar::new()),
             expired: Vec::new(),
+            flush_cursor: None,
         }
     }
 }
@@ -533,26 +537,71 @@ pub fn invalidate(id: &str) {
 ///
 /// Returns an error, after the others are written, when the idle sweep or a session failed.
 pub(crate) fn flush_dirty(factory: &ExecutionContextFactory) -> Result<(), Error> {
+    flush_dirty_within(factory, None)
+}
+
+/// The most sessions one scheduler pass writes, and the longest it spends writing them ([`flush_dirty_bounded`]).
+pub(crate) const FLUSH_PASS_SESSIONS: usize = 1000;
+pub(crate) const FLUSH_PASS_TIME: Duration = Duration::from_secs(5);
+
+/// How much of the dirty sessions one bounded flush writes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FlushBound {
+    pub(crate) sessions: usize,
+    pub(crate) time: Duration,
+}
+
+/// [`flush_dirty`] for the scheduler's pass: it writes at most `bound.sessions` sessions, or for at most `bound.time`,
+/// starting after the last id the previous bounded flush reached and going round to the first ids, so a pass with many
+/// dirty sessions does not hold the scheduler thread, and the sessions it leaves are written first by the next pass
+/// (plans/High-Level-Review.md HL-020). The host's flush at shutdown writes them all.
+///
+/// # Errors
+///
+/// As [`flush_dirty`].
+pub(crate) fn flush_dirty_bounded(factory: &ExecutionContextFactory, bound: FlushBound) -> Result<(), Error> {
+    flush_dirty_within(factory, Some(bound))
+}
+
+fn flush_dirty_within(factory: &ExecutionContextFactory, bound: Option<FlushBound>) -> Result<(), Error> {
+    let started = std::time::Instant::now();
     sync_bound(factory);
     let mut failed = 0_usize;
     if let Err(err) = expire_idle(factory) {
         tracing::error!("could not expire idle sessions: {err}");
         failed += 1;
     }
-    let mut ids: Vec<String> = {
+    // In id order (the table is sorted), from just after the cursor round to it.
+    let (ids, cursor) = {
         let table = lock_sessions(factory);
-        table
+        let ids: Vec<String> = table
             .sessions
             .iter()
             .filter(|(_, live)| needs_flush(live))
             .map(|(id, _)| id.clone())
-            .collect()
+            .collect();
+        (ids, table.flush_cursor.clone())
     };
-    ids.sort_unstable();
-    for id in ids {
-        if let Err(err) = flush_id(factory, &id) {
+    let split = cursor
+        .as_deref()
+        .filter(|_| bound.is_some())
+        .map_or(0, |cursor| ids.partition_point(|id| id.as_str() <= cursor));
+    let (before, after) = ids.split_at(split);
+    let mut reached = None;
+    for (written, id) in after.iter().chain(before).enumerate() {
+        if bound.is_some_and(|bound| written >= bound.sessions || started.elapsed() >= bound.time) {
+            break;
+        }
+        // Each is written on its own, and one that fails moves the cursor on too, so it does not hold back the rest.
+        if let Err(err) = flush_id(factory, id) {
             tracing::error!("could not write session {id}: {err}");
             failed += 1;
+        }
+        reached = Some(id.clone());
+    }
+    if bound.is_some() {
+        if let Some(reached) = reached {
+            lock_sessions(factory).flush_cursor = Some(reached);
         }
     }
     if failed > 0 {

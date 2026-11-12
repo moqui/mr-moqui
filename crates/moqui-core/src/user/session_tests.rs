@@ -1128,6 +1128,47 @@ fn a_session_that_fails_to_flush_does_not_stop_the_others() {
     }
 }
 
+/// plans/High-Level-Review.md HL-020: the scheduler's flush writes at most its bound of sessions, and the next one goes
+/// on after the last id it reached, round to the first ids, before writing any session again; a session that fails
+/// moves the cursor on too.
+#[test]
+fn a_bounded_session_flush_resumes_where_the_last_pass_stopped() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let dirty = |n: usize| -> String {
+        let guard = bind(&factory, None, None, false).unwrap();
+        save_parameter("n", &n.to_string());
+        guard.session_id()
+    };
+    let mut ids: Vec<String> = (0..5).map(dirty).collect();
+    ids.sort();
+    let written = |id: &String| read_row(&facade, id).unwrap().is_some();
+    let bound = FlushBound {
+        sessions: 2,
+        time: Duration::from_secs(60),
+    };
+    // The second session fails: the pass still stops at its bound, past it.
+    *lock(&FAILING_FLUSH) = vec![ids[1].clone()];
+    let first = flush_dirty_bounded(&factory, bound);
+    lock(&FAILING_FLUSH).clear();
+    assert!(first.is_err(), "the failure is reported");
+    let after_first: Vec<bool> = ids.iter().map(written).collect();
+    assert_eq!(after_first, [true, false, false, false, false]);
+    flush_dirty_bounded(&factory, bound).unwrap();
+    let after_second: Vec<bool> = ids.iter().map(written).collect();
+    assert_eq!(
+        after_second,
+        [true, false, true, true, false],
+        "it went on after the last id reached"
+    );
+    flush_dirty_bounded(&factory, bound).unwrap();
+    assert!(
+        ids.iter().all(written),
+        "round to the first ids: the one that failed is written now"
+    );
+}
+
 /// Holds the flushes of one session id at [`flush_hook`] until released.
 struct BlockedFlush {
     entered: mpsc::Receiver<()>,

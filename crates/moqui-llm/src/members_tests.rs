@@ -1164,6 +1164,56 @@ fn a_trigger_batches_its_events_and_keeps_its_run_limits() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// plans/High-Level-Review.md HL-020: a sweep fires at most its cap of triggers whose window has closed, the one
+/// waiting longest first; the rest fire on the next pass.
+#[test]
+fn a_capped_trigger_sweep_fires_the_rest_next_pass() {
+    let bed = bed("capped", "");
+    let _entered = bed.ctx.enter();
+    let dir = trigger_setup(&bed, "capped");
+    let make = |id: &str| {
+        store_trigger(&[
+            ("triggerId", text(id)),
+            ("agentId", text("watcher")),
+            ("triggerTypeEnumId", text("AgttDocument")),
+            ("dataDocumentId", text("TestEnum")),
+            ("instructions", text("Review the changes.")),
+            ("batchSeconds", Value::I64(60)),
+        ])
+    };
+    let (newer, older) = (make("CAP_NEW"), make("CAP_OLD"));
+    // one waiting event each, both past the window, the second trigger's the older
+    for (trigger_id, ago) in [(&newer, 120_000), (&older, 600_000)] {
+        let _authz = bed.ctx.disable_authz();
+        let mut event = bed.facade.make_value("moqui.agent.AgentTriggerEvent").unwrap();
+        event.set_sequenced_id_primary(&bed.facade).unwrap();
+        event.set("triggerId", text(trigger_id));
+        event.set("dataDocumentId", text("TestEnum"));
+        event.set("documentId", text("E1"));
+        event.set("eventJson", text(r#"{"_type":"TestEnum","_id":"E1","enumId":"E1"}"#));
+        event.set("receivedDate", run::stamp(run::now_millis() - ago));
+        event.create(&bed.facade).unwrap();
+    }
+    fake::script(
+        &bed.endpoint,
+        vec![fake::Reply::text("Reviewed."), fake::Reply::text("Reviewed.")],
+    );
+    crate::trigger::sweep_at_most(&bed.factory, 1);
+    assert_eq!(
+        trigger_runs(&bed, &older).len(),
+        1,
+        "the one waiting longest fires first"
+    );
+    assert!(trigger_runs(&bed, &newer).is_empty(), "the cap leaves the other");
+    crate::trigger::sweep_at_most(&bed.factory, 1);
+    assert_eq!(trigger_runs(&bed, &newer).len(), 1, "it fires on the next pass");
+    assert_eq!(trigger_runs(&bed, &older).len(), 1, "the first does not fire again");
+    for run_id in trigger_runs(&bed, &older).into_iter().chain(trigger_runs(&bed, &newer)) {
+        run::wait_for(&bed.factory, &run_id, WAIT).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The typed AI tasks answer with outputs that fit their schemas, which the fake is sent; a component's task from the
 /// conf runs through its prepare service; an async task ends its record and tells its user in the inbox.
 #[test]
