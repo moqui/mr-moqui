@@ -34,6 +34,8 @@ thread_local! {
     pub(crate) static REQUEST_THREAD: Cell<bool> = const { Cell::new(false) };
     /// Where the stack was when the outermost script on the thread was entered.
     pub(crate) static STACK_BASE: Cell<usize> = const { Cell::new(0) };
+    /// The stack this thread was spawned with, when it was declared ([`declare_thread_stack`]).
+    static THREAD_STACK: Cell<Option<usize>> = const { Cell::new(None) };
     /// The context stack both engines read and write bare names through.
     pub(crate) static STACK: RefCell<ContextStack> = RefCell::new(ContextStack::new());
     /// How deep scripts are nested on this thread, over both engines.
@@ -91,14 +93,45 @@ pub(crate) fn enter_depth(depth: usize) -> DepthGuard {
 /// The deepest nesting of scripts any thread of the process reached.
 pub(crate) static DEPTH_MAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// The stack the outermost script on a thread may use, below the 2 MiB of a service worker. QuickJS counts the engine's
-/// stack from where the outermost script enters it, so the scripts it nests share this budget plus [`NESTED_STACK`]
-/// (on a request worker, [`REQUEST_SCRIPT_STACK`]). Less than [`MIN_NESTED_STACK`] left fails before a nested script.
+/// The stack the outermost script on a thread may use when the thread's stack was not declared
+/// ([`declare_thread_stack`]); on a declared thread, half of it. The engine's stack is counted from where the outermost
+/// script enters it, so the scripts it nests share this budget plus [`NESTED_STACK`] (on a request worker,
+/// [`REQUEST_SCRIPT_STACK`]). Less than [`MIN_NESTED_STACK`] left fails before a nested script.
 pub(crate) const SCRIPT_STACK: usize = 1024 * 1024;
 /// Full app renders nest widget templates, includes and services on the request worker's 8 MiB stack.
 pub(crate) const REQUEST_SCRIPT_STACK: usize = 4 * 1024 * 1024;
 pub(crate) const NESTED_STACK: usize = 256 * 1024;
 pub(crate) const MIN_NESTED_STACK: usize = 32 * 1024;
+
+/// Declare that this thread was spawned with `size` bytes of stack: call it first thing on the thread. quickjs-oxide
+/// then lets the nested runs of its loop (a script's service call that runs another script) use the thread's stack,
+/// less a reserve to unwind. On a thread not declared it counts on 1 MiB less the reserve, 640 KiB in a Debug build,
+/// whose frames are larger (a nested service call takes about 50 KiB of stack there): a chain of a dozen services, as a
+/// demo data load makes, stopped with `stack overflow` in Debug only. Scripts here may use half of `size`
+/// ([`stack_budget`]).
+pub fn declare_thread_stack(size: usize) {
+    quickjs_oxide::engine::api::declare_thread_stack(size);
+    THREAD_STACK.with(|stack| stack.set(Some(size)));
+}
+
+/// Spawn a thread named `name` that runs scripts, with `size` bytes of stack declared to the engine
+/// ([`declare_thread_stack`]).
+pub fn spawn_script_thread<T: Send + 'static>(
+    name: String,
+    size: usize,
+    body: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<T>> {
+    std::thread::Builder::new().name(name).stack_size(size).spawn(move || {
+        declare_thread_stack(size);
+        body()
+    })
+}
+
+/// The stack the outermost script on a thread that is not a request worker may use: half of the thread's declared
+/// stack, else [`SCRIPT_STACK`].
+fn thread_script_stack() -> usize {
+    THREAD_STACK.with(Cell::get).map_or(SCRIPT_STACK, |size| size / 2)
+}
 
 /// Bounds script time on this thread to a transaction's remaining time.
 ///
@@ -274,7 +307,7 @@ pub(crate) fn stack_budget(depth: usize) -> Result<usize, Error> {
     let (budget, ceiling) = if REQUEST_THREAD.with(Cell::get) {
         (REQUEST_SCRIPT_STACK, REQUEST_SCRIPT_STACK)
     } else {
-        (SCRIPT_STACK, NESTED_STACK)
+        (thread_script_stack(), NESTED_STACK)
     };
     if depth == 0 {
         STACK_BASE.with(|base| base.set(here));

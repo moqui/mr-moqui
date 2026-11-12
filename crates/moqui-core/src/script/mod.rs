@@ -28,7 +28,7 @@ pub(crate) mod text;
 pub mod theme;
 pub(crate) mod walker;
 
-pub use run::ReleaseScope;
+pub use run::{declare_thread_stack, spawn_script_thread, ReleaseScope};
 
 pub(crate) use actions::run_actions_at;
 pub(crate) use actions::{is_empty_value, is_groovy_false};

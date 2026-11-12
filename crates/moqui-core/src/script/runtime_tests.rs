@@ -566,6 +566,27 @@ fn request_scripts_have_room_for_nested_app_templates() {
         .expect("request recursion must fail as a script error, not overflow the worker");
 }
 
+/// The outermost script on a thread whose stack is declared may use half of it, and on one not declared
+/// [`crate::script::run::SCRIPT_STACK`]; the scripts it nests have [`super::NESTED_STACK`] more.
+#[test]
+fn a_declared_thread_gives_its_scripts_half_its_stack() {
+    let budget = |declared: Option<usize>| {
+        std::thread::Builder::new()
+            .stack_size(4 * 1024 * 1024)
+            .spawn(move || {
+                if let Some(size) = declared {
+                    crate::script::declare_thread_stack(size);
+                }
+                super::stack_budget(0).unwrap()
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    };
+    assert_eq!(budget(None), crate::script::run::SCRIPT_STACK + super::NESTED_STACK);
+    assert_eq!(budget(Some(4 * 1024 * 1024)), 2 * 1024 * 1024 + super::NESTED_STACK);
+}
+
 /// A script cannot replace a helper for the later scripts on the thread: the helper objects, `System` and their
 /// functions are frozen on each engine, so an assignment does nothing in sloppy code and throws in strict code. A
 /// `UserSecurityChecks` check replaced by one script would otherwise let a non-member's later write of an admin group

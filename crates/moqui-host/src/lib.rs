@@ -599,6 +599,7 @@ pub fn load_save(
 /// (`use my_component as _;`) so its `submit_component!` entry is kept.
 pub fn main() {
     process_started();
+    declare_main_stack();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(status) = terminal_helper(&args) {
         std::process::exit(status);
@@ -629,6 +630,22 @@ pub fn terminal_helper(args: &[String]) -> Option<i32> {
         #[cfg(all(feature = "tui", feature = "devtools", unix))]
         Some("term-hold") => Some(term::hold::term_hold()),
         _ => None,
+    }
+}
+
+/// Declare the main thread's stack to the script engine ([`moqui_core::script::declare_thread_stack`]): `moqui load` and
+/// `moqui test` run their data loads and specs on it. Its size is the stack limit (`ulimit -s`, 8 MiB by default on
+/// macOS and Linux), less what sits above `main` on it (the arguments, the environment, the runtime's start). Not
+/// declared, the engine counts on 1 MiB of it, which a demo data load's chain of services passed in a Debug build. With
+/// no limit, or on Windows (whose main thread has 1 MiB), it is left to the engine.
+fn declare_main_stack() {
+    #[cfg(unix)]
+    if let Some(limit) = rustix::process::getrlimit(rustix::process::Resource::Stack).current {
+        const ABOVE_MAIN: usize = 1024 * 1024;
+        let size = usize::try_from(limit).unwrap_or(usize::MAX).saturating_sub(ABOVE_MAIN);
+        if size > 0 {
+            moqui_core::script::declare_thread_stack(size);
+        }
     }
 }
 

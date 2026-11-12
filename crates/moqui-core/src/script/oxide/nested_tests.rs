@@ -207,3 +207,61 @@ fn a_unit_reads_its_own_frame_not_the_callers_kept_values() -> Result<(), Error>
     assert_eq!(crate::script::context_value("after"), Some(Value::string("1.5")));
     Ok(())
 }
+
+/// The stack each level of [`nest_on_thread`] holds: about twice what a nested service call takes in a Debug build.
+const LEVEL_STACK: usize = 96 * 1024;
+
+/// Run `body` with [`LEVEL_STACK`] of this thread's stack held under it.
+#[inline(never)]
+fn holding_stack<T>(body: impl FnOnce() -> T) -> T {
+    let held = [0_u8; LEVEL_STACK];
+    std::hint::black_box(&held);
+    let out = body();
+    std::hint::black_box(&held);
+    out
+}
+
+/// `nest(levels)` on a new thread with 8 MiB of stack, declared to the engine or not: each level is a host call that
+/// holds [`LEVEL_STACK`] and runs the next level as a nested script, as a service a script calls does.
+fn nest_on_thread(levels: i32, declared: bool) -> Result<(), String> {
+    let body = move || -> Result<(), String> {
+        use quickjs_oxide::engine::api::core::{NativeErrorKind, Scope, Value as JsValue};
+        clear_context_stack();
+        push_context_frame();
+        let context = super::engine::context_for_tests();
+        let global = context.global_object().unwrap();
+        context
+            .define_function(&global, "nest", 1, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+                let JsValue::Int(left @ 1..) = scope.arg(0) else {
+                    return Ok(JsValue::Undefined);
+                };
+                let ran = scope.lend(|| holding_stack(|| crate::script::run_script(&format!("nest({})", left - 1))));
+                match ran {
+                    Ok(()) => Ok(JsValue::Undefined),
+                    Err(err) => Err(scope.throw_error(NativeErrorKind::Type, err.message())),
+                }
+            })
+            .unwrap();
+        crate::script::run_script(&format!("nest({levels})")).map_err(|err| err.message().to_string())
+    };
+    let size = 8 * 1024 * 1024;
+    let spawned = if declared {
+        crate::script::spawn_script_thread("nest".to_string(), size, body)
+    } else {
+        std::thread::Builder::new().stack_size(size).spawn(body)
+    };
+    spawned
+        .unwrap()
+        .join()
+        .expect("a nesting too deep fails as a script error, not by overflowing the thread")
+}
+
+/// Scripts nested 20 deep under host calls that hold about 2 MiB of the thread's stack run on a thread whose 8 MiB stack
+/// is declared, in every build. Not declared, quickjs-oxide counts on 1 MiB of it, less its reserve: a Debug data load
+/// stopped with `stack overflow` a dozen services deep (`load#DemoOrder` in mr-boss), where release went on.
+#[test]
+fn a_declared_thread_stack_holds_scripts_nested_deep() {
+    assert_eq!(nest_on_thread(20, true), Ok(()));
+    let err = nest_on_thread(20, false).unwrap_err();
+    assert!(err.contains("stack"), "{err}");
+}
