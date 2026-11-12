@@ -75,6 +75,7 @@ pub(super) fn backup_embedded_database(
                 removed: Vec::new(),
                 keep: Vec::new(),
                 renames: Vec::new(),
+                rewritten: Vec::new(),
                 errors: Vec::new(),
             },
             "N",
@@ -300,7 +301,13 @@ fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::Backu
         .map(|(path, _)| path.rsplit('/').next().unwrap_or(path).to_string())
         .collect();
     let keep_names: Vec<String> = outcome.keep.iter().map(|kept| kept.name.clone()).collect();
-    let plan = backup::mirror_plan(&keep_names, &remote_names, &outcome.renames, backup::is_archive_name);
+    let plan = backup::mirror_plan(
+        &keep_names,
+        &remote_names,
+        &outcome.renames,
+        &outcome.rewritten,
+        backup::is_archive_name,
+    );
     let mut failed = false;
     for (old, new) in &plan.renames {
         let from = child(send_path, old);
@@ -322,6 +329,21 @@ fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::Backu
         };
         if let Err(err) = put {
             tracing::error!("backup mirror could not upload {name}: {err}");
+            failed = true;
+        }
+    }
+    // a directory as it is: only its sidecar changed
+    for name in &plan.resends {
+        let Some(kept) = outcome.keep.iter().find(|kept| &kept.name == name) else {
+            continue;
+        };
+        let local = kept.path.join(backup::SIDECAR);
+        if !local.is_file() {
+            continue;
+        }
+        let remote = child(&child(send_path, name), backup::SIDECAR);
+        if let Err(err) = client.put_file(&remote, &local) {
+            tracing::error!("backup mirror could not update {remote}: {err}");
             failed = true;
         }
     }

@@ -84,3 +84,17 @@ fn chunks_round_trip_at_every_boundary() {
         }
     }
 }
+
+/// A stanza whose share is a low-order point (all zeros) gives the all-zero shared secret, a wrap key anyone can
+/// compute: the file is refused, as the age spec requires, and encrypting to such a recipient is refused too.
+#[test]
+fn a_low_order_share_or_recipient_is_refused() {
+    let identity = Identity::generate().unwrap();
+    let zero = base64::engine::general_purpose::STANDARD_NO_PAD.encode([0_u8; 32]);
+    let file = format!("age-encryption.org/v1\n-> X25519 {zero}\n{zero}\n--- {zero}\n");
+    let err = decrypt(&identity, &mut file.as_bytes()).unwrap_err();
+    assert!(err.to_string().contains("low-order"), "{err}");
+
+    let low_order = Recipient::parse(&Recipient([0_u8; 32]).to_string()).unwrap();
+    assert!(Encryptor::new(Vec::new(), &low_order).is_err());
+}

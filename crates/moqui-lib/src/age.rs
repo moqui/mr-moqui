@@ -278,6 +278,10 @@ pub fn decrypt(identity: &Identity, input: &mut dyn Read) -> Result<Vec<u8>, Err
             .ok_or_else(|| bad("stanza"))?;
         let wrapped = b64().decode(&body).map_err(|_| bad("stanza"))?;
         let shared = MontgomeryPoint(share).mul_clamped(identity.0).to_bytes();
+        // the spec's rule: a low-order share gives a key anyone can compute
+        if shared == [0; 32] {
+            return Err(bad("stanza with a low-order share"));
+        }
         let mut salt = [0_u8; 64];
         salt[..32].copy_from_slice(&share);
         salt[32..].copy_from_slice(&identity.recipient().0);

@@ -105,6 +105,7 @@ fn outcome(keep: &[(&str, PathBuf)], renames: &[(&str, &str)]) -> BackupOutcome 
             .iter()
             .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
             .collect(),
+        rewritten: Vec::new(),
         errors: Vec::new(),
     }
 }
@@ -255,6 +256,44 @@ fn over_sftp_encrypted_each_archive_is_one_sealed_file_and_a_promotion_a_rename(
     untar(&plain, &out);
     assert_eq!(std::fs::read(out.join("INCREMENTAL.1")).unwrap(), b"changed");
     assert!(mirror_sftp_encrypted(&mut client, "/srv/bk", "ssh-ed25519 AAAA", &next).is_err());
+}
+
+/// An incremental already on the store whose sidecar changed (its parent was promoted) goes up again whole, after the
+/// rename, so the store's copy names its parent as it is now called.
+#[test]
+fn an_archive_whose_sidecar_changed_goes_up_again() {
+    let base = archives("resend");
+    let _guard = DirGuard(base.clone());
+    let store = Memory::default();
+    let first = outcome(&[(FULL, base.join(FULL)), (INCR, base.join(INCR))], &[]);
+    assert_eq!(mirror(&store, "s3://b/bk", "bk/", None, &first).unwrap(), "Y");
+
+    std::fs::rename(base.join(FULL), base.join(FULL_WEEKLY)).unwrap();
+    std::fs::write(
+        base.join(INCR).join(crate::backup::SIDECAR),
+        format!("parent={FULL_WEEKLY}\n"),
+    )
+    .unwrap();
+    store.calls.borrow_mut().clear();
+    let mut next = outcome(
+        &[(FULL_WEEKLY, base.join(FULL_WEEKLY)), (INCR, base.join(INCR))],
+        &[(FULL, FULL_WEEKLY)],
+    );
+    next.rewritten = vec![INCR.to_string()];
+    assert_eq!(mirror(&store, "s3://b/bk", "bk/", None, &next).unwrap(), "Y");
+    assert_eq!(
+        *store.calls.borrow(),
+        [
+            format!("rename bk/{FULL}.tar.gz bk/{FULL_WEEKLY}.tar.gz"),
+            format!("put bk/{INCR}.tar.gz"),
+        ]
+    );
+    let out = base.join("restored");
+    untar(&store.objects.borrow()[&format!("bk/{INCR}.tar.gz")], &out);
+    assert_eq!(
+        std::fs::read_to_string(out.join(crate::backup::SIDECAR)).unwrap(),
+        format!("parent={FULL_WEEKLY}\n")
+    );
 }
 
 #[test]
