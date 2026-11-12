@@ -87,12 +87,20 @@ Purpose keys: "field", "field-index", "session", "lfs-token", "mcp-state", "pass
 ```
 
 - **On disk:** `runtime/seal.json` holds the wrapped root key and the unseal method's public metadata: TPM policy,
-  KMS key ARN, share threshold. The file is useless alone.
+  KMS key ARN, share threshold. It also holds the **bootstrap secrets**, wrapped by the root key: the secrets needed
+  before the database is open (`entity_ds_password`, `content_ds_password`, `entity_ds_c1_password` and the embedded
+  Postgres password, which today is a plaintext `pgpass` file, `crates/moqui-drivers/src/embedded.rs` about line 751).
+  The file is useless alone.
 - **In the database:** `moqui.security.SecretKeyring` holds each data key version, wrapped by the root key, with its
   id, purpose, state (`active`, `decrypt-only`, `retired`) and dates.
-- **Stored secrets:** `moqui.security.SecretValue` holds each secret that is now a property (the list in §2), in the
-  `v2` format below, by name. A generated secret is made into this table, never into `.env`.
+- **Stored secrets:** `moqui.security.SecretValue` holds each other secret that is now a property (the list in §2),
+  in the `v2` format below, by name. A generated secret is made into this table, never into `.env`.
 - **Purpose keys** come from HKDF with a fixed label, so one leaked purpose key does not give another.
+- **Start order:** unseal, unwrap the root key, unwrap the bootstrap secrets, open the database, unwrap the keyring,
+  read `SecretValue`, then open the listeners.
+- **Secret handles.** Code gets a secret through a handle from the keyring, never through a property. Today a secret
+  property is copied into the process properties and the factory state (`context/factory.rs` about lines 339 and 387),
+  and `session.rs` decodes its key into a plain `Vec<u8>` (about line 2963). These copies go in S4 and S5.
 
 ### 3.2 The `v2` field format
 
@@ -101,15 +109,27 @@ v2:<keyId>:<nonce, base64url>:<ciphertext+tag, base64url>
 ```
 
 - AES-256-GCM, a random 96-bit nonce for each value. See [§6](#6-decisions) for the choice against XChaCha20-Poly1305.
-- **Associated data** = entity name, field name and primary key. Then a ciphertext copied into another row or field
-  does not decrypt. This also stops an attacker with database write access from moving a secret into a field they can
+- **Associated data** = entity name, field name and primary key, in a fixed encoding (length-prefixed parts, the key
+  fields in definition order). Then a ciphertext copied into another row or field does not decrypt. A read must know
+  the source entity, field and full primary key. A find that selects only some fields, and a view entity that has an
+  encrypted field as an alias (`entity/find.rs` about line 964, `field_rw.rs` about line 262), selects the source
+  primary key as hidden columns. A distinct or aggregate select of an encrypted field is refused, as it gives nothing
+  useful. This also stops an attacker with database write access from moving a secret into a field they can
   read.
-- **Blind index** for a field found by value. A separate column holds HMAC-SHA256 under the `field-index` key. Such a
-  field is marked `encrypt="true" index="blind"`. `CalendarShare.publishToken` is the first one.
+- **Blind index** for a field found by value. A separate column holds `<keyId>:` and HMAC-SHA256 under that version
+  of the `field-index` key. Such a field is marked `encrypt="true" index="blind"`. `CalendarShare.publishToken` is the
+  first one. A lookup computes the index under each key version that is not `retired`, and then decrypts each match and
+  compares it with the value asked for. The rewrap job writes the ciphertext and the index of a row in one
+  transaction. A `field-index` version is retired only when no row uses it.
+- **No fallback.** Today a value that fails to decrypt and has no colon and is not hex is read as plaintext
+  (`entity/field_rw.rs` about line 191), so a database writer can put a chosen plaintext in place of a ciphertext. A
+  field accepts only `v2` once its entity holds no old-format value: from the start on a new database, and after the
+  rewrap on one loaded with Moqui Java data (its old-format count is zero). A value that is not `v2`, or that fails
+  authentication, is an error, never plaintext and never an old format.
 - Old formats (`:`, `<iv>:`, hex, DES) are **decrypt-only**, for data written by Moqui Java. Before the first release
-  there are no installs to move: `v2` replaces the write path and a clean reload is fine. The rewrap job is part of
-  key rotation (S2, S14) and writes each row it reads in the current format. Whether to drop the Java formats is
-  decided after the first release.
+  there are no MR Moqui installs to move: `v2` replaces the write path and a clean reload is fine. The rewrap job moves
+  loaded Java data to `v2`, and is also part of key rotation (S2, S14); a count of the rows still in an old format is
+  shown in System. Whether to drop the Java formats is decided after the first release.
 
 ### 3.3 Sealed start
 
@@ -119,7 +139,7 @@ States: **sealed → unsealing → unsealed**, and back to sealed on `moqui oper
 |---|---|
 | No HTTP, SSH, SIP, XMPP, TURN or gRPC listener. No jobs. | All as configured |
 | The operator socket only: `runtime/moqui.sock`, mode 0600, owned by the service user | Same socket, plus the System screens |
-| systemd `STATUS=sealed`, `READY=1` not sent | `READY=1` |
+| systemd `READY=1` and `STATUS=sealed` once the socket is open | `STATUS=unsealed` |
 
 Unseal methods (`seal` element in the conf):
 
@@ -132,8 +152,23 @@ Unseal methods (`seal` element in the conf):
 | `shamir` (k of n shares) | No | Separation of duties |
 | `dev` (key in `.env`, as today) | Yes | Development only. Refused when `instance_purpose` is `production`. |
 
+The unit's `TimeoutStartSec=300` (`systemd/moqui.service`) does not end a server that waits for a passphrase or
+shares, since `READY=1` is sent when the socket is open. Health checks and load balancers use the HTTP listener, which
+opens only after unseal.
+
 **Recovery shares** (Shamir, 3 of 5 by default) are made at init for every method. They are printed once and are never
 stored. They unseal when the TPM, KMS or passphrase is lost, and they authorize `rekey` and a new root token.
+
+`rekey` keeps the root key and wraps it again. `rotate-root` makes a new root key: it writes the new wrapped
+keyring and bootstrap secrets beside the old ones, switches `seal.json` in one atomic rename, then deletes the old
+ones. A crash before the rename leaves the old root in use. In a cluster every member must be unsealed and acknowledge
+the new root before the switch. After a process compromise, recovery runs `rotate-root` before it rotates data keys,
+since an attacker may hold the old root key.
+
+**Backup of the seal.** A database backup is useless without the matching `seal.json`. `export-seal` writes a
+recovery bundle: `seal.json` (it holds only wrapped values), the database identity and the keyring id. The bundle is
+made at init, after each `rekey`, `rotate-root` and bootstrap-secret change, and goes with the offline backups. A
+restore on a clean host needs the bundle and the recovery shares; the TPM of the old host is not needed.
 
 Commands, on the socket or in the SSH admin shell:
 
@@ -144,14 +179,24 @@ moqui operator seal      # drop every key from memory now
 moqui operator status
 moqui operator rotate    # add a data key version; the rewrap job follows
 moqui operator rekey     # change the unseal method or the shares (needs recovery shares)
+moqui operator rotate-root   # new root key: rewrap the keyring and the bootstrap secrets (needs recovery shares)
+moqui operator export-seal   # write the recovery bundle (§3.3, Backup of the seal)
 moqui operator secret put|list|rm <name>   # external credentials; values are never printed
 ```
 
 ### 3.4 A cluster and an edge link
 
-- Each BOSS member unseals with the same auto method, or an unsealed member sends the keyring to a joining member over
-  cluster mTLS after the member proves its pinned certificate. `session_cookie_key`'s "must match a live member" check
+- Each BOSS member unseals on its own, with its own copy of `seal.json` and the same root key (an auto method, or
+  shares). No member sends keys to another: the cluster's TLS key is itself a secret, so a sealed member could not
+  open the cluster transport (`crates/moqui-host/src/cluster_edge/mod.rs`, about line 525). The cluster's TLS key and
+  certificate are bootstrap secrets in `seal.json`. `session_cookie_key`'s "must match a live member" check
   (`cluster/mod.rs`) becomes a check of the keyring id.
+- **Rotation across members.** A key version moves `pending → active → decrypt-only → retired`. A new version becomes
+  `active` only after every live member has loaded it and acknowledged; a member that has not acknowledged may not
+  write encrypted fields. A member that comes back with an older keyring generation reloads before it writes. The
+  rewrap job updates a row only if its ciphertext is unchanged since it read it (compare-and-swap), so it never
+  overwrites a concurrent update. A version is retired only after the final scan, run once no member can write with
+  it, finds no row.
 - An edge node has its own keyring and seal. The link carries no key of either side. A replicated secret crosses the
   link inside the link's TLS, and the edge node encrypts it under its own `field` key at once.
 
@@ -160,7 +205,14 @@ moqui operator secret put|list|rm <name>   # external credentials; values are ne
 - Key material is held in `secrecy::SecretBox` or `zeroize::Zeroizing`. `Debug` stays redacted, as `CryptConfig`'s is.
 - The keyring pages are `mlock`ed. The process sets `PR_SET_DUMPABLE=0` and `RLIMIT_CORE=0`, and the unit sets
   `LimitCORE=0`.
-- `seal` overwrites every key in memory, closes the listeners and stops the jobs.
+- **The entity cache holds ciphertext** for `encrypt="true"` fields. Today a find decrypts before it caches
+  (`entity/find.rs` about line 994), so the plaintext stays in the cache and later readers get it with no decrypt.
+  With ciphertext in the cache, each read decrypts and each read is in the decrypt log (§3.10).
+- `seal` refuses new work, waits for running requests, streams, jobs and background tasks to end (with a time limit),
+  then overwrites every key and secret handle in memory, clears the caches, closes the listeners and stops the jobs.
+  Decrypted values in entity values that work still holds (`entity/value.rs`, a cloneable `Arc<FieldMap>`) cannot be
+  found and cleared. So when work is still running at the time limit, `seal` ends the process; systemd starts it again
+  sealed. Only a clean drain gives a sealed process that stays running.
 
 ### 3.6 Sign-in core
 
@@ -173,7 +225,9 @@ path verifies its credential ─► canonical identity ─► one check:
 ```
 
 - **Canonical identity:** Unicode NFKC, trim, then case fold, applied once before lookup and before the lockout count.
-  The same form on every path.
+  The same form on every path. A unique `canonicalUsername` column holds it, set on create and on rename. Before the
+  core uses it, a check lists existing accounts whose names give the same form. Start refuses the new lookup until an
+  administrator renames or merges them.
 - **One lockout count** for the identity and for the client address, across HTTP, SSH, SIP, XMPP and gRPC.
 - **The request never chooses the verifier.** Issuers, keys, endpoints and audiences come from configuration. This
   already holds for SSO (the endpoint-change rule, `PublicOnly`), and the core checks it for every path.
@@ -228,11 +282,19 @@ An operator can answer at any time, and for any past date: who can read this sec
 - **A secret access map.** For each secret in the inventory (§3.11, and each `encrypt="true"` field): the entity that
   holds it, the permissions and artifact groups that can read that entity, the services that decrypt it, and then the
   users, groups, jobs, agents, PASS clients and edge nodes that hold those permissions. As of a date, from the same
-  dated grants `get#GrantReview` reads.
-- **A decrypt log.** Each decrypt of an encrypted field writes one line: user, session or job, service, entity, field
+  dated grants `get#GrantReview` reads. Today `get#GrantReview` leaves out sealed permissions and shows app gates as
+  they are now, not as of the date (`AccessCapabilities.js` about lines 460 and 510). S13 adds a dated history of the
+  authorization rows (artifact groups, authz, filters, app gates, sealed permissions) so the report can show a past
+  date. Where a service decides access in code, the report names the service and says the result is not
+  reconstructed.
+- **A use log for other secrets.** Each use of a secret handle (§3.1) writes one line: caller, purpose and key
+  version. A use that repeats often, such as a session check, is counted per minute and caller, not logged one by one.
+- **A decrypt log.** Each decrypt of an encrypted field, from the database or from the cache (§3.5), writes one line: user, session or job, service, entity, field
   and primary key, and the key version. The line never holds the value. A line of a secret's own value is HMAC-SHA256
   under the `audit` purpose key, as Vault's audit devices write, so a known value can be matched without being stored.
-  The log is kept as long as the audit log, not seven days.
+  The log is kept as long as the audit log, not seven days. A decrypt of a secret marked `audit="required"` fails when
+  its log line cannot be written, as Vault fails closed. Other decrypts go on, and a gap row records the time and count
+  that were not logged, so the report shows the gap.
 - **The Access report screen** in System joins the map, the decrypt log and the credentials, with "as of", a filter by
   secret, by user and by machine identity, and a CSV export. It needs `ADMIN_ACCESS_VIEW`; a secret's value is never
   shown.
@@ -245,6 +307,8 @@ its age, its rotation policy, and what a rotation breaks.
 | Key | Rotation now | What a rotation breaks now | Target |
 |---|---|---|---|
 | Field key (`entity_ds_crypt_pass`) | Set `_old` by hand, re-save rows | Nothing if done right | Keyring version; rewrap job |
+| The same key, in the audit log | Not rotated | Old audit values of encrypted fields no longer decrypt | `EntityAuditLog.oldValueText` and `newValueText` hold ciphertext of audited encrypted fields (`entity/field_rw.rs`, `audit_text`) with no `encrypt="true"` on the column. The rewrap job and the old-format count include them, with the source entity, field and key as associated data |
+| Root key | `rekey` only rewraps it | – | `rotate-root` (§3.3) |
 | `session_cookie_key` and its derived keys | Change it | Every session and every derived signature | Current and previous (S2) |
 | `git_lfs_token_key` | `_previous` | Nothing | Already the model |
 | `ssh_host_key` | Replace it | Clients warn of a changed host key | Publish the new key first; keep both for a period |
@@ -252,15 +316,24 @@ its age, its rotation policy, and what a rotation breaks.
 | `edge_link_key` | Replace it | Every local node pairs again | A second link key announced over the link before the change |
 | `mail_dkim_key` | New selector in DNS first | DKIM fails if DNS lags | Two selectors; switch after DNS answers |
 | `web_push_vapid_key` | Replace it | Browser subscriptions stop | Clients subscribe again on their next visit |
+| `chat_store_key_secret` | Replace it | Each browser device store is encrypted under a passphrase derived from it (`service/chat_keys.rs`); a device cannot open its store | The derived passphrase carries the key version; a device opens its store with the previous version and re-encrypts it under the current one |
+| `field-index` key | None | Lookups by value miss old rows | Versioned index (§3.2) |
 | External credentials (OAuth, SMTP, API keys, FCM) | At the provider, then Admin's write-only field | That integration until updated | A reminder from the policy age |
 
-- **Every key gets a current and a previous version**, as `git_lfs_token_key` has. New use takes the current one;
-  checks accept both until the previous one expires.
+- **Every key gets versions**, as `git_lfs_token_key` has a previous one. New use takes the current version. A new
+  signature carries its key id; today `sign_session` does not (`user/session.rs` about line 2932). A version that
+  verifies is kept until the longest lifetime of what it signed has passed, so two rotations in a row do not end a
+  valid session. A signature with no key id is checked against the version that was current before the first key id.
+- **Two kinds of key retire in two ways.** A *signing* key (session, LFS token, MCP state, PASS handle): checks accept
+  the previous version until it expires, or not at all after an emergency. An *encryption* key (field, field index,
+  stored secrets, chat store): the previous version stays `decrypt-only` until the rewrap job has moved every row and
+  device to the current one. No rotation, emergency or not, deletes an encryption key that data still needs. Only
+  `retired` keys are deleted, and only after the next backup.
 - `moqui operator rotate <name>|all` rotates in one step and starts the rewrap job where there is one.
 - **The Keys screen** in System shows the inventory: version, age, last rotation, policy, and a warning past the
   policy. Rotation needs a sealed permission and a recent sign-in, and writes an audit row with no value.
-- **Emergency rotation.** `moqui operator rotate all --emergency` rotates every generated key with no grace period
-  for the previous version, ends every session, and lists the external credentials to change at their providers.
+- **Emergency rotation.** `moqui operator rotate all --emergency` rotates every generated key, refuses the previous
+  signing keys at once, makes the previous encryption keys `decrypt-only` and starts the rewrap, ends every session, and lists the external credentials to change at their providers.
 
 ### 3.12 Incident response
 
@@ -279,8 +352,10 @@ its age, its rotation policy, and what a rotation breaks.
 2. **Preserve.** Take a disk snapshot and copy the logs and the decrypt log off the host before anything changes.
 3. **Scope.** The access report and the decrypt log (§3.10) for the window: which secrets were read, by whom.
 4. **Rotate by zone:**
-   - BOSS process: every key (emergency rotation) and every external credential at its provider.
-   - BOSS disk or backup only, after S3: nothing secret, since all of it was ciphertext; before S3, everything.
+   - BOSS process: `rotate-root`, then every key (emergency rotation), then every external credential at its provider.
+   - BOSS disk or backup only: nothing secret, but only for a disk or backup made since S4 keeps every secret out of
+     `.env` and the runtime directory. An older snapshot or backup, or a copy of an old `.env`, holds the keys of its
+     time: rotate every key and credential it held.
    - PASS or edge node only: the outer zone's keys and the PASS credential. BOSS keys are safe (S6).
 5. **Recover** from a known-good binary and backup on a clean host. Do not clean a compromised host.
 6. **Notify** the users and the authorities the law names, within its deadline (72 hours under the GDPR).
@@ -294,25 +369,25 @@ Attack-Surface says what changed.
 | Phase | Work | Closes | Tests (suite) |
 |---|---|---|---|
 | **S0** | Threat model and `known_gap_*` tests (in progress). The secret inventory of §2 as a table in Attack-Surface: each secret's zone, kind (generated, external, derived) and where it goes. | – | the `known_gap_*` and control tests (regression) |
-| **S1** | `v2` AEAD field format with associated data; keyring table; the field key from the keyring, which still starts from `entity_ds_crypt_pass` until S3; blind index; rewrap job | Tampering, equal-value leaks, row swap, AES-128. Also, at once: a `decrypt-alt` whose pass is still the `CHANGEME` sentinel is skipped | `known_gap_*` for constant IV and no MAC flip to control tests; a swapped ciphertext fails; the blind index finds the row; a rewrap leaves no old rows (regression) |
-| **S2** | Purpose keys by HKDF; `session_cookie_key` gets a previous key and a rotation, so sessions survive a rotation; `operator rotate` | No rotation | A session signed by the previous key is accepted until it expires, then refused (regression) |
-| **S3** | Sealed start; `seal.json`; operator socket and commands; `passphrase`, `shamir`, `tpm` (`systemd-creds`) and `dev` methods; recovery shares; `seal` | Key beside the data | Sealed: no port answers; a wrong share is refused and counted; seal drops keys and closes listeners (regression). A full TPM reboot on a real host (acceptance, `SealedStart`) |
-| **S4** | The generator writes generated secrets to `SecretValue`, not `.env` (before the first release a clean start; no move of an existing `.env`); external credentials by `operator secret put` and Admin's write-only fields; the embedded Postgres password generated into the keyring | `.env` secrets | A new runtime's `.env` holds no secret and the server starts; a generated secret is never in `.env` (regression) |
-| **S5** | Memory hygiene of §3.5 | Keys in dumps and swap | `seal` zeroes the key buffers (unit test on the type); the process is not dumpable (regression) |
+| **S1** | `v2` AEAD field format with associated data; keyring table; the field key from the keyring, which still starts from `entity_ds_crypt_pass` until S3; blind index; rewrap job; old-format count in System | Tampering, equal-value leaks, row swap, AES-128. Also, at once: a `decrypt-alt` whose pass is still the `CHANGEME` sentinel is skipped | `known_gap_*` for constant IV and no MAC flip to control tests; a swapped ciphertext fails; a partial select and a view alias of an encrypted field decrypt; once an entity holds no old-format value, a plaintext or an old-format value put in place of a `v2` value is refused through the entity facade; the blind index finds a row under the previous and the current index key during a rewrap; a rewrap leaves no old rows, audit-log values included, survives a restart midway and does not overwrite a concurrent update (regression) |
+| **S2** | Purpose keys by HKDF; `session_cookie_key` gets a previous key and a rotation, so sessions survive a rotation; `operator rotate` | No rotation | A session signed by the previous key is accepted until it expires, then refused; a session made before two rotations in a row is still accepted; a session cookie with no key id is read (regression) |
+| **S3** | Sealed start; `seal.json`; operator socket and commands; `passphrase`, `shamir`, `tpm` (`systemd-creds`) and `dev` methods; recovery shares; `seal`; `rotate-root`; `export-seal` | Key beside the data | Sealed: no port answers; a wrong share is refused and counted; seal drops keys and closes listeners; a server that stays sealed past `TimeoutStartSec` then unseals and serves; a `rotate-root` stopped before the rename keeps the old root; a database restore with the recovery bundle and shares on a new runtime directory unseals and reads every row (regression). A full TPM reboot on a real host (acceptance, `SealedStart`) |
+| **S4** | The generator writes bootstrap secrets to `seal.json` and the others to `SecretValue`, not `.env` (before the first release a clean start; no move of an existing `.env`); external credentials by `operator secret put` and Admin's write-only fields; the embedded Postgres password into `seal.json`, with no `pgpass`; secret handles in place of secret properties | `.env` secrets | A new runtime's `.env` and runtime directory hold no secret, and a cold start with a password-protected database works; a generated secret is never in `.env` (regression) |
+| **S5** | Memory hygiene of §3.5; ciphertext in the entity cache | Keys and secrets in dumps, swap and caches | `seal` zeroes the key buffers (unit test on the type); after `seal` the caches hold no plaintext of an encrypted field and an old handle is refused; a `seal` while a request is blocked past the time limit ends the process; the process is not dumpable (regression) |
 | **S6** | Zones: an outer keyring for PASS and edge nodes; replicated secrets re-encrypted on arrival; PASS's client credential to mTLS with a pinned key, the header secret kept for REST until PASS moves; a zone check that refuses a BOSS data key on an outer node | Outer node gives inner keys | An edge database dump and its `seal.json` decrypt no BOSS row; a replicated secret on the edge is in the edge's format (regression). Attach and replicate on two runtimes (acceptance, in Edge's suite) |
-| **S7** | Sign-in core of §3.6; canonical identity; shared lockout; scope; a lint that finds `==` on a secret | Edge sign-in bypass | Canonicalization, the shared count and the scope refusal, one test each (regression). The matrix of every sign-in path × wrong, expired, replay, disabled, end date, case and Unicode variant, factor skipped, other organization (acceptance, `SignInPaths`) |
+| **S7** | Sign-in core of §3.6; canonical identity with its column and the collision check; shared lockout; scope; a lint that finds `==` on a secret | Edge sign-in bypass | Canonicalization, two accounts with the same canonical form refused, the shared count and the scope refusal, one test each (regression). The matrix of every sign-in path × wrong, expired, replay, disabled, end date, case and Unicode variant, factor skipped, other organization (acceptance, `SignInPaths`) |
 | **S8** | Code and data apart (§3.7); new unit; deploy approval | A feature turns into code execution | No upload, export, log or audit path resolves under a code directory (regression). The packaged server starts and serves under the new unit (acceptance) |
 | **S9** | Unsafe production starts (§3.8); an empty `crypt-pass` while an entity has `encrypt="true"` fields is refused on every instance | Unsafe settings | One test for each refusal (regression) |
 | **S10** | Outside review of the design and of `crypto.rs`, the keyring and the seal code; publish the result in `docs/security/` | Trust you can check | – |
 | **S11** | `kms` and `transit` methods | Root key held on the host | Unseal by each method against a stub (regression) |
 | **S12** | Less attack surface (§3.9): `moqui operator surface`; a test that every optional listener is off by default | Unneeded surface | The default conf binds no optional listener; the report names each bound listener (regression) |
-| **S13** | Access (§3.10): the secret access map, the decrypt log with HMAC'd values, the Access report screen | Not knowing who can read or did read a secret | A decrypt writes one line with no value; the map names a user who gains the permission and drops one who loses it, as of each date; a user without `ADMIN_ACCESS_VIEW` is refused (regression) |
-| **S14** | Key inventory and rotation (§3.11): current and previous for every generated key, `operator rotate`, the Keys screen, emergency rotation | Keys that cannot be rotated without an outage | For each key: a value signed by the previous version is accepted until it expires; emergency rotation refuses the previous one at once and ends every session (regression) |
+| **S13** | Access (§3.10): the secret access map, the dated authorization history, the decrypt log with HMAC'd values, the use log of secret handles, fail-closed `audit="required"`, the Access report screen | Not knowing who can read or did read a secret | A decrypt writes one line with no value, and two users who read one cached row write two lines; a handle use is counted; with the log store down an `audit="required"` decrypt fails and other decrypts leave a gap row; an artifact rule changed with no change of membership shows on its date; the map names a user who gains the permission and drops one who loses it, as of each date; a user without `ADMIN_ACCESS_VIEW` is refused (regression) |
+| **S14** | Key inventory and rotation (§3.11): current and previous for every generated key, `operator rotate`, the Keys screen, emergency rotation | Keys that cannot be rotated without an outage | For each signing key: a value signed by the previous version is accepted until it expires; emergency rotation refuses it at once and ends every session. For each encryption key: emergency rotation leaves every row readable; a device store opens after `chat_store_key_secret` rotates; a backup made before a rotation restores and reads (regression) |
 | **S15** | Incident response (§3.12): `revoke#AllAccess`, the alerts, the runbook | No way to contain and scope a breach | `revoke#AllAccess` ends every session and key and pauses jobs (regression). A tabletop run of the runbook on a scratch server (acceptance, by hand) |
 
 Order: S1 and S2 make the stored data safe even before sealing. S3 and S4 remove keys from disk. S6 follows S3,
 because the outer zone needs its own seal. S7 and S8 do not depend on the others and can run beside them. S12 and S13
-need nothing else. S14 follows S2. S15 follows S3 (for `seal`), S13 (to scope) and S14 (to rotate).
+need nothing else. S5 follows S4 (secret handles). S13's decrypt log follows S5 (ciphertext in the cache). S14 follows S1 and S2. S15 follows S3 (for `seal`), S13 (to scope) and S14 (to rotate).
 
 ## 5. Tests
 
@@ -349,9 +424,9 @@ need nothing else. S14 follows S2. S15 follows S3 (for `seal`), S13 (to scope) a
 | Vault | Root key sealed by Shamir shares or a KMS; nothing usable on disk | Sealed start (S3) |
 | Vault | Versioned keyring, `rotate`, `rekey`, Transit `rewrap` | Keyring, rewrap job (S1, S2) |
 | Vault | `mlock`, seal drops keys | Memory hygiene, `seal` (S3, S5) |
-| Vault | Fail closed when the audit log cannot be written | A later phase may refuse privileged actions when the audit log cannot be written |
+| Vault | Fail closed when the audit log cannot be written | A decrypt of an `audit="required"` secret fails when its line cannot be written (S13) |
 | Vault 2020, 2024, 2025 | Bypasses in AWS/GCP, cert and lockout code; an audit device that wrote a plugin | One sign-in core, canonical identity (S7); code and data apart (S8) |
-| Bitwarden | The key that encrypts data is wrapped, so a password change re-wraps one key | Root key wraps the keyring; `rekey` re-wraps only the root key |
+| Bitwarden | The key that encrypts data is wrapped, so a password change re-wraps one key | Root key wraps the keyring; `rekey` re-wraps only the root key; `rotate-root` replaces it |
 | Bitwarden | Encrypt-then-MAC on every field | AEAD (S1) |
 | Bitwarden, LastPass breach | Old accounts kept weak KDF settings after the default changed | The rewrap job writes each row in the current format and key version (S1, S2) |
 | Bitwarden | The server holds no key | The outer zone holds no inner key (S6) |
