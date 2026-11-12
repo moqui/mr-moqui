@@ -298,3 +298,44 @@ says "as on desktop", run that check of MD4 or MD5 on the phone and record it th
     the app's memory (`adb shell dumpsys meminfo org.moqui.mobile`, TOTAL PSS) at idle and after ten minutes of chat,
     mail and a call. Also an hour in the background with a ring: the battery use (Settings, Battery).
     - Record: the times and sizes, with the phone's model and Android and WebView versions.
+
+## The browser terminal: the apps and the edge node
+
+The checks that close [Terminal-Fancy](Terminal-Fancy.md) P7 and P8 on real machines. The emulator, a development run
+of the Desktop app and the in-process edge node of `crates/moqui-host/tests/it/edge_web.rs` have run these paths
+already; these checks run them on installed apps, a real touch screen and a deployed edge node. Record the results in
+Terminal-Fancy §13 (a line per check), and file what fails in Remaining-Work's Browser terminal table.
+
+Set up a **remote dev server**: `instance_purpose=dev`, `terminal_remote=true` (in its `runtime/.env`), its HTTPS
+listener with a certificate the devices trust, a `host-profile` for `claude` or another agent beside the defaults, and
+a user in `ADMIN_ADV` (john.doe in the demo data) who has `SSH_SHELL` and `TERMINAL_HOST`. For check 4, the same server
+as the local node of the edge node and the all-in-one node of [Setup](#setup), with web access in each mode.
+
+1. **The Desktop app as a client** (MD3's client mode, the installed bundle) of the remote dev server.
+   - Open the Terminal: the command line opens; New › Shell opens a shell. The first of these asks for the password
+     (and code) in an app window (`confirm#TerminalUser`'s ticket), and an attach within the ticket's time does not ask
+     again.
+   - Type, resize the window, run `vim` and `htop`, Ctrl+C a `sleep 100`, float the shell, go to another app, come
+     back.
+   - Record: each step, the ticket asked once, and nothing dropped or garbled.
+2. **The Desktop app with its node in process** (MD2, the installed bundle, with the tray's Developer tools on).
+   - With Developer tools off, the Terminal offers only the apps and there is no Dev AIDE. Turn it on: the app
+     restarts, and the App List has Dev AIDE, which opens.
+   - Open a shell: it is local, so nothing more is asked. Its program runs through the app's own executable
+     (`term-exec`). Quit the app with `top` running in the shell, and open it again within a minute.
+   - Record: the shell runs and resizes; after the restart the session is still listed, running (the holder,
+     `moqui term-hold`, kept it), and reattaches with its output.
+3. **A phone** (MD6, a real Android phone, the release build), against the remote dev server.
+   - Sign in, then open the Terminal: a command line, then a shell, each after the password confirmation.
+   - The key bar: Esc leaves `vi`'s insert mode, Tab completes a path, Ctrl+C stops `sleep 100`, and Ctrl and Alt with
+     a letter from the keyboard.
+   - The keyboard opening: the terminal shrinks to the visual viewport, and the prompt line stays in view.
+   - Pinch: the session's font size follows the fingers (8 to 32), and the terminal fits again.
+   - A long press selects the line under it and copies it.
+   - Record: each step with the phone's model, Android and WebView versions.
+4. **Through a deployed edge node**, from a browser on another network, in terminate mode and then passthrough mode.
+   - Open a shell on the local node through the edge node: a remote client, so a recent sign-in is asked.
+   - Run `while true; do date; sleep 1; done`. Cut the link: stop the local node's network for 20 seconds, or restart
+     the edge node.
+   - Record: the page shows the pause, then goes on from where it was with no line repeated or lost (resumed by its
+     byte count, not replayed), and the session's audit row says through the edge node.

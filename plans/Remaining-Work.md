@@ -170,12 +170,10 @@ Built Nov 11, 2026 ([Terminal-Fancy](Terminal-Fancy.md), guide [Terminal](../doc
 
 | Item | Source |
 |---|---|
-| Live checks on devices: the Desktop app (node in process, and as a client of a remote dev server) and the Android app open a command line and a shell, the key bar types Esc, Tab and Ctrl+C, the visual viewport fit, pinch and long press on a phone | Terminal-Fancy §12, P7 |
-| Live checks through a deployed edge node in both modes: a shell survives a dropped link | Terminal-Fancy P8 |
-| zsh's shell integration run against a real zsh (bash's is tested; zsh was not installed where it was built); the hook lines for Claude Code and Codex run against each agent | Terminal-Fancy §11.2, P6 |
-| The Desktop app's crate (`crates/moqui-desktop`, outside the workspace) built with the `terminal_helper` call in its main | Terminal-Fancy §7.2 |
-| `moqui-mail`'s dead code under the Lite feature set (`force_cache`, `Payload::Raw`) fails `scripts/check-packages.sh`'s Lite clippy; it predates the terminal | found while checking the terminal's feature gates |
-| Later (§15): Windows host sessions (ConPTY); a server-side emulator for the screen as text; sessions driven by a program; the kitty keyboard protocol; mirrored viewers; `attach <id>` over SSH; a per-person OS account; named workspaces; worktrees per agent; images, ligatures, WebGL; a native window per terminal in the Desktop app; recording; more kinds of float; docking by drag | Terminal-Fancy §15 |
+| Hand checks on installed apps, a real phone and the Android app against a remote dev server over HTTPS, and a shell through a deployed edge node in both modes across a dropped link (the emulator, the Desktop app's development run and the in-process edge node have run these paths) | [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node) |
+| Codex's hook line run against Codex (Claude Code's were, Nov 11, 2026) | Terminal-Fancy §11.1, guide "Hooks for agents" |
+| A long press on a phone opens the terminal's context menu beside copying the line | Terminal-Fancy §13.1 |
+| Later (§15): Windows host sessions (ConPTY); a server-side emulator for the screen as text; sessions driven by a program; answering Claude Code's `OSC 7501 ; ?`; the kitty keyboard protocol; mirrored viewers; a per-person OS account; named workspaces; worktrees per agent; images, ligatures, WebGL; a native window per terminal in the Desktop app; recording; more kinds of float | Terminal-Fancy §15 |
 
 ## Tooling: lint and XSD
 
