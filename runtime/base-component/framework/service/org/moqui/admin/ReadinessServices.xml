@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Readiness, refresh, the settings index and the support summary for delegated administration
     (plans/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss plan/design-admin.md §3, §7, §10, §14,
     §16; Readiness.js), over the registrations their owners seed (moqui.server.ReadinessProvider, RefreshOperation and
-    SettingsEntry, entity/ServerEntities.xml). ALL_USERS may call the six (data/AdminConfigurationData.xml
+    SettingsEntry, entity/ServerEntities.xml). ALL_USERS may call the seven (data/AdminConfigurationData.xml
     AdminReadinessServices) and each checks the caller itself. Their ALLOW is not inheritable: a registered owner's service
     is called only because a row names it, as the caller, never with authorization off, and is authorized for the caller
     as a direct call is, so a registration adds no right. No parameter of any of them names a service, an entity or an
@@ -49,8 +49,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="providers" type="List"/>
             <parameter name="failedProviders" type="List"/>
             <parameter name="checkedText"/>
-            <parameter name="ownerOptions" type="List"><description>The owner apps of the providers the caller may read</description></parameter>
-            <parameter name="groupOptions" type="List"><description>The groups, each {key, text}</description></parameter>
+            <parameter name="ownerOptions" type="List"><description>The owner apps of the providers the caller may read, less
+                those whose service refused the caller</description></parameter>
+            <parameter name="groupOptions" type="List"><description>The groups of those providers, each {key, text}</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('readiness', context))</script></actions>
     </service>
@@ -91,6 +92,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="checkedText"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('overview', context))</script></actions>
+    </service>
+    <service verb="get" noun="HealthCards" allow-remote="false">
+        <description>The health cards of get#Overview alone, with no provider run: cards, each {key, title, value, icon,
+            route, routeId, parameters}, the backup coverage read from the backup check alone. Refuses a caller without
+            ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED).</description>
+        <out-parameters>
+            <parameter name="cards" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('healthCards', context))</script></actions>
     </service>
     <service verb="get" noun="SupportSummary" allow-remote="false">
         <description>The readiness and support summary, the one projection of the support summary screen, its print and

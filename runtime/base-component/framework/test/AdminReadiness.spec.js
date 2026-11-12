@@ -211,9 +211,11 @@ feature(
             const reader = readiness(users.reader, {})
             const checks = Array.from(reader.checks || [])
             const failing = checks.find(row => row.providerKey === key("failing")) || {}
+            const reportMail = checks.find(row => row.checkKey === "admin.reportMail") || {}
             return {
                 reader,
                 failing,
+                reportMail,
                 readerOwn: own(reader).sort(),
                 // the framework's own checks answer beside it
                 mail: checks.filter(row => row.providerKey === "admin.mailServer").length,
@@ -229,7 +231,20 @@ feature(
                 ready: keysOf(readiness(users.reader, {providerKey: key("failing"), state: "ready"}))
             }
         },
-        then({reader, failing, readerOwn, mail, unknownStates, operatorOwn, none, scoped, instance, narrowed, ready}) {
+        then({
+            reader,
+            failing,
+            reportMail,
+            readerOwn,
+            mail,
+            unknownStates,
+            operatorOwn,
+            none,
+            scoped,
+            instance,
+            narrowed,
+            ready
+        }) {
             reader.error == ""
             failing.state == "unavailable"
             failing.reasonCode == "PROVIDER_FAILED"
@@ -238,11 +253,15 @@ feature(
             // the fix place is a key with its record, never a URL
             failing.fixRoute == "specFix"
             failing.fixId == "SPEC"
+            // a check's own fix place replaces its provider's: report mail with no mail server is fixed at the mail
+            // relays, not at the email templates its registration names
+            reportMail.state == "ready" || reportMail.fixRoute == "adminMailRelay"
             reader.failedProviders.includes("Spec failing check")
             // hidden needs a permission the reader lacks, missing names no service, disabled is off: none is shown or named
             readerOwn == [key("failing"), key("refusing"), key("scoped")]
             !reader.failedProviders.some(title => /hidden|missing|disabled/.test(title))
             reader.ownerOptions.includes(OWNER)
+            Array.from(reader.groupOptions).some(row => row.key == "AdmHgObservability")
             mail == 1
             unknownStates == 0
             operatorOwn == [key("failing"), key("hidden"), key("refusing"), key("scoped")]
@@ -250,6 +269,8 @@ feature(
             Array.from(none.checks).length == 0
             Array.from(none.failedProviders).length == 0
             !Array.from(none.ownerOptions).includes("System")
+            // the owner's only provider this caller may read refuses them: the owner is not offered
+            !Array.from(none.ownerOptions).includes(OWNER)
             scoped == [key("scoped")]
             instance == [key("failing"), key("refusing")]
             narrowed == [key("failing")]
@@ -336,6 +357,8 @@ feature("the overview and the support summary are a reader's; the summary's JSON
     when() {
         const address = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
         const overview = as(users.reader, () => invoke(S + "get#Overview", {}))
+        // the cards alone, with no provider run
+        const healthCards = as(users.reader, () => invoke(S + "get#HealthCards", {}))
         const redacted = as(users.reader, () => invoke(S + "get#SupportSummary", {redacted: true})).summary
         // the operator reads the settings and the connections too
         const plain = as(users.operator, () => invoke(S + "get#SupportSummary", {})).summary
@@ -344,6 +367,9 @@ feature("the overview and the support summary are a reader's; the summary's JSON
         return {
             overview,
             cards: Array.from(overview.cards || []),
+            healthCards: Array.from(healthCards.cards || []),
+            healthCardsError: healthCards.error,
+            refusedCards: as(users.none, () => invoke(S + "get#HealthCards", {})),
             attention: Array.from(overview.attention || []),
             refusedOverview: as(users.none, () => invoke(S + "get#Overview", {})),
             redacted,
@@ -355,12 +381,33 @@ feature("the overview and the support summary are a reader's; the summary's JSON
             check: as(users.none, () => invoke(CHECK, {providerKey: "admin.mailServer"}))
         }
     },
-    then({overview, cards, attention, refusedOverview, redacted, redactedText, plain, insideRows, address, refused, check}) {
+    then({
+        overview,
+        cards,
+        healthCards,
+        healthCardsError,
+        refusedCards,
+        attention,
+        refusedOverview,
+        redacted,
+        redactedText,
+        plain,
+        insideRows,
+        address,
+        refused,
+        check
+    }) {
         overview.error == ""
         cards.map(card => card.key) == ["failedJobs", "transports", "backup", "signIn"]
         // a card's place is a key, with what the list is narrowed by
         cards.map(card => card.route) == ["adminJobRuns", "adminSystemMessages", "adminJob", "adminVisits"]
         cards[0].parameters.state == "failed"
+        healthCardsError == ""
+        healthCards.map(card => card.key + " " + card.route) == cards.map(card => card.key + " " + card.route)
+        // the backup coverage from the backup check alone is the overview's
+        healthCards[2].value == cards[2].value
+        healthCards[3].value != "Unavailable"
+        refusedCards.error.includes("ADMIN_OVERVIEW_VIEW")
         attention.length > 0 && attention.length <= 10
         attention.every(row => row.state != "ready")
         overview.failedProviders.includes("Spec failing check")

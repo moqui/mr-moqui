@@ -983,6 +983,20 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
             "gate-translations.csv",
         ],
     );
+    // and not for one who opens System but not Tools (the import above is not theirs: they see the targets)
+    let system_only = basic("gate.system", "moqui");
+    let imports = "/System/Data/Imports?fromDate=2026-01-01&thruDate=2026-02-01";
+    let (status, page) = get(address, &system_only, imports);
+    assert_eq!(status, 200, "{}", failure(imports, status, &page));
+    assert!(
+        page.contains("Import targets")
+            && page.contains("Message translations")
+            && !page.contains("Error rendering")
+            && !page.contains("Entity data of the instance itself, in Tools")
+            && !page.contains("/apps/tools/Data/Load"),
+        "{}",
+        failure(imports, status, &page)
+    );
     assert_page(
         address,
         &john,
@@ -1020,18 +1034,33 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
     // The registries (plans/Admin-Screens-Down.md A6): Health lists the framework's own checks, each fix place a
     // System screen; the support summary and its redacted JSON; the settings index links the System screens of the
     // framework's entries; and the home's attention list is the checks that are not ready.
-    assert_page(
-        address,
-        &john,
-        "/System/Operations/Health",
-        &[
-            "Support summary",
-            "Administrator factors",
-            "Off-site mirror",
-            "Backups are not mirrored off the server",
-            "/Integrations/ConnectionDetail?adapterKey=remote",
-            "Check again",
-        ],
+    // A row is "Provider: Check" where the titles differ; the header has the sign-in failures of the last day, linked
+    // to the visits; report mail with no mail server is fixed at the mail relays, not at the email templates.
+    let health_path = "/System/Operations/Health";
+    let (status, health) = get(address, &john, health_path);
+    assert_eq!(status, 200, "{}", failure(health_path, status, &health));
+    for text in [
+        "Support summary",
+        "Administrator factors",
+        "Database backup: Off-site mirror",
+        "Backups are not mirrored off the server",
+        "/Integrations/ConnectionDetail?adapterKey=remote",
+        "Check again",
+        "Sign-in failures, last 24 hours",
+        "href=\"/System/Visit\"",
+        "Report emails have no mail server to send through",
+        "/Protocols/MailRelays",
+    ] {
+        assert!(
+            health.contains(text),
+            "{health_path} missing [{text}]: {}",
+            failure(health_path, status, &health)
+        );
+    }
+    assert!(
+        !health.contains("Error rendering") && !health.contains("moqui.basic.email.EmailTemplate"),
+        "{}",
+        failure(health_path, status, &health)
     );
     assert_page(
         address,
@@ -1310,7 +1339,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
 }
 
 /// Users for the SQL runners: one in ADMIN without ADMIN_ADV (the Tools app but not `SQL_RUNNER_WEB`), one in no
-/// group. Both passwords are moqui.
+/// group; and one who opens System but not Tools. Their passwords are moqui.
 const SQL_DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="GATE_TOOLS_ONLY" username="gate.tools" userFullName="Gate Tools"
         currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA"/>
@@ -1318,6 +1347,14 @@ const SQL_DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="GATE_PLAIN" username="gate.plain" userFullName="Gate Plain"
         currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA"/>
     <moqui.basic.Enumeration enumId="GATE_SQL" description="untouched"/>
+    <!-- one who opens System by their own grant and reads the imports, but not Tools: the Data area's Tools links -->
+    <moqui.security.UserAccount userId="GATE_SYSTEM_ONLY" username="gate.system" userFullName="Gate System"
+        currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA"/>
+    <moqui.security.UserGroup userGroupId="GATE_SYSTEM_ONLY" description="Gate System only"/>
+    <moqui.security.UserGroupMember userGroupId="GATE_SYSTEM_ONLY" userId="GATE_SYSTEM_ONLY" fromDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="GATE_SYSTEM_ONLY" userPermissionId="ADMIN_TRANSFER_VIEW" fromDate="0"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="GATE_SYSTEM_ONLY" userGroupId="GATE_SYSTEM_ONLY" artifactGroupId="SYSTEM_APP"
+        authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>"#;
 
 fn encode(text: &str) -> String {

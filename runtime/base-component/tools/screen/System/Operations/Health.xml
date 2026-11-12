@@ -15,13 +15,15 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Health (plans/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §10): the readiness checks the
     viewer may read, from every registered provider (org.moqui.admin.ReadinessServices.get#Readiness over
     moqui.server.ReadinessProvider: the framework's own checks and each component's), narrowed by group, state and owner
-    (ReadinessFind). Each check (Readiness) shows its state, explanation, checked time, the freshness of a data source and
-    the owner's fix place where the mount has a route for its key (template/AdminMount.js; a screen the viewer does not
-    open is a disabled link); Check again reads its provider again (nonmutating), and Request refresh runs the refresh
-    operation registered for it (request#Refresh, its own permission) with the check's own scope. A provider that could
-    not be checked is named; one the viewer may not read is left out, and nothing unavailable shows as ready. The
-    presentation is template/AdminReadiness.js. An app that adds a scope of its own (an organization) shows a screen of
-    its own around ReadinessFind, ReadinessHeader and ReadinessChecks. No part is the instance administrator's alone. -->
+    (ReadinessFind). The header shows the sign-in failures of the last day to a reader of the overview's
+    (get#HealthCards). Each check (Readiness) is named "Provider: Check" where the two titles differ and shows its state,
+    explanation, checked time, the freshness of a data source and the owner's fix place where the mount has a route for
+    its key (template/AdminMount.js; a screen the viewer does not open is a disabled link); Check again reads its
+    provider again (nonmutating), and Request refresh runs the refresh operation registered for it (request#Refresh, its
+    own permission) with the check's own scope. A provider that could not be checked is named; one the viewer may not
+    read is left out, and nothing unavailable shows as ready. The presentation is template/AdminReadiness.js. An app that
+    adds a scope of its own (an organization) shows a screen of its own around ReadinessFind, ReadinessHeader and
+    ReadinessChecks. No part is the instance administrator's alone. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Health" default-menu-index="4" menu-image="sym_o_health_and_safety" menu-image-type="icon">
     <parameter name="healthGroupEnumId"/>
@@ -55,12 +57,26 @@ along with this software (see the LICENSE.md file). If not, see
     </actions>
     <widgets>
         <section name="ReadinessHeader">
+            <!-- the sign-in failures of the last day, for a reader of the overview's (get#HealthCards: no provider is run),
+                linked by the mount's route for the card's key; a section's actions, so a screen of an app's own that
+                includes the header shows it too -->
+            <actions>
+                <set field="signInCard" from="ec.resource.script('component://tools/template/AdminReadiness.js').healthCard('signIn')"/>
+            </actions>
             <widgets>
                 <container style="row items-center q-col-gutter-sm q-mb-sm">
                     <container style="col">
                         <label text="Health" type="h5"/>
                         <label text="Checked ${checkedText}" type="p" style="text-caption m-muted q-mb-none" condition="checkedText"/>
                     </container>
+                    <section name="SignInFailures" condition="signInCard">
+                        <widgets>
+                            <container style="col-auto">
+                                <number-card id="SignInFailuresCard" title="Sign-in failures, last 24 hours" value="${signInCard.value}"
+                                        icon="${signInCard.icon}" size="sm" link="${signInCard.link}"/>
+                            </container>
+                        </widgets>
+                    </section>
                     <container style="col-auto">
                         <link url="../SupportSummary" text="Support summary" icon="sym_o_summarize" link-type="anchor-button"/>
                     </container>
@@ -104,7 +120,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box>
                     <box-body-nopad>
                         <form-list name="Readiness" list="checks" skip-form="true" paginate="false">
-                            <field name="title"><default-field title="Check"><display text="${title}"/></default-field></field>
+                            <field name="title"><default-field title="Check"><display text="${checkText}"/></default-field></field>
                             <field name="subject"><default-field title="For"><display/></default-field></field>
                             <field name="groupName"><default-field title="Area"><display/></default-field></field>
                             <field name="stateName">

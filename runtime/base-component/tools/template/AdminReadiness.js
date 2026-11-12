@@ -25,6 +25,12 @@ function linkFields(prefix, link, clear) {
 }
 const healthNames = ["healthGroupEnumId", "state", "ownerApp", "providerKey", "title", "text"]
 const settingsNames = ["text", "ownerApp", "settingsGroupEnumId", "state", "healthGroupEnumId", "title"]
+// A check as a list names it: "Provider: Check" when the provider's title and the check's differ (People setup:
+// Departments), else the one title.
+const checkTextOf = row =>
+    row.providerTitle && row.title && row.providerTitle !== row.title
+        ? row.providerTitle + ": " + row.title
+        : row.title || row.providerTitle || ""
 const freshnessOf = row =>
     (row.watermarkText ? "Last " + row.watermarkText + (row.lagText ? ", " + row.lagText + " ago" : "") : "") +
     (row.expectedFrequencyText ? (row.watermarkText ? "; " : "") + "every " + row.expectedFrequencyText : "")
@@ -56,6 +62,7 @@ function health(findValues, scopeParameters) {
                 healthNames
             ),
             {
+                checkText: checkTextOf(row),
                 freshnessText: freshnessOf(row),
                 // the row's own state, group and owner are not the find's: sent empty, so the link leaves them out
                 againParameters: Object.assign({}, row.scope || {}, {
@@ -77,6 +84,16 @@ function health(findValues, scopeParameters) {
         ownerOptions: Array.from(found.ownerOptions || []).map(owner => ({key: owner, text: owner})),
         groupOptions: Array.from(found.groupOptions || [])
     }
+}
+// One of the health cards (get#HealthCards: no provider is run) as a number card shows it: {title, value, icon, link},
+// link the URL with its query string of the place the mount gives its key ("" for none), or null for a viewer who may not
+// read the cards.
+function healthCard(key) {
+    const called = calls.read(SERVICES + "get#HealthCards", {}, "The health cards are not available to you.")
+    const card = Array.from(called.out?.cards || []).find(row => row.key === key)
+    if (!card) return null
+    const link = card.route ? mounts.link(mounts.state().routes, card.route, card.routeId, card.parameters) : null
+    return {title: card.title, value: card.value, icon: card.icon, link: link ? link.href : ""}
 }
 // A refresh's scope as the row's dialog sent it: a plain map, or none for anything else.
 function scopeOf(scopeJson) {
@@ -151,7 +168,7 @@ function supportSummary() {
             ? ["failed", "unavailable", "warning", "ready"].map(state => (counts[state] || 0) + " " + state).join(", ")
             : "",
         failedText: Array.from(readinessSection.failedProviders || []).join(", "),
-        checks: Array.from(readinessSection.checks || []),
+        checks: Array.from(readinessSection.checks || []).map(row => Object.assign({}, row, {checkText: checkTextOf(row)})),
         protocolSection,
         protocols: Array.from(protocolSection.protocols || []).map(row =>
             Object.assign({}, row, {
@@ -172,4 +189,4 @@ function supportSummary() {
     }
 }
 
-;({health, scopeOf, settingsIndex, supportSummary, linkFields})
+;({health, healthCard, scopeOf, settingsIndex, supportSummary, linkFields})

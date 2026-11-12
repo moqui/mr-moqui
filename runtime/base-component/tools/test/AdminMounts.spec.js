@@ -10,7 +10,8 @@
 // Localization's createLocalizedMessage). And the rule that keeps it so, read from the screens' sources at no render's
 // cost: every transition of an area's screens that acts either calls only org.moqui.admin services, which check the
 // delegated permissions themselves, or carries raw() as its condition (the Data area has no raw part: its four
-// transitions are all of the first kind).
+// transitions are all of the first kind). No other component's app takes in an area's own file (System/<Area>.xml), which
+// holds what only System shows of the area.
 // Run: ./moq test tools --spec AdminMounts
 const mount = "component://tools/test/screen/AdminMount.xml"
 const probe = "component://tools/test/screen/AdminMount/Probe.xml"
@@ -320,6 +321,39 @@ feature("a System screen's raw transition is refused under a mount that mounts i
         afterOwn == "past a forged mount"
         ownGroup.errors == "" && groupDescription == "directly"
         ownMessage.errors == "" && messageText == "directly"
+    }
+})
+
+// An area's own file (System/<Area>.xml) holds what only System shows of the area (Data's links to Tools' data screens),
+// so an app shows an area by its screens, never by that file. Read from the sources of every other component's app roots
+// and their areas (screen/<App>.xml and screen/<App>/<Area>.xml), where an area is mounted.
+feature("no other component's app root or area takes in a System area's own file", {
+    when() {
+        const areaFiles = AREAS.map(area => "component://tools/screen/System/" + area + ".xml")
+        const found = []
+        let read = 0
+        const readFile = reference => {
+            read++
+            const text = String(reference.getText() || "")
+            for (const file of areaFiles)
+                if (text.includes('"' + file + '"') || text.includes('"' + file + "#"))
+                    found.push(reference.getLocation() + " " + file)
+        }
+        for (const name of Object.keys(ec.factory.getComponentBaseLocations())) {
+            if (name === "tools") continue
+            const top = ec.resource.getLocationReference("component://" + name + "/screen")
+            if (!top.getExists() || !top.isDirectory()) continue
+            for (const entry of top.getDirectoryEntries()) {
+                if (/\.xml$/.test(entry.getLocation())) readFile(entry)
+                else if (entry.isDirectory())
+                    for (const area of entry.getDirectoryEntries()) if (/\.xml$/.test(area.getLocation())) readFile(area)
+            }
+        }
+        return {found: found.join(", "), read}
+    },
+    then({found, read}) {
+        found == ""
+        read > 0
     }
 })
 

@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 text="${countsText}; checked ${readinessSection.checkedText}"/>
                         <label type="p" style="q-px-md text-warning" condition="failedText" text="Could not be checked: ${failedText}"/>
                         <form-list name="SummaryChecks" list="checks" skip-form="true" paginate="false">
-                            <field name="title"><default-field title="Check"><display/></default-field></field>
+                            <field name="title"><default-field title="Check"><display text="${checkText}"/></default-field></field>
                             <field name="subject"><default-field title="For"><display/></default-field></field>
                             <field name="ownerApp"><default-field title="Owner"><display/></default-field></field>
                             <field name="stateName"><default-field title="Result"><display/></default-field></field>

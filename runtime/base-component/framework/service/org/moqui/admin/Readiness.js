@@ -213,6 +213,7 @@ const instanceChecks = {
         const server = template.emailServerId
             ? one("moqui.basic.email.EmailServer", {emailServerId: template.emailServerId})
             : null
+        // a missing mail server is fixed at the mail relays, not at the templates the provider's registration names
         return [
             server?.smtpHost
                 ? ready("admin.reportMail", "Report mail", "Report emails have a mail server")
@@ -221,7 +222,8 @@ const instanceChecks = {
                       "Report mail",
                       "warning",
                       "REPORT_MAIL_SERVER",
-                      "Report emails have no mail server to send through"
+                      "Report emails have no mail server to send through",
+                      {fixRoute: "adminMailRelay"}
                   )
         ]
     },
@@ -532,6 +534,8 @@ function readiness(p) {
     const checks = []
     const answered = []
     const failedProviders = []
+    // the providers whose service refused the caller: left out of the checks and of the owners and groups offered
+    const refused = new Set()
     for (const provider of providers) {
         // a provider that takes none of the scope asked for has nothing of it: left out; one that takes a scope is not
         // the instance's own, and is left out when only those are asked for
@@ -545,7 +549,10 @@ function readiness(p) {
             parameters.providerKey = provider.providerKey
             found = Array.from(ownerCall(text(provider.serviceName), parameters).checks || [])
         } catch (error) {
-            if (isRefusal(error)) continue
+            if (isRefusal(error)) {
+                refused.add(provider.providerKey)
+                continue
+            }
             ec.logger.error(
                 "Readiness provider " + provider.providerKey + " (" + provider.serviceName + ") failed: " + error.message
             )
@@ -574,13 +581,17 @@ function readiness(p) {
         })
     }
     const shown = p.state ? checks.filter(row => row.state === p.state) : checks
+    // the owners and groups offered are those of the providers the caller may read, whatever the find narrowed to, less
+    // those whose service refused the caller here (a provider the find left out is not asked, so it stays offered)
+    const offered = readable.filter(row => !refused.has(row.providerKey))
+    const offeredGroups = new Set(offered.map(row => row.healthGroupEnumId))
     return {
         checks: shown,
         providers: answered,
         failedProviders,
         checkedText: context.checkedText,
-        ownerOptions: Array.from(new Set(readable.map(row => row.ownerApp).filter(Boolean))).sort(),
-        groupOptions: groups.map(row => ({key: row.enumId, text: row.description}))
+        ownerOptions: Array.from(new Set(offered.map(row => row.ownerApp).filter(Boolean))).sort(),
+        groupOptions: groups.filter(row => offeredGroups.has(row.enumId)).map(row => ({key: row.enumId, text: row.description}))
     }
 }
 
@@ -622,16 +633,11 @@ function requestRefresh(p) {
 }
 
 // ===== overview =====
-// get#Overview: what needs attention (the checks that are not ready, worst first, at most ten) and the health cards
-// (failed job runs and sign-in failures of the last day, system messages in error, backup coverage), each card with the
-// key of the place that lists it. A reader of the overview's (ADMIN_OVERVIEW_VIEW).
-function overview(p) {
-    requireOverview()
-    const found = readiness({scopeParameters: p.scopeParameters})
-    const attention = found.checks
-        .filter(row => row.state !== "ready")
-        .sort((a, b) => stateOrder[a.state] - stateOrder[b.state])
-        .slice(0, 10)
+// The health cards (failed job runs and sign-in failures of the last day, system messages in error, backup coverage),
+// each with the key of the place that lists it; a count that cannot be read is shown unavailable. They are counts of
+// their own, so they run no provider: the backup's coverage is what the caller's readiness run found (the overview's),
+// else what the backup check alone answers.
+function cardsOf(backupCoverage) {
     const since = new Date(nowMs() - 24 * 60 * minute)
     const count = (label, read) => {
         try {
@@ -641,8 +647,7 @@ function overview(p) {
             return "Unavailable"
         }
     }
-    const backup = found.checks.find(row => row.checkKey === "admin.backup.job")
-    const cards = [
+    return [
         {
             key: "failedJobs",
             title: "Failed job runs",
@@ -671,7 +676,7 @@ function overview(p) {
         {
             key: "backup",
             title: "Backup coverage",
-            value: backup?.coverage || "Unavailable",
+            value: backupCoverage || "Unavailable",
             icon: "sym_o_backup",
             route: "adminJob",
             routeId: backupJob,
@@ -692,7 +697,30 @@ function overview(p) {
             parameters: {}
         }
     ]
-    return {attention, cards, failedProviders: found.failedProviders, checkedText: found.checkedText}
+}
+// get#Overview: what needs attention (the checks that are not ready, worst first, at most ten) and the health cards. A
+// reader of the overview's (ADMIN_OVERVIEW_VIEW).
+function overview(p) {
+    requireOverview()
+    const found = readiness({scopeParameters: p.scopeParameters})
+    const attention = found.checks
+        .filter(row => row.state !== "ready")
+        .sort((a, b) => stateOrder[a.state] - stateOrder[b.state])
+        .slice(0, 10)
+    const backup = found.checks.find(row => row.checkKey === "admin.backup.job")
+    return {attention, cards: cardsOf(backup?.coverage), failedProviders: found.failedProviders, checkedText: found.checkedText}
+}
+// get#HealthCards: the health cards alone, with no provider run (Health's header shows the sign-in failures). A reader of
+// the overview's (ADMIN_OVERVIEW_VIEW).
+function healthCards() {
+    requireOverview()
+    let coverage = null
+    try {
+        coverage = instanceChecks["admin.backup"]().find(row => row.checkKey === "admin.backup.job")?.coverage || null
+    } catch (error) {
+        ec.logger.error("Overview backup coverage not read: " + error.message)
+    }
+    return {cards: cardsOf(coverage)}
 }
 
 // ===== settings index =====
@@ -982,7 +1010,7 @@ function supportSummary(p) {
     }
 }
 
-const operations = {readiness, requestRefresh, overview, settings, instanceSetup, supportSummary}
+const operations = {readiness, requestRefresh, overview, healthCards, settings, instanceSetup, supportSummary}
 ;({
     execute: (op, parameters) => {
         if (!operations[op]) throw new Error("Unknown readiness operation " + op)

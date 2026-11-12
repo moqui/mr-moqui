@@ -482,14 +482,14 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Readiness, refresh, the settings index and the support summary (org.moqui.admin.ReadinessServices;
         plans/Admin-Screens-Down.md A6), named service by service. Each checks the caller itself: get#Readiness each
         provider's required permission, request#Refresh the operation's, find#Settings each entry's view permission and
-        whether its screen opens to the caller's own groups, get#Overview and get#SupportSummary ADMIN_OVERVIEW_VIEW,
+        whether its screen opens to the caller's own groups, get#Overview, get#HealthCards, get#SupportSummary and
         check#InstanceSetup ADMIN_OVERVIEW_VIEW (its protocols check what get#ProtocolReadiness asks). Not inheritable:
         an owner's service a registration names is authorized for the caller as a direct call is, so the registration
         adds no right (below an app's screen its inheritable always-allow covers it, as everything there). Their own
         reads of the registrations and of the framework's records are made with authorization off, after the check. -->
     <moqui.security.ArtifactGroup artifactGroupId="AdminReadinessServices" description="Admin readiness services"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminReadinessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
-            artifactName="org\.moqui\.admin\.ReadinessServices\.(get#Readiness|request#Refresh|get#Overview|get#SupportSummary|find#Settings|check#InstanceSetup)"/>
+            artifactName="org\.moqui\.admin\.ReadinessServices\.(get#Readiness|request#Refresh|get#Overview|get#HealthCards|get#SupportSummary|find#Settings|check#InstanceSetup)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminReadinessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminReadinessServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <!-- The registries' kinds. An app adds what is its own: a scope (an organization, a store), a settings group. -->
