@@ -1179,7 +1179,8 @@ fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static s
     items
 }
 
-/// The drill screen of the app that mounts the dashboard (`appLinks.drill`): Tools mounts none, so there is no fallback.
+/// The drill screen the dashboard's screen sends (`appLinks.drill`: Tools' own, or a mounting app's): a mount that
+/// names none sends none, so there is no fallback.
 fn drill_link(dashboard: &Value) -> Option<String> {
     dashboard["appLinks"].as_object()?;
     app_link(dashboard, "drill", "")

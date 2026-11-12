@@ -347,6 +347,19 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "Dashboards/Playlist",
             "/apps/dashboards/Playlist?definitionId=tui-playlist",
         ),
+        ("Dashboards/Playlists", "/apps/dashboards/Playlists"),
+        (
+            "Dashboards/WallDisplay",
+            "/apps/dashboards/WallDisplay?definitionId=tui-playlist",
+        ),
+        (
+            "Dashboards/Analysis",
+            "/apps/dashboards/Analysis?datasetId=otel_logs&run=Run&from=now-1h&thru=now",
+        ),
+        (
+            "Dashboards/Drill",
+            "/apps/dashboards/Drill?definitionId=tui-dashboard&panelId=a-total&from=now-1h&thru=now",
+        ),
     ];
     // A new screen without an acceptance case is a failed gate, rather than silently missing coverage.
     let covered: BTreeSet<_> = cases.iter().map(|(name, _)| name.to_string()).collect();

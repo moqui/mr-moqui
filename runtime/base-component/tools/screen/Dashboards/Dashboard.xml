@@ -7,10 +7,14 @@
     not offered. A mount may fix variables (reportFixedVariables, such as the organization in scope): a viewer's var-* parameter
     or carried value never replaces a fixed one (nor the variables of a panel export or inspect), and a fixed variable is not
     offered for editing. The mount sets reportLinks and reportFixedVariables in always-actions, so these transitions read them.
-    A mount whose reportLinks names a drill screen gets Drill in each panel's menu: it opens that screen with the dashboard, the
-    panel, the range and the variable values, and the screen asks get#Drill, which reads the saved panel again. The range, when
-    the request names none, is the mount's (reportPolicy.range), else the last seven days; both maps are read through
-    template/ReportMount.js. -->
+    Each panel's menu has Drill where there is a drill screen (Tools' Drill, or the one a mount's reportLinks names; none under
+    a mount that names none): it opens that screen with the dashboard, the panel, the range and the variable values, and the
+    screen asks get#Drill, which reads the saved panel again. The range, when the request names none, is the mount's
+    (reportPolicy.range), else the last seven days; both maps are read through template/ReportMount.js.
+    ShareDashboard: the owner shares the dashboard with one of their own groups, or one the mount offers
+    (reportPolicy.shareGroups), or makes it private again (share; template/ReportShare.js), where the mount's policy lets
+    the viewer share (features.share; with no mount Tools does, beside the definition editor's group field). The transition
+    holds the feature and the engine's save checks the owner, the version read and the group. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
@@ -87,6 +91,13 @@
         ]]></script></actions><default-response type="none"/>
     </transition>
     <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
+    <!-- the owner shares this dashboard with a group offered here, or makes it private: refused without the mount's share
+        feature, and the engine's save checks the owner, the version and the group (template/ReportShare.js) -->
+    <transition name="share" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportShare.js').share({definitionId:definitionId,userGroupId:userGroupId,expectedVersion:expectedVersion},['dashboard'])</script></actions>
+        <default-response url="."><parameter name="definitionId"/></default-response>
+        <error-response url="."><parameter name="definitionId"/></error-response>
+    </transition>
     <actions><script><![CDATA[
         // The mount (template/ReportMount.js): its default range and its links.
         const mount = ec.resource.script('component://tools/template/ReportMount.js').state()
@@ -156,6 +167,9 @@
         dashboardDefinition.title = definition.title
         dashboardDefinition.editable = definition.type === 'dashboard' && !definition.readOnly && definition.ownerId === ec.user.userId
         dashboardDefinition.definitionId = definitionId
+        // ShareDashboard: offered to the owner where the mount's policy lets them share; the groups are the viewer's own
+        // and the mount's (template/ReportShare.js)
+        dashboardShare = ec.resource.script('component://tools/template/ReportShare.js').state(definition, ['dashboard'])
         // The including screen's URL: the panel export, inspect and variable requests use its transitions.
         dashboardDefinition.screenUrl = sri.buildUrl('.').path
         // The report screens where the app mounts them (its reportLinks), as server paths: the editor, the library panel editor,
@@ -167,7 +181,8 @@
         for (const key of ['definition','panel','explore','alertRule','dashboard'])
             dashboardDefinition.appLinks[key] = mount.links[key] && (key !== 'alertRule' || mount.policy.features.alert)
                 ? sri.buildUrl(mount.links[key]).path : null
-        // a mount's drill screen (Tools mounts none): the panel menu's Drill, in the browser and the terminal
+        // the drill screen (Tools' own, or a mount's; a mount that names none offers none): the panel menu's Drill, in the
+        // browser and the terminal
         if (mount.links.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mount.links.drill).path
         dashboardDefinition.panelId = panelId || null
         dashboardDefinition.kiosk = String(ec.web.parameters.kiosk || '') === 'true'
@@ -186,6 +201,20 @@
     <widgets>
         <label text="${dashboardTitle}" type="h4"/>
         <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}" condition="dashboardDefinition.appLinks.definition"/>
+        <section name="ShareDashboard" condition="dashboardShare.shareable"><widgets>
+            <container-dialog id="ShareDashboard" button-text="Share">
+                <label type="p" style="m-muted" text="A dashboard is shared with one group at a time. It is shared with ${dashboardShare.sharedWith} now: choosing another group takes it from ${dashboardShare.sharedWith}." condition="dashboardShare.sharedWith"/>
+                <label type="p" style="m-muted" text="A dashboard is shared with one group at a time, the one you choose." condition="!dashboardShare.sharedWith"/>
+                <form-single name="ShareDashboardForm" transition="share" map="dashboardShare.values">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="expectedVersion"><default-field><hidden/></default-field></field>
+                    <field name="userGroupId"><default-field title="Share with" tooltip="Leave it empty to keep the dashboard private. A group sees the dashboard; each person still sees only the data they may read.">
+                        <drop-down allow-empty="true"><list-options list="dashboardShare.groups" key="${value}" text="${label}"/></drop-down>
+                    </default-field></field>
+                    <field name="save"><default-field><submit text="Save sharing"/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </widgets></section>
         <!-- In qvt the dashboard's time picker sets the range; the other modes use this form. -->
         <section name="DashboardTimeForm" condition="sri.getRenderMode() !== 'qvt'"><widgets>
             <form-single name="DashboardTime" transition=".">

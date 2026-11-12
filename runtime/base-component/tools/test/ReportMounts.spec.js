@@ -10,7 +10,10 @@
 // field with its default; a screen under the mount reads the policy the mount set (the dashboard's range), whatever a request
 // sends, and Tools' own screens read Tools', whatever a request sends; with no mount the links and the policy are Tools' own,
 // and a value that is not a map is a mount with nothing in it. An area of the mounting app adds to its root's policy
-// through the module (policyWith: the recipient cap of the area that delivers), which with no mount makes none. And the rule
+// through the module (policyWith: the recipient cap of the area that delivers), which with no mount makes none. Sharing
+// under a mount: the dashboard's share transition refuses where the mount's policy does not let the viewer share, takes
+// one of the viewer's own groups, and refuses a group the mount offers that the viewer's own grant does not let them name
+// and any group that is neither (the engine's save refuses both itself: the framework's ReportDrill spec). And the rule
 // that keeps it so, read from the screens' sources at no render's cost: Tools' two roots null every name of the mount, and
 // no screen reads the two maps but through the module.
 // Run: ./moq test tools --spec ReportMounts
@@ -250,6 +253,7 @@ feature("a mounted dashboard reads the mount's links, policy and fixed variable;
         state.links.alertRule == "../Board"
         state.links.split == null
         state.links.drill == null
+        state.links.wallDisplay == null
         JSON.stringify(state.policy.range) == '{"from":"now-90d","thru":"now"}'
         JSON.stringify(state.policy.features) == '{"alert":false,"share":true}'
         state.policy.recipientCap == 25
@@ -317,7 +321,11 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
         own.links.alerts == "//apps/dashboards/Alerts"
         own.links.import == "//apps/dashboards/Home"
         own.links.share == null
-        own.links.drill == null
+        // Tools' own drill, playlist and wall display screens
+        own.links.drill == "//apps/dashboards/Drill"
+        own.links.playlists == "//apps/dashboards/Playlists"
+        own.links.wallDisplay == "//apps/dashboards/WallDisplay"
+        own.links.analysis == "//apps/dashboards/Analysis"
         JSON.stringify(own.policy) ==
             '{"features":{"alert":true,"share":true},"range":{"from":"now-7d","thru":"now"},"datasetIdPrefix":"",' +
                 '"datasetScopeLabel":"Scope field",' +
@@ -335,5 +343,48 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
         under.recipientCap == 5 && under.range.from == "now-90d"
         roots.join(", ") == ""
         readers.join(", ") == ""
+    }
+})
+
+feature("a dashboard is shared under a mount only by its feature, with a group the viewer may name", {
+    when() {
+        const group = () =>
+            sys(() => ec.entity.find("moqui.report.Definition").condition("definitionId", boardId).one())?.userGroupId || null
+        const before = group()
+        // the mount offers its wall group, which the viewer's own grant does not let them name: not taken
+        const offered = screen(mount, "Board/share", {definitionId: boardId, userGroupId: "REPORT_MOUNTS_WALL"}, "post")
+        const afterOffered = group()
+        // nor a group that is neither theirs nor the mount's (the engine's own refusal of either is ReportDrill's spec)
+        const other = screen(mount, "Board/share", {definitionId: boardId, userGroupId: "ADMIN_ADV"}, "post")
+        // one of the viewer's own groups: taken
+        const own = screen(mount, "Board/share", {definitionId: boardId, userGroupId: GROUP}, "post")
+        const afterOwn = group()
+        // a mount whose policy does not let the viewer share: refused before anything is read, and nothing offered
+        ec.context.put("reportPolicy", {features: {share: false}})
+        const shareLib = ec.resource.script("component://tools/template/ReportShare.js")
+        const refused = shareLib.share({definitionId: boardId, userGroupId: null}, ["dashboard"])
+        const feature = ec.message.getErrorsString()
+        ec.message.clearErrors()
+        const state = shareLib.state({id: boardId, type: "dashboard", ownerId: USER, version: 1}, ["dashboard"])
+        ec.context.put("reportPolicy", null)
+        const afterRefused = group()
+        // as the spec found it, for Tools' render of the same dashboard
+        sys(() => {
+            const row = ec.entity.find("moqui.report.Definition").condition("definitionId", boardId).one()
+            row.userGroupId = before
+            row.update()
+        })
+        return {before, offered, afterOffered, other, own, afterOwn, refused, feature, state, afterRefused}
+    },
+    then({before, offered, afterOffered, other, own, afterOwn, refused, feature, state, afterRefused}) {
+        offered.errors.includes("Share only with a group you belong to")
+        afterOffered == before
+        other.errors.includes("Share only with a group you belong to")
+        own.errors == ""
+        afterOwn == GROUP
+        refused == null
+        feature.includes("Sharing is not offered to you here")
+        state.shareable == false
+        afterRefused == GROUP
     }
 })

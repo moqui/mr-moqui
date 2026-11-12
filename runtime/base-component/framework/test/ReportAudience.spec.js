@@ -6,7 +6,8 @@
 // schedule pauses until a qualified owner takes it and passes the same check. A recipient reads their own report again, never
 // another's. What the delivery screens read and write beside the engine's own (ReportReads.js, ReportWrites.js): recipients
 // are proposed and accepted by the engine's rule or among a permission's holders, whatever a caller passes, and a screen
-// schedule is read and changed by its own user alone. The dataset, its scope groups (RDR_A, RDR_B by the ReportUserGroups
+// schedule is read and changed by its own user alone. The group a definition is shared with is the saver's own or one
+// whose share artifact their own grant holds, whatever saves it. The dataset, its scope groups (RDR_A, RDR_B by the ReportUserGroups
 // policy) and the reading grants are ReportDrill's. Run: ./moq test framework --spec ReportAudience
 const R = "org.moqui.report.ReportServices."
 const capture = ec.factory.getTool("MailCapture")
@@ -80,7 +81,8 @@ feature("an owner, recipients in and out of the owner's scope, a team and a dash
     when() {
         sys(() => {
             const from = new Date(Date.now() - 60000)
-            for (const userGroupId of ["RDA_SENDERS", "RDA_GROUP", "RDA_TEAM"])
+            // RDA_WALL: a group no person is in (an app's wall displays), which only a holder of its share artifact names
+            for (const userGroupId of ["RDA_SENDERS", "RDA_GROUP", "RDA_TEAM", "RDA_WALL"])
                 make("moqui.security.UserGroup", {userGroupId, description: "Report audience spec " + userGroupId})
             for (const [userId, username, locale, scopeGroup, distributes] of USERS) {
                 make("moqui.security.UserAccount", {
@@ -127,11 +129,13 @@ feature("an owner, recipients in and out of the owner's scope, a team and a dash
                     "find#OwnedSchedules",
                     "transfer#DefinitionOwner",
                     "find#ReportRecipients",
+                    "find#ShareGroups",
                     "find#ScreenSchedules",
                     "store#ScreenSchedule"
                 ].map(name => R + name)
             )
-            grant("RDA_GROUP", ["org.moqui.report.delivery.group"])
+            // and so is sharing a definition with a group the sharer is not in: the group's own share artifact
+            grant("RDA_GROUP", ["org.moqui.report.delivery.group", "org.moqui.report.share.RDA_WALL"])
             // every reader of the dataset reads their own deliveries
             for (const name of ["find#ReportOccurrences", "get#ReportOccurrence", "get#RecipientReport"])
                 make("moqui.security.ArtifactGroupMember", {
@@ -837,3 +841,103 @@ feature(
         }
     }
 )
+
+feature("a definition is shared with a group of the saver's own, or one their own grant lets them name", {
+    when() {
+        const board = (id, userGroupId, title) => ({
+            definition: {id, type: "dashboard", title: title || id, userGroupId, body: {panels: {}}},
+            note: "Report audience spec"
+        })
+        const group = id => one("moqui.report.Definition", {definitionId: id})?.userGroupId || null
+        const error = result => result.error || ""
+        // rda.other saves and is in RDA_SENDERS, RDR_B and RDR_READER; not in the team, and holds no share artifact
+        const own = error(as("rda.other", "save#Definition", board("rda-share-other", "RDA_SENDERS")))
+        const refused = ["RDA_TEAM", "RDA_WALL", "ALL_USERS", "RDA_NO_SUCH"].map(userGroupId =>
+            error(as("rda.other", "save#Definition", board("rda-share-other", userGroupId)))
+        )
+        const afterRefused = group("rda-share-other")
+        const offered = as("rda.other", "find#ShareGroups", {groupIds: ["RDA_WALL", "RDA_TEAM"]}).out
+        // a group the definition already has is kept by a later save, though its owner could not name it now
+        sys(() => {
+            ec.user.internalLoginUser("rda.other")
+            try {
+                call(R + "save#Definition", board("rda-share-kept", "RDA_TEAM"))
+            } finally {
+                login("john.doe")
+            }
+        })
+        const kept = error(as("rda.other", "save#Definition", board("rda-share-kept", "RDA_TEAM", "Kept")))
+        const moved = error(as("rda.other", "save#Definition", board("rda-share-kept", "RDA_WALL", "Moved")))
+        const afterKept = one("moqui.report.Definition", {definitionId: "rda-share-kept"})
+        // rda.next holds the wall group's share artifact (RDA_GROUP), and no other group's
+        const granted = error(as("rda.next", "save#Definition", board("rda-share-next", "RDA_WALL")))
+        const ungranted = error(as("rda.next", "save#Definition", board("rda-share-next", "RDR_B")))
+        const afterGranted = group("rda-share-next")
+        const named = as("rda.next", "find#ShareGroups", {groupIds: ["RDA_WALL", "RDR_B", "RDA_NO_SUCH"]}).out
+        const priv = error(as("rda.next", "save#Definition", board("rda-share-next", null)))
+        return {
+            own,
+            refused,
+            afterRefused,
+            offeredOwn: Array.from(offered.groups)
+                .filter(row => row.own)
+                .map(row => row.userGroupId)
+                .sort()
+                .join(","),
+            offeredOther: Array.from(offered.groups).filter(row => !row.own).length,
+            offeredRefused: Array.from(offered.refusedGroupIds).sort().join(","),
+            kept,
+            moved,
+            keptGroup: afterKept.userGroupId,
+            keptTitle: afterKept.title,
+            granted,
+            ungranted,
+            afterGranted,
+            namedWall: Array.from(named.groups)
+                .filter(row => !row.own)
+                .map(row => row.userGroupId + ":" + row.description)
+                .join(","),
+            namedRefused: Array.from(named.refusedGroupIds).sort().join(","),
+            priv,
+            afterPrivate: group("rda-share-next")
+        }
+    },
+    then({
+        own,
+        refused,
+        afterRefused,
+        offeredOwn,
+        offeredOther,
+        offeredRefused,
+        kept,
+        moved,
+        keptGroup,
+        keptTitle,
+        granted,
+        ungranted,
+        afterGranted,
+        namedWall,
+        namedRefused,
+        priv,
+        afterPrivate
+    }) {
+        own == ""
+        // a group the saver is not in, one no person is in, everyone's implicit group and one that does not exist
+        refused.every(message => message.includes("SHARE_GROUP_UNAVAILABLE"))
+        afterRefused == "RDA_SENDERS"
+        offeredOwn == "RDA_SENDERS,RDR_B,RDR_READER"
+        offeredOther == 0
+        offeredRefused == "RDA_TEAM,RDA_WALL"
+        kept == ""
+        moved.includes("SHARE_GROUP_UNAVAILABLE")
+        keptGroup == "RDA_TEAM" && keptTitle == "Kept"
+        // by the share artifact of that group alone
+        granted == ""
+        ungranted.includes("SHARE_GROUP_UNAVAILABLE")
+        afterGranted == "RDA_WALL"
+        namedWall == "RDA_WALL:Report audience spec RDA_WALL"
+        namedRefused == "RDA_NO_SUCH,RDR_B"
+        priv == ""
+        afterPrivate == null
+    }
+})

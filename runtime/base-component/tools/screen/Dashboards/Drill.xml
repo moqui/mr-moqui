@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Drill (docs/tools/Monitoring.md, "Drill"): from a value of a saved panel to a breakdown and the records behind it,
+    opened from a panel's menu on Dashboard (Drill, the drill link of template/ReportMount.js) and hidden from the menu.
+    The request names the dashboard or library panel, the panel, the range and the buckets chosen; the engine's get#Drill
+    reads the saved panel again as the viewer and computes every predicate, so the page carries no query
+    (template/ReportDrill.js view). DrillBreakdown: the panel's buckets to choose from, and one more of the dataset's
+    dimensions; a breakdown the engine's guards refuse says why. DrillSourceRows: a page of the records with the query's
+    own columns, labelled as a sample when more match. A viewer who reads the total and not the records is told so; a
+    value the viewer may not read is "not available", whether or not it exists. The same page is a linear task in the
+    terminal and full width on a phone. Under a mount the range and the fixed variables are the mount's (reportPolicy,
+    reportFixedVariables). An app with business parts of its own (a measure's meaning, a screen for each record, values
+    some viewers may not see, a scope choice) shows these sections in a screen of its own, with the page from its own
+    service (BOSS Insights › Drill): a record's row then links the screen the app gives it (recordUrl). The screen has
+    no transition. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Drill" default-menu-include="false">
+
+    <parameter name="definitionId" required="true"/>
+    <parameter name="panelId"/>
+    <parameter name="queryReference"/>
+    <parameter name="from"/>
+    <parameter name="thru"/>
+    <parameter name="variablesJson"/>
+    <parameter name="bucketsJson"/>
+    <parameter name="breakdownDimension"/>
+    <parameter name="pageIndex"/>
+
+    <actions>
+        <set field="drill" from="ec.resource.script('component://tools/template/ReportDrill.js').view({definitionId:definitionId, panelId:panelId,
+                queryReference:queryReference, from:from, thru:thru, variablesJson:variablesJson, bucketsJson:bucketsJson,
+                breakdownDimension:breakdownDimension, pageIndex:pageIndex})"/>
+        <set field="drillLinks" from="ec.resource.script('component://tools/template/ReportMount.js').state().links"/>
+        <!-- the other screens' own find values are sent empty, so a link carries only what it names -->
+        <set field="dashboardParameters" from="{definitionId:definitionId, from:(from || ''), thru:(thru || ''), panelId:'', pageIndex:''}"/>
+    </actions>
+    <widgets>
+        <section name="DrillHeader"><widgets>
+            <container style="m-record-header">
+                <container style="m-record-title">
+                    <label text="${drill.title || 'Drill'}" type="h5" style="q-my-none"/>
+                    <label text="${drill.selectedText || 'The whole panel'}" type="p" style="text-caption m-muted q-mb-none"/>
+                </container>
+                <container style="m-record-actions">
+                    <link url="${drillLinks.dashboard}" text="Back to the dashboard" link-type="anchor-button" btn-type="primary"
+                            icon="sym_o_arrow_back" parameter-map="dashboardParameters" condition="drillLinks.dashboard &amp;&amp; drill.definitionType != 'panel'"/>
+                    <link url="${drillLinks.dashboards}" text="Dashboards and panels" link-type="anchor-button" parameter-map="{definitionId:'', pageIndex:''}"
+                            condition="drillLinks.dashboards &amp;&amp; drill.definitionType == 'panel'"/>
+                    <link url="." text="Clear the selection" link-type="anchor-button" parameter-map="drill.clearParameters"
+                            condition="drill.available &amp;&amp; drill.selected.length"/>
+                    <link url="${drillLinks.analysis}" text="Open as analysis" link-type="anchor-button"
+                            parameter-map="{datasetId:drill.datasetId, from:(from || ''), thru:(thru || '')}"
+                            condition="drill.available &amp;&amp; drillLinks.analysis"/>
+                </container>
+            </container>
+        </widgets></section>
+        <section name="DrillUnavailable" condition="!drill.available">
+            <widgets>
+                <container-box type="warning">
+                    <box-header title="Not available"/>
+                    <box-body><label type="p" text="${drill.reason}"/></box-body>
+                </container-box>
+            </widgets>
+        </section>
+        <section name="DrillAvailable" condition="drill.available">
+            <widgets>
+                <container-box>
+                    <box-header title="Breakdown"/>
+                    <box-body>
+                        <form-single name="Breakdown" transition="." map="drill.breakdownValues">
+                            <field name="definitionId"><default-field><hidden/></default-field></field>
+                            <field name="panelId"><default-field><hidden/></default-field></field>
+                            <field name="queryReference"><default-field><hidden/></default-field></field>
+                            <field name="from"><default-field><hidden/></default-field></field>
+                            <field name="thru"><default-field><hidden/></default-field></field>
+                            <field name="variablesJson"><default-field><hidden/></default-field></field>
+                            <field name="bucketsJson"><default-field><hidden/></default-field></field>
+                            <field name="breakdownDimension">
+                                <default-field title="Break down by" tooltip="One more dimension of the same records, in the same scope">
+                                    <drop-down allow-empty="true"><list-options list="drill.dimensions" key="${value}" text="${label}"/></drop-down>
+                                </default-field>
+                            </field>
+                            <field name="apply"><default-field><submit text="Break down"/></default-field></field>
+                            <field-layout><field-row><field-ref name="breakdownDimension"/><field-ref name="apply"/></field-row></field-layout>
+                        </form-single>
+                        <section name="DrillBreakdownRefused" condition="drill.breakdownRefused"><widgets>
+                            <label type="p" style="text-warning" text="${drill.breakdownRefused}"/>
+                        </widgets></section>
+                    </box-body>
+                    <box-body-nopad>
+                        <section name="DrillPanelBuckets" condition="drill.panelBuckets.length">
+                            <widgets>
+                                <form-list name="PanelBucketList" list="drill.panelBuckets" skip-form="true" paginate="false">
+                                    <field name="label"><default-field title="Choose a value">
+                                        <link url="." text="${label}" link-type="anchor" parameter-map="chooseParameters"/>
+                                    </default-field></field>
+                                    <field name="valuesText"><default-field title="Value"><display/></default-field></field>
+                                </form-list>
+                            </widgets>
+                        </section>
+                        <section name="DrillBreakdownRows" condition="drill.breakdown.length">
+                            <widgets>
+                                <form-list name="BreakdownList" list="drill.breakdown" skip-form="true" paginate="false">
+                                    <field name="label"><default-field title="${drill.breakdownDimension}"><display/></default-field></field>
+                                    <field name="valuesText"><default-field title="Value"><display/></default-field></field>
+                                </form-list>
+                            </widgets>
+                        </section>
+                    </box-body-nopad>
+                </container-box>
+                <section name="DrillSourceRows"><widgets>
+                    <container-box>
+                        <box-header title="Source records"/>
+                        <box-toolbar>
+                            <link url="." text="Previous" link-type="anchor" parameter-map="drill.previousParameters"
+                                    condition="drill.rowsAvailable &amp;&amp; drill.pageIndex &gt; 0"/>
+                            <link url="." text="Next" link-type="anchor" parameter-map="drill.nextParameters"
+                                    condition="drill.rowsAvailable &amp;&amp; drill.pageIndex &lt; drill.pageMaxIndex"/>
+                        </box-toolbar>
+                        <box-body-nopad>
+                            <label type="p" style="q-pa-md m-muted" text="${drill.rowsReason}" condition="!drill.rowsAvailable"/>
+                            <section name="DrillSourceRowsShown" condition="drill.rowsAvailable">
+                                <widgets>
+                                    <form-list name="SourceRows" list="drill.rows" skip-form="true" paginate="false">
+                                        <field name="title">
+                                            <conditional-field condition="recordUrl" title="Record">
+                                                <link url="${recordUrl}" text="${title}" link-type="anchor" parameter-map="recordParameters"/>
+                                            </conditional-field>
+                                            <default-field title="Record"><display/></default-field>
+                                        </field>
+                                        <field name="valuesText"><default-field title="In this value"><display/></default-field></field>
+                                        <columns type="mobile">
+                                            <column><field-ref name="title"/></column>
+                                            <column><field-ref name="valuesText"/></column>
+                                        </columns>
+                                    </form-list>
+                                    <label type="p" style="q-pa-md m-muted" condition="drill.bounded"
+                                            text="Showing ${drill.rows.length} of ${drill.total} records: a page, not all of them."/>
+                                    <label type="p" style="q-pa-md m-muted" condition="!drill.rows.length" text="No record matches."/>
+                                </widgets>
+                            </section>
+                        </box-body-nopad>
+                    </container-box>
+                </widgets></section>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

@@ -132,6 +132,7 @@ From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring
 | `REPORT_DATASETS_ADMIN` | every `org.moqui.report.dataset.*`: unrestricted dataset access |
 | `REPORT_CONTACT_ADMIN` | `org.moqui.report.contact.webhook`: alert webhooks |
 | `REPORT_ALERT_EVALUATION` | `org.moqui.report.alert.evaluateAll`: the alert job evaluating every owner's rules |
+| `REPORT_SHARE_ADMIN` | every `org.moqui.report.share.*`: sharing a report definition with a group the sharer is not in ([Sharing](../tools/Monitoring.md#sharing)) |
 
 A report query is authorized on its dataset (`org.moqui.report.dataset.<id>`, plus `DataDocumentUserGroup` for a DataDocument) as the viewer, or as the owner for alerts and scheduled reports, with server-side row filters. The permissions `MONITOR_INGEST` (the owner of an ingest key) and `REPORT_SAVE_LOCATION` (scheduled report files on the server) are seeded on `ADMIN`.
 

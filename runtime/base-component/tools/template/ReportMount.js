@@ -18,9 +18,11 @@
 // reportHiddenComponents and reportDefinitionTypes are read by the screens they are for (Dashboard, Home and the schedule
 // list, Definition).
 
-// Tools' own screen for each link key. share has none (Tools shares in the definition editor's group field), nor has
-// drill (Tools has no drill screen yet); a key with no screen here is offered only under a mount that names one.
-// alertRule is where a rule opens for anyone who reads it; setting one there is the policy's features.alert.
+// Tools' own screen for each link key. share has none: it names the screen a mount shares in, and where there is one the
+// definition editor keeps a definition's group as it is; Tools shares on its Dashboard and Playlists and keeps the
+// editor's group field too. A key with no screen here is offered only under a mount that names one. alertRule is where a
+// rule opens for anyone who reads it; setting one there is the policy's features.alert. playlists is the list of
+// playlists, playlist where one plays in the app and wallDisplay the page it plays on full screen and unattended.
 const toolsLinks = {
     dashboards: "//apps/dashboards/Home",
     dashboard: "//apps/dashboards/Dashboard",
@@ -28,14 +30,17 @@ const toolsLinks = {
     panel: "//apps/dashboards/Definition",
     explore: "//apps/dashboards/Explore",
     split: "//apps/dashboards/Split",
+    playlists: "//apps/dashboards/Playlists",
     playlist: "//apps/dashboards/Playlist",
+    wallDisplay: "//apps/dashboards/WallDisplay",
+    analysis: "//apps/dashboards/Analysis",
     alerts: "//apps/dashboards/Alerts",
     alertRule: "//apps/dashboards/AlertRule",
     alertShared: "//apps/dashboards/AlertShared",
     logContext: "//apps/dashboards/LogContext",
     import: "//apps/dashboards/Home",
     share: null,
-    drill: null
+    drill: "//apps/dashboards/Drill"
 }
 
 // The policy with no mount: what Tools' own screens do. Under a mount a field the app leaves out has the same default,
@@ -44,7 +49,8 @@ const toolsLinks = {
 //     features.alert         whether the viewer may set an alert rule here (new, copy, change, pause, delete): the alert
 //                            screens' transitions refuse without it (ReportAlerts.js), and a panel's New alert rule is
 //                            not offered
-//     features.share         whether the viewer may share a dashboard of their own here
+//     features.share         whether the viewer may share a dashboard or a playlist of their own here: the share
+//                            transitions refuse without it (ReportShare.js), and no sharing is offered
 //     range                  {from, thru}: the range a screen opens on when the request names none
 //     datasetIdPrefix        what the id of a dataset created here starts with
 //     datasetScopeLabel      the dataset forms' label of the scope field (the field that carries a row's scope; the
@@ -57,11 +63,14 @@ const toolsLinks = {
 //                            of users and groups. A mount that names it tells every rule set there to an audience, with
 //                            these written at each save and no contact point; null leaves a rule's kind to the engine
 //                            (contact points for an operational rule, as Tools' are)
-//     shareGroups            [{value, label}]: groups a definition may be shared with beside the viewer's own
+//     shareGroups            [{value, label}]: groups a definition is offered to be shared with beside the viewer's own
+//                            (an app's wall displays). Being here gives no right: the engine's save accepts such a group
+//                            only from a viewer whose own grant holds its share artifact
 //     recipientCap           the most recipients a group delivery is saved and checked with; null is the engine's. Set
 //                            by the area that delivers (policyWith), not by the root
 //     calendar               {timeZone, weekOffset}: the zone calendar buckets are cut in and the offset of a week
-//                            bucket (the engine's time_zone and offset); null is the viewer's zone and the instance's week
+//                            bucket (the engine's time_zone and offset) in the queries Analysis builds; null is the
+//                            viewer's zone and the instance's week
 const toolsPolicy = () => ({
     features: {alert: true, share: true},
     range: {from: "now-7d", thru: "now"},

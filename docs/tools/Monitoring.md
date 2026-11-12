@@ -361,12 +361,14 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   with the time range (`now-6h`, `now/d`, `now-1M/M`, `now/fy`; `<report week-start fiscal-start-month
   fiscal-start-day/>` in the conf sets the week and fiscal year). Keys: `t-` zooms out, `t←`/`t→` shift the range,
   `e` edits, `v` views a panel, `i` inspects, `d k` toggles kiosk mode, and Esc leaves kiosk mode, then the single-panel
-  view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display; a
-  playlist of one dashboard loads it again at each turn, and `m-report-playlist` with `kiosk` (a shared device's page, such as BOSS Insights' WallDisplay) offers no link out, retries a
+  view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display
+  ([Playlists and the wall display](#playlists-and-the-wall-display)); a
+  playlist of one dashboard loads it again at each turn, and `m-report-playlist` with `kiosk` (the `WallDisplay` page, which a shared device opens under BOSS Insights) offers no link out, retries a
   failed load at the next turn instead of pausing, and reloads the page (at most once a minute) when a load is refused
   (401, 403), so the server's plain refusal page replaces it, or when the playlist changed under it ([Shared devices](../security/Shared-Devices.md)).
   The time picker has quick ranges, the viewer's recent ranges and an absolute range. Each panel's menu has view,
-  edit, share (a link with the time made absolute), explore, inspect, duplicate, remove and new alert rule. The
+  edit, share (a link with the time made absolute), explore, inspect, drill ([Drill](#drill)), duplicate, remove and
+  new alert rule. A dashboard's owner shares it with a group from its Share dialog ([Sharing](#sharing)). The
   editor suggests visualizations from the query's or the data's columns. Tables can have footer calculations
   (computed from every row, not the ones shown) and sparkline cells; text panels take `${name}` variables and
   `${__from}`/`${__thru}`, escaped as text, and a data link takes `${__from}`/`${__thru}` too, so a drill-down (such as
@@ -434,7 +436,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   are read-only until saved as a copy. A shipped alert rule is a template: it runs only once copied, which gives it an
   owner. The owner can delete a saved definition (`delete#Definition`; Delete on the Definition, Alerts and shared item
   screens) with its versions and an alert rule's state; a shipped one cannot be deleted, nor one that other definitions
-  still reference (the error names them). Deletes are logged to `moqui.report.audit`.
+  still reference (the error names them). Deletes are logged to `moqui.report.audit`. A definition is its owner's, and
+  is read by one group beside them when it is shared ([Sharing](#sharing)).
 - **Alerts.** A rule is a report query, a reduce to one value per series, and a condition (above, below, within or
   outside, with an optional recovery threshold). The `evaluate_ReportAlerts_minute` job runs each rule at its own
   interval, as its owner. States: Normal, Pending, Firing, Recovering, No Data and Error; missing or failed data never
@@ -457,8 +460,11 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   or xlsx: one CSV, or one sheet, per table panel (a dashboard with no table panel exports each panel with data), and
   a preview of several CSVs downloads as a zip. An empty report is skipped. Saving to a server location needs
   `REPORT_SAVE_LOCATION`. Dashboards › Reports previews and downloads a dashboard or report, opens the composer of a
-  multi-dashboard report, keeps the playlists, and schedules a report in owner mode (`create#Schedule`: to one address
+  multi-dashboard report, links the playlists, and schedules a report in owner mode (`create#Schedule`: to one address
   line, a group or a server location, as its owner); the schedules themselves are on the delivery screens.
+- **Analysis** builds an aggregate over a dataset from typed choices and saves it as a library panel
+  ([Analysis](#analysis)). **Playlists** lists, makes and shares the dashboard playlists; one plays in the app
+  (`Playlist`) or full screen and unattended (`WallDisplay`).
 - **The delivery screens** (Scheduled reports, `Schedules`, with the hidden `ScheduledReportDetail` and `ReportDelivery`)
   are the viewer's side of [report delivery](#report-delivery). Schedules lists Mine (the schedules that go to the viewer
   alone, the owner-mode ones and the screen schedules they set up for themselves), Shared administration (the group
@@ -502,12 +508,16 @@ An app shows the Dashboards screens under its own root (BOSS Insights does: impl
 | Tools screen | How an app shows it | In BOSS Insights |
 |---|---|---|
 | Home (the list) | Included, with `definitionType` set; `dashboard`, `star`, `edit`, `new` and `explore` taken in | Dashboards |
-| Dashboard | Included; `edit`, `setVariable`, `exportPanel`, `inspectPanel`, `duplicatePanel` and `removePanel` taken in; the app's screen sets `reportFixedVariables` | Dashboard, with the organization in scope, sharing and the measures' meaning around it |
+| Dashboard | Included; `edit`, `setVariable`, `exportPanel`, `inspectPanel`, `duplicatePanel`, `removePanel` and `share` taken in; the app's screen sets `reportFixedVariables` | Dashboard, with the organization in scope and the measures' meaning around it; the Share dialog is the Tools screen's |
 | Definition | Included, once for each editor; `save`, `copy`, `restore`, `delete`, `export`, `reference` and `dashboard` taken in (never `import`, unless the app mounts it); the app's screen sets `reportDefinitionTypes` and carries the authors' grant | DashboardEditor, PanelDetail |
 | Panels | By location | Library panels |
 | Explore | By location | Report builder › Explore |
 | Split | By location | Report builder › Compare, hidden from the menu |
-| Playlist | Included; `data` taken in | Playlists, with its own list around the player |
+| Playlists | A screen of the app's own around its sections (`PlaylistsHeader`, the `Playlists` list, extended), with the page from `ReportPlaylists.js` `list()`; `createPlaylist`, `play`, `edit` and `sharePlaylist` taken in | Wall display (`Playlists`): the wall displays' share links, the devices showing each playlist and Register as display around the list |
+| Playlist | Included; `data` taken in | the same screen, with a playlist chosen |
+| WallDisplay | Included at the app's own location, with `data` taken in: a shared device's route group and its display account's grant name that location and that transition alone | WallDisplay, hidden from the menu |
+| Drill | A screen of the app's own around its sections (`DrillUnavailable`, `DrillBreakdownRefused`, `DrillPanelBuckets`, `DrillBreakdownRows`, `DrillSourceRows`, the `Breakdown` form extended), with the page from the app's service over `ReportDrill.js` `view(request, options)`; it has no transition | Drill, hidden from the menu: the organization in scope, the cost filter, the measure's meaning and each record's Insights screen |
+| Analysis | A screen of the app's own around its sections (`AnalysisSource`, `AnalysisRefused`, `AnalysisResult`), with the page and `saveAnalysis` from the app's services over `ReportAnalysis.js` (`fieldsOf`, `choicesOf`, `queryOf`, `resultOf`); Tools' `saveAnalysis` is not taken in | Report builder › Analysis, the author's and the steward's: the admitted datasets, the organization's calendar, Insights' reason codes |
 | Datasets | Included; `createDataset` taken in (never `explore` and `definition`, the links of Tools' other datasets, which are not shown under a mount) | Report builder › Datasets, the author's and the steward's |
 | DatasetDetail | Included; `storeDataset`, `admitDataset`, `retireDataset` and `rebuildIndex` taken in (never `definition`, the dataset in Tools' definition editor) | Report builder › DatasetDetail, the steward's |
 | DatasetFields | Included; `storeFields` and `storeConditions` taken in | Report builder › DatasetFields, the steward's |
@@ -523,10 +533,14 @@ mount's `explore` link, as a link of their own and not a transition, so an app t
 screens link each other as siblings too (`../Schedules`, `../ScheduledReportDetail`, `../ReportDelivery`); every
 transition of theirs is on the app's route, and each reads the mount's policy, never the request (below). The alert
 screens link each other by the mount's `alerts`, `alertRule` and `alertShared` links, as links of their own and not
-transitions, so an app's two screens need not be named as Tools' are (Insights: `Rules` and `AlertDetail`). The other
-Dashboards screens (Reports, Annotations, Git sync, Log context) are not shown by an app yet: Reports, Tools' own desk
-with the owner-mode schedule form, is linked from Schedules only where there is no mount (Insights' Playlists takes in
-Reports' `createPlaylist` alone). The screens run under the app's authorization;
+transitions, so an app's two screens need not be named as Tools' are (Insights: `Rules` and `AlertDetail`). The
+playlist screens link by `playlists`, `playlist` and `wallDisplay`, and Drill and Analysis by `drill`, `analysis`,
+`dashboard` and `panel`, the same way. A screen of the app's own around a Tools screen's sections (`section-include`,
+`form-list extends`) sets what those sections read under the same names (`playlistView`, `drill`, `analysisView`),
+from the Tools module or from its own service, and adds its own parts: a record's row links the screen the app gives
+it (`recordUrl`), a list gains the app's columns. The other
+Dashboards screens (Reports, Annotations, Git sync, Log context) are not shown by an app: Reports, Tools' own desk
+with the owner-mode schedule form, is linked from Schedules only where there is no mount. The screens run under the app's authorization;
 using them needs no `DASHBOARDS_APP` or `REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses
 and each dataset's own artifact.
 
@@ -534,7 +548,7 @@ The app's root sets, in its `always-actions` so that the transitions read them t
 
 | Context | What it does |
 |---|---|
-| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the app's drill screen, which each panel's menu then offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`; Tools has none). Without a mount the screens keep Tools' own (`//apps/dashboards/...`; the list opens a dashboard in its sibling `Dashboard`); under a mount a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `split` or `logContext` hides Explore's Compare and Surrounding entries; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted. `alertRule` is where a rule opens, for anyone who reads it (the alerts a user receives link it), so a mount names it for every user; a panel's New alert rule is offered there only where the policy lets the viewer set one (`features.alert`). `alerts` (the alert list) and `alertShared` (a shared contact point, silence or mute timing) are where the alert screens link each other |
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlists` (the list of playlists), `playlist` (where one plays in the app), `wallDisplay` (the page one plays on full screen), `analysis`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the drill screen, which each panel's menu offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`). Without a mount the screens keep Tools' own (`//apps/dashboards/...`; the list opens a dashboard in its sibling `Dashboard`); under a mount a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `split` or `logContext` hides Explore's Compare and Surrounding entries; no `import` hides import; no `drill` hides the panel menu's Drill, no `wallDisplay` Play full screen, no `analysis` Drill's Open as analysis; a `share` (the screen the app shares in; Tools names none, and shares on Dashboard and Playlists beside the editor's group field) hides the editor's group field and the editor's save keeps the saved group, whatever group is posted. `alertRule` is where a rule opens, for anyone who reads it (the alerts a user receives link it), so a mount names it for every user; a panel's New alert rule is offered there only where the policy lets the viewer set one (`features.alert`). `alerts` (the alert list) and `alertShared` (a shared contact point, silence or mute timing) are where the alert screens link each other |
 | `reportPolicy` | What the app's policy is for the report screens it shows (the table below). Data only: a screen shown under a mount still asks its service, and the service decides. An area of the app adds to it for the screens below it by setting it again in its own `always-actions`, from `ReportMount.js`'s `policyWith(fields)` (the root's map with the area's fields): a field that costs a read the root should not make on every request, as the recipient cap of the area that delivers |
 | `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
 | `reportHiddenComponents` | Components whose shipped definitions the dashboard list leaves out, and the schedule list does not offer or take for a new schedule (Insights: `tools`, the telemetry dashboards) |
@@ -546,16 +560,16 @@ out, but for the features: a mount offers one only when its map says so.
 | Field | What it is | With no mount | Read by |
 |---|---|---|---|
 | `features.alert` | Whether the viewer may set an alert rule here: new, copy, change, pause, activate and delete. Every such transition of the alert screens refuses without it, and none is offered | true | Alerts, AlertRule, AlertShared (every transition that writes); Dashboard (a panel's New alert rule) |
-| `features.share` | Whether the viewer may share a dashboard of their own here | true | no screen yet (Dashboard's sharing) |
-| `range` | `{from, thru}`: the range a screen opens on when the request names none | `now-7d` to `now` | Dashboard (and its panel export and inspect), Explore (and its tail), DatasetView (and its export) |
+| `features.share` | Whether the viewer may share a dashboard or a playlist of their own here. The share transitions refuse without it, and no sharing is offered ([Sharing](#sharing)) | true | Dashboard (`share`), Playlists (`sharePlaylist`), Analysis (`saveAnalysis`, for a group named) |
+| `range` | `{from, thru}`: the range a screen opens on when the request names none; the wall display's range, whatever its request names | `now-7d` to `now` | Dashboard (and its panel export and inspect), Explore (and its tail), DatasetView (and its export), Playlist (and its `data`), WallDisplay (and its `data`, always), Drill, Analysis (and `saveAnalysis`) |
 | `datasetIdPrefix` | What the id of a dataset created here starts with, before the form's short name. The engine creates a dataset only under an id whose own update artifact the creator holds, so the prefix names what the app's stewards are granted and gives no right | none | Datasets (`createDataset`) |
 | `datasetScopeLabel`, `datasetScopeHelp` | The words of the dataset forms' scope field; the `rowFilterParameters` entry it is sent in is the scope policy's own, from its registration ([Business datasets](#business-datasets)) | "Scope field", "The field that carries each row's scope; the policy's own when left empty" | Datasets, DatasetDetail |
 | `recipientPermissionId` | The permission a person holds to be proposed and accepted as a recipient: the schedule and alert screens ask `find#ReportRecipients` with it for the choices and again, in the transition, for the people a save names, and refuse the save when one is not among its holders | the engine's own rule (an active internal account) | Schedules (`createSchedule`, `recipientChoices`), ScheduledReportDetail (`storeAudience`, `recipientChoices`), AlertRule (`storeAudience`, `recipientChoices`) |
 | `reportEmailTemplateId` | The `EmailTemplate` every save of a report schedule here is sent with to `store#Schedule` | the engine's (`DASHBOARD_REPORT`, or the one the schedule has) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`) |
 | `alertAudience` | `{topic, emailTemplateId, detailLink}`: the fixed parts of an alert rule told to an audience of users and groups. A mount that names it tells every rule set there to an audience: each save writes the three from the policy (the template where email is a channel) and drops any contact point; a rule there watches a panel's saved query, never one typed; only business rules are listed and opened; and contact points, silences, mute timings, shared items and Evaluate now are not shown | null: a rule's kind is the engine's, an operational rule has contact points and a business rule the audience it is given, on the engine's own topic | Alerts, AlertRule (every save, copy and activation) |
-| `shareGroups` | `[{value, label}]`: groups a definition may be shared with beside the viewer's own | none | no screen yet (Dashboard's sharing) |
+| `shareGroups` | `[{value, label}]`: groups a definition is offered to be shared with beside the viewer's own, by the app's words for them (its wall displays). Being here gives no right: such a group is offered, and taken by `save#Definition`, only for a viewer whose own grant holds its share artifact ([Sharing](#sharing)) | none | Dashboard (`share`), Playlists (`sharePlaylist`) |
 | `recipientCap` | The most recipients a group delivery is saved and checked with, sent with every save to `store#Schedule`, which refuses a larger audience and holds the cap under the instance ceiling; and written into the audience of an alert rule at every save, which `save#Definition` checks the same way. Added by the area that delivers (`policyWith`), not by the root | the engine's (50, under the ceiling) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`, and the audience shown), Alerts and AlertRule (every save of a rule told to an audience, and the audience shown) |
-| `calendar` | `{timeZone, weekOffset}`: the zone calendar buckets are cut in and a week bucket's offset | the viewer's zone, the instance's week | no screen yet (analysis) |
+| `calendar` | `{timeZone, weekOffset}`: the zone a time grain's buckets are cut in and a week bucket's offset (the engine's `time_zone` and `offset`), in the query Analysis builds, runs and saves. The root's is that of the scope it knows; a screen of the app's own with a scope choice of its own passes its own (Insights' Analysis: the chosen organization's) | the viewer's zone, the instance's week | Analysis (the result and `saveAnalysis`) |
 
 `tools/template/ReportMount.js` is the one reader of the two maps: `state()` gives `{mounted, links, policy}` in a
 screen's actions, every link key present (null when not offered) and every policy field with its default, and
@@ -582,13 +596,21 @@ another purpose (in BOSS, a dataset steward) sets no alert through the app; unde
 the same transitions write the audience's topic, template and link and the recipient cap into the rule at every save
 and take no query, contact point, topic, link or cap from the request; and the people and groups an audience names,
 and the group a rule is shared with, are accepted by `find#ReportRecipients` under the mount's permission in
-`storeAudience`, before `save#Definition`, which then checks each one's scope for an active rule. What does not depend
-on the mount is the engine's own, checked whatever calls it: the owner, the group delivery artifact for anyone but
-oneself, each recipient's scope fingerprint at the save, at a resume and before each message, and the cap under the
-instance ceiling.
+`storeAudience`, before `save#Definition`, which then checks each one's scope for an active rule. For sharing:
+Dashboard's `share` and Playlists' `sharePlaylist` first ask the policy's `features.share`, so a user whose grant
+opens the engine's `save#Definition` for another purpose (in BOSS, a steward or a distributor) shares nothing through
+the app; the group posted must be one the transition offers (the viewer's own, or one of the policy's `shareGroups`
+that the viewer may name), and `save#Definition` then asks the same of the group itself, whatever the policy lists:
+a group the saver belongs to, or one whose share artifact their own grant holds. For the wall display: the range of
+its page and of its `data` is the policy's, and `from` and `thru` are no parameters that are read. For Analysis: the
+calendar of a time grain's buckets is written into the query by the screen's own actions and by `saveAnalysis`, and no
+parameter names it. What does not depend
+on the mount is the engine's own, checked whatever calls it: the owner, the group a definition is shared with, the
+group delivery artifact for anyone but oneself, each recipient's scope fingerprint at the save, at a resume and before
+each message, and the cap under the instance ceiling.
 
 Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
-`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`, and `drill` where the mount has one), and
+`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`, and `drill` where there is a drill screen), and
 Explore's count over time carries its own `explore`; the panel menu, the `e` key, Explore from a panel, a filter outside
 a dashboard and the duplicate and remove posts use them, and a dashboard without them uses Tools' screens. Under a mount
 the editor's dataset choices are the datasets the author may read (`list#Datasets`, each dataset's artifact), a new
@@ -622,7 +644,13 @@ mount by mr-boss `test/Insights/InsightsAlerts.spec.js` (a save refused to a use
 the engine's save, and taken for one with it; the topic, link and cap of every save whatever is posted; an audience
 kept to the permission's holders, the viewer's own groups and the cap; Tools' contact point, silence, mute timing,
 shared item and evaluation transitions absent on the app's route and taken on Tools' own), with no mount by the cargo
-tests, and the engine's rules by `framework/test/BusinessAlerts.spec.js`.
+tests, and the engine's rules by `framework/test/BusinessAlerts.spec.js`. Sharing, the playlists, the wall display,
+Drill and Analysis likewise: the share feature and the groups a share takes by `tools/test/ReportMounts.spec.js`
+(under the test mount) and by mr-boss `test/Insights/InsightsDashboards.spec.js` and `InsightsWallDisplay.spec.js`
+(a distributor's share refused and an author's taken; the wall displays' group taken from the author alone; the
+device's route, which opens the app's wall display and nothing of Tools'), Insights' drill and analysis around the
+Tools sections by `InsightsRecords.spec.js`, the screens with no mount by the cargo tests, and the group rule of
+`save#Definition` and `find#ShareGroups` by `framework/test/ReportAudience.spec.js`.
 
 ### Business datasets
 
@@ -750,8 +778,91 @@ query, a dataset, an entity or a service.
   (nothing is fetched). A panel the viewer cannot read, or whose value is not an aggregate of a dataset, answers `available`
   false with its reason.
 
-A mount offers it from each panel's menu by naming its drill screen in `reportLinks` (above). The code is
-`crates/moqui-report/src/drill.rs`; the regression spec is `framework/test/ReportDrill.spec.js`.
+Dashboards › Drill (`tools/screen/Dashboards/Drill.xml`, hidden from the menu, with no transition) is its page, opened
+from each panel's menu: the panel's buckets to choose from, a breakdown by one more of the dataset's dimensions (or
+why the guards refuse it), and a page of the records with the query's own columns, a sample when more match; back to
+the dashboard, and on to Analysis over the same dataset. `tools/template/ReportDrill.js` `view(request, options)` asks
+the engine as the viewer and presents its answer; under a mount the default range and the fixed variables are the
+mount's (`reportPolicy.range`, `reportFixedVariables`). An app with business parts of its own shows the screen's
+sections in a screen of its own and calls `view` from its service with its parts as `options`, each decided by the
+service and never by a request: `fixedVariables` (its scope), `range`, `permitted` (which fields a viewer may see as
+a column or a dimension), `row` (what it adds to a record's row: `recordUrl` and `recordParameters`, the app's screen
+for the record) and `carry` (further parameters its links keep). A mount that names no `drill` link offers none. The
+code is `crates/moqui-report/src/drill.rs`; the regression spec is `framework/test/ReportDrill.spec.js`.
+
+### Analysis
+
+Dashboards › Analysis (`tools/screen/Dashboards/Analysis.xml`, `tools/template/ReportAnalysis.js`) builds an aggregate
+over a dataset the viewer reads from typed choices: the dataset (`list#Datasets`), how a measure is aggregated (count,
+sum, average, least, greatest, distinct values) and of which number field, up to two groups, a time grain (day to
+year), one equality filter and the range. No query language is added: the choices become the engine's own query, each
+field checked against the dataset's fields (`get#Dataset`, with what the dataset's definition declares of each: its
+unit field, a ratio, the dimensions it is not added across), and `run#Query` runs it as the viewer. The result shows
+each bucket with its measures and units, the engine's count of the records behind them (never the number of rows
+shown) and its notices; what the [semantic guards](#semantic-guards) refuse is shown as its reason ("Not a meaningful
+result"), and nothing is computed around it. Save analysis (`saveAnalysis`) runs the choices again and saves them as
+a library panel the viewer owns (`save#Definition`: an ordinary panel, which the definition editor then refines),
+private or shared with a group offered to them ([Sharing](#sharing)), and optionally placed by reference on a dashboard
+of their own; it is offered to a viewer whose own grant opens the save where there is a panel editor. Under a mount
+the default range and the calendar of a time grain's buckets are the mount's (`reportPolicy.range`, `calendar`), read
+by the screen and by the transition, never from a request. An app with business parts of its own (which datasets are
+offered, who may build one, a scope choice with its own calendar, reason codes) shows the screen's sections in a
+screen of its own, with the page and the save from its own services built on the module's `fieldsOf`, `choicesOf`,
+`queryOf(choices, source, bucketParameters, deny)` and `resultOf`.
+
+### Sharing
+
+A definition has one owner and at most one group (`userGroupId`): the group reads the definition, and nothing else.
+Each of its members still reads a dataset by their own grant and row filter, so a share never gives data.
+
+- **The group rule is `save#Definition`'s**, whatever saves (a screen, a copy, a restore, an import, a pull): the group
+  is one the saver belongs to by a membership of their own (never the implicit `ALL_USERS`), or one whose share
+  artifact, `org.moqui.report.share.<userGroupId>` (update), the saver's own authorization records hold, with nothing
+  inherited from the screen or service that asks. Any other group is refused (`SHARE_GROUP_UNAVAILABLE`). A group the
+  definition already has is kept by a later save without being asked again, so an owner who left a group still saves
+  their definition. `ADMIN` holds `org.moqui.report.share.*` (`REPORT_SHARE_ADMIN`); an app grants the artifact of a
+  group no person is in to those who share with it (BOSS Insights: its wall displays' group, to its authors).
+- **`find#ShareGroups`** answers the groups the caller may share with, by name: their own (`own` true), and of the
+  `groupIds` named those they may share with by the artifact; a group named that is neither, or does not exist, is in
+  `refusedGroupIds`. It grants nothing.
+- **On the screens** (`tools/template/ReportShare.js`): Dashboard's Share dialog (`share`) and Playlists' Share a
+  playlist (`sharePlaylist`) are offered to the owner of a saved dashboard or playlist: one of the groups
+  `find#ShareGroups` answers (their own, and the mount's `reportPolicy.shareGroups` they may name, by the mount's
+  words), or none to make it private again. The transitions hold the mount's `features.share` first and refuse a
+  group they do not offer; the engine's save then checks the owner, the version the dialog read and the group. With no
+  mount a viewer shares with a group of their own there, and the definition editor has its group field too, where
+  `ADMIN` names any group; under a mount that names a `share` link the editor keeps a definition's group as it is.
+  Analysis' save shares its new panel the same way.
+
+### Playlists and the wall display
+
+A playlist is a report definition of kind `playlist`: one to fifty dashboards in an order, each shown for five to 3600
+seconds. Three screens (`tools/template/ReportPlaylists.js`):
+
+- **Playlists** (in the menu) lists the playlists the viewer reads, each with its dashboards, its seconds and the group
+  it is shared with; makes one (`createPlaylist`: dashboards the viewer reads, saved as their own; it is ordered in the
+  definition editor), for a viewer whose own grant opens the save where there is an editor; and shares one
+  ([Sharing](#sharing)). A playlist opens in Playlist or, by Play full screen, on WallDisplay in a window of its own.
+- **Playlist** plays one in the app, for whoever sits at it: the dashboards in turn in kiosk mode over the request's
+  range (the mount's when it names none), each also opened on its own. Its `data` transition answers the dashboard at
+  an index of the stored playlist, rendered as the viewer.
+- **WallDisplay** plays one unattended, on a page of its own and not the app shell: standalone, its html is a bare
+  document (no navigation, menu, account or instance header) that loads the client's files and mounts the screen's
+  qvt render as an island, `m-report-playlist` in kiosk mode. What an unattended browser may not choose is not taken
+  from its request: the range is `reportPolicy.range` (Tools' seven days with no mount), never `from` and `thru`; only
+  a dashboard of the stored playlist is rendered, by its index; a panel's failure is shown as "not available" with
+  its text in the log, with no query inspection; any failure answers one fixed sentence; the screen has no transition
+  but `data`, and nothing writes. Everything runs as the viewer: a dashboard they may not read is left out and logged
+  by name.
+
+A wall display on a [shared device](../security/Shared-Devices.md) is an app's: the app includes WallDisplay in a
+screen at its own location with `data` taken in, and the device's route group and its display account's grant name
+that location and that transition alone, so the Tools file opens nothing for a device and nothing else of the app
+does either; the framework puts the registered playlist over whatever the browser asks for; and the app's root sets
+the range for a device's request. The display account reads a playlist and its dashboards when they are shared with
+a group it is in, which no person is in: its owner shares them there by the group's share artifact
+(BOSS Insights: `BOSS_INSIGHTS_DISPLAY`, the mount's `shareGroups`, the route group `INSIGHTS_PLAYLISTS` over
+`Insights/WallDisplay`).
 
 ### Report delivery
 

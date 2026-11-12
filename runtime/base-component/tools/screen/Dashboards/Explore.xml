@@ -9,7 +9,7 @@
     when the viewer reads it, else on the first one; a viewer who reads none, and asks for none, is told so and nothing is
     queried. The range, when the request names none, is the mount's (reportPolicy.range), else the last seven days. Saving is
     offered only where the mount has a definition editor (the viewer authors there). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Explore" default-menu-index="3"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Explore" default-menu-index="2"
         menu-image="sym_o_search" menu-image-type="icon">
     <parameter name="filtersJson"/><parameter name="pillAction"/><parameter name="pillIndex"/><parameter name="pillField"/><parameter name="pillOperation"/><parameter name="pillValue"/><parameter name="pillLabel"/><parameter name="historyQuery"/>
     <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>

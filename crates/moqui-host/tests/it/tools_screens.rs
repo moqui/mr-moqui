@@ -601,7 +601,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         status == 200 && audit.starts_with("Report,Run,Kind,Delivery") && audit.contains(",Sent,"),
         "{status}: {audit}"
     );
-    // Reports keeps the previews, the composer, the playlists and the owner-mode form, and links the schedules.
+    // Reports keeps the previews, the composer and the owner-mode form, and links the schedules and the playlists.
     assert_page(
         address,
         &john,
@@ -611,6 +611,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
             "Compose a multi-dashboard report",
             "Schedule a report in owner mode",
             "/apps/dashboards/Schedules",
+            "/apps/dashboards/Playlists",
         ],
     );
     // The alert screens of Dashboards, with no mount: every rule the viewer reads with its kind, its owner, whom it tells
@@ -739,6 +740,158 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         &john,
         "/apps/dashboards/AlertRule?definitionId=gate-made-alert",
         &["Gate made alert", "fires when above 5", "gate-made-contact"],
+    );
+    // Playlists, the wall display, sharing, Analysis and Drill, with no mount. A playlist made on Playlists is listed
+    // with its player and its full screen page, and its owner shares it with a group of their own.
+    let create = "/apps/dashboards/Playlists/createPlaylist";
+    let (status, page) = post(
+        address,
+        &john,
+        create,
+        &[
+            ("playlistId", "gate-playlist"),
+            ("playlistTitle", "Gate playlist"),
+            ("playlistDashboardIds", "monitor-overview"),
+            ("playlistSeconds", "15"),
+        ],
+    );
+    ran(create, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Playlists",
+        &[
+            "Gate playlist",
+            "New playlist",
+            "Share a playlist",
+            "Play full screen",
+            "/apps/dashboards/Playlist?definitionId=gate-playlist",
+            "/apps/dashboards/WallDisplay?definitionId=gate-playlist",
+        ],
+    );
+    let share = "/apps/dashboards/Playlists/sharePlaylist";
+    let (status, page) = post(
+        address,
+        &john,
+        share,
+        &[("shareDefinitionId", "gate-playlist"), ("userGroupId", "ADMIN")],
+    );
+    ran(share, status, &page);
+    assert_page(address, &john, "/apps/dashboards/Playlists", &["Shared with "]);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Playlist?definitionId=gate-playlist",
+        &[
+            "Gate playlist",
+            "All playlists",
+            "/apps/dashboards/Dashboard?definitionId=monitor-overview",
+        ],
+    );
+    // The wall display is a bare page of its own, and its data is a dashboard of the stored playlist over Tools' range,
+    // whatever range the request names; an index outside the playlist answers the one fixed sentence.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/WallDisplay?definitionId=gate-playlist",
+        &[
+            "data-moqui-island=\"wall-display\"",
+            "/js/WebrootPublic.qvt.js",
+            "<title>Gate playlist</title>",
+        ],
+    );
+    let (status, data) = get(
+        address,
+        &john,
+        "/apps/dashboards/WallDisplay/data?definitionId=gate-playlist&index=0&from=now-30y",
+    );
+    assert!(status == 200 && data.contains("monitor-overview"), "{status}: {data}");
+    let from = data
+        .split("\"from\" : \"")
+        .nth(1)
+        .and_then(|rest| rest.get(..4))
+        .and_then(|year| year.parse::<i32>().ok());
+    assert!(
+        from.is_some_and(|year| year >= 2026),
+        "the wall display reads its own range: {data}"
+    );
+    let (status, data) = get(
+        address,
+        &john,
+        "/apps/dashboards/WallDisplay/data?definitionId=gate-playlist&index=7",
+    );
+    assert!(status != 200 && !data.contains("monitor-overview"), "{status}: {data}");
+    // A dashboard of the viewer's own has Share, with their own groups; shared, it says with whom.
+    let save = "/apps/dashboards/Definition/save";
+    let (status, page) = post(
+        address,
+        &john,
+        save,
+        &[
+            ("definitionId", "gate-board"),
+            ("definitionType", "dashboard"),
+            ("definitionTitle", "Gate board"),
+            ("definitionVersion", "0"),
+            (
+                "definitionJson",
+                r#"{"panels":{"counts":{"title":"Gate counts","visualization":"table","queries":[{"datasetId":"otel_metrics","aggregations":[]}]}}}"#,
+            ),
+        ],
+    );
+    ran(save, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Dashboard?definitionId=gate-board",
+        &["Gate board", "Share", "Save sharing", "the one you choose"],
+    );
+    let share = "/apps/dashboards/Dashboard/share";
+    let (status, page) = post(
+        address,
+        &john,
+        share,
+        &[("definitionId", "gate-board"), ("userGroupId", "ADMIN")],
+    );
+    ran(share, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Dashboard?definitionId=gate-board",
+        &["It is shared with "],
+    );
+    // Analysis: the choices run as the viewer, and saved as a library panel on that dashboard.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Analysis?datasetId=otel_metrics&run=Run",
+        &["Source", "Result", "Computed from ", "Save analysis"],
+    );
+    let save = "/apps/dashboards/Analysis/saveAnalysis";
+    let (status, page) = post(
+        address,
+        &john,
+        save,
+        &[
+            ("datasetId", "otel_metrics"),
+            ("title", "Gate analysis"),
+            ("dashboardId", "gate-board"),
+        ],
+    );
+    ran(save, status, &page);
+    assert_page(address, &john, "/apps/dashboards/Panels", &["Gate analysis"]);
+    // Drill: a panel of that dashboard, its breakdown and its records, back to the dashboard and on to Analysis.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Drill?definitionId=gate-board&panelId=counts",
+        &[
+            "Gate counts",
+            "The whole panel",
+            "Breakdown",
+            "Source records",
+            "/apps/dashboards/Dashboard?definitionId=gate-board",
+            "/apps/dashboards/Analysis?datasetId=otel_metrics",
+        ],
     );
 }
 

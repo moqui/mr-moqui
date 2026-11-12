@@ -60,7 +60,8 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
   described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens) (`datasetScopeParameter` left the
   contract in I3: a scope policy registers its own). `reportLinks` has the keys `alerts` and `alertShared` since I0,
   read by the alert screens since I3, when `alertRule` became where a rule opens for any reader and `features.alert`
-  what offers setting one; `wallDisplay` and a Tools default for `drill` come with their screens (I4).
+  what offers setting one; `playlists`, `wallDisplay`, `analysis` and a Tools default for `drill` came with their
+  screens (I4).
 - `T/template/ReportMount.js`: `state()` gives `{mounted, links, policy}`, every key and field present, and
   `url(key, own)` is a transition's response. It is the one reader of both maps. `policyWith(fields)` is the root's
   policy with an area's fields, which the area sets as `reportPolicy` in its own `always-actions` (I2: the recipient
@@ -161,15 +162,16 @@ Tools gets the generic screens, each reading and writing only through `ReportSer
 | Datasets, DatasetDetail, DatasetFields, DatasetView | merge: the business list and stewardship on top; today's telemetry and index list stays as "Other datasets" where there is no mount | W (grants name locations and transitions; the record's I1) |
 | Schedules, ScheduledReportDetail, ReportDelivery | new; `Reports.xml` keeps previews, the compose link, the playlists (until I4) and the owner-mode form, and links Schedules | D; the area adds the recipient cap (the record's I2) |
 | Alerts, AlertRule, AlertShared | one list (All where rules have contact points, Mine, Received, Templates; Kind) and one editor: a shared basis form, then Contact points or Audience; links from `reportLinks`; kind and state through `get#AlertState` | W for the list and the editor, taking in only the business transitions; AlertShared not shown (the record's I3) |
-| Drill, Analysis | new generic screens | S: scope, meaning, record links, cost filter; organization calendar |
-| Dashboard | `share` transition and dialog (owner only; own groups plus `reportPolicy.shareGroups`) | W |
-| Playlists, WallDisplay | new list, create and share screen; the hardened kiosk player | S (devices, display share); W |
+| Drill, Analysis | new generic screens over `ReportDrill.js` and `ReportAnalysis.js` | S: scope, meaning, record links, cost filter; the admitted datasets, the organization's calendar and Insights' own `saveAnalysis` (the record's I4) |
+| Dashboard | `share` transition and dialog (owner only; own groups plus `reportPolicy.shareGroups`, with no mount too) | W, `share` taken in |
+| Playlists, Playlist, WallDisplay | new list, create and share screen; the player in the app, as it was; the hardened kiosk page | S (devices, display share) with Playlist included when one is chosen; W |
 | Explore, Split, Panels | the "no readable dataset" guard moves into Explore and Split, the default range into Explore (and Dashboard); Panels carries its menu image | D (the record's I0) |
 
 New `ReportServices` operations (`F/service/org/moqui/report/ReportReads.js`, and `ReportWrites.js` for the write):
 `get#BusinessDataset`, `get#BusinessDatasetOptions`, `find#ReportRecipients`, `find#ScreenSchedules`,
-`store#ScreenSchedule`; `ownerName` in the answers of `get#ReportOccurrence` (I2) and `get#AlertState` (I3: its own
-code, `alert_delivery.rs`). Five artifact rows are added to existing BOSS groups.
+`store#ScreenSchedule`, `find#ShareGroups` (I4); `ownerName` in the answers of `get#ReportOccurrence` (I2) and
+`get#AlertState` (I3: its own code, `alert_delivery.rs`); the group rule of `save#Definition` (I4: `definitions.rs`).
+Six artifact rows are added to existing BOSS groups, and one group for the wall displays' share artifact.
 
 Stays in BOSS: the Insights root, Home, the Reports catalog, Records, Flows, Settings, AddToDashboard, SavedReports,
 ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
@@ -180,7 +182,7 @@ ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
 | I1 Datasets | two operations; four screens; `ReportDatasets.js`; a scope policy registers its parameter; `create#BusinessDataset` asks the named dataset's update artifact | four wrappers; two rows; `DatasetServices` keeps readiness and refresh | `BusinessDatasets`; `InsightsDatasets` |
 | I2 Delivery | recipient and screen-schedule operations, `ownerName`; three screens; `ReportDelivery.js`; `policyWith`; `Reports.xml` trimmed | items re-pointed, the area adds the cap; three rows; `Delivery.js` keeps the digests and what the alerts use | `ReportAudience`, `ReportMounts`; `InsightsDelivery`, `InsightsSettings` |
 | I3 Alerts (after I2) | merged list and editor; `ReportAlerts.js`; `ownerName` in `get#AlertState`; a panel's New alert rule by `features.alert`; `datasetScopeParameter` gone | two wrappers, the area adds the cap; `Alerts.js` and `AlertServices.xml` deleted; no row | `BusinessAlerts`, `AdminOverview`, `ReportMounts`; `InsightsAlerts`, `InsightsAccess` |
-| I4 Drill, Analysis, share, playlists, wall | five screens | wrappers; `DashboardServices` deleted | `InsightsRecords`, `InsightsDashboards`, `InsightsWallDisplay` |
+| I4 Drill, Analysis, share, playlists, wall | four screens and Dashboard's share; `find#ShareGroups`; the group rule of `save#Definition`; `ReportShare.js`, `ReportPlaylists.js`, `ReportDrill.js`, `ReportAnalysis.js`; `Reports.xml` gives up the playlists | Dashboard and WallDisplay wrappers, Playlists, Drill and Analysis around the Tools sections; `DashboardServices` deleted; one row and one group | `ReportAudience`, `ReportMounts`; `InsightsDashboards`, `InsightsWallDisplay`, `InsightsRecords` |
 
 ## Order and tests
 
@@ -1092,3 +1094,149 @@ monitor_readers::` (the list and the editor in the terminal walk; 4 pass, 1 need
 mr-boss's acceptance `InsightsAlertsUsable` (a refusal read as the transition's error; the rule deleted through the
 route) and `InsightsReviewWalk` (the copy, the audience and the activation through the screens' transitions in place
 of the deleted services).
+
+### I4 Drill, Analysis, share, playlists, wall (Nov 11, 2026)
+
+Built: sharing on `Dashboard` (the `share` transition and the ShareDashboard dialog: the owner of a saved dashboard
+shares it with one of their own groups or one the mount offers, or makes it private), and four screens of Dashboards,
+Insights' with their BOSS references gone: `Playlists` (the playlists the viewer reads with their dashboards, seconds
+and sharing; New playlist; Share a playlist; Play full screen), `WallDisplay` (one playlist on a bare page of its own,
+unattended, with its one transition `data`), `Drill` (from a panel's value to the panel's buckets, a breakdown by one
+more dimension and a page of its records) and `Analysis` (an aggregate over a dataset the viewer reads from typed
+choices, run as the viewer and saved as a library panel). `Playlist` stays the player in the app. Their presentation
+is `tools/template/ReportShare.js` (`state`, `listState`, `share`, `requireShare`), `ReportPlaylists.js` (`list`,
+`create`, `player`, `playerData`, `wall`, `wallData`), `ReportDrill.js` (`view`) and `ReportAnalysis.js` (`view`,
+`save`, and what an app builds on: `fieldsOf`, `choicesOf`, `queryOf`, `resultOf`, `refusedOf`, `panelId`), each
+calling only `ReportServices` as the viewer. In the engine (`crates/moqui-report/src/definitions.rs`; the release binary
+rebuilt): `save#Definition` takes a group only from a saver who may name it. One operation, `find#ShareGroups`
+(`ReportReads.js`); ADMIN's grant of the share artifacts (`REPORT_SHARE_ADMIN`, `MonitoringSecurityData.xml`).
+`ReportMount.js`: the link keys `playlists`, `wallDisplay` and `analysis`, and Tools' own `drill`, so Tools' dashboards
+have Drill in each panel's menu. `Reports.xml` gives up `createPlaylist`, `playlist` and its playlist box, and links
+Playlists. The Dashboards menu: Explore 2, Analysis 3, Playlists 9, Annotations 10, Git sync 11. In mr-boss: Dashboard
+takes in `share` and loses its own dialog, `shareDashboard` and its range defaults; WallDisplay includes the Dashboards
+screen at its own location with `data`; Playlists, Drill and ReportBuilder › Analysis are Insights' own screens around
+the Dashboards screens' sections; `DashboardServices.xml` is deleted; `Drill.js` and `Analysis.js` keep Insights' own
+parts over the framework's modules; PanelDetail's repeated "Used in" box is dropped (the editor's own list shows it);
+`find#ShareGroups` is a row of `BOSS_INS_REPORT_AUTHOR` and `BOSS_INS_SHARE_DISPLAY` gives the author the wall
+displays' share artifact.
+
+| Screen | With no mount | Under a mount | Insights | Taken in | Left out | BOSS rows that name it |
+|---|---|---|---|---|---|---|
+| Dashboard | Share for the owner: their own groups | Share where `features.share` holds: own groups and the mount's `shareGroups` the viewer may name | W | `share`, with the six it had | none | none (the root's allow opens it) |
+| Playlists | the list, New playlist, Share a playlist, Play full screen, Edit | the same without the hidden components' definitions; New where the mount has an editor; sharing by the feature | S (`Playlists`): the wall displays' share links, the devices, Register as display | `createPlaylist`, `play`, `edit`, `sharePlaylist`; `data` of Playlist | none | none |
+| Playlist | one playlist in the app over the request's range or Tools' | the same over the mount's range | included by Playlists when one is chosen | `data` | none | none |
+| WallDisplay | one playlist full screen over Tools' range | the same over the mount's range | W | `data` | none | `BOSS_DEV_INS_WALL` (the route group's allow-list) and `BOSS_INS_WALL_DISPLAY` (the display accounts' allow): the screen and `WallDisplay.xml/data` |
+| Drill | the page, with Tools' links | the mount's range and fixed variables | S: its header, DrillMeaning, the organization in the Breakdown form, record links | none (it has none) | none | none |
+| Analysis | every dataset the viewer reads; Save for one who may save | the mount's range and calendar | S (`ReportBuilder/Analysis`): its own page and `saveAnalysis` | none | `saveAnalysis` (Insights' own of that name is on the route) | `BOSS_INS_ANALYSIS`: the screen and `Analysis.xml/saveAnalysis` |
+
+Each is the kind the plan expected. WallDisplay is a wrapper for its rows (the standalone page at the route group's
+`homePath`), Dashboard for what it sets and puts around the screen (`reportFixedVariables`, the organization, the
+measures' meaning). Playlists, Drill and Analysis could not
+be wrappers: each adds columns, a section or a form field inside the Tools screen's own boxes, and Analysis' grant
+names a transition that must stay Insights' own.
+
+The operations:
+
+| Operation | Answers or stores | Checks |
+|---|---|---|
+| `save#Definition` (Rust) | as before, with the group it is given | the group is one the saver belongs to by a membership of their own (not `ALL_USERS`), or one whose share artifact, `org.moqui.report.share.<userGroupId>` (update), the saver's own grant holds; `SHARE_GROUP_UNAVAILABLE` otherwise; a group kept as stored is not asked again. Every save goes through it: copy, restore, import, pull, a business dataset's |
+| `find#ShareGroups` (new) | `groups` (`userGroupId`, `description`, `own`): the caller's own groups and, of `groupIds`, those the caller may name by the artifact; `refusedGroupIds` | signed in; names only a group that is the caller's own or theirs to name. Covered by `DASHBOARDS_APP`'s pattern; under Insights a row of `BOSS_INS_REPORT_AUTHOR` (the author and the steward), beside `save#Definition` |
+
+Where what Insights' services did is now:
+
+| Insights | Now |
+|---|---|
+| `DashboardServices.share#Dashboard` | `ReportShare.share` in Dashboard's `share` and Playlists' `sharePlaylist`; its group rule is `save#Definition`'s, its author check the policy's `features.share` |
+| `DashboardServices.get#ShareGroups` | `find#ShareGroups` for the two share dialogs; `ContextServices.get#ShareGroups` (the same function of `Insights.js`, now without the wall displays) for SavedReports and Analysis, with FlowMaps' and the digest's use of it |
+| `Insights.js` `shareDashboard` | deleted; `shareGroups` and `shareGroupIds` stay for Insights' own forms |
+| `Drill.js` | keeps the reader check, the scope, the default range, the cost filter, the meaning and the record screens; the engine call, the buckets, the breakdown, the rows and the links' parameters are `ReportDrill.js` `view` |
+| `Analysis.js` | keeps the author check, the admitted datasets, the organization's calendar, the narrowing for Assist, its reason codes and `store`; the choices' lists, the fields, the query and the result's rows are `ReportAnalysis.js` |
+| Playlists' list, devices and display share | the list is `ReportPlaylists.list`; the direct read of `UserGroup` is gone (a group's name is `find#ShareGroups`'); the devices stay |
+| WallDisplay's page and `data` | `WallDisplay.xml` of Dashboards and `ReportPlaylists.wall`, `wallData` |
+
+The policy values, and why a hand-made request does not get past them:
+
+| Value | Where it is enforced | Why it holds |
+|---|---|---|
+| `features.share` | `ReportShare.requireShare`, first in `share` and `sharePlaylist`; a group named in Tools' `saveAnalysis` | the transitions read the policy the root set in `always-actions`, never a parameter. The engine alone would not hold it: Insights' steward and distributor hold `save#Definition` and are no authors. Under Insights these transitions are the only way to change a dashboard's or a playlist's group: the editors keep the group as stored (the `share` link), Insights' own saves name only the caller's own groups, no REST resource or agent tool names the operation, and its users open no Tools route (held in `InsightsDashboards`: the distributor's share of their own dashboard refused and the author's same request taken; seen to fail with the feature not asked) |
+| `shareGroups` | the transition takes only a group it offers (the viewer's own, and the policy's that `find#ShareGroups` answers them); `save#Definition` then asks the group's membership or share artifact itself | the list is what is offered and gives no right. A group in the policy is taken only from one whose own grant holds its artifact (Insights: the author, `BOSS_INS_SHARE_DISPLAY`), by a direct call too; a group outside both is refused by the transition and by the engine (held in `InsightsWallDisplay`: the author's share with the wall displays taken, a distributor's save with that group refused by the engine; in `InsightsDashboards`: another group refused by the transition and by the engine's save; in `ReportMounts`: the mount's group not taken from a viewer without its artifact) |
+| `range` | Playlist and Drill open on it when the request names none; WallDisplay's page and `data` use it always | `wallData` reads no `from` or `thru`; the device's request gets the range from the root (held in `InsightsWallDisplay`: thirty years asked, thirty days answered; in the cargo test for Tools) |
+| `calendar` | Tools' Analysis writes it into a time grain's bucket in its actions and in `saveAnalysis` | no parameter names a zone or an offset. Insights' Analysis is its own screen and service and writes the calendar of its own organization choice (`calendarParameters`), as before, so nothing on Insights' route reads the root's field today |
+
+What keeps the wall display hardened: the route group and the display account's grant still name
+`mr-boss/screen/Insights/WallDisplay.xml` and its `data` alone, and the wrapper takes in nothing else (the Tools screen
+has nothing else); the page is standalone and bare, not the shell; `data` takes the playlist's index only, renders only
+a dashboard of the stored playlist as the viewer, over the mount's range, drops each panel's inspection and requests,
+shows a failed panel as "not available" with its text logged, and answers one fixed sentence for any failure; the
+client's kiosk player is unchanged; Insights' root still calls no Insights service for a device and sets only the range.
+A device opens neither Tools' `WallDisplay` nor its `data` (held in `InsightsWallDisplay`).
+
+Findings:
+
+- F94. F50 is settled in the engine with an artifact a group, not a list passed with the request: a list of allowed
+  groups in the request would be the caller's word, and a single "may share with any group" grant would let an app's
+  author name every group. `org.moqui.report.share.<userGroupId>` by the saver's own grant says exactly which group,
+  is asked by `permitted_own` (nothing inherited from the screen's allow, no failure recorded) and is granted as the
+  group delivery artifact is. `ALL_USERS` is not a group of one's own for this. A group kept as stored is not asked
+  again: an owner who left a group, or a mounted editor's save, keeps it.
+- F95. `find#ReportRecipients` could not name the groups: it answers them only to a holder of the group delivery
+  artifact, and an author is no distributor. `find#ShareGroups` also names a definition's present group for the list,
+  only when it is the caller's own or theirs to name; a reader sees "Shared".
+- F96. Tools offers the dialog with no mount too, since a share with a group of one's own is the common case and the
+  editor's group field is text. The link key `share` stays null for Tools: it names the screen a mount shares in and
+  is what makes the editor keep a definition's group, which Tools' editor must not do.
+- F97. Insights' `sharePlaylist` took only the wall displays or nothing; the framework's takes any group it offers,
+  the sharer's own among them. Insights' own forms (a saved report's copy, an analysis, a flow map, a digest) offered
+  the wall displays and then refused them; `shareGroups` of `Insights.js` is the user's own groups again.
+- F98. The reason codes of `share#Dashboard` (`INSIGHTS_AUTHOR_REQUIRED`, `DASHBOARD_NOT_OWNED`,
+  `DASHBOARD_REQUIRED`) are gone with it; a refusal is the transition's error (F67). `SHARE_GROUP_UNAVAILABLE` is the
+  engine's now.
+- F99. Three playlist screens, each one thing: Playlists the list and what is done to a playlist, Playlist one played
+  where someone sits (the request's range, links out), WallDisplay one played where nobody does. The two `data`
+  transitions share `dashboardAt` and differ in what they take and show. Playlist's three `now-7d` defaults are the
+  policy's range. `createPlaylist` refuses a dashboard of a hidden component, as `createSchedule` does (F70).
+- F100. New playlist is offered by the viewer's own grant of the save where the mount has an editor, as Insights
+  offered it; the transition itself is held by the engine's save alone, as before, so Insights' distributor could
+  post one by hand. There is no feature for authoring in the policy; not added here.
+- F101. A service's context is its own: `ReportMount.js` called from Insights' drill service sees no mount and would
+  answer Tools' range, so `view` takes the range and the fixed variables as options, and an app's service passes them.
+  The same holds for any module function an app calls from a service.
+- F102. `section-include` reaches a section nested in another, and a form extended from the Tools screen keeps its
+  layout with an added hidden field: Insights' Breakdown form carries the organization that way. A row of the records
+  list links what the app gives it (`recordUrl`, `recordParameters`), so the list itself is included.
+- F103. The generic Analysis offers every dataset the viewer reads (`list#Datasets`), a telemetry index among them;
+  Insights offers the admitted business datasets, from its own service. Its Save form no longer carries
+  `organizationPartyId`: the Source form never did, so a run and its save both use the organization in scope.
+- F104. Tools' `saveAnalysis` reads the dashboard to place the panel on before it saves the panel; a placement the
+  engine then refuses (a stale version) leaves the panel saved and says so. Insights' `store#Analysis` is one
+  transaction, as before.
+- F105. In html a link to a transition that only redirects is written as its target (`Playlist?definitionId=`), which
+  the cargo test holds.
+- F106. `rustfmt` on the two host test files reformatted lines that are not this phase's; they are left as they
+  were. `InsightsRecords` and `InsightsWallDisplay` were not prettier-clean before this phase and are not reformatted.
+- F107. No recorded agent replay names a screen, a transition or a service of this phase (not replayed).
+- F108. Left for the finishing phase: `B/plan` (design-insights §4 ShareDashboard and Playlists, impl-insights' P2,
+  P6 and P11 entries name `DashboardServices`); the root's `calendar` field has no reader on Insights' route (the
+  table above); `InsightsSpecLib.mountedScreens` lists only screens mounted by location, which this phase did not add
+  to.
+
+Tests: `cargo lint`, `./moq build`, then `./moq test tools --nobuild` (73 features; 3.4 to 3.5 s of 4 s in
+four of five runs after the last build and 3.8 in one, the spread in the one DataViews feature, 1.4 to 1.7 s, as in
+I2; `ReportMounts`' four features take 0.07 s, the fourth with no render, 0.01 s: the share transition under the test mount with the
+mount's group, another group and the viewer's own, and the feature off; and the new link keys); `./moq test framework
+--nobuild --spec ReportAudience --spec BusinessAlerts --spec BusinessDatasets --spec ReportDrill --spec
+ReportAnnotations` (27 features, 2.6 s; the new feature of ReportAudience, 0.18 s: a group of the saver's own taken,
+one they are not in, one no person is in, `ALL_USERS` and one that does not exist refused, a kept group saved and
+moved, the wall group taken from a holder of its artifact and another group not, and what `find#ShareGroups` answers
+each); `./moq test mr-boss --nobuild --spec InsightsRecords --spec InsightsDashboards --spec InsightsWallDisplay --spec
+InsightsAlerts --spec InsightsDelivery --spec InsightsDatasets --spec InsightsAccess --spec InsightsHome --spec
+InsightsCatalog --spec InsightsSettings --spec AdminDevices --spec InsightsFlowMaps` (56 features, 14.1 s; the share
+through Insights' route in InsightsDashboards and InsightsWallDisplay, each seen to fail with the feature not asked; the distributor's `saveAnalysis` refused and the author's taken
+in InsightsRecords; no render added); `cargo test -p moqui-report definitions` (2); `cargo test -p moqui-host --test it
+tools_screens -- --ignored` (a playlist made, shared and played, the wall display's page and its data over Tools' range
+whatever is asked, an index outside the playlist, a dashboard shared, an analysis run and saved onto it, and its drill;
+29 s) and `cargo test -p moqui-host --test it -- monitor_tui:: monitor_readers::` (the four new screens in the
+terminal walk; 4 pass, 1 needs a server that is not there); `moqui lint --screens` with no parse failure and no
+flagged site that is new (135, as before), `moqui lint` of the four changed service files. Changed and not run:
+mr-boss's acceptance `InsightsWallDisplayUsable` (the share through Dashboard's and Playlists' transitions) and
+`InsightsReviewWalk` (the wall's definitions saved with their group in place of the deleted service).

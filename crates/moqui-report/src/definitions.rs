@@ -47,6 +47,21 @@ pub(super) fn readable(definition: &Json) -> Result<bool, Error> {
     let group = text(definition, "userGroupId", "");
     Ok(!group.is_empty() && moqui_core::user::is_in_group(group).map_err(fail)?)
 }
+/// The artifact of sharing a definition with a group the sharer is not in: `org.moqui.report.share.<userGroupId>`.
+pub(crate) const SHARE_ARTIFACT: &str = "org.moqui.report.share";
+/// Whether the viewer may share a definition with `group`: a group they belong to by a membership of their own (never
+/// the implicit `ALL_USERS`), or one whose share artifact their own grant holds (update), whatever screen or service
+/// asks: an app grants it to those who share with a group no person is in (its wall displays). Sharing gives the group
+/// the definition only; each of its viewers still reads a dataset by their own grant.
+pub(super) fn may_share_with(group: &str) -> Result<bool, Error> {
+    if group != "ALL_USERS" && moqui_core::user::is_in_group(group).map_err(fail)? {
+        return Ok(true);
+    }
+    if !group.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.:".contains(&c)) {
+        return Ok(false);
+    }
+    moqui_core::user::permitted_own("AT_SERVICE", &format!("{SHARE_ARTIFACT}.{group}"), "update").map_err(fail)
+}
 fn visible(ec: &ExecutionContext, mut definition: Json) -> Result<Json, Error> {
     let viewer = moqui_core::user::current_user_id().map_err(fail)?.unwrap_or_default();
     if text(&definition, "ownerId", "") != viewer || viewer.is_empty() {
@@ -439,6 +454,18 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
             if previous["version"].as_i64() != Some(expected) {
                 return Err(fail("definition changed since it was read; reload before saving"));
             }
+        }
+    }
+    // The group a definition is shared with is one the saver may name ([`may_share_with`]); a group kept as it is stored
+    // is not asked again, so an owner who left a group still saves their definition.
+    if let Some(group) = definition["userGroupId"].as_str().filter(|group| !group.is_empty()) {
+        let kept = previous
+            .as_ref()
+            .is_some_and(|previous| text(previous, "userGroupId", "") == group);
+        if !kept && !may_share_with(group)? {
+            return Err(fail(
+                "SHARE_GROUP_UNAVAILABLE: share a definition only with a group you belong to",
+            ));
         }
     }
     let mut body = definition.get("body").cloned().unwrap_or_else(|| json!({}));

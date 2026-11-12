@@ -2,28 +2,14 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Reports (docs/tools/Monitoring.md, "The Dashboards app"): Tools' own report desk. A dashboard or a report of several
     is previewed and downloaded as the viewer reads it (preview), a multi-dashboard report is composed in the definition
-    editor, a playlist of dashboards is made and played, and a report is scheduled in owner mode (createSchedule,
+    editor, and a report is scheduled in owner mode (createSchedule,
     create#Schedule: to one address line, a group or a server location, as its owner). The schedules themselves, an
     owner-mode one among them, are listed, paused, resumed and sent on Schedules, with their runs and each recipient's
-    delivery (ScheduledReportDetail, ReportDelivery), where a schedule that is checked for each recipient is made. This
-    screen is not shown by another app but for createPlaylist, which an app's own playlist screen takes in. -->
+    delivery (ScheduledReportDetail, ReportDelivery), where a schedule that is checked for each recipient is made. The
+    dashboard playlists are Playlists' (listed, made, shared and played there), which this screen links. This screen is
+    not shown by another app. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Reports" default-menu-index="7"
         menu-image="sym_o_summarize" menu-image-type="icon">
-    <transition name="createPlaylist" method="post" authz-action="create">
-        <actions><script><![CDATA[
-            const ids=String(playlistDashboardIds || '').split(',').map(id=>id.trim()).filter(Boolean)
-            if (!ids.length || ids.length>50) throw new Error('Choose between one and fifty dashboards')
-            const seconds=parseInt(playlistSeconds || '30',10)
-            if (!Number.isFinite(seconds) || seconds<5 || seconds>3600) throw new Error('Choose a duration from five to 3600 seconds')
-            for (const id of ids) {
-                const entry=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:id}).call().definition
-                if (entry.type!=='dashboard') throw new Error(id+' is not a dashboard')
-            }
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition:{id:playlistId,type:'report',title:playlistTitle,
-                body:{kind:'playlist',seconds,playlist:ids.map(definitionId=>({definitionId}))}},note:'Created dashboard playlist'}).call()
-        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('playlist')}"><parameter name="definitionId" from="playlistId"/></default-response>
-    </transition>
-    <transition name="playlist"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('playlist')}"/></transition>
     <transition name="createSchedule" method="post" authz-action="create">
         <actions><service-call name="org.moqui.report.ReportServices.create#Schedule" in-map="{definitionId:definitionId,cronExpression:cronExpression,emailTemplateId:(delivery==='email' || delivery==='both')?(emailTemplateId || 'DASHBOARD_REPORT'):null,userId:(delivery==='email' || delivery==='both')?(userId || (userGroupId ? null : ec.user.userId)):null,userGroupId:(delivery==='email' || delivery==='both')?userGroupId:null,saveToLocation:delivery==='email'?null:saveToLocation,renderMode:renderMode}"/></actions>
         <!-- the new schedule is on the list of schedules, where it is paused, resumed and sent -->
@@ -46,8 +32,6 @@
     <actions><script><![CDATA[
         const all = ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').call().definitions || []
         reportDefinitions = all.filter(definition=>(definition.type === 'report' && (definition.body || {}).kind!=='playlist') || definition.type === 'dashboard')
-        playlists=all.filter(definition=>definition.type==='report' && (definition.body || {}).kind==='playlist')
-        dashboards=all.filter(definition=>definition.type==='dashboard')
     ]]></script></actions>
     <widgets>
         <label text="Dashboard reports" type="h4"/>
@@ -60,6 +44,7 @@
                     <box-header title="Preview and download"/>
                     <box-toolbar>
                         <link url="//apps/dashboards/Definition" text="Compose a multi-dashboard report" parameter-map="{definitionType:'report'}"/>
+                        <link url="../Playlists" text="Dashboard playlists"/>
                     </box-toolbar>
                     <box-body>
                         <section name="AvailableReportPreviews" condition="reportDefinitions.length"><widgets>
@@ -76,50 +61,6 @@
                             </form-list>
                         </widgets><fail-widgets>
                             <label text="No dashboards or reports are available to preview." type="p"/>
-                        </fail-widgets></section>
-                    </box-body>
-                </container-box>
-                <container-box>
-                    <box-header title="Dashboard playlists"/>
-                    <box-toolbar>
-                        <container-dialog id="CreatePlaylist" title="New dashboard playlist" button-text="New dashboard playlist">
-                            <label text="Enter dashboard IDs in playback order. Each dashboard is checked with your current access when opened." type="p"/>
-                            <section name="AvailablePlaylistDashboards" condition="dashboards.length"><widgets>
-                                <form-list name="PlaylistAvailableDashboards" list="dashboards" skip-form="true">
-                                    <field name="id"><default-field><display/></default-field></field>
-                                    <field name="title"><default-field><display/></default-field></field>
-                                </form-list>
-                            </widgets><fail-widgets>
-                                <label text="No dashboards are available. Create a dashboard in the library before creating a playlist." type="p"/>
-                            </fail-widgets></section>
-                            <form-single name="CreateDashboardPlaylist" transition="createPlaylist">
-                                <field name="playlistId"><default-field title="Playlist ID"><text-line/></default-field></field>
-                                <field name="playlistTitle"><default-field title="Title"><text-line/></default-field></field>
-                                <field name="playlistDashboardIds"><default-field title="Dashboard IDs, comma separated"><text-area rows="3" cols="70"/></default-field></field>
-                                <field name="playlistSeconds"><default-field title="Seconds per dashboard"><text-line default-value="30"/></default-field></field>
-                                <field name="create"><default-field><submit text="Save playlist"/></default-field></field>
-                                <field-layout>
-                                    <field-row><field-ref name="playlistId"/><field-ref name="playlistTitle"/></field-row>
-                                    <field-ref name="playlistDashboardIds"/>
-                                    <field-ref name="playlistSeconds"/>
-                                    <field-row-big><field-ref name="create"/></field-row-big>
-                                </field-layout>
-                            </form-single>
-                        </container-dialog>
-                    </box-toolbar>
-                    <box-body>
-                        <section name="SavedDashboardPlaylists" condition="playlists.length"><widgets>
-                            <form-list name="DashboardPlaylists" list="playlists" skip-form="true">
-                                <field name="title"><default-field><display/></default-field></field>
-                                <field name="open"><default-field><link url="playlist" text="Play dashboards" parameter-map="{definitionId:id}"/></default-field></field>
-                                <field name="edit"><default-field><link url="//apps/dashboards/Definition" text="Edit playlist" parameter-map="{definitionId:id}"/></default-field></field>
-                                <columns type="mobile">
-                                    <column><field-ref name="title"/></column>
-                                    <column><field-ref name="open"/><field-ref name="edit"/></column>
-                                </columns>
-                            </form-list>
-                        </widgets><fail-widgets>
-                            <label text="No dashboard playlists yet. Create one to rotate through dashboards in a chosen order." type="p"/>
                         </fail-widgets></section>
                     </box-body>
                 </container-box>

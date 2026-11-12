@@ -34,6 +34,13 @@
         <artifacts artifactName="org.moqui.report.delivery.group" artifactTypeEnumId="AT_SERVICE"/>
         <authz artifactAuthzId="REPORT_DELIVERY_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
+    <!-- Sharing a definition with a group the sharer is not in (save#Definition, org.moqui.report.share.<userGroupId>;
+        crates/moqui-report/src/definitions.rs): ADMIN's for any group, and an app grants the artifact of a group no
+        person is in (its wall displays) to those who share with it. A group of one's own needs no grant -->
+    <artifactGroups artifactGroupId="REPORT_SHARE_ADMIN" description="Share report definitions with any user group">
+        <artifacts artifactName="org.moqui.report.share.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
+        <authz artifactAuthzId="REPORT_SHARE_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
     <moqui.security.UserPermission userPermissionId="MONITOR_INGEST" description="Send telemetry through source-scoped ingestion keys"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_INGEST" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="MONITOR_REPLAY" description="See browser session replays (Monitor › Replays)"/>

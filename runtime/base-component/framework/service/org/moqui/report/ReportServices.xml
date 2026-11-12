@@ -74,6 +74,12 @@
         <in-parameters><parameter name="definitionType"/></in-parameters><out-parameters><parameter name="definitions" type="List"/></out-parameters>
     </service>
     <service verb="save" noun="Definition" type="rust" location="moqui_core::report::save_definition">
+        <description>Save a definition as its owner, a new version each time (crates/moqui-report/src/definitions.rs). The
+            group it is shared with (definition.userGroupId; a group reads the definition, never a dataset) is one the
+            saver belongs to by a membership of their own, never the implicit ALL_USERS, or one whose share artifact
+            (org.moqui.report.share.&lt;userGroupId&gt;, update) the saver's own grant holds; any other is refused
+            (SHARE_GROUP_UNAVAILABLE), in a copy, a restore, an import and a pull too. A group kept as it is stored is
+            not asked again.</description>
         <in-parameters><parameter name="definition" type="Map" required="true"/><parameter name="note"/></in-parameters><out-parameters><parameter name="definition" type="Map"/></out-parameters>
     </service>
     <service verb="copy" noun="Definition" type="rust" location="moqui_core::report::copy_definition">
@@ -372,6 +378,17 @@
             <parameter name="refusedGroupIds" type="List"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findReportRecipients', context))</script></actions>
+    </service>
+    <service verb="find" noun="ShareGroups" allow-remote="false">
+        <description>The groups the caller may share a definition with, by name, as save#Definition accepts them (groups:
+            userGroupId, description, own): the caller's own groups (own true; never the implicit ALL_USERS), and of the
+            groups named (groupIds: a mounting app's share groups, a definition's present group) those the caller may
+            share with though no member of them, by the group's share artifact (org.moqui.report.share.&lt;userGroupId&gt;,
+            update) in the caller's own grant. A group named that is neither, or does not exist, is in refusedGroupIds.
+            Being answered here grants nothing: save#Definition asks the same of the group it is given.</description>
+        <in-parameters><parameter name="groupIds" type="List"/></in-parameters>
+        <out-parameters><parameter name="groups" type="List"/><parameter name="refusedGroupIds" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findShareGroups', context))</script></actions>
     </service>
     <service verb="find" noun="ScreenSchedules" allow-remote="false">
         <description>The screen schedules the caller set up for themselves (a ScreenScheduled of a screen path with the

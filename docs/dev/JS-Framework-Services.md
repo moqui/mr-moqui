@@ -383,7 +383,8 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 | `ReportServices.list#Datasets`, `get#Dataset` | → `datasets`; `datasetId*` → `dataset` |
 | `ReportServices.query#Documents` | `datasetId*`, `queryString`, `filters`, `from`, `thru`, `sort`, `pageIndex`, `pageSize` → `hits`, `total`, `nextCursor`, `notices` |
 | `ReportServices.run#Query` | `query*` → `frames`, `range`, `notices` |
-| `ReportServices.list#Definitions`, `get#Definition`, `save#Definition` | `definitionType`; `definitionId*`; `definition*`, `note` → `definition` |
+| `ReportServices.list#Definitions`, `get#Definition`, `save#Definition` | `definitionType`; `definitionId*`; `definition*`, `note` → `definition`. The group a definition is shared with (`definition.userGroupId`) is one the saver belongs to or one whose share artifact (`org.moqui.report.share.<userGroupId>`) their own grant holds (`SHARE_GROUP_UNAVAILABLE` otherwise); a group kept as stored is not asked again |
+| `ReportServices.find#ShareGroups` | `groupIds` → `groups` (`userGroupId`, `description`, `own`): the groups the caller may share a definition with, their own and of those named the ones they may name by the share artifact; `refusedGroupIds` |
 | `ReportServices.render#Dashboard` | `definitionId*`, `variables`, `filters`, `from`, `thru`, `panelId` → `dashboard` |
 | `ReportServices.preview#Report` | `definitionId*`, `renderMode`, `from`, `thru`, `variables` → `contentBase64`, `contentType`, `filename` |
 | `ReportServices.create#Schedule`, `send#Report` | `definitionId*`, `cronExpression*`, `renderMode`, `userId` or `userGroupId` → `screenScheduledId` |

@@ -19,11 +19,19 @@ mount) read through `template/ReportDatasets.js`
 `ScheduledReportDetail`, `ReportDelivery`: the viewer's scheduled reports and the reports delivered to them, one
 schedule with its recipients and runs, one run with each recipient's outcome) read and write through
 `template/ReportDelivery.js` ([Report delivery](../../../docs/tools/Monitoring.md#report-delivery)); `Reports` keeps
-the previews, the composer, the playlists and the owner-mode schedule form. The alert screens (`Alerts`, `AlertRule`,
+the previews, the composer and the owner-mode schedule form. The alert screens (`Alerts`, `AlertRule`,
 `AlertShared`: the rules the viewer reads, receives and may copy; one rule with its reading and condition, then its
 contact points or its audience by its kind, its state and its deliveries; a shared contact point, silence or mute
 timing) read and write through `template/ReportAlerts.js`
-([Business alerts](../../../docs/tools/Monitoring.md#business-alerts)).
+([Business alerts](../../../docs/tools/Monitoring.md#business-alerts)). The playlist screens (`Playlists`: the list, a
+new one and its sharing; `Playlist`: one played in the app; `WallDisplay`: one played full screen and unattended, on a
+page of its own that takes no range from a request) read and write through `template/ReportPlaylists.js`
+([Playlists and the wall display](../../../docs/tools/Monitoring.md#playlists-and-the-wall-display)); a dashboard and a
+playlist are shared with a group through `template/ReportShare.js` ([Sharing](../../../docs/tools/Monitoring.md#sharing)).
+`Drill` (from a panel's value to its breakdown and records) is `template/ReportDrill.js`
+([Drill](../../../docs/tools/Monitoring.md#drill)) and `Analysis` (an aggregate from typed choices, saved as a library
+panel) `template/ReportAnalysis.js` ([Analysis](../../../docs/tools/Monitoring.md#analysis)); an app with business parts
+of its own shows their sections in a screen of its own.
 
 ## Tools
 

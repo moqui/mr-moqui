@@ -2,7 +2,8 @@
 // "Business datasets", "Report delivery" and "Mounting the report screens"; plans/Admin-Screens-Down.md, Track I): what a
 // mountable report screen shows that the engine's operations do not answer, so that no screen reads an entity itself. Each
 // operation checks what its caller may read: it asks the engine as the caller (the dataset's own artifact,
-// org.moqui.report.dataset.<id>) or the caller's own grant (the group delivery artifact), or answers the caller's own rows,
+// org.moqui.report.dataset.<id>) or the caller's own grant (the group delivery artifact, a group's share artifact), or
+// answers the caller's own rows,
 // and reads with authorization off only what that opens. No dependency on Mantle or an app.
 //
 //     get#BusinessDataset         one business dataset the caller reads or stewards, and for its steward its document's
@@ -12,6 +13,8 @@
 //                                 create a dataset the documents of registered feeds
 //     find#ReportRecipients       who a caller that may deliver to others may propose as a recipient of a report or an
 //                                 alert, and which of the users and groups named may be one
+//     find#ShareGroups            the groups the caller may share a definition with, by name: their own, and of
+//                                 those named the ones whose share artifact their own grant holds
 //     find#ScreenSchedules        the caller's own screen schedules (a ScreenScheduled of a screen path, no report
 //                                 definition), which store#ScreenSchedule (ReportWrites.js) changes
 const R = "org.moqui.report.ReportServices."
@@ -42,6 +45,9 @@ const FUNCTIONS = ["min", "max", "sum", "avg", "count", "count-distinct", "upper
 // with the create action), and the permission of an account that is not an internal user (moqui_core::user EXTERNAL_USER).
 const GROUP_DELIVERY = "org.moqui.report.delivery.group"
 const EXTERNAL_USER = "EXTERNAL_USER"
+// The artifact of sharing a definition with a group the sharer is not in, <this>.<userGroupId>, asked with the update
+// action (crates/moqui-report/src/definitions.rs SHARE_ARTIFACT, may_share_with).
+const SHARE_ARTIFACT = "org.moqui.report.share"
 const ACCOUNT = "moqui.security.UserAccount"
 const SCHEDULE = "moqui.screen.ScreenScheduled"
 // a page of recipient choices, the most ids one call answers for, and the most screen schedules listed
@@ -305,6 +311,35 @@ function findReportRecipients(p) {
     }
 }
 
+// ===== find#ShareGroups =====
+// find#ShareGroups: the groups the caller may share a definition with, by name, as save#Definition accepts them: the
+// caller's own groups (own true; never the implicit ALL_USERS), and of the groups named those the caller may share with
+// though no member of them (the group's share artifact by the caller's own grant: a group no person is in, such as an
+// app's wall displays). A group named that is neither, or does not exist, is in refusedGroupIds. Nothing is granted
+// here: the save asks the same of the group it is given.
+function findShareGroups(p) {
+    signedIn()
+    const named = idList(p.groupIds).slice(0, NAMED_MAX)
+    const ownIds = Array.from(ec.user.getUserGroupIdSet() || []).filter(groupId => groupId !== "ALL_USERS")
+    const granted = named.filter(
+        groupId =>
+            !ownIds.includes(groupId) &&
+            /^[A-Za-z0-9_.:-]+$/.test(groupId) &&
+            ec.artifactExecution.isPermittedOwn(SHARE_ARTIFACT + "." + groupId, "AT_SERVICE", "update") === true
+    )
+    const ids = ownIds.concat(granted)
+    const groups = ids.length
+        ? Array.from(ec.entity.find("moqui.security.UserGroup").condition("userGroupId", "in", ids).disableAuthz().list())
+              .map(row => ({
+                  userGroupId: row.userGroupId,
+                  description: text(row.description) || row.userGroupId,
+                  own: ownIds.includes(row.userGroupId)
+              }))
+              .sort((a, b) => a.description.localeCompare(b.description))
+        : []
+    return {groups, refusedGroupIds: named.filter(groupId => !groups.some(group => group.userGroupId === groupId))}
+}
+
 // ===== find#ScreenSchedules =====
 // a timestamp is text of epoch milliseconds in a script (docs/dev/JS-Globals.md)
 const millis = value =>
@@ -363,7 +398,13 @@ function findScreenSchedules(p) {
     }
 }
 
-const operations = {getBusinessDataset, getBusinessDatasetOptions, findReportRecipients, findScreenSchedules}
+const operations = {
+    getBusinessDataset,
+    getBusinessDatasetOptions,
+    findReportRecipients,
+    findShareGroups,
+    findScreenSchedules
+}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown report read " + op)
