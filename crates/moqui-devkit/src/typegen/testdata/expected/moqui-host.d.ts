@@ -1272,6 +1272,8 @@ interface MoquiNotificationMessage {
     userId(userId: string): MoquiNotificationMessage;
     userIds(userIds: string[] | Set<string>): MoquiNotificationMessage;
     userGroupId(userGroupId: string): MoquiNotificationMessage;
+    /** Only the named users and group receive it, never a subscriber to every message of the topic; no argument is true. */
+    directOnly(flag?: boolean): MoquiNotificationMessage;
     message(message: MoquiMap | string): MoquiNotificationMessage;
     title(title: string): MoquiNotificationMessage;
     link(link: string): MoquiNotificationMessage;
@@ -1281,6 +1283,17 @@ interface MoquiNotificationMessage {
     persistOnSend(flag?: boolean): MoquiNotificationMessage;
     emailTemplateId(id: string): MoquiNotificationMessage;
     emailMessageSave(flag?: boolean): MoquiNotificationMessage;
+    /** A `NotificationReason` enumeration id, or the short name of a seeded one (`mention`, `approval`, ...). */
+    reason(reason: string): MoquiNotificationMessage;
+    reasonEnumId(enumId: string): MoquiNotificationMessage;
+    /** The record the notification is about. */
+    record(entityName: string, recordId?: string): MoquiNotificationMessage;
+    recordEntityName(entityName: string): MoquiNotificationMessage;
+    recordId(recordId: string): MoquiNotificationMessage;
+    /** Who did what the notification tells of; the current user when not set. */
+    actorUserId(userId: string): MoquiNotificationMessage;
+    /** The app root the notification comes from. */
+    appName(name: string): MoquiNotificationMessage;
     send(persist?: boolean): MoquiNotificationMessage;
     getTopic(): string;
     /** The `NotificationTopic` value of the topic, or null. */
