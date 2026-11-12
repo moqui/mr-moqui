@@ -5,9 +5,18 @@
 // mount's links to the browser and terminal (appLinks), leaves out the screens the mount does not offer and keeps its fixed
 // variables over a viewer's (in a panel inspect too); the mount's editor saves only its types and, where the mount shares in its own
 // screen, keeps a definition's group over a posted one; Tools' own Dashboards screens keep Tools' links, whatever a request sends.
+// The mount's policy (reportPolicy) beside its links: template/ReportMount.js answers both, every link key and every policy
+// field with its default; a screen under the mount reads the policy the mount set (the dashboard's range), whatever a request
+// sends, and Tools' own screens read Tools', whatever a request sends; with no mount the links and the policy are Tools' own,
+// and a value that is not a map is a mount with nothing in it. And the rule that keeps it so, read from the screens' sources
+// at no render's cost: Tools' two roots null every name of the mount, and no screen reads the two maps but through the module.
 // Run: ./moq test tools --spec ReportMounts
 const mount = "component://tools/test/screen/ReportMount.xml"
 const webroot = "component://webroot/screen/webroot.xml"
+const mountLib = "component://tools/template/ReportMount.js"
+const screens = "component://tools/screen"
+// the names a mounting root sets, which Tools' roots null
+const MOUNT_NAMES = ["reportLinks", "reportPolicy", "reportFixedVariables", "reportHiddenComponents", "reportDefinitionTypes"]
 const USER = "REPORT_MOUNTS_SPEC"
 const USERNAME = "report.mounts.spec"
 const GROUP = "REPORT_MOUNTS_SPEC"
@@ -46,6 +55,14 @@ function screen(root, path, parameters, method, mode) {
     }
 }
 const decoded = text => text.replace(/&quot;/g, '"').replace(/&amp;/g, "&")
+// The screen files under a directory, its subscreens' directories too.
+function screenFiles(location, found = []) {
+    for (const entry of ec.resource.getLocationReference(location).getDirectoryEntries()) {
+        if (entry.isDirectory()) screenFiles(entry.getLocation(), found)
+        else if (/\.xml$/.test(entry.getLocation())) found.push(entry.getLocation())
+    }
+    return found
+}
 function removeDefinitions() {
     sys(() => {
         for (const entityName of [
@@ -191,9 +208,12 @@ feature("a mounted editor offers the author's datasets without DASHBOARDS_APP, a
     }
 })
 
-feature("a mounted dashboard sends the mount's links and keeps its fixed variable; Tools' Dashboards keep Tools' links", {
+feature("a mounted dashboard reads the mount's links, policy and fixed variable; Tools' Dashboards keep Tools' own", {
     when() {
-        const board = screen(mount, "Board", {definitionId: boardId, "var-region": "US"}, null, "qvt")
+        // a mount's names sent as request parameters are not taken under the mount either: its root sets them
+        const sent = {reportPolicy: {range: {from: "now-999d"}, features: {alert: true}}}
+        const board = screen(mount, "Board", Object.assign({definitionId: boardId, "var-region": "US"}, sent), null, "qvt")
+        const state = JSON.parse(screen(mount, "Board/mountState", sent).output)
         const inspect = screen(mount, "Board/inspectPanel", {
             definitionId: boardId,
             panelId: "note",
@@ -202,7 +222,7 @@ feature("a mounted dashboard sends the mount's links and keeps its fixed variabl
         // Tools' own Dashboards app (ADMIN): the same dashboard with Tools' links, a mount's names sent as request parameters not
         // taken, and Home's edit going to Tools' editor
         login("john.doe")
-        const forged = {reportLinks: {definition: "/forged", dashboard: "/forged"}}
+        const forged = {reportLinks: {definition: "/forged", dashboard: "/forged"}, reportPolicy: sent.reportPolicy}
         const tools = screen(webroot, "apps/dashboards/Dashboard", Object.assign({definitionId: boardId}, forged), null, "qvt")
         const edit = screen(
             webroot,
@@ -210,11 +230,29 @@ feature("a mounted dashboard sends the mount's links and keeps its fixed variabl
             Object.assign({definitionId: boardId, definitionType: "dashboard"}, forged)
         )
         ec.user.internalLoginUser(USERNAME)
-        return {board, mounted: decoded(board.output), inspect, tools, toolsText: decoded(tools.output), edit}
+        return {board, mounted: decoded(board.output), state, inspect, tools, toolsText: decoded(tools.output), edit}
     },
-    then({board, mounted, inspect, tools, toolsText, edit}) {
+    then({board, mounted, state, inspect, tools, toolsText, edit}) {
         board.status == 200
         board.errors == ""
+        // the range the mount's policy names, not the request's
+        mounted.includes('"requestedTime":{"from":"now-90d","thru":"now"}')
+        !mounted.includes("now-999d")
+        // what the module answers under the mount: the links the mount gave (a key it left out is not offered), the policy
+        // it gave, and the default of each field it left out (a feature it did not name is not offered)
+        state.mounted == true
+        state.links.definition == "../Editor"
+        state.links.alertRule == null
+        state.links.split == null
+        state.links.drill == null
+        JSON.stringify(state.policy.range) == '{"from":"now-90d","thru":"now"}'
+        JSON.stringify(state.policy.features) == '{"alert":false,"share":true}'
+        state.policy.recipientCap == 25
+        JSON.stringify(state.policy.shareGroups) == '[{"value":"REPORT_MOUNTS_WALL","label":"Wall"}]'
+        state.policy.datasetIdPrefix == ""
+        state.policy.recipientPermissionId == null
+        state.policy.alertAudience == null
+        state.policy.calendar == null
         mounted.includes(
             '"appLinks":{"definition":"/Editor","panel":"/Editor","explore":"/Board","alertRule":null,"dashboard":"/Board"}'
         )
@@ -230,5 +268,55 @@ feature("a mounted dashboard sends the mount's links and keeps its fixed variabl
         edit.location.includes("/apps/dashboards/Definition")
         !toolsText.includes("/forged")
         !edit.location.includes("/forged")
+        // Tools' own range, whatever policy a request sends
+        toolsText.includes('"requestedTime":{"from":"now-7d","thru":"now"}')
+        !toolsText.includes("now-999d")
+    }
+})
+
+feature("with no mount the links and the policy are Tools' own; Tools' roots null the mount's names and one module reads them", {
+    when() {
+        const lib = ec.resource.script(mountLib)
+        const own = lib.state()
+        // a value that is not a map: a mount with nothing in it
+        ec.context.put("reportPolicy", "forged")
+        const empty = lib.state()
+        const emptyUrl = lib.url("dashboard")
+        ec.context.put("reportPolicy", null)
+        const nulling = MOUNT_NAMES.map(name => name + "=null").join(";")
+        const roots = ["/Dashboards.xml", "/System/Monitor.xml"].filter(
+            file =>
+                !String(ec.resource.getLocationText(screens + file) || "").includes(
+                    "<always-actions><script>" + nulling + "</script>"
+                )
+        )
+        const readers = screenFiles(screens + "/Dashboards")
+            .concat(screenFiles(screens + "/System/Monitor"))
+            .filter(location =>
+                /(context\.get\(|context\.)['"]?(reportLinks|reportPolicy)\b/.test(
+                    String(ec.resource.getLocationText(location) || "")
+                )
+            )
+        return {own, empty, emptyUrl, roots, readers}
+    },
+    then({own, empty, emptyUrl, roots, readers}) {
+        own.mounted == false
+        own.links.definition == "//apps/dashboards/Definition"
+        own.links.alerts == "//apps/dashboards/Alerts"
+        own.links.import == "//apps/dashboards/Home"
+        own.links.share == null
+        own.links.drill == null
+        JSON.stringify(own.policy) ==
+            '{"features":{"alert":true,"share":true},"range":{"from":"now-7d","thru":"now"},"datasetIdPrefix":"",' +
+                '"datasetScopeParameter":null,"recipientPermissionId":null,"reportEmailTemplateId":null,"alertAudience":null,' +
+                '"shareGroups":[],"recipientCap":null,"calendar":null}'
+        empty.mounted == true
+        Object.values(empty.links).every(link => link == null)
+        JSON.stringify(empty.policy.features) == '{"alert":false,"share":false}'
+        empty.policy.range.from == "now-7d"
+        // a transition's answer still has somewhere to go: Tools' screen, which opens to its own users only
+        emptyUrl == "//apps/dashboards/Dashboard"
+        roots.join(", ") == ""
+        readers.join(", ") == ""
     }
 })

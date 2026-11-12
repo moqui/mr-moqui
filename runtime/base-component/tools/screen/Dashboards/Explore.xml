@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Explore a dataset: search, filter pills, field values, log patterns, live tail, save a search or add a panel to a dashboard.
-    A screen that mounts it under another app (BOSS Insights › Explore) takes in its transitions, which then run at that screen's
-    path; adding a panel opens the app's Dashboard, Compare its Split and surrounding entries its log context, by the reportLinks
-    map of the app's root (docs/tools/Monitoring.md, "Mounting the report screens"), and a link the map leaves out is not offered.
-    The dataset choices are the datasets the viewer may read, and with no dataset chosen it opens on Tools' log dataset when the
-    viewer reads it, else on the first one. Saving is offered only where the mount has a definition editor (the viewer authors
-    there). -->
+    Another app shows it under its own root by location (BOSS Insights › Explore), or includes it in a screen of its own and
+    takes in its transitions, which then run at that screen's path (Monitor's Logs and Metrics); adding a panel opens the app's
+    Dashboard, Compare its Split and surrounding entries its log context, by the reportLinks map of the app's root
+    (docs/tools/Monitoring.md, "Mounting the report screens"; template/ReportMount.js), and a link the map leaves out is not
+    offered. The dataset choices are the datasets the viewer may read, and with no dataset chosen it opens on Tools' log dataset
+    when the viewer reads it, else on the first one; a viewer who reads none, and asks for none, is told so and nothing is
+    queried. The range, when the request names none, is the mount's (reportPolicy.range), else the last seven days. Saving is
+    offered only where the mount has a definition editor (the viewer authors there). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Explore" default-menu-index="3">
     <parameter name="filtersJson"/><parameter name="pillAction"/><parameter name="pillIndex"/><parameter name="pillField"/><parameter name="pillOperation"/><parameter name="pillValue"/><parameter name="pillLabel"/><parameter name="historyQuery"/>
     <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
@@ -26,11 +28,11 @@
     </transition>
     <transition name="trace"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
     <transition name="user"><default-response url="//apps/system/Security/UserAccount/UserAccountDetail"/></transition>
-    <transition name="context"><default-response url="${ec.context.get('reportLinks')?.logContext ?? '//apps/dashboards/LogContext'}"/></transition>
+    <transition name="context"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('logContext')}"/></transition>
     <transition name="visit"><default-response url="//apps/system/Visit/VisitList"/></transition>
     <transition name="tail" method="get" read-only="true">
         <actions><script><![CDATA[
-            const options = {datasetId:datasetId || 'otel_logs',from:from || 'now-7d',thru:'now',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),pageSize:100,
+            const options = {datasetId:datasetId || 'otel_logs',from:from || ec.resource.script('component://tools/template/ReportMount.js').state().policy.range.from,thru:'now',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),pageSize:100,
                 sort:cursor ? ['time','__cursor'] : ['-time','-__cursor']}
             if (cursor) options.cursor = JSON.parse(cursor)
             const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters(options).call()
@@ -59,10 +61,21 @@
                 datasetId,mode:'documents',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),retrievalMode:retrievalMode || 'lexical',pageSize:1000
             }]}
             ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added panel from Explore'}).call()
-        ]]></script></actions><default-response url="${ec.context.get('reportLinks')?.dashboard ?? '//apps/dashboards/Dashboard'}"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response>
+        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard')}"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response>
     </transition>
-    <transition name="split"><default-response url="${ec.context.get('reportLinks')?.split ?? '//apps/dashboards/Split'}"/></transition>
+    <transition name="split"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('split')}"/></transition>
     <actions><script><![CDATA[
+        // The mount (template/ReportMount.js): its default range, and its links: saving where it has a definition editor,
+        // Compare and surrounding entries where mounted. Then the datasets the viewer may read: with none of them and none
+        // asked for, by id or by a saved search, the screen says so and asks nothing more (it would otherwise open on Tools'
+        // log dataset and show that dataset's refusal).
+        const mount=ec.resource.script('component://tools/template/ReportMount.js').state()
+        exploreRange=mount.policy.range
+        exploreOffers={save:!!mount.links.definition,split:!!mount.links.split,context:!!mount.links.logContext,path:sri.buildUrl('.').path}
+        datasetList = ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
+        noDataset = !datasetId && !savedSearchId && datasetList.length===0
+    ]]></script>
+    <if condition="!noDataset"><script><![CDATA[
         if (savedSearchId) {
             const saved=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:savedSearchId}).call().definition
             if (saved.type !== 'search') throw new Error('This definition is not a saved search')
@@ -72,19 +85,14 @@
             retrievalMode=ec.web.parameters.retrievalMode ?? saved.body.retrievalMode
             filtersJson=ec.web.parameters.filtersJson ?? JSON.stringify(saved.body.filters || [])
         }
-        from = from || 'now-7d'; thru = thru || 'now'
+        from = from || exploreRange.from; thru = thru || exploreRange.thru
         savedSearches=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'search'}).call().definitions || []
         editableDashboards=(ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'dashboard'}).call().definitions || []).filter(definition=>!definition.readOnly && definition.ownerId===ec.user.userId)
-        datasetList = ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
         // With none chosen: Tools' log dataset where the viewer reads it, else the first dataset they may read.
         datasetId = datasetId || (datasetList.find(dataset=>dataset.id==='otel_logs') || datasetList[0] || {id:'otel_logs'}).id
         // A dataset the viewer may not read leaves its error as the message, not a render failure.
         datasetInfo = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId}).call().dataset || {id:datasetId,fields:[]}
         datasetFields = (datasetInfo.fields || []).filter(field=>field.aggregatable)
-        // the mount's links (reportLinks): saving where it has a definition editor, Compare and surrounding entries where mounted
-        const mountLinks=ec.context.get('reportLinks')
-        exploreOffers={save:!mountLinks || !!mountLinks.definition,split:!mountLinks || !!mountLinks.split,context:!mountLinks || !!mountLinks.logContext,
-            path:sri.buildUrl('.').path}
         if (historyQuery) queryString=historyQuery
         const pinKey='REPORT_PINNED_'+datasetId,historyKey='REPORT_HISTORY_'+datasetId
         filtersJson=filtersJson || ec.user.getPreference(pinKey) || '[]'
@@ -219,8 +227,9 @@
                 patternLines = Number(patterns.result.sourceCount || 0)
             }
         }
-    ]]></script></actions>
+    ]]></script></if></actions>
     <widgets>
+        <section name="ExploreDatasets" condition="!noDataset"><widgets>
         <label condition="!datasetList.length" text="No dataset is available to you yet." type="p"/>
         <container-row>
             <row-col md="6">
@@ -422,5 +431,9 @@
             <field name="documentJson"><default-field title="Document"><display style="m-report-export-only"/><container-dialog id="ExploreDocument" button-text="View document"><code-view text="${documentJson}" language="json"/></container-dialog></default-field></field>
         </form-list>
         </widgets></section>
+        </widgets><fail-widgets>
+            <label text="No dataset is available to you yet." type="p"/>
+            <label text="A dataset is read by its own grant, and a business dataset once its steward admits it." type="p" style="m-muted"/>
+        </fail-widgets></section>
     </widgets>
 </screen>

@@ -415,8 +415,10 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   service and entity detail do.
 - **Reusing the dashboard list.** `Dashboards/Home.xml`'s links run through its own transitions (`dashboard`, `star`,
   `edit`, `new`, `explore`), so a screen that includes it takes them in with `transition-include`, as
-  `Dashboards/Panels.xml` and BOSS Insights › Dashboards do. A dashboard then opens in that screen's sibling `Dashboard`
-  screen (in BOSS, Insights › Dashboard); editing and Explore open the Dashboards app.
+  `Dashboards/Panels.xml` and BOSS Insights › Dashboards do. With no mount a dashboard then opens in that screen's
+  sibling `Dashboard` screen, and editing and Explore open the Dashboards app; under a mount each goes where the
+  mount's `reportLinks` send it ([below](#mounting-the-report-screens): in BOSS, Insights › Dashboard, its editors and
+  Report builder › Explore), and a link the mount does not offer is not shown.
 - **Definitions.** Dashboards, library panels, datasets, saved searches, alert rules and report schedules are JSON in
   `moqui.report.Definition`, with versions (diff and restore) and references (the "used in" lists, export and
   import). Components ship them as `report/*.json`, one file each with `id`, `type`, `title` and `body`; shipped ones
@@ -449,39 +451,91 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
 
 ### Mounting the report screens
 
-An app mounts the Dashboards screens under its own root (BOSS Insights does: impl-insights P2) with a screen of its own
-per Tools screen that includes it (`include-screen share-scope="true"`) and takes in its transitions
-(`transition-include`): Home (the list, with `definitionType` set), Dashboard, Definition, Panels, Explore, Split and
-Playlist. The screens run under the app's authorization; using them needs no `DASHBOARDS_APP` or
+An app shows the Dashboards screens under its own root (BOSS Insights does: impl-insights P2,
+[plans/Admin-Screens-Down.md](../../plans/Admin-Screens-Down.md) Track I), each in one of two ways:
+
+- **By location**: a `subscreens-item` of the app names the Tools screen file. Every transition of the screen is then
+  on the app's route, so this is for a screen with nothing that only an instance administrator may do, that no grant of
+  the app names, and to which the app adds nothing.
+- **Included**: a screen of the app's own includes the Tools screen (`include-screen share-scope="true"`) and takes in
+  the transitions it wants (`transition-include`); a transition it does not take in does not exist on its route. The
+  app's screen can then carry a grant of its own, set what depends on the request in its `always-actions`, and put its
+  own parts around the Tools screen.
+
+| Tools screen | How an app shows it | In BOSS Insights |
+|---|---|---|
+| Home (the list) | Included, with `definitionType` set; `dashboard`, `star`, `edit`, `new` and `explore` taken in | Dashboards |
+| Dashboard | Included; `edit`, `setVariable`, `exportPanel`, `inspectPanel`, `duplicatePanel` and `removePanel` taken in; the app's screen sets `reportFixedVariables` | Dashboard, with the organization in scope, sharing and the measures' meaning around it |
+| Definition | Included, once for each editor; `save`, `copy`, `restore`, `delete`, `export`, `reference` and `dashboard` taken in (never `import`, unless the app mounts it); the app's screen sets `reportDefinitionTypes` and carries the authors' grant | DashboardEditor, PanelDetail |
+| Panels | By location | Library panels |
+| Explore | By location | Report builder › Explore |
+| Split | By location | Report builder › Compare, hidden from the menu |
+| Playlist | Included; `data` taken in | Playlists, with its own list around the player |
+
+The other Dashboards screens (Datasets, Reports, Alerts, AlertRule, AlertShared, Annotations, Git sync, Log context)
+are not shown by an app yet: Alerts, AlertRule and AlertShared link each other in the Dashboards app, and Insights has
+screens of its own for datasets, scheduled reports and alerts (its Playlists takes in Reports' `createPlaylist`
+alone). The screens run under the app's authorization; using them needs no `DASHBOARDS_APP` or
 `REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses and each dataset's own artifact.
 
 The app's root sets, in its `always-actions` so that the transitions read them too:
 
 | Context | What it does |
 |---|---|
-| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the app's drill screen, which each panel's menu then offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`; Tools mounts none). Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the app's drill screen, which each panel's menu then offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`; Tools has none). Without a mount the screens keep Tools' own (`//apps/dashboards/...`; the list opens a dashboard in its sibling `Dashboard`); under a mount a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `split` or `logContext` hides Explore's Compare and Surrounding entries; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted. `alerts` (the alert list) and `alertShared` (a shared contact point, silence or mute timing) are keys of the contract that no screen reads yet |
+| `reportPolicy` | What the app's policy is for the report screens it shows (the table below). Data only: a screen shown under a mount still asks its service, and the service decides |
 | `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
 | `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
 | `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
 
+`reportPolicy`'s fields, each with what Tools' own screens do, which is also what a mount gets for a field it leaves
+out, but for the features: a mount offers one only when its map says so.
+
+| Field | What it is | With no mount | Read by |
+|---|---|---|---|
+| `features.alert` | Whether the viewer may set an alert rule here | true | no screen yet (the alert screens) |
+| `features.share` | Whether the viewer may share a dashboard of their own here | true | no screen yet (Dashboard's sharing) |
+| `range` | `{from, thru}`: the range a screen opens on when the request names none | `now-7d` to `now` | Dashboard (and its panel export and inspect), Explore (and its tail) |
+| `datasetIdPrefix` | What the id of a dataset created here starts with | none | no screen yet (the dataset screens) |
+| `datasetScopeParameter` | The scope policy's parameter a dataset form asks for, sent in `rowFilterParameters` | none asked | no screen yet (the dataset screens) |
+| `recipientPermissionId` | The permission a person holds to be proposed as a recipient | the engine's own rule | no screen yet (report delivery, alerts) |
+| `reportEmailTemplateId` | The `EmailTemplate` of a delivered report | the engine's | no screen yet (report delivery) |
+| `alertAudience` | `{topic, emailTemplateId, detailLink}`: the fixed parts of an alert rule told to an audience of users and groups | contact points, as Tools' rules have | no screen yet (the alert screens) |
+| `shareGroups` | `[{value, label}]`: groups a definition may be shared with beside the viewer's own | none | no screen yet (Dashboard's sharing) |
+| `recipientCap` | The most recipients a group delivery is saved and checked with | the engine's | no screen yet (report delivery, alerts) |
+| `calendar` | `{timeZone, weekOffset}`: the zone calendar buckets are cut in and a week bucket's offset | the viewer's zone, the instance's week | no screen yet (analysis) |
+
+`tools/template/ReportMount.js` is the one reader of the two maps: `state()` gives `{mounted, links, policy}` in a
+screen's actions, every link key present (null when not offered) and every policy field with its default, and
+`url(key)` is a transition's response, the mount's screen or Tools' own. A screen never reads `reportLinks` or
+`reportPolicy` from the context itself. A value that is not a map is a mount with nothing in it: no link is offered and
+no feature.
+
 Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
-`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`), and Explore's count over time carries its own
-`explore`; the panel menu, the `e` key, Explore from a panel, a filter outside a dashboard and the duplicate and remove
-posts use them, and a dashboard without them uses Tools' screens. Under a mount the editor's dataset choices are the
-datasets the author may read (`list#Datasets`, each dataset's artifact), a new panel starts on the first of them, and
-Explore and Split open on one of them. A panel the viewer may not read (a dataset refused, a failed query) says "Not
+`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`, and `drill` where the mount has one), and
+Explore's count over time carries its own `explore`; the panel menu, the `e` key, Explore from a panel, a filter outside
+a dashboard and the duplicate and remove posts use them, and a dashboard without them uses Tools' screens. Under a mount
+the editor's dataset choices are the datasets the author may read (`list#Datasets`, each dataset's artifact), a new
+panel starts on the first of them, and Explore and Split open on one of them. A viewer who reads no dataset, and asks
+for none, is told so by Explore and Split, which then query nothing (under Tools too), where they would open on a
+telemetry dataset and show its refusal. A panel the viewer may not read (a dataset refused, a failed query) says "Not
 available" with the reason, never "No data". Saving a definition still checks every dataset it references as the
 author, so a copy of a dashboard over a dataset the author may not read is refused until the dataset is granted.
 
 Request parameters are names in a screen's context, so these names are set only by screens: Tools' Dashboards and
-Monitor roots set them to null, and a mount sets each in `always-actions` of the screen that reads it.
+Monitor roots set all five to null, and a mount sets each in `always-actions`, its root's or those of the screen that
+reads it.
 
 The mount's root grant is inherited by the screens it mounts (impl-admin F34): deny, on the screens of an area only some
 groups use, the root's groups and grant the others there, and take in only the transitions the area needs. An
 inheritable `AUTHZT_ALWAYS` on a screen passes every deny below it, including the engine operations' own, so grant such
 an area with `inheritAuthz="N"` on the screen and on its transitions by name (`AT_XML_SCREEN_TRANS`, `<screen>/<transition>`,
-as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. The regression
-spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`.
+as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. A
+grant names the app's own screen, never a Tools location, which would open the screen in the Dashboards app too. The
+regression spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`: the
+links, the policy and its defaults under the mount, with no mount and with a forged request parameter, and, read from
+the screens' sources, that both Tools roots null the five names and that no screen reads the two maps but through the
+module.
 
 ### Business datasets
 

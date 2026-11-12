@@ -9,8 +9,8 @@
     mount's own (its share link): the editor's save keeps the definition's group as it is, whatever group is posted. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Definition" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="definitionType"/><parameter name="leftVersion"/><parameter name="rightVersion"/>
-    <transition name="reference"><default-response url="${ec.context.get('reportLinks')?.[definitionType === 'panel' ? 'panel' : 'definition'] ?? '//apps/dashboards/Definition'}"/></transition>
-    <transition name="dashboard"><default-response url="${ec.context.get('reportLinks')?.dashboard ?? '//apps/dashboards/Dashboard'}"/></transition>
+    <transition name="reference"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url(definitionType === 'panel' ? 'panel' : 'definition')}"/></transition>
+    <transition name="dashboard"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard')}"/></transition>
     <transition name="save" method="post" authz-action="update">
         <actions><script><![CDATA[
             const body=JSON.parse(definitionJson || '{}')
@@ -20,7 +20,7 @@
             const type=definitionType || 'dashboard', mountTypes=ec.context.get('reportDefinitionTypes')
             if (Array.isArray(mountTypes) && mountTypes.length && !mountTypes.includes(type)) throw new Error('This editor saves only '+mountTypes.join(', ')+' definitions')
             let userGroupId=definitionUserGroupId || null
-            if (ec.context.get('reportLinks')?.share) {
+            if (ec.resource.script('component://tools/template/ReportMount.js').state().links.share) {
                 userGroupId=null
                 if (definitionId) {
                     ec.message.pushErrors()
@@ -52,7 +52,7 @@
     </transition>
     <transition name="delete" method="post" authz-action="delete">
         <actions><service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/></actions>
-        <default-response url="${ec.context.get('reportLinks')?.dashboards ?? '//apps/dashboards/Home'}"/><error-response url="."/>
+        <default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboards')}"/><error-response url="."/>
     </transition>
     <transition name="export" method="get" read-only="true">
         <actions><script><![CDATA[
@@ -62,18 +62,17 @@
     <transition name="import" method="post" authz-action="create">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.report.ReportServices.import#Definitions').parameters({bundle:JSON.parse(importJson),idPrefix:idPrefix || ''}).call()
-        ]]></script></actions><default-response url="${ec.context.get('reportLinks')?.import ?? '//apps/dashboards/Home'}"/>
+        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('import')}"/>
     </transition>
     <actions><script><![CDATA[
         // The datasets the author may read (each dataset's own artifact), and the mount's links and types.
         datasetOptions=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
-        const mountLinks=ec.context.get('reportLinks')
+        const mountLinks=ec.resource.script('component://tools/template/ReportMount.js').state().links
         const allTypes=['dashboard','panel','dataset','search','alert','report']
         const mountTypes=ec.context.get('reportDefinitionTypes')
         definitionTypeOptions=(Array.isArray(mountTypes) && mountTypes.length ? allTypes.filter(type=>mountTypes.includes(type)) : allTypes).map(type=>({type}))
         if (!definitionId && !definitionTypeOptions.some(option=>option.type===definitionType)) definitionType=definitionTypeOptions[0].type
-        definitionOffers={import:!mountLinks || !!mountLinks.import,share:!mountLinks || !mountLinks.share,
-            panelEditor:sri.buildUrl(mountLinks ? mountLinks.panel || '.' : '//apps/dashboards/Definition').path}
+        definitionOffers={import:!!mountLinks.import,share:!mountLinks.share,panelEditor:sri.buildUrl(mountLinks.panel || '.').path}
         // a new panel starts on Tools' log dataset where the author reads it, else on the first dataset they may read
         const firstDataset=(datasetOptions.find(dataset=>dataset.id==='otel_logs') || datasetOptions[0] || {id:'otel_logs'}).id
         definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:'New panel',visualization:'table',queries:[{datasetId:firstDataset,mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',paper:'letter',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}

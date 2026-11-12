@@ -54,10 +54,13 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
 - `adminMount` (nulled in `T/screen/System.xml`, set in `B/screen/Admin.xml`): `routes` `{key: {url, idParameter,
   parameters, plain}}` keyed by the registrations' `ownerRoute` and `linkKey` values, framework keys defaulting to
   relative paths; optional `hide` list.
-- `reportPolicy` (beside `reportLinks`): `features {alert, share}`, `range`, `datasetIdPrefix`,
-  `datasetScopeParameter`, `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`,
-  `recipientCap`, `calendar`. New `reportLinks` keys `alerts`, `alertShared`, `wallDisplay`; `drill` gains a Tools
-  default.
+- `reportPolicy` (beside `reportLinks`; nulled in `T/screen/Dashboards.xml` and `T/screen/System/Monitor.xml`, set in
+  `B/screen/Insights.xml`): `features {alert, share}`, `range`, `datasetIdPrefix`, `datasetScopeParameter`,
+  `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`, `recipientCap`, `calendar`, each
+  described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens). `reportLinks` has the keys
+  `alerts` and `alertShared` since I0; `wallDisplay` and a Tools default for `drill` come with their screens (I4).
+- `T/template/ReportMount.js`: `state()` gives `{mounted, links, policy}`, every key and field present, and
+  `url(key, own)` is a transition's response. It is the one reader of both maps.
 - `T/template/AdminMount.js`: `state()` gives `{mounted, raw, routes}`, `raw()` is a transition's condition. `raw` is
   true when there is no mount and the user opens System by its own grant. Every raw transition carries the condition.
 - Capabilities are `ec.user.hasPermission('ADMIN_*')` and the services' own refusals. `AdminCalls.js` (`read`,
@@ -157,7 +160,7 @@ Tools gets the generic screens, each reading and writing only through `ReportSer
 | Drill, Analysis | new generic screens | S: scope, meaning, record links, cost filter; organization calendar |
 | Dashboard | `share` transition and dialog (owner only; own groups plus `reportPolicy.shareGroups`) | W |
 | Playlists, WallDisplay | new list, create and share screen; the hardened kiosk player | S (devices, display share); W |
-| Explore, Split, Panels | the "no readable dataset" guard and default range move into Explore | D |
+| Explore, Split, Panels | the "no readable dataset" guard moves into Explore and Split, the default range into Explore (and Dashboard); Panels carries its menu image | D (the record's I0) |
 
 New `ReportServices` operations (`F/service/org/moqui/report/ReportReads.js`): `get#BusinessDataset`,
 `get#BusinessDatasetOptions`, `find#ReportRecipients`, `find#ScreenSchedules`, `store#ScreenSchedule`; `ownerName` in
@@ -168,7 +171,7 @@ ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
 
 | Phase | mr-moqui | mr-boss | Specs |
 |---|---|---|---|
-| I0 Contract | `reportPolicy` nulled at `Dashboards.xml` and `System/Monitor.xml`; `ReportMount.js`; Explore guard; Monitoring.md | root sets `reportPolicy`; direct-mount Panels, Explore, Split | `ReportMounts`, `InsightsAccess` |
+| I0 Contract | `reportPolicy` nulled at `Dashboards.xml` and `System/Monitor.xml`; `ReportMount.js`, which every Dashboards screen reads the links through; Explore and Split guard; Monitoring.md | root sets `reportPolicy`; direct-mount Panels, Explore, Split | `ReportMounts`, `InsightsAccess` |
 | I1 Datasets | two operations; four screens; `ReportDatasets.js` | four wrappers; two rows | `BusinessDatasets`; `InsightsDatasets` |
 | I2 Delivery | recipient and screen-schedule operations, `ownerName`; three screens; `Reports.xml` trimmed | items re-pointed; three rows | `ReportAudience`; `InsightsDelivery`, `InsightsSettings` |
 | I3 Alerts (after I2) | merged list and editor; `ReportAlerts.js` | two wrappers; `Alerts.js` deleted | `AdminOverview`; `InsightsAlerts` |
@@ -554,3 +557,121 @@ detail with its retry, the export wizard's review of the framework's own target,
 `moqui lint --screens` with no parse failure and no flagged site in the changed screens, `moqui lint` of the two
 changed service files. Changed and not run: mr-boss's acceptance `AdminReviewWalk` (the export service's name) and the
 sweeps' screen list comment in `AdminSpecLib.js` (`AdminTui`, `AdminServerStatic`).
+
+### I0 Contract (Nov 11, 2026)
+
+Built: `tools/template/ReportMount.js`, the one reader of a report mount's two maps: `state()` answers `{mounted,
+links, policy}`, every link key present (null where not offered) and every policy field with its default, and
+`url(key, own)` is a transition's response (the mount's screen, else the screen's own default, else Tools'). The seven
+Dashboards screens that read `reportLinks` themselves (Home, Dashboard, Definition, Explore, Datasets, Reports,
+Playlist; twenty places) read through it. `reportPolicy` is the second map: `Dashboards.xml` and `System/Monitor.xml`
+null it with the other four names, and the fields are described in Monitoring.md, whose mount section also has the
+table of which report screen an app shows how. Explore and Split say that the viewer reads no dataset, and query
+nothing, when none is readable and none is asked for (by id, or for Explore by a saved search); Explore, its tail and
+Dashboard with its panel export and inspect open on the mount's range when the request names none. Panels has a menu
+image. The link keys `alerts` and `alertShared` are in the contract with Tools' own screens as their defaults; no
+screen reads them yet. In mr-boss: `get#Context` answers `reportPolicy` and `Insights.xml` sets it beside
+`reportLinks` (a wall display's request gets the range alone); Panels, Explore and Split are mounted by location and
+their three files deleted; `reportLinks` has `alerts` (the Rules list) and `alertShared` (null); `InsightsAccess` holds
+the reader's and the author's policy and the framework's guard on Explore's one render; the acceptance sweeps take the
+screens mounted by location from `InsightsSpecLib.mountedScreens`.
+
+What each field of `reportPolicy` stands for in Insights today, its value there, and its phase:
+
+| Field | What Insights does today | Insights' value | With no mount | Used from |
+|---|---|---|---|---|
+| `features.alert` | `Alerts.js` lets a holder of `INSIGHTS_AUTHOR` or `INSIGHTS_DISTRIBUTE` set a rule; the same two decide `reportLinks.alertRule` | the two permissions | true | I3 |
+| `features.share` | Dashboard's `shareable` and `share#Dashboard` need `INSIGHTS_AUTHOR` | the permission | true | I4 |
+| `range` | `get#Context`'s defaults, which the Explore and Dashboard wrappers put in `from` and `thru` | `now-30d` to `now` | `now-7d` to `now` | I0: Explore, Dashboard |
+| `datasetIdPrefix` | `Datasets.js` `createdPrefix` | `insights-` | none | I1 |
+| `datasetScopeParameter` | the dataset forms' "Organization field", sent as `rowFilterParameters.organizationField` (Mantle's scope policy's parameter) | `organizationField` | none asked | I1 |
+| `recipientPermissionId` | `Delivery.js` `readerIds`: only holders of `INSIGHTS_VIEW` are proposed or accepted as recipients, of a schedule and of an alert | `INSIGHTS_VIEW` | the engine's own rule | I2, I3 |
+| `reportEmailTemplateId` | `Delivery.js` `TEMPLATE`, sent with every `store#Schedule` | `BOSS_INSIGHTS_REPORT` | the engine's | I2 |
+| `alertAudience` | `Alerts.js` `TOPIC`, `TEMPLATE` and `DETAIL_LINK`, written into every rule in place of contact points | the topic `InsightsBusinessAlert`, the template `BOSS_INSIGHTS_ALERT`, the link to AlertDetail | contact points | I3 |
+| `shareGroups` | `get#ShareGroups` adds the wall displays' group to the sharer's own groups, and `share#Dashboard` accepts it | `BOSS_INSIGHTS_DISPLAY`, "Wall displays" | none | I4 |
+| `recipientCap` | `Insights.js` `recipientCap`: the organization's setting under the instance ceiling, sent with every schedule, audience check and alert rule | not set by the root (F44) | the engine's | I2, I3 |
+| `calendar` | `Insights.js` `calendarParameters`: the organization's display zone and week start as `time_zone` and a week bucket's `offset`, in Analysis' queries | those of the organization in scope, null where it set none | the viewer's zone, the instance's week | I4 |
+
+No field of the plan's list is left out: each has a present use in Insights.
+
+The three wrappers, and where what each did is now:
+
+| Wrapper | What it did | Now |
+|---|---|---|
+| Panels | included Tools' Panels and took in Home's `dashboard`, `star`, `edit`, `new` and `explore` | Tools' Panels takes them in itself |
+| | set `definitionType` to panel | Tools' Panels sets it |
+| | menu title, index 3 and image | the `subscreens-item` in `Insights.xml` (title, index); the image is Tools' Panels' (F46) |
+| Explore | took in all nine transitions of Tools' Explore | on the route by location |
+| | `from` defaulted to Insights' range | `reportPolicy.range`, read by Explore (`thru` too) |
+| | the "no dataset" sentence for a viewer who reads none and asks for none, in place of the screen | Tools' Explore, with no mount too |
+| | menu index 1 under Report builder | the `subscreens-item` in `ReportBuilder.xml` |
+| | declared only `datasetId` and `savedSearchId` as its parameters | Tools' Explore declares all of its own (F45) |
+| Split | included Tools' Split, hidden from the menu | the `subscreens-item`, `menu-include="false"` |
+
+Findings:
+
+- F39. Insights' root grant is an inheritable allow for its users (an always-allow only for `ADMIN`), and
+  `BOSS_INS_REPORT_ENGINE` denies them every `ReportServices` operation that a capability group is not granted. So a
+  Dashboards screen mounted by location is opened by the root and each operation it calls is still checked: the rule for
+  a direct mount holds more easily here than under Admin's area grants. No row of `BossSetupData.xml` names Panels,
+  Explore or Split or a transition of one (the nearest, `BOSS_INS_LEGACY`'s old patterns over Dashboards and
+  ReportBuilder, are plain names since P4 and match nothing), nothing includes the wrappers by location, and every link
+  to them is by path, which is unchanged.
+- F40. There was no `Report*.js` in `tools/template`; the links were read in place, each with Tools' default beside it.
+  The module now holds each key's default once, and `ReportMounts`' static rule fails for a screen under
+  `screen/Dashboards` or `screen/System/Monitor` that reads `reportLinks` or `reportPolicy` from the context itself.
+  mr-boss's own screens still read `reportLinks` directly (Playlists, Home), as their own map.
+- F41. There is a mount when either map is set. A value that is not a map (a request parameter under a root that set
+  none) is a mount with nothing in it, as F2: no link is offered, and neither feature. Under a mount a feature is
+  offered only when the policy says so; every other field a mount leaves out has Tools' value.
+- F42. The guard holds with no mount too, where a user who reads no dataset was shown Tools' log dataset's refusal.
+  Its first sentence is the one Explore already had ("No dataset is available to you yet.", which mr-l10n
+  translates), followed by how a dataset comes to be read. Split has the same guard; its ranges keep their own
+  defaults (a week and the week before), since Explore sends its range when it opens Compare.
+- F43. Dashboard reads its default range from the policy as well, so the contract's rule (the policy a mount sets is
+  what a screen under it reads; a forged one is ignored under Tools) is carried by the two dashboard renders
+  `ReportMounts` already had, and no render is added. Insights' Dashboard wrapper still sets `from` and `thru` itself,
+  to the same values; I4 can drop those two lines. Playlist's three `now-7d` defaults are not changed (I4).
+- F44. The root does not set `recipientCap`. Reading it is a call for the instance ceiling and the settings of the
+  active organization, or of up to 50 organizations for an administrator of all with none active, on every Insights
+  request. The plan already has the Scheduled reports area add it (I2); the Alerts area does the same in I3. The
+  `calendar` is that of the organization in scope at the root (the active one, or the only one); a screen with an
+  organization choice of its own (Analysis) sets its own.
+- F45. A screen mounted by location declares all of its parameters on the app's route. Explore declares twenty, the
+  wrapper declared two, so a link to it carries more of the linking screen's context (F24): the Report builder's tab
+  to Explore from DatasetView carried the dataset and now carries that screen's range, query and `pageIndex` too
+  (seen in the menu's data), so Explore opens on the same page number of its own list. Tools' own menu does this
+  between Dashboards screens. Not changed here: the choice is this or a wrapper kept only to declare less; I1 should
+  settle it when DatasetView is rewritten.
+- F46. A `subscreens-item` has no menu image, so an item mounted by location shows the screen's own. Tools' Panels has
+  Insights' image now, and is the only item of the Dashboards menu with one.
+- F47. The Insights sweeps list its screens from its own files, as Admin's did (F14): `InsightsSpecLib.mountedScreens`
+  reads the items of the root and the areas that name a Dashboards screen, for `InsightsTui` and
+  `InsightsServerStatic`.
+- F48. The policy's fixed values (the dataset prefix, the alert topic, the two templates, the detail link) are written
+  twice in mr-boss until I1 to I3 delete the modules that use them: in `Insights.js` `reportPolicy` and in
+  `Datasets.js`, `Delivery.js` and `Alerts.js`.
+- F49. For I1: `datasetScopeParameter` is a name only. The form's label and help ("Organization field", "The field
+  that carries each row's organization") are Insights' words, and with no mount the framework's own scope policy
+  takes `groupField`, Mantle's `organizationField`: the parameter belongs to the policy chosen, not to the app, so I1
+  may do better to read it from the scope policy's registration.
+- F50. For I2 to I4: `recipientPermissionId`, `shareGroups` and `recipientCap` are data a Tools transition would pass
+  on. They cannot be forged (the roots set or null the map), but what they allow must be decided by the service called:
+  the engine's `save#Definition` stores the group it is given without asking whether the saver belongs to it
+  (`definitions.rs`), where `share#Dashboard` refuses a group that is neither the sharer's own nor the wall displays'.
+- F51. Explore's `tail` and `remember` fall back to Tools' log dataset when a request names no dataset, by location
+  as under the wrapper; the page always sends one, and the engine refuses the rest.
+- F52. No recorded agent replay names a screen or a sentence of this phase (not replayed).
+
+Tests: `./moq test tools --nobuild` (72 features, 3.3 s of 4 s; `ReportMounts` has three: the mounted dashboard's
+existing render now also holds the mount's range over a forged one, a new transition of the test mount answers
+`state()` under it, Tools' dashboard render holds Tools' range over a forged policy, and a third feature with no render
+holds the defaults with no mount, a value that is not a map, the two roots' nulling and the one-reader rule; each of
+the last two was seen to fail with the nulling removed and with a direct read added);
+`./moq test mr-boss --nobuild --spec InsightsAccess --spec InsightsDashboards --spec InsightsHome` (12 features);
+`cargo test -p moqui-host --test it tools_screens -- --ignored` (Monitor's Logs, Metrics and Compare include the
+changed screens; 27 s) and, of the same binary by name, `monitor_tui::`, `monitor_readers::`,
+`report_embed_renders_the_dashboard_for_a_signed_in_viewer_only` and `report_documents::` (every changed Dashboards
+screen in html or the terminal; 6 pass, 3 need a server that is not there); `moqui lint --screens` with no parse
+failure and no flagged site that is new, `moqui lint` of `ContextServices.xml`. Changed and not run: mr-boss's
+acceptance `InsightsTui` and `InsightsServerStatic` (the screens mounted by location added to their lists).

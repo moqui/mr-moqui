@@ -8,9 +8,11 @@ Their access is three artifact groups granted to `ADMIN`: `TOOLS_APP` and `SYSTE
 and `DASHBOARDS_APP` (`data/MonitoringSecurityData.xml`). Monitor has no group of its own: the telemetry datasets and
 its services and entities are members of `SYSTEM_APP`.
 
-Another app may mount the Dashboards screens under its own root, as BOSS Insights does
-([Mounting the report screens](../../../docs/tools/Monitoring.md#mounting-the-report-screens)); `test/screen/` holds
-the test mount of the ReportMounts spec.
+Another app may show the Dashboards screens under its own root, as BOSS Insights does
+([Mounting the report screens](../../../docs/tools/Monitoring.md#mounting-the-report-screens)): its root sets
+`reportLinks` (where each report link goes) and `reportPolicy` (the app's policy for the screens, as data), which
+`template/ReportMount.js` reads for the screens, and Tools' own roots null. `test/screen/` holds the test mounts of the
+ReportMounts and AdminMounts specs.
 
 ## Tools
 

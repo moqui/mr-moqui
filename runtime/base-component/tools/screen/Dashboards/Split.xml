@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- Compare two ranges or two versions of a dataset, Explore's included region. A screen may mount it under another app (BOSS
-    Insights › Split); its dataset choices are the datasets the viewer may read, and the request rate, error and duration charts
-    show only to a viewer who reads Tools' request metric (otel_metrics). -->
+<!-- Compare two ranges or two versions of a dataset, Explore's included region. Another app shows it under its own root by
+    location (BOSS Insights › Split) or includes it (Monitor's Compare); its dataset choices are the datasets the viewer may
+    read, a viewer who reads none and asks for none is told so and nothing is queried (as Explore), and the request rate,
+    error and duration charts show only to a viewer who reads Tools' request metric (otel_metrics). Its ranges, when the
+    request names none, are the last week and the week before, under a mount too: Explore sends its own. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Compare" default-menu-include="false">
     <parameter name="datasetId"/><parameter name="queryString"/><parameter name="from"/><parameter name="thru"/>
     <parameter name="compareFrom"/><parameter name="compareThru"/><parameter name="leftVersion"/><parameter name="rightVersion"/><parameter name="serviceName"/>
@@ -10,6 +12,9 @@
         // the datasets the viewer may read; with none chosen, Tools' spans where the viewer reads them, else the first
         datasetList=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
         redAvailable=datasetList.some(dataset=>dataset.id==='otel_metrics')
+        noDataset=!datasetId && datasetList.length===0
+    ]]></script>
+    <if condition="!noDataset"><script><![CDATA[
         datasetId=datasetId || (datasetList.find(dataset=>dataset.id==='otel_spans') || datasetList[0] || {id:'otel_spans'}).id;from=from || 'now-7d';thru=thru || 'now'
         // Two versions usually run in the same range (a canary or a rolling deploy), so the second range defaults to the first then.
         compareFrom=compareFrom || (rightVersion ? from : 'now-14d');compareThru=compareThru || (rightVersion ? thru : 'now-7d')
@@ -59,8 +64,9 @@
         }
         for (const version of [leftVersion,rightVersion]) if (version) versions.add(String(version))
         versionOptions=Array.from(versions).sort().map(value=>({value,text:value}))
-    ]]></script></actions>
+    ]]></script></if></actions>
     <widgets>
+        <section name="CompareDatasets" condition="!noDataset"><widgets>
         <form-single name="CompareOptions" transition=".">
             <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetList" key="${id}" text="${title || id}"/></drop-down></default-field></field>
             <field name="queryString"><default-field title="Shared query"><text-line size="70"/></default-field></field>
@@ -86,5 +92,9 @@
         <label text="Each pane shows at most 1,000 documents. Missing telemetry does not establish health." type="p"/>
         <container-row><row-col md="6"><report-panel frame="leftFrame" panel="{title:'First range',visualization:'table'}"/></row-col>
             <row-col md="6"><report-panel frame="rightFrame" panel="{title:'Second range',visualization:'table'}"/></row-col></container-row>
+        </widgets><fail-widgets>
+            <label text="No dataset is available to you yet." type="p"/>
+            <label text="A dataset is read by its own grant, and a business dataset once its steward admits it." type="p" style="m-muted"/>
+        </fail-widgets></section>
     </widgets>
 </screen>

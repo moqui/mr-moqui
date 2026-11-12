@@ -15,11 +15,11 @@
             let recent=[];try {recent=JSON.parse(ec.user.getPreference('REPORT_RECENT') || '[]')}catch(_){}
             recent=Array.isArray(recent)?recent:[]
             ec.user.setPreference('REPORT_RECENT',JSON.stringify([definitionId,...recent.filter(id=>id!==definitionId)].slice(0,20)))
-        ]]></script></actions><default-response url="${ec.context.get('reportLinks')?.dashboard ?? '../Dashboard'}"><parameter name="definitionId"/></default-response>
+        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard', '../Dashboard')}"><parameter name="definitionId"/></default-response>
     </transition>
-    <transition name="edit"><default-response url="${ec.context.get('reportLinks')?.[definitionType === 'panel' ? 'panel' : 'definition'] ?? '//apps/dashboards/Definition'}"/></transition>
-    <transition name="new"><default-response url="${ec.context.get('reportLinks')?.[definitionType === 'panel' ? 'panel' : 'definition'] ?? '//apps/dashboards/Definition'}"/></transition>
-    <transition name="explore"><default-response url="${ec.context.get('reportLinks')?.explore ?? '//apps/dashboards/Explore'}"/></transition>
+    <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url(definitionType === 'panel' ? 'panel' : 'definition')}"/></transition>
+    <transition name="new"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url(definitionType === 'panel' ? 'panel' : 'definition')}"/></transition>
+    <transition name="explore"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('explore')}"/></transition>
     <transition name="star" method="post" authz-action="update">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call()
@@ -46,8 +46,8 @@
             (!tag || (Array.isArray(definition.body.tags)?definition.body.tags:[]).includes(tag)) && (starredOnly!=='Y' || definition.isStarred))
         definitions.sort((a,b)=>a.folderName.localeCompare(b.folderName) || a.title.localeCompare(b.title))
         // The mount's links: no editor (null) for a viewer who does not author there, no Explore where it is not mounted.
-        const mountLinks=ec.context.get('reportLinks')
-        homeOffers={edit:!mountLinks || !!mountLinks[(definitionType || 'dashboard')==='panel'?'panel':'definition'],explore:!mountLinks || !!mountLinks.explore}
+        const mountLinks=ec.resource.script('component://tools/template/ReportMount.js').state().links
+        homeOffers={edit:!!mountLinks[(definitionType || 'dashboard')==='panel'?'panel':'definition'],explore:!!mountLinks.explore}
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-gutter-sm q-mb-md">

@@ -8,23 +8,27 @@
     or carried value never replaces a fixed one (nor the variables of a panel export or inspect), and a fixed variable is not
     offered for editing. The mount sets reportLinks and reportFixedVariables in always-actions, so these transitions read them.
     A mount whose reportLinks names a drill screen gets Drill in each panel's menu: it opens that screen with the dashboard, the
-    panel, the range and the variable values, and the screen asks get#Drill, which reads the saved panel again. -->
+    panel, the range and the variable values, and the screen asks get#Drill, which reads the saved panel again. The range, when
+    the request names none, is the mount's (reportPolicy.range), else the last seven days; both maps are read through
+    template/ReportMount.js. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
         <actions><script><![CDATA[
             if (!panelId) throw new Error('Choose a panel')
             if (!['csv','xlsx'].includes(String(renderMode))) throw new Error('Choose CSV or XLSX')
+            const range=ec.resource.script('component://tools/template/ReportMount.js').state().policy.range
             const output=ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,panelId,
-                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
+                renderMode,from:from || range.from,thru:thru || range.thru,variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
     <transition name="inspectPanel" method="get" read-only="true">
         <actions><script><![CDATA[
             if (!panelId) throw new Error('Choose a panel')
+            const range=ec.resource.script('component://tools/template/ReportMount.js').state().policy.range
             const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,panelId,inspect:true,
-                from:from || 'now-7d',thru:thru || 'now',variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
+                from:from || range.from,thru:thru || range.thru,variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -82,9 +86,11 @@
             ec.web.sendJsonResponse({removed:panelId})
         ]]></script></actions><default-response type="none"/>
     </transition>
-    <transition name="edit"><default-response url="${ec.context.get('reportLinks')?.definition ?? '//apps/dashboards/Definition'}"/></transition>
+    <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
     <actions><script><![CDATA[
-        from = from || 'now-7d'; thru = thru || 'now'
+        // The mount (template/ReportMount.js): its default range and its links.
+        const mount = ec.resource.script('component://tools/template/ReportMount.js').state()
+        from = from || mount.policy.range.from; thru = thru || mount.policy.range.thru
         const definition = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
         dashboardTitle = ec.l10n.localize(definition.title || "")
         dashboardDefinition = JSON.parse(JSON.stringify(definition.body || {}))
@@ -155,15 +161,11 @@
         // The report screens where the app mounts them (its reportLinks), as server paths: the editor, the library panel editor,
         // Explore, alert rules and the Dashboard screen whose transitions duplicate and remove a panel. Without a map they are
         // Tools' Dashboards screens; a link the map leaves out or sets to null is not offered.
-        const mountLinks = ec.context.get('reportLinks')
-        const toolsScreens = {definition:'Definition',panel:'Definition',explore:'Explore',alertRule:'AlertRule',dashboard:'Dashboard'}
         dashboardDefinition.appLinks = {}
-        for (const [key, screen] of Object.entries(toolsScreens)) {
-            const url = mountLinks ? mountLinks[key] : '//apps/dashboards/' + screen
-            dashboardDefinition.appLinks[key] = url ? sri.buildUrl(url).path : null
-        }
+        for (const key of ['definition','panel','explore','alertRule','dashboard'])
+            dashboardDefinition.appLinks[key] = mount.links[key] ? sri.buildUrl(mount.links[key]).path : null
         // a mount's drill screen (Tools mounts none): the panel menu's Drill, in the browser and the terminal
-        if (mountLinks && mountLinks.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mountLinks.drill).path
+        if (mount.links.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mount.links.drill).path
         dashboardDefinition.panelId = panelId || null
         dashboardDefinition.kiosk = String(ec.web.parameters.kiosk || '') === 'true'
         dashboardDefinition.variableValues = rendered.variableValues || dashboardDefinition.variableValues

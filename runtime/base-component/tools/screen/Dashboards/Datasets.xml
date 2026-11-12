@@ -2,8 +2,8 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Datasets" default-menu-index="5">
     <parameter name="datasetId"/>
-    <transition name="explore"><default-response url="${ec.context.get('reportLinks')?.explore ?? '//apps/dashboards/Explore'}"/></transition>
-    <transition name="definition"><default-response url="${ec.context.get('reportLinks')?.definition ?? '//apps/dashboards/Definition'}"/></transition>
+    <transition name="explore"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('explore')}"/></transition>
+    <transition name="definition"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
     <actions><script><![CDATA[
         // Every dataset this user may query: the telemetry datasets, saved dataset definitions and the DataDocument indexes.
         const telemetry = ['otel_spans','otel_logs','otel_metrics','otel_errors','monitor_annotations']
