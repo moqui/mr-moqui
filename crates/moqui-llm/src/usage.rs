@@ -18,7 +18,8 @@
 //!
 //! Days are in the server's time zone. A quota counts today's calls from `LlmCall` itself, so it does not wait for the
 //! rollup; a monthly quota adds the earlier days of the month from `LlmUsageDaily`. One check reads each distinct
-//! scope's calls once, and only their token and cost fields.
+//! scope's calls once, as one row of totals the database sums (the `LlmCallSummary` view; plans/High-Level-Review.md
+//! HL-012), and so the reservations and the month's earlier days.
 //!
 //! A call is admitted ([`admit`]) under a lock row per user and per API client (`LlmQuotaLock`), which checks the
 //! quotas with what the call may use at most and writes that as an `LlmQuotaReservation` in the same short
@@ -52,8 +53,17 @@ const LLM_USAGE_DAILY: &str = "moqui.llm.LlmUsageDaily";
 const LLM_QUOTA: &str = "moqui.llm.LlmQuota";
 pub(crate) const LLM_QUOTA_RESERVATION: &str = "moqui.llm.LlmQuotaReservation";
 const LLM_QUOTA_LOCK: &str = "moqui.llm.LlmQuotaLock";
-/// The fields of an `LlmCall` a total reads: never its content.
-const TOTAL_FIELDS: [&str; 8] = [
+/// `LlmCall` summed: a find of only its totals reads one row (plans/High-Level-Review.md HL-012).
+const LLM_CALL_SUMMARY: &str = "moqui.llm.LlmCallSummary";
+/// `LlmUsageDaily` summed.
+const LLM_USAGE_SUMMARY: &str = "moqui.llm.LlmUsageSummary";
+/// `LlmQuotaReservation` summed.
+const LLM_QUOTA_RESERVATION_SUMMARY: &str = "moqui.llm.LlmQuotaReservationSummary";
+/// The totals `LlmCallSummary` and `LlmUsageSummary` both give, by the same names. On `LlmUsageSummary`
+/// `currencyUomId` is grouped by, so its read gives a row for each currency (in practice one).
+const SUMMARY_FIELDS: [&str; 9] = [
+    "callCount",
+    "errorCount",
     "inputTokens",
     "cachedInputTokens",
     "cacheWriteTokens",
@@ -61,7 +71,6 @@ const TOTAL_FIELDS: [&str; 8] = [
     "reasoningTokens",
     "cost",
     "currencyUomId",
-    "errorClass",
 ];
 
 /// The user of a call that has none, in `LlmUsageDaily`.
@@ -275,7 +284,15 @@ fn write_call(
             .map_or(Value::Null, |status| Value::I64(i64::from(status))),
     );
     row.set("finishReason", text(&call.finish));
-    row.set("errorClass", text(&call.error_class));
+    // Stored null when blank: `LlmCallSummary` counts the calls whose errorClass is not null as errors.
+    row.set(
+        "errorClass",
+        call.error_class
+            .as_deref()
+            .map(str::trim)
+            .filter(|class| !class.is_empty())
+            .map_or(Value::Null, Value::string),
+    );
     row.set(
         "errorText",
         call.error_text.as_ref().map_or(Value::Null, |error| {
@@ -491,27 +508,6 @@ impl Totals {
         self.cost + self.reserved.cost
     }
 
-    fn add_row(&mut self, row: &moqui_core::entity::EntityValue) {
-        let tokens = |field: &str| int_of(row, field).and_then(|n| u64::try_from(n).ok()).unwrap_or(0);
-        self.calls += 1;
-        if text_of(row, "errorClass").is_some() {
-            self.errors += 1;
-        }
-        self.usage.add(&Usage {
-            input: tokens("inputTokens"),
-            cached_input: tokens("cachedInputTokens"),
-            cache_write: tokens("cacheWriteTokens"),
-            output: tokens("outputTokens"),
-            reasoning: tokens("reasoningTokens"),
-        });
-        if let Some(cost) = decimal_of(row, "cost") {
-            self.cost += cost;
-        }
-        if self.currency.is_none() {
-            self.currency = text_of(row, "currencyUomId");
-        }
-    }
-
     /// Add `other`'s calls, use and cost (not its reservations).
     fn add_totals(&mut self, other: &Totals) {
         self.calls += other.calls;
@@ -523,7 +519,9 @@ impl Totals {
         }
     }
 
-    fn add_daily_row(&mut self, row: &moqui_core::entity::EntityValue) {
+    /// Add a row of [`SUMMARY_FIELDS`], of `LlmCallSummary` or `LlmUsageSummary` (or an `LlmUsageDaily` row, which has
+    /// the same names). A sum over no rows is null, which adds nothing.
+    fn add_summary_row(&mut self, row: &moqui_core::entity::EntityValue) {
         let count = |field: &str| int_of(row, field).and_then(|n| u64::try_from(n).ok()).unwrap_or(0);
         self.calls += count("callCount");
         self.errors += count("errorCount");
@@ -542,8 +540,10 @@ impl Totals {
 }
 
 /// Recompute the `LlmUsageDaily` rows of `date` from its `LlmCall` rows, by user, model and source: the day's rows are
-/// replaced whole, so running it again gives the same rows. It reads with a cursor, so it runs in a transaction. Out:
-/// the number of rows written.
+/// replaced whole, so running it again gives the same rows. The database sums the calls by user, model and source
+/// (`LlmCallSummary`); a group with no user or model counts under [`NO_USER`] and one with no source under `agent`, so
+/// groups that name those differently (null or blank) are added together into one row. Out: the number of rows
+/// written.
 ///
 /// # Errors
 ///
@@ -551,24 +551,21 @@ impl Totals {
 pub fn rollup_day(facade: &EntityFacade, date: jiff::civil::Date) -> Result<usize, Error> {
     let (start, end) = day_bounds(date)?;
     let mut groups: BTreeMap<(String, String, String), Totals> = BTreeMap::new();
-    let mut calls = facade
-        .find(LLM_CALL)?
-        .condition(Condition::greater_equal(
-            "startDate",
-            moqui_core::user::stamp_value(start),
-        ))
-        .condition(Condition::less("startDate", moqui_core::user::stamp_value(end)))
-        .disable_authz()
-        .iterator()?;
-    while let Some(row) = calls.next_value()? {
-        let key = (
-            text_of(&row, "userId").unwrap_or_else(|| NO_USER.to_string()),
-            text_of(&row, "modelId").unwrap_or_else(|| NO_USER.to_string()),
-            text_of(&row, "source").unwrap_or_else(|| CallSource::Agent.as_str().to_string()),
-        );
-        groups.entry(key).or_default().add_row(&row);
+    let mut find = calls_between(facade, start, end)?;
+    for field in ["userId", "modelId", "source"] {
+        find = find.select_field(field);
     }
-    calls.close()?;
+    for field in SUMMARY_FIELDS {
+        find = find.select_field(field);
+    }
+    for row in find.list()?.iter() {
+        let key = (
+            text_of(row, "userId").unwrap_or_else(|| NO_USER.to_string()),
+            text_of(row, "modelId").unwrap_or_else(|| NO_USER.to_string()),
+            text_of(row, "source").unwrap_or_else(|| CallSource::Agent.as_str().to_string()),
+        );
+        groups.entry(key).or_default().add_summary_row(row);
+    }
     facade
         .find(LLM_USAGE_DAILY)?
         .eq("usageDate", Value::Date(date))
@@ -601,28 +598,39 @@ pub fn rollup_day(facade: &EntityFacade, date: jiff::civil::Date) -> Result<usiz
     Ok(groups.len())
 }
 
-/// The totals of all calls that started in `[start, end)` (milliseconds), from `LlmCall`, read with a cursor, so in a
-/// transaction.
-///
-/// # Errors
-///
-/// Returns an error when the calls cannot be read.
-pub fn totals_between(facade: &EntityFacade, start: i64, end: i64) -> Result<Totals, Error> {
-    let mut totals = Totals::default();
-    let mut calls = facade
-        .find(LLM_CALL)?
+/// The find of `LlmCallSummary` for the calls that started in `[start, end)` (milliseconds).
+fn calls_between(facade: &EntityFacade, start: i64, end: i64) -> Result<moqui_core::entity::EntityFind, Error> {
+    Ok(facade
+        .find(LLM_CALL_SUMMARY)?
         .condition(Condition::greater_equal(
             "startDate",
             moqui_core::user::stamp_value(start),
         ))
         .condition(Condition::less("startDate", moqui_core::user::stamp_value(end)))
-        .disable_authz()
-        .iterator()?;
-    while let Some(row) = calls.next_value()? {
-        totals.add_row(&row);
+        .disable_authz())
+}
+
+/// The totals of the rows `find` (of `LlmCallSummary` or `LlmUsageSummary`, with its conditions) reads when it selects
+/// only [`SUMMARY_FIELDS`]: one row of totals, which the database sums (plans/High-Level-Review.md HL-012), or for
+/// `LlmUsageSummary` one a currency.
+fn summed(mut find: moqui_core::entity::EntityFind) -> Result<Totals, Error> {
+    for field in SUMMARY_FIELDS {
+        find = find.select_field(field);
     }
-    calls.close()?;
+    let mut totals = Totals::default();
+    for row in find.list()?.iter() {
+        totals.add_summary_row(row);
+    }
     Ok(totals)
+}
+
+/// The totals of all calls that started in `[start, end)` (milliseconds), from `LlmCall`, summed by the database.
+///
+/// # Errors
+///
+/// Returns an error when the calls cannot be read.
+pub fn totals_between(facade: &EntityFacade, start: i64, end: i64) -> Result<Totals, Error> {
+    summed(calls_between(facade, start, end)?)
 }
 
 /// The totals of the `LlmUsageDaily` rows from `from` up to but not including `to`.
@@ -635,21 +643,16 @@ pub fn daily_totals_between(
     from: jiff::civil::Date,
     to: jiff::civil::Date,
 ) -> Result<Totals, Error> {
-    let mut totals = Totals::default();
     if from >= to {
-        return Ok(totals);
+        return Ok(Totals::default());
     }
-    for row in facade
-        .find(LLM_USAGE_DAILY)?
-        .condition(Condition::greater_equal("usageDate", Value::Date(from)))
-        .condition(Condition::less("usageDate", Value::Date(to)))
-        .disable_authz()
-        .list()?
-        .iter()
-    {
-        totals.add_daily_row(row);
-    }
-    Ok(totals)
+    summed(
+        facade
+            .find(LLM_USAGE_SUMMARY)?
+            .condition(Condition::greater_equal("usageDate", Value::Date(from)))
+            .condition(Condition::less("usageDate", Value::Date(to)))
+            .disable_authz(),
+    )
 }
 
 /// Clear the request and response content of the calls that started more than `retention_days` before `now_millis`.
@@ -842,11 +845,11 @@ fn larger(left: QuotaLimit, right: QuotaLimit) -> QuotaLimit {
     }
 }
 
-/// The calls of `user_id` in `scope` (all for every source) from `start` until now, from `LlmCall`: their token and
-/// cost fields only.
+/// The calls of `user_id` in `scope` (all for every source) from `start` until now, from `LlmCall`, summed by the
+/// database.
 fn calls_since(facade: &EntityFacade, user_id: &str, scope: &str, start: i64) -> Result<Totals, Error> {
     let mut find = facade
-        .find(LLM_CALL)?
+        .find(LLM_CALL_SUMMARY)?
         .eq("userId", Value::string(user_id))
         .condition(Condition::greater_equal(
             "startDate",
@@ -856,20 +859,14 @@ fn calls_since(facade: &EntityFacade, user_id: &str, scope: &str, start: i64) ->
     if scope != "all" {
         find = find.eq("source", Value::string(scope));
     }
-    for field in TOTAL_FIELDS {
-        find = find.select_field(field);
-    }
-    let mut totals = Totals::default();
-    for row in find.list()?.iter() {
-        totals.add_row(row);
-    }
-    Ok(totals)
+    summed(find)
 }
 
-/// The open reservations (not expired at `now`) of `field` (`userId` or `clientId`) `id`, of `scope` unless `all`.
+/// The open reservations (not expired at `now`) of `field` (`userId` or `clientId`) `id`, of `scope` unless `all`,
+/// summed by the database. Every reservation is written with tokens and a cost of zero or more.
 fn reserved(facade: &EntityFacade, field: &str, id: &str, scope: &str, now: i64) -> Result<Reserve, Error> {
     let mut find = facade
-        .find(LLM_QUOTA_RESERVATION)?
+        .find(LLM_QUOTA_RESERVATION_SUMMARY)?
         .eq(field, Value::string(id))
         .condition(Condition::greater("expiresDate", moqui_core::user::stamp_value(now)))
         .select_field("tokens")
@@ -1007,7 +1004,8 @@ pub fn check_quota_reserving(
     }))
 }
 
-/// The `LlmUsageDaily` totals of `user_id` in `counted` from the first of `today`'s month up to `today`.
+/// The `LlmUsageDaily` totals of `user_id` in `counted` from the first of `today`'s month up to `today`, summed by the
+/// database.
 fn month_before(
     facade: &EntityFacade,
     user_id: &str,
@@ -1015,7 +1013,7 @@ fn month_before(
     today: jiff::civil::Date,
 ) -> Result<Totals, Error> {
     let mut find = facade
-        .find(LLM_USAGE_DAILY)?
+        .find(LLM_USAGE_SUMMARY)?
         .eq("userId", Value::string(user_id))
         .condition(Condition::greater_equal(
             "usageDate",
@@ -1026,11 +1024,7 @@ fn month_before(
     if counted != "all" {
         find = find.eq("source", Value::string(counted));
     }
-    let mut totals = Totals::default();
-    for row in find.list()?.iter() {
-        totals.add_daily_row(row);
-    }
-    Ok(totals)
+    summed(find)
 }
 
 /// An API client's daily limits, checked with the user's at [`admit`].
@@ -1271,28 +1265,22 @@ pub fn take_request(key: &str, per_minute: u32, now_millis: i64) -> Result<(), u
     Ok(())
 }
 
-/// The calls made through the `LlmApiClient` `client_id` from `start` until now.
+/// The calls made through the `LlmApiClient` `client_id` from `start` until now, summed by the database.
 ///
 /// # Errors
 ///
 /// Returns an error when the calls cannot be read.
 pub fn client_calls_since(facade: &EntityFacade, client_id: &str, start: i64) -> Result<Totals, Error> {
-    let mut totals = Totals::default();
-    let mut find = facade
-        .find(LLM_CALL)?
-        .eq("clientId", Value::string(client_id))
-        .condition(Condition::greater_equal(
-            "startDate",
-            moqui_core::user::stamp_value(start),
-        ))
-        .disable_authz();
-    for field in TOTAL_FIELDS {
-        find = find.select_field(field);
-    }
-    for row in find.list()?.iter() {
-        totals.add_row(row);
-    }
-    Ok(totals)
+    summed(
+        facade
+            .find(LLM_CALL_SUMMARY)?
+            .eq("clientId", Value::string(client_id))
+            .condition(Condition::greater_equal(
+                "startDate",
+                moqui_core::user::stamp_value(start),
+            ))
+            .disable_authz(),
+    )
 }
 
 /// The seconds from `now_millis` until the period of `limit` (`day` or `month`) ends and its use starts again from 0.
