@@ -308,7 +308,9 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
         own.links.drill == null
         JSON.stringify(own.policy) ==
             '{"features":{"alert":true,"share":true},"range":{"from":"now-7d","thru":"now"},"datasetIdPrefix":"",' +
-                '"datasetScopeParameter":null,"recipientPermissionId":null,"reportEmailTemplateId":null,"alertAudience":null,' +
+                '"datasetScopeParameter":null,"datasetScopeLabel":"Scope field",' +
+                '"datasetScopeHelp":"The field that carries each row\'s scope; the policy\'s own when left empty",' +
+                '"recipientPermissionId":null,"reportEmailTemplateId":null,"alertAudience":null,' +
                 '"shareGroups":[],"recipientCap":null,"calendar":null}'
         empty.mounted == true
         Object.values(empty.links).every(link => link == null)

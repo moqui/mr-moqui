@@ -376,7 +376,7 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 
 ## Reports and monitoring: `org.moqui.report`, `org.moqui.monitor`
 
-`ReportServices` is the report engine: datasets, queries, saved definitions (dashboards, reports, alert rules), schedules and their deliveries. `MonitorServices` and `TelemetryServices` are the monitor's incidents, releases, recovery, runtime settings and telemetry jobs. All Rust. See [Monitoring](../tools/Monitoring.md).
+`ReportServices` is the report engine: datasets, queries, saved definitions (dashboards, reports, alert rules), schedules and their deliveries. `MonitorServices` and `TelemetryServices` are the monitor's incidents, releases, recovery, runtime settings and telemetry jobs. All Rust, but for the reads of the report screens (`ReportReads.js`) and the framework's scope policy. See [Monitoring](../tools/Monitoring.md).
 
 | Service | |
 |---|---|
@@ -387,12 +387,14 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 | `ReportServices.render#Dashboard` | `definitionId*`, `variables`, `filters`, `from`, `thru`, `panelId` → `dashboard` |
 | `ReportServices.preview#Report` | `definitionId*`, `renderMode`, `from`, `thru`, `variables` → `contentBase64`, `contentType`, `filename` |
 | `ReportServices.create#Schedule`, `send#Report` | `definitionId*`, `cronExpression*`, `renderMode`, `userId` or `userGroupId` → `screenScheduledId` |
+| `ReportServices.find#BusinessDatasets`, `get#BusinessDataset` | `datasetId`, `status` → `datasets`: the business datasets the caller reads or stewards, with state and checks; `datasetId*` → `dataset`, and for its steward `fields`, `conditions`, `uses`, `usesAvailable` |
+| `ReportServices.get#BusinessDatasetOptions` | → `policies` (each with its `scopeParameter`), `operators`, `functions`, `canCreate`, and for a caller who may create a dataset `documents` |
 | `ReportServices.create#Annotation` | `text*`, `time`, `source`, `tags`, `serviceName`, `recordType`, `recordId`, `link` → `annotationId`: a change marker or a business event on the time series |
 | `MonitorServices.create#Incident`, `update#Incident`, `add#IncidentNote`, `list#Incidents` | `title*`, `severity`, `serviceName`, `summary` → `incidentId`, `incident` |
 | `MonitorServices.list#RuntimeSettings`, `set#RuntimeSetting` | `key`, `value*`, `minutes*`, `reason*`: a setting changed for a while on every instance |
 | `TelemetryServices.clean#TelemetryData`, `rollup#Metrics`, `scrape#Targets`, `run#Checks` | The telemetry jobs |
 
-`ReportServices` also has business datasets (`create#BusinessDataset`, ...), definition versions, export and import, git sync of definitions, and the owned-resource services of schedules and alert rules.
+`ReportServices` also has the stewardship of business datasets (`create#BusinessDataset`, `store#BusinessDataset`, ...), definition versions, export and import, git sync of definitions, and the owned-resource services of schedules and alert rules.
 
 ## User interface: `org.moqui.ui`
 

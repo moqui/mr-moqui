@@ -41,8 +41,11 @@ const toolsLinks = {
 //     features.share         whether the viewer may share a dashboard of their own here
 //     range                  {from, thru}: the range a screen opens on when the request names none
 //     datasetIdPrefix        what the id of a dataset created here starts with
-//     datasetScopeParameter  the name of the scope policy's parameter a dataset form asks for (the field that carries a
-//                            row's scope), sent in rowFilterParameters; null asks for none
+//     datasetScopeParameter  the rowFilterParameters entry a dataset form's scope field is sent in under a scope policy
+//                            whose registration names none (a policy's own scopeParameter comes first); null asks for
+//                            none under such a policy
+//     datasetScopeLabel      the dataset forms' label of the scope field (the field that carries a row's scope)
+//     datasetScopeHelp       its help
 //     recipientPermissionId  the permission a person holds to be proposed as a recipient of a report or an alert; null
 //                            proposes by the engine's own rule
 //     reportEmailTemplateId  the EmailTemplate of a delivered report; null is the engine's
@@ -57,6 +60,8 @@ const toolsPolicy = () => ({
     range: {from: "now-7d", thru: "now"},
     datasetIdPrefix: "",
     datasetScopeParameter: null,
+    datasetScopeLabel: "Scope field",
+    datasetScopeHelp: "The field that carries each row's scope; the policy's own when left empty",
     recipientPermissionId: null,
     reportEmailTemplateId: null,
     alertAudience: null,
@@ -88,7 +93,14 @@ function policyOf(given, mounted) {
     policy.features = {alert: features.alert === true, share: features.share === true}
     const range = mapIn(from.range)
     policy.range = {from: text(range.from) || policy.range.from, thru: text(range.thru) || policy.range.thru}
-    for (const name of ["datasetIdPrefix", "datasetScopeParameter", "recipientPermissionId", "reportEmailTemplateId"])
+    for (const name of [
+        "datasetIdPrefix",
+        "datasetScopeParameter",
+        "datasetScopeLabel",
+        "datasetScopeHelp",
+        "recipientPermissionId",
+        "reportEmailTemplateId"
+    ])
         policy[name] = text(from[name]) ?? policy[name]
     if (from.alertAudience !== null && typeof from.alertAudience === "object") {
         const audience = from.alertAudience

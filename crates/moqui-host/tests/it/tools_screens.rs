@@ -74,6 +74,12 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="02" fieldPath="description"/>
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="03" fieldPath="(enumId + ' / ' + description)"
         fieldNameAlias="enumLabel" defaultDisplay="Y"/>
+    <!-- a business dataset over the document, in a registered feed and waiting for review, for the dataset screens of Dashboards -->
+    <moqui.entity.feed.DataFeed dataFeedId="GateFeed" dataFeedTypeEnumId="DTFDTP_MAN_PULL" feedName="Gate feed"/>
+    <moqui.entity.feed.DataFeedDocument dataFeedId="GateFeed" dataDocumentId="GateDoc"/>
+    <moqui.report.Definition definitionId="gate-business" definitionType="dataset" title="Gate business dataset" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1"
+        bodyJson='{"documentType":"GateDoc","timeField":"_timestamp","signal":"business","rowFilterService":"org.moqui.report.ReportServices.get#UserGroupRowFilter","rowFilterParameters":{"groupField":"enumTypeId"}}'/>
 </entity-facade-xml>"#;
 
 /// Detail screens with the parameters of a record in [`DATA`] or the seed data.
@@ -389,6 +395,85 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         assert!(run.contains(&format!("name=\"{name}\"")), "{name}: {run}");
     }
     assert!(run.contains("type=\"datetime-local\""), "{run}");
+    // The dataset screens of Dashboards, with no mount: the business datasets first, with what a new one may be made
+    // over and Tools' words for the scope field, then Tools' other datasets with the fields of the one chosen.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Datasets?otherDatasetId=otel_logs",
+        &[
+            "Gate business dataset",
+            "Needs review",
+            "data-dialog=\"CreateDataset\"",
+            "Gate Document (gate)",
+            "Scope field",
+            "Other datasets",
+            "New dataset definition",
+            "Fields of otel_logs",
+            "severity_text",
+        ],
+    );
+    // A dataset for its steward: the checks, the scope by the policy's registered parameter, and its definition in
+    // Tools' editor.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetDetail?datasetId=gate-business",
+        &[
+            "Admission checks",
+            "indexed by the GateFeed feed",
+            "user groups on enumTypeId",
+            "/apps/dashboards/DatasetDetail/admitDataset",
+            "/apps/dashboards/Definition?definitionId=gate-business",
+        ],
+    );
+    // A dataset made here has no prefix before its short name, and its scope field goes under the parameter its policy
+    // registers.
+    let create = "/apps/dashboards/Datasets/createDataset";
+    let (status, page) = post(
+        address,
+        &john,
+        create,
+        &[
+            ("title", "Gate made dataset"),
+            ("name", "Gate made"),
+            ("dataDocumentId", "GateDoc"),
+            ("scopePolicyId", "ReportUserGroups"),
+            ("scopeField", "enumId"),
+        ],
+    );
+    ran(create, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetDetail?datasetId=gate-made",
+        &["Gate made dataset", "user groups on enumId"],
+    );
+    // Its document's fields, the expression one among them, with the engine's functions and operators.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetFields?datasetId=gate-business",
+        &[
+            "Fields of Gate business dataset",
+            "enumLabel",
+            "count distinct",
+            "not between",
+        ],
+    );
+    // Its rows: the steward reads it before admission; a dataset that is not a business one is not previewed here.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetView?datasetId=gate-business",
+        &["Dataset", "Through"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetView?datasetId=otel_logs",
+        &["Dataset otel_logs is not available"],
+    );
 }
 
 /// The text `SystemScreenRenderTests`, `ToolsScreenRenderTests`, and `ToolsRestApiTests` require.

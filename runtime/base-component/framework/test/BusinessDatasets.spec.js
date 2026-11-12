@@ -3,7 +3,9 @@
 // its index built and a registered scope policy bound; index#BusinessDataset rebuilds one feed's document for the dataset's
 // steward; the row filter, called with the dataset's rowFilterParameters, narrows rows, value counts and an export alike; a field
 // a definition over the dataset uses cannot be removed, and a stale version is refused; an alias of a telemetry index or of a
-// business dataset's document needs the source's own grant, saved or read (alias.rs). The fixtures are enumerations of a type
+// business dataset's document needs the source's own grant, saved or read (alias.rs); what the dataset screens read beside
+// the engine (ReportReads.js: get#BusinessDataset, get#BusinessDatasetOptions) is answered by what the caller reads, stewards
+// and may create, and a dataset is created only under an id the creator's own grant names. The fixtures are enumerations of a type
 // of the spec's own, each scoped to a user group (enumCode) by the framework's ReportUserGroups policy, on feeds that index only
 // when asked (manual pull). Run: ./moq test framework --spec BusinessDatasets
 const R = "org.moqui.report.ReportServices."
@@ -581,3 +583,128 @@ feature("an alias of a log index or of a business document needs the source's ow
         ownHits == 0
     }
 })
+
+feature(
+    "the dataset reads answer a reader the dataset, its steward its document, a creator the sources; an id or scope named gives no right",
+    {
+        when() {
+            const STEWARD = "bds.steward"
+            // both may call the two reads: what each answers is by the caller's own dataset grants
+            sys(() => {
+                for (const [artifactGroupId, verbNouns] of [
+                    ["BDS_READER", ["get#BusinessDataset", "get#BusinessDatasetOptions"]],
+                    ["BDS_STEWARD", ["get#BusinessDataset", "get#BusinessDatasetOptions", "find#BusinessDatasets"]]
+                ])
+                    for (const verbNoun of verbNouns)
+                        make("moqui.security.ArtifactGroupMember", {
+                            artifactGroupId,
+                            artifactName: R + verbNoun,
+                            artifactTypeEnumId: "AT_SERVICE"
+                        })
+            })
+            // bds-sales bound, built and admitted again (it was left unbound, in review), so that the reader reads it
+            dataset("bds-sales", types.fed, policy)
+            call(R + "index#BusinessDataset", {datasetId: "bds-sales"})
+            call(R + "store#BusinessDataset", {datasetId: "bds-sales", admit: true})
+            const read = "get#BusinessDataset"
+            const steward = asSteward(R + read, {datasetId: "bds-sales"})
+            const reader = asReader(R + read, {datasetId: "bds-sales"})
+            // a dataset that exists and the reader holds no artifact of, and one that does not exist: told the same
+            const hidden = asReader(R + read, {datasetId: "bds-unfed"})
+            const missing = asReader(R + read, {datasetId: "bds-none"})
+            // the spec's steward stewards bds-own-* alone: bds-sales is not theirs either
+            const others = asUser(STEWARD, R + read, {datasetId: "bds-sales"})
+            const creator = asUser(STEWARD, R + "get#BusinessDatasetOptions", {})
+            const plain = asReader(R + "get#BusinessDatasetOptions", {})
+            // a dataset under an id the steward's grant does not name, and a scope parameter that is no field name
+            const create = extra =>
+                asUser(
+                    STEWARD,
+                    R + "create#BusinessDataset",
+                    Object.assign({dataDocumentId: types.fed, scopePolicyId: "ReportUserGroups"}, extra)
+                ).error || ""
+            const foreign = create({datasetId: "bds-other-sales", rowFilterParameters: policy.rowFilterParameters})
+            const expression = create({datasetId: "bds-own-expression", rowFilterParameters: {groupField: "enumCode OR 1=1"}})
+            const kept = sys(() =>
+                ec.entity
+                    .find("moqui.report.Definition")
+                    .condition("definitionId", "in", ["bds-other-sales", "bds-own-expression"])
+                    .count()
+            )
+            const names = (out, list, field) =>
+                Array.from(out?.[list] || [])
+                    .map(row => row[field])
+                    .sort()
+                    .join(",")
+            return {
+                steward: steward.out?.dataset || {},
+                stewardFields: names(steward.out, "fields", "fieldName"),
+                stewardCondition: Array.from(steward.out?.conditions || [])[0] || {},
+                stewardUses: names(steward.out, "uses", "id"),
+                usesAvailable: steward.out?.usesAvailable,
+                reader: reader.out?.dataset || {},
+                readerParts: ["fields", "conditions", "uses"].map(list => Array.from(reader.out?.[list] || []).length).join(","),
+                hidden: hidden.error || "",
+                missing: missing.error || "",
+                others: others.error || "",
+                creator: creator.out || {},
+                creatorDocuments: names(creator.out, "documents", "dataDocumentId"),
+                policy: Array.from(creator.out?.policies || []).find(row => row.scopePolicyId === "ReportUserGroups") || {},
+                plain: plain.out || {},
+                plainDocuments: names(plain.out, "documents", "dataDocumentId"),
+                foreign,
+                expression,
+                kept
+            }
+        },
+        then({
+            steward,
+            stewardFields,
+            stewardCondition,
+            stewardUses,
+            usesAvailable,
+            reader,
+            readerParts,
+            hidden,
+            missing,
+            others,
+            creator,
+            creatorDocuments,
+            policy,
+            plain,
+            plainDocuments,
+            foreign,
+            expression,
+            kept
+        }) {
+            steward.status == "admitted"
+            steward.stewarded == true
+            // the policy's scope parameter, from its registration
+            steward.scopeParameter == "groupField"
+            stewardFields == "description,enumCode,enumId,enumTypeId,scopeCode"
+            stewardCondition.fieldNameAlias == "enumTypeId"
+            stewardCondition.operator == "equals"
+            stewardUses.includes("bds-board") && stewardUses.includes("bds-panel")
+            usesAvailable == true
+            // the reader reads it and stewards nothing: the dataset alone
+            reader.readable == true
+            reader.stewarded == false
+            readerParts == "0,0,0"
+            hidden.includes("Dataset bds-unfed is not available")
+            missing.includes("Dataset bds-none is not available")
+            others.includes("Dataset bds-sales is not available")
+            // the sources are a creator's; the policies, operators and functions any caller's
+            creator.canCreate == true
+            creatorDocuments.includes(types.fed) && creatorDocuments.includes(types.unbuilt)
+            !creatorDocuments.includes(types.unfed)
+            policy.scopeParameter == "groupField"
+            Array.from(creator.operators).includes("not-between") && Array.from(creator.functions).includes("count-distinct")
+            plain.canCreate == false
+            plainDocuments == ""
+            Array.from(plain.policies).length >= 1
+            foreign.includes("bds-other-sales would not be yours to steward")
+            expression.includes("rowFilterParameters groupField must be a name")
+            kept == 0
+        }
+    }
+)

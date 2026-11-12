@@ -1,49 +1,188 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Datasets" default-menu-index="5">
-    <parameter name="datasetId"/>
+<!-- Datasets (docs/tools/Monitoring.md, "Business datasets"; plans/Admin-Screens-Down.md, Track I; first BOSS Insights'):
+    the business datasets the viewer reads, and a steward's waiting for review, each with its state (admitted, needs review,
+    unavailable, retired), source, scope, index and feed and last build, from the engine's find#BusinessDatasets. A dataset
+    reaches readers only once admitted: its document in a registered feed, its index built and a registered row filter
+    bound; until then it shows as needs review, never as an empty source. One who may create a dataset (the dataset-save
+    artifact) makes one over a registered feed's document (CreateDataset, create#BusinessDataset) and opens it in
+    DatasetDetail; a dataset the viewer reads is previewed in DatasetView and opened in Explore where the mount has one.
+    With no mount the screen also lists Tools' other datasets (OtherDatasets): the telemetry indexes, the DataDocument
+    indexes and the saved datasets that are not business ones, with the fields of the one chosen and their definitions.
+    Another app shows the screen under its own root in a screen of its own, taking in createDataset (BOSS Insights › Report
+    builder › Datasets); the other datasets are not shown there and their transitions (explore, definition) are not taken
+    in. What a new dataset's id starts with, the scope field's words and the name of its parameter under a policy that
+    registers none are the mount's policy (template/ReportMount.js), data only: the engine creates a dataset only under an
+    id its creator's own grant names. Every read is through template/ReportDatasets.js, which reads no entity. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Datasets" default-menu-index="5"
+        menu-image="sym_o_database" menu-image-type="icon">
+    <parameter name="status"/>
+    <parameter name="text"/>
+    <!-- the other dataset whose fields are shown (not datasetId, which the screens beside this one carry) -->
+    <parameter name="otherDatasetId"/>
+
+    <transition name="createDataset">
+        <actions>
+            <set field="request" from="ec.resource.script('component://tools/template/ReportDatasets.js').createRequest(context)"/>
+            <service-call name="org.moqui.report.ReportServices.create#BusinessDataset" in-map="request" out-map="created"/>
+        </actions>
+        <default-response url="../DatasetDetail" parameter-map="{datasetId:created?.dataset?.datasetId}"/>
+        <error-response url="."/>
+    </transition>
+    <!-- Tools' other datasets (no mount): a dataset in Explore, a saved one in the definition editor -->
     <transition name="explore"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('explore')}"/></transition>
     <transition name="definition"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
-    <actions><script><![CDATA[
-        // Every dataset this user may query: the telemetry datasets, saved dataset definitions and the DataDocument indexes.
-        const telemetry = ['otel_spans','otel_logs','otel_metrics','otel_errors','monitor_annotations']
-        datasetList = (ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []).map(dataset => Object.assign({}, dataset, {
-            title: dataset.title || dataset.id,
-            kind: telemetry.includes(dataset.id) ? 'Telemetry' : String(dataset.id).startsWith('index:') ? 'Document index' : 'Saved dataset',
-            saved: !telemetry.includes(dataset.id) && !String(dataset.id).startsWith('index:')
-        }))
-        fieldList = []; fieldNotice = ''; selectedTimeField = ''
-        if (datasetId) {
-            try {
-                const dataset = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId}).call().dataset || {}
-                fieldList = (dataset.fields || []).map(field => ({name:field.name,type:field.type,kind:field.kind || '',
-                    searchable:field.searchable === false ? 'N' : 'Y',aggregatable:field.aggregatable ? 'Y' : 'N'}))
-                selectedTimeField = dataset.timeField || ''
-            } catch (error) { ec.logger.error('Dataset '+datasetId+' fields unavailable: '+String(error)); fieldNotice = String(error) }
-        }
-    ]]></script></actions>
+
+    <actions>
+        <set field="listed" from="ec.resource.script('component://tools/template/ReportDatasets.js').list({status:status, text:text, otherDatasetId:otherDatasetId})"/>
+        <set field="datasetList" from="listed.datasets"/>
+        <set field="failure" from="listed.failure"/>
+        <set field="canCreate" from="listed.canCreate"/>
+        <set field="filtered" from="listed.filtered"/>
+        <set field="exploreUrl" from="listed.exploreUrl"/>
+        <set field="showOther" from="!listed.mounted"/>
+        <set field="otherList" from="listed.other.datasets"/>
+        <set field="fieldList" from="listed.other.fields"/>
+        <set field="findValues" from="{status:status, text:text}"/>
+    </actions>
     <widgets>
-        <link url="definition" text="New dataset" parameter-map="{definitionType:'dataset'}"/>
-        <label text="Datasets are the telemetry indexes, saved dataset definitions with their row filters, and the DataDocument indexes. Queries run with your dataset permissions." type="p"/>
-        <form-list name="DatasetList" list="datasetList" skip-form="true" paginate="false">
-            <field name="title"><default-field title="Dataset"><link url="." text="${title}" link-type="anchor" parameter-map="{datasetId:id}"/></default-field></field>
-            <field name="id"><default-field title="ID"><display/></default-field></field>
-            <field name="kind"><default-field><display/></default-field></field>
-            <field name="timeField"><default-field title="Time field"><display/></default-field></field>
-            <field name="explore"><default-field title=""><link url="explore" text="Explore" link-type="anchor" parameter-map="{datasetId:id}"/></default-field></field>
-            <field name="edit"><default-field title=""><link condition="saved" url="definition" text="Definition" link-type="anchor" parameter-map="{definitionId:id}"/></default-field></field>
-        </form-list>
-        <section name="DatasetFields" condition="datasetId"><widgets>
-            <label text="Fields of ${datasetId}" type="h5"/>
-            <label condition="fieldNotice" text="${fieldNotice}" type="p" style="text-negative"/>
-            <label condition="!fieldNotice" text="Time field: ${selectedTimeField}" type="p"/>
-            <form-list name="DatasetFieldList" list="fieldList" skip-form="true" paginate="false">
-                <field name="name"><default-field title="Field"><display/></default-field></field>
-                <field name="type"><default-field><display/></default-field></field>
-                <field name="kind"><default-field title="Index type"><display/></default-field></field>
-                <field name="searchable"><default-field><display/></default-field></field>
-                <field name="aggregatable"><default-field title="Aggregatable"><display/></default-field></field>
-            </form-list>
+        <container style="row items-center q-col-gutter-sm q-mb-sm">
+            <container style="col"><label text="Datasets" type="h5"/></container>
+            <container style="col-auto">
+                <container-dialog id="CreateDataset" button-text="New dataset" type="primary" icon="sym_o_add" width="640"
+                        title="New business dataset" condition="canCreate">
+                    <label type="p" text="A dataset reads one document of a registered data feed. It waits for review until its index is built and you admit it."/>
+                    <form-single name="CreateDatasetForm" transition="createDataset">
+                        <field name="title"><default-field title="Name"><text-line size="40"/></default-field></field>
+                        <field name="name"><default-field title="Short name" tooltip="${listed.nameHelp}"><text-line size="30"/></default-field></field>
+                        <field name="dataDocumentId">
+                            <default-field title="Source">
+                                <drop-down><list-options list="listed.documentChoices" key="${key}" text="${text}"/></drop-down>
+                            </default-field>
+                        </field>
+                        <field name="timeField"><default-field title="Time field" tooltip="The date the range filters on"><text-line size="30"/></default-field></field>
+                        <field name="scopePolicyId">
+                            <default-field title="Rows scoped by">
+                                <drop-down><list-options list="listed.policyChoices" key="${key}" text="${text}"/></drop-down>
+                            </default-field>
+                        </field>
+                        <field name="scopeField"><default-field title="${listed.scope.label}" tooltip="${listed.scope.help}"><text-line size="30"/></default-field></field>
+                        <field name="submitButton"><default-field title="Create dataset"><submit/></default-field></field>
+                        <field-layout>
+                            <field-row><field-ref name="title"/><field-ref name="name"/></field-row>
+                            <field-row><field-ref name="dataDocumentId"/><field-ref name="timeField"/></field-row>
+                            <field-row><field-ref name="scopePolicyId"/><field-ref name="scopeField"/></field-row>
+                            <field-ref name="submitButton"/>
+                        </field-layout>
+                    </form-single>
+                </container-dialog>
+            </container>
+        </container>
+        <form-single name="DatasetFind" transition="." map="findValues">
+            <field name="text"><default-field title="Find"><text-line size="30"/></default-field></field>
+            <field name="status">
+                <default-field title="State">
+                    <drop-down allow-empty="true">
+                        <option key="admitted" text="Admitted"/><option key="review" text="Needs review"/>
+                        <option key="unavailable" text="Unavailable"/><option key="retired" text="Retired"/>
+                    </drop-down>
+                </default-field>
+            </field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+            <field-layout>
+                <field-row-big><field-ref name="text"/><field-ref name="status"/><field-ref name="submitButton"/></field-row-big>
+            </field-layout>
+        </form-single>
+        <label type="p" style="text-negative" condition="failure" text="${failure}"/>
+        <container-box>
+            <box-body-nopad>
+                <form-list name="DatasetList" list="datasetList" skip-form="true" paginate="false">
+                    <field name="title">
+                        <conditional-field condition="stewarded" title="Dataset">
+                            <link url="../DatasetDetail" text="${title}" link-type="anchor" parameter-map="{datasetId:datasetId}"/>
+                        </conditional-field>
+                        <conditional-field condition="readable" title="Dataset">
+                            <link url="../DatasetView" text="${title}" link-type="anchor" parameter-map="{datasetId:datasetId}"/>
+                        </conditional-field>
+                        <default-field title="Dataset">
+                            <display text="${title}"/>
+                        </default-field>
+                    </field>
+                    <field name="statusName">
+                        <default-field title="State">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${statusColor}">${
+                                    WebUtilities.encodeHtml(statusName)}</q-chip>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: statusName})}]]></text>
+                                <text type="html">${statusName}</text>
+                            </render-mode>
+                        </default-field>
+                    </field>
+                    <field name="documentName"><default-field title="Source"><display text="${documentName || dataDocumentId}"/></default-field></field>
+                    <field name="scopeText"><default-field title="Scope"><display/></default-field></field>
+                    <field name="indexName"><default-field title="Index and feed"><display text="${indexName}${dataFeedId ? ' · ' + dataFeedId : ''}"/></default-field></field>
+                    <field name="lastIndexedText"><default-field title="Last build"><display text="${lastIndexedText ? lastIndexedText + ' (' + lagText + ' ago)' : 'Indexed as written'}"/></default-field></field>
+                    <field name="failedText"><default-field title="To review"><display/></default-field></field>
+                    <field name="actions">
+                        <default-field title="">
+                            <link url="../DatasetView" text="Preview" link-type="anchor-button" icon="sym_o_visibility"
+                                    parameter-map="{datasetId:datasetId}" condition="readable"/>
+                            <link url="${exploreUrl}" text="Explore" link-type="anchor-button" icon="sym_o_search"
+                                    parameter-map="{datasetId:datasetId}" condition="readable &amp;&amp; !!exploreUrl"/>
+                        </default-field>
+                    </field>
+                    <columns type="mobile">
+                        <column><field-ref name="title"/><field-ref name="scopeText"/></column>
+                        <column><field-ref name="statusName"/><field-ref name="actions"/></column>
+                    </columns>
+                </form-list>
+                <label type="p" style="q-pa-md m-muted" condition="!datasetList.length &amp;&amp; filtered" text="No dataset matches."/>
+                <label type="p" style="q-pa-md m-muted" condition="!datasetList.length &amp;&amp; !filtered &amp;&amp; !failure"
+                        text="No business dataset is open to you yet. A dataset steward admits each one once its index is built and its rows are scoped."/>
+            </box-body-nopad>
+        </container-box>
+        <!-- Tools' own (no mount): every other dataset the viewer may query, which are not business datasets and have no
+            admission -->
+        <section name="OtherDatasets" condition="showOther"><widgets>
+            <container style="row items-center q-col-gutter-sm q-mt-md q-mb-sm">
+                <container style="col">
+                    <label text="Other datasets" type="h6"/>
+                    <label type="p" style="text-caption m-muted q-mb-none" text="The telemetry indexes, the DataDocument indexes and saved dataset definitions with their row filters. Queries run with your dataset permissions."/>
+                </container>
+                <container style="col-auto"><link url="definition" text="New dataset definition" icon="sym_o_add" parameter-map="{definitionType:'dataset'}"/></container>
+            </container>
+            <container-box>
+                <box-body-nopad>
+                    <form-list name="OtherDatasetList" list="otherList" skip-form="true" paginate="false">
+                        <field name="title"><default-field title="Dataset"><link url="." text="${title}" link-type="anchor" parameter-map="{otherDatasetId:id}"/></default-field></field>
+                        <field name="id"><default-field title="ID"><display/></default-field></field>
+                        <field name="kind"><default-field><display/></default-field></field>
+                        <field name="timeField"><default-field title="Time field"><display/></default-field></field>
+                        <field name="explore"><default-field title=""><link url="explore" text="Explore" link-type="anchor" parameter-map="{datasetId:id}"/></default-field></field>
+                        <field name="edit"><default-field title=""><link condition="saved" url="definition" text="Definition" link-type="anchor" parameter-map="{definitionId:id}"/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="kind"/></column>
+                            <column><field-ref name="explore"/><field-ref name="edit"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad>
+            </container-box>
+            <section name="DatasetFields" condition="otherDatasetId"><widgets>
+                <label text="Fields of ${otherDatasetId}" type="h6"/>
+                <label condition="listed.other.notice" text="${listed.other.notice}" type="p" style="text-negative"/>
+                <label condition="!listed.other.notice" text="Time field: ${listed.other.timeField}" type="p"/>
+                <form-list name="DatasetFieldList" list="fieldList" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="Field"><display/></default-field></field>
+                    <field name="type"><default-field><display/></default-field></field>
+                    <field name="kind"><default-field title="Index type"><display/></default-field></field>
+                    <field name="searchable"><default-field><display/></default-field></field>
+                    <field name="aggregatable"><default-field title="Aggregatable"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="name"/></column>
+                        <column><field-ref name="type"/></column>
+                    </columns>
+                </form-list>
+            </widgets></section>
         </widgets></section>
     </widgets>
 </screen>

@@ -5,10 +5,13 @@
     <moqui.security.user.NotificationTopic topic="ReportAlert" inboxEnumId="NinUpdates" description="Report alert"
         typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"/>
     <!-- Business dataset scope policies (crates/moqui-report/src/business.rs): each a rowFilterService (enumCode) a domain
-        component registers as an Enumeration of this type, which a business dataset must name to be admitted -->
+        component registers as an Enumeration of this type, which a business dataset must name to be admitted. optionValue
+        is the policy's scope parameter: the name of the rowFilterParameters entry in which a dataset names the field that
+        carries a row's scope, which the dataset forms ask for; a policy that takes none leaves it out -->
     <moqui.basic.EnumerationType enumTypeId="ReportScopePolicy" description="Business dataset scope policy (a row-filter service)"/>
     <moqui.basic.Enumeration enumId="ReportUserGroups" enumTypeId="ReportScopePolicy"
-            enumCode="org.moqui.report.ReportServices.get#UserGroupRowFilter" description="the viewer's user groups"/>
+            enumCode="org.moqui.report.ReportServices.get#UserGroupRowFilter" description="the viewer's user groups"
+            optionValue="groupField"/>
     <!-- Business annotation sources (crates/moqui-report/src/annotations.rs; BOSS impl-insights P6): each a dataset (enumCode) over
         the annotations that a domain component registers and scopes with its own row filter; a dashboard over business data
         shows the business events of each source its viewer may read -->

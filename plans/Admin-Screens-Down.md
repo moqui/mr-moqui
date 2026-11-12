@@ -56,7 +56,7 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
   relative paths; optional `hide` list.
 - `reportPolicy` (beside `reportLinks`; nulled in `T/screen/Dashboards.xml` and `T/screen/System/Monitor.xml`, set in
   `B/screen/Insights.xml`): `features {alert, share}`, `range`, `datasetIdPrefix`, `datasetScopeParameter`,
-  `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`, `recipientCap`, `calendar`, each
+  `datasetScopeLabel`, `datasetScopeHelp` (I1), `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`, `recipientCap`, `calendar`, each
   described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens). `reportLinks` has the keys
   `alerts` and `alertShared` since I0; `wallDisplay` and a Tools default for `drill` come with their screens (I4).
 - `T/template/ReportMount.js`: `state()` gives `{mounted, links, policy}`, every key and field present, and
@@ -154,7 +154,7 @@ Tools gets the generic screens, each reading and writing only through `ReportSer
 
 | Dashboards screen | Change | Insights after |
 |---|---|---|
-| Datasets, DatasetDetail, DatasetFields, DatasetView | merge: the business list and stewardship on top; today's telemetry and index list stays as "Other datasets" where there is no mount | W (grants name locations and transitions) |
+| Datasets, DatasetDetail, DatasetFields, DatasetView | merge: the business list and stewardship on top; today's telemetry and index list stays as "Other datasets" where there is no mount | W (grants name locations and transitions; the record's I1) |
 | Schedules, ScheduledReportDetail, ReportDelivery | new; `Reports.xml` keeps previews, the compose link and the owner-mode form | D; the area adds the recipient cap |
 | Alerts, AlertRule, AlertShared | one list (Mine, Received, Templates, Kind) and one editor: a shared basis form, then Contact points or Audience; links from `reportLinks`; state through `get#AlertState` | W taking in only the business transitions |
 | Drill, Analysis | new generic screens | S: scope, meaning, record links, cost filter; organization calendar |
@@ -172,7 +172,7 @@ ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
 | Phase | mr-moqui | mr-boss | Specs |
 |---|---|---|---|
 | I0 Contract | `reportPolicy` nulled at `Dashboards.xml` and `System/Monitor.xml`; `ReportMount.js`, which every Dashboards screen reads the links through; Explore and Split guard; Monitoring.md | root sets `reportPolicy`; direct-mount Panels, Explore, Split | `ReportMounts`, `InsightsAccess` |
-| I1 Datasets | two operations; four screens; `ReportDatasets.js` | four wrappers; two rows | `BusinessDatasets`; `InsightsDatasets` |
+| I1 Datasets | two operations; four screens; `ReportDatasets.js`; a scope policy registers its parameter; `create#BusinessDataset` asks the named dataset's update artifact | four wrappers; two rows; `DatasetServices` keeps readiness and refresh | `BusinessDatasets`; `InsightsDatasets` |
 | I2 Delivery | recipient and screen-schedule operations, `ownerName`; three screens; `Reports.xml` trimmed | items re-pointed; three rows | `ReportAudience`; `InsightsDelivery`, `InsightsSettings` |
 | I3 Alerts (after I2) | merged list and editor; `ReportAlerts.js` | two wrappers; `Alerts.js` deleted | `AdminOverview`; `InsightsAlerts` |
 | I4 Drill, Analysis, share, playlists, wall | five screens | wrappers; `DashboardServices` deleted | `InsightsRecords`, `InsightsDashboards`, `InsightsWallDisplay` |
@@ -675,3 +675,119 @@ changed screens; 27 s) and, of the same binary by name, `monitor_tui::`, `monito
 screen in html or the terminal; 6 pass, 3 need a server that is not there); `moqui lint --screens` with no parse
 failure and no flagged site that is new, `moqui lint` of `ContextServices.xml`. Changed and not run: mr-boss's
 acceptance `InsightsTui` and `InsightsServerStatic` (the screens mounted by location added to their lists).
+
+### I1 Datasets (Nov 11, 2026)
+
+Built: the four dataset screens of Dashboards, Insights' with their BOSS references gone: `Datasets` (the business
+datasets the viewer reads and a steward's waiting for review, with state, source, scope, index and last build; a new
+dataset over a registered feed's document; below it, where there is no mount, "Other datasets", what the screen showed
+before: the telemetry indexes, the document indexes and the saved datasets that are not business ones, with the fields
+of the one chosen), `DatasetDetail` (identity and scope, admission checks, Admit, Rebuild index, Retire, the definitions
+that use it; with no mount, the dataset in the definition editor), `DatasetFields` (the document's fields and
+conditions) and `DatasetView` (the rows as the viewer reads them, a page at a time, and their export as CSV or JSON,
+recorded). Their presentation is `tools/template/ReportDatasets.js` (`list`, `detail`, `view`, `exportRows`,
+`createRequest`, `storeRequest`), which calls only `ReportServices` as the viewer and shows a refusal by its words.
+Two operations in the new `framework/service/org/moqui/report/ReportReads.js`: `get#BusinessDataset` (one dataset the
+caller reads or stewards, as `find#BusinessDatasets` answers it; for its steward its document's fields and conditions
+and the definitions over it; any other dataset, and one that does not exist, "not available") and
+`get#BusinessDatasetOptions` (the registered scope policies with their scope parameter and the engine's operators and
+functions for any signed-in caller; `canCreate`, the dataset-save artifact by the caller's own grant, and only then the
+documents of registered feeds; it takes nothing from the request). Both are covered by `DASHBOARDS_APP`'s
+`ReportServices.*` pattern, as every other operation is, so the framework's security data gains no row; they are in
+Monitoring.md ("Business datasets") and `JS-Framework-Services.md`. In the engine (`crates/moqui-report/src/business.rs`;
+the release binary rebuilt): a scope policy's registration names its scope parameter (the enumeration's `optionValue`,
+`groupField` for `ReportUserGroups`), answered as each dataset's `scopeParameter`; and `create#BusinessDataset` asks the
+update artifact of the dataset named beside the dataset-save artifact. `ReportMount.js`'s policy gains
+`datasetScopeLabel` and `datasetScopeHelp`. Datasets and Explore have a menu image, as the other Dashboards items now
+do. In mr-boss: the four screens include the Dashboards screens at their own locations and take in the eight
+transitions Insights offers (the table below); `Datasets.js` and `DatasetServices.xml` keep `check#DatasetReadiness`
+and `refresh#DatasetIndex`, and the six services of the screens are deleted; the dataset prefix is written once, in
+`Insights.js` `reportPolicy`, with Insights' words for the organization field; the two operations are rows of
+`BOSS_INS_DATASET_READ`, beside `find#BusinessDatasets`.
+
+| Screen | With no mount | Under a mount | Insights | Taken in | Left out | BOSS rows that name it |
+|---|---|---|---|---|---|---|
+| Datasets | the business list, New dataset, then Other datasets with their Explore and Definition links and the fields of one | the business list and New dataset; the id starts with the mount's prefix, the scope field has the mount's words | W | `createDataset` | `explore`, `definition` | `BOSS_INS_DATASET_SCREENS`: the screen, `Datasets.xml/createDataset` |
+| DatasetDetail | the dataset for its steward, with Definition in the More menu | the same without Definition | W | `storeDataset`, `admitDataset`, `retireDataset`, `rebuildIndex` | `definition` | `BOSS_INS_DATASET_STEWARDSHIP`: the screen and the four transitions |
+| DatasetFields | fields and conditions | the same | W | `storeFields`, `storeConditions` | none | `BOSS_INS_DATASET_STEWARDSHIP`: the screen and the two transitions |
+| DatasetView | the rows and the export, the range Tools' | the same, the range the mount's | W | `exportDocuments` | none | `BOSS_INS_DATASET_SCREENS`: the screen, `DatasetView.xml/exportDocuments` |
+
+Each grant is a non-inheritable always-allow on the screen and on its transitions by name, with the root group and
+the administrator denied, so a wrapper is the only form that keeps them: no row is changed, and a transition Insights
+does not take in would be refused even if it were on the route. `BOSS_INS_LEGACY`'s plain names match nothing, as
+before.
+
+Where what `Datasets.js` did is now:
+
+| Insights service | Now |
+|---|---|
+| `find#Datasets` | `ReportDatasets.list` over `find#BusinessDatasets`; `canCreate` is the engine's (the dataset-save artifact), not `INSIGHTS_DATASET_EDIT` |
+| `get#Dataset` | `get#BusinessDataset`: the document's fields and conditions read by the framework, for the dataset's steward |
+| `get#DatasetChoices` | `get#BusinessDatasetOptions` |
+| `create#Dataset` | `ReportDatasets.createRequest` (the mount's prefix and the form's short name), then the engine's `create#BusinessDataset` |
+| `get#DatasetView` | `ReportDatasets.view` over `query#Documents` |
+| `export#Dataset` | `ReportDatasets.exportRows` in DatasetView's `exportDocuments`, over `query#Documents` and `audit#Export` |
+| `check#DatasetReadiness`, `refresh#DatasetIndex` | stay: Admin's registries name them |
+
+No write operation was missing in the engine.
+
+Findings:
+
+- F53. F49 is settled so: the scope parameter's name is the policy's, from its registration, and the words of the
+  form's field are the app's, from the mount. A dataset form has one scope field and sends it under the parameter of
+  the policy chosen (`groupField` for the framework's policy), which keeps Tools right with no mount whichever policy
+  is chosen; Insights' form sent `organizationField` under any policy. The mount's `datasetScopeParameter` is kept as
+  the name for a policy whose registration names none, and `datasetScopeLabel` and `datasetScopeHelp` are Insights'
+  "Organization field" and its help (Tools: "Scope field"). Mantle's policy is registered in mr-mantle, which this
+  phase does not change, so it names no parameter yet: under Insights the mount's name serves it, and in Tools with no
+  mount a dataset under Mantle's policy is asked for no scope field and its scope is shown without the field. One
+  attribute there (`optionValue="organizationField"` on the `MantleOrganization` enumeration) completes it, and
+  `datasetScopeParameter` can then leave the contract.
+- F54. F50 for the prefix: the engine's `create#BusinessDataset` asked only the dataset-save artifact, so a steward
+  granted the datasets of a name pattern could create one under any id by a direct call (a dataset they could then
+  neither admit nor read; no data was reached). It now asks the update artifact of the dataset named, so the prefix a
+  screen puts before a name gives no right. A scope field is taken by the engine only as a plain name, as before.
+- F55. F45 is settled as far as the screens go. The dataset screens open Explore by a link of their own to the mount's
+  `explore` URL, not by a transition, so an app takes in nothing and needs no grant row for it, and DatasetView's link
+  sends `pageIndex` empty beside the dataset, the range and the query (Insights' spec fails without it). The Report
+  builder's tab to Explore still carries the page: the subscreens menu builds each item's URL from what the item
+  declares of the current request (from DatasetView with `pageIndex=2` the menu's data has Explore with `datasetId`,
+  `from` and `pageIndex=2`, and Analysis with `datasetId` and `from`), in Tools' own menu too. Left as it is: the change
+  would be the menu's, for every app.
+- F56. Datasets' parameter for the other dataset whose fields are shown is `otherDatasetId`, not `datasetId`: the
+  screens beside it carry `datasetId`, and a link or tab back to the list would have opened the other datasets' field
+  list on a business dataset (F24).
+- F57. The permission checks of the deleted services (`INSIGHTS_DATASETS_UNAVAILABLE` and the others) are not
+  replaced: who opens a screen is its grant, what is offered is the engine's answer (`stewarded`, `canCreate`), and an
+  author who posts `createDataset` is refused by the operation's own grant (held in `InsightsDatasets`). A reader's
+  export is refused at the screen, where it was refused by the service.
+- F58. Both rows are in `BOSS_INS_DATASET_READ`, not one in the steward's group: the list asks the options at every
+  render, an author's too, and the operation answers the sources only to a caller who may create.
+- F59. The report engine refuses in sentences, not coded reasons, so `AdminCalls.read` would show its fallback in
+  place of them; `ReportDatasets.js` has its own `ask` (a transaction and an error frame of its own, the first line of
+  the refusal). A service an operation of `ReportReads.js` calls as the caller needs the caller's own grant under
+  Insights (a service row is not inheritable there): `find#BusinessDatasets` and `find#DefinitionUses`, which the
+  reading groups hold.
+- F60. mr-boss's legacy saved-find mapping found a list by reading the mr-boss screen file, and a wrapper has no
+  form-list (`InsightsCatalog` failed): `findList` reads the framework screen a file includes too.
+- F61. The export's default row limit is passed to its form as text: a number in a form's map is shown formatted
+  ("1,000") in a number field. In html a `container-dialog` shows its button text as the dialog's title.
+- F62. No recorded agent replay names a screen or a service of this phase (not replayed).
+
+Tests: `cargo lint` and `./moq build` (the Rust change), then `./moq test tools --nobuild` (72 features, 3.3 to 3.4 s
+of 4 s; `ReportMounts` holds the two new policy fields in the no-mount policy, no render added); `./moq test framework --nobuild --spec
+BusinessDatasets` (8 features, 0.6 s; the new feature: what each read answers a steward, a reader and a creator, a
+dataset the caller does not read told as one that does not exist, a dataset created under an id outside the creator's
+grant and a scope field that is no name refused, nothing stored); `./moq test mr-boss --nobuild --spec InsightsDatasets
+--spec InsightsAccess --spec InsightsHome --spec InsightsCatalog --spec InsightsSettings --spec InsightsDashboards
+--spec AdminExports --spec AdminRegistries` (41 features; InsightsDatasets' one render is DatasetView through Insights'
+route, with the Explore link and no page in it, the export through its transition, and a new feature with no render:
+the steward's dataset created and revised through the route, an author's refused, and `Datasets/definition`,
+`Datasets/explore` and `DatasetDetail/definition` posted by the steward and by ADMIN, not on the route, where Tools'
+own route goes to its editor); `cargo test -p moqui-host --test it tools_screens -- --ignored` (the four screens in
+html with no mount over a seeded business dataset: the other datasets, the scope by the registered parameter, the
+definition link, and a dataset made there with no prefix and its scope field under `groupField`; 26 s) and `cargo test -p moqui-host --test it -- monitor_tui:: monitor_readers::` (the three new
+screens in the terminal walk; 4 pass, 1 needs a server that is not there); `moqui lint --screens` with no parse
+failure and no flagged site in the changed screens, `moqui lint` of the two changed service files. Changed and not
+run: mr-boss's acceptance `InsightsDatasetsUsable` and `InsightsReviewWalk` (the export through DatasetView's
+transition in place of the deleted service).

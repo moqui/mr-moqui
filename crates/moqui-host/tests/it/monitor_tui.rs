@@ -177,6 +177,11 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
       <moqui.monitor.MonitorIncidentEvidence incidentId="TUI_INCIDENT" evidenceSeqId="01" evidenceDate="2026-10-30 12:00:00" kind="trace" refId="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" summary="TUI monitored request failed"/>
       <moqui.monitor.RecoveryDecision decisionId="TUI_DECISION" incidentId="TUI_INCIDENT" policyId="DEFAULT" action="isolate-instance" target="tui-canary" adapterId="IN_PROCESS" scopeKey="recovery:monitor-tui" statusId="AwaitingApproval" blastRadius="1 of 2 instances" decidedBy="system" decidedDate="2026-10-30 12:01:00"/>
       <moqui.monitor.RecoveryAction actionId="TUI_ACTION" decisionId="TUI_DECISION" incidentId="TUI_INCIDENT" action="escalate" adapterId="IN_PROCESS" scopeKey="recovery:monitor-tui" statusId="Succeeded" createdDate="2026-10-30 12:00:30" resultingState="escalated"/>
+      <moqui.entity.document.DataDocument dataDocumentId="TuiBusinessDoc" documentName="TUI business document" primaryEntityName="moqui.basic.Enumeration" indexName="tui_business"/>
+      <moqui.entity.document.DataDocumentField dataDocumentId="TuiBusinessDoc" fieldSeqId="01" fieldPath="enumId"/>
+      <moqui.entity.document.DataDocumentField dataDocumentId="TuiBusinessDoc" fieldSeqId="02" fieldPath="enumTypeId"/>
+      <moqui.entity.feed.DataFeed dataFeedId="TuiBusinessFeed" dataFeedTypeEnumId="DTFDTP_MAN_PULL" feedName="TUI business feed"/>
+      <moqui.entity.feed.DataFeedDocument dataFeedId="TuiBusinessFeed" dataDocumentId="TuiBusinessDoc"/>
       <moqui.monitor.MonitorRegression regressionId="TUI_REGRESSION" serviceName="monitor-tui" metric="error_rate" baselineVersion="1.0" candidateVersion="2.0" baselineValue="0" candidateValue="0.4" magnitude="9" confidence="0.999" severity="critical" dataQuality="good" locality="unknown" statusId="Open" incidentId="TUI_INCIDENT"/>
     </entity-facade-xml>"#,
     );
@@ -209,6 +214,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         let aggregate = json!({"datasetId":"tui-dataset","aggregations":[{"id":"severity_total","type":"sum","role":"metric","params":{"field":"severity_number"}}]});
         for definition in [
             json!({"id":"tui-dataset","type":"dataset","title":"TUI scoped logs","body":{"documentType":"otel_logs","timeField":"timestamp","rowFilter":{"field":{"name":"service.name","op":"eq","value":"monitor-tui"}}}}),
+            json!({"id":"tui-business","type":"dataset","title":"TUI business dataset","body":{"documentType":"TuiBusinessDoc","timeField":"_timestamp","signal":"business","rowFilterService":"org.moqui.report.ReportServices.get#UserGroupRowFilter","rowFilterParameters":{"groupField":"enumTypeId"}}}),
             json!({"id":"tui-panel","type":"panel","title":"TUI library logs","body":{"title":"TUI library logs","visualization":"table","queries":[{"datasetId":"tui-dataset","mode":"documents","queryString":"body:tui-marker","pageSize":50}]}}),
             json!({"id":"tui-dashboard","type":"dashboard","title":"TUI acceptance dashboard","body":{"variables":[{"name":"service","kind":"custom","label":"Service","datasetId":"tui-dataset","field":"service.name","options":["monitor-tui"],"default":"monitor-tui"}],"panels":{"a-total":{"title":"TUI severity total","visualization":"stat","queries":[aggregate.clone()],"transformations":[{"type":"organize","order":["severity_total"]}]},"b-library":{"panelRef":"tui-panel"},"c-notes":{"title":"TUI notes","visualization":"text","text":"TUI offline instructions"}},"layout":{"type":"autoGrid"}}}),
             json!({"id":"tui-dashboard-second","type":"dashboard","title":"TUI second dashboard","body":{"panels":{"notes":{"title":"Second dashboard notes","visualization":"text","text":"Rotation reached this dashboard"}},"layout":{"type":"autoGrid"}}}),
@@ -286,6 +292,18 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         ("Dashboards/Panels", "/apps/dashboards/Panels"),
         ("Dashboards/GitSync", "/apps/dashboards/GitSync"),
         ("Dashboards/Datasets", "/apps/dashboards/Datasets"),
+        (
+            "Dashboards/DatasetDetail",
+            "/apps/dashboards/DatasetDetail?datasetId=tui-business",
+        ),
+        (
+            "Dashboards/DatasetFields",
+            "/apps/dashboards/DatasetFields?datasetId=tui-business",
+        ),
+        (
+            "Dashboards/DatasetView",
+            "/apps/dashboards/DatasetView?datasetId=tui-business",
+        ),
         (
             "Dashboards/Explore",
             "/apps/dashboards/Explore?savedSearchId=tui-search",
@@ -377,6 +395,19 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     ] {
         assert!(seen.contains(name), "specialized twin {name} was not reachable");
     }
+    // The dataset screens: the business dataset with its state above Tools' other datasets, and its steward's detail.
+    let datasets = open(&link, "/apps/dashboards/Datasets").screen_text(220, 120);
+    assert!(
+        datasets.contains("TUI business dataset")
+            && datasets.contains("Needs review")
+            && datasets.contains("Other datasets"),
+        "{datasets}"
+    );
+    let detail = open(&link, "/apps/dashboards/DatasetDetail?datasetId=tui-business").screen_text(220, 120);
+    assert!(
+        detail.contains("Admission checks") && detail.contains("user groups on enumTypeId"),
+        "{detail}"
+    );
     // The AI screen groups LLM calls by trace and names each by its agent frame.
     let ai = open(&link, "/apps/system/Monitor/AgentTraces?from=now-1h&thru=now").screen_text(220, 80);
     assert!(

@@ -124,7 +124,8 @@
     <service verb="create" noun="BusinessDataset" type="rust" location="moqui_core::report::create_business_dataset">
         <description>A steward's business dataset over a DataDocument a registered DataFeed indexes, with a registered scope policy
             and its parameters, saved as a dataset definition they own and waiting for review. Refuses a document of no feed, a
-            telemetry index, an unregistered policy and a group the steward is not in.</description>
+            telemetry index, an unregistered policy, a group the steward is not in, and an id whose own update artifact
+            (org.moqui.report.dataset.(id)) the creator does not hold: a prefix a screen puts before a name gives no right.</description>
         <in-parameters>
             <parameter name="datasetId" required="true"/><parameter name="title"/><parameter name="dataDocumentId" required="true"/>
             <parameter name="timeField"/><parameter name="scopePolicyId" required="true"/><parameter name="rowFilterParameters" type="Map"/>
@@ -164,11 +165,50 @@
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="conditions" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
         <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
     </service>
+    <!-- What the report screens read beside the engine's own operations (ReportReads.js; plans/Admin-Screens-Down.md,
+        Track I), so that a screen an app shows under its own root reads no entity itself. Each asks the engine as the caller
+        and reads with authorization off only what that answer opens. -->
+    <service verb="get" noun="BusinessDataset" allow-remote="false">
+        <description>One business dataset the caller reads or stewards (dataset: as find#BusinessDatasets answers it, with
+            readable, stewarded and the scope policy's scopeParameter), and for its steward the fields of its document
+            (fields: fieldSeqId, fieldPath, fieldNameAlias, fieldName, functionName, sequenceNum, expression), the
+            conditions that narrow it (conditions: conditionSeqId, fieldNameAlias, operator, fieldValue, toFieldNameAlias,
+            postQuery) and the definitions over it that the caller reads (uses: id, title, type, readOnly; usesAvailable
+            false when they could not be listed). A reader who does not steward it gets the dataset alone. A dataset the
+            caller neither reads nor stewards is refused as one that is not available, as one that does not exist is.</description>
+        <in-parameters><parameter name="datasetId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="dataset" type="Map"/>
+            <parameter name="fields" type="List"/>
+            <parameter name="conditions" type="List"/>
+            <parameter name="uses" type="List"/>
+            <parameter name="usesAvailable" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('getBusinessDataset', context))</script></actions>
+    </service>
+    <service verb="get" noun="BusinessDatasetOptions" allow-remote="false">
+        <description>What a business dataset's forms may offer, for a signed-in caller: the registered scope policies
+            (policies: scopePolicyId, description, scopeParameter, the name of the rowFilterParameters entry in which a
+            dataset names the field that carries a row's scope, from the policy's registration, null where it registers
+            none), the condition operators and field functions a steward may use (operators, functions), whether the caller
+            may create a dataset (canCreate: the dataset-save artifact org.moqui.report.dataset, update, by the caller's own
+            grant) and, only then, the documents a dataset may be made over (documents: dataDocumentId, documentName,
+            indexName; those of registered data feeds, never a telemetry index). It takes nothing from the request.</description>
+        <out-parameters>
+            <parameter name="canCreate" type="Boolean"/>
+            <parameter name="documents" type="List"/>
+            <parameter name="policies" type="List"/>
+            <parameter name="operators" type="List"/>
+            <parameter name="functions" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('getBusinessDatasetOptions', context))</script></actions>
+    </service>
     <service verb="get" noun="UserGroupRowFilter" allow-remote="false">
         <description>The framework's scope policy ReportUserGroups (ReportSetupData.xml), a business dataset's rowFilterService: the
             rows whose field named in rowFilterParameters (groupField, userGroupId by default) is one of the signed-in viewer's
             user groups; nothing for a viewer of none. A userId of another user is refused. A domain registers its own policies
-            (an organization's, a confidential class's) the same way.</description>
+            (an organization's, a confidential class's) the same way, each with its scope parameter (here groupField) as the
+            enumeration's optionValue.</description>
         <in-parameters>
             <parameter name="userId"/><parameter name="datasetId"/><parameter name="rowFilterParameters" type="Map"/>
         </in-parameters>

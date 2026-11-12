@@ -336,6 +336,15 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
   row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
   currency shows it and a sum across currencies shows a plain number.
+- **The dataset screens** (Datasets, with the hidden DatasetDetail, DatasetFields and DatasetView) are the
+  [business datasets](#business-datasets)' list and stewardship: the datasets the viewer reads, and a steward's waiting
+  for review, each with its state, source, scope, index and last build; a new dataset over a registered feed's document;
+  one dataset for its steward (identity and scope, admission checks, Admit, Rebuild index, Retire, the definitions that
+  use it); its document's fields and conditions; and its rows as the viewer reads them, with their export as CSV or
+  JSON. Below the business list, where no app mounts the screen, Datasets shows Tools' other datasets: the telemetry
+  indexes, the DataDocument indexes and the saved datasets that are not business ones, each opened in Explore, a saved
+  one in the definition editor, with the fields of the one chosen. Their presentation is `tools/template/ReportDatasets.js`,
+  which reads no entity: every read and write is a `ReportServices` operation called as the viewer.
 - **Explore** queries one dataset: a query string (the Lucene subset), filter pills (pin, negate, disable, label),
   a field sidebar with top values, a count over time, the document table, Split to compare two ranges or filters,
   saved searches, and "add to dashboard".
@@ -471,12 +480,19 @@ An app shows the Dashboards screens under its own root (BOSS Insights does: impl
 | Explore | By location | Report builder › Explore |
 | Split | By location | Report builder › Compare, hidden from the menu |
 | Playlist | Included; `data` taken in | Playlists, with its own list around the player |
+| Datasets | Included; `createDataset` taken in (never `explore` and `definition`, the links of Tools' other datasets, which are not shown under a mount) | Report builder › Datasets, the author's and the steward's |
+| DatasetDetail | Included; `storeDataset`, `admitDataset`, `retireDataset` and `rebuildIndex` taken in (never `definition`, the dataset in Tools' definition editor) | Report builder › DatasetDetail, the steward's |
+| DatasetFields | Included; `storeFields` and `storeConditions` taken in | Report builder › DatasetFields, the steward's |
+| DatasetView | Included; `exportDocuments` taken in | Report builder › DatasetView, the author's and the steward's |
 
-The other Dashboards screens (Datasets, Reports, Alerts, AlertRule, AlertShared, Annotations, Git sync, Log context)
-are not shown by an app yet: Alerts, AlertRule and AlertShared link each other in the Dashboards app, and Insights has
-screens of its own for datasets, scheduled reports and alerts (its Playlists takes in Reports' `createPlaylist`
-alone). The screens run under the app's authorization; using them needs no `DASHBOARDS_APP` or
-`REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses and each dataset's own artifact.
+The dataset screens link each other as siblings (`../DatasetDetail`, `../DatasetView`, `../DatasetFields`,
+`../Datasets`), so an app shows the four under one parent with these names; they open a dataset in Explore by the
+mount's `explore` link, as a link of their own and not a transition, so an app takes in nothing for it. The other
+Dashboards screens (Reports, Alerts, AlertRule, AlertShared, Annotations, Git sync, Log context) are not shown by an
+app yet: Alerts, AlertRule and AlertShared link each other in the Dashboards app, and Insights has screens of its own
+for scheduled reports and alerts (its Playlists takes in Reports' `createPlaylist` alone). The screens run under the
+app's authorization; using them needs no `DASHBOARDS_APP` or `REPORT_DATASETS_ADMIN`, only the ReportServices
+operations a capability uses and each dataset's own artifact.
 
 The app's root sets, in its `always-actions` so that the transitions read them too:
 
@@ -495,9 +511,10 @@ out, but for the features: a mount offers one only when its map says so.
 |---|---|---|---|
 | `features.alert` | Whether the viewer may set an alert rule here | true | no screen yet (the alert screens) |
 | `features.share` | Whether the viewer may share a dashboard of their own here | true | no screen yet (Dashboard's sharing) |
-| `range` | `{from, thru}`: the range a screen opens on when the request names none | `now-7d` to `now` | Dashboard (and its panel export and inspect), Explore (and its tail) |
-| `datasetIdPrefix` | What the id of a dataset created here starts with | none | no screen yet (the dataset screens) |
-| `datasetScopeParameter` | The scope policy's parameter a dataset form asks for, sent in `rowFilterParameters` | none asked | no screen yet (the dataset screens) |
+| `range` | `{from, thru}`: the range a screen opens on when the request names none | `now-7d` to `now` | Dashboard (and its panel export and inspect), Explore (and its tail), DatasetView (and its export) |
+| `datasetIdPrefix` | What the id of a dataset created here starts with, before the form's short name. The engine creates a dataset only under an id whose own update artifact the creator holds, so the prefix names what the app's stewards are granted and gives no right | none | Datasets (`createDataset`) |
+| `datasetScopeParameter` | The `rowFilterParameters` entry the dataset forms' scope field is sent in under a scope policy whose registration names none; a policy's own registered parameter comes first ([Business datasets](#business-datasets)) | none: nothing is asked under such a policy | Datasets, DatasetDetail (and the scope shown in the lists) |
+| `datasetScopeLabel`, `datasetScopeHelp` | The words of the dataset forms' scope field | "Scope field", "The field that carries each row's scope; the policy's own when left empty" | Datasets, DatasetDetail |
 | `recipientPermissionId` | The permission a person holds to be proposed as a recipient | the engine's own rule | no screen yet (report delivery, alerts) |
 | `reportEmailTemplateId` | The `EmailTemplate` of a delivered report | the engine's | no screen yet (report delivery) |
 | `alertAudience` | `{topic, emailTemplateId, detailLink}`: the fixed parts of an alert rule told to an audience of users and groups | contact points, as Tools' rules have | no screen yet (the alert screens) |
@@ -535,7 +552,9 @@ grant names the app's own screen, never a Tools location, which would open the s
 regression spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`: the
 links, the policy and its defaults under the mount, with no mount and with a forged request parameter, and, read from
 the screens' sources, that both Tools roots null the five names and that no screen reads the two maps but through the
-module.
+module. The dataset screens under a mount (the id prefix, the scope field's parameter and words, the transitions an app
+does not take in) are held by the app's own spec through its route (mr-boss `test/Insights/InsightsDatasets.spec.js`),
+and with no mount by the cargo tests that render them (`tools_screens.rs`, `monitor_tui.rs`).
 
 ### Business datasets
 
@@ -557,9 +576,16 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   `userId`, the dataset's id and the dataset's `rowFilterParameters` (such as `{"organizationField": "vendorPartyId"}`), so one
   policy serves every dataset by naming its field; a registered policy runs without a grant of its own (it is the engine's,
   reviewed code), any other with the viewer's. Its filter is added before documents, suggestions, value counts, aggregations,
-  panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it.
+  panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it. A
+  registration also names the policy's scope parameter, the `rowFilterParameters` entry in which a dataset names the field
+  that carries a row's scope, as the enumeration's `optionValue` (`groupField` for `ReportUserGroups`): the engine answers it
+  as each dataset's `scopeParameter`, and the dataset forms send their one scope field under it, whichever policy is
+  chosen. A policy that registers none is asked for no field, unless the app that shows the forms names one in its
+  mount's policy (`datasetScopeParameter`, [Mounting the report screens](#mounting-the-report-screens)).
 - **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document with a registered policy, owned by the
-  steward, waiting for review; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
+  steward, waiting for review; its creator holds the dataset-save artifact `org.moqui.report.dataset` and the update artifact
+  of the dataset named, so a steward granted the datasets of a name pattern creates only under it, whatever id a caller
+  sends; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
   a git pull, returns it to review, and deleting the definition deletes its admission), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
   it to review; a shipped dataset's definition is its component's; steward; admit; retire; `expectedVersion`),
   `store#BusinessDatasetFields` (plain field paths only, no expression, secret or encrypted entity field; unique names; removing or renaming a field
@@ -574,6 +600,16 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   (`org.moqui.report.dataset.<document>`; `ADMIN`), so a view grant on such an artifact, by pattern or by mistake, reaches no
   unfiltered rows, and neither does a steward's own dataset: a steward granted the datasets they name by a pattern reads a
   business document through a business dataset and its registered policy only ([Dataset aliases](#dataset-aliases)).
+- **What the screens read** beside these is two operations in `framework/service/org/moqui/report/ReportReads.js`, so that
+  a screen an app shows under its own root reads no entity. `get#BusinessDataset` answers one dataset as
+  `find#BusinessDatasets` does, to a caller who reads or stewards it (any other dataset, and one that does not exist, is
+  "not available"), and to its steward also its document's `fields` and `conditions` and the definitions over it that the
+  caller reads (`uses`; `usesAvailable` false when they could not be listed); a reader gets the dataset alone.
+  `get#BusinessDatasetOptions` answers what a dataset form offers: the registered `policies` with their `scopeParameter`
+  and the `operators` and `functions` a steward may use, to any signed-in caller, and `canCreate` (the dataset-save
+  artifact by the caller's own grant) with, only then, the `documents` of registered feeds (never a telemetry index). It
+  takes nothing from the request. Both are granted with the other `ReportServices` operations (`DASHBOARDS_APP`'s
+  pattern); an app grants them to the groups that list datasets.
 - The regression spec is `framework/test/BusinessDatasets.spec.js`.
 
 ### Dataset aliases

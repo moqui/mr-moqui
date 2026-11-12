@@ -2536,7 +2536,10 @@ All paths below are relative to `runtime/base-component/tools/screen/`. Monitor 
 | `Dashboards/Panels.xml` | Panel library + optional embed; includes Home | D01, D02, D04 | A16 embed R/F |
 | `Dashboards/Dashboard.xml` | Dashboard view/time/variables/panels | D02 | A01 R, A08/A16 F |
 | `Dashboards/Definition.xml` | Hidden generic definition editor/copy/history/import/export; dashboard/panel/report variants | D04, D06, D07 | A02 R, A05/A08 F |
-| `Dashboards/Datasets.xml` | Dataset/schema inspection and Explore/Definition links | D03 | P |
+| `Dashboards/Datasets.xml` | Business dataset list, state and create; other datasets' schema inspection and Explore/Definition links | D03 | P |
+| `Dashboards/DatasetDetail.xml` | Hidden business dataset for its steward: identity, scope, admission checks, index, uses | D03 | P |
+| `Dashboards/DatasetFields.xml` | Hidden business dataset fields and conditions | D03 | P |
+| `Dashboards/DatasetView.xml` | Hidden business dataset rows and export | D03 | P |
 | `Dashboards/Explore.xml` | Query/filter/history/save/add-panel/context view | D03 | A04 F; shared paths exercised via Monitor |
 | `Dashboards/LogContext.xml` | Hidden surrounding entries, reused by Monitor | D03, M02 | Monitor mount A09 F; own direct route P |
 | `Dashboards/Split.xml` | Hidden comparison view, reused by Monitor | D02, D05, M03 | Monitor mount A15 R; own route P |
