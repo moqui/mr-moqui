@@ -65,7 +65,7 @@ mod grpc_client;
 mod grpc_listen;
 #[cfg(feature = "print")]
 pub mod ipp;
-// Load runs from Tools (plans/LoadRunner.md §7): org.moqui.dev.LoadServices.
+// Load runs from Tools (plans/archive/LoadRunner.md §7): org.moqui.dev.LoadServices.
 #[cfg(feature = "test-client")]
 mod load_runner;
 #[cfg(not(feature = "test-client"))]
@@ -117,12 +117,16 @@ pub mod usage;
     feature = "inbound-smtp",
     feature = "xmpp",
     feature = "edge",
-    feature = "sip"
+    feature = "sip",
+    all(feature = "devtools", feature = "tui")
 ))]
 mod worker;
 
 mod cluster_edge;
 mod cluster_notify;
+// The `moqui>` command line: SSH's admin shell, and the browser terminal's on a dev instance (devtools).
+#[cfg(any(feature = "ssh", all(feature = "devtools", feature = "tui")))]
+mod command;
 mod tls_pin;
 
 #[cfg(feature = "axum")]
@@ -595,7 +599,11 @@ pub fn load_save(
 /// (`use my_component as _;`) so its `submit_component!` entry is kept.
 pub fn main() {
     process_started();
-    match dispatch(std::env::args().skip(1)) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(status) = terminal_helper(&args) {
+        std::process::exit(status);
+    }
+    match dispatch(args) {
         Ok(Some(line)) => println!("{line}"),
         Ok(None) => {}
         Err(err) => {
@@ -606,6 +614,21 @@ pub fn main() {
             }
             std::process::exit(1);
         }
+    }
+}
+
+/// The browser terminal's helper modes (plans/Terminal-Fancy.md §7.2): when the first argument names one, run it and
+/// answer its exit status, else `None`. `term-exec` becomes the program of a host session on its pty, and answers only
+/// when it could not; `term-hold` is the holder of host sessions (`term::hold`), which outlives the server. Every
+/// binary that hosts a server calls this before anything else: [`main`], and the Desktop app's, whose node in process
+/// starts its own executable. It takes no conf and starts no runtime.
+pub fn terminal_helper(args: &[String]) -> Option<i32> {
+    match args.first().map(String::as_str) {
+        #[cfg(all(feature = "tui", feature = "devtools", unix))]
+        Some("term-exec") => Some(term::exec::term_exec()),
+        #[cfg(all(feature = "tui", feature = "devtools", unix))]
+        Some("term-hold") => Some(term::hold::term_hold()),
+        _ => None,
     }
 }
 
@@ -974,6 +997,9 @@ pub struct LoadFlags {
     pub disable_data_feed: bool,
     /// Extra service files registered before the load. Not a CLI flag. The path must not contain `/service/`.
     pub service_files: Vec<std::path::PathBuf>,
+    /// After the data, build a dev instance's artifact index into the database (moqui-devkit `index`). Not a CLI flag:
+    /// a test snapshot keeps the index, so each spec's server starts with it and reads only the files changed since.
+    pub build_artifact_index: bool,
 }
 
 /// Counts from one [`load_data`] call.
@@ -1238,8 +1264,31 @@ fn load_with_factory(
     // The data feed indexes on service workers after each commit; let that work finish before the database closes, so it
     // is not cut off mid-statement. Rows it does not deliver stay pending for the feed job either way.
     wait_for_workers(factory, std::time::Duration::from_secs(120));
+    if flags.build_artifact_index && outcome.is_ok() {
+        build_artifact_index(factory);
+    }
     drop(facade);
     outcome
+}
+
+/// A dev instance's artifact index, built into the database a load filled ([`LoadFlags::build_artifact_index`]). A
+/// failure is logged and the load stands: a server builds the index at its first use as it would have.
+fn build_artifact_index(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) {
+    if !moqui_devkit::index::enabled(factory) {
+        return;
+    }
+    let started = std::time::Instant::now();
+    match moqui_devkit::index::build(factory) {
+        Ok(report) => tracing::info!(
+            "Artifact index built into the loaded database in {:.1}s: {} files, {} artifacts",
+            started.elapsed().as_secs_f64(),
+            report.files,
+            report.artifacts
+        ),
+        Err(err) => tracing::error!(
+            "Artifact index: not built into the loaded database, a server builds it at first use: {err}"
+        ),
+    }
 }
 
 /// Wait until the service workers have nothing running or queued, or `limit` passes.
@@ -1407,6 +1456,14 @@ fn serve_thread(
             return Err(err);
         }
     };
+    // The certificates the listener serves, for the resource readings: when each expires (System home, the gauge).
+    if https.is_some() {
+        let cert_dir = runtime_dir.join("cert");
+        moqui_core::context::resources::set_certificate_source(
+            &factory,
+            std::sync::Arc::new(move || tls::certificate_expiries(&cert_dir)),
+        );
+    }
     let listened = runtime.block_on(http::listen(
         factory,
         address,

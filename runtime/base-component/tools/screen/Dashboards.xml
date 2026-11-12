@@ -2,8 +2,8 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboards" menu-image="sym_o_dashboard" menu-image-type="icon">
     <!-- Tools' own report screens: no mount (docs/tools/Monitoring.md, "Mounting the report screens"), so a request parameter
-        never sets a mount's links, fixed variables, hidden components or editor types here -->
-    <always-actions><script>reportLinks=null;reportFixedVariables=null;reportHiddenComponents=null;reportDefinitionTypes=null</script></always-actions>
+        never sets a mount's links, policy, fixed variables, hidden components or editor types here -->
+    <always-actions><script>reportLinks=null;reportPolicy=null;reportFixedVariables=null;reportHiddenComponents=null;reportDefinitionTypes=null</script></always-actions>
     <subscreens default-item="Home"/>
     <widgets><subscreens-panel id="dashboards-panel" type="popup"/></widgets>
 </screen>

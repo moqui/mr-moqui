@@ -51,6 +51,9 @@ pub struct FieldDefinition {
     pub java_type: String,
     pub is_pk: bool,
     pub encrypt: bool,
+    /// `ai-opt-out`: the field's text reaches no model tool (Assist's data reads, `propose#AiFieldValue`, an
+    /// approval's record; design-people PE-21).
+    pub ai_opt_out: bool,
     pub enable_audit_log: Option<String>,
     pub enable_localization: bool,
     pub create_only: bool,
@@ -244,6 +247,7 @@ impl EntityDefinition {
                 field_type: alias.field_type.clone(),
                 is_pk: alias.is_pk,
                 encrypt: alias.encrypt,
+                ai_opt_out: alias.ai_opt_out,
                 enable_localization: alias.enable_localization,
             })
         } else {
@@ -251,6 +255,7 @@ impl EntityDefinition {
                 field_type: Some(field.field_type.clone()),
                 is_pk: field.is_pk,
                 encrypt: field.encrypt,
+                ai_opt_out: field.ai_opt_out,
                 enable_localization: field.enable_localization,
             })
         }
@@ -953,6 +958,7 @@ fn parse_fields(
             java_type: String::new(),
             is_pk: is_true(&child, "is-pk"),
             encrypt: is_true(&child, "encrypt"),
+            ai_opt_out: is_true(&child, "ai-opt-out"),
             enable_audit_log: optional_attr(&child, "enable-audit-log").or_else(|| entity_audit.map(str::to_string)),
             enable_localization: is_true(&child, "enable-localization"),
             create_only: child.with_attribute("create-only", |value| match value.filter(|value| !value.is_empty()) {

@@ -285,9 +285,42 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="LUD" name="errorCount" function="sum"/>
         <alias entity-alias="LUD" name="inputTokens" function="sum"/>
         <alias entity-alias="LUD" name="cachedInputTokens" function="sum"/>
+        <alias entity-alias="LUD" name="cacheWriteTokens" function="sum"/>
         <alias entity-alias="LUD" name="outputTokens" function="sum"/>
         <alias entity-alias="LUD" name="reasoningTokens" function="sum"/>
         <alias entity-alias="LUD" name="totalTokens" function="sum"/>
         <alias entity-alias="LUD" name="cost" function="sum"/>
+    </view-entity>
+    <view-entity entity-name="LlmCallSummary" package="moqui.llm">
+        <description>LlmCall summed for the quota checks, the daily rollup and the dashboard: a find that selects only
+            the totals reads one row of the calls its conditions match (on userId, clientId, source, startDate); one that
+            also selects userId, modelId and source reads a row for each. callCount counts the calls and errorCount those
+            with an errorClass (stored null when there is none); currencyUomId is the least of the calls'.</description>
+        <member-entity entity-alias="LC" entity-name="moqui.llm.LlmCall"/>
+        <alias entity-alias="LC" name="userId"/>
+        <alias entity-alias="LC" name="clientId"/>
+        <alias entity-alias="LC" name="modelId"/>
+        <alias entity-alias="LC" name="source"/>
+        <alias entity-alias="LC" name="startDate"/>
+        <alias entity-alias="LC" name="callCount" field="callId" function="count"/>
+        <alias entity-alias="LC" name="errorCount" field="errorClass" function="count"/>
+        <alias entity-alias="LC" name="inputTokens" function="sum"/>
+        <alias entity-alias="LC" name="cachedInputTokens" function="sum"/>
+        <alias entity-alias="LC" name="cacheWriteTokens" function="sum"/>
+        <alias entity-alias="LC" name="outputTokens" function="sum"/>
+        <alias entity-alias="LC" name="reasoningTokens" function="sum"/>
+        <alias entity-alias="LC" name="cost" function="sum"/>
+        <alias entity-alias="LC" name="currencyUomId" function="min"/>
+    </view-entity>
+    <view-entity entity-name="LlmQuotaReservationSummary" package="moqui.llm">
+        <description>LlmQuotaReservation summed for the quota checks: a find that selects only tokens and cost reads one
+            row of the reservations its conditions match (on userId, clientId, source, expiresDate).</description>
+        <member-entity entity-alias="LQR" entity-name="moqui.llm.LlmQuotaReservation"/>
+        <alias entity-alias="LQR" name="userId"/>
+        <alias entity-alias="LQR" name="clientId"/>
+        <alias entity-alias="LQR" name="source"/>
+        <alias entity-alias="LQR" name="expiresDate"/>
+        <alias entity-alias="LQR" name="tokens" function="sum"/>
+        <alias entity-alias="LQR" name="cost" function="sum"/>
     </view-entity>
 </entities>

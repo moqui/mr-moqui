@@ -12,13 +12,13 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Load testing (plans/LoadRunner.md §8): the load scripts of the loaded components (Scripts), a run's form (NewRun),
+<!-- Load testing (plans/archive/LoadRunner.md §8): the load scripts of the loaded components (Scripts), a run's form (NewRun),
     the runs (Runs), one run (Run) and runs side by side (Compare), over org.moqui.dev.LoadServices, which check the
     sealed LOAD_RUNNER permission and all actions on the Tools app whatever calls them. The JSON transitions here serve
     NewRun.qvue and Run.qvue; each answers {..., errors} and every change is a POST. A run's script and target are
     never taken from a result: start#LoadRun resolves the script among the loaded components and checks the target. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Load testing" default-menu-index="10" menu-image="sym_o_speed" menu-image-type="icon">
+        default-menu-title="Load testing" default-menu-index="11" menu-image="sym_o_speed" menu-image-type="icon">
 
     <!-- a run for its page: once with the script's title, then every 2 seconds while it runs (template/LoadRuns.js runView) -->
     <transition name="runStatus" method="get" read-only="true" begin-transaction="false">
@@ -95,7 +95,7 @@ along with this software (see the LICENSE.md file). If not, see
         </widgets><fail-widgets>
             <container-box><box-header title="Load testing"/><box-body>
                 <label text="Not available: load testing needs the LOAD_RUNNER permission." type="p"/>
-                <link url="../dashboard" text="Tools"/>
+                <link url="../Home" text="Tools"/>
             </box-body></container-box>
         </fail-widgets></section>
     </widgets>

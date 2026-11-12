@@ -963,6 +963,12 @@ impl Telemetry {
         let _ = (name, callback);
     }
 
+    /// How many gauges the SDK holds; 0 when the SDK is off.
+    #[cfg(all(test, feature = "telemetry"))]
+    pub(crate) fn gauge_count(&self) -> usize {
+        self.sdk.as_ref().map_or(0, |sdk| sdk.gauge_count())
+    }
+
     /// A gauge of several series, one per attribute set the callback returns (the metric attribute allow-list
     /// applies). Callbacks must use weak factory references, as for [`Telemetry::observe_gauge`].
     pub fn observe_gauge_series(
@@ -1163,29 +1169,7 @@ pub fn register_runtime_gauges(factory: &Arc<ExecutionContextFactory>) {
     telemetry.observe_gauge("moqui.request.queue.depth", move || {
         Some(weak.upgrade()?.request_pool().queue_depth() as f64)
     });
-    for (name, key) in [
-        ("process.memory.usage", "MemoryUsed"),
-        ("process.thread.count", "Threads"),
-    ] {
-        let weak = Arc::downgrade(factory);
-        telemetry.observe_gauge(name, move || {
-            let factory = weak.upgrade()?;
-            let status = crate::context::status::status_map(&factory, false);
-            let Value::Map(process) = status.get("Process")? else {
-                return None;
-            };
-            let value = process.get(key)?;
-            if value.is_null() {
-                return None;
-            }
-            let value = moqui_lib::object::to_plain_string(value).parse::<f64>().ok()?;
-            Some(if key == "MemoryUsed" {
-                value * 1024.0 * 1024.0
-            } else {
-                value
-            })
-        });
-    }
+    register_resource_gauges(factory, &telemetry);
     for (name, which) in [("moqui.telemetry.dropped", 0), ("moqui.telemetry.failed", 1)] {
         let weak = Arc::downgrade(&telemetry);
         telemetry.observe_gauge(name, move || {
@@ -1194,6 +1178,87 @@ pub fn register_runtime_gauges(factory: &Arc<ExecutionContextFactory>) {
             Some(if which == 0 { counters.dropped } else { counters.failed } as f64)
         });
     }
+}
+
+/// A gauge's value from the readings; `None` records nothing.
+type ReadingGauge = fn(&crate::context::resources::Readings) -> Option<f64>;
+/// A filesystem gauge's value for one filesystem.
+type FilesystemGauge = fn(&crate::context::resources::Filesystem) -> Option<f64>;
+
+/// The gauges of the resource readings (`context::resources`, plans/archive/Tools-Fancy.md B3), named after the OpenTelemetry
+/// host and process metrics where there is one. Each collection reads the kept readings, so a minute's gauges share
+/// one read; a reading the platform does not report records nothing. Shares are 0 to 1.
+const RESOURCE_GAUGES: [(&str, ReadingGauge); 10] = [
+    ("system.cpu.load_average.1m", |readings| readings.load.map(|load| load[0])),
+    ("system.cpu.load_average.5m", |readings| readings.load.map(|load| load[1])),
+    ("moqui.system.cpu.load.utilization", |readings| {
+        readings.load_percent().map(|percent| percent / 100.0)
+    }),
+    ("process.cpu.utilization", |readings| readings.process_cpu),
+    ("process.memory.usage", |readings| readings.process_memory.map(|bytes| bytes as f64)),
+    ("moqui.process.memory.utilization", |readings| {
+        readings.process_memory_percent().map(|percent| percent / 100.0)
+    }),
+    ("system.linux.memory.available", |readings| {
+        readings.memory_available.map(|bytes| bytes as f64)
+    }),
+    ("process.thread.count", |readings| readings.threads.map(|count| count as f64)),
+    ("process.unix.file_descriptor.count", |readings| {
+        readings.open_files.map(|count| count as f64)
+    }),
+    // the fewest days a listener certificate has left: nothing recorded with no certificate
+    ("moqui.tls.certificate.days_left", |readings| readings.certificate_days_left()),
+];
+
+/// The attribute of the filesystem gauges' series: where the filesystem is mounted.
+pub const FILESYSTEM_ATTRIBUTE: &str = "system.filesystem.mountpoint";
+
+/// The filesystem gauges, one series per filesystem: its share used and the bytes the server's user may still write.
+const FILESYSTEM_GAUGES: [(&str, FilesystemGauge); 2] = [
+    ("system.filesystem.utilization", |filesystem| {
+        filesystem.used_percent().map(|percent| percent / 100.0)
+    }),
+    ("moqui.system.filesystem.available", |filesystem| {
+        Some(filesystem.available as f64)
+    }),
+];
+
+fn register_resource_gauges(factory: &Arc<ExecutionContextFactory>, telemetry: &Telemetry) {
+    for (name, value) in RESOURCE_GAUGES {
+        let weak = Arc::downgrade(factory);
+        telemetry.observe_gauge(name, move || {
+            value(&crate::context::resources::readings(&*weak.upgrade()?))
+        });
+    }
+    for (name, value) in FILESYSTEM_GAUGES {
+        let weak = Arc::downgrade(factory);
+        telemetry.observe_gauge_series(name, move || {
+            let Some(factory) = weak.upgrade() else {
+                return Vec::new();
+            };
+            let readings = crate::context::resources::readings(&factory);
+            readings
+                .filesystems
+                .iter()
+                .filter_map(|filesystem| {
+                    let mut attributes = Document::default();
+                    attributes.insert(FILESYSTEM_ATTRIBUTE.to_string(), Value::string(&filesystem.mount_point));
+                    Some((attributes, value(filesystem)?))
+                })
+                .collect()
+        });
+    }
+    for (name, which) in [("moqui.service.pool.active", 0), ("moqui.service.pool.queued", 1)] {
+        let weak = Arc::downgrade(factory);
+        telemetry.observe_gauge(name, move || {
+            let status = weak.upgrade()?.service_pools().status();
+            Some(if which == 0 { status.active } else { status.queued } as f64)
+        });
+    }
+    let weak = Arc::downgrade(factory);
+    telemetry.observe_gauge("moqui.request.pool.busy", move || {
+        Some(weak.upgrade()?.request_pool().status().busy as f64)
+    });
 }
 
 impl Shared {

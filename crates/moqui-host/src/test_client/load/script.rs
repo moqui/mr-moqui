@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Load scripts (plans/LoadRunner.md section 4): a `<component>/test/load/<Name>.load.js` file with `plan({...})` and
+//! Load scripts (plans/archive/LoadRunner.md section 4): a `<component>/test/load/<Name>.load.js` file with `plan({...})` and
 //! `scenario(name, {...})` at its top level. The file is evaluated once to read its plan ([`read_plan`]) and once in
 //! each user's engine ([`super::start`] with [`super::Source::Script`]). A scenario's settings are its defaults with
 //! what the run overrides ([`settings`]).
@@ -251,7 +251,7 @@ impl ScenarioSettings {
 
 /// A load script's file.
 pub(crate) struct LoadScript {
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
+    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/archive/LoadRunner.md L2, L3)
     pub(crate) path: PathBuf,
     /// The name errors give it: the component's directory name and the path within it.
     pub(crate) display: String,

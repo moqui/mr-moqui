@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, MutexGuard};
+use std::time::Duration;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
@@ -126,6 +127,8 @@ pub struct SessionTable {
     flushed: Arc<Condvar>,
     /// Sessions that expired since the listeners last heard, for their `sessionDestroyed` ([`take_expired`]).
     expired: Vec<String>,
+    /// The last id a bounded flush reached; the next one starts after it ([`flush_dirty_bounded`]).
+    flush_cursor: Option<String>,
 }
 
 impl SessionTable {
@@ -138,6 +141,7 @@ impl SessionTable {
             flushing: BTreeSet::new(),
             flushed: Arc::new(Condvar::new()),
             expired: Vec::new(),
+            flush_cursor: None,
         }
     }
 }
@@ -273,6 +277,25 @@ pub(crate) struct Memory {
     factory: Option<Arc<ExecutionContextFactory>>,
     dirty_columns: BTreeSet<Column>,
     dirty_json: BTreeSet<String>,
+    /// A shared device's request ([`super::device`]): the display account is this context's user for the request, and
+    /// what the web session itself holds is kept here, so nothing of the device's identity is ever stored in it.
+    device: Option<DeviceHold>,
+}
+
+/// The identity of the bound web session under a device's request, and what the device may open.
+#[derive(Clone)]
+struct DeviceHold {
+    scope: Arc<super::device::DeviceScope>,
+    user_id: Option<String>,
+    username: Option<String>,
+    anonymous: bool,
+}
+
+impl Memory {
+    /// The session's user, for the thread's activity mirror (`context/activity.rs`).
+    pub(crate) fn user_id(&self) -> Option<&str> {
+        self.user_id.as_deref()
+    }
 }
 
 struct ThreadView {
@@ -514,26 +537,71 @@ pub fn invalidate(id: &str) {
 ///
 /// Returns an error, after the others are written, when the idle sweep or a session failed.
 pub(crate) fn flush_dirty(factory: &ExecutionContextFactory) -> Result<(), Error> {
+    flush_dirty_within(factory, None)
+}
+
+/// The most sessions one scheduler pass writes, and the longest it spends writing them ([`flush_dirty_bounded`]).
+pub(crate) const FLUSH_PASS_SESSIONS: usize = 1000;
+pub(crate) const FLUSH_PASS_TIME: Duration = Duration::from_secs(5);
+
+/// How much of the dirty sessions one bounded flush writes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FlushBound {
+    pub(crate) sessions: usize,
+    pub(crate) time: Duration,
+}
+
+/// [`flush_dirty`] for the scheduler's pass: it writes at most `bound.sessions` sessions, or for at most `bound.time`,
+/// starting after the last id the previous bounded flush reached and going round to the first ids, so a pass with many
+/// dirty sessions does not hold the scheduler thread, and the sessions it leaves are written first by the next pass
+/// (plans/archive/High-Level-Review.md HL-020). The host's flush at shutdown writes them all.
+///
+/// # Errors
+///
+/// As [`flush_dirty`].
+pub(crate) fn flush_dirty_bounded(factory: &ExecutionContextFactory, bound: FlushBound) -> Result<(), Error> {
+    flush_dirty_within(factory, Some(bound))
+}
+
+fn flush_dirty_within(factory: &ExecutionContextFactory, bound: Option<FlushBound>) -> Result<(), Error> {
+    let started = std::time::Instant::now();
     sync_bound(factory);
     let mut failed = 0_usize;
     if let Err(err) = expire_idle(factory) {
         tracing::error!("could not expire idle sessions: {err}");
         failed += 1;
     }
-    let mut ids: Vec<String> = {
+    // In id order (the table is sorted), from just after the cursor round to it.
+    let (ids, cursor) = {
         let table = lock_sessions(factory);
-        table
+        let ids: Vec<String> = table
             .sessions
             .iter()
             .filter(|(_, live)| needs_flush(live))
             .map(|(id, _)| id.clone())
-            .collect()
+            .collect();
+        (ids, table.flush_cursor.clone())
     };
-    ids.sort_unstable();
-    for id in ids {
-        if let Err(err) = flush_id(factory, &id) {
+    let split = cursor
+        .as_deref()
+        .filter(|_| bound.is_some())
+        .map_or(0, |cursor| ids.partition_point(|id| id.as_str() <= cursor));
+    let (before, after) = ids.split_at(split);
+    let mut reached = None;
+    for (written, id) in after.iter().chain(before).enumerate() {
+        if bound.is_some_and(|bound| written >= bound.sessions || started.elapsed() >= bound.time) {
+            break;
+        }
+        // Each is written on its own, and one that fails moves the cursor on too, so it does not hold back the rest.
+        if let Err(err) = flush_id(factory, id) {
             tracing::error!("could not write session {id}: {err}");
             failed += 1;
+        }
+        reached = Some(id.clone());
+    }
+    if bound.is_some() {
+        if let Some(reached) = reached {
+            lock_sessions(factory).flush_cursor = Some(reached);
         }
     }
     if failed > 0 {
@@ -815,6 +883,53 @@ pub(crate) fn drop_live(factory: &ExecutionContextFactory, id: &str) {
     let _claim = FlushClaim::wait(factory, id);
     retire_old(factory, id);
 }
+
+/// Retire the live sessions whose `HttpSession` rows are gone: ended on another server, whose `session-end` this one
+/// may have missed in a cluster delivery gap (plans/archive/High-Level-Review.md HL-018). Run when a peer's clear of every
+/// entity cache says it may have lost messages ([`crate::cluster::recover_missed`]). Only a session that was written
+/// or read is looked at (a new one has no row yet), with one `IN` query per [`RETIRE_CHUNK`] ids. Out: how many were
+/// retired.
+///
+/// # Errors
+///
+/// When the rows cannot be read; the sessions of the chunks read before are retired.
+pub(crate) fn retire_gone(factory: &ExecutionContextFactory) -> Result<usize, Error> {
+    let Some(facade) = factory.entity() else {
+        return Ok(0);
+    };
+    let ids: Vec<String> = lock_sessions(factory)
+        .sessions
+        .iter()
+        .filter(|(_, live)| !live.retired && live.snapshot.is_some())
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut retired = 0;
+    for chunk in ids.chunks(RETIRE_CHUNK) {
+        let condition = Condition::is_in("sessionId", chunk.iter().map(Value::string).collect());
+        let statement = facade
+            .with_entity(HTTP_SESSION, |entity, dialect, _| {
+                sql_select(
+                    entity,
+                    dialect,
+                    &[FieldRef::new("sessionId")],
+                    Some(&condition),
+                    &[],
+                    LimitOffset::default(),
+                )
+            })
+            .map_err(Error::from)?;
+        let rows = with_session_sql(&facade, |conn| conn.query(&statement.sql, &statement.params))?;
+        let present: BTreeSet<String> = rows.iter().filter_map(|row| opt_text(row, "sessionId")).collect();
+        for id in chunk.iter().filter(|id| !present.contains(*id)) {
+            drop_live(factory, id);
+            retired += 1;
+        }
+    }
+    Ok(retired)
+}
+
+/// Session ids [`retire_gone`] reads in one query.
+const RETIRE_CHUNK: usize = 1000;
 
 /// The visit of this session, if it has one.
 fn visit_id_now() -> Option<String> {
@@ -1323,6 +1438,12 @@ pub(crate) fn set_visit(visit_id: &str, visitor_id: &str) {
 /// cached authorization data go, so a later login cannot reuse them.
 pub fn clear_login() {
     with_session(|session| {
+        // under a device's request the web session's own user signs out; the request stays a device's, with no user
+        if let Some(hold) = session.device.as_mut() {
+            hold.user_id = None;
+            hold.username = None;
+            hold.anonymous = false;
+        }
         session.user_id = None;
         session.username = None;
         session.anonymous = false;
@@ -1330,6 +1451,47 @@ pub fn clear_login() {
         session.authz = AuthzCache::default();
         mark_column(session, Column::UserId);
     });
+}
+
+/// Make a shared device's display account this context's user for the request under way ([`super::device`]): the
+/// user, the username and fresh authorization data, and nothing else. The bound web session keeps the identity it had
+/// (none, for a device's browser): no column is marked, and [`thread_view`] stores the held identity, so no session
+/// row, live session or socket ever carries the display account. [`leave_device`] ends it.
+pub(crate) fn enter_device(user_id: &str, username: &str, scope: Arc<super::device::DeviceScope>) {
+    with_session(|session| {
+        let hold = match session.device.take() {
+            // entered twice in one request: the session's own identity is the one first held
+            Some(hold) => DeviceHold { scope, ..hold },
+            None => DeviceHold {
+                scope,
+                user_id: session.user_id.clone(),
+                username: session.username.clone(),
+                anonymous: session.anonymous,
+            },
+        };
+        session.device = Some(hold);
+        session.user_id = Some(user_id.to_string());
+        session.username = Some(username.to_string());
+        session.anonymous = false;
+        session.authz = AuthzCache::default();
+    });
+}
+
+/// End [`enter_device`]: the context's user is the web session's own again.
+pub(crate) fn leave_device() {
+    with_session(|session| {
+        if let Some(hold) = session.device.take() {
+            session.user_id = hold.user_id;
+            session.username = hold.username;
+            session.anonymous = hold.anonymous;
+            session.authz = AuthzCache::default();
+        }
+    });
+}
+
+/// What the device whose request this is may open, when the request is a shared device's.
+pub(crate) fn device_scope() -> Option<Arc<super::device::DeviceScope>> {
+    with_session(|session| session.device.as_ref().map(|hold| Arc::clone(&hold.scope)))
 }
 
 /// Who is logged in on this context, with what a login changes beside the user, for [`restore_identity`].
@@ -1538,6 +1700,13 @@ fn touch_session(factory: &ExecutionContextFactory, id: &str) {
         live.touch = true;
         live.revision = next_revision();
     }
+}
+
+/// Count use of the session `id` that came without a request, such as typing in a browser terminal whose socket is the
+/// only traffic (plans/Terminal-Fancy.md §5.2), so the session does not time out while its user works. Only a session
+/// this node holds live is touched.
+pub fn note_use(factory: &ExecutionContextFactory, id: &str) {
+    touch_session(factory, id);
 }
 
 /// Keep the table within `session-config` `max`: drop the sessions used longest ago, down to nine
@@ -2541,17 +2710,23 @@ fn bound_factory() -> Option<Arc<ExecutionContextFactory>> {
 }
 
 fn thread_view(session: &mut Memory) -> ThreadView {
+    // a device's request runs as its display account, which the web session never holds: what is stored is the
+    // session's own identity, whatever asks for the view and whenever
+    let (user_id, username, anonymous) = match &session.device {
+        Some(hold) => (hold.user_id.clone(), hold.username.clone(), hold.anonymous),
+        None => (session.user_id.clone(), session.username.clone(), session.anonymous),
+    };
     ThreadView {
         bound_id: session.bound_id.clone(),
         factory: session.factory.clone(),
-        user_id: session.user_id.clone(),
-        username: session.username.clone(),
+        user_id,
+        username,
         visit_id: session.visit_id.clone(),
         visitor_id: session.visitor_id.clone(),
         locale: session.locale.clone(),
         time_zone: session.time_zone.clone(),
         csrf_token: session.csrf_token.clone(),
-        anonymous: session.anonymous,
+        anonymous,
         attributes: session.attributes.clone(),
         dirty_columns: session.dirty_columns.clone(),
         dirty_json: session.dirty_json.clone(),

@@ -17,8 +17,8 @@
 //
 // The proposed change is a map: memberships (rows {userGroupId, userId, fromDate, thruDate} that replace the stored row of the
 // same key or are added), groups ({userGroupId: {requireAuthcFactor, ipAllowed}}), accounts ({userId: {disabled,
-// disabledDateTime, terminateDate, ipAllowed}}) and endedFactorIds (factors a reset ends, P4). Later phases add the provider
-// changes their services make.
+// disabledDateTime, terminateDate, ipAllowed}}), endedFactorIds (factors a reset ends, P4) and disabledFlowIds (the sign-in
+// providers a change disables, P10: an administrator with no password signs in only through an enabled one).
 //
 // P4 adds the sessions and credentials of an account (design-admin §4 Sessions, UserDetail AccessCredentials; impl-admin F3,
 // F4, F42): find#Sessions and revoke#Sessions over Visit and HttpSession, for the caller's own sessions (Commons Account) or,
@@ -69,7 +69,20 @@ function groupFlags(groupId, proposed, cache) {
     }
     return cache.get(groupId)
 }
-const enabledFlows = () => rows("moqui.security.sso.AuthFlow").some(row => row.disabled !== "Y")
+// The sign-in providers enabled once the change has disabled those it names (their ids).
+function enabledFlows(proposed = {}) {
+    const disabled = new Set(Array.from(proposed.disabledFlowIds || []).map(String))
+    return new Set(
+        rows("moqui.security.sso.AuthFlow")
+            .filter(row => row.disabled !== "Y" && row.inbound !== "Y" && !disabled.has(String(row.authFlowId)))
+            .map(row => String(row.authFlowId))
+    )
+}
+// Whether an administrator signs in through a provider: the account carries a provider's id, and the provider it names is
+// enabled; one that names none is taken by a provider only while that is the one enabled (with several, a sign-in never
+// takes an account in a privileged group, crates/moqui-core/src/service/sso.rs).
+const providerSignIn = (account, flows) =>
+    !!account.externalUserId && (account.externalAuthFlowId ? flows.has(String(account.externalAuthFlowId)) : flows.size === 1)
 
 // Why the account is not a usable path at the moment, or null when it is.
 function unusable(userId, at, memberRows, proposed, context) {
@@ -78,7 +91,7 @@ function unusable(userId, at, memberRows, proposed, context) {
     const account = Object.assign(map(stored), (proposed.accounts || {})[userId] || {})
     if (account.disabled === "Y" && !account.disabledDateTime) return "DISABLED"
     if (account.terminateDate && ms(account.terminateDate) < at) return "TERMINATED"
-    if (!account.currentPassword && !(account.externalUserId && context.flows)) return "NO_CREDENTIAL"
+    if (!account.currentPassword && !providerSignIn(account, context.flows)) return "NO_CREDENTIAL"
     const groupIds = memberRows.filter(row => row.userId === userId && open(row, at)).map(row => row.userGroupId)
     if (!groupIds.includes(ADMIN_GROUP)) return "NOT_ADMINISTRATOR"
     groupIds.push("ALL_USERS")
@@ -115,8 +128,8 @@ function moments(proposed) {
 // Whether the change keeps a usable administration path: allowed, with the paths before and after (counts only, no names), or
 // refused with ADMINISTRATION_PATH and the reason. A change on an instance that had no path is not refused for it.
 function administrationPath(proposed = {}) {
-    const context = {clientIp: String(ec.user.getClientIp() || ""), flows: enabledFlows(), groups: new Map()}
-    const before = countPaths(nowMs(), {}, Object.assign({}, context, {groups: new Map()}))
+    const context = {clientIp: String(ec.user.getClientIp() || ""), flows: enabledFlows(proposed), groups: new Map()}
+    const before = countPaths(nowMs(), {}, Object.assign({}, context, {flows: enabledFlows(), groups: new Map()}))
     let after = before
     for (const at of moments(proposed)) {
         after = countPaths(at, proposed, context)
@@ -223,9 +236,22 @@ function heldBeyond(userId) {
     return null
 }
 
+// The accounts whose username or name holds a text, ignoring case: the first 200 by username.
+function accountsLike(term) {
+    const factory = ec.entity.conditionFactory
+    const like = "%" + term.replace(/[\\%_]/g, character => "\\" + character) + "%"
+    const named = factory.makeCondition(
+        ["username", "userFullName"].map(field => factory.makeCondition(field, "like", like).ignoreCase()),
+        "or"
+    )
+    return Array.from(find(ACCOUNT).condition(named).selectField("userId").orderBy("username").limit(200).list()).map(
+        row => row.userId
+    )
+}
 // find#Sessions: the sessions of an account (its visits, the live ones those with a web session), newest first; for the
-// caller's own account any signed-in user, for another or all accounts ADMIN_IDENTITY_VIEW. A session is named by its visit
-// (sessionKey), never by its cookie or token, and its client by a summary and address.
+// caller's own account any signed-in user, for another or all accounts ADMIN_IDENTITY_VIEW (all accounts narrowed by text to
+// those whose username or name holds it). A session is named by its visit (sessionKey), never by its cookie or token, and its
+// client by a summary and address.
 function findSessions(p) {
     const me = signedInUser()
     const listed = Array.from(p.userIdList || [])
@@ -235,7 +261,8 @@ function findSessions(p) {
     let userIds
     if (allUsers || listed.length) {
         if (!ec.user.hasPermission(IDENTITY_VIEW)) throw new Error(IDENTITY_VIEW + " is required for other users' sessions")
-        userIds = allUsers ? null : listed
+        const term = text(p.text)
+        userIds = allUsers ? (term ? accountsLike(term) : null) : listed
     } else userIds = [target(p, IDENTITY_VIEW).userId]
     const activeOnly = p.activeOnly == null ? false : p.activeOnly === true || p.activeOnly === "true" || p.activeOnly === "Y"
     const days = Math.max(1, Math.min(365, Number(p.sinceDays || 30)))
@@ -317,10 +344,12 @@ function revokeSessions(p) {
     }
     let sessionCount = 0
     let visitCount = 0
+    const ended = new Set()
     for (const [userId, visitIds] of byUser) {
         try {
             sessionCount += Number(UserSecurityChecks.endUserSessions(userId, visitIds))
             visitCount += visitIds ? visitIds.length : 0
+            ended.add(userId)
         } catch (error) {
             // one account's failure is named; the others' sessions still end
             ec.logger.error("Sessions of " + userId + " not ended: " + error.message)
@@ -329,7 +358,20 @@ function revokeSessions(p) {
     }
     if (byUser.size)
         ec.logger.info("Sessions ended by " + me + " for " + Array.from(byUser.keys()).join(", ") + ": " + sessionCount)
+    // another account's sessions ended by an administrator are evidence (impl-admin P17): who, whose, and how many were named;
+    // none for an account whose sessions could not be ended
+    for (const [userId, visitIds] of byUser)
+        if (userId !== me && ended.has(userId))
+            accessEvidence(userId, "sessions", visitIds ? visitIds.length + " sessions ended" : "Every session ended", null)
     return {sessionCount, visitCount, refusedCount}
+}
+
+// An administrative action on an account that changes no audit-logged field (sessions ended, credentials revoked) is a row
+// of the audit log on the account, with who did it, the session it was done in and the reason given; never a credential.
+function accessEvidence(userId, fieldName, summary, reason) {
+    ec.resource
+        .script("component://framework/service/org/moqui/admin/ConfigurationLib.js")
+        .auditRow(ACCOUNT, fieldName, userId, null, null, summary, reason)
 }
 
 // get#AccountCredentials: an account's credentials, metadata only (never a secret, hash, verifier or factor option): the
@@ -504,6 +546,17 @@ function revokeAccountAccess(p) {
             failed.push(kind)
         }
     }
+    // the evidence of it (impl-admin P17): the kinds and how many of each, never a credential
+    accessEvidence(
+        userId,
+        "access",
+        (
+            Object.entries(counts)
+                .map(([kind, count]) => kind + ": " + count)
+                .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
+        ).slice(0, 255) || "Nothing to revoke",
+        reason || null
+    )
     ec.logger.warn(
         "Account access of " +
             account.username +
@@ -527,7 +580,8 @@ function checkPath(p) {
         memberships: Array.from(proposed.memberships || []).map(map),
         groups: Object.assign({}, proposed.groups || {}),
         accounts: Object.assign({}, proposed.accounts || {}),
-        endedFactorIds: Array.from(proposed.endedFactorIds || [])
+        endedFactorIds: Array.from(proposed.endedFactorIds || []),
+        disabledFlowIds: Array.from(proposed.disabledFlowIds || [])
     })
 }
 

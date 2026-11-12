@@ -34,6 +34,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ================ Screen - root elements ================ -->
     <xs:complexType name="screen-base">
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>True for a screen whose content no AI model may read: an agent's render
+                shows "Not shared with AI" in place of its widgets and the subscreens rendered in them, and in the
+                browser its rich-text fields offer no text actions, Assist leaves its forms out of the page state,
+                and the Assist drawer does not dictate while it is shown. As the field attribute of the same name
+                (xml-form-3.xsd), for the whole screen.</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="standalone" type="boolean" default="false">
             <xs:annotation><xs:documentation>
                 If set to true this screen will be rendered without rendering any parent screens. It can still be
@@ -43,6 +50,10 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="default-menu-title" type="xs:string"/>
         <xs:attribute name="default-menu-index" type="xs:nonNegativeInteger"/>
+        <xs:attribute name="default-menu-group" type="xs:string"><xs:annotation><xs:documentation>
+            The group this screen is in, in its parent's menu, when the subscreens-item that mounts it has no menu-group
+            (see there). Localized.
+        </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="default-menu-include" type="xs:string" default="true">
             <xs:annotation><xs:documentation>
                 Set this to false to not automatically appear in the parent's subscreens menu based on the directory
@@ -686,6 +697,16 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="screen" type="xs:string"/>
         <xs:attribute name="requires-record" type="boolean" default="false"><xs:annotation><xs:documentation>Offered only
             while a record is in the screen context (an activity on the record).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="condition-service" type="xs:string"><xs:annotation><xs:documentation>
+            A service that says whether to offer this kind to the current user, beyond the grant of its screen (Clock in
+            only to someone who clocks). The shell calls it each time it makes the shell data (and the providers the tray
+            reads, which it keeps up to ten minutes), in a transaction of its own and as the app root that declares the
+            kind, with that app's authorization and entity filters; it gets kind and nothing else, answers for the session's
+            user (a user named as data grants nothing) and implements org.moqui.ui.ShellServices.offer#QuickCreate: its
+            out-parameter offer true offers the kind. False, no answer, or a service that fails or is missing leaves out
+            this kind alone, and a failure is logged with the app, kind and service. Keep it cheap: it runs on every page
+            load of the shell.
+        </xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="today-source"><xs:annotation><xs:documentation>
         A service the Today panel calls for the items this app adds to it (open RFQs for Sales, late shipments for
@@ -874,6 +895,13 @@ along with this software (see the LICENSE.md file). If not, see
             If empty this item will be added to the end of the list (after the directory load, before the
             entity load).
         </xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="menu-group" type="xs:string"><xs:annotation><xs:documentation>
+            The group this item is in (Security, Integration), localized: a long flat menu is drawn with the group's name
+            as a caption above the first of each run of items that share one, in the drawer of the browser and of the
+            terminal. It does not order the items: give the items of a group menu indexes that follow each other. An
+            item with no group has no caption; a menu where no item has one is drawn as before. Defaults to the
+            default-menu-group of the screen at location. The menu data has it as each item's group.
+        </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="menu-include" type="xs:string" default="true"><xs:annotation><xs:documentation>
             true, false, or an expression evaluated per request. An expression is JavaScript run when a menu is built,
             in the context disable-when has (for example ec.user.hasPermission('LOAD_RUNNER')); when it is false the
@@ -961,6 +989,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>A name for the section, used for reference within the screen.
                 Must be specified and must be unique within the screen.</xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>True for a section whose content no AI model may read: an agent's
+                render runs nothing of it and shows "Not shared with AI" in its place, and in the browser its
+                rich-text fields offer no text actions and Assist leaves its forms out of the page state. As
+                the field attribute of the same name (xml-form-3.xsd), for every field and text in the
+                section.</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="condition" type="xs:string">
             <xs:annotation><xs:documentation>A condition expression, just like the section.condition.expression
                 element but more concise.</xs:documentation></xs:annotation>
@@ -977,6 +1012,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>
                 The name of the field that contains the list to iterate over.
             </xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>As the section attribute: no AI model reads what the section shows for
+                any entry.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="entry" type="xs:string" use="required">
             <xs:annotation><xs:documentation>
@@ -1505,12 +1544,49 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="icon" type="xs:string"><xs:annotation><xs:documentation>A Quasar icon name, Material Symbols
             outlined (sym_o_receipt_long) or Material Icons, or CSS classes when it has a space.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="sparkline" type="xs:string"><xs:annotation><xs:documentation>The value's recent history, drawn
+            small under it: numbers with commas, oldest first, as a list expands (${loadSeries}); an empty place is a gap,
+            and fewer than two numbers draw nothing. A line in qvt, bars in tui; html, text and print show the value
+            alone.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="link" type="xs:string"><xs:annotation><xs:documentation>Where the card goes: a screen path or
             transition of this screen, as the url of a link with url-type transition, with a query string for the filter
             (../Tasks?dueToday=true); a link to something other than a screen is a plain anchor.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="size" default="md"><xs:annotation><xs:documentation>The size of the value: sm (text-h6), md
             (text-h5) or lg (text-h4).</xs:documentation></xs:annotation>
             <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="sm"/><xs:enumeration value="md"/><xs:enumeration value="lg"/></xs:restriction></xs:simpleType>
+        </xs:attribute>
+        <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>If specified and evaluates to
+            false the card is not rendered.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="style" type="xs:string"><xs:annotation><xs:documentation>CSS classes for the card.</xs:documentation></xs:annotation></xs:attribute>
+    </xs:complexType></xs:element>
+    <xs:element name="nav-card" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
+        A navigation tile: an icon, a title and one line saying what is there, the whole card a link to a screen, with up
+        to three secondary links along its bottom (the featured screens of an app home, the shortcuts of a landing). Put
+        them in a dashboard, which lays them out as it does number cards. In qvt an m-nav-card, a q-card flat bordered
+        with the icon in a tonal avatar, the title as text-subtitle1 and the text as text-caption, the child links as text
+        links in its default slot; in a server-static screen the attributes are bound over the screen's actions data, as
+        a label's text is. In html a plain card whose title is the anchor; in tui a container of a link (the title), the
+        text and the child links; in text and print "Title: text". The attributes may hold ${} expressions.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:sequence>
+            <xs:element ref="link" minOccurs="0" maxOccurs="3"><xs:annotation><xs:documentation>A secondary link (a
+                screen under the card's, a filtered list), written as a text link whatever its link-type; one whose
+                condition is false or whose target the user may not see is left out as any link is.</xs:documentation></xs:annotation></xs:element>
+        </xs:sequence>
+        <xs:attribute name="id" type="xs:string"/>
+        <xs:attribute name="title" type="xs:string" use="required"><xs:annotation><xs:documentation>The name of what
+            the card opens, localized (Data grid).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="text" type="xs:string"><xs:annotation><xs:documentation>One line saying what is there,
+            localized (Browse and edit the records of any entity).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="icon" type="xs:string"><xs:annotation><xs:documentation>A Quasar icon name, Material Symbols
+            outlined (sym_o_table) or Material Icons, or CSS classes when it has a space.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="link" type="xs:string"><xs:annotation><xs:documentation>Where the card goes, as a
+            number-card's link: a screen path or transition of this screen, as the url of a link with url-type
+            transition, with a query string if any (../Data/Grid); a link to something other than a screen is a plain
+            anchor. A card whose link the user may not follow is not a link.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="size" default="md"><xs:annotation><xs:documentation>md: the icon beside the title and the
+            text, for a row of several; lg: a larger icon and more room, for the few featured screens of a home.</xs:documentation></xs:annotation>
+            <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="md"/><xs:enumeration value="lg"/></xs:restriction></xs:simpleType>
         </xs:attribute>
         <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>If specified and evaluates to
             false the card is not rendered.</xs:documentation></xs:annotation></xs:attribute>

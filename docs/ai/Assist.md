@@ -93,6 +93,37 @@ password widgets.
 - `editor` is a dev-aide page's file (plans/design-dev-aide.md 13.4): its root and path, language and view, whether it
   has unsaved edits, the element at the cursor and its line, the selection (at most 2,000 characters), its problem count
   and artifact. The Workspace sets `moqui.assist.editorState` while it is the page; the tail gives it one line.
+- `forms` holds no value of an `ai-opt-out` field, and no form in an `ai-opt-out` section or screen ("AI opt-out" below).
+
+## AI opt-out
+
+`ai-opt-out="true"` keeps a field's text away from every model tool (design-people PE-21): confidential notes, case
+statements, review text. It goes on a form field (`form-single` and `form-list`), a `section` or `section-iterate`, a
+`screen`, and an entity field; mark the entity field and each screen field that shows it.
+
+- **An agent's render** (`RenderOrigin::Agent`: an Assist screen session, `data`'s screen lists, the canvas read proxy;
+  and `agent-apps` over SSH; `sri.isAgentRender()`, also inside a render one of these started) writes "Not shared with
+  AI" in place of an opted-out field's value (a form field as a display, a list cell, a board or calendar card's field),
+  posts no hidden value of it, has no find field for it, offers no export of a list with one (CSV, XLS, Text or Print
+  render the list in another mode, with every value; Show all stays), and runs nothing of an opted-out section or
+  screen (its widgets and the subscreens in them). The `tui` macros do this (`ScreenTui.js`); the person's own terminal and browser
+  show everything as always.
+- **`data`** names a list's opted-out fields from the render (`aiOff`) and answers `ai_opt_out` for a `where` or
+  `order` on one, so a filter cannot tell the text by the rows it keeps. Its entity reads never read, find or sort by an
+  opted-out entity field, as for an encrypted one.
+- **Update with AI** (`propose#AiFieldValue`) refuses an opted-out entity field before any model call, and leaves the
+  record's opted-out fields out of the text it sends for another field; an approval's record snapshot leaves them out.
+- **The browser**: the qvt macros mark an opted-out field's box or list cell `data-ai-opt-out="field"
+  data-ai-field="<name>"` and wrap a section or screen in `<div class="m-ai-opt-out" data-ai-opt-out="section|screen">`
+  (`display: contents`). `m-rich-text` offers no text actions inside one (or with its `ai-opt-out` prop, for a `.qvue`
+  screen), the drawer leaves those fields out of `forms` and never fills them (`follow.locate` answers `aiOff`), and
+  it does not dictate while a screen opted out is on the page.
+
+Not covered: text a screen shows other than through its fields and sections (a label outside an opted-out section, a
+menu or title), a service tool's result (`AgentToolExposure`; expose no service whose result holds such text), the
+search index (a DataDocument that indexes the text is found by `search`), a `section-include` of an opted-out section
+(mark the include's section in the including screen), and a find parameter of an opted-out field given in a `screen`
+`go` path's query. Routing to a local model in place of none is not built.
 
 ## The calls
 
@@ -255,7 +286,7 @@ fixes its tier), `contextVersion` (the tab's page version), `state` (the page).
   its page **syncs into** the conversation's screen session (a new conversation's first session opens on it).
 - A new run counts one hit of the user's AT_LLM tarpit (`agent:<agentId>`; the seed allows 30 a minute), where the run is
   made under the conversation's lock (so a send that finds the run active, or a second send of the same moment, counts none); a queued
-  message counts none. Over the limit is 429 with `Retry-After`. A user over their daily quota gets a run in state
+  message counts none. Over the limit is 429 with `Retry-After`. A user over their daily quota (a token quota counts cached prompt tokens as a tenth) gets a run in state
   `TASK_STATE_REJECTED` (200; its `run.done` says `quota_exhausted`).
 - 404 for another user's conversation or an agent the user may not use in the drawer.
 - 13.14: `attachments` (a list of attachment ids, JSON text in a form) carries files `POST attachments` stored: each
@@ -607,7 +638,8 @@ calls `moqui.assist.start(root)` once mounted, which reads `bootstrap` (the butt
 count, and reopens the tab's conversation of before a reload (`sessionStorage`), or the one `?assist=<conversationId>` names.
 
 **The components.** `m-assist-button` (rightmost in the header, the waiting count as its badge) and `m-shell-assist`, one
-right `q-drawer` of the shell's layout, mounted on first open and kept: nothing is reparented or teleported. It is
+right `q-drawer` of the shell's layout, mounted on first open and kept; what is in it is `m-assist-body`, held in a
+teleport that is off while docked (Undocked, below). It is
 `persistent`: an overlay `q-drawer` hides itself on every navigation and on Esc, and this one follows the agent across pages
 (it closes by Close, Mod+J and a second Esc). 420 px by
 default, 320–720 by the handle on its left edge (kept as `localStorage` `ASSIST_WIDTH`), the full width below 600 px; it
@@ -615,6 +647,23 @@ pushes the page from 1440 px and overlays it below. Inside: the header (agent pi
 a new conversation; the tier unless the agent fixes it; New, History, Tasks with the badge, a menu with Follow on this
 page, Close), the status line, "Following in another tab" with Follow here, the chips, then `m-assist-thread`,
 `m-assist-card`s and `m-assist-composer`, or `m-assist-history` or `m-assist-tasks`.
+
+**Undocked** (plans/Terminal-Fancy.md §10.5, the floats of [Qvt-Client](../ui/Qvt-Client.md#floats)). Undock
+(`#m-assist-undock`, beside Close; not below 600 px nor on a handheld screen) shuts the drawer and shows the body in a
+float of kind `assist`, 420 by 640 at the right to start. The body is one instance in both places: the teleport moves it,
+so a run, the draft and the panes stay, and the thread's scroll is put back after the move. The float's Dock puts it back
+and opens the drawer (as does dragging the float to the right edge, where a dashed Dock outline shows the drawer's
+place before the drop), its Close puts it back shut, and the body's own Close is the float's Close while floated. The header
+button and Mod+J show and hide whichever form is current (`assist.shown()`, `openDrawer` shows a float too; a hidden float
+is still a float); the first Esc gives the keys to the page in both, the second closes the drawer or hides the float. The
+width handle and `ASSIST_WIDTH` are the drawer's. Shut, the drawer pushes nothing, so a canvas has the page's whole width.
+Follow, approvals, the hand-off and the tasks badge read the store and the page and do not change. Whether it floats is
+kept with the float places in `localStorage`; at a load (after `bootstrap`) it floats again, shown or hidden as it was.
+
+**Its reach** (§10.7, D18). The float layer is outside `#m-canvas`, so a float is in `assistReach` only when its kind
+says so: a floated tray tab's body is, a floated Assist is not. Assist's body carries `data-assist-self="assist"`, and an
+element with `data-assist-self` (a terminal's has `"terminal"`) is never in reach, docked or floated, whatever
+`assistReach` lists: `gatherForms` and `openDialogs` leave out what is inside one.
 
 **The store** is a pure reducer of one conversation (`assist.emptyState`):
 
@@ -663,8 +712,9 @@ and the conversation when it is this tab's and the tab does not stream that run 
   `<field>_<row>`; else the form whose qvt id is `domId` (several with it, as a static render repeats the bare name: the
   `occurrence`-th); else by name, the name or `<name>_<n>` (a merged render appends the section entry index), the
   `occurrence`-th within the scope (a dialog's forms for `dialog`, the page's before the dialogs' otherwise); a list's find
-  form is `<list>_header`. Refused: a form outside `assistReach` (the canvas, the open tray, the quick-create dialog, and the
-  screen dialogs; never the header, the drawer or the palette), a hidden, password or file field, a secret name, a field the
+  form is `<list>_header`. Refused: a form outside `assistReach` (the canvas, the open tray, a floated tray tab, the
+  quick-create dialog, and the screen dialogs; never the header, the palette, or anything marked `data-assist-self`: the
+  drawer's body wherever it is, and a terminal), a hidden, password or file field, a secret name, a field the
   form does not have. A fill sets the form's value (dependent fields follow), outlines the field with an "Assist" tag until
   it is focused or for 8 s, and is announced in a polite region; a form still mounting after a navigation is looked for
   again for 3 s. `ui.dialog` opens or closes a container dialog by its id.
@@ -726,11 +776,12 @@ again. No card has a keyboard accelerator.
 **The shell's hooks** (in `WebrootVue.qvt.js`): `moqui.onFormAnswer`; `qvt.registerLate`; the palette's last group "Ask
 Assist ‘…’" (a `?` first is that row alone, Shift+Enter asks), which opens the drawer and sends the text; palette rows that
 keep `recordEntity` and `recordId`; Mod+J opens the drawer and focuses the composer (from inside the drawer it closes),
-Mod+. stops the run, Esc in the drawer returns focus to the page and a second Esc closes it (`moqui.keymap` actions
-`assist` and `assistStop`).
+Mod+. stops the run, Esc in the drawer (or its float) returns focus to the page and a second Esc closes it, or hides the
+float (`moqui.keymap` actions `assist` and `assistStop`).
 
 **For the browser smokes** the drawer has stable hooks: `#m-assist-button` (badge `[data-assist-badge]`),
-`#m-assist-drawer`, `#m-assist-input` (the composer's textarea), `#m-assist-send`, `#m-assist-stop`, `#m-assist-new`,
+`#m-assist-drawer` (the body is in it while docked; floated it is in `#m-float-body-assist`), `#m-assist-undock`,
+`#m-assist-input` (the composer's textarea), `#m-assist-send`, `#m-assist-stop`, `#m-assist-new`,
 `#m-assist-history`, `#m-assist-tasks`, `#m-assist-status`, `#m-assist-elsewhere`, `#m-assist-follow-here`,
 `#m-assist-chips`, `#m-assist-thread` (rows `[data-assist-item=user|assistant|step|done|queued|note|reasoning]`, a step's
 `data-tool` and `data-status`, a local message's `data-assist-local`; an assistant row's text is its `.m-assist-markdown`), cards `[data-assist-card=approval|question|handoff]`
@@ -783,7 +834,7 @@ follows there. They are acceptance tests of the framework, run by `./moq accept-
   same dialog. It reads `GET /assist/constitution` and `GET /assist/constitutionReference`, which need a signed-in user,
   not `AgentUse` ([Constitution](Constitution.md)).
 - **Inline text actions**: `m-rich-text` offers Rewrite, Shorten, Translate and Fix grammar in its toolbar when
-  `moqui.assist.textActionsOn()` (not on a shared, co-edited document); the selection's text, or the field's as plain
+  `moqui.assist.textActionsOn()` (not on a shared, co-edited document, nor on a field opted out of AI, "AI opt-out"); the selection's text, or the field's as plain
   text, goes to `POST textAction`, and the proposal shows under the toolbar with Replace, Insert below and Discard. Only
   a click applies it, and a selection that changed meanwhile is never overwritten.
 - **Degrading**: a 501 or 404 from prompts, attachments, transcribe, textAction, memories, skills or a skill draft turns
@@ -1263,8 +1314,9 @@ tasks, `ec.llm.summarize`/`classify`/`extract`/`startRun`, `propose#AiFieldValue
   and runs the task on a service worker (`execute#AiTask`); `get#AiTask` gives its state and output; its user gets an
   inbox message and, with `webhookUrl` (https, public addresses only), a POST of `{taskId, taskType, state, output |
   error}`.
-- **`ec.llm`**: `summarize(text, {maxWords})`, `classify(text, labels)`, `extract(text, fields)`, `startRun(agentId,
-  text)` (a job-surface run as the current user, which needs `AgentUse` and `AgentAdmin`, as `start#AgentRun` does).
+- **`ec.llm`**: `summarize(text, {maxWords, allowInTransaction})`, `classify(text, labels, {allowInTransaction})`,
+  `extract(text, fields, {allowInTransaction})`, `startRun(agentId, text)` (a job-surface run as the current user,
+  which needs `AgentUse` and `AgentAdmin`, as `start#AgentRun` does).
 - **`propose#AiFieldValue`** (entityName, the key as `pk` or `recordId`, fieldName, instructions): the `ai-field`
   feature's model (else `assist`) proposes `proposedValue` with a `reason`; nothing is written. `mode=approval` ("Update
   with AI") starts a drawer run attached to the record whose first step is a seeded `set_field` call (the tool exists

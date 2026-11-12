@@ -10,6 +10,7 @@ const galleryScreens = [
     ["Board", "qvue"], ["Calendar", "qvue"], ["Split", "qvt"], ["Settings", "qvt"], ["Wizard", "qvt"],
     ["Dialog", "qvt"], ["Report", "qvt"], ["Panel", "qvt"], ["Widgets", "qvt"], ["Editor", "qvt"], ["QuickNote", "qvt"], ["QuickTask", "qvue"],
     ["Chatter", "qvt"], ["RecordFiles", "qvt"], ["Message", "qvt"], ["Views", "qvt"], ["Search", "qvt"], ["Handheld", "qvt"],
+    ["NavCards", "qvt"],
 ]
 
 const queryParameters = url => Object.fromEntries(String(url || "").replace(/&amp;/g, "&").split("?").slice(1).join("?")

@@ -17,6 +17,7 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -44,6 +45,8 @@ struct Shared {
     state: Mutex<State>,
     workers: usize,
     queue_cap: usize,
+    /// The workers running a job now.
+    busy: AtomicUsize,
     handles: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -118,7 +121,7 @@ impl RequestPool {
 
     /// Queue `job` and hand its result to `done`, which runs on the worker once the job's context and cleanup have
     /// ended: the completion hook an async caller finishes its own future from, so no thread waits on the reply
-    /// (`plans/High-Level-Review.md` HL-006). A full or stopped pool returns an error and calls neither; a job still
+    /// (`plans/archive/High-Level-Review.md` HL-006). A full or stopped pool returns an error and calls neither; a job still
     /// queued when the pool stops gets `done` with an error.
     pub fn try_submit_then<T>(
         &self,
@@ -142,6 +145,21 @@ impl RequestPool {
             state.idle.wake_one();
         }
         Ok(())
+    }
+
+    /// The pool's size and what it is doing now; all zero while it is not running.
+    pub fn status(&self) -> RequestPoolStatus {
+        let shared = lock(&self.inner).as_ref().cloned();
+        let Some(shared) = shared else {
+            return RequestPoolStatus::default();
+        };
+        let queued = lock(&shared.state).queue.len();
+        RequestPoolStatus {
+            workers: shared.workers,
+            busy: shared.busy.load(Ordering::Relaxed),
+            queued,
+            queue_cap: shared.queue_cap,
+        }
     }
 
     /// Jobs waiting for a worker. A job a worker has already taken is not included.
@@ -175,6 +193,19 @@ impl Drop for RequestPool {
     }
 }
 
+/// [`RequestPool::status`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RequestPoolStatus {
+    /// The worker threads.
+    pub workers: usize,
+    /// Those running a job now.
+    pub busy: usize,
+    /// Jobs waiting for a worker.
+    pub queued: usize,
+    /// The most jobs that may wait.
+    pub queue_cap: usize,
+}
+
 /// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 25.
 pub fn caps(conf_text: &str) -> (u32, u32) {
     let Ok(Some(tools)) = tools_of(conf_text) else {
@@ -199,7 +230,7 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
 ///
 /// The pool the `content` group reads from also holds a connection for each streamed database download reading a
 /// window ([`transfer_readers`]). When the webapp's `transfer-workers` do not fit beside the workers and the agent
-/// worker, this warns and the downloads read fewer at once, at least one (`plans/High-Level-Review.md` HL-022).
+/// worker, this warns and the downloads read fewer at once, at least one (`plans/archive/High-Level-Review.md` HL-022).
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(&factory.conf_text());
@@ -381,6 +412,7 @@ fn make_shared(workers: usize, queue: usize) -> Result<Arc<Shared>, Error> {
         state: Mutex::new(State::default()),
         workers,
         queue_cap: queue,
+        busy: AtomicUsize::new(0),
         handles: Mutex::new(Vec::new()),
     });
     let handles = spawn_all(&shared, workers)?;
@@ -415,7 +447,10 @@ fn worker_loop(shared: Arc<Shared>) {
     crate::script::mark_request_thread();
     let waiter = Arc::new(Condvar::new());
     while let Some(work) = next_work(&shared, &waiter) {
+        shared.busy.fetch_add(1, Ordering::Relaxed);
+        // run_work catches a job's panic, so the count always comes back down
         run_work(work);
+        shared.busy.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

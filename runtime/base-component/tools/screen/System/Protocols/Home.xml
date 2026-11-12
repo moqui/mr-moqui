@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Home (plans/archive/Admin-Screens-Down.md; first IronStone Admin's ProtocolsHome, mr-boss design-admin §9, §15.3 "Protocol
+    readiness"): what each protocol of the server is doing, from org.moqui.admin.ConfigurationServices.get#ProtocolReadiness: a
+    protocol this build leaves out, one the conf keeps off, one that did not start, one that runs without its trust and one
+    that is ready read apart, each with the reason the server gives, where it listens and the link to its owner: a screen of
+    this area (MailRelays, or ServerConfiguration narrowed to the protocol) or, for a mail account's or the phone system's
+    own screens, the mount's route (mailAccount, voice; template/AdminMount.js), with no link where there is none. Nothing
+    is configured here: outgoing mail is MailRelays', its send outcomes MailQueue's, the configuration the protocols run with
+    and their checks ServerConfiguration's. A protocol that is not built is never shown as something that works. Reading
+    needs ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or ADMIN_OPERATION_VIEW, checked by the service.
+    An app that shows more around the list (its own readiness checks, its apps' links) has a screen of its own: it reads
+    found (get#ProtocolReadiness) and mount in its actions and includes ProtocolsPrepare, ProtocolsHeader and
+    ProtocolSection (README, "Mounting the administration screens"). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Protocols" default-menu-index="1" menu-image="sym_o_lan" menu-image-type="icon">
+
+    <actions>
+        <service-call name="org.moqui.admin.ConfigurationServices.get#ProtocolReadiness" out-map="found" transaction="force-new" ignore-error="true"/>
+        <set field="mount" from="ec.resource.script('component://tools/template/AdminMount.js').state()"/>
+    </actions>
+    <widgets>
+        <!-- what the parts below show of found (get#ProtocolReadiness' answer) and mount (AdminMount.js state()); a section's
+            actions, so a screen of an app's own shares them -->
+        <section name="ProtocolsPrepare">
+            <actions>
+                <!-- ignore-error clears a refusal's message -->
+                <set field="available" from="!!found?.protocolList"/>
+                <script><![CDATA[
+                    ec.message.clearErrors()
+                    const colors = {ready: 'positive', failing: 'negative', untrusted: 'warning', notStarted: 'info', disabled: 'grey-7', absent: 'grey-6'}
+                    const mountLib = ec.resource.script('component://tools/template/AdminMount.js')
+                    // the owner a protocol's row links: the relays beside this screen, or the mount's route for a place that is
+                    // not the framework's (a mail account's own screens, the phone system's); else its configuration and checks
+                    const owners = {
+                        mailRelays: {link: {url: '../MailRelays', parameters: {}}, text: 'Mail relays'},
+                        mailAccounts: {link: mountLib.link(mount.routes, 'mailAccount'), text: 'Mail accounts'},
+                        voice: {link: mountLib.link(mount.routes, 'voice'), text: 'Voice'}
+                    }
+                    protocols = Array.from(found?.protocolList || []).map(row => {
+                        const owner = Object.hasOwn(owners, row.ownerKey || '') && owners[row.ownerKey].link ? owners[row.ownerKey] : null
+                        const configured = !!(row.settingGroup || row.checkList.length)
+                        const link = owner ? owner.link : configured ? {url: '../ServerConfiguration', parameters: {protocolKey: row.protocolKey}} : {}
+                        return Object.assign({}, row, {
+                            stateColor: colors[row.state] || 'grey-7',
+                            detailText: [row.reason, row.listener ? 'Listening on ' + row.listener : '', row.trustText || ''].filter(Boolean).join(' · '),
+                            // a plain route by its href, a screen path by its url and parameters
+                            ownerHref: link.plain ? link.href : '',
+                            ownerUrl: link.plain ? '' : link.url || '',
+                            ownerParameters: link.plain ? {} : link.parameters || {},
+                            ownerText: owner ? owner.text : configured ? 'Configuration and checks' : ''
+                        })
+                    })
+                    const count = states => protocols.filter(row => states.includes(row.state)).length
+                    counts = {ready: count(['ready']), attention: count(['failing', 'untrusted']), off: count(['disabled', 'notStarted']), absent: count(['absent'])}
+                    checkedText = found?.checkedDate ? ec.l10n.format(Date.parse(found.checkedDate), 'yyyy-MM-dd HH:mm') : ''
+                ]]></script>
+            </actions>
+            <widgets/>
+        </section>
+        <section name="ProtocolsHeader">
+            <widgets>
+                <container style="row items-center q-col-gutter-sm q-mb-sm">
+                    <container style="col">
+                        <label text="Mail and protocols" type="h5"/>
+                        <label text="What this server speaks besides the web: mail, calendars and files for other apps, SSH and Git, chat, calls and phones. Each is turned on in the deployment's configuration; this page says what each is doing. Checked ${checkedText}."
+                                type="p" style="text-caption m-muted q-mb-none"/>
+                    </container>
+                    <container style="col-auto">
+                        <link url="../ServerConfiguration" text="Configuration and checks" link-type="anchor-button" btn-type="primary"
+                                icon="sym_o_fact_check" condition="available"/>
+                    </container>
+                </container>
+                <label type="p" style="text-negative" condition="!available" text="The protocols are not available to you."/>
+            </widgets>
+        </section>
+        <section name="ProtocolSection" condition="available">
+            <widgets>
+                <dashboard min-width="160">
+                    <number-card title="Ready" value="${counts.ready}" icon="sym_o_check_circle" size="sm"/>
+                    <number-card title="Failing or not trusted" value="${counts.attention}" icon="sym_o_error" size="sm"
+                            link="../ServerConfiguration"/>
+                    <number-card title="Off" value="${counts.off}" icon="sym_o_toggle_off" size="sm"/>
+                    <number-card title="Not in this build" value="${counts.absent}" icon="sym_o_block" size="sm"/>
+                </dashboard>
+                <label type="p" style="m-muted q-mt-sm" condition="found.serverStarted !== true"
+                        text="This process opened no listeners, so a protocol that is turned on is shown as configured, not as running."/>
+                <container-box>
+                    <box-header title="Protocols"/>
+                    <box-toolbar>
+                        <link url="../MailQueue" text="Mail queue" link-type="anchor-button" icon="sym_o_outbox"/>
+                    </box-toolbar>
+                    <box-body-nopad>
+                        <form-list name="ProtocolReadiness" list="protocols" skip-form="true" paginate="false">
+                            <field name="title"><default-field title="Protocol"><display/></default-field></field>
+                            <field name="description"><default-field title="What it is"><display/></default-field></field>
+                            <field name="stateText">
+                                <default-field title="State">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${stateText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="detailText"><default-field title="Why, and where"><display/></default-field></field>
+                            <field name="source"><default-field title="Known from"><display/></default-field></field>
+                            <field name="owner">
+                                <default-field title="Opens">
+                                    <link url="${ownerHref}" url-type="plain" text="${ownerText}" link-type="anchor" condition="ownerHref"/>
+                                    <link url="${ownerUrl}" text="${ownerText}" link-type="anchor" condition="ownerUrl" parameter-map="ownerParameters"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="title"/><field-ref name="detailText"/></column>
+                                <column><field-ref name="stateText"/><field-ref name="owner"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body-nopad>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Sessions (plans/archive/Admin-Screens-Down.md; its list first IronStone Admin's, mr-boss design-admin §4 Sessions): the sessions
+    of every account, from org.moqui.admin.IdentityServices.find#Sessions (ADMIN_IDENTITY_VIEW), live ones or the last
+    days', narrowed by a user's name, each named by its visit and a client summary, never a cookie, token or user agent.
+    SessionList's bulk action ends the chosen sessions on every server (revoke#Sessions, ADMIN_IDENTITY_MANAGE): one the
+    service refuses (an account in a privileged group the administrator is not in, or holding a sealed permission they
+    lack) is counted, the others end. A revoked session's next request goes to the sign-in page and its notification
+    socket closes at its next check. A user's name opens the user's page by the mount's route (template/AdminMount.js).
+    An app that lists the sessions of the users it scopes (an organization's staff) has a screen of its own: it reads
+    found (find#Sessions with its users) and sets canRevoke in its actions, has its own revokeSessions with its own check
+    of each account, and includes SessionsPrepare and SessionListBox around a find form of its own (SessionFind extended;
+    README, "Mounting the administration screens").
+    For the instance administrator: RawVisits, the users with visits in a period (moqui.server.VisitUserSummary), as the
+    Active Users screen this one replaced did, shown in place of the sessions with visits=Y; read only. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Sessions" default-menu-index="4" menu-image="sym_o_devices" menu-image-type="icon">
+    <parameter name="text"/>
+    <parameter name="recent"/>
+    <parameter name="visits"/>
+
+    <transition name="revokeSessions">
+        <actions>
+            <service-call name="org.moqui.admin.IdentityServices.revoke#Sessions" out-map="done"
+                    in-map="{sessionKeyList:Array.from(typeof sessionKeys === 'string' ? sessionKeys.split(',') : (sessionKeys || [])).map(key => String(key).trim()).filter(Boolean)}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(Number(done.sessionCount || 0) + ' session(s) signed out' + (done.refusedCount ? '; ' + done.refusedCount + ' not yours to end' : ''),
+                    done.refusedCount ? 'warning' : 'success')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="mount" from="ec.resource.script('component://tools/template/AdminMount.js').state()"/>
+        <set field="showVisits" from="mount.raw &amp;&amp; visits === 'Y'"/>
+        <if condition="showVisits">
+            <entity-find entity-name="moqui.server.VisitUserSummary" list="visitUserList">
+                <search-form-inputs default-order-by="-visitCount">
+                    <default-parameters fromDate_poffset="-1" fromDate_period="30d"/>
+                </search-form-inputs>
+                <select-field field-name="userId,visitCount,fromDateMin,fromDateMax"/>
+            </entity-find>
+            <else>
+                <!-- a refusal is shown as its reason (AdminCalls.read; ignore-error would clear it) -->
+                <set field="called" from="ec.resource.script('component://framework/service/org/moqui/admin/AdminCalls.js').read('org.moqui.admin.IdentityServices.find#Sessions',
+                        {allUsers:true, text:(text || null), activeOnly:(recent != 'Y'), sinceDays:7, limit:200}, 'Sessions are not available to you.')"/>
+                <set field="found" from="called.out"/>
+                <set field="failure" from="called.failure"/>
+            </else>
+        </if>
+        <set field="canRevoke" from="ec.user.hasPermission('ADMIN_IDENTITY_MANAGE')"/>
+        <set field="filtered" from="!!text"/>
+        <set field="findValues" from="{text:text, recent:recent}"/>
+    </actions>
+    <widgets>
+        <!-- what the list below shows of found (find#Sessions' answer); a section's actions, so a screen of an app's own shares
+            them -->
+        <section name="SessionsPrepare">
+            <actions>
+                <script><![CDATA[
+                    const when = value => value ? ec.l10n.format(Number(value), 'yyyy-MM-dd HH:mm') : ''
+                    // a session's user, by the mount's route for a user's page: a plain route by its href, a screen path by its
+                    // url and parameters
+                    const mountLib = ec.resource.script('component://tools/template/AdminMount.js')
+                    const routes = mountLib.state().routes
+                    const userLink = userId => {
+                        const link = mountLib.link(routes, 'adminUser', userId) || {}
+                        return {userHref: link.plain ? link.href : '', userUrl: link.plain ? '' : link.url || '',
+                            userParameters: link.plain ? {} : link.parameters || {}}
+                    }
+                    sessions = Array.from(found?.sessionList || []).map(row => Object.assign({}, row, userLink(row.userId), {
+                        startedText: when(row.startedDate), seenText: when(row.lastSeenDate),
+                        stateText: row.active ? (row.current ? 'This session' : 'Signed in') : row.state === 'ended' ? 'Signed out' : 'Expired',
+                        whereText: [row.clientAddress, row.clientPlace].filter(Boolean).join(' · ')}))
+                ]]></script>
+            </actions>
+            <widgets/>
+        </section>
+        <container style="row items-center q-col-gutter-sm q-mb-sm">
+            <container style="col">
+                <label text="Sessions" type="h5"/>
+                <label text="Where the accounts of this instance are signed in. Signing a session out sends its next request to the sign-in page; its user can sign in again."
+                        type="p" style="text-caption m-muted q-mb-none"/>
+            </container>
+            <container style="col-auto">
+                <section name="RawVisitsLinks" condition="mount.raw">
+                    <widgets>
+                        <link url="." text="Visits by user" icon="sym_o_person_check" link-type="anchor" condition="!showVisits" parameter-map="{visits:'Y'}"/>
+                        <!-- a link carries what its target declares of the context: visits is sent empty to leave the visits -->
+                        <link url="." text="Sessions" icon="sym_o_devices" link-type="anchor" condition="showVisits" parameter-map="{visits:''}"/>
+                    </widgets>
+                </section>
+            </container>
+        </container>
+        <section name="SessionsSection" condition="!showVisits">
+            <widgets>
+                <form-single name="SessionFind" transition="." map="findValues">
+                    <field name="text"><default-field title="User"><text-find size="20" hide-options="true"/></default-field></field>
+                    <field name="recent">
+                        <default-field title="Show">
+                            <drop-down><option key="N" text="Signed in now"/><option key="Y" text="The last 7 days"/></drop-down>
+                        </default-field>
+                    </field>
+                    <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                    <field-layout>
+                        <field-row-big>
+                            <field-ref name="text"/>
+                            <field-ref name="recent"/>
+                            <field-ref name="submitButton"/>
+                        </field-row-big>
+                    </field-layout>
+                </form-single>
+                <label type="p" style="text-negative" condition="failure" text="${failure}"/>
+                <section name="SessionListBox">
+                    <widgets>
+                        <container-box>
+                            <box-body-nopad>
+                                <form-list name="SessionList" list="sessions" skip-form="true" paginate="true">
+                                    <row-selection id-field="sessionKey" parameter="sessionKeys" list-mode="true" condition="canRevoke">
+                                        <action>
+                                            <dialog button-text="Sign out" title="Sign out the selected sessions"/>
+                                            <form-single name="RevokeSelected" transition="revokeSessions">
+                                                <field name="note"><default-field title=""><label text="Each selected session's next request goes to the sign-in page. Its user can sign in again."/></default-field></field>
+                                                <field name="submitButton"><default-field title="Sign out"><submit type="danger"/></default-field></field>
+                                            </form-single>
+                                        </action>
+                                    </row-selection>
+                                    <field name="userFullName">
+                                        <default-field title="User">
+                                            <link url="${userHref}" url-type="plain" text="${userFullName}" link-type="anchor" condition="userHref"/>
+                                            <link url="${userUrl}" text="${userFullName}" link-type="anchor" condition="userUrl" parameter-map="userParameters"/>
+                                            <label text="${userFullName}" condition="!userHref &amp;&amp; !userUrl"/>
+                                        </default-field>
+                                    </field>
+                                    <field name="clientSummary"><default-field title="Device"><display/></default-field></field>
+                                    <field name="whereText"><default-field title="From"><display/></default-field></field>
+                                    <field name="startedText"><default-field title="Started"><display/></default-field></field>
+                                    <field name="seenText"><default-field title="Last seen"><display/></default-field></field>
+                                    <field name="stateText"><default-field title="State"><display/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="userFullName"/><field-ref name="clientSummary"/></column>
+                                        <column><field-ref name="stateText"/><field-ref name="seenText"/></column>
+                                    </columns>
+                                </form-list>
+                                <label type="p" style="q-pa-md m-muted" condition="!sessions.length &amp;&amp; !failure" text="${filtered ? 'No session matches.' : 'No one is signed in.'}"/>
+                            </box-body-nopad>
+                        </container-box>
+                    </widgets>
+                </section>
+            </widgets>
+        </section>
+        <section name="RawVisits" condition="showVisits">
+            <widgets>
+                <label text="Instance administrator" type="h6" style="q-mt-md q-mb-none"/>
+                <label type="p" style="text-caption m-muted" text="Visits by user: the users with visits in a period, with how many and the first and the last."/>
+                <form-list name="VisitUserList" list="visitUserList" skip-form="true" header-dialog="true" show-page-size="true"
+                        show-csv-button="true" show-xlsx-button="true" saved-finds="true">
+                    <field name="visits"><header-field><hidden/></header-field></field>
+                    <field name="fromDate">
+                        <header-field show-order-by="true"><date-period/></header-field>
+                    </field>
+                    <field name="fromDateMin"><default-field><display/></default-field></field>
+                    <field name="fromDateMax"><default-field><display/></default-field></field>
+                    <field name="userId">
+                        <header-field show-order-by="true"><text-find size="20" default-operator="begins"/></header-field>
+                        <default-field>
+                            <display/>
+                            <!-- raw parts are never under a mount, so the account's page is System's own -->
+                            <link url="../UserAccount/UserAccountDetail" text="UsernameTemplate" link-type="anchor"
+                                    entity-name="moqui.security.UserAccount" parameter-map="{userId:userId}"/>
+                        </default-field>
+                    </field>
+                    <field name="visitCount">
+                        <header-field show-order-by="true"><range-find size="6"/></header-field>
+                        <default-field><display/></default-field>
+                    </field>
+                    <field name="find">
+                        <header-field><submit text="Find"/></header-field>
+                        <default-field><display text=" "/></default-field>
+                    </field>
+                </form-list>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- SystemMessageDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §8.1, §15.3 "Unknown
+    provider outcome"): one system message's evidence and recovery, from org.moqui.admin.OperationServices.get#Message.
+    MessageEvidence: its direction, type and remote, its state in words, its times, its correlation ids, the class of its
+    last error and, where its owner lets this reader, one masked line of it, its owner with the owner's own state and place
+    (linked where the mount has a route for the key its registration names; template/AdminMount.js), and the next step.
+    MessageAttempts: each failed attempt with its time, what was attempted and the error's class; then the status history
+    from the audit log, with who and why. MessageRecovery: each action its owner registered that may be taken now, in a
+    dialog that says what it does, with a reason and the revision read (execute#Recovery); a message whose outcome is unknown
+    is offered Settle (what was found on the other side: nothing is sent or consumed, and the message is not marked sent or
+    consumed: the report is kept beside it, with who, when and why, and shown in MessageEvidence) and never a retry; one
+    reported not done may then be retried; an action that may not be taken is listed with why. The message's content is
+    shown only when asked for, only to a reader who holds the permission its owner registered for it, and only where that
+    owner lets it; otherwise the screen says why not. Reading needs ADMIN_OPERATION_VIEW and an action
+    ADMIN_OPERATION_MANAGE (and the owner's permission where it registered one), checked by the services; every refusal
+    comes back as a reason shown here.
+    For the instance administrator (README, "Mounting the administration screens"): RawMessage, the message as it is
+    stored and what the System Message screen this one replaced did past any owner's registration: every field of the
+    record, its text edited (the EditMessageText subscreen) and downloaded, a send, a consume, a reset to produced or from
+    error, an acknowledgement queued and a cancel, with the messages it acknowledges and those split from it, its status
+    history and its errors whole. Each of its transitions carries raw() as its condition and an app that shows this screen
+    takes in only recoverMessage. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="System message" default-menu-include="false">
+    <parameter name="systemMessageId" required="true"/>
+    <parameter name="showContent"/>
+
+    <transition name="recoverMessage">
+        <actions>
+            <service-call name="org.moqui.admin.OperationServices.execute#Recovery" out-map="done"
+                    in-map="{targetKind:'SystemMessage', action:action, resolution:(resolution || null), targetId:systemMessageId,
+                        expectedRevision:expectedRevision, reason:reason, operationKey:operationKey}"/>
+            <if condition="!ec.message.hasError()">
+                <script><![CDATA[
+                    const result = Array.from(done.resultList || [])[0] || {}
+                    ec.message.addMessage(done.applied ? (done.repeated ? 'Already done. ' : 'Done. ') + 'The message is now: ' + (result.stateText || 'changed')
+                            + (action === 'reconcile' ? '. It is not marked sent or consumed.' : '')
+                        : (result.reason || done.reason || 'Not done'), done.applied ? 'success' : 'warning')
+                ]]></script>
+            </if>
+        </actions>
+        <default-response url="."><parameter name="systemMessageId"/></default-response>
+        <error-response url="."><parameter name="systemMessageId"/></error-response>
+    </transition>
+
+    <!-- the instance administrator's transitions: never under a mount, and only for a user who opens System by their own grant -->
+    <transition name="updateMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.service.message.SystemMessage"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="sendMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="consumeMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="org.moqui.impl.SystemMessageServices.consume#ReceivedSystemMessage" async="true"/>
+        <actions>
+            <message>The message is being consumed in the background</message>
+        </actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="queueAckMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="org.moqui.impl.SystemMessageServices.queue#AckSystemMessage"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="resetError">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="org.moqui.impl.SystemMessageServices.reset#SystemMessageInError"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="cancelMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="org.moqui.impl.SystemMessageServices.cancel#SystemMessage"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="downloadMessageText" read-only="true">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <actions>
+            <entity-find-one entity-name="moqui.service.message.SystemMessage" value-field="systemMessage"/>
+            <script>ec.web.sendTextResponse(systemMessage.messageText, "text/plain", `SystemMessage${systemMessageId}.txt`)</script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <actions>
+        <set field="mount" from="ec.resource.script('component://tools/template/AdminMount.js').state()"/>
+        <if condition="mount.raw">
+            <entity-find-one entity-name="moqui.service.message.SystemMessage" value-field="systemMessage"/>
+            <entity-find entity-name="moqui.service.message.SystemMessageError" list="rawErrorList">
+                <econdition field-name="systemMessageId"/>
+                <order-by field-name="-errorDate"/>
+            </entity-find>
+            <entity-find entity-name="moqui.service.message.SystemMessage" list="rawAckOfList">
+                <econdition field-name="ackMessageId" from="systemMessageId"/>
+            </entity-find>
+            <entity-find entity-name="moqui.service.message.SystemMessage" list="rawChildList">
+                <econdition field-name="parentMessageId" from="systemMessageId"/>
+            </entity-find>
+            <entity-find entity-name="moqui.entity.EntityAuditLog" list="rawStatusList">
+                <econdition field-name="changedEntityName" value="moqui.service.message.SystemMessage"/>
+                <econdition field-name="changedFieldName" value="statusId"/>
+                <econdition field-name="pkPrimaryValue" from="systemMessageId"/>
+                <order-by field-name="-changedDate"/>
+            </entity-find>
+        </if>
+        <service-call name="org.moqui.admin.OperationServices.get#Message" out-map="found" transaction="force-new" ignore-error="true"
+                in-map="{systemMessageId:systemMessageId, includePayload:(showContent === 'Y')}"/>
+        <!-- ignore-error clears a refusal's message -->
+        <set field="recordFound" from="!!found?.message"/>
+        <script><![CDATA[
+            ec.message.clearErrors()
+            const colors = {failed: 'negative', retrying: 'warning', uncertain: 'deep-orange', settled: 'purple', inProgress: 'info', waiting: 'info', done: 'positive'}
+            const when = value => value ? ec.l10n.format(Date.parse(value), 'yyyy-MM-dd HH:mm') : ''
+            message = found?.message || {}
+            stateColor = colors[message.state] || 'grey-7'
+            // the owner's own place for the message, by the mount's route for the key its registration names (never a URL from
+            // data): a plain route by its href, a screen path by its url and parameters
+            const ownerLink = (message.ownerRef ? ec.resource.script('component://tools/template/AdminMount.js')
+                .link(mount.routes, message.ownerRoute, message.ownerRef, {systemMessageId: message.systemMessageId}) : null) || {}
+            ownerHref = ownerLink.plain ? ownerLink.href : ''
+            ownerUrl = ownerLink.plain ? '' : ownerLink.url || ''
+            ownerParameters = ownerLink.plain ? {} : ownerLink.parameters || {}
+            ownerText = [message.ownerApp, message.ownerTitle, message.ownerStateText].filter(Boolean).join(' · ')
+            evidence = recordFound ? [
+                {label: 'Direction', value: message.directionText},
+                {label: 'Type', value: message.typeText + (message.contentType ? ' (' + message.contentType + ')' : '')},
+                {label: 'Remote', value: message.remoteText ? message.remoteText + (message.remoteDisabled ? ' (disabled until a test of the connection passes)' : '') : 'None'},
+                {label: message.direction === 'out' ? 'Produced' : 'Received', value: when(message.initDate)},
+                {label: 'Last attempt', value: when(message.lastAttemptDate)},
+                {label: message.direction === 'out' ? 'Sent' : 'Consumed', value: when(message.processedDate)},
+                {label: 'Failed attempts', value: String(message.failCount || 0)},
+                {label: 'Settled', value: message.settlement ? [message.settlementText + (message.settledByName ? ' by ' + message.settledByName : ''), when(message.settledDate),
+                    message.settledReason].filter(Boolean).join(' · ') + '. The message is not marked ' + (message.direction === 'out' ? 'sent' : 'consumed') + '.' : ''},
+                {label: 'Envelope id', value: message.messageId},
+                {label: 'Id at the other system', value: message.remoteMessageId},
+                {label: 'Document', value: message.docType},
+                {label: 'Split from', value: message.parentMessageId},
+                {label: 'Messages split from it', value: message.childCount ? String(message.childCount) : ''},
+                {label: 'Acknowledged by', value: message.ackMessageId},
+                {label: 'Last failure', value: [message.errorClass, message.errorText].filter(Boolean).join(': ')},
+                {label: 'Size', value: message.payloadLength ? message.payloadLength + ' characters' : 'Empty'}
+            ].filter(row => row.value) : []
+            attempts = Array.from(found?.attemptList || []).map(row => Object.assign({}, row, {timeText: when(row.errorDate)}))
+            history = Array.from(found?.historyList || []).map(row => Object.assign({}, row, {timeText: when(row.changedDate),
+                changeText: [row.fromText, row.toText].filter(Boolean).join(' → ')}))
+            const offered = Array.from(found?.actionList || [])
+            const keyOf = name => (name + '.' + message.systemMessageId + '.' + message.revision).replace(/[^\w.-]/g, '_').slice(0, 60)
+            recoveryActions = offered.filter(row => row.eligible).map(row => Object.assign({}, row, {
+                resolutionOptions: Array.from(row.resolutionList || []).map(option => ({value: option.resolution, label: option.label})),
+                values: {systemMessageId: message.systemMessageId, action: row.action, expectedRevision: message.revision, operationKey: keyOf(row.action)}}))
+            // why the others are not offered, where a reader would look for them
+            const open = ['failed', 'retrying', 'uncertain', 'settled'].includes(message.state)
+            refusedActions = open ? offered.filter(row => !row.eligible && !['NOT_UNCERTAIN', 'NOT_FAILED', 'ALREADY_SETTLED'].includes(row.reasonCode)) : []
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="MessageUnavailable" condition="!recordFound">
+            <widgets>
+                <label type="p" style="text-negative" text="This message is not available to you, or there is no such message."/>
+                <link url="../SystemMessages" text="System messages" link-type="anchor"/>
+            </widgets>
+        </section>
+        <section name="MessageFound" condition="recordFound">
+            <widgets>
+                <container style="row items-center q-col-gutter-sm q-mb-sm">
+                    <container style="col">
+                        <label text="Message ${message.systemMessageId}" type="h5"/>
+                        <label text="${message.typeText}${message.remoteText ? ' · ' + message.remoteText : ''}" type="p" style="text-caption m-muted q-mb-none"/>
+                    </container>
+                    <container style="col-auto">
+                        <render-mode>
+                            <text type="qvt"><![CDATA[<q-chip square class="q-ma-none m-tonal text-${stateColor}">${message.stateText}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: message.stateText})}]]></text>
+                            <text type="html">${message.stateText}</text>
+                        </render-mode>
+                    </container>
+                    <container style="col-auto">
+                        <link url="../SystemMessages" text="System messages" icon="sym_o_arrow_back"/>
+                    </container>
+                </container>
+
+                <container-box>
+                    <box-header title="Recovery"/>
+                    <box-body>
+                        <label type="p" condition="message.nextStep" text="${message.nextStep}"/>
+                        <label type="p" style="m-muted" condition="!message.nextStep &amp;&amp; !recoveryActions.length" text="Nothing is to be done to this message here."/>
+                        <label type="p" style="m-muted" condition="message.idempotencyNote" text="${message.ownerApp}: ${message.idempotencyNote}"/>
+                        <section-iterate name="MessageRecoveryActions" list="recoveryActions" entry="offer">
+                            <widgets>
+                                <container-dialog id="Recover_${offer.action}" button-text="${offer.label}" icon="sym_o_build" width="600"
+                                        title="${offer.label}: message ${message.systemMessageId}">
+                                    <label type="p" text="${offer.consequence}"/>
+                                    <form-single name="MessageRecovery" transition="recoverMessage" map="offer.values">
+                                        <field name="systemMessageId"><default-field><hidden/></default-field></field>
+                                        <field name="action"><default-field><hidden/></default-field></field>
+                                        <field name="expectedRevision"><default-field><hidden/></default-field></field>
+                                        <field name="operationKey"><default-field><hidden/></default-field></field>
+                                        <field name="resolution">
+                                            <conditional-field condition="offer.resolutionOptions.length" title="What was found">
+                                                <drop-down><list-options list="offer.resolutionOptions" key="${value}" text="${label}"/></drop-down>
+                                            </conditional-field>
+                                            <default-field><hidden/></default-field>
+                                        </field>
+                                        <field name="reason"><default-field title="Reason" tooltip="Kept in the audit log"><text-line size="50"/></default-field></field>
+                                        <field name="submitButton"><default-field title="${offer.label}"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                            </widgets>
+                        </section-iterate>
+                        <section-iterate name="RefusedActions" list="refusedActions" entry="held">
+                            <widgets><label type="p" style="text-caption m-muted q-mb-none" text="${held.label}: ${held.reason}"/></widgets>
+                        </section-iterate>
+                    </box-body>
+                </container-box>
+
+                <container-box>
+                    <box-header title="Evidence"/>
+                    <box-body>
+                        <form-list name="MessageEvidence" list="evidence" skip-form="true" paginate="false">
+                            <field name="label"><default-field title=""><display/></default-field></field>
+                            <field name="value"><default-field title=""><display/></default-field></field>
+                        </form-list>
+                        <container style="q-mt-sm">
+                            <label text="Owner: " style="m-muted"/>
+                            <link url="${ownerHref}" url-type="plain" link-type="anchor" condition="ownerHref" text="${ownerText}"/>
+                            <link url="${ownerUrl}" link-type="anchor" condition="ownerUrl" text="${ownerText}" parameter-map="ownerParameters"/>
+                            <label condition="!ownerHref &amp;&amp; !ownerUrl" text="${ownerText || 'No owner has registered a recovery for this message type'}"/>
+                        </container>
+                    </box-body>
+                </container-box>
+
+                <container-box>
+                    <box-header title="Attempts"/>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!attempts.length" text="No failed attempt is recorded."/>
+                        <form-list name="MessageAttempts" list="attempts" skip-form="true" paginate="false">
+                            <field name="timeText"><default-field title="Time"><display/></default-field></field>
+                            <field name="attemptedText"><default-field title="Attempted"><display/></default-field></field>
+                            <field name="errorClass"><default-field title="Failure"><display/></default-field></field>
+                            <field name="errorText"><default-field title="What was recorded"><display/></default-field></field>
+                        </form-list>
+                        <label type="p" style="text-caption m-muted q-mt-sm" condition="history.length" text="Status changes"/>
+                        <form-list name="MessageHistory" list="history" skip-form="true" paginate="false">
+                            <field name="timeText"><default-field title="Time"><display/></default-field></field>
+                            <field name="changeText"><default-field title="Change"><display/></default-field></field>
+                            <field name="username"><default-field title="By"><display/></default-field></field>
+                            <field name="reason"><default-field title="Reason"><display/></default-field></field>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box>
+                    <box-header title="Content"/>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!found.payloadVisible" text="${found.payloadHiddenReason}."/>
+                        <section name="ContentShown" condition="found.payloadVisible">
+                            <widgets>
+                                <link url="." text="Show the content" icon="sym_o_visibility" condition="found.payloadText == null"
+                                        parameter-map="{systemMessageId:systemMessageId, showContent:'Y'}"/>
+                                <label type="p" style="text-caption m-muted" condition="found.payloadText != null"
+                                        text="As its owner lets you read it${found.payloadTruncated ? ', cut to its first 20,000 characters' : ''}; values of fields named like a credential are hidden."/>
+                                <label type="pre" style="text-mono text-caption" condition="found.payloadText != null" text="${found.payloadText}"/>
+                            </widgets>
+                        </section>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+        <section name="RawMessage" condition="mount.raw &amp;&amp; systemMessage">
+            <widgets>
+                <label text="Instance administrator" type="h6" style="q-mt-md q-mb-none"/>
+                <label type="p" style="text-caption m-muted"
+                        text="The message as it is stored, acted on directly: no owner's registration, eligibility or review applies. Use Recovery above where it offers the action."/>
+                <container-box>
+                    <box-header title="Stored message"/>
+                    <box-toolbar>
+                        <dynamic-dialog id="EditMessageTextDialog" button-text="Edit message text" icon="sym_o_edit" transition="EditMessageText" width="900"
+                                parameter-map="{systemMessageId:systemMessageId}"/>
+                        <link url="downloadMessageText" text="Download message text" icon="sym_o_download" parameter-map="{systemMessageId:systemMessageId}"/>
+                        <link url="sendMessage" text="Send" icon="sym_o_send" parameter-map="{systemMessageId:systemMessageId}"
+                                condition="systemMessage.isOutgoing === 'Y' &amp;&amp; ['SmsgProduced', 'SmsgError'].includes(systemMessage.statusId)"
+                                confirmation="Send message ${systemMessageId} now, whatever its owner registered?"/>
+                        <link url="updateMessage" text="Reset to produced" icon="sym_o_restart_alt" parameter-map="{systemMessageId:systemMessageId, statusId:'SmsgProduced'}"
+                                condition="systemMessage.statusId === 'SmsgSending'"
+                                confirmation="Reset message ${systemMessageId} to produced? If it is in fact being sent, it may be sent twice."/>
+                        <link url="consumeMessage" text="Consume" icon="sym_o_move_to_inbox" parameter-map="{systemMessageId:systemMessageId}"
+                                condition="systemMessage.isOutgoing === 'N' &amp;&amp; ['SmsgReceived', 'SmsgError'].includes(systemMessage.statusId)"
+                                confirmation="Consume message ${systemMessageId} now, whatever its owner registered?"/>
+                        <link url="queueAckMessage" text="Send ack" icon="sym_o_reply" parameter-map="{systemMessageId:systemMessageId}"
+                                condition="systemMessage.isOutgoing === 'N' &amp;&amp; ['SmsgConsumed', 'SmsgRejected', 'SmsgError'].includes(systemMessage.statusId)"/>
+                        <link url="resetError" text="Reset from error" icon="sym_o_restart_alt" parameter-map="{systemMessageId:systemMessageId}"
+                                condition="systemMessage.statusId === 'SmsgError'"/>
+                        <link url="cancelMessage" text="Cancel" icon="sym_o_cancel" btn-type="danger" parameter-map="{systemMessageId:systemMessageId}"
+                                condition="['SmsgProduced', 'SmsgStaged', 'SmsgReceived', 'SmsgError', 'SmsgRejected'].includes(systemMessage.statusId)"
+                                confirmation="Cancel message ${systemMessageId}? It is not sent or consumed after that."/>
+                    </box-toolbar>
+                    <box-body>
+                        <container-row>
+                            <row-col lg="5">
+                                <form-single name="SystemMessageForm" map="systemMessage">
+                                    <field name="systemMessageId"><default-field title="ID"><display/></default-field></field>
+                                    <auto-fields-entity entity-name="moqui.service.message.SystemMessage" field-type="display" include="nonpk"/>
+                                    <field name="messageText"><default-field><ignored/></default-field></field>
+                                    <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem"/></default-field></field>
+                                    <field name="systemMessageTypeId">
+                                        <default-field title="Type">
+                                            <link url="../MessageTypeDetail" text="${systemMessage.systemMessageTypeId}" link-type="anchor"
+                                                    parameter-map="{systemMessageTypeId:systemMessage.systemMessageTypeId}" condition="systemMessage.systemMessageTypeId"/>
+                                        </default-field>
+                                    </field>
+                                    <field name="systemMessageRemoteId">
+                                        <default-field title="Remote">
+                                            <link url="../ConnectionDetail" text="${systemMessage.systemMessageRemoteId}" link-type="anchor"
+                                                    parameter-map="{adapterKey:'remote', connectionKey:systemMessage.systemMessageRemoteId}"
+                                                    condition="systemMessage.systemMessageRemoteId"/>
+                                        </default-field>
+                                    </field>
+                                    <field name="parentMessageId">
+                                        <default-field title="Split from">
+                                            <link url="." text="${systemMessage.parentMessageId}" link-type="anchor"
+                                                    parameter-map="{systemMessageId:systemMessage.parentMessageId}" condition="systemMessage.parentMessageId"/>
+                                        </default-field>
+                                    </field>
+                                    <field name="ackMessageId">
+                                        <default-field title="Acknowledged by">
+                                            <link url="." text="${systemMessage.ackMessageId}" link-type="anchor"
+                                                    parameter-map="{systemMessageId:systemMessage.ackMessageId}" condition="systemMessage.ackMessageId"/>
+                                        </default-field>
+                                    </field>
+                                </form-single>
+                            </row-col>
+                            <row-col lg="7">
+                                <section name="RawAckOfSection" condition="rawAckOfList.length">
+                                    <widgets>
+                                        <label type="p" style="text-caption m-muted" text="Acknowledges"/>
+                                        <form-list name="AckOfForm" list="rawAckOfList" skip-form="true" paginate="false">
+                                            <field name="systemMessageId">
+                                                <default-field title="Message">
+                                                    <link url="." text="${systemMessageId}" link-type="anchor" parameter-map="{systemMessageId:systemMessageId}"/>
+                                                </default-field>
+                                            </field>
+                                            <field name="systemMessageTypeId"><default-field title="Type"><display/></default-field></field>
+                                            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem"/></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
+                                <section name="RawChildrenSection" condition="rawChildList.length">
+                                    <widgets>
+                                        <label type="p" style="text-caption m-muted" text="Messages split from it"/>
+                                        <form-list name="ChildrenForm" list="rawChildList" skip-form="true" paginate="false">
+                                            <field name="systemMessageId">
+                                                <default-field title="Message">
+                                                    <link url="." text="${systemMessageId}" link-type="anchor" parameter-map="{systemMessageId:systemMessageId}"/>
+                                                </default-field>
+                                            </field>
+                                            <field name="systemMessageTypeId"><default-field title="Type"><display/></default-field></field>
+                                            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem"/></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
+                                <label type="p" style="text-caption m-muted" text="Status history"/>
+                                <label type="p" style="m-muted" condition="!rawStatusList.length" text="No status change is recorded."/>
+                                <form-list name="RawStatusHistory" list="rawStatusList" skip-form="true" paginate="false">
+                                    <field name="changedDate"><default-field title="Time"><display/></default-field></field>
+                                    <field name="newValueText">
+                                        <default-field title="Status">
+                                            <display-entity entity-name="moqui.basic.StatusItem" key-field-name="statusId" default-text="${newValueText}"/>
+                                        </default-field>
+                                    </field>
+                                    <field name="changedByUserId">
+                                        <default-field title="By">
+                                            <display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username}" default-text="${changedByUserId || 'Unknown'}"/>
+                                        </default-field>
+                                    </field>
+                                </form-list>
+                                <label type="p" style="text-caption m-muted q-mt-sm" text="Errors"/>
+                                <label type="p" style="m-muted" condition="!rawErrorList.length" text="No error is recorded."/>
+                                <form-list name="ErrorListForm" list="rawErrorList" skip-form="true" paginate="false">
+                                    <field name="errorDate"><default-field title="Time"><display/></default-field></field>
+                                    <field name="errorText"><default-field title="Error"><display style="m-wrap-anywhere"/></default-field></field>
+                                </form-list>
+                            </row-col>
+                        </container-row>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

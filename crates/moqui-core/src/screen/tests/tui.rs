@@ -1130,7 +1130,9 @@ fn stacked_columns_are_parts_and_no_cell_is_an_element_name() {
 }
 
 /// A container-dialog in a list cell (an Edit per row) is a dialog node of the row, its form filled from the row; a
-/// section in such a dialog cannot be captured and is an error node, with the rest of the document whole.
+/// section in such a dialog is its nodes, with its condition and the row's values (Contacts' contact info and Commerce's
+/// review decisions); a screen included in one cannot be captured and is an error node, with the rest of the document
+/// whole.
 #[test]
 fn a_container_dialog_in_a_list_cell_is_a_dialog_of_its_row() {
     let xml = format!(
@@ -1181,9 +1183,35 @@ fn a_container_dialog_in_a_list_cell_is_a_dialog_of_its_row() {
     assert!(body.contains("after the list"), "{body}");
     client_model(&body);
 
+    let sectioned = xml.replace(
+        r#"<form-single name="EditRow""#,
+        r#"<section name="Inner" condition="name == 'Beta'"><widgets><label text="inner ${name}"/></widgets>
+            <fail-widgets><label text="not for ${name}"/></fail-widgets></section><form-single name="EditRow""#,
+    );
+    let output = render("row-dialog-section", &sectioned, BTreeMap::new());
+    let body = output.body_text();
+    let doc = document(&output);
+    let list = list_named(&doc, "Rows");
+    let rows = list["rows"].as_array().unwrap();
+    let dialog = |row: usize| {
+        rows[row]["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|cell| cell["t"] == json!("dialog"))
+            .unwrap_or_else(|| panic!("no dialog in row {row}: {}", rows[row]))
+            .to_string()
+    };
+    assert!(dialog(0).contains("not for Alpha") && !dialog(0).contains("inner"), "{}", dialog(0));
+    assert!(dialog(1).contains("inner Beta") && !dialog(1).contains("not for"), "{}", dialog(1));
+    assert!(dialog(1).contains("\"qty\""), "{}", dialog(1));
+    assert!(!body.contains("\"error\""), "{body}");
+    assert!(body.contains("after the list"), "{body}");
+    client_model(&body);
+
     let nested = xml.replace(
         r#"<form-single name="EditRow""#,
-        r#"<section name="Inner"><widgets><label text="x"/></widgets></section><form-single name="EditRow""#,
+        r#"<include-screen location="component://none/screen/None.xml"/><form-single name="EditRow""#,
     );
     let output = render("row-dialog-nested", &nested, BTreeMap::new());
     let body = output.body_text();
@@ -1597,6 +1625,94 @@ fn trees_button_menus_and_components() {
 
 fn qvt_render_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/script/testdata/screen/qvt/render")
+}
+
+/// A `nav-card` is a container of a link (the title, to the card's link), the text and its child links, a cell of the
+/// dashboard; a card with no link has its title as a text, and a card or a child link whose condition is false is left out.
+#[test]
+fn a_nav_card_is_a_container_of_its_link_its_text_and_its_child_links() {
+    let context = ExecutionContextFactory::test_context();
+    let body = make_render(context.factory())
+        .root_screen(qvt_render_dir().join("Dashboard.xml").to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("tui")
+        .render()
+        .unwrap_or_else(|err| panic!("{err}"))
+        .body_text();
+    let doc: Json = serde_json::from_str(&body).unwrap_or_else(|err| panic!("{err}: {body}"));
+    let featured = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("t") == Some(&json!("dashboard")) && node["id"] == json!("Featured"))
+        .unwrap_or_else(|| panic!("{body}"));
+    let cards = featured["c"].as_array().unwrap();
+    assert_eq!(cards.len(), 3, "{body}");
+    let parts = |card: &Json| -> Vec<(String, String, String)> {
+        card["c"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| {
+                let text = |key: &str| node.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+                (text("t"), text("text"), text("url"))
+            })
+            .collect()
+    };
+    let part = |t: &str, text: &str, url: &str| (t.to_string(), text.to_string(), url.to_string());
+    assert_eq!(cards[0]["t"], json!("container"));
+    assert_eq!(
+        parts(&cards[0]),
+        [
+            part("link", "Orders", "/Orders"),
+            part("text", "Find {{x}} & open orders", ""),
+            part("link", "Open ones", "/Orders?statusId=Open"),
+            part("link", "Help", "https://example.com/help"),
+        ]
+    );
+    assert_eq!(parts(&cards[1]), [part("link", "Late", "https://example.com/late")]);
+    assert_eq!(
+        parts(&cards[2]),
+        [part("text", "Counted", ""), part("text", "42 open", "")]
+    );
+    assert!(!body.contains("Hidden"), "{body}");
+    // the client reads every node
+    client_model(&body);
+}
+
+/// A `number-card` carries its `link` as the card's url, resolved as a screen link is (a path below this screen with
+/// its query, another address as it is); a card with no link has an empty url. The macro once read a `url` attribute
+/// the element does not have, so no card was a link in the terminal.
+#[test]
+fn a_number_card_carries_its_link() {
+    let context = ExecutionContextFactory::test_context();
+    let body = make_render(context.factory())
+        .root_screen(qvt_render_dir().join("Dashboard.xml").to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("tui")
+        .render()
+        .unwrap_or_else(|err| panic!("{err}"))
+        .body_text();
+    let doc: Json = serde_json::from_str(&body).unwrap_or_else(|err| panic!("{err}: {body}"));
+    let cards: Vec<(String, String)> = nodes(&doc)
+        .into_iter()
+        .filter(|node| node.get("t") == Some(&json!("numberCard")))
+        .map(|node| {
+            let text = |key: &str| node.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+            (text("title"), text("url"))
+        })
+        .collect();
+    let card = |title: &str, url: &str| (title.to_string(), url.to_string());
+    assert_eq!(
+        cards,
+        [
+            card("Open orders", "/Orders?statusId=Open"),
+            card("Late shipments", "https://example.com/late"),
+            card("Revenue {{x}} & more", ""),
+            card("Plain", ""),
+            card("Held orders", "/Orders?statusId=Held"),
+        ],
+        "{body}"
+    );
+    client_model(&body);
 }
 
 /// A parent level asked for alone, as the terminal asks for each level, holds an empty active node: the level under it is
@@ -2277,4 +2393,123 @@ fn a_no_current_selected_key_expression_is_expanded() {
             .unwrap_or_else(|| panic!("{doc}"));
         assert_eq!(field["w"]["value"], json!(expected), "{field:?}");
     }
+}
+
+/// A list column titled "" has no header, as in qvt (a column of Remove links), whether the default-field or only a
+/// conditional-field says so. A cell text of several lines is one part, the array of its lines (a score per scorer),
+/// which the client draws a line each, as a stacked column, and a cell is at most four lines. Epoch millis text, as a
+/// time stamp reaches a script's row, shows in a display's date format, and an input keeps it, to post it as it was.
+#[test]
+fn an_empty_column_title_the_lines_of_a_cell_and_millis_under_a_date_format() {
+    let xml = r#"<screen require-authentication="false">
+        <actions><script>
+            rows = [{name: 'Alpha', scores: 'one: 1\n\ntwo: 0', notes: 'a\nb\nc\nd\ne', started: '1709647629000'}]
+            startedAt = '1709647629000'
+        </script></actions>
+        <widgets><form-list name="Rows" list="rows" skip-form="true">
+            <field name="name"><default-field><display/></default-field></field>
+            <field name="scores"><default-field title=""><display/></default-field></field>
+            <field name="flag"><conditional-field condition="true" title=""><display text="x"/></conditional-field></field>
+            <field name="started"><default-field><display format="yyyy-MM-dd"/></default-field></field>
+            <field name="notes"><default-field><display/></default-field></field>
+            <form-list-column><field-ref name="name"/></form-list-column>
+            <form-list-column><field-ref name="scores"/></form-list-column>
+            <form-list-column><field-ref name="flag"/></form-list-column>
+            <form-list-column><field-ref name="started"/></form-list-column>
+            <form-list-column><field-ref name="name"/><field-ref name="notes"/></form-list-column>
+        </form-list>
+        <form-single name="Edit">
+            <field name="startedAt"><default-field><text-line format="yyyy-MM-dd"/></default-field></field>
+        </form-single></widgets></screen>"#;
+    let output = render("cell-lines", xml, BTreeMap::new());
+    let doc = document(&output);
+    let list = list_named(&doc, "Rows");
+    let titles: Vec<&Json> = list["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| &column["title"])
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            &json!("Name"),
+            &json!(""),
+            &json!(""),
+            &json!("Started"),
+            &json!("Name / Notes")
+        ],
+        "{list:?}"
+    );
+    // the stacked column: the name, then the notes' lines as one part, cut to the cell's four lines
+    assert_eq!(
+        list["rows"][0]["cells"],
+        json!([
+            "Alpha",
+            ["one: 1", "two: 0"],
+            "x",
+            "2024-03-05",
+            ["Alpha", ["a", "b", "c d e"]]
+        ]),
+        "{list:?}"
+    );
+    let edit = field_named(&doc, "startedAt");
+    assert_eq!(edit["w"]["value"], json!("1709647629000"), "{edit:?}");
+    client_model(&output.body_text());
+}
+
+/// An agent's render (design-people PE-21): an `ai-opt-out` field of a list's row form (an input and a value it posts
+/// hidden) and of a board card shows the placeholder, a section in a cell is the placeholder, and the document is one
+/// the terminal client the screen tool draws with reads; the person's render of the same screen shows the text.
+#[test]
+fn an_agents_render_leaves_out_the_text_of_ai_opt_out_fields_of_row_forms_and_views() {
+    let xml = r#"<screen require-authentication="false" default-menu-title="Cases">
+        <transition name="save"><default-response type="none"/></transition>
+        <actions><script>rows = [{caseId: 'C1', title: 'Visible title', reason: 'Secret reason', ref: 'Secret ref', status: 'Open'}]</script></actions>
+        <widgets><form-list name="Cases" list="rows" transition="save" multi="true" id-field="caseId" views="list,board">
+            <view-board group-field="status" card-title-field="title" card-fields="reason"/>
+            <field name="caseId"><default-field><hidden/></default-field></field>
+            <field name="title"><default-field><display/></default-field></field>
+            <field name="reason" ai-opt-out="true"><default-field><text-line/></default-field></field>
+            <field name="ref" ai-opt-out="true"><default-field><display also-hidden="true"/></default-field></field>
+            <field name="note"><default-field><section name="Note" ai-opt-out="true"><widgets><label text="Secret note"/></widgets></section></default-field></field>
+            <field name="status"><default-field><display/></default-field></field>
+            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+        </form-list></widgets></screen>"#;
+    let path = std::env::temp_dir().join(format!("moqui-tui-{}-ai-opt-out.xml", std::process::id()));
+    std::fs::write(&path, xml).unwrap();
+    let context = ExecutionContextFactory::test_context();
+    let render = |origin: crate::screen::RenderOrigin| {
+        make_render(context.factory())
+            .root_screen(path.to_string_lossy().into_owned())
+            .render_mode("tui")
+            .origin(origin)
+            .render()
+            .unwrap_or_else(|err| panic!("{err}"))
+            .body_text()
+    };
+    let person = render(crate::screen::RenderOrigin::Internal);
+    let agent = render(crate::screen::RenderOrigin::Agent {
+        agent_id: "assist".to_string(),
+        run_id: None,
+    });
+    let _ = std::fs::remove_file(&path);
+    for secret in ["Secret reason", "Secret ref", "Secret note"] {
+        assert!(person.contains(secret), "{secret}: {person}");
+        assert!(!agent.contains(secret), "{secret}: {agent}");
+    }
+    assert!(agent.contains("Visible title"), "{agent}");
+    let doc: Json = serde_json::from_str(&agent).unwrap();
+    let list = list_named(&doc, "Cases");
+    assert_eq!(list["aiOff"], json!(["reason", "ref"]));
+    let row = &list["rows"][0];
+    // the row form posts its key, never the opted-out value it holds hidden
+    assert_eq!(
+        hidden_map(&row["hidden"]).get("caseId_0").map(String::as_str),
+        Some("C1")
+    );
+    assert!(!hidden_map(&row["hidden"]).contains_key("ref_0"), "{row}");
+    assert!(row["cells"].to_string().contains("Not shared with AI"), "{row}");
+    assert_eq!(list["views"]["board"]["rows"][0]["f0"], json!("Not shared with AI"));
+    client_model(&agent);
 }

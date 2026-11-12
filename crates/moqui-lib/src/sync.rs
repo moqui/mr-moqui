@@ -19,13 +19,23 @@
 //! anyway rather than spreading the panic to every later caller.
 
 use std::sync::{
-    Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitTimeoutResult,
+    Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
+    WaitTimeoutResult,
 };
 use std::time::Duration;
 
 /// Lock `mutex`, taking the guard of a poisoned lock too.
 pub fn lock<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Lock `mutex` when no one holds it, taking the guard of a poisoned lock too; none while another holds it.
+pub fn try_lock<T: ?Sized>(mutex: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
+    match mutex.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
 }
 
 /// Read-lock `lock`, taking the guard of a poisoned lock too.

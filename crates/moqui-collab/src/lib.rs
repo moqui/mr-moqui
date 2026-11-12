@@ -27,6 +27,13 @@
 //! changes open is read again when the next editor joins; with changes open, the co-edited text is kept (logged) and
 //! the next save writes over it, the other change staying in the page's history.
 //!
+//! In a cluster an update is relayed once to the other servers that have the document open (`collab-update`). One that
+//! is lost there is recovered from the row (plans/archive/High-Level-Review.md HL-018): each [`tick`] reads the stamps of the
+//! open documents' rows in one query, merges the state of each row another server wrote since this one last read or
+//! wrote it, and gives the part its room lacked to the room's clients ([`Event::Update`]); a version is saved from the
+//! document with the stored state merged first. Yjs updates are idempotent, so merging what a room already has changes
+//! nothing.
+//!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
 //! entry below: `org.moqui.resource.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
 //! from its WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
@@ -54,6 +61,7 @@ use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
 use moqui_core::context::{Error, ExecutionContext};
+use moqui_core::entity::Condition;
 use moqui_core::service::call::{sync_checked, CallOptions};
 
 const COLLAB_DOCUMENT: &str = "moqui.resource.CollabDocument";
@@ -104,6 +112,9 @@ pub enum Event {
         user_id: String,
         user_name: String,
     },
+    /// Changes another server stored that this server's room lacked, now merged into it: the Yjs update (v1) for the
+    /// room's clients.
+    Update { document_key: String, update: Vec<u8> },
 }
 
 /// The record a document key names.
@@ -128,6 +139,9 @@ struct Room {
     last_editor: Option<String>,
     members: usize,
     can_edit: HashMap<String, bool>,
+    /// The row's `lastUpdatedStamp` (milliseconds) as this server last read or wrote it; a row with another was written
+    /// by another server since, and [`tick`] merges it. `None` when not known, which only costs a read.
+    stamp: Option<i64>,
 }
 
 fn rooms() -> &'static Mutex<HashMap<String, Arc<Mutex<Room>>>> {
@@ -281,6 +295,101 @@ fn now_value() -> Value {
     moqui_core::user::now_value()
 }
 
+/// A row's `lastUpdatedStamp` in milliseconds.
+fn stamp_of(row: &moqui_core::entity::EntityValue) -> Option<i64> {
+    match row.get("lastUpdatedStamp") {
+        Some(Value::Timestamp(stamp)) => Some(stamp.as_millisecond()),
+        _ => None,
+    }
+}
+
+/// Merge a stored state into `doc`. Out: the update of what `doc` lacked, for its clients; `None` when it had it all
+/// or the state is not one.
+fn merge_into(key: &str, doc: &Doc, state: &[u8]) -> Option<Vec<u8>> {
+    if state.is_empty() {
+        return None;
+    }
+    let update = match Update::decode_v1(state) {
+        Ok(update) => update,
+        Err(err) => {
+            tracing::warn!("co-edited {key}: its stored state is not a Yjs update and was not merged: {err}");
+            return None;
+        }
+    };
+    let before = doc.transact().state_vector();
+    if let Err(err) = doc.transact_mut().apply_update(update) {
+        tracing::warn!("co-edited {key}: its stored state was not merged: {err}");
+        return None;
+    }
+    let txn = doc.transact();
+    (txn.state_vector() != before).then(|| txn.encode_state_as_update_v1(&before))
+}
+
+/// What another server stored: merged into the room, and what the room lacked queued for its clients.
+fn merge_stored(key: &str, room: &mut Room, row: &moqui_core::entity::EntityValue) {
+    if let Some(update) = merge_into(key, &room.doc, &bytes_of(row, "stateData")) {
+        lock(events()).push(Event::Update {
+            document_key: key.to_string(),
+            update,
+        });
+    }
+    room.stamp = stamp_of(row);
+}
+
+/// Rows read in one query by [`refresh`].
+const REFRESH_CHUNK: usize = 500;
+
+/// Merge into the open rooms what other servers stored since this one last read or wrote their rows: the stamps of
+/// all of them in one query, then the state of those another server wrote (HL-018). A chunk that cannot be read is
+/// logged and the others go on.
+fn refresh(open: &[(String, Arc<Mutex<Room>>)]) {
+    let facade = match entity() {
+        Ok(facade) => facade,
+        Err(err) => return tracing::error!("co-editing: the stored documents were not read: {}", err.message()),
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    for chunk in open.chunks(REFRESH_CHUNK) {
+        if let Err(err) = refresh_chunk(&facade, chunk) {
+            tracing::error!("co-editing: the stored documents were not read: {}", err.message());
+        }
+    }
+}
+
+fn refresh_chunk(facade: &moqui_core::entity::EntityFacade, open: &[(String, Arc<Mutex<Room>>)]) -> Result<(), Error> {
+    let by_key: HashMap<&str, &Arc<Mutex<Room>>> = open.iter().map(|(key, room)| (key.as_str(), room)).collect();
+    let keys = open.iter().map(|(key, _)| Value::string(key)).collect();
+    let stamps = facade
+        .find(COLLAB_DOCUMENT)?
+        .condition(Condition::is_in("documentKey", keys))
+        .select_field("documentKey,lastUpdatedStamp")
+        .list()?;
+    let changed: Vec<Value> = stamps
+        .iter()
+        .filter(|row| {
+            let key = row.get("documentKey").map(to_plain_string).unwrap_or_default();
+            by_key
+                .get(key.as_str())
+                .is_some_and(|room| lock(room).stamp != stamp_of(row))
+        })
+        .filter_map(|row| row.get("documentKey").cloned())
+        .collect();
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let rows = facade
+        .find(COLLAB_DOCUMENT)?
+        .condition(Condition::is_in("documentKey", changed))
+        .select_field("documentKey,stateData,lastUpdatedStamp")
+        .list()?;
+    for row in rows.iter() {
+        let key = row.get("documentKey").map(to_plain_string).unwrap_or_default();
+        if let Some(room) = by_key.get(key.as_str()) {
+            merge_stored(&key, &mut lock(room), row);
+        }
+    }
+    Ok(())
+}
+
 /// The room of a document, loaded from its row or seeded from the page's text.
 fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>, Refusal> {
     if let Some(room) = room_of(key) {
@@ -292,6 +401,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
     let doc = Doc::new();
     let mut unsaved = BTreeSet::new();
     let mut seed = true;
+    let mut stamp = row.as_ref().and_then(stamp_of);
     if let Some(row) = &row {
         let editors: BTreeSet<String> = row
             .get("editorUserIds")
@@ -327,7 +437,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
     }
     if seed {
         markdown::seed(&doc, &page_text);
-        write_row(
+        stamp = write_row(
             key,
             &doc,
             Stored::Replace,
@@ -335,7 +445,8 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
             version.as_deref(),
             &unsaved,
             None,
-        )?;
+        )?
+        .stamp;
     }
     let room = Arc::new(Mutex::new(Room {
         doc,
@@ -346,6 +457,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         last_editor: None,
         members: 0,
         can_edit: HashMap::new(),
+        stamp,
     }));
     // another join may have loaded it meanwhile: keep the first
     Ok(Arc::clone(lock(rooms()).entry(key.to_string()).or_insert(room)))
@@ -360,6 +472,13 @@ enum Stored {
     Replace,
 }
 
+/// What [`write_row`] did: the stamp it wrote, and the update of what another server had stored that the document
+/// lacked (merged into it, for its clients).
+struct Written {
+    stamp: Option<i64>,
+    merged: Option<Vec<u8>>,
+}
+
 /// Write the document's state and snapshot.
 fn write_row(
     key: &str,
@@ -369,7 +488,7 @@ fn write_row(
     base_version: Option<&str>,
     unsaved: &BTreeSet<String>,
     last_editor: Option<&str>,
-) -> Result<(), Error> {
+) -> Result<Written, Error> {
     let facade = entity()?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let tx = facade.transactions_for(COLLAB_DOCUMENT)?;
@@ -379,15 +498,16 @@ fn write_row(
             .eq("documentKey", Value::string(key))
             .for_update(true)
             .one()?;
+        let mut merged = None;
         if let Some(row) = existing.as_ref().filter(|_| stored == Stored::Merge) {
             // another server's edits: into this document too, so nothing either wrote is lost
-            let state = bytes_of(row, "stateData");
-            if !state.is_empty() {
-                if let Ok(update) = Update::decode_v1(&state) {
-                    let _ = doc.transact_mut().apply_update(update);
-                }
-            }
+            merged = merge_into(key, doc, &bytes_of(row, "stateData"));
         }
+        // the stamp the write gets: when this transaction began, as the entity facade sets it
+        let stamp = facade
+            .transactions_for(COLLAB_DOCUMENT)?
+            .start_time_millis()
+            .filter(|millis| *millis > 0);
         let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
         let snapshot = markdown::render(doc);
         let mut row = match existing {
@@ -421,12 +541,24 @@ fn write_row(
             row.set("lastChangeDate", now_value());
         }
         if creating {
-            row.create(&facade)
+            row.create(&facade)?;
         } else {
-            row.update(&facade)
+            row.update(&facade)?;
         }
-    })?;
-    Ok(())
+        Ok(Written { stamp, merged })
+    })
+    .map_err(Error::from)
+}
+
+/// Note what [`write_row`] did in the room: its stamp, and the merged update for the room's clients.
+fn wrote(key: &str, room: &mut Room, written: Written) {
+    room.stamp = written.stamp;
+    if let Some(update) = written.merged {
+        lock(events()).push(Event::Update {
+            document_key: key.to_string(),
+            update,
+        });
+    }
 }
 
 /// An error unless the current user may view the document.
@@ -557,6 +689,10 @@ pub fn tick() {
         .iter()
         .map(|(key, room)| (key.clone(), Arc::clone(room)))
         .collect();
+    if keys.is_empty() {
+        return;
+    }
+    refresh(&keys);
     for (key, room) in keys {
         if let Err(err) = tick_room(&key, &room) {
             tracing::error!("co-edited {key}: {}", err.message());
@@ -601,20 +737,25 @@ fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
 
 /// Write the room's state now.
 fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
-    let guard = lock(room);
+    let mut guard = lock(room);
     let unsaved = guard.unsaved.clone();
     let editor = guard.last_editor.clone();
-    write_row(key, &guard.doc, Stored::Merge, None, None, &unsaved, editor.as_deref())?;
-    drop(guard);
-    lock(room).dirty = false;
+    let written = write_row(key, &guard.doc, Stored::Merge, None, None, &unsaved, editor.as_deref())?;
+    wrote(key, &mut guard, written);
+    guard.dirty = false;
     Ok(())
 }
 
 /// Save the document as a version of its record, as `user_id` (an editor with update access), with `note` or one that
 /// names its editors. Out: the version made, none when the text was unchanged.
 fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -> Result<Option<String>, Error> {
+    // what other servers stored goes into the version too, though an update of theirs was lost on its way here
+    let row = stored(key)?;
     let (target, page_text, editors) = {
-        let room = lock(room);
+        let mut room = lock(room);
+        if let Some(row) = &row {
+            merge_stored(key, &mut room, row);
+        }
         (room.target.clone(), markdown::render(&room.doc), room.unsaved.clone())
     };
     let note = note
@@ -683,16 +824,16 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
         let mut room = lock(room);
         room.unsaved.clear();
         room.dirty = false;
-        let guard = &*room;
-        write_row(
+        let written = write_row(
             key,
-            &guard.doc,
+            &room.doc,
             Stored::Merge,
             Some(&text_hash(&page_text)),
             version_name.as_deref(),
             &BTreeSet::new(),
             None,
         )?;
+        wrote(key, &mut room, written);
     }
     {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);

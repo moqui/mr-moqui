@@ -44,6 +44,16 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="emailSubject" type="text-long"/>
         <field name="userId" type="id"><description>Send email to UserAccount.emailAddress for the user</description></field>
         <field name="userGroupId" type="id"><description>Send email to UserAccount.emailAddress for each user in the group</description></field>
+        <field name="deliveryMode" type="text-short"><description>A report schedule's delivery (crates/moqui-report/src/delivery.rs):
+            empty for an owner-mode schedule (create#Schedule and the screen schedules), personal (the owner alone) or group
+            (owner-equivalent recipients, each sent their own message), set by store#Schedule and never by its caller</description></field>
+        <field name="recipientCap" type="number-integer"><description>The most recipients a group schedule delivers to, at most
+            the instance preference report.groupRecipientCeiling</description></field>
+        <field name="pausedReason" type="text-short"><description>Why a report schedule is paused other than by its owner:
+            owner-disabled (pause#OwnedSchedules, or a run that found its owner inactive) or transfer-pending
+            (transfer#DefinitionOwner, until the new owner resumes it)</description></field>
+        <field name="versionNumber" type="number-integer"><description>The revision store#Schedule, pause#Schedule and a
+            transfer advance; a stale expectedRevision is refused</description></field>
         <!-- FUTURE: consider adding 'topic' field for sending a Notification when a screen render is done, along with info about
             email or location; would be useful for more secure reports so user gets a notification (internal or email) and then can
             view the saved report through a browser if they have access -->
@@ -211,9 +221,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The color schemes a user may choose for a theme (the THEME_COLOR_SCHEME preference): the standard colors for light and dark,
         sent as one style sheet by the colorSchemeCss transition of apps.xml (docs/ui/Qvt-Client.md, Appearance). The
         names are the tokens of WebrootVue.qvt.css: the brand colors primary, secondary, accent, positive, negative, info and warning
-        (Quasar's --q-*), the surfaces page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text,
+        (Quasar's q- custom properties), the surfaces page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text,
         border and divider, and the shapes header-bg-image, header-border, header-shadow, page-bg-image, btn-radius, btn-border,
-        btn-primary-bg, card-radius, card-border, card-shadow, drawer-current-bg and drawer-current-fg (--m-*); a shape value may be any CSS
+        btn-primary-bg, card-radius, card-border, card-shadow, drawer-current-bg and drawer-current-fg (m- custom properties); a shape value may be any CSS
         value without ; { } &lt; &gt; \ " ' or !, such as a gradient or a shadow. A scheme with no colors is the theme's own. -->
     <entity entity-name="ScreenColorScheme" package="moqui.screen" use="configuration" cache="true">
         <field name="colorSchemeId" type="id" is-pk="true"/>

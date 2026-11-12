@@ -17,8 +17,46 @@
         <in-parameters><parameter name="definitionId"/></in-parameters><out-parameters><parameter name="evaluated" type="Integer"/><parameter name="failed" type="Integer"/><parameter name="notices" type="List"/></out-parameters>
     </service>
     <service verb="create" noun="Annotation" type="rust" location="moqui_core::report::create_annotation">
-        <in-parameters><parameter name="time"/><parameter name="timeEnd"/><parameter name="source"/><parameter name="text" required="true"/><parameter name="tags" type="List"/><parameter name="scope"/><parameter name="serviceName"/><parameter name="instanceId"/><parameter name="dashboardId"/><parameter name="panelId"/><parameter name="version"/><parameter name="revision"/></in-parameters>
+        <description>A change marker on the time series (source deploy, config, release or user: MONITOR_INGEST or the
+            monitor_annotations dataset's create), or a business event (source business; docs/tools/Monitoring.md "Business
+            events"): a domain's event with its name, time, organization, type (event) and the record behind it (recordType,
+            recordId) or a link on this server, and no amount. A business event needs the artifact
+            org.moqui.report.annotation.business (create), which its owning service passes by writing with authorization off
+            after its commit; MONITOR_INGEST does not write one. With an eventKey the event keeps one marker, written again
+            in place.</description>
+        <in-parameters>
+            <parameter name="time"/><parameter name="timeEnd"/><parameter name="source"/><parameter name="text" required="true"/><parameter name="tags" type="List"/><parameter name="scope"/><parameter name="serviceName"/><parameter name="instanceId"/><parameter name="dashboardId"/><parameter name="panelId"/><parameter name="version"/><parameter name="revision"/>
+            <parameter name="organizationPartyId"/><parameter name="event"/><parameter name="recordType"/><parameter name="recordId"/>
+            <parameter name="link"/><parameter name="eventKey"/>
+        </in-parameters>
         <out-parameters><parameter name="annotationId"/><parameter name="annotation" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="Drill" type="rust" location="moqui_core::report::get_drill">
+        <description>From a value of a saved panel to its breakdown and records (crates/moqui-report/src/drill.rs;
+            docs/tools/Monitoring.md "Drill"). The request names a definition the viewer reads (a dashboard with panelId, or
+            a library panel), one of the panel's queries (queryReference, its index) and the buckets chosen (selectedBuckets:
+            field, value as the panel showed them); never a query, entity or service. The engine runs the panel as its
+            dashboard does (variables fill the saved variables only; each dataset's admission and row filter apply), takes
+            each bucket's predicate from its own result (an Other or missing bucket keeps its exact predicate), and answers
+            the saved query narrowed by them: selected, the panel's own frames (panelFrames), dimensions, an optional breakdown by one of the dataset's
+            dimensions, and a page of records with columns, total and bounded. A viewer who reads the dataset's aggregates
+            and not its records (rows restricted) gets rowsAvailable false with rowsReason and no record; a panel the viewer
+            cannot read answers available false with its reason.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="queryReference"/>
+            <parameter name="range" type="Map"/><parameter name="from"/><parameter name="thru"/>
+            <parameter name="variables" type="Map"/><parameter name="selectedBuckets" type="List"/>
+            <parameter name="breakdownDimension"/><parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/><parameter name="reason"/><parameter name="definitionId"/><parameter name="panelId"/>
+            <parameter name="title"/><parameter name="datasetId"/><parameter name="queryReference" type="Integer"/><parameter name="range" type="Map"/>
+            <parameter name="selected" type="List"/><parameter name="panelFrames" type="List"/><parameter name="dimensions" type="List"/><parameter name="breakdown" type="Map"/>
+            <parameter name="rows" type="List"/><parameter name="rowsAvailable" type="Boolean"/><parameter name="rowsReason"/>
+            <parameter name="columns" type="List"/><parameter name="total" type="Long"/><parameter name="totalRelation"/>
+            <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/><parameter name="bounded" type="Boolean"/>
+            <parameter name="notices" type="List"/>
+        </out-parameters>
     </service>
     <service verb="list" noun="Datasets" type="rust" location="moqui_core::report::list_datasets">
         <out-parameters><parameter name="datasets" type="List"/></out-parameters>
@@ -36,6 +74,12 @@
         <in-parameters><parameter name="definitionType"/></in-parameters><out-parameters><parameter name="definitions" type="List"/></out-parameters>
     </service>
     <service verb="save" noun="Definition" type="rust" location="moqui_core::report::save_definition">
+        <description>Save a definition as its owner, a new version each time (crates/moqui-report/src/definitions.rs). The
+            group it is shared with (definition.userGroupId; a group reads the definition, never a dataset) is one the
+            saver belongs to by a membership of their own, never the implicit ALL_USERS, or one whose share artifact
+            (org.moqui.report.share.&lt;userGroupId&gt;, update) the saver's own grant holds; any other is refused
+            (SHARE_GROUP_UNAVAILABLE), in a copy, a restore, an import and a pull too. A group kept as it is stored is
+            not asked again.</description>
         <in-parameters><parameter name="definition" type="Map" required="true"/><parameter name="note"/></in-parameters><out-parameters><parameter name="definition" type="Map"/></out-parameters>
     </service>
     <service verb="copy" noun="Definition" type="rust" location="moqui_core::report::copy_definition">
@@ -86,7 +130,8 @@
     <service verb="create" noun="BusinessDataset" type="rust" location="moqui_core::report::create_business_dataset">
         <description>A steward's business dataset over a DataDocument a registered DataFeed indexes, with a registered scope policy
             and its parameters, saved as a dataset definition they own and waiting for review. Refuses a document of no feed, a
-            telemetry index, an unregistered policy and a group the steward is not in.</description>
+            telemetry index, an unregistered policy, a group the steward is not in, and an id whose own update artifact
+            (org.moqui.report.dataset.(id)) the creator does not hold: a prefix a screen puts before a name gives no right.</description>
         <in-parameters>
             <parameter name="datasetId" required="true"/><parameter name="title"/><parameter name="dataDocumentId" required="true"/>
             <parameter name="timeField"/><parameter name="scopePolicyId" required="true"/><parameter name="rowFilterParameters" type="Map"/>
@@ -126,11 +171,50 @@
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="conditions" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
         <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
     </service>
+    <!-- What the report screens read beside the engine's own operations (ReportReads.js; plans/archive/Admin-Screens-Down.md,
+        Track I), so that a screen an app shows under its own root reads no entity itself. Each asks the engine as the caller
+        and reads with authorization off only what that answer opens. -->
+    <service verb="get" noun="BusinessDataset" allow-remote="false">
+        <description>One business dataset the caller reads or stewards (dataset: as find#BusinessDatasets answers it, with
+            readable, stewarded and the scope policy's scopeParameter), and for its steward the fields of its document
+            (fields: fieldSeqId, fieldPath, fieldNameAlias, fieldName, functionName, sequenceNum, expression), the
+            conditions that narrow it (conditions: conditionSeqId, fieldNameAlias, operator, fieldValue, toFieldNameAlias,
+            postQuery) and the definitions over it that the caller reads (uses: id, title, type, readOnly; usesAvailable
+            false when they could not be listed). A reader who does not steward it gets the dataset alone. A dataset the
+            caller neither reads nor stewards is refused as one that is not available, as one that does not exist is.</description>
+        <in-parameters><parameter name="datasetId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="dataset" type="Map"/>
+            <parameter name="fields" type="List"/>
+            <parameter name="conditions" type="List"/>
+            <parameter name="uses" type="List"/>
+            <parameter name="usesAvailable" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('getBusinessDataset', context))</script></actions>
+    </service>
+    <service verb="get" noun="BusinessDatasetOptions" allow-remote="false">
+        <description>What a business dataset's forms may offer, for a signed-in caller: the registered scope policies
+            (policies: scopePolicyId, description, scopeParameter, the name of the rowFilterParameters entry in which a
+            dataset names the field that carries a row's scope, from the policy's registration, null where it registers
+            none), the condition operators and field functions a steward may use (operators, functions), whether the caller
+            may create a dataset (canCreate: the dataset-save artifact org.moqui.report.dataset, update, by the caller's own
+            grant) and, only then, the documents a dataset may be made over (documents: dataDocumentId, documentName,
+            indexName; those of registered data feeds, never a telemetry index). It takes nothing from the request.</description>
+        <out-parameters>
+            <parameter name="canCreate" type="Boolean"/>
+            <parameter name="documents" type="List"/>
+            <parameter name="policies" type="List"/>
+            <parameter name="operators" type="List"/>
+            <parameter name="functions" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('getBusinessDatasetOptions', context))</script></actions>
+    </service>
     <service verb="get" noun="UserGroupRowFilter" allow-remote="false">
         <description>The framework's scope policy ReportUserGroups (ReportSetupData.xml), a business dataset's rowFilterService: the
             rows whose field named in rowFilterParameters (groupField, userGroupId by default) is one of the signed-in viewer's
             user groups; nothing for a viewer of none. A userId of another user is refused. A domain registers its own policies
-            (an organization's, a confidential class's) the same way.</description>
+            (an organization's, a confidential class's) the same way, each with its scope parameter (here groupField) as the
+            enumeration's optionValue.</description>
         <in-parameters>
             <parameter name="userId"/><parameter name="datasetId"/><parameter name="rowFilterParameters" type="Map"/>
         </in-parameters>
@@ -148,8 +232,284 @@
     <service verb="create" noun="Schedule" type="rust" location="moqui_core::report_schedule::create_schedule">
         <in-parameters><parameter name="definitionId" required="true"/><parameter name="cronExpression" required="true"/><parameter name="renderMode"/><parameter name="emailTemplateId"/><parameter name="userId"/><parameter name="userGroupId"/><parameter name="saveToLocation"/><parameter name="emailSubject"/></in-parameters><out-parameters><parameter name="screenScheduledId"/></out-parameters>
     </service>
-    <service verb="list" noun="Schedules" type="rust" location="moqui_core::report_schedule::list_schedules"><out-parameters><parameter name="schedules" type="List"/></out-parameters></service>
-    <service verb="pause" noun="Schedule" type="rust" location="moqui_core::report_schedule::pause_schedule"><in-parameters><parameter name="screenScheduledId" required="true"/><parameter name="paused" type="Boolean"/></in-parameters></service>
+    <service verb="list" noun="Schedules" type="rust" location="moqui_core::report_schedule::list_schedules">
+        <description>The report schedules the viewer owns (one of them with screenScheduledId), each with its definition, timing,
+            delivery mode (empty for an owner-mode schedule, personal or group), recipients, revision, pause reason and last
+            run.</description>
+        <in-parameters><parameter name="screenScheduledId"/></in-parameters>
+        <out-parameters><parameter name="schedules" type="List"/></out-parameters>
+    </service>
+    <service verb="pause" noun="Schedule" type="rust" location="moqui_core::report_schedule::pause_schedule">
+        <description>Pause or resume a schedule the viewer owns. Resuming a group schedule repeats the audience check
+            (check#ReportAudience) and is refused while a recipient's scope differs from the owner's.</description>
+        <in-parameters><parameter name="screenScheduledId" required="true"/><parameter name="paused" type="Boolean"/></in-parameters>
+    </service>
+    <!-- Owner-equivalent delivery (crates/moqui-report/src/delivery.rs; docs/tools/Monitoring.md "Report delivery"; BOSS
+        impl-insights P7, INS-06) -->
+    <service verb="check" noun="ReportAudience" type="rust" location="moqui_core::report_delivery::check_audience">
+        <description>Whether each proposed recipient of a report or dashboard the viewer would own a schedule of, or of an
+            alert rule the viewer reads, may be sent the viewer's own result: an internal, active user with an address whose scope fingerprint for the definition
+            equals the viewer's. The fingerprint is a hash of what the user reads of the definition and everything it
+            references, the documents of each dataset they may read and each dataset's resolved row filter (rowFilter,
+            contextFilters and the rowFilterService's answer). Groups are expanded to their members in date and each is
+            checked. recipients names each one (userId, username, userFullName, viaGroupIds, eligible, blocking, reasonCode,
+            reason); a reason is a code (not-shared: the definition or one it references is not theirs to read; scope-differs;
+            not-comparable for a service source; denied-source; inactive; external; no-address) and never another user's
+            grants. recipientCap is the cap asked for, 50 by default, held
+            under the instance preference report.groupRecipientCeiling; overCap says the audience is larger. Recipients
+            other than the viewer need the artifact org.moqui.report.delivery.group.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/><parameter name="recipientUserIds" type="List"/>
+            <parameter name="recipientGroupIds" type="List"/><parameter name="recipientCap" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recipients" type="List"/><parameter name="recipientCount" type="Integer"/>
+            <parameter name="eligibleCount" type="Integer"/><parameter name="refusedCount" type="Integer"/>
+            <parameter name="recipientCap" type="Integer"/><parameter name="recipientCeiling" type="Integer"/>
+            <parameter name="overCap" type="Boolean"/><parameter name="deliveryMode"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="Schedule" type="rust" location="moqui_core::report_delivery::store_schedule">
+        <description>Create or change a business report schedule the viewer owns, delivered by email only. The server sets
+            the delivery mode: personal when the owner is the only recipient, group otherwise. A group schedule is saved only
+            when check#ReportAudience passes every recipient (a refused one is an error naming each with its reason code,
+            RECIPIENT_REFUSED) and the audience is within the cap (RECIPIENT_CAP); a change needs the revision read
+            (expectedRevision, STALE_REVISION), and cancels the deliveries of the earlier revision not yet sent. A value not
+            sent is kept: recipient lists not sent keep the recipients (an empty list names the owner alone), and
+            clearFields names which of emailSubject, fromDate and thruDate to empty. At each run the check repeats and a
+            recipient whose scope changed is skipped (scope-differs). An owner-mode schedule (made by create#Schedule, with no
+            delivery mode) changed with no recipient list is changed in its timing and output alone (cronExpression,
+            renderMode, noResultsAbort, emailSubject and the dates, at the revision read): its definition, userId,
+            userGroupId, saveToLocation and template are kept, and it stays an owner-mode schedule.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId"/><parameter name="definitionId"/><parameter name="cronExpression"/>
+            <parameter name="renderMode"/><parameter name="noResultsAbort"/><parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/><parameter name="emailTemplateId"/><parameter name="emailSubject"/>
+            <parameter name="recipientUserIds" type="List"/><parameter name="recipientGroupIds" type="List"/>
+            <parameter name="recipientCap" type="Integer"/><parameter name="paused" type="Boolean"/>
+            <parameter name="clearFields" type="List"/><parameter name="expectedRevision" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="screenScheduledId"/><parameter name="deliveryMode"/><parameter name="revision" type="Long"/>
+            <parameter name="recipientCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="ReportOccurrences" type="rust" location="moqui_core::report_delivery::find_occurrences">
+        <description>The occurrences of business report schedules, newest first, as status and safe counters, never content:
+            those of the viewer's own schedules (one schedule's with screenScheduledId); with received true, those that hold a
+            delivery to the viewer, each with that delivery's state alone; with administrative true, every owner's, for a
+            holder of ADMIN_TRANSFER_VIEW, without titles.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId"/><parameter name="statusId"/><parameter name="received" type="Boolean"/>
+            <parameter name="administrative" type="Boolean"/><parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="occurrences" type="List"/><parameter name="total" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="ReportOccurrence" type="rust" location="moqui_core::report_delivery::get_occurrence">
+        <description>One occurrence: for its schedule's owner, or a holder of ADMIN_TRANSFER_VIEW, what ran (schedule and
+            revision, definition and version, counters, and its owner by id and by name, ownerUserId and ownerName) and each
+            recipient's outcome (identity, state, safe reason, attempt time, whether it may be retried); for a recipient who
+            is neither, their own delivery only. No frame, file or query diagnostic of anyone's.</description>
+        <in-parameters><parameter name="occurrenceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="occurrence" type="Map"/><parameter name="deliveries" type="List"/>
+            <parameter name="ownDelivery" type="Map"/><parameter name="administers" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="RecipientReport" type="rust" transaction="ignore" location="moqui_core::report_delivery::get_recipient_report">
+        <description>The report of one delivery, for its own recipient only. Nothing sent is stored: the report is rendered
+            again as the recipient, with their current authorization, and says so (rerendered, generatedDate). A recipient
+            whose scope fingerprint is no longer the one the delivery was sent under gets available false with reasonCode
+            scope-changed and no content; another user's delivery id is refused as one that does not exist.</description>
+        <in-parameters><parameter name="deliveryId" required="true"/><parameter name="renderMode"/></in-parameters>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/><parameter name="reasonCode"/><parameter name="contentBase64"/>
+            <parameter name="contentType"/><parameter name="filename"/><parameter name="rerendered" type="Boolean"/>
+            <parameter name="generatedDate" type="Long"/><parameter name="definitionId"/><parameter name="title"/>
+        </out-parameters>
+    </service>
+    <service verb="retry" noun="ReportRecipients" type="rust" transaction="ignore" location="moqui_core::report_delivery::retry_recipients">
+        <description>Send again to the failed recipients of an occurrence, for its schedule's owner: only deliveries in the
+            failed state (a sent one is never replayed, an uncertain one is refused until reconcile#ReportRecipient settles
+            it), at the occurrence's revision read (expectedRevision), with the same schedule revision and definition
+            version (else DEFINITION_CHANGED: send a new occurrence). Each recipient is checked again as at a run; the report
+            is rendered again and the delivery says so. results names each delivery's outcome.</description>
+        <in-parameters>
+            <parameter name="occurrenceId" required="true"/><parameter name="deliveryIds" type="List" required="true"/>
+            <parameter name="expectedRevision" type="Long"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="results" type="List"/><parameter name="sentCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="reconcile" noun="ReportRecipient" type="rust" location="moqui_core::report_delivery::reconcile_recipient">
+        <description>Settle an uncertain delivery, for its schedule's owner: outcome sent (the message did arrive) or failed
+            (it did not, so it may be retried), with the reason kept in the audit log.</description>
+        <in-parameters>
+            <parameter name="deliveryId" required="true"/><parameter name="outcome" required="true"/><parameter name="reason" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <!-- What the delivery screens read and write beside the engine's own operations (ReportReads.js, ReportWrites.js;
+        plans/archive/Admin-Screens-Down.md, Track I), so that a screen an app shows under its own root reads and writes no entity
+        itself. Each checks what its caller may read or change. -->
+    <service verb="find" noun="ReportRecipients" allow-remote="false">
+        <description>Who may be proposed and accepted as a recipient of a report schedule or an alert rule, for a caller who
+            may deliver to others (canDeliver: the artifact org.moqui.report.delivery.group, create, by the caller's own
+            grant, as check#ReportAudience and store#Schedule ask it): a page of the active internal accounts (users:
+            userId, username, name; found by term in the full name or the username, ignoring case; pageSize, 20 by
+            default, at most 100), the caller's own groups (groups: userGroupId, description; never ALL_USERS: a delivery
+            goes to a group its owner belongs to), and of the users and groups named (userIds, groupIds) which may be
+            recipients (selectedUsers, with their names) and which may not (refusedUserIds, refusedGroupIds). With
+            permissionId only the holders of that permission (members in date of a group that holds it in date) are
+            proposed and accepted: an app that keeps its reports to its own readers passes theirs. The caller is always
+            accepted. A caller who may not deliver to others is answered no account and no group, and every other user
+            and every group named is refused. Being accepted grants nothing: the engine checks each recipient's scope
+            when the schedule or the rule is saved and again before each message.</description>
+        <in-parameters>
+            <parameter name="permissionId"/><parameter name="term"/><parameter name="userIds" type="List"/>
+            <parameter name="groupIds" type="List"/><parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="canDeliver" type="Boolean"/>
+            <parameter name="users" type="List"/>
+            <parameter name="groups" type="List"/>
+            <parameter name="selectedUsers" type="List"/>
+            <parameter name="refusedUserIds" type="List"/>
+            <parameter name="refusedGroupIds" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findReportRecipients', context))</script></actions>
+    </service>
+    <service verb="find" noun="ShareGroups" allow-remote="false">
+        <description>The groups the caller may share a definition with, by name, as save#Definition accepts them (groups:
+            userGroupId, description, own): the caller's own groups (own true; never the implicit ALL_USERS), and of the
+            groups named (groupIds: a mounting app's share groups, a definition's present group) those the caller may
+            share with though no member of them, by the group's share artifact (org.moqui.report.share.&lt;userGroupId&gt;,
+            update) in the caller's own grant. A group named that is neither, or does not exist, is in refusedGroupIds.
+            Being answered here grants nothing: save#Definition asks the same of the group it is given.</description>
+        <in-parameters><parameter name="groupIds" type="List"/></in-parameters>
+        <out-parameters><parameter name="groups" type="List"/><parameter name="refusedGroupIds" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findShareGroups', context))</script></actions>
+    </service>
+    <service verb="find" noun="ScreenSchedules" allow-remote="false">
+        <description>The screen schedules the caller set up for themselves (a ScreenScheduled of a screen path with the
+            caller as its user and no report definition, as a saved find's scheduled delivery; a report schedule is
+            list#Schedules'), one of them with screenScheduledId (schedules: screenScheduledId, screenPath, formListFindId,
+            description, the saved find's; cronExpression, renderMode, noResultsAbort, paused, fromDate, thruDate,
+            emailSubject, userGroupId, and groupAdmitted: whether the group it names is sent to, which needs its screen
+            path registered as a ReportLegacyAdapter). Another user's schedule is not answered, whatever id is asked.</description>
+        <in-parameters><parameter name="screenScheduledId"/></in-parameters>
+        <out-parameters><parameter name="schedules" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findScreenSchedules', context))</script></actions>
+    </service>
+    <service verb="store" noun="ScreenSchedule" allow-remote="false">
+        <description>Change a screen schedule the caller set up for themselves (find#ScreenSchedules): its timing
+            (cronExpression, a time pattern), format (renderMode: csv, xlsx, xsl-fo or html-print), skipping when empty
+            (noResultsAbort Y or N), active interval (fromDate, thruDate), subject (emailSubject: plain text of at most 255
+            characters; one that holds an expression is refused, since the subject is expanded when the schedule runs) and
+            pause (paused). Never its screen, saved find, user, group, template or location. A value not sent is kept, and
+            clearFields names which of emailSubject, fromDate and thruDate to empty. Another user's schedule, a report
+            schedule (store#Schedule's) and one that does not exist are refused alike (SCHEDULE_UNAVAILABLE); a value
+            that is not one of these is VALUE_INVALID.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId" required="true"/><parameter name="cronExpression"/><parameter name="renderMode"/>
+            <parameter name="noResultsAbort"/><parameter name="fromDate" type="Timestamp"/><parameter name="thruDate" type="Timestamp"/>
+            <parameter name="emailSubject"/><parameter name="paused" type="Boolean"/><parameter name="clearFields" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="screenScheduledId"/><parameter name="paused" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportWrites.js').execute('storeScreenSchedule', context))</script></actions>
+    </service>
+    <service verb="find" noun="OwnedSchedules" type="rust" location="moqui_core::report_delivery::find_owned_schedules">
+        <description>The report schedules userId owns, by name only (the owned-resource lookup of
+            org.moqui.admin.IdentityServices): the viewer's own, or another user's for a holder of REPORT_OWNER_CHANGE.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="resourceList" type="List"/></out-parameters>
+    </service>
+    <service verb="pause" noun="OwnedSchedules" type="rust" location="moqui_core::report_delivery::pause_owned_schedules">
+        <description>Pause every report schedule userId owns (the owned-resource pause), marked owner-disabled, until
+            transfer#DefinitionOwner hands each to a new owner: the viewer's own, or another user's for a holder of
+            REPORT_OWNER_CHANGE. It reads no report.</description>
+        <in-parameters><parameter name="userId" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="pausedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="transfer" noun="DefinitionOwner" type="rust" location="moqui_core::report_delivery::transfer_definition_owner">
+        <description>Hand one report schedule (screenScheduledId), with its definition and the definitions that references
+            which fromUserId owns, to toUserId (the owned-resource transfer): for fromUserId themselves or a holder of
+            REPORT_OWNER_CHANGE. Refused unless toUserId is an active internal user who may store a schedule and reads the
+            definition and every source it names. The schedule stays paused (transfer-pending) until the new owner resumes
+            it, which repeats the audience check against the new owner's scope; nothing already delivered runs again, and the
+            caller gains no report data.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId" required="true"/><parameter name="fromUserId" required="true"/>
+            <parameter name="toUserId" required="true"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="transferred" type="Boolean"/><parameter name="definitionIds" type="List"/></out-parameters>
+    </service>
+    <!-- Owner-equivalent business alerts (crates/moqui-report/src/alert_delivery.rs; docs/tools/Monitoring.md "Business
+        alerts"; BOSS impl-insights P8, INS-07). A rule that names an audience, or reads a dataset whose rows depend on the
+        viewer, is saved through save#Definition with an audience in place of contact points; check#ReportAudience answers its
+        recipients as it does a schedule's. -->
+    <service verb="find" noun="AlertDeliveries" type="rust" location="moqui_core::report_alert::find_alert_deliveries">
+        <description>The last outcome of each recipient of business alert rules, as states and safe reason codes, never a
+            value or a series label: of the rules the viewer owns (one rule's with definitionId), each recipient by name;
+            with received true, the deliveries to the viewer; with administrative true, every owner's business rules for a
+            holder of ADMIN_TRANSFER_VIEW, as counters by rule (sent, skipped, failed, paused, last evaluated) without a
+            title, a series or a recipient.</description>
+        <in-parameters>
+            <parameter name="definitionId"/><parameter name="received" type="Boolean"/>
+            <parameter name="administrative" type="Boolean"/><parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deliveries" type="List"/><parameter name="total" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="AlertState" type="rust" location="moqui_core::report_alert::get_alert_state">
+        <description>An alert rule the viewer reads with the state of each of its series (labels, state, since, last
+            evaluated, the last value). A business rule's state is its owner's reading: instances are answered to its owner,
+            and to a recipient of its audience whose scope fingerprint equals the owner's now; anyone else gets available
+            false with a reason code (not-recipient, scope-differs, not-shared, ...) and no instance. A shipped rule is a
+            template and has no state. ownerName is the owner's name, for anyone who reads the rule (none for a shipped
+            rule, or when the owner's account is gone).</description>
+        <in-parameters><parameter name="definitionId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="definitionId"/><parameter name="title"/><parameter name="own" type="Boolean"/>
+            <parameter name="ownerName"/>
+            <parameter name="business" type="Boolean"/><parameter name="template" type="Boolean"/>
+            <parameter name="paused" type="Boolean"/><parameter name="pausedReason"/><parameter name="deliveryMode"/>
+            <parameter name="available" type="Boolean"/><parameter name="reasonCode"/><parameter name="reason"/>
+            <parameter name="instances" type="List"/><parameter name="lastEvaluated" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="OwnedAlertRules" type="rust" location="moqui_core::report_alert::find_owned_alert_rules">
+        <description>The alert rules userId owns, by name only (the owned-resource lookup): the viewer's own, or another
+            user's for a holder of REPORT_OWNER_CHANGE.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="resourceList" type="List"/></out-parameters>
+    </service>
+    <service verb="pause" noun="OwnedAlertRules" type="rust" location="moqui_core::report_alert::pause_owned_alert_rules">
+        <description>Pause every alert rule userId owns (the owned-resource pause), marked owner-disabled, until
+            transfer#AlertRuleOwner hands each to a new owner: the viewer's own, or another user's for a holder of
+            REPORT_OWNER_CHANGE. It reads no state and no value.</description>
+        <in-parameters><parameter name="userId" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="pausedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="transfer" noun="AlertRuleOwner" type="rust" location="moqui_core::report_alert::transfer_alert_rule_owner">
+        <description>Hand one alert rule (definitionId), with the shared silences and mute timings it names that fromUserId
+            owns, to toUserId (the owned-resource transfer): for fromUserId themselves or a holder of REPORT_OWNER_CHANGE.
+            Refused unless toUserId is an active internal user who may save definitions, reads the rule's sources and, for a
+            group audience, may deliver to a group (NEW_OWNER_REFUSED). The rule stays paused (transfer-pending) until the
+            new owner resumes it, which repeats the audience check against the new owner's scope; the caller gains no
+            state and no value.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/><parameter name="fromUserId" required="true"/>
+            <parameter name="toUserId" required="true"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="transferred" type="Boolean"/><parameter name="definitionIds" type="List"/></out-parameters>
+    </service>
     <service verb="preview" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::preview_report"><in-parameters><parameter name="definitionId" required="true"/><parameter name="renderMode"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/><parameter name="variables" type="Map"/><parameter name="filters" type="List"/></in-parameters><out-parameters><parameter name="contentBase64"/><parameter name="contentType"/><parameter name="filename"/><parameter name="files" type="List"/><parameter name="empty" type="Boolean"/></out-parameters></service>
     <service verb="send" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::send_report"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>
     <service verb="run" noun="ScheduledReport" type="rust" authenticate="anonymous-all" allow-remote="false" transaction="ignore" location="moqui_core::report_schedule::run_scheduled"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>

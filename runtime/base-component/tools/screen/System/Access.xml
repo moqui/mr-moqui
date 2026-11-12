@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Access (plans/archive/Admin-Screens-Down.md): the groups as grant bundles with their members, grants and defaults (Groups, a
+    group: GroupDetail), what the registered bundles and custom groups hold (Capabilities), the row rules in effect
+    (RowRules) and the access and grant review for print and CSV (AccessReview), over org.moqui.admin.AccessServices,
+    which check ADMIN_ACCESS_VIEW and ADMIN_ACCESS_MANAGE and the delegation rules themselves. Its screens are the files of
+    Access/, with the sibling names an app that shows them under its own root uses (README, "Mounting the administration
+    screens"), so their links to each other are relative. ArtifactGroups and ArtifactGroupDetail (what an artifact group
+    holds and which groups it authorizes, changed directly) are System's own, the instance administrator's: no app shows
+    them. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Access" default-menu-index="3" default-menu-group="Administration" menu-image="sym_o_group" menu-image-type="icon">
+    <subscreens default-item="Groups"/>
+    <widgets>
+        <subscreens-panel id="SystemAccessPanel" type="tab"/>
+    </widgets>
+</screen>

@@ -168,6 +168,8 @@ by the prefix of each part (`./moq r-p` is `run-production`).
   firewall it unless cluster members use it ([ports](#ports)).
 - **Backups**: run the embedded database's backup job, or back up the external database
   ([backups](#backups)).
+- **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
+  and CPU alert rules so someone is told ([resource watch](#resource-watch)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
 - **CORS**: leave `webapp_allow_origins` empty. The dev conf sets `*`.
 - **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
@@ -233,7 +235,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 
 | Property | Default | What it does |
 |---|---|---|
-| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component) |
+| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
 | `default_locale`, `default_time_zone`, `database_time_zone` | `en_US`, `UTC`, `UTC` | |
 | `webapp_http_host` | empty: the request's host | The host in generated URLs |
 | `webapp_http_bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
@@ -246,6 +248,8 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp_client_ip_header` | empty | The header those proxies put the client address in |
 | `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
 | `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
+| `terminal_command_line`, `terminal_host_sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `false` off, empty on for any purpose ([Terminal](ui/Terminal.md#conf)) |
+| `terminal_remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `terminal_remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
 | `moqui_chromium_path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load_runner_targets`, `load_runner_max_runs`, `load_runner_max_users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
@@ -304,9 +308,46 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
 | `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
 | `llm_openai_url`, `llm_openai_api_key`, `llm_openai_model` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
+| `llm_anthropic_api_key`, `llm_dev_model` | empty, `default` | Dev conf only: the Claude API key of its `claude-haiku` model (Claude Haiku 5.5), and the model id its features (Assist, titles, summaries, classify, AI fields) are bound to; `llm_dev_model=claude-haiku` in `runtime/.env` puts Assist on Claude. The startup report's LLM line names the model Assist is on |
 
 The database properties are in [Database and search](#database-and-search), and the cluster properties in
 [Cluster](#cluster).
+
+### Resource watch
+
+The server reads what the machine and its own process have left: the CPU load, memory, the filesystems it writes to
+(the runtime directory, its `db`, `log`, `tmp`, `txlog` and `opensearch` directories where they are mounted apart, and
+the system temp directory), open files and swap. Each reading has a level, `ok`, `warning` or `critical`, from the
+conf's `resource-watch` element:
+
+| Reading | Attributes | Warning | Critical |
+| --- | --- | --- | --- |
+| A filesystem's space used | `disk-warning`, `disk-critical`, `disk-free-critical` | 80 % | 90 %, or under `disk-free-critical` bytes left (1 GiB) on a filesystem larger than that |
+| A filesystem's file entries (inodes) used | `inodes-warning`, `inodes-critical` | 80 % | 90 % |
+| The server's memory, of the memory it may use | `memory-warning`, `memory-critical` | 80 % | 90 % |
+| The machine's memory still available | `memory-available-warning`, `memory-available-critical` | 10 % left | 5 % left |
+| The 5-minute load, of the processors | `cpu-load-warning`, `cpu-load-critical` | 80 % | 100 % |
+| Open files, of the soft limit | `open-files-warning`, `open-files-critical` | 80 % | 95 % |
+| Swap in use | `swap-warning`, `swap-critical` | 50 % | none |
+| The days until a certificate the HTTPS listener serves expires | `certificate-days-warning`, `certificate-days-critical` | 30 days left | 7 days left |
+
+```xml
+<resource-watch disk-warning="70" disk-critical="85" swap-warning=""/>
+```
+
+An empty value turns that level off; an attribute left out keeps its default, and a conf reload applies a change. The
+memory the server may use is its container's or service unit's limit (the cgroup's `memory.max`) when one is set
+below the machine's memory, else the machine's.
+
+The levels are in the status map (`ec.factory.getStatusMap()`, its `Resources`), which the System app shows, and the
+attention list of the System home names every reading that is not `ok`
+(`moqui.tools.SystemHomeServices.get#SystemAttention`, beside the readiness checks that are not ready, which System ›
+Operations › Health lists in full). With telemetry on, the readings are also recorded each minute
+as gauges ([Monitoring](tools/Monitoring.md)), and four alert rule templates in the System folder of Dashboards ›
+Alerts (low disk space, high memory use, high CPU load, a certificate expiring) send a notification once an
+administrator saves a copy with its contact points. The certificates are those in `runtime/cert`, read again as the
+readings are, so a renewed one is seen without a restart. Linux reports every reading; macOS the filesystems only; Windows none, and a reading that is not
+reported has no level.
 
 ## Command line
 
@@ -320,7 +361,7 @@ The database properties are in [Database and search](#database-and-search), and 
 | `moqui save-db <cluster-dir> <dump-file>` | `pg_dump` of an embedded cluster, usually `runtime/db/embedded` |
 | `moqui load-save <cluster-dir> <dump-file>` | `pg_restore` into an embedded cluster; stop the server first |
 | `moqui tui [--path P] [--user U]` | The apps in this terminal, on this runtime; `--server URL` reaches a running server instead ([TUI](ui/TUI.md)) |
-| `moqui test`, `moqui test-client` | Component specs ([Testing](Build-Test.md#component-specs), [Client-Testing](dev/Client-Testing.md)) |
+| `moqui test`, `moqui test-client` | Component specs ([Testing](Build-Test.md#component-specs), [JS-Test-Client](dev/JS-Test-Client.md)) |
 | `moqui test-load` | A component's load script against a running server ([Load-Runner](tools/Load-Runner.md)) |
 | `moqui lint`, `check`, `refs`, `types`, `lsp` | Checks and tools for developers |
 | `moqui version` | The version, package and features of this binary |
@@ -502,22 +543,43 @@ before a restore. These work on the embedded database only; an external database
 ### Backups
 
 The job `backup_EmbeddedDatabase_daily` backs up the embedded clusters while the server runs. It is paused in the seed
-data; set it running on System › Service Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
+data; set it running on System › Operations › Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
 (`false` pauses it). It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly archives, and every yearly one,
 in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 
 - **Modes**: `backupMode=dump`, the default, writes a `pg_dump` file of each database: `moqui-<stamp>-d.dump` and
   `moqui_content-<stamp>-d.dump`, with the same stamp. `incremental` takes `pg_basebackup` fulls and block
-  incrementals of the whole cluster, both databases in one copy.
-- **Mirror**: archives can be copied to an SFTP server. Set `sendUrl`, the user and a password or key on the
-  `EmbeddedDbBackup` system message remote.
+  incrementals of the whole cluster, both databases in one copy. Each incremental is taken from the generation's full;
+  with `chainIncrementals=true` it is taken from the archive before it, which holds only a day's changed blocks.
+- **Mirror**: set `systemMessageRemoteId` (the seed job's is `EmbeddedDbBackup`) and on that remote `sendUrl`, the
+  user, and a password or key. The remote directory or key prefix is its message type's `sendPath`. Only the archives
+  the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. With
+  `incremental` and `chainIncrementals`, a night sends one incremental. Two job parameters shape it:
+  - `mirrorTransport`: `sftp` or `s3`. Empty picks `s3` for a `sendUrl` of `s3://<bucket>`, else `sftp`. For S3 add
+    `?region=<region>` (default `us-east-1`) and, for a store other than AWS (MinIO, R2, B2),
+    `&endpoint=https://<host>`; the username is the access key, the password the secret key.
+  - `mirrorEncrypt`: `true` seals each archive to `mirrorRecipient`, an [age](https://age-encryption.org) recipient
+    (`age1...`, from `age-keygen`), before it leaves the server, which holds no key that reads it; keep the identity
+    (`AGE-SECRET-KEY-1...`) off the server. Off by default.
+
+  | | plain | encrypted |
+  |---|---|---|
+  | `sftp` | files and directories as they are | `<name>.age`, `<name>.tar.gz.age` |
+  | `s3` | `<name>`, `<name>.tar.gz` | `<name>.age`, `<name>.tar.gz.age` |
+
+  A `.tar.gz` holds the backup directory's contents at the top. Changing `mirrorEncrypt` sends every archive again in
+  the new form and leaves the old-form objects alone.
 - **Restore**: restore a dump with `moqui load-save` while the server is stopped. It also restores the content dump
   of the same name beside it (`moqui_content-<stamp>-d.dump` for `moqui-<stamp>-d.dump`). A physical backup is put
-  together with `pg_combinebackup`.
+  together with `pg_combinebackup`: the full, then each incremental in order up to the one restored (each names its
+  parent in `moqui-backup.txt`). An encrypted archive is decrypted first: `age -d -i key.txt <name>.age > <name>`, or for a directory
+  `mkdir <name> && age -d -i key.txt <name>.tar.gz.age | tar xz -C <name>` (`tar xz` alone for a plain `.tar.gz`).
 - **Not included**: `.env` and the field-encryption key are not in the archive. Keep them with the backup.
 
 The details are in [plans/archive/PostgresBackup.md](../plans/archive/PostgresBackup.md). The job does not back up an
-external database.
+external database. `org.moqui.admin.BackupServices` reads the job's runs and the archive directory for an application's
+backup screen (IronStone Admin › Data › Backups): coverage as the runs recorded it, the archives as names and sizes, and
+a backup asked for now with the job's own parameters ([Attack-Surface](security/Attack-Surface.md)).
 
 ## HTTPS, ports and proxies
 
@@ -748,6 +810,11 @@ beside the edge node), chat providers' webhooks and MMS files, and mr-pass's pub
 their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
 clients through its tunnel ports, and phone calls (SIP trunks and outside phones), with a voicemail fallback while the
 local node is away.
+
+The browser terminal goes through too, in both web access modes: a client of the edge node is another machine to the
+local node, so a dev local node's command line and shells need `terminal_remote=true` and a recent sign-in there, and a
+dropped link resumes each terminal by the count of what it drew ([Terminal](ui/Terminal.md#the-desktop-and-mobile-apps-and-phones)).
+Each terminal is one of the link's forwarded sockets.
 
 **Attach a local node in one sitting.**
 1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI

@@ -51,13 +51,11 @@ use russh::keys::{HashAlg, PrivateKey};
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, ChannelOpenFailure};
 use russh::{MethodKind, MethodSet};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
-use super::{
-    sftp_fs::{Backend, SftpFs},
-    shell,
-};
+use super::sftp_fs::{Backend, SftpFs};
+use crate::command::{interactive, run_apps, shell, with_newlines, AppsAccess};
 use crate::worker::on_pool;
 
 const DEFAULT_MAX_SESSIONS: usize = 8;
@@ -68,11 +66,8 @@ pub(super) const IDLE: Duration = Duration::from_secs(600);
 const PREAUTH_TIMEOUT: Duration = Duration::from_secs(30);
 /// Connections that have not logged in yet, at once; one more is closed. They do not count toward `ssh-server` `max-sessions`.
 const MAX_PREAUTH: usize = 16;
-/// Of [`MAX_PREAUTH`], those one source may hold (plans/High-Level-Review.md HL-032).
+/// Of [`MAX_PREAUTH`], those one source may hold (plans/archive/High-Level-Review.md HL-032).
 const PREAUTH_PER_SOURCE: usize = 4;
-/// The longest admin shell line, and the longest `js` block.
-const MAX_LINE: usize = 1024 * 1024;
-const PROMPT: &str = "moqui> ";
 
 /// The address the server listens on, kept on the factory for `Server::ssh_address`.
 #[derive(Default)]
@@ -562,12 +557,6 @@ struct Pty {
     size: tokio::sync::watch::Sender<(u16, u16)>,
 }
 
-/// What `apps` gets on a channel: the client, or why not.
-#[cfg(feature = "tui")]
-type AppsAccess = Result<crate::term::Start, &'static str>;
-#[cfg(not(feature = "tui"))]
-type AppsAccess = Result<(), &'static str>;
-
 /// What `agent-apps` gets on a connection: the sessions and the user, or why not.
 #[cfg(feature = "tui")]
 type AgentAccess = Result<super::agent::AgentAccess, &'static str>;
@@ -650,6 +639,25 @@ impl Connection {
         }
     }
 
+    /// `sh` on `channel` (plans/Terminal-Fancy.md §6): a pty, and a build with host sessions; who may and from where
+    /// is asked when it is typed, by the peer's address.
+    #[cfg(all(feature = "devtools", feature = "tui", unix))]
+    fn host_access(&self, channel: ChannelId, username: &str) -> crate::command::HostCommand {
+        let pty = self.ptys.get(&channel)?;
+        Some(crate::command::host::HostAccess {
+            factory: std::sync::Weak::clone(&self.shared.factory),
+            username: username.to_string(),
+            size: pty.size.subscribe(),
+            facts: crate::term::access::Facts::over_ssh(self.peer.ip()),
+            session_id: format!("ssh-{}", self.peer),
+        })
+    }
+
+    #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
+    fn host_access(&self, _channel: ChannelId, _username: &str) -> crate::command::HostCommand {
+        crate::command::HostCommand
+    }
+
     /// `apps` on `channel`: a pty, and a build with the client. It runs as the user logged in, or with the login
     /// dialog first, once per connection.
     fn apps_access(&mut self, channel: ChannelId) -> AppsAccess {
@@ -679,6 +687,8 @@ impl Connection {
                 size: pty.size.subscribe(),
                 label: format!("SSH apps from {}", self.peer),
                 client_ip: self.peer.ip().to_string(),
+                admission: crate::term::Admission::Take,
+                redraw: None,
             })
         }
         #[cfg(not(feature = "tui"))]
@@ -738,30 +748,6 @@ fn refuse_channel(
         let _ = handle.close(channel).await;
     });
     Ok(())
-}
-
-/// Run `apps` on the stream, or write why it cannot run. Returns the exit status.
-async fn run_apps<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
-    stream: &mut S,
-    access: AppsAccess,
-    newline: &str,
-) -> u32 {
-    match access {
-        #[cfg(feature = "tui")]
-        Ok(mut start) => {
-            let ended = crate::term::serve(stream, &mut start).await;
-            if let Some(note) = ended.note {
-                let _ = stream.write_all(format!("apps: {note}{newline}").as_bytes()).await;
-            }
-            ended.status
-        }
-        #[cfg(not(feature = "tui"))]
-        Ok(()) => 1,
-        Err(reason) => {
-            let _ = stream.write_all(format!("{reason}{newline}").as_bytes()).await;
-            1
-        }
-    }
 }
 
 impl russh::server::Handler for Connection {
@@ -1129,8 +1115,9 @@ impl russh::server::Handler for Connection {
             });
             return Ok(());
         }
+        let host = self.host_access(channel, &username);
         tokio::spawn(async move {
-            let status = interactive(open.into_stream(), &factory, &username, pty, access).await;
+            let status = interactive(open.into_stream(), &factory, &username, pty, access, host).await;
             let _ = handle.exit_status_request(channel, status).await;
             let _ = handle.eof(channel).await;
             let _ = handle.close(channel).await;
@@ -1186,182 +1173,13 @@ fn millis(value: &Value) -> Option<i64> {
     }
 }
 
-fn with_newlines(text: &str, newline: &str) -> String {
-    if newline == "\n" {
-        text.to_string()
-    } else {
-        text.replace('\n', newline)
-    }
-}
-
-/// The interactive loop: a prompt, a line, its output. With a PTY the client does not echo, so this echoes and
-/// handles backspace, ctrl-C (drop the line) and ctrl-D (end on an empty line). `apps` runs the terminal client on
-/// the stream, and the prompt comes back when it ends. Returns the exit status.
-async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
-    mut stream: S,
-    factory: &std::sync::Weak<ExecutionContextFactory>,
-    username: &str,
-    pty: bool,
-    apps: AppsAccess,
-) -> u32 {
-    let newline = if pty { "\r\n" } else { "\n" };
-    let greeting = format!("MR-Moqui admin shell for {username}; type help{newline}{PROMPT}");
-    if stream.write_all(greeting.as_bytes()).await.is_err() {
-        return 1;
-    }
-    let mut line: Vec<u8> = Vec::new();
-    let mut block: Option<Vec<String>> = None;
-    // Bytes past MAX_LINE are not kept; the line is refused when it ends.
-    let mut overflow = false;
-    let mut block_len = 0_usize;
-    let mut buffer = [0u8; 1024];
-    loop {
-        let read = match stream.read(&mut buffer).await {
-            Ok(0) | Err(_) => return 0,
-            Ok(read) => read,
-        };
-        for &byte in &buffer[..read] {
-            let mut echo: Vec<u8> = Vec::new();
-            let mut finished = None;
-            match byte {
-                b'\r' | b'\n' => {
-                    if byte == b'\n' && pty {
-                        continue;
-                    }
-                    if pty {
-                        echo.extend_from_slice(b"\r\n");
-                    }
-                    finished = Some(String::from_utf8_lossy(&line).into_owned());
-                    line.clear();
-                }
-                0x7f | 0x08 => {
-                    if line.pop().is_some() && pty {
-                        echo.extend_from_slice(b"\x08 \x08");
-                    }
-                }
-                0x03 => {
-                    line.clear();
-                    overflow = false;
-                    block = None;
-                    if pty {
-                        echo.extend_from_slice(format!("^C{newline}{PROMPT}").as_bytes());
-                    }
-                }
-                0x04 if line.is_empty() => return 0,
-                byte if byte >= 0x20 || byte == b'\t' => {
-                    if line.len() < MAX_LINE {
-                        line.push(byte);
-                        if pty {
-                            echo.push(byte);
-                        }
-                    } else {
-                        overflow = true;
-                    }
-                }
-                _ => {}
-            }
-            if !echo.is_empty() && stream.write_all(&echo).await.is_err() {
-                return 1;
-            }
-            let Some(text) = finished else {
-                continue;
-            };
-            if std::mem::take(&mut overflow) {
-                block = None;
-                let message = format!("the line is longer than {MAX_LINE} bytes and was dropped");
-                if refuse(&mut stream, &message, newline).await.is_err() {
-                    return 1;
-                }
-                continue;
-            }
-            // A `js` block gathers lines until a line with only `.`.
-            if let Some(lines) = block.as_mut() {
-                block_len = block_len.saturating_add(text.len() + 1);
-                if block_len > MAX_LINE {
-                    block = None;
-                    let message = format!("the js block is longer than {MAX_LINE} bytes and was dropped");
-                    if refuse(&mut stream, &message, newline).await.is_err() {
-                        return 1;
-                    }
-                    continue;
-                }
-                if text.trim() == "." {
-                    let code = lines.join("\n");
-                    block = None;
-                    let outcome = shell::run(factory, username, &format!("js {code}")).await;
-                    if write_outcome(&mut stream, &outcome.text, newline).await.is_err() {
-                        return 1;
-                    }
-                } else {
-                    lines.push(text);
-                    if stream.write_all(b"... ").await.is_err() {
-                        return 1;
-                    }
-                    continue;
-                }
-            } else if shell::starts_block(&text) {
-                block = Some(Vec::new());
-                block_len = 0;
-                if stream
-                    .write_all(format!("end with a line of .{newline}... ").as_bytes())
-                    .await
-                    .is_err()
-                {
-                    return 1;
-                }
-                continue;
-            } else if text.trim() == "apps" {
-                // `apps` takes the stream until it ends; a second `apps` gets a fresh window watch.
-                #[cfg(feature = "tui")]
-                let access = match &apps {
-                    Ok(start) => Ok(start.again()),
-                    Err(reason) => Err(*reason),
-                };
-                #[cfg(not(feature = "tui"))]
-                let access = apps;
-                run_apps(&mut stream, access, newline).await;
-            } else {
-                let outcome = shell::run(factory, username, &text).await;
-                if outcome.exit {
-                    let _ = stream.write_all(format!("bye{newline}").as_bytes()).await;
-                    return 0;
-                }
-                if write_outcome(&mut stream, &outcome.text, newline).await.is_err() {
-                    return 1;
-                }
-            }
-            if stream.write_all(PROMPT.as_bytes()).await.is_err() {
-                return 1;
-            }
-        }
-    }
-}
-
-/// An input the shell refuses: the message, then a fresh prompt.
-async fn refuse<W: AsyncWriteExt + Unpin>(stream: &mut W, message: &str, newline: &str) -> std::io::Result<()> {
-    stream
-        .write_all(format!("error: {message}{newline}{PROMPT}").as_bytes())
-        .await
-}
-
-async fn write_outcome<W: AsyncWriteExt + Unpin>(stream: &mut W, text: &str, newline: &str) -> std::io::Result<()> {
-    if text.is_empty() {
-        return Ok(());
-    }
-    stream.write_all(with_newlines(text, newline).as_bytes()).await?;
-    stream.write_all(newline.as_bytes()).await
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
     use super::{
-        conf_listen_target, interactive, listen_target, Counts, Slot, SlotRefused, SourceSlots, MAX_LINE, MAX_PREAUTH,
-        PREAUTH_PER_SOURCE,
+        conf_listen_target, listen_target, Counts, Slot, SlotRefused, SourceSlots, MAX_PREAUTH, PREAUTH_PER_SOURCE,
     };
 
     #[test]
@@ -1386,35 +1204,6 @@ mod tests {
             listen_target(&conf(r#"<ssh-server enabled="false" port="2223"/>"#)).unwrap(),
             None
         );
-    }
-
-    #[tokio::test]
-    async fn an_overlong_shell_line_or_js_block_is_refused() {
-        let (client, server) = tokio::io::duplex(64 * 1024);
-        let shell =
-            tokio::spawn(
-                async move { interactive(server, &std::sync::Weak::new(), "tester", false, Err("no apps")).await },
-            );
-        let (mut reader, mut writer) = tokio::io::split(client);
-        let send = tokio::spawn(async move {
-            writer.write_all(&vec![b'a'; MAX_LINE + 10]).await.unwrap();
-            writer.write_all(b"\njs\n").await.unwrap();
-            let chunk = vec![b'b'; MAX_LINE / 2];
-            for _ in 0..3 {
-                writer.write_all(&chunk).await.unwrap();
-                writer.write_all(b"\n").await.unwrap();
-            }
-            writer.write_all(b"exit\n").await.unwrap();
-            writer
-        });
-        let mut seen = Vec::new();
-        reader.read_to_end(&mut seen).await.unwrap();
-        let seen = String::from_utf8_lossy(&seen);
-        assert!(seen.contains("error: the line is longer than"), "{seen}");
-        assert!(seen.contains("error: the js block is longer than"), "{seen}");
-        assert!(seen.ends_with("bye\n"), "{seen}");
-        drop(send.await.unwrap());
-        assert_eq!(shell.await.unwrap(), 0);
     }
 
     #[test]

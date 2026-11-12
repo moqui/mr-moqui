@@ -11,6 +11,7 @@ warranty.
 You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <!-- Data (plans/design-dev-aide.md 12): the data files of the loaded components by component and type; a file opens in
     the Workspace, whose data file view has Load, Load the changed records, Check against the database and Export. A
     list, so the terminal reaches it. -->

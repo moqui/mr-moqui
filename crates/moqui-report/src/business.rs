@@ -82,6 +82,21 @@ fn row_text(row: Option<&moqui_core::entity::EntityValue>, field: &str) -> Json 
         .map_or(Json::Null, Json::from)
 }
 
+/// Whether a business dataset's fields changed after its index was last built, so what it answers is not what its definition
+/// says (the admission check `index`): an alert over it has no valid reading until the index is rebuilt (alert_delivery.rs).
+pub(super) fn index_stale(ec: &ExecutionContext, id: &str) -> bool {
+    let Ok(row) = admission_row(ec, id) else {
+        return false;
+    };
+    millis(row.as_ref(), "fieldsChangedDate")
+        .as_i64()
+        .is_some_and(|changed| {
+            millis(row.as_ref(), "lastIndexedDate")
+                .as_i64()
+                .is_none_or(|built| built < changed)
+        })
+}
+
 /// The engine's check before a business dataset is read: admitted with a registered scope policy still bound (a shipped
 /// definition can change under its admission with a component update), or read by its steward. A business dataset reads its
 /// one document: an index or a service in its body would read past what was admitted, so either is refused to everyone.
@@ -94,31 +109,39 @@ pub(super) fn check_admitted(ec: &ExecutionContext, id: &str, body: &Json) -> Re
             "business dataset {id} reads its document only, not an index or a service"
         )));
     }
-    let bound = body["rowFilterService"]
-        .as_str()
-        .map_or(Ok(false), |service| registered_policy(ec, service))?;
-    if bound && admitted(admission_row(ec, id)?.as_ref()) {
+    if bound(ec, body)? && admitted(admission_row(ec, id)?.as_ref()) {
         return Ok(());
     }
     steward_of(id).map_err(|_| fail(format!("dataset {id} is not admitted")))
 }
 
+/// Whether a body's `rowFilterService` is a registered scope policy.
+fn bound(ec: &ExecutionContext, body: &Json) -> Result<bool, Error> {
+    body["rowFilterService"]
+        .as_str()
+        .map_or(Ok(false), |service| registered_policy(ec, service))
+}
+
 /// The documents business datasets read: a dataset that is not a business one (a DataDocument by its id, an `index:` alias, a
 /// definition without the signal) over one of these reads it without the admission and the row filter, so the engine opens it
-/// only to a holder of that dataset's update artifact, its steward or the system administrator (BOSS impl-insights F-P3-6).
+/// only to a holder of that dataset's update artifact (BOSS impl-insights F-P3-6) who also holds the update artifact of each
+/// such document by its own id (alias.rs): a steward's name pattern covers a dataset the steward names, not the document
+/// under it, so the system administrator reads it and a steward does not. Asked at each read and when the definition is saved.
+/// A business dataset is past this only with a registered scope policy bound: its steward reads it before admission under that
+/// policy, and one saved with no policy, or with a service that is not one, would read the document as an alias does.
 pub(super) fn check_governed(ec: &ExecutionContext, id: &str, body: &Json, documents: &[String]) -> Result<(), Error> {
-    if is_business(body) || documents.is_empty() {
+    if documents.is_empty() || (is_business(body) && bound(ec, body)?) {
         return Ok(());
     }
     let governed = definitions::business_documents(ec)?;
-    let Some(document) = documents.iter().find(|document| governed.contains(*document)) else {
-        return Ok(());
-    };
-    steward_of(id).map_err(|_| {
-        fail(format!(
-            "dataset {id} reads {document}, a business dataset's document, without its admission and row filter"
-        ))
-    })
+    for document in documents.iter().filter(|document| governed.contains(*document)) {
+        if steward_of(id).is_err() || !super::alias::governed_opens(document) {
+            return Err(fail(format!(
+                "dataset {id} reads {document}, a business dataset's document, without its admission and row filter"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A dataset definition saved through `save#Definition` (or copied, restored, imported or pulled): a business dataset whose body
@@ -164,8 +187,17 @@ pub(super) fn definition_deleted(ec: &ExecutionContext, id: &str) -> Result<(), 
     })
 }
 
-/// The registered scope policies, by their service: `ReportScopePolicy` enumerations, seeded by the domain that owns each.
-fn policies(ec: &ExecutionContext) -> Result<BTreeMap<String, (String, String)>, Error> {
+/// A registered scope policy: a `ReportScopePolicy` enumeration, seeded by the domain that owns it.
+struct ScopePolicy {
+    id: String,
+    description: String,
+    /// The name of the `rowFilterParameters` entry in which a dataset names the field that carries a row's scope
+    /// (`optionValue`); a policy that takes none registers none.
+    parameter: Option<String>,
+}
+
+/// The registered scope policies, by their service.
+fn policies(ec: &ExecutionContext) -> Result<BTreeMap<String, ScopePolicy>, Error> {
     let rows = metadata(ec, || {
         entity(ec)?
             .find("moqui.basic.Enumeration")?
@@ -183,7 +215,19 @@ fn policies(ec: &ExecutionContext) -> Result<BTreeMap<String, (String, String)>,
             continue;
         };
         let description = row.get("description").and_then(Value::as_str).unwrap_or(id);
-        out.insert(service.to_owned(), (id.to_owned(), description.to_owned()));
+        let parameter = row
+            .get("optionValue")
+            .and_then(Value::as_str)
+            .filter(|name| plain_name(name))
+            .map(str::to_owned);
+        out.insert(
+            service.to_owned(),
+            ScopePolicy {
+                id: id.to_owned(),
+                description: description.to_owned(),
+                parameter,
+            },
+        );
     }
     Ok(out)
 }
@@ -194,7 +238,7 @@ pub(super) fn registered_policy(ec: &ExecutionContext, service: &str) -> Result<
 fn policy_service(ec: &ExecutionContext, policy_id: &str) -> Result<String, Error> {
     policies(ec)?
         .into_iter()
-        .find(|(_, (id, _))| id == policy_id)
+        .find(|(_, policy)| policy.id == policy_id)
         .map(|(service, _)| service)
         .ok_or_else(|| fail(format!("scope policy {policy_id} is not registered")))
 }
@@ -288,7 +332,7 @@ fn describe(ec: &ExecutionContext, definition: &Json) -> Result<Json, Error> {
         "scope",
         policy.is_some(),
         match policy {
-            Some((_, description)) => format!("rows are scoped by {description}"),
+            Some(policy) => format!("rows are scoped by {}", policy.description),
             None if service.is_empty() => "no row filter is bound".to_owned(),
             None => format!("row filter {service} is not a registered scope policy"),
         },
@@ -315,8 +359,9 @@ fn describe(ec: &ExecutionContext, definition: &Json) -> Result<Json, Error> {
         "dataFeedId": feed,
         "timeField": text(body, "timeField", "_timestamp"),
         "rowFilterService": if service.is_empty() { Json::Null } else { json!(service) },
-        "scopePolicyId": policy.map_or(Json::Null, |(id, _)| json!(id)),
-        "scopePolicy": policy.map_or(Json::Null, |(_, description)| json!(description)),
+        "scopePolicyId": policy.map_or(Json::Null, |policy| json!(policy.id)),
+        "scopePolicy": policy.map_or(Json::Null, |policy| json!(policy.description)),
+        "scopeParameter": policy.and_then(|policy| policy.parameter.as_deref()).map_or(Json::Null, Json::from),
         "rowFilterParameters": body.get("rowFilterParameters").cloned().unwrap_or(Json::Null),
         "component": definition["component"],
         "readOnly": definition["readOnly"] == true,
@@ -479,7 +524,8 @@ fn filter_parameters(value: &Json) -> Result<Json, Error> {
 }
 
 /// `create#BusinessDataset`: a steward's dataset over a DataDocument of a registered feed, with a registered scope policy,
-/// saved as a dataset definition they own and waiting for review.
+/// saved as a dataset definition they own and waiting for review. The creator holds the dataset-save artifact and the
+/// update artifact of the dataset they name.
 pub fn create_business_dataset(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -493,6 +539,13 @@ pub fn create_business_dataset(
     if id.is_empty() || document.is_empty() {
         return Err(fail("a business dataset needs an id and a document"));
     }
+    // the id is the creator's to name only where their grant covers it: a dataset whose own update artifact they do not
+    // hold is one they could neither admit nor revise, whatever prefix the screen that asks was given
+    steward_of(id).map_err(|_| {
+        fail(format!(
+            "dataset {id} would not be yours to steward: your grant names other datasets"
+        ))
+    })?;
     if search::telemetry::is_telemetry_index(document) {
         return Err(fail("a telemetry index is not a business source"));
     }

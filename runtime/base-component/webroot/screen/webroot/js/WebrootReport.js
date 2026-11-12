@@ -4,6 +4,8 @@
     "use strict";
     const moqui = root.moqui;
     const report = moqui.report = {};
+    // The route of System › Monitor, where a trace opens.
+    const MONITOR_PATH = "/apps/system/Monitor";
     const finite = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
     // Opt in only the native elements created by this renderer. Embedded Quasar/Markdown controls keep their own styles.
     const nativeTags = new Set(["button", "input", "select", "textarea", "summary"]);
@@ -305,17 +307,8 @@
         }
         return color;
     };
-    report.sparkline = (values) => {
-        const nums = (values || []).filter(finite).map(Number);
-        if (!nums.length) return "";
-        const min = Math.min(...nums), max = Math.max(...nums), length = values.length;
-        let open = false;
-        return values.map((value, at) => {
-            if (!finite(value)) { open = false; return ""; }
-            const point = (100 * at / Math.max(1, length - 1)).toFixed(2) + "," + (max === min ? 12 : 22 - 20 * (Number(value) - min) / (max - min)).toFixed(2);
-            const command = open ? "L" : "M"; open = true; return command + point;
-        }).join(" ");
-    };
+    // the path of a sparkline, in a 100 by 24 box: MoquiLib.js has it, for the number card too
+    report.sparkline = (values) => moqui.sparklinePath(values);
     // A calculation over a field's values, as the server's reduce does: sum, mean, min, max, count, first, last, delta, pNN.
     report.reduce = (values, calculation) => {
         const all = values || [], nums = all.filter(finite).map(Number);
@@ -1169,7 +1162,7 @@
                         return h("details", { key: hit.documentId + ":" + hit.id, class: "q-py-xs" }, [
                             h("summary", { style: { color: Number(doc.severity_number) >= 17 ? "var(--q-negative)" : undefined } },
                                 report.format(doc.timestamp || doc.start, { type: "time" }) + " " + (doc.severity_text || "") + " " + String(doc.body || doc.name || "").slice(0, 500)),
-                            trace ? h("a", { href: report.appPath("/apps/monitor/TraceDetail?traceId=" + encodeURIComponent(trace)) }, "Open trace") : null,
+                            trace ? h("a", { href: report.appPath(MONITOR_PATH + "/TraceDetail?traceId=" + encodeURIComponent(trace)) }, "Open trace") : null,
                             h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(doc, null, 2)) ]);
                     }) : [h("p", "No new telemetry. This does not establish health.")]) : null ]);
         }
@@ -1263,8 +1256,24 @@
                 h("div", { ref: "stage", class: "m-session-replay-stage", style: { overflow: "auto", maxWidth: "100%" } }) ]);
         }
     };
+    // the page loaded again (a kiosk playlist whose request was refused or whose playlist changed), apart so a test can stand
+    // in for it; at most once a minute (the time kept in the tab's sessionStorage), so an answer the page cannot get past
+    // (a refused data request under a page that still renders) is tried at the next turns instead of reloading in a loop.
+    // False when it did not reload.
+    report.reloadPage = () => {
+        try {
+            const last = Number(root.sessionStorage.getItem("moqui.playlistReload")) || 0;
+            if (Date.now() - last < 60000) return false;
+            root.sessionStorage.setItem("moqui.playlistReload", String(Date.now()));
+        } catch (error) { /* no storage: reload; the server's answer decides */ }
+        root.location.reload();
+        return true;
+    };
+    // kiosk: a wall display with no one at it (a shared device's page, BOSS Insights WallDisplay): no link out, a failed load
+    // retried at the next turn rather than paused, and a refused one (401, 403: the device revoked or stopped) or a changed
+    // playlist reloads the page, whose answer is then the server's plain refusal page or the playlist as it is now.
     components["m-report-playlist"] = {
-        props: { source: String, items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30} },
+        props: { source: String, items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30}, kiosk: Boolean },
         data: () => ({ at:0, paused:false, pausedForError:false, timer:null, loading:false, error:"", changed:false, dashboard:null, frames:{}, requestId:0, controller:null }),
         computed: { selected() { return this.items[this.at]; } },
         watch: { selected:"load", source:"load" },
@@ -1276,13 +1285,16 @@
             moveByHand(delta) { this.move(delta); this.restartTimer(); },
             restartTimer() {
                 root.clearInterval(this.timer);
-                this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) this.move(1); }, Math.max(5,this.seconds)*1000);
+                // the next dashboard at each turn; a playlist of one loads its dashboard again, so its panels stay current
+                this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) { if (this.items.length>1) this.move(1); else this.load(true); } }, Math.min(86400,Math.max(5,Number(this.seconds) || 30))*1000);
             },
             togglePause() { this.paused=!this.paused;this.pausedForError=false; if (!this.paused) this.restartTimer(); },
-            async load() {
+            // refresh (true only from the turn of a playlist of one): the dashboard shown stays until its new frames come
+            async load(refresh) {
                 const requestId=++this.requestId,item=this.selected;
                 if (this.controller) this.controller.abort();
-                this.controller=null;this.dashboard=null;this.frames={};this.error="";this.changed=false;this.loading=!!item;
+                this.controller=null;this.error="";this.changed=false;this.loading=!!item;
+                if (refresh!==true) { this.dashboard=null;this.frames={}; }
                 if (!item) return;
                 try {
                     if (!this.source) throw new Error("Playlist data source is unavailable");
@@ -1301,20 +1313,24 @@
                     // The saved playlist may have been reordered since this page loaded. Never mislabel another dashboard's frames.
                     const expectedId=link.searchParams.get("definitionId");
                     if (!expectedId || json.dashboard.definitionId!==expectedId) {
-                        this.changed=true;this.paused=true;
+                        // a wall display has no one to press Reload: it loads the page again (or tries at the next turn)
+                        if (this.kiosk && report.reloadPage() !== false) return;
+                        this.changed=true;this.paused=!this.kiosk;
                         this.error=T("This playlist has changed. Reload the playlist to continue, or open the selected dashboard directly.");
                         return;
                     }
                     // Reuse the in-page embed; the application's frame-ancestors policy continues to prohibit iframe embedding.
-                    this.dashboard=Object.assign({},json.dashboard,{embedded:true,kiosk:false,refreshSeconds:0,title:item.title,
+                    // display: a kiosk's panels are shown with no controls (export, inspect, menu, open), which a wall display has no use for
+                    this.dashboard=Object.assign({},json.dashboard,{embedded:true,kiosk:false,display:!!this.kiosk,refreshSeconds:0,title:item.title,
                         screenUrl:link.pathname,requestedTime:{from:link.searchParams.get("from") || "now-7d",thru:link.searchParams.get("thru") || "now"}});
                     this.frames=json.frames || {};
                     // A pause the load failure made ends once a dashboard loads again (Retry); a pause by hand stays.
                     if (this.pausedForError) { this.paused=false;this.pausedForError=false;this.restartTimer(); }
                 } catch (error) {
+                    if (requestId===this.requestId && this.kiosk && error && (error.status===401 || error.status===403) && report.reloadPage() !== false) return;
                     if (requestId===this.requestId) {
-                        this.error=T("Could not load this dashboard. Retry or open it directly.");
-                        if (!this.paused) { this.paused=true;this.pausedForError=true; }
+                        this.error=T(this.kiosk ? "Could not load this dashboard. It is tried again at the next turn." : "Could not load this dashboard. Retry or open it directly.");
+                        if (!this.paused && !this.kiosk) { this.paused=true;this.pausedForError=true; }
                     }
                 } finally { if (requestId===this.requestId) { this.loading=false;this.controller=null; } }
             }
@@ -1326,7 +1342,7 @@
                 h("button",{type:"button","aria-label":T("Previous dashboard"),onClick:()=>this.moveByHand(-1)},T("Previous")),
                 h("button",{type:"button","aria-pressed":this.paused,onClick:this.togglePause},this.paused?T("Resume"):T("Pause")),
                 h("button",{type:"button","aria-label":T("Next dashboard"),onClick:()=>this.moveByHand(1)},T("Next")),
-                h("a",{href:report.safeLink(report.appPath(item.url))},item.title),h("span",{"aria-label":T("Dashboard {0} of {1}",this.at+1,this.items.length)},(this.at+1)+" / "+this.items.length)]),
+                this.kiosk ? h("strong",item.title) : h("a",{href:report.safeLink(report.appPath(item.url))},item.title),h("span",{"aria-label":T("Dashboard {0} of {1}",this.at+1,this.items.length)},(this.at+1)+" / "+this.items.length)]),
                 this.loading ? h("p",{role:"status"},T("Loading {0}…",item.title)) : null,
                 this.error ? h("div",[h("p",{role:"alert"},this.error),this.changed
                     ? h("button",{type:"button",onClick:()=>root.location.reload()},T("Reload playlist"))
@@ -1337,7 +1353,7 @@
     components["m-report-panel"] = {
         props: { frame: { type: Object, default: () => ({ fields: [] }) }, frames: Array, panel: { type: Object, default: () => ({}) },
             title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]},
-            editable:Boolean, embedded:Boolean, single:Boolean, appLinks:Object },
+            editable:Boolean, embedded:Boolean, single:Boolean, appLinks:Object, display:Boolean },
         emits:["filter"],
         data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outlineReady: false, outlineError: "" }),
         computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
@@ -1400,6 +1416,10 @@
             editPanel(){this.menu=false;const editor=report.appLink(this.links(),'definition','Definition');if(editor)report.navigate(editor+'?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.sourcePanelId()));},
             async sharePanel(){this.menu=false;this.shared=report.shareUrl(this.range,this.panelId,this.embedded?this.dashboardUrl():undefined);this.status=await report.copyText(this.shared)?'Link copied, with the time range made absolute.':'Copy this link to share the panel:';},
             explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range,appLinks:this.links()});if(url)report.navigate(url);},
+            // The drill screen the dashboard's screen sends (appLinks.drill: Tools' own, or a mounting app's): the panel, the range and
+            // the variable values as shown. The server reads the saved panel again and takes no query from here.
+            drillLink(){const links=this.links();return links && typeof links==='object' && links.drill?report.appLink(links,'drill',''):'';},
+            drillPanel(){this.menu=false;const path=this.drillLink();if(!path)return;const url=new root.URL(path,root.location.href);url.searchParams.set('definitionId',this.dashboardId);url.searchParams.set('panelId',this.sourcePanelId());if(this.range && this.range.from)url.searchParams.set('from',this.range.from);if(this.range && this.range.thru)url.searchParams.set('thru',this.range.thru);if(this.variables && Object.keys(this.variables).length)url.searchParams.set('variablesJson',JSON.stringify(this.variables));report.navigate(url.href);},
             async changePanel(action){
                 this.menu=false;
                 if(action==='removePanel'){
@@ -1453,7 +1473,7 @@
             const fields = report.configuredFields(frame, this.panel), rows = report.rows(frame), visual = this.panel.visualization || this.panel.type || "table";
             const title = this.title || this.panel.title;
             const named = title || T("Report");
-            const header = h("div", { class: "row items-center q-gutter-sm" }, [h("strong", { class: "col" }, named),
+            const header = this.display ? h("div", { class: "row items-center q-gutter-sm" }, [h("strong", { class: "col" }, named)]) : h("div", { class: "row items-center q-gutter-sm" }, [h("strong", { class: "col" }, named),
                 h("button", { type: "button", onClick: this.dashboardId ? () => this.exportPanel("csv") : this.csv, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Export {0} as CSV", named) }, "CSV"),
                 this.dashboardId ? h("button", { type: "button", onClick: () => this.exportPanel("xlsx"), disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Export {0} as XLSX", named) }, "XLSX") : null,
                 h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Inspect {0}", named), "aria-pressed": this.inspector }, T("Inspect")),
@@ -1462,7 +1482,7 @@
             const alerting = (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric")), alertRule = report.appLink(this.links(), "alertRule", "AlertRule");
             const menu = this.menu ? h("div", { role: "menu", "aria-label": T("Panel menu for {0}", named), class: "row q-gutter-xs q-py-xs", onKeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.menu = false; } } }, [
                 item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel, !!report.serverLink(this.links(), "definition", "Definition")), item("Share", this.sharePanel),
-                item("Explore", this.explorePanel, !!report.firstQuery(this.panel) && !!report.serverLink(this.links(), "explore", "Explore")), item("Inspect", () => { this.menu = false; this.inspect(); }),
+                item("Explore", this.explorePanel, !!report.firstQuery(this.panel) && !!report.serverLink(this.links(), "explore", "Explore")), item("Inspect", () => { this.menu = false; this.inspect(); }), item("Drill", this.drillPanel, !!this.drillLink()),
                 item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable && !!report.serverLink(this.links(), "dashboard", "Dashboard")), item("Remove", () => this.changePanel("removePanel"), this.editable && !!report.serverLink(this.links(), "dashboard", "Dashboard")),
                 alerting && alertRule ? h("a", { role: "menuitem", class: "m-report-native q-btn q-pa-xs", href: alertRule + "?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId) }, T("New alert rule")) : null]) : null;
             const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
@@ -1691,7 +1711,7 @@
             const byId = Object.fromEntries(entries);
             const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
                 frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, appLinks: this.dashboard.appLinks, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
-                editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
+                editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId, display: !!this.dashboard.display })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
             const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,640px),1fr))", gap: "12px" } }, items);
             const layout = (node, path) => {
                 if (!node) return auto(entries.map(([id]) => panel(id)));
@@ -1722,7 +1742,7 @@
                 E.button("Close", () => { this.shareStatus = ""; })]) : null;
             if (this.dashboard.embedded) return h("div", { class: "m-report-dashboard m-report-embed" }, [h("div", { class: "row items-center q-gutter-sm q-py-xs" }, [
                 h("strong", this.dashboard.title || this.dashboard.definitionId), h("span", { class: "text-caption" }, report.rangeLabel(this.dashboard.requestedTime || this.dashboard.absoluteTime)),
-                h("a", { href: this.openUrl() }, "Open in Dashboards")]), ...entries.flatMap(([id, item]) => (item.notices || []).filter((notice) => notice && notice.level === "error").map((notice) => h("p", { role: "status", class: "text-caption text-negative" }, (item.title || id) + ": " + (notice.message || "")))), layout(this.dashboard.layout, "root")]);
+                this.dashboard.display ? null : h("a", { href: this.openUrl() }, "Open in Dashboards")]), ...entries.flatMap(([id, item]) => (item.notices || []).filter((notice) => notice && notice.level === "error").map((notice) => h("p", { role: "status", class: "text-caption text-negative" }, (item.title || id) + ": " + (notice.message || "")))), layout(this.dashboard.layout, "root")]);
             const toolbar = this.kiosk ? null : h("div", { class: "row items-center q-gutter-sm q-py-sm" }, [...variables, picker,
                 h("label", ["Refresh ", h("select", { value: this.refreshSeconds, onChange: (event) => { this.refreshSeconds = Number(event.target.value); this.setRefresh(); } },
                     [0, 5, 15, 30, 60, 300].map((seconds) => h("option", { value: seconds }, seconds ? seconds + "s" : "Off")))]),

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The REST API reference (plans/archive/Tools-Fancy.md §2.3): the service REST resources (service/*.rest.xml) and the entity
+    master API, each linking to its description as JSON (a resource's OpenAPI document, an entity's master schema), read
+    as the signed-in user with REST_SCHEMA. There is no viewer here: on a dev instance Dev AIDE explores the services
+    and entities behind them. A root resource with more than a hundred methods is listed by its child resources.
+    `filter` narrows both lists to the names and descriptions that hold it; `api` (service or entity) shows one list
+    alone. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="REST API" default-menu-index="10" menu-image="sym_o_api" menu-image-type="icon">
+
+    <parameter name="filter"/>
+    <parameter name="api"/>
+
+    <actions>
+        <script><![CDATA[
+            const term = String(filter || '').trim().toLowerCase()
+            const holds = (...texts) => !term || texts.some(text => String(text || '').toLowerCase().includes(term))
+            const rest = sri.buildUrl('/rest').url
+            devAide = ec.resource.script('component://tools/template/HomeCatalog.js').devMounted(sri, ec)
+            showService = api !== 'entity'
+            showEntity = api !== 'service'
+
+            // one row an OpenAPI document: a root resource, or each child of a root too large for one document
+            resourceRows = []
+            if (showService) {
+                let roots = []
+                try { roots = Array.from(ec.service.restApi.getFreshRootResources() || []) }
+                catch (error) { ec.logger.error('REST API reference: the resources could not be read: ' + String(error)) }
+                for (const resource of roots) {
+                    const rootText = String(resource.displayName || resource.name)
+                    if (Number(resource.childMethods || 0) > 100) {
+                        for (const child of Object.values(resource.resourceMap || {})) {
+                            if (!holds(resource.name, rootText, child.name, child.displayName, child.description)) continue
+                            resourceRows.push({resourceText: rootText + ' › ' + String(child.displayName || child.name),
+                                description: String(child.description || ''), methods: child.childMethods,
+                                documentUrl: rest + '/service.swagger/' + resource.name + '/' + child.name})
+                        }
+                    } else if (holds(resource.name, rootText, resource.description)) {
+                        resourceRows.push({resourceText: rootText, description: String(resource.description || ''),
+                            methods: resource.childMethods, documentUrl: rest + '/service.swagger/' + resource.name})
+                    }
+                }
+            }
+            entityRows = showEntity
+                ? Array.from(ec.entity.getAllEntityNamesWithMaster() || []).map(String).filter(name => holds(name))
+                    .map(name => ({masterEntityName: name, documentUrl: rest + '/master.json/' + name}))
+                : []
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Each link opens the description of one API as JSON in a new tab, with your current sign-in: a resource's OpenAPI document, an entity's master schema." type="p" style="m-muted"/>
+        <container id="RestApiDevAide" style="q-mb-sm" condition="devAide">
+            <link url="//apps/dev" text="Explore services and entities in Dev AIDE" link-type="anchor" icon="sym_o_code"/>
+        </container>
+        <form-single name="RestApiFilter" transition=".">
+            <field name="api"><default-field><hidden/></default-field></field>
+            <field name="filter"><default-field title="Filter" tooltip="A part of a resource's or an entity's name or description">
+                <text-line size="40"/></default-field></field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+            <field-layout><field-row-big><field-ref name="filter"/><field-ref name="submitButton"/></field-row-big></field-layout>
+        </form-single>
+        <container id="RestApiShow" style="row items-center q-gutter-x-sm q-mb-sm">
+            <label text="Show" type="span" style="m-muted"/>
+            <link url="." text="Both" link-type="anchor" parameter-map="{filter: filter}" condition="api == 'service' || api == 'entity'"/>
+            <link url="." text="Service REST API" link-type="anchor" parameter-map="{filter: filter, api: 'service'}" condition="api != 'service'"/>
+            <link url="." text="Entity master API" link-type="anchor" parameter-map="{filter: filter, api: 'entity'}" condition="api != 'entity'"/>
+        </container>
+        <container-row>
+            <row-col md="${showService &amp;&amp; showEntity ? '7' : '12'}">
+                <section name="ServiceApi" condition="showService"><widgets>
+                    <container-box id="ServiceApiBox"><box-header title="Service REST API"/><box-body-nopad>
+                        <label text="No resource matches the filter." type="div" style="m-muted q-pa-sm" condition="!resourceRows.length"/>
+                        <form-list name="RestResourceList" list="resourceRows" skip-form="true" paginate="false">
+                            <field name="resourceText"><default-field title="Resource">
+                                <link url="${documentUrl}" text="${resourceText}" url-type="plain" link-type="anchor" target-window="_blank"/>
+                            </default-field></field>
+                            <field name="description"><default-field title="Description"><display/></default-field></field>
+                            <field name="methods"><default-field title="Methods" align="right"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="resourceText"/><field-ref name="description"/></column>
+                                <column><field-ref name="methods"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body-nopad></container-box>
+                </widgets></section>
+            </row-col>
+            <row-col md="${showService &amp;&amp; showEntity ? '5' : '12'}">
+                <section name="EntityApi" condition="showEntity"><widgets>
+                    <container-box id="EntityApiBox"><box-header title="Entity master API"/><box-body-nopad>
+                        <label text="No entity with a master definition matches the filter." type="div" style="m-muted q-pa-sm" condition="!entityRows.length"/>
+                        <form-list name="MasterEntityList" list="entityRows" skip-form="true" paginate="false">
+                            <field name="masterEntityName"><default-field title="Entity">
+                                <link url="${documentUrl}" text="${masterEntityName}" url-type="plain" link-type="anchor" target-window="_blank"/>
+                            </default-field></field>
+                        </form-list>
+                    </box-body-nopad></container-box>
+                </widgets></section>
+            </row-col>
+        </container-row>
+    </widgets>
+</screen>

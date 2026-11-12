@@ -145,7 +145,7 @@ thread_local! {
 }
 
 /// From now on every script on this thread ends, as at a passed deadline, once `flag` is set: a load run's user
-/// thread, whose script a stop must end even in a loop with no host call (plans/LoadRunner.md §10). None clears it.
+/// thread, whose script a stop must end even in a loop with no host call (plans/archive/LoadRunner.md §10). None clears it.
 pub fn interrupt_thread_on(flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) {
     INTERRUPT.with(|held| *held.borrow_mut() = flag);
 }
@@ -166,7 +166,7 @@ pub fn thread_interrupted() -> bool {
 }
 
 /// From now on the scripts on this thread have `until` as their deadline, for the thread's life: a thread that only
-/// reads a load script's plan, whose top level must end (plans/LoadRunner.md §10). A nested [`DeadlineGuard`] keeps
+/// reads a load script's plan, whose top level must end (plans/archive/LoadRunner.md §10). A nested [`DeadlineGuard`] keeps
 /// the earlier deadline.
 pub fn limit_thread_scripts(until: Instant) {
     DEADLINE.with(|deadline| deadline.set(Some(until)));

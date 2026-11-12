@@ -122,6 +122,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <text-area rows="5" editor-type="rich" mention-transition="mentionSearch" record-transition="recordSearch"/></default-field></field>
                 <field name="textRichLight"><default-field title="text-area editor-type=rich-light">
                     <text-area rows="2" editor-type="rich-light" mention-transition="mentionSearch" record-transition="recordSearch"/></default-field></field>
+                <!-- ai-opt-out (docs/ai/Assist.md "AI opt-out"): no Assist text actions here, and an agent reads "Not shared with AI" -->
+                <field name="textRichPrivate" ai-opt-out="true"><default-field title="text-area editor-type=rich ai-opt-out">
+                    <text-area rows="2" editor-type="rich"/></default-field></field>
                 <field name="ddEntity"><default-field title="drop-down entity-options">
                     <drop-down allow-empty="true"><entity-options key="${enumTypeId}" text="${description} [${enumTypeId}]">
                         <entity-find entity-name="moqui.basic.EnumerationType" cache="true"><order-by field-name="description"/></entity-find>

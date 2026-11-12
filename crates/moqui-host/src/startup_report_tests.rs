@@ -80,3 +80,23 @@ fn a_skipped_or_failed_entry_makes_the_report_a_warning() {
     let failed = [entry(Section::Integration, "Search", State::failed("no store"))];
     assert!(render(&header(), &failed, &[], "").1);
 }
+
+/// The LLM line names the model Assist is bound to, by its id and name, the conf's properties expanded; with the default
+/// model bound it is the default model's line.
+#[test]
+fn the_llm_line_names_the_model_assist_is_bound_to() {
+    moqui_lib::env::set_property("report_test_assist_model", "claude-haiku".to_string());
+    let conf = r#"<moqui-conf><llm-facade>
+        <model id="default" endpoint="default" name=""/>
+        <model id="claude-haiku" endpoint="anthropic" name="claude-haiku-5-5"/>
+        <bind feature="title" model="default"/>
+        <bind feature="assist" model="${report_test_assist_model}" reasoning="low"/>
+    </llm-facade></moqui-conf>"#;
+    assert_eq!(
+        assist_model(conf),
+        Some(("claude-haiku".to_string(), "claude-haiku-5-5".to_string()))
+    );
+    let bound_default = conf.replace("${report_test_assist_model}", "default");
+    assert_eq!(assist_model(&bound_default).map(|(id, _)| id), Some("default".to_string()));
+    assert_eq!(assist_model("<moqui-conf/>"), None);
+}

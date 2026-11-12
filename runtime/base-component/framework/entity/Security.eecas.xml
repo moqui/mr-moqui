@@ -33,4 +33,22 @@ along with this software (see the LICENSE.md file). If not, see
             on-create="true" on-update="true" run-before="true">
         <actions><script>UserSecurityChecks.assertDocumentExpression(fieldPath)</script></actions>
     </eeca>
+    <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
+        history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
+        most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own
+        (a notification whose email cannot be sent marks its transaction rollback-only). It never fails the row: a failure
+        is logged. -->
+    <eeca id="UserLoginHistoryNewDevice" entity="moqui.security.UserLoginHistory" on-create="true">
+        <condition><expression>successfulLogin == 'Y' &amp;&amp; !!visitId</expression></condition>
+        <actions><script><![CDATA[
+            ec.message.pushErrors()
+            try {
+                ec.service.sync().name('org.moqui.admin.IdentityServices.notify#NewDeviceSignIn')
+                    .parameters({userId: userId, visitId: visitId, fromDate: fromDate}).requireNewTransaction(true).disableAuthz().call()
+                if (ec.message.hasError()) ec.logger.error('New-device notice for ' + userId + ': ' + ec.message.getErrorsString())
+            } catch (err) {
+                ec.logger.error('New-device notice for ' + userId + ': ' + (err && err.message ? err.message : err))
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        ]]></script></actions>
+    </eeca>
 </eecas>

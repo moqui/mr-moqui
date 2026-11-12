@@ -7,6 +7,14 @@ browser.runInPage({
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootAssist.page.js",
 })
 
+// Assist undocked (plans/Terminal-Fancy.md §10.5, §10.7): the drawer and the float layer mounted with Vue and Quasar.
+browser.runInPage({
+    styles: ["/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css"],
+    scripts: ["/libs/vue/vue.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootFloats.js", "/js/WebrootAssist.js",
+        "/js/WebrootVue.qvt.js", "/libs/marked/marked.umd.min.js"],
+    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootAssist.float.page.js",
+})
+
 // From WebrootAssistCanvas.spec.js, merged here to share a spec run.
 // The Assist canvas, in the page. Was js/WebrootAssistCanvas.test.js.
 

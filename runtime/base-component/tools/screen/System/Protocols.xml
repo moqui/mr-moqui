@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Mail and protocols (plans/archive/Admin-Screens-Down.md): what each protocol of the server is doing, the outgoing mail relays,
+    the send outcomes of the instance's mail and the configuration the protocols run with, over
+    org.moqui.admin.ConfigurationServices (ADMIN_CONNECTION_VIEW and ADMIN_CONNECTION_MANAGE) and
+    org.moqui.admin.OperationServices (ADMIN_OPERATION_VIEW and ADMIN_OPERATION_MANAGE), which check the permissions
+    themselves. Its screens are the files of Protocols/, with the sibling names an app that shows them under its own root
+    uses (README, "Mounting the administration screens"), so their links to each other are relative. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Mail and protocols" default-menu-index="11" default-menu-group="Integration" menu-image="sym_o_mail" menu-image-type="icon">
+    <subscreens default-item="Home"/>
+    <widgets>
+        <subscreens-panel id="SystemProtocolsPanel" type="tab"/>
+    </widgets>
+</screen>

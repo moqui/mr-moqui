@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     Edit (with the sealed CONF_EDIT permission) changes one conf file and reloads; Changes compares the files with the
     running conf, applies what can be live and restarts for the rest. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Conf" default-menu-index="3" menu-image="sym_o_tune" menu-image-type="icon">
+        default-menu-title="Configuration" default-menu-index="21" default-menu-group="Server" menu-image="sym_o_tune" menu-image-type="icon">
     <subscreens default-item="View"/>
     <widgets>
         <subscreens-panel id="ConfPanel" type="tab"/>

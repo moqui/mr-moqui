@@ -1,0 +1,583 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Delegated configuration administration, org.moqui.admin.ConfigurationServices (mr-boss plan/design-admin.md §7, §17.2;
+    impl-admin P8): the services' grant, the first registered instance settings and the registered label targets. A later
+    part of ConfigurationServices (identity providers, connections, protocols, message types) appends its rows at the end. -->
+<entity-facade-xml type="seed">
+    <!-- The settings and localization services for every signed-in user: each checks ADMIN_SETTINGS_VIEW or
+        ADMIN_SETTINGS_MANAGE itself (get#InstancePreference reads one nonsecret registered preference and checks none). An
+        ALLOW, so an app's deny of a package still applies; inheritable, so the service's own reads and writes are authorized
+        as it. A service a later part adds is named here by that part, never by a pattern over the whole file. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminConfigurationServices" description="Admin configuration services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConfigurationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(get#EffectiveSettings|get#InstancePreference|store#InstancePreference|find#LocalizedMessages|store#LocalizedMessage|find#LocalizedEntityFields|store#LocalizedEntityField)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminConfigurationServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminConfigurationServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The instance preferences (editable Y), each read by the code its description names through
+        ConfigurationServices.get#InstancePreference. Presentation: what the instance is called and the locale and time zone
+        shown for a person who has none of their own; the conf's default_locale and default_time_zone hold until one is set.
+        The server's own zone (how the server reads a timestamp with no zone) stays default_time_zone, deployment
+        configuration below. -->
+    <moqui.server.InstanceSetting settingKey="instance.displayName" title="Instance name" settingGroup="Presentation"
+            description="What this instance is called where people see it: the name of the company or of the installation"
+            valueTypeEnumId="IsvText" maxLength="80" defaultValue="" editable="Y" sequenceNum="10"/>
+    <moqui.server.InstanceSetting settingKey="instance.defaultLocale" title="Default locale" settingGroup="Presentation"
+            description="The language and formats shown for a person who has chosen none; a person's own locale wins"
+            valueTypeEnumId="IsvLocale" defaultValue="en_US" propertyName="default_locale" editable="Y" sequenceNum="20"/>
+    <moqui.server.InstanceSetting settingKey="instance.defaultTimeZone" title="Default time zone" settingGroup="Presentation"
+            description="The time zone times are shown in for a person who has chosen none; a person's own zone wins, and business dates keep their owners' meaning"
+            valueTypeEnumId="IsvTimeZone" defaultValue="UTC" propertyName="default_time_zone" editable="Y" sequenceNum="30"/>
+    <!-- design-admin §19 Q6: how long a client may go unseen before a sign-in from it counts as a new device
+        (IdentityServices.notify#NewDeviceSignIn, impl-admin P10) -->
+    <moqui.server.InstanceSetting settingKey="signin.newDeviceWindowDays" title="New-device sign-in window (days)" settingGroup="Sign-in"
+            description="A sign-in from a client not seen for this many days is reported to the account's owner as a new device"
+            valueTypeEnumId="IsvInteger" minValue="1" maxValue="730" defaultValue="90" editable="Y" sequenceNum="110"/>
+    <!-- design-insights §7.1: the most recipients a business schedule or alert rule may deliver to as a group; an app's own
+        cap may only be at or under it -->
+    <moqui.server.InstanceSetting settingKey="report.groupRecipientCeiling" title="Group recipient ceiling" settingGroup="Reports"
+            description="The most recipients one scheduled report or business alert rule may deliver to as a group; an organization's own cap is at most this"
+            valueTypeEnumId="IsvInteger" minValue="1" maxValue="500" defaultValue="200" editable="Y" sequenceNum="210"/>
+
+    <!-- Deployment configuration shown read only (editable N): nonsecret default-properties of the conf an administrator is
+        asked about. A property that holds a secret is not registered here. -->
+    <moqui.server.InstanceSetting settingKey="conf.instancePurpose" title="Instance purpose" settingGroup="Deployment"
+            description="Production, test or development: what the instance is run for" valueTypeEnumId="IsvText"
+            propertyName="instance_purpose" restartRequired="Y" sequenceNum="1010"
+            operatorNote="Set instance_purpose in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.defaultLocale" title="Server default locale" settingGroup="Deployment"
+            description="The locale of a session with no user and no preference above" valueTypeEnumId="IsvText"
+            propertyName="default_locale" restartRequired="Y" sequenceNum="1020"
+            operatorNote="Set default_locale in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.defaultTimeZone" title="Server time zone" settingGroup="Deployment"
+            description="The zone the server reads a time with no zone in" valueTypeEnumId="IsvText"
+            propertyName="default_time_zone" restartRequired="Y" sequenceNum="1030"
+            operatorNote="Set default_time_zone in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.databaseTimeZone" title="Database time zone" settingGroup="Deployment"
+            description="The zone times are stored in" valueTypeEnumId="IsvText" propertyName="database_time_zone"
+            restartRequired="Y" sequenceNum="1040"
+            operatorNote="Set before the first start; changing it later changes the meaning of stored times"/>
+    <moqui.server.InstanceSetting settingKey="conf.publicHost" title="Public host name" settingGroup="Deployment"
+            description="The host name links in mail and redirects are made with" valueTypeEnumId="IsvText"
+            propertyName="webapp_http_host" restartRequired="Y" sequenceNum="1050"
+            operatorNote="Set webapp_http_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.httpsEnabled" title="HTTPS links" settingGroup="Deployment"
+            description="Whether links are made with https" valueTypeEnumId="IsvText" propertyName="webapp_https_enabled"
+            restartRequired="Y" sequenceNum="1060"
+            operatorNote="Set webapp_https_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.maxUpload" title="Largest upload (bytes)" settingGroup="Deployment"
+            description="The largest request body the web server accepts" valueTypeEnumId="IsvText"
+            propertyName="webapp_max_upload" restartRequired="Y" sequenceNum="1070"
+            operatorNote="Set webapp_max_upload in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.telemetryEnabled" title="Telemetry" settingGroup="Deployment"
+            description="Whether traces, metrics and logs are kept for Monitor" valueTypeEnumId="IsvText"
+            propertyName="telemetry_enabled" restartRequired="Y" sequenceNum="1080"
+            operatorNote="Set telemetry_enabled in the environment or the runtime conf and restart"/>
+
+    <!-- The registered label targets of delegated translation (ConfigurationServices.store#LocalizedEntityField): the
+        framework's vocabularies. A component adds its own configuration labels. -->
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Enumeration" fieldName="description" title="Type and option names" sequenceNum="10"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.StatusItem" fieldName="description" title="Status names" sequenceNum="20"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Uom" fieldName="description" title="Unit and currency names" sequenceNum="30"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Geo" fieldName="geoName" title="Country and region names" sequenceNum="40"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.EnumerationType" fieldName="description" title="Type list names" sequenceNum="50"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.StatusType" fieldName="description" title="Status list names" sequenceNum="60"/>
+
+    <!-- ========== Admin P10 (mr-boss plan/impl-admin.md P10): sign-in policy and identity providers ========== -->
+    <!-- The identity provider services for every signed-in user: each checks ADMIN_CONNECTION_VIEW or ADMIN_ACCESS_VIEW to
+        read, ADMIN_CONNECTION_MANAGE for the configuration and ADMIN_ACCESS_MANAGE for the role mappings, the link rule and
+        enabling. A grant of its own, as the settings services'; inheritable, so the service's own reads and writes and
+        test#IdentityProvider's call of org.moqui.sso.AuthServices.check#Flow (which checks the same permissions) are
+        authorized as it. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminIdentityProviderServices" description="Admin identity provider services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminIdentityProviderServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#IdentityProviders|store#IdentityProvider|test#IdentityProvider)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminIdentityProviderServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminIdentityProviderServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The sign-in policy the server runs with (design-admin §6 EffectiveSignInPolicy; F110), shown read only: literal conf
+        attributes of user-facade and of the web session, each named by confAttribute and answered by
+        ConfigurationServices.get#SignInPolicyValues (a fixed list in the server; a row naming another is logged and left
+        out). The conf's user-facade is read live, so a change applies when the conf is reloaded. A setting's key avoids the
+        words that mark a secret (pass, key, token), or it would be masked. -->
+    <moqui.server.InstanceSetting settingKey="signin.minLength" title="Shortest password" settingGroup="Sign-in policy"
+            description="The fewest characters a new password may have" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@min-length" sequenceNum="2010"
+            operatorNote="Set min-length on user-facade password in the runtime conf (System, Conf) and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.minDigits" title="Digits required" settingGroup="Sign-in policy"
+            description="The fewest digits a new password must hold" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@min-digits" sequenceNum="2020"
+            operatorNote="Set min-digits on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.minOthers" title="Other characters required" settingGroup="Sign-in policy"
+            description="The fewest characters that are neither letter nor digit a new password must hold" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@min-others" sequenceNum="2030"
+            operatorNote="Set min-others on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.reuseHistory" title="Earlier passwords refused" settingGroup="Sign-in policy"
+            description="How many of an account's last passwords may not be chosen again" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@history-limit" sequenceNum="2040"
+            operatorNote="Set history-limit on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.changeWeeks" title="Weeks until a change is required" settingGroup="Sign-in policy"
+            description="After this many weeks a sign-in asks for a new password" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@change-weeks" sequenceNum="2050"
+            operatorNote="Set change-weeks on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.resetRequiresChange" title="Change required after a reset" settingGroup="Sign-in policy"
+            description="Whether a password sent by a reset must be changed at the next sign-in" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@email-require-change" sequenceNum="2060"
+            operatorNote="Set email-require-change on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.resetExpireHours" title="Hours a reset stays usable" settingGroup="Sign-in policy"
+            description="How long a password sent by a reset may be used" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@email-expire-hours" sequenceNum="2070"
+            operatorNote="Set email-expire-hours on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.maxFailures" title="Failed sign-ins before a lock" settingGroup="Sign-in policy"
+            description="After this many wrong passwords in a row the account is locked for a time" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login/@max-failures" sequenceNum="2110"
+            operatorNote="Set max-failures on user-facade login in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.lockMinutes" title="Minutes a lock lasts" settingGroup="Sign-in policy"
+            description="How long an account stays locked after too many wrong passwords" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login/@disable-minutes" sequenceNum="2120"
+            operatorNote="Set disable-minutes on user-facade login in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.historyStore" title="Sign-in history kept" settingGroup="Sign-in policy"
+            description="Whether each sign-in leaves a history row, which Sessions and the new-device notice read" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login/@history-store" sequenceNum="2130"
+            operatorNote="Set history-store on user-facade login in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.sessionMinutes" title="Minutes until an idle session ends" settingGroup="Sign-in policy"
+            description="A web session with no request for this long expires; 0 never" valueTypeEnumId="IsvText"
+            confAttribute="webapp/session-config/@timeout" sequenceNum="2210"
+            operatorNote="Set timeout on session-config of the webroot webapp in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.rememberHours" title="Hours a browser stays signed in" settingGroup="Sign-in policy"
+            description="How long the sign-in a browser keeps between sessions lasts" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login-key/@expire-hours" sequenceNum="2220"
+            operatorNote="Set expire-hours on user-facade login-key in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.deviceHours" title="Hours an app stays signed in" settingGroup="Sign-in policy"
+            description="How long the sign-in of a desktop or mobile app lasts" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login-key/@device-expire-hours" sequenceNum="2230"
+            operatorNote="Set device-expire-hours on user-facade login-key in the runtime conf and reload the conf"/>
+
+    <!-- The connection services (impl-admin P11) for every signed-in user: each checks ADMIN_CONNECTION_VIEW to read and
+        ADMIN_CONNECTION_MANAGE to change or test. Inheritable, so a kind's adapter service and the native services a test
+        calls (test#EmailServer, print#Document) run as it; no group is authorized to call an adapter service directly. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminConnectionServices" description="Admin connection services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConnectionServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#Connections|get#Connection|store#Connection|test#Connection|find#ConnectionConsumers)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminConnectionServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminConnectionServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The framework's connection kinds (moqui.server.ConnectionAdapter; design-admin §14): no service, their definitions
+        are ConfigurationConnections.js. A component seeds its own kinds with their adapter service. -->
+    <moqui.server.ConnectionAdapter adapterKey="remote" title="Remote system" adapterGroup="integration" creatable="Y" sequenceNum="40"
+            description="A system that messages are sent to and received from (SystemMessageRemote)"/>
+    <moqui.server.ConnectionAdapter adapterKey="mailOAuth" title="Mail sign-in provider" adapterGroup="integration" creatable="N" sequenceNum="50"
+            description="The OAuth client mail accounts sign in with at a provider (EmailOAuthProvider)"/>
+    <moqui.server.ConnectionAdapter adapterKey="printer" title="Network printer" adapterGroup="integration" creatable="Y" sequenceNum="60"
+            description="A printer on a print server (NetworkPrinter)"/>
+    <moqui.server.ConnectionAdapter adapterKey="relay" title="Mail relay" adapterGroup="mail" creatable="Y" sequenceNum="10"
+            description="An outgoing mail server no mail account owns (EmailServer)"/>
+
+    <!-- ========== Admin P12 (mr-boss plan/impl-admin.md P12): protocols and the mail queue ========== -->
+    <!-- The protocol services for every signed-in user: get#ProtocolReadiness checks ADMIN_CONNECTION_VIEW,
+        ADMIN_SETTINGS_VIEW or ADMIN_OPERATION_VIEW, test#Protocol ADMIN_CONNECTION_MANAGE. Inheritable, so their calls of
+        the server's own get#ProtocolFacts and probe#ProtocolTarget (which check the same permissions, and which no group is
+        authorized to call directly) run as them. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminProtocolServices" description="Admin protocol services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminProtocolServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(get#ProtocolReadiness|test#Protocol)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminProtocolServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminProtocolServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The operation services (org.moqui.admin.OperationServices; the mail queue in P12) for every signed-in user: each
+        checks ADMIN_OPERATION_VIEW to read and ADMIN_OPERATION_MANAGE to act. Inheritable, so a retry's claim, the mail
+        service's send of the stored message and a registered owner's own services run as it; no group is authorized to call
+        those directly here. A service a later part adds is named here by that part. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminOperationServices" description="Admin operation services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(find#MailOutcomes|retry#MailOutcome|reconcile#MailOutcome)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminOperationServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminOperationServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The configuration each protocol runs with (design-admin §9 EffectiveProtocolSettings), shown read only: nonsecret
+        default-properties of the conf, in the groups named "Protocols: ..." that the integration administrator and the
+        operations operator read too. No key, host key, key file or shared secret is registered. -->
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.listenPort" title="SMTP listener port" settingGroup="Protocols: mail reception"
+            description="The port the listener for hosted and shared mail accounts binds; empty keeps it off" valueTypeEnumId="IsvText"
+            propertyName="smtp_listen_port" restartRequired="Y" sequenceNum="3010"
+            operatorNote="Set smtp_listen_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.listenHost" title="SMTP listener address" settingGroup="Protocols: mail reception"
+            description="The address the listener binds; this machine only by default" valueTypeEnumId="IsvText"
+            propertyName="smtp_listen_host" restartRequired="Y" sequenceNum="3020"
+            operatorNote="Set smtp_listen_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.allowedAddresses" title="Gateway addresses allowed" settingGroup="Protocols: mail reception"
+            description="The addresses and ranges of the edge gateway, the only ones that may deliver; empty never starts the listener" valueTypeEnumId="IsvText"
+            propertyName="smtp_allowed_addresses" restartRequired="Y" sequenceNum="3030"
+            operatorNote="Set smtp_allowed_addresses in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.authservId" title="Gateway authentication name" settingGroup="Protocols: mail reception"
+            description="The authserv-id of the gateway's Authentication-Results, the only ones kept; empty keeps them all as they came" valueTypeEnumId="IsvText"
+            propertyName="smtp_authserv_id" restartRequired="Y" sequenceNum="3040"
+            operatorNote="Set smtp_authserv_id in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.hostname" title="SMTP greeting name" settingGroup="Protocols: mail reception"
+            description="The name in the greeting and the Received field; the public host name when empty" valueTypeEnumId="IsvText"
+            propertyName="smtp_hostname" restartRequired="Y" sequenceNum="3050"
+            operatorNote="Set smtp_hostname in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.internet" title="Mail taken from the internet" settingGroup="Protocols: mail reception"
+            description="Whether the listener takes mail from any sender and checks it itself, with no gateway in front" valueTypeEnumId="IsvText"
+            propertyName="smtp_internet" restartRequired="Y" sequenceNum="3060"
+            operatorNote="Set smtp_internet in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.tlsCertFile" title="SMTP certificate file" settingGroup="Protocols: mail reception"
+            description="The certificate the listener offers for STARTTLS" valueTypeEnumId="IsvText"
+            propertyName="smtp_tls_cert_file" restartRequired="Y" sequenceNum="3070"
+            operatorNote="Set smtp_tls_cert_file in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.port" title="SSH port" settingGroup="Protocols: SSH and Git"
+            description="The port of the built-in SSH server (SFTP, the terminal client, git over SSH); empty keeps it off" valueTypeEnumId="IsvText"
+            propertyName="ssh_port" restartRequired="Y" sequenceNum="3080"
+            operatorNote="Set ssh_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.host" title="SSH address" settingGroup="Protocols: SSH and Git"
+            description="The address the SSH server binds" valueTypeEnumId="IsvText"
+            propertyName="ssh_host" restartRequired="Y" sequenceNum="3090"
+            operatorNote="Set ssh_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.publicHost" title="SSH public host" settingGroup="Protocols: SSH and Git"
+            description="The host clone URLs show; the public host name when empty" valueTypeEnumId="IsvText"
+            propertyName="ssh_public_host" restartRequired="Y" sequenceNum="3100"
+            operatorNote="Set ssh_public_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.publicPort" title="SSH public port" settingGroup="Protocols: SSH and Git"
+            description="The port clone URLs show; the SSH port when empty" valueTypeEnumId="IsvText"
+            propertyName="ssh_public_port" restartRequired="Y" sequenceNum="3110"
+            operatorNote="Set ssh_public_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.git.publicUrl" title="Git public URL" settingGroup="Protocols: SSH and Git"
+            description="The base of the clone URLs shown; made from the public host name when empty" valueTypeEnumId="IsvText"
+            propertyName="git_public_url" restartRequired="Y" sequenceNum="3120"
+            operatorNote="Set git_public_url in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.domain" title="XMPP domain" settingGroup="Protocols: chat"
+            description="The domain of the users' chat addresses; empty keeps XMPP off" valueTypeEnumId="IsvText"
+            propertyName="xmpp_domain" restartRequired="Y" sequenceNum="3130"
+            operatorNote="Set xmpp_domain in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.port" title="XMPP port" settingGroup="Protocols: chat"
+            description="The STARTTLS port for chat apps" valueTypeEnumId="IsvText"
+            propertyName="xmpp_port" restartRequired="Y" sequenceNum="3140"
+            operatorNote="Set xmpp_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.host" title="XMPP address" settingGroup="Protocols: chat"
+            description="The address the XMPP ports bind" valueTypeEnumId="IsvText"
+            propertyName="xmpp_host" restartRequired="Y" sequenceNum="3150"
+            operatorNote="Set xmpp_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.tlsPort" title="XMPP direct TLS port" settingGroup="Protocols: chat"
+            description="The direct TLS port for chat apps" valueTypeEnumId="IsvText"
+            propertyName="xmpp_tls_port" restartRequired="Y" sequenceNum="3160"
+            operatorNote="Set xmpp_tls_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaPort" title="Call media port" settingGroup="Protocols: calls"
+            description="The UDP port of call media; empty keeps calls' media off" valueTypeEnumId="IsvText"
+            propertyName="rtc_media_port" restartRequired="Y" sequenceNum="3170"
+            operatorNote="Set rtc_media_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaHost" title="Call media address" settingGroup="Protocols: calls"
+            description="The address call media binds" valueTypeEnumId="IsvText"
+            propertyName="rtc_media_host" restartRequired="Y" sequenceNum="3180"
+            operatorNote="Set rtc_media_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.publicAddress" title="Call media public address" settingGroup="Protocols: calls"
+            description="The address browsers are told, for a server behind address translation" valueTypeEnumId="IsvText"
+            propertyName="rtc_public_address" restartRequired="Y" sequenceNum="3190"
+            operatorNote="Set rtc_public_address in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaTcpPort" title="Call media TCP port" settingGroup="Protocols: calls"
+            description="A TCP port for browsers that cannot reach the UDP one" valueTypeEnumId="IsvText"
+            propertyName="rtc_media_tcp_port" restartRequired="Y" sequenceNum="3200"
+            operatorNote="Set rtc_media_tcp_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.port" title="TURN port" settingGroup="Protocols: calls"
+            description="The relay's UDP and TCP port; empty keeps it off" valueTypeEnumId="IsvText"
+            propertyName="turn_port" restartRequired="Y" sequenceNum="3210"
+            operatorNote="Set turn_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.tlsPort" title="TURN TLS port" settingGroup="Protocols: calls"
+            description="The relay's TLS port" valueTypeEnumId="IsvText"
+            propertyName="turn_tls_port" restartRequired="Y" sequenceNum="3220"
+            operatorNote="Set turn_tls_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.publicHost" title="TURN public host" settingGroup="Protocols: calls"
+            description="The name or address browsers are given for the relay" valueTypeEnumId="IsvText"
+            propertyName="turn_public_host" restartRequired="Y" sequenceNum="3230"
+            operatorNote="Set turn_public_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.externalUrls" title="External TURN servers" settingGroup="Protocols: calls"
+            description="TURN servers run elsewhere that browsers are also given" valueTypeEnumId="IsvText"
+            propertyName="turn_external_urls" restartRequired="Y" sequenceNum="3240"
+            operatorNote="Set turn_external_urls in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.calls.recordingEnabled" title="Call recording" settingGroup="Protocols: calls"
+            description="Whether a call's host may record it" valueTypeEnumId="IsvText"
+            propertyName="call_recording_enabled" restartRequired="Y" sequenceNum="3250"
+            operatorNote="Set call_recording_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.calls.recordingRetentionDays" title="Days a recording is kept" settingGroup="Protocols: calls"
+            description="Recordings are deleted this long after they start; 0 keeps them" valueTypeEnumId="IsvText"
+            propertyName="call_recording_retention_days" restartRequired="Y" sequenceNum="3260"
+            operatorNote="Set call_recording_retention_days in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.calls.captionsEnabled" title="Live captions" settingGroup="Protocols: calls"
+            description="Whether someone in a call may turn captions on" valueTypeEnumId="IsvText"
+            propertyName="call_captions_enabled" restartRequired="Y" sequenceNum="3270"
+            operatorNote="Set call_captions_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.port" title="SIP port" settingGroup="Protocols: phone"
+            description="The UDP and TCP port for trunks and phones; empty with the TLS port keeps phone calls off" valueTypeEnumId="IsvText"
+            propertyName="sip_port" restartRequired="Y" sequenceNum="3280"
+            operatorNote="Set sip_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.host" title="SIP address" settingGroup="Protocols: phone"
+            description="The address the SIP ports bind" valueTypeEnumId="IsvText"
+            propertyName="sip_host" restartRequired="Y" sequenceNum="3290"
+            operatorNote="Set sip_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.tlsPort" title="SIP TLS port" settingGroup="Protocols: phone"
+            description="The TLS port for trunks and phones" valueTypeEnumId="IsvText"
+            propertyName="sip_tls_port" restartRequired="Y" sequenceNum="3300"
+            operatorNote="Set sip_tls_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.publicAddress" title="SIP public address" settingGroup="Protocols: phone"
+            description="The address trunks reach, when it is not the bound one" valueTypeEnumId="IsvText"
+            propertyName="sip_public_address" restartRequired="Y" sequenceNum="3310"
+            operatorNote="Set sip_public_address in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.registrarEnabled" title="Phone registrar" settingGroup="Protocols: phone"
+            description="Whether desk and soft phones may register" valueTypeEnumId="IsvText"
+            propertyName="sip_registrar_enabled" restartRequired="Y" sequenceNum="3320"
+            operatorNote="Set sip_registrar_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.domain" title="SIP domain" settingGroup="Protocols: phone"
+            description="The domain phones register to" valueTypeEnumId="IsvText"
+            propertyName="sip_domain" restartRequired="Y" sequenceNum="3330"
+            operatorNote="Set sip_domain in the environment or the runtime conf and restart"/>
+
+    <!-- System messages, recovery and message types (impl-admin P13), named service by service. find#Messages, get#Message
+        and preview#Recovery check ADMIN_OPERATION_VIEW, execute#Recovery ADMIN_OPERATION_MANAGE (and the owner's
+        permission a registration names); find#MessageTypes and get#MessageTypeUse ADMIN_CONNECTION_VIEW, store#MessageType
+        ADMIN_CONNECTION_MANAGE. Inheritable, so a recovery's own step (apply#MessageRecovery), the framework's send, consume,
+        reset and cancel of that one message and a registered owner's services run as it; no group is authorized to call
+        those directly here. The recovery descriptors (moqui.server.RecoveryDescriptor) and handlers
+        (moqui.server.MessageHandler) are their owners' seed rows: the framework registers none of its own for a message (its
+        two message jobs' are below, P14). -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(find#Messages|get#Message|preview#Recovery|execute#Recovery)"/>
+    <moqui.security.ArtifactGroup artifactGroupId="AdminMessageTypeServices" description="Admin message type services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminMessageTypeServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#MessageTypes|get#MessageTypeUse|store#MessageType)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminMessageTypeServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminMessageTypeServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- Jobs and notification topics (impl-admin P14), named service by service. find#Jobs, get#Job, find#JobRuns,
+        get#JobRun and get#JobRunItems check ADMIN_OPERATION_VIEW, store#Job ADMIN_OPERATION_MANAGE (and the owner's
+        permission a registration names); find#Topics and get#Topic ADMIN_OPERATION_VIEW or ADMIN_SETTINGS_VIEW,
+        store#TopicDefaults ADMIN_SETTINGS_MANAGE, store#TopicSubscription ADMIN_OPERATION_MANAGE. Inheritable, so a job's
+        registered items service and a run's own step (apply#JobRecovery, under execute#Recovery) run as it; no group is
+        authorized to call those directly here. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(find#Jobs|get#Job|store#Job|find#JobRuns|get#JobRun|get#JobRunItems|find#Topics|get#Topic|store#TopicDefaults|store#TopicSubscription)"/>
+
+    <!-- The framework's own registrations (it owns these jobs and this topic; an app's are its own seed rows). The two
+        system message jobs: their schedule, pause, priority and wait after an error, and the retry settings of a message
+        (design-admin §8 MessageContract's "retry settings" are these parameters, impl-admin F185): how long a failed
+        message waits and how many times it is tried. A run outside the schedule is safe to repeat: each message is claimed
+        by the send or consume that takes it (claim#SystemMessage). Their items are the messages a run tried. The run
+        history's cleanup: its schedule, pause and days kept. A recipient of any of them must hold
+        ADMIN_OPERATION_MANAGE: a job's notification carries the run's errors, parameters and results. -->
+    <moqui.server.JobRegistration jobName="send_AllProducedSystemMessages_frequent" ownerApp="Framework" title="Send produced system messages"
+            description="Sends the outgoing system messages that wait, and tries the failed ones again"
+            scheduleEditable="Y" minIntervalMinutes="1" pauseEditable="Y" priorityEditable="Y" retryEditable="Y"
+            recipientPermission="ADMIN_OPERATION_MANAGE" sequenceNum="10"/>
+    <moqui.server.JobParameterDefinition jobName="send_AllProducedSystemMessages_frequent" parameterName="retryMinutes"
+            title="Minutes before a failed message is sent again" valueType="decimal" minValue="1" maxValue="1440" sequenceNum="1"/>
+    <moqui.server.JobParameterDefinition jobName="send_AllProducedSystemMessages_frequent" parameterName="retryLimit"
+            title="Attempts before a message is failed for good" valueType="integer" minValue="1" maxValue="100" sequenceNum="2"/>
+    <moqui.server.RecoveryDescriptor descriptorKey="frameworkSendMessagesJob" title="Send produced system messages" ownerApp="Framework"
+            targetKind="ServiceJob" targetKey="send_AllProducedSystemMessages_frequent" retryMode="native"
+            itemsService="org.moqui.admin.OperationServices.find#MessageJobRunItems"
+            idempotencyNote="A run sends only messages that wait, and each is claimed by the send that takes it." sequenceNum="10"/>
+    <moqui.server.JobRegistration jobName="consume_AllReceivedSystemMessages_frequent" ownerApp="Framework" title="Consume received system messages"
+            description="Consumes the received system messages that wait, and tries the failed ones again"
+            scheduleEditable="Y" minIntervalMinutes="1" pauseEditable="Y" priorityEditable="Y" retryEditable="Y"
+            recipientPermission="ADMIN_OPERATION_MANAGE" sequenceNum="11"/>
+    <moqui.server.JobParameterDefinition jobName="consume_AllReceivedSystemMessages_frequent" parameterName="retryMinutes"
+            title="Minutes before a failed message is consumed again" valueType="decimal" minValue="1" maxValue="1440" sequenceNum="1"/>
+    <moqui.server.JobParameterDefinition jobName="consume_AllReceivedSystemMessages_frequent" parameterName="retryLimit"
+            title="Attempts before a message is failed for good" valueType="integer" minValue="1" maxValue="100" sequenceNum="2"/>
+    <moqui.server.RecoveryDescriptor descriptorKey="frameworkConsumeMessagesJob" title="Consume received system messages" ownerApp="Framework"
+            targetKind="ServiceJob" targetKey="consume_AllReceivedSystemMessages_frequent" retryMode="native"
+            itemsService="org.moqui.admin.OperationServices.find#MessageJobRunItems"
+            idempotencyNote="A run consumes only messages that wait, and each is claimed by the consume that takes it." sequenceNum="11"/>
+    <moqui.server.JobRegistration jobName="clean_ServiceJobRun_daily" ownerApp="Framework" title="Clean the job run history"
+            description="Removes job runs older than the days kept" scheduleEditable="Y" minIntervalMinutes="60" pauseEditable="Y"
+            recipientPermission="ADMIN_OPERATION_MANAGE" sequenceNum="20"/>
+    <moqui.server.JobParameterDefinition jobName="clean_ServiceJobRun_daily" parameterName="daysToKeep"
+            title="Days of job runs kept" valueType="integer" minValue="1" maxValue="366" required="Y" sequenceNum="1"/>
+    <!-- The job error topic: private, sent to a failed job's recipients, each of whom receives it only with a setting of
+        their own (the topic's default is not to). Its audience is who may be a job's recipient here. -->
+    <moqui.server.TopicRegistration topic="ServiceJobError" ownerApp="Framework" purpose="A job run ended with an error: sent to the job's recipients"
+            editableFields="showAlert,alertNoAutoHide,emailNotifications,digestDefault" subscriptionPermission="ADMIN_OPERATION_MANAGE" sequenceNum="10"/>
+
+    <!-- Business data transfer (org.moqui.admin.DataTransferServices; impl-admin P15), named service by service. Each
+        checks the caller itself: find#ImportTargets and find#Transfers ADMIN_TRANSFER_VIEW; the steps of an import the
+        permissions its target's registration names, and its owner's services their own. Inheritable, so the services'
+        own reads and writes of a batch kept here run as them; an owner's service is reached only through
+        call#TargetService, whose ALLOW is not inheritable (AdminTransferCall), so it is authorized for the caller as a
+        direct call is and the registration adds no right. apply#TransferItem, fail#TransferItem and
+        clean#TransferBatches are granted to no group. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminTransferServices" description="Admin data transfer services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ImportTargets|get#ImportTarget|stage#Import|configure#Import|validate#Import|apply#Import|get#Transfer|retry#ImportItems|get#ImportReport|get#ImportSample|find#Transfers)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminTransferServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminTransferServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <moqui.security.ArtifactGroup artifactGroupId="AdminTransferCall" description="Admin data transfer target call"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferCall" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="N"
+            artifactName="org.moqui.admin.DataTransferServices.call#TargetService"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminTransferCallALL" userGroupId="ALL_USERS" artifactGroupId="AdminTransferCall"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The framework's own import target (an app's are its own seed rows): message translations, a batch kept here
+        whose rows are saved by store#LocalizedMessage's rules, each at the revision its preview read. Its row services
+        check ADMIN_SETTINGS_MANAGE themselves; the registration asks for the transfer permission besides. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConfigurationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(validate|apply)#MessageTranslationRow"/>
+    <moqui.server.TransferTarget targetId="messageTranslations" direction="import" targetMode="rows" title="Message translations"
+            description="Translations of the messages people see, by original text and locale"
+            effectsNote="Each row saves one translation, replacing the one there; none is removed. The audit log keeps the text before and after."
+            ownerApp="Framework" targetVersion="1" fieldLabel="Translation field"
+            columnsJson="[{&quot;name&quot;:&quot;original&quot;,&quot;label&quot;:&quot;Original&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;locale&quot;,&quot;label&quot;:&quot;Locale&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;localized&quot;,&quot;label&quot;:&quot;Translation&quot;,&quot;required&quot;:true}]"
+            keyFields="original,locale"
+            validateRowService="org.moqui.admin.ConfigurationServices.validate#MessageTranslationRow"
+            applyRowService="org.moqui.admin.ConfigurationServices.apply#MessageTranslationRow"
+            maxRows="2000" retentionDays="30" importPermission="ADMIN_TRANSFER_RUN,ADMIN_SETTINGS_MANAGE"
+            viewPermission="ADMIN_TRANSFER_VIEW,ADMIN_SETTINGS_VIEW" ownerRoute="adminLocalization" sequenceNum="900"/>
+    <!-- The retention of the batches kept here: staged rows are removed after each target's retentionDays -->
+    <moqui.service.job.ServiceJob jobName="clean_TransferBatches_daily" description="Clean staged data transfer batches"
+            serviceName="org.moqui.admin.DataTransferServices.clean#TransferBatches" cronExpression="0 20 2 * * ?" paused="N"/>
+
+    <!-- Exports (org.moqui.admin.DataTransferServices; impl-admin P16), named service by service in the same group as
+        the imports: find#ExportTargets asks ADMIN_TRANSFER_VIEW; get#ExportFields, preview#Export and run#Export the
+        permissions the target's registration names, and its owner's export service its own (it is reached only through
+        call#TargetService, as an import's steps are). Inheritable, so the record of an export is written as them. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ExportTargets|get#ExportFields|preview#Export|run#Export)"/>
+    <!-- What the Data screens of the System app, and of an app that shows them, read and post (plans/archive/Admin-Screens-Down.md
+        A5), in the same group: find#ExportRuns, get#ExportContext, find#ImportRuns and get#ImportDetail ask
+        ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN and answer what the services above answer the caller; run#ExportRequest
+        asks ADMIN_TRANSFER_RUN besides what run#Export asks. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ExportRuns|get#ExportContext|run#ExportRequest|find#ImportRuns|get#ImportDetail)"/>
+    <!-- The framework's own export target (an app's are its own seed rows): message translations as the import of
+        translations reads them, written here as delimited text. Its service checks ADMIN_SETTINGS_VIEW itself; the
+        registration asks for the transfer permission besides. No field is restricted: a translation is what people see. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConfigurationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="N"
+            artifactName="org.moqui.admin.ConfigurationServices.export#MessageTranslationRows"/>
+    <moqui.server.TransferTarget targetId="messageTranslationsExport" direction="export" targetMode="rows" title="Message translations"
+            description="The translations of the messages people see, by original text and locale, as a file the import of translations reads"
+            ownerApp="Framework" targetVersion="1"
+            columnsJson="[{&quot;name&quot;:&quot;original&quot;,&quot;label&quot;:&quot;Original&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;locale&quot;,&quot;label&quot;:&quot;Locale&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;localized&quot;,&quot;label&quot;:&quot;Translation&quot;}]"
+            optionsJson="[{&quot;name&quot;:&quot;locale&quot;,&quot;label&quot;:&quot;Locale (empty for every locale)&quot;,&quot;type&quot;:&quot;text&quot;,&quot;maxLength&quot;:20}]"
+            exportService="org.moqui.admin.ConfigurationServices.export#MessageTranslationRows"
+            maxRows="50000" maxBytes="16777216" exportPermission="ADMIN_TRANSFER_RUN,ADMIN_SETTINGS_VIEW"
+            viewPermission="ADMIN_TRANSFER_VIEW,ADMIN_SETTINGS_VIEW" ownerRoute="adminLocalization" sequenceNum="900"/>
+
+    <!-- Backups (org.moqui.admin.BackupServices; impl-admin P16), named service by service. Each checks the caller
+        itself: get#Coverage and find#Archives ADMIN_BACKUP_VIEW or ADMIN_BACKUP_RUN, run#Backup ADMIN_BACKUP_RUN. None
+        takes a path, a file, a mode or a destination; there is no download. Inheritable, so their reads of the backup
+        job's records and the run they start are made as them. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminBackupServices" description="Admin backup services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminBackupServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.BackupServices\.(get#Coverage|find#Archives|run#Backup)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminBackupServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminBackupServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- Readiness, refresh, the settings index and the support summary (org.moqui.admin.ReadinessServices;
+        plans/archive/Admin-Screens-Down.md A6), named service by service. Each checks the caller itself: get#Readiness each
+        provider's required permission, request#Refresh the operation's, find#Settings each entry's view permission and
+        whether its screen opens to the caller's own groups, get#Overview, get#HealthCards, get#SupportSummary and
+        check#InstanceSetup ADMIN_OVERVIEW_VIEW (its protocols check what get#ProtocolReadiness asks). Not inheritable:
+        an owner's service a registration names is authorized for the caller as a direct call is, so the registration
+        adds no right (below an app's screen its inheritable always-allow covers it, as everything there). Their own
+        reads of the registrations and of the framework's records are made with authorization off, after the check. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminReadinessServices" description="Admin readiness services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminReadinessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ReadinessServices\.(get#Readiness|request#Refresh|get#Overview|get#HealthCards|get#SupportSummary|find#Settings|check#InstanceSetup)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminReadinessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminReadinessServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The registries' kinds. An app adds what is its own: a scope (an organization, a store), a settings group. -->
+    <moqui.basic.EnumerationType enumTypeId="AdminHealthGroup" description="Admin Health group"/>
+    <moqui.basic.Enumeration enumId="AdmHgIdentity" enumTypeId="AdminHealthGroup" description="Identity" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="AdmHgBusiness" enumTypeId="AdminHealthGroup" description="Business setup" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="AdmHgTransport" enumTypeId="AdminHealthGroup" description="Transport" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="AdmHgStorage" enumTypeId="AdminHealthGroup" description="Storage and backup" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="AdmHgObservability" enumTypeId="AdminHealthGroup" description="Observability" sequenceNum="5"/>
+    <moqui.basic.EnumerationType enumTypeId="AdminRegistryScope" description="Admin registration scope"/>
+    <moqui.basic.Enumeration enumId="AdmScInstance" enumTypeId="AdminRegistryScope" description="Instance" sequenceNum="1"/>
+    <moqui.basic.EnumerationType enumTypeId="AdminSettingsGroup" description="Admin settings index group"/>
+    <moqui.basic.Enumeration enumId="AdmSgApplications" enumTypeId="AdminSettingsGroup" description="Applications" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="AdmSgInstance" enumTypeId="AdminSettingsGroup" description="Instance" sequenceNum="3"/>
+    <moqui.basic.EnumerationType enumTypeId="AdminRefreshSource" description="Admin refresh source kind"/>
+    <moqui.basic.Enumeration enumId="AdmRsIndex" enumTypeId="AdminRefreshSource" description="Index" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="AdmRsFeed" enumTypeId="AdminRefreshSource" description="Feed" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="AdmRsProjection" enumTypeId="AdminRefreshSource" description="Projection" sequenceNum="3"/>
+    <!-- The framework's own readiness providers, each a function of Readiness.js behind check#InstanceSetup, for a
+        reader of the overview (the protocols for a reader of the connections); the backup check has the freshness
+        facet of its last finished run. A fix place is a key the application showing the check resolves
+        (tools template/AdminMount.js has the System screens'). -->
+    <moqui.server.ReadinessProvider providerKey="admin.mailServer" version="1" ownerApp="System" title="Outgoing mail"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminMailRelay" sequenceNum="10"/>
+    <moqui.server.ReadinessProvider providerKey="admin.backup" version="1" ownerApp="System" title="Database backup"
+            healthGroupEnumId="AdmHgStorage" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminJob" fixId="backup_EmbeddedDatabase_daily"
+            expectedFrequencyMinutes="1440" maxLagMinutes="2880" sequenceNum="20"/>
+    <moqui.server.ReadinessProvider providerKey="admin.reportMail" version="1" ownerApp="System" title="Report mail"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="emailTemplates" sequenceNum="30"/>
+    <moqui.server.ReadinessProvider providerKey="admin.protocols" version="1" ownerApp="System" title="Protocols"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_CONNECTION_VIEW" fixRoute="adminProtocols" sequenceNum="35"/>
+    <moqui.server.ReadinessProvider providerKey="admin.reportAlertTopic" version="1" ownerApp="System" title="Report alerts"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminTopic" fixId="ReportAlert" sequenceNum="40"/>
+    <moqui.server.ReadinessProvider providerKey="admin.adminFactors" version="1" ownerApp="System" title="Administrator factors"
+            healthGroupEnumId="AdmHgIdentity" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminUsers" sequenceNum="50"/>
+    <moqui.server.ReadinessProvider providerKey="admin.jobRuns" version="1" ownerApp="System" title="Job runs"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminJobRuns" sequenceNum="60"/>
+    <moqui.server.ReadinessProvider providerKey="admin.cluster" version="1" ownerApp="System" title="Cluster"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="monitor" sequenceNum="70"/>
+    <moqui.server.ReadinessProvider providerKey="admin.telemetry" version="1" ownerApp="System" title="Telemetry"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="monitorSources" sequenceNum="80"/>
+    <moqui.server.ReadinessProvider providerKey="constitution.global" version="1" ownerApp="System" title="Instance Constitution"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="constitution" sequenceNum="140"/>
+    <!-- The framework's own settings index entries, each shown to a caller its System screen opens to. An app that
+        shows one of these screens under its own root seeds the entry again with its own screenLocation. -->
+    <moqui.server.SettingsEntry settingsKey="admin.instanceSettings" version="1" ownerApp="System" title="Instance settings"
+            description="What the instance is called, its default locale and time zone, the new-device sign-in window, the group recipient ceiling, and where each deployment value comes from"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminInstanceSettings"
+            screenLocation="component://tools/screen/System/Settings/InstanceSettings.xml" viewPermission="ADMIN_SETTINGS_VIEW"
+            configuredBy="Configuration administrator" sequenceNum="101"/>
+    <moqui.server.SettingsEntry settingsKey="admin.localization" version="1" ownerApp="System" title="Localization"
+            description="Translations of messages and of the names of statuses, options, units and places"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminLocalization"
+            screenLocation="component://tools/screen/System/Settings/Localization.xml" viewPermission="ADMIN_SETTINGS_VIEW"
+            configuredBy="Configuration administrator" sequenceNum="102"/>
+    <moqui.server.SettingsEntry settingsKey="admin.connections" version="1" ownerApp="System" title="Connections"
+            description="The remote systems, mail sign-in providers, printers and gateways this instance reaches, with their addresses and credentials"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminConnection"
+            screenLocation="component://tools/screen/System/Integrations/Connections.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Integration administrator" sequenceNum="111"/>
+    <moqui.server.SettingsEntry settingsKey="admin.mailRelays" version="1" ownerApp="System" title="Mail relays"
+            description="The outgoing mail servers the instance sends its own mail through"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminMailRelay"
+            screenLocation="component://tools/screen/System/Protocols/MailRelays.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Integration administrator" sequenceNum="112"/>
+    <moqui.server.SettingsEntry settingsKey="admin.protocols" version="1" ownerApp="System" title="Mail and protocols"
+            description="What the server speaks besides the web (mail reception, SSH and Git, chat, calls and phones), the configuration each runs with and the checks of it"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminProtocols"
+            screenLocation="component://tools/screen/System/Protocols/Home.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Whoever operates the server" sequenceNum="113"/>
+    <moqui.server.SettingsEntry settingsKey="admin.messageTypes" version="1" ownerApp="System" title="Message types"
+            description="The kinds of message exchanged with other systems: what sends and consumes each, among the handlers its owner registered, and its transport options"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminMessageTypes"
+            screenLocation="component://tools/screen/System/Integrations/MessageTypes.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Integration administrator" sequenceNum="114"/>
+    <moqui.server.SettingsEntry settingsKey="admin.topics" version="1" ownerApp="System" title="Notification topics"
+            description="What people are notified about and how each topic is delivered when a person chose nothing, for the topics their owners registered"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminTopics"
+            screenLocation="component://tools/screen/System/Operations/Topics.xml" viewPermission="ADMIN_SETTINGS_VIEW"
+            configuredBy="Configuration administrator" sequenceNum="116"/>
+</entity-facade-xml>

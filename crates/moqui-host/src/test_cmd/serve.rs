@@ -177,9 +177,14 @@ fn serve_on(
     let url = format!("http://{}", server.address());
     println!("Serving {url} (Ctrl-C to stop)");
     if let Some(path) = ready_file {
-        // Written whole and renamed, so a reader never sees part of the URL.
+        // Written whole and renamed, so a reader never sees part of the URL. The SSH listener, when there is one, is
+        // a second line, `ssh <address>`: its port moved to a free one too (test_client/serve.rs reads it).
         let partial = path.with_extension("partial");
-        std::fs::write(&partial, format!("{url}\n"))
+        let mut ready = format!("{url}\n");
+        if let Some(ssh) = server.ssh_address() {
+            ready.push_str(&format!("ssh {ssh}\n"));
+        }
+        std::fs::write(&partial, ready)
             .and_then(|()| std::fs::rename(&partial, path))
             .map_err(|err| Error::new(format!("could not write {}", path.display())).with_source(err))?;
     }

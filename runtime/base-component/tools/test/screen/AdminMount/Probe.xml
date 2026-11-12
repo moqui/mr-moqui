@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The AdminMounts spec's probe: what template/AdminMount.js answers where it stands (under the test mount, or as its own
+    root with no mount), and a transition of an instance administrator's part, which carries raw() as its condition. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Probe">
+    <transition name="rawOnly">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <actions><script>ec.user.setPreference('AdminMountsSpec.raw', 'ran')</script></actions>
+        <default-response url="."/>
+    </transition>
+    <actions>
+        <set field="adminMountLib" from="ec.resource.script('component://tools/template/AdminMount.js')"/>
+        <set field="mount" from="adminMountLib.state()"/>
+        <set field="userLink" from="adminMountLib.link(mount.routes, 'adminUser', 'U1')"/>
+        <set field="storeLink" from="adminMountLib.link(mount.routes, 'storeIntegration', 'S1')"/>
+        <set field="mailLink" from="adminMountLib.link(mount.routes, 'mailAccount', 'A 1', {view:'queue', empty:''})"/>
+        <!-- what the stack answers for System here: true under any inheritable always-allow, which is why raw asks the
+            user's own records -->
+        <set field="stackOpensSystem" from="ec.artifactExecution.isPermitted('component://tools/screen/System.xml')"/>
+    </actions>
+    <widgets>
+        <label text="mounted=${mount.mounted} raw=${mount.raw} stack=${stackOpensSystem} hidden=${mount.hidden.join(',')}"/>
+        <label text="user=${userLink ? userLink.url + ' ' + JSON.stringify(userLink.parameters) : 'none'}"/>
+        <label text="store=${storeLink ? storeLink.url + ' ' + JSON.stringify(storeLink.parameters) : 'none'}"/>
+        <label text="storePlain=${storeLink ? storeLink.plain + ' ' + storeLink.href : 'none'}"/>
+        <label text="mail=${mailLink ? mailLink.plain + ' ' + mailLink.href : 'none'}"/>
+    </widgets>
+</screen>

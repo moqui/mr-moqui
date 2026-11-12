@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Browser session replays (telemetry/browser replay-enabled): masked rrweb recordings of a sample of signed-in sessions. Only
+    users with MONITOR_REPLAY see them; the services check it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Replays" default-menu-index="10" default-menu-group="Clients and AI" menu-image="sym_o_replay" menu-image-type="icon">
+    <parameter name="userId"/><parameter name="visitId"/>
+    <transition name="replayDetail"><default-response url="../ReplayDetail"/></transition>
+    <actions><script><![CDATA[
+        replayAllowed = ec.user.hasPermission('MONITOR_REPLAY')
+        replayList = []
+        filtered = !!(userId || visitId)
+        if (replayAllowed) {
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#BrowserReplays').parameters({userId, visitId, limit: 200}).call()
+            // Replay starts come as epoch milliseconds or date text; show them in the user's time zone, keep the raw value.
+            const stamp = value => {
+                if (value == null || value === '') return ec.l10n.localize('Not recorded')
+                const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value)
+                return Number.isNaN(date.getTime()) ? String(value) : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss')
+            }
+            replayList = (result.replays || []).map(item => Object.assign({}, item, {startText: stamp(item.start), traces: (item.traceIds || []).length}))
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="Session replays" type="h4"/>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
+        <section name="NotAllowed" condition="!replayAllowed"><widgets>
+            <label text="Session replays need the MONITOR_REPLAY permission." type="p"/>
+        </widgets><fail-widgets>
+            <container-box><box-header title="Find replays"/><box-body>
+                <label text="Masked recordings of sampled signed-in sessions (telemetry browser replay-enabled): inputs and text are masked in the browser before they are sent. Each replay opened is logged." type="p"/>
+                <form-single name="ReplayFilter" transition=".">
+                    <field name="userId"><default-field title="User ID"><text-line/></default-field></field>
+                    <field name="visitId"><default-field title="Visit ID"><text-line/></default-field></field>
+                    <field name="find"><default-field><submit text="Find"/></default-field></field>
+                    <field-layout>
+                        <field-col-row>
+                            <field-col xs="12" md="4"><field-ref name="userId"/></field-col>
+                            <field-col xs="12" md="4"><field-ref name="visitId"/></field-col>
+                        </field-col-row>
+                        <field-ref name="find"/>
+                    </field-layout>
+                </form-single>
+            </box-body></container-box>
+            <container-box><box-header title="Replays"/><box-body>
+                <section name="AvailableReplayList" condition="replayList.length"><widgets>
+                    <label text="Newest first. Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
+                    <form-list name="ReplayList" list="replayList" skip-form="true">
+                        <field name="start"><default-field title="Started"><link url="replayDetail" text="${startText}" parameter-map="{replayId:replayId}" link-type="anchor"/></default-field></field>
+                        <field name="userId"><default-field title="User"><display/></default-field></field>
+                        <field name="visitId"><default-field title="Visit"><display style="m-wrap-anywhere"/></default-field></field>
+                        <field name="url"><default-field title="First page"><display style="m-wrap-anywhere"/></default-field></field>
+                        <field name="traces"><default-field title="Traces"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="start"/><field-ref name="url"/></column>
+                            <column><field-ref name="userId"/><field-ref name="visitId"/><field-ref name="traces"/></column>
+                        </columns>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <section name="NoMatch" condition="filtered"><widgets>
+                        <label text="No replays match this user or visit. Clear the filters to see every recorded session." type="p"/>
+                    </widgets><fail-widgets>
+                        <label text="No session replays are recorded. Replays are made only while browser RUM and replay are enabled (Monitor › Settings › Browser) and a session is sampled." type="p"/>
+                    </fail-widgets></section>
+                </fail-widgets></section>
+            </box-body></container-box>
+        </fail-widgets></section>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
+    </widgets>
+</screen>

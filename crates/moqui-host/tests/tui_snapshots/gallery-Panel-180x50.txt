@@ -19,8 +19,8 @@
      Message             │ Mark done  Snooze to tomorrow
      Views               │ Due today
      Handheld            │ 4
- ▾ Home                  │ Reply to the RFQ questions
-                         │ email · 10:00 · RFQ-2041 · Beta Inc.
+     Nav cards           │ Reply to the RFQ questions
+ ▾ Home                  │ email · 10:00 · RFQ-2041 · Beta Inc.
                          │ Mark done  Snooze to tomorrow
                          │ Weekly pipeline review
                          │ meeting · 14:00 · Sales team · Room 2

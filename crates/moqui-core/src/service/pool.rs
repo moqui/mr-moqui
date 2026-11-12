@@ -266,10 +266,18 @@ pub(crate) struct State {
     pub(crate) warm_idle: usize,
     /// The workers waiting for work, woken one at a time, the one idle most recently first (plans/Profiling3.md W13).
     pub(crate) idle: super::idle::Idle,
-    /// Scheduled job runs waiting for a job worker, as Java's separate `jobWorkerPool`.
-    pub(crate) jobs: VecDeque<Box<super::jobs::JobRun>>,
+    /// Scheduled job runs, and tx rules from the outbox, waiting for a job worker, as Java's separate `jobWorkerPool`.
+    pub(crate) jobs: VecDeque<JobWork>,
     /// Job workers running a job now.
     pub(crate) jobs_active: usize,
+}
+
+/// What a job worker runs.
+pub(crate) enum JobWork {
+    Run(Box<super::jobs::JobRun>),
+    /// Tx rules the scheduler found waiting in the outbox (HL-025): on a job worker, so a full service queue, which may
+    /// be why they wait, does not hold them.
+    Rules(Box<RulesJob>),
 }
 
 pub(crate) enum Work {
@@ -308,6 +316,29 @@ pub(crate) struct RulesJob {
     user_name: Option<String>,
     origin: Option<crate::context::AgentOrigin>,
     trace_context: Option<crate::telemetry::TraceContext>,
+    /// The outbox row that keeps them until a run commits (HL-025); None for tx-rollback rules and a call outside the
+    /// outbox's transaction.
+    outbox: Option<super::outbox::OutboxEntry>,
+}
+
+impl RulesJob {
+    /// The rules of the outbox row `entry`, which the scheduler claimed, run as the caller that committed them.
+    pub(crate) fn from_outbox(
+        rules: TxRules,
+        factory: Arc<ExecutionContextFactory>,
+        user_name: Option<String>,
+        origin: Option<crate::context::AgentOrigin>,
+        entry: super::outbox::OutboxEntry,
+    ) -> Self {
+        Self {
+            rules,
+            factory,
+            user_name,
+            origin,
+            trace_context: None,
+            outbox: Some(entry),
+        }
+    }
 }
 
 type ClosureOut = Result<Box<dyn Any + Send>, Error>;
@@ -575,16 +606,18 @@ impl ServicePools {
     }
 
     /// Run the tx rules of a service call on a service worker, as the current user and agent run, without waiting.
-    /// When the queue is full or the pool is stopping they are stored as a queued job, which the scheduler runs later
-    /// (here or on another member); a failure to store them is logged with the service and phase. With no worker
-    /// threads they run now.
-    pub(crate) fn spawn_rules(&self, factory: &Arc<ExecutionContextFactory>, rules: TxRules) {
+    /// Rules kept in the outbox row `outbox` stay there when the queue is full or the pool is stopping, and the
+    /// scheduler runs them later (HL-025); others are stored as a queued job then, which the scheduler runs later (here
+    /// or on another member), and a failure to store them is logged with the service and phase. With no worker threads
+    /// they run now.
+    pub(crate) fn spawn_rules(&self, factory: &Arc<ExecutionContextFactory>, rules: TxRules, outbox: Option<String>) {
         let job = RulesJob {
             rules,
             factory: Arc::clone(factory),
             user_name: crate::user::current_username().ok().flatten(),
             origin: current_origin(),
             trace_context: crate::telemetry::capture(),
+            outbox: outbox.map(|id| super::outbox::OutboxEntry { id, claimed: false }),
         };
         let Some(shared) = &self.shared else {
             run_rules(job, false);
@@ -599,7 +632,11 @@ impl ServicePools {
             }
             job
         };
-        spill_rules(job, "the service worker queue is full or stopping");
+        if job.outbox.is_some() {
+            left_in_outbox(&job, "the service worker queue is full or stopping");
+        } else {
+            spill_rules(job, "the service worker queue is full or stopping");
+        }
     }
 
     /// Start the call and return its pending result. See [`Shared::submit_future`].
@@ -1020,7 +1057,10 @@ fn job_loop(shared: Arc<Shared>) {
                 state = wait(&shared.job_wake, state);
             }
         };
-        run_job_work(run);
+        match run {
+            JobWork::Run(run) => run_job_work(run),
+            JobWork::Rules(job) => run_rules(*job, true),
+        }
         lock(&shared.state).jobs_active -= 1;
     }
 }
@@ -1176,7 +1216,7 @@ fn invoke(
     let ctx = factory.new_context();
     let _entered = ctx.enter();
     if let Some(user_name) = user_name {
-        crate::user::internal_login_user(user_name)?;
+        crate::user::internal_login_queued_user(user_name)?;
     }
     ctx.set_agent_origin(origin.cloned());
     // As Java's `AsyncServiceInfo`: authorization was checked as the caller before the call was queued.
@@ -1208,7 +1248,7 @@ fn call_now(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap
         let ctx = factory.new_context();
         let _entered = ctx.enter();
         if let Some(user_name) = user_name.as_deref() {
-            crate::user::internal_login_user(user_name)?;
+            crate::user::internal_login_queued_user(user_name)?;
         }
         ctx.set_agent_origin(origin);
         super::call::sync_with(name, parameters, &options)
@@ -1361,8 +1401,11 @@ fn fail_pending(shared: &Shared) {
     for work in pending {
         fail_one(work);
     }
-    for run in jobs {
-        super::jobs::abandon(*run);
+    for work in jobs {
+        match work {
+            JobWork::Run(run) => super::jobs::abandon(*run),
+            JobWork::Rules(job) => left_in_outbox(&job, "the service worker pool stopped before they ran"),
+        }
     }
 }
 
@@ -1384,6 +1427,9 @@ fn fail_one(work: Work) {
                 tracing::error!("{what} was not run: the service worker pool stopped first");
             }
             let _ = job.reply.send(Err(stopped));
+        }
+        Work::Rules(job) if job.outbox.is_some() => {
+            left_in_outbox(&job, "the service worker pool stopped before they ran")
         }
         Work::Rules(job) => spill_rules(job, "the service worker pool stopped before they ran"),
         Work::Job(run) => super::jobs::abandon(*run),
@@ -1494,6 +1540,7 @@ fn run_rules(job: RulesJob, own_cleanup: bool) {
         user_name,
         origin,
         trace_context,
+        outbox,
     } = job;
     let _trace = crate::telemetry::attach(trace_context);
     let _cleanup = own_cleanup.then(|| WorkCleanup::new(Some(Arc::clone(&factory))));
@@ -1504,15 +1551,41 @@ fn run_rules(job: RulesJob, own_cleanup: bool) {
         // As a job's user: a user that cannot be logged in is logged, and the rules still run, as before they carried
         // the caller.
         if let Some(user_name) = user_name.as_deref() {
-            if let Err(err) = crate::user::internal_login_user(user_name) {
+            if let Err(err) = crate::user::internal_login_queued_user(user_name) {
                 tracing::warn!(service = %rules.service, when = %rules.when, error = %err, "could not log in the user of tx rules");
             }
         }
         ctx.set_agent_origin(origin);
-        super::call::run_tx_rules(&factory, &mut rules).map(|()| BTreeMap::new())
+        let outbox_id = outbox.as_ref().map(|entry| entry.id.as_str());
+        super::call::run_tx_rules(&factory, &mut rules, outbox_id).map(|()| BTreeMap::new())
     })));
     if let Err(err) = outcome {
         tracing::error!(service = %rules.service, when = %rules.when, error = %err, "service tx rules failed");
+        // Their transaction rolled back, the outbox row's delete with it: the scheduler tries them again later.
+        if let Some(entry) = &outbox {
+            super::outbox::record_failure(&factory, entry, &rules.service, &err.to_string());
+        }
+    }
+}
+
+/// Tx rules not run now that stay in their outbox row, which the scheduler runs later (HL-025).
+fn left_in_outbox(job: &RulesJob, why: &str) {
+    let id = job.outbox.as_ref().map_or("", |entry| entry.id.as_str());
+    tracing::warn!(service = %job.rules.service, when = %job.rules.when, outbox = %id, "{why}: the service tx rules stay in the outbox for the scheduler");
+}
+
+impl Shared {
+    /// Queue tx rules from the outbox for the job workers. False when the job queue is full or the pool stopped.
+    pub(crate) fn submit_rules_job(&self, job: RulesJob) -> bool {
+        {
+            let mut state = lock(&self.state);
+            if state.stop || state.jobs.len() >= self.job_queue_max.max(self.job_pool_max) {
+                return false;
+            }
+            state.jobs.push_back(JobWork::Rules(Box::new(job)));
+        }
+        self.job_wake.notify_all();
+        true
     }
 }
 
@@ -1524,6 +1597,7 @@ fn spill_rules(job: RulesJob, why: &str) {
         user_name,
         origin,
         trace_context: _,
+        outbox: _,
     } = job;
     let (service, when) = (rules.service.clone(), rules.when.clone());
     let call = super::jobs::QueuedCall {

@@ -1,0 +1,50 @@
+ gallery ▸ Nav cards                                                                                                                                            john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ The nav-card element ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ A navigation tile: an icon in a tonal avatar, a title and one line saying what is there. The whole card is one link, and up to three child links     │
+     List                │ ┃ along the bottom go further in. A dashboard lays the cards out, as many columns as fit. In the terminal a card is a link, its text and its links; in │
+     Detail              │ ┃ text and print it is a line.                                                                                                                         │
+     360                 │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Task                │ Large, with links
+     Board               │ List                     Detail                   Report
+     Calendar            │ Find, sort and page the  One record: its fields   Parameters in the URL,
+     Split               │ enumerations, and act on in sections, its status  counters, two charts and
+     Settings            │ the rows selected        and its history          a table with totals
+     Wizard              │ Example types  Geo types 360 of a user
+     Dialog              │ As a board
+     Report              │ Medium
+     Panel               │ Board                    Calendar                 Wizard                   Widgets                  No icon                  Moqui documentation
+     Widgets             │ Cards by status          Examples by their start  Steps with Back and Next                          A title and a text only  A link to something
+     Editor              │                          and end                  Dialogs  A task                                                            other than a screen is a
+     Message             │                                                                                                                              plain anchor
+     Views               │ Not a link
+     Handheld            │ A card without a link,
+   ▶ Nav cards           │ or whose link the user
+ ▾ Home                  │ may not follow, is plain
+                         │ From a list
+                         │ Admin Health group
+                         │ Enumerations of the type
+                         │ AdminHealthGroup
+                         │ Admin refresh source kin
+                         │ Enumerations of the type
+                         │ AdminRefreshSource
+                         │ Admin registration scope
+                         │ Enumerations of the type
+                         │ AdminRegistryScope
+                         │ Admin settings index gro
+                         │ Enumerations of the type
+                         │ AdminSettingsGroup
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

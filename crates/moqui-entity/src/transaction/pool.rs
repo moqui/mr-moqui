@@ -84,7 +84,7 @@ pub struct PoolStats {
     pub checkouts: u64,
 }
 
-/// Running totals of how checkouts waited, for measuring admission under load (`plans/High-Level-Review.md` HL-022).
+/// Running totals of how checkouts waited, for measuring admission under load (`plans/archive/High-Level-Review.md` HL-022).
 /// Every return or loss of a connection wakes all waiters; `woken` adds up how many each time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PoolCounters {
@@ -510,6 +510,11 @@ impl Pool {
         Ok(())
     }
 
+    /// The configured `max`: every connection, the reserve among them.
+    pub fn max(&self) -> u32 {
+        self.inner.config.max
+    }
+
     pub fn stats(&self) -> PoolStats {
         let state = lock(&self.inner.state);
         PoolStats {
@@ -854,7 +859,7 @@ impl Drop for PooledConn {
             }
         }
         // A connection back with a stream open would hand its cursor, or its buffered rows, to the next borrower
-        // (plans/High-Level-Review.md HL-003).
+        // (plans/archive/High-Level-Review.md HL-003).
         if !self.discard && self.stream_open() {
             tracing::warn!("a connection came back to the pool with a stream open; discarding it");
             self.discard();

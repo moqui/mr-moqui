@@ -11,6 +11,7 @@ warranty.
 You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <!-- ECA Rules (plans/design-dev-aide.md 10): the active SECA, EECA, EmECA and gitECA rules as the framework holds them,
     in the order they run, each with its file and line, priority, condition and actions; a rule a later one of its id
     replaced is under it, marked so. A rule opens in the Workspace's ECA view. A list, so the terminal reaches it. -->

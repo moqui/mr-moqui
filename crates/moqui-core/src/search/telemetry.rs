@@ -148,6 +148,8 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("moqui.artifact.action", Keyword),
             ("moqui.artifact.sub_type", Keyword),
             ("moqui.operation.name", Keyword),
+            // the filesystem gauges' series (plans/archive/Tools-Fancy.md B3), so a chart or an alert rule splits by it
+            ("system.filesystem.mountpoint", Keyword),
         ],
         ERRORS => &[
             ("fingerprint", Keyword),
@@ -171,6 +173,11 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("rule_id", Keyword),
             ("series_id", Keyword),
             ("state", Keyword),
+            // a business event (source business; moqui-report annotations.rs): its organization, type and record
+            ("organizationPartyId", Keyword),
+            ("event", Keyword),
+            ("recordType", Keyword),
+            ("recordId", Keyword),
         ],
         REPLAYS => &[
             ("replay_id", Keyword),

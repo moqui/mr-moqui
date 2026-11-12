@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The load scripts a run from Tools may start (plans/LoadRunner.md D2, D12, §10 Scripts): the
+//! The load scripts a run from Tools may start (plans/archive/LoadRunner.md D2, D12, §10 Scripts): the
 //! `<component>/test/load/<Name>.load.js` files of the loaded components, named by
 //! `component://<component>/test/load/<Name>.load.js`. No script text comes from the screen, and no other file is a
 //! script.

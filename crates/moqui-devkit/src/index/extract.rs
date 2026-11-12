@@ -57,18 +57,102 @@ pub struct ArtifactRow {
     /// service no file defines, with its parameters from the entity's fields.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub origin: String,
+    /// What a service, form or transition declares to be filled in from elsewhere, for the index's expansions
+    /// ([`super::resolve::Resolver::expand`]; [`join_marks`], [`split_marks`]), empty for any other artifact: a
+    /// service's `auto-parameters` and `implements`, a form's `auto-fields-entity`,
+    /// `auto-fields-service`, `extends` and transition, a transition's calls. Each mark is words separated by spaces, the
+    /// marks by `; `:
+    /// - `auto-parameters <in|out> <entity, - for the service's noun> <all|pk|nonpk> <required true|false> <excludes>`
+    /// - `implements <service> <required true|false|->`
+    /// - `auto-fields-entity <entity> <all|pk|nonpk> <field-type> <excludes>` and
+    ///   `auto-fields-service <service> <in|out|all> <field-type> <excludes>`
+    /// - `extends <location#form, or form of the same screen>`
+    /// - `transition <name>` (of the same screen) or `transition-path <screen path>`
+    /// - `call <service> <passes the request y|n> <field-maps from=to>`
+    ///
+    /// A list is comma separated, `-` when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub marks: String,
 }
 
 /// The origin of an artifact or reference the index makes rather than reads (an entity-auto service and its
 /// parameters, [`super::resolve::Resolver::derive`]).
 pub const ORIGIN_DERIVED: &str = "derived";
 
-/// The origin of a default subscreen's reference, made from the directory a screen is in rather than read from an
+/// The origin of a directory subscreen's reference, made from the directory a screen is in rather than read from an
 /// element ([`RefRow::ref_type`]).
 pub const ORIGIN_DIRECTORY: &str = "directory";
 
+/// The end of the id of a subscreens item a conf mounts (`screen-facade/screen/subscreens-item` of a `MoquiConf.xml`):
+/// `subscreen:<screen location>#<name>@conf`, in the pseudo file [`CONF_PATH`].
+pub const CONF_ITEM: &str = "@conf";
+
+/// The end of the id of a subscreens item a `moqui.screen.SubscreensItem` row mounts: `subscreen:<screen>#<name>@row`,
+/// or `...@row:<userGroupId>` for a row of a user group.
+pub const ROW_ITEM: &str = "@row";
+
+/// The pseudo file of the conf's screen mounts.
+pub const CONF_PATH: &str = "conf:screen-facade";
+
+/// The mark a `no-sub-path` subscreens item's summary (its location) ends with.
+pub const NO_SUB_PATH_MARK: &str = ", no-sub-path";
+
+/// How a transition's summary starts when it calls a service: `calls <service>` (its `service-call`).
+pub const CALLS_MARK: &str = "calls ";
+
+/// A part of a transition's summary: its `service-call` has an `in-map` of its own, so it takes none of the request's
+/// parameters.
+pub const OWN_IN_MAP_MARK: &str = "own in-map";
+
+/// A part of a transition's summary: `request to <service>`, a service of its actions it passes the request's
+/// parameters to (`in-map="true"` or `in-map="context"`).
+pub const REQUEST_MARK: &str = "request to ";
+
+/// The owner of the parameter id of a form field's binding into a transition named by a path
+/// (`parameter:screen-path:<screen location>#<path>@in.<field>`): the resolver names the service it reaches
+/// ([`super::resolve::Resolver::resolve_binding`]).
+pub const SCREEN_PATH_OWNER: &str = "screen-path:";
+
 /// The pseudo file of the derived artifacts.
 pub const DERIVED_PATH: &str = "derived:entity-auto";
+
+/// The origins of the artifacts and bindings the index expands from what an artifact declares
+/// ([`super::resolve::Resolver::expand`]): a service's parameters from its `auto-parameters` and `implements`, a form's
+/// fields from its `auto-fields-entity`, `auto-fields-service` and `extends`.
+pub const EXPANDED_ORIGINS: [&str; 5] = [
+    "auto-parameters",
+    "implements",
+    "auto-fields-entity",
+    "auto-fields-service",
+    "extends",
+];
+
+/// Whether `origin` is one of [`EXPANDED_ORIGINS`].
+#[must_use]
+pub fn is_expanded(origin: &str) -> bool {
+    EXPANDED_ORIGINS.contains(&origin)
+}
+
+/// `marks` as an artifact keeps them ([`ArtifactRow::marks`]).
+#[must_use]
+pub fn join_marks(marks: &[String]) -> String {
+    marks.join("; ")
+}
+
+/// An artifact's marks, one by one ([`ArtifactRow::marks`]).
+#[must_use]
+pub fn split_marks(marks: &str) -> Vec<&str> {
+    marks.split("; ").filter(|mark| !mark.is_empty()).collect()
+}
+
+/// A list for a mark: comma separated, `-` when empty.
+fn mark_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join(",")
+    }
+}
 
 /// What a reference names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
@@ -91,9 +175,10 @@ pub enum ToKind {
     TransitionAnchor,
     /// An in-parameter of the service in `scope` (a `field-map`'s `field-name`).
     Parameter,
-    /// A screen path written in the screen at `scope` (a `link`'s or a response's `url`, a form's `transition`):
-    /// `../Assignments`, `EditTask`, `Sub/Screen/trans`, `/apps/a/B`. It resolves to the screen or transition it
-    /// reaches ([`super::resolve::Resolver::screen_path`]).
+    /// A screen path written in the screen at `scope` (a `link`'s or a response's `url`, a form's `transition`, a
+    /// `subscreens` `default-item` or `conditional-default` `item`): `../Assignments`, `EditTask`, `Sub/Screen/trans`,
+    /// `/apps/a/B`, `//Commons/Party`. It resolves to the screen or transition it reaches
+    /// ([`super::resolve::Resolver::screen_path`]).
     ScreenPath,
 }
 
@@ -143,10 +228,12 @@ pub struct RefRow {
     pub to_scope: String,
     /// How it refers: the element that makes it (`entity-find`, `service-call`, `relationship`, `member-entity`,
     /// `subscreens-item`), `extend` for an extension's target, `anchor` for a named anchor of a base screen,
-    /// `implements`, `link`, `script` for a string in a script, `data` for a data file's records. A screen in a
-    /// directory beside a screen of the directory's name (`Foo/Bar.xml` and `Foo.xml`) is that screen's default
-    /// subscreen: a `subscreens-item` reference from the parent screen (`screen:<Foo.xml>`, its location in `to_scope`)
-    /// to the screen, read from the subscreen's file, with origin [`ORIGIN_DIRECTORY`].
+    /// `implements`, `link`, `script` for a string in a script, `data` for a data file's records, `default-item` and
+    /// `conditional-default` for a screen's default subscreen (its `subscreens@default-item`, a conf's
+    /// `default-subscreen`, a `SubscreensItem` row's `makeDefault`) and the conditional ones. A screen in a directory
+    /// beside a screen of the directory's name (`Foo/Bar.xml` and `Foo.xml`) is that screen's directory subscreen: a
+    /// `subscreens-item` reference from the parent screen (`screen:<Foo.xml>`, its location in `to_scope`) to the
+    /// screen, read from the subscreen's file, with origin [`ORIGIN_DIRECTORY`].
     pub ref_type: String,
     pub line: u32,
     pub column: u32,
@@ -184,6 +271,11 @@ pub struct BindingRow {
     /// The parameter id the value comes from, for a `parameter` source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// A form field's binding into a transition by its path: the id it is written with
+    /// (`parameter:screen-path:<screen>#<path>@in.<field>`, [`SCREEN_PATH_OWNER`]), which `to_id` is resolved from again
+    /// when the screens change ([`super::resolve::Resolver::resolve_binding`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_path: Option<String>,
     pub origin: String,
     pub origin_hash: String,
     pub line: u32,
@@ -341,6 +433,7 @@ impl Reader<'_> {
             summary,
             parent,
             origin: String::new(),
+            marks: String::new(),
         });
     }
 
@@ -371,6 +464,13 @@ impl Reader<'_> {
         });
     }
 
+    /// Set the marks of the artifact just made ([`ArtifactRow::marks`]).
+    fn mark_last(&mut self, marks: &[String]) {
+        if let Some(last) = self.index.artifacts.last_mut() {
+            last.marks = join_marks(marks);
+        }
+    }
+
     /// Set the operation of the reference just made.
     fn last_operation(&mut self, operation: &str) {
         if let Some(last) = self.index.refs.last_mut() {
@@ -392,6 +492,11 @@ impl Reader<'_> {
                     .unwrap_or_default();
                 let id = format!("screen:{location}");
                 self.artifact(id.clone(), "screen", &location, Some(root), title, None);
+                // a path may go on past it: the rest is extra path ([`super::resolve::Resolver::screen_path`])
+                if root.attribute_is("allow-extra-path", "true") {
+                    self.mark_last(&["allow-extra-path".to_string()]);
+                }
+                // a directory subscreen of the screen of its directory's name
                 if let Some(parent) = super::resolve::directory_parent(&location) {
                     let from = format!("screen:{parent}");
                     // no line: the file's own lines are its definitions
@@ -701,6 +806,7 @@ impl Reader<'_> {
                 let summary =
                     description(node).unwrap_or_else(|| node.attribute("type").unwrap_or_else(|| "inline".to_string()));
                 self.artifact(id.clone(), "service", &name, Some(node), summary, None);
+                self.mark_last(&service_marks(node));
                 Some(id)
             }
             (ArtifactKind::Service, "implements") => {
@@ -853,6 +959,20 @@ impl Reader<'_> {
                     summary.join(", "),
                     Some(parent_id),
                 );
+                // what it sets of a parameter of its name it merges into (an implemented service's, an auto one)
+                let given: Vec<String> = [
+                    ("type", node.attribute("type").is_some()),
+                    ("required", node.attribute("required").is_some()),
+                    (
+                        "default",
+                        node.attribute("default-value").is_some() || node.attribute("default").is_some(),
+                    ),
+                ]
+                .iter()
+                .filter(|(_, set)| *set)
+                .map(|(attribute, _)| (*attribute).to_string())
+                .collect();
+                self.mark_last(&[format!("given {}", mark_list(&given))]);
                 None
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "parameter" | "path-parameter")
@@ -893,11 +1013,7 @@ impl Reader<'_> {
                     .unwrap_or_else(|| "any".to_string())
                     .to_ascii_lowercase();
                 let id = format!("transition:{location}#{name}:{method}");
-                let summary = node
-                    .first_named("service-call")
-                    .and_then(|call| call.attribute("name"))
-                    .map(|service| format!("calls {service}"))
-                    .unwrap_or_default();
+                let summary = transition_summary(node);
                 self.artifact(
                     id.clone(),
                     "transition",
@@ -906,17 +1022,34 @@ impl Reader<'_> {
                     summary,
                     Some(self.screen_owner()),
                 );
+                self.mark_last(&call_marks(node));
                 Some(id)
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "form-single" | "form-list") => {
                 let name = node.attribute("name")?;
                 let id = format!("form:{location}#{name}");
+                let mut marks = form_marks(node);
                 // a screen-extend's form may post to a transition of the base screen: not read as one of its own
                 if self.info.kind == ArtifactKind::Screen {
                     if let Some(transition) = node.attribute("transition") {
-                        self.url_refs(node, &id, &transition, "form");
-                        self.form_bindings(node, &id, &transition);
+                        let same_screen = self.url_refs(node, &id, &transition, "form");
+                        self.form_bindings(node, &id, &transition, same_screen);
+                        let transition = transition.trim();
+                        if same_screen {
+                            marks.push(format!("transition {transition}"));
+                        } else if is_screen_path(transition) {
+                            let path = transition.split(['?', '#']).next().unwrap_or_default();
+                            marks.push(format!("transition-path {path}"));
+                        }
                     }
+                }
+                // the form it extends, an edge for the browser
+                if let Some((base, form)) = node
+                    .attribute("extends")
+                    .as_deref()
+                    .and_then(|extends| extended_form(extends, location))
+                {
+                    self.reference(&id, ToKind::Anchor, &form, &base, "extends", node.line(), node.column());
                 }
                 self.artifact(
                     id.clone(),
@@ -926,6 +1059,7 @@ impl Reader<'_> {
                     element.to_string(),
                     Some(self.screen_owner()),
                 );
+                self.mark_last(&marks);
                 Some(id)
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "field")
@@ -943,12 +1077,26 @@ impl Reader<'_> {
                     form_field_summary(node),
                     Some(from.to_string()),
                 );
+                // a field with no widget of its own (none, or an empty `default-field` that only sets a title) takes the
+                // widget of a field of its name it merges into, as Moqui merges a field's `default-field`
+                let widgets = node
+                    .child_iter()
+                    .filter(|child| matches!(child.name().as_str(), "default-field" | "conditional-field"))
+                    .any(|child| child.child_iter().next().is_some());
+                if !widgets {
+                    self.mark_last(&["no-widget".to_string()]);
+                } else if !is_filled(node) {
+                    self.mark_last(&["unfilled".to_string()]);
+                }
                 None
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "subscreens-item") => {
                 let name = node.attribute("name").filter(|name| !name.is_empty())?;
                 let id = format!("subscreen:{location}#{name}");
-                let summary = node.attribute("location").unwrap_or_default();
+                let mut summary = node.attribute("location").unwrap_or_default();
+                if node.attribute_is("no-sub-path", "true") {
+                    summary.push_str(NO_SUB_PATH_MARK);
+                }
                 self.artifact(
                     id.clone(),
                     "subscreen",
@@ -980,6 +1128,30 @@ impl Reader<'_> {
                 let summary = node.child_iter().next().map(|child| child.name()).unwrap_or_default();
                 self.artifact(id.clone(), "widget-template", &name, Some(node), summary, None);
                 Some(id)
+            }
+            // the default subscreen, and the conditional ones: edges from the screen to the item each names
+            (ArtifactKind::Screen, "subscreens" | "conditional-default") => {
+                let (attribute, ref_type) = if element == "subscreens" {
+                    ("default-item", "default-item")
+                } else {
+                    ("item", "conditional-default")
+                };
+                if let Some(item) = node
+                    .attribute(attribute)
+                    .filter(|item| !item.is_empty() && refs::is_literal(item))
+                {
+                    let from = format!("screen:{location}");
+                    self.reference(
+                        &from,
+                        ToKind::ScreenPath,
+                        &item,
+                        location,
+                        ref_type,
+                        node.line(),
+                        node.column(),
+                    );
+                }
+                None
             }
             (
                 ArtifactKind::Screen,
@@ -1083,13 +1255,17 @@ impl Reader<'_> {
     }
 
     /// The reference a screen URL written in this screen makes: a transition of this file by its name
-    /// ([`Self::transition_refs`]), else a screen path ([`ToKind::ScreenPath`]). None for an expression, a URL with a
-    /// scheme, or `.` (this screen).
-    fn url_refs(&mut self, node: &MNode, from: &str, url: &str, ref_type: &str) {
+    /// ([`Self::transition_refs`]) when no subscreens item of the file has that name (a subscreen comes first, as Moqui
+    /// walks a path), else a screen path ([`ToKind::ScreenPath`]). None for an expression, a URL with a scheme, or `.`
+    /// (this screen). Answers whether it is a transition of this file. A directory subscreen of the transition's name
+    /// is not seen here: the file alone does not say it is there.
+    fn url_refs(&mut self, node: &MNode, from: &str, url: &str, ref_type: &str) -> bool {
         let url = url.trim();
-        if is_plain_name(url) && !self.transitions_named(node, url).is_empty() {
+        if is_plain_name(url) && !self.has_item(node, url) && !self.transitions_named(node, url).is_empty() {
             self.transition_refs(node, from, url, ref_type);
-        } else if is_screen_path(url) {
+            return true;
+        }
+        if is_screen_path(url) {
             self.reference(
                 from,
                 ToKind::ScreenPath,
@@ -1100,37 +1276,76 @@ impl Reader<'_> {
                 node.column(),
             );
         }
+        false
     }
 
-    /// The `transition` and `transition-include` elements of this file named `name`.
-    fn transitions_named(&self, node: &MNode, name: &str) -> Vec<MNode> {
+    /// The root element of the file `node` is in.
+    fn root_of(node: &MNode) -> MNode {
         let mut root = node.clone();
         while let Some(parent) = root.parent() {
             root = parent;
         }
-        root.child_iter()
+        root
+    }
+
+    /// Whether this file's `subscreens` has an item named `name`.
+    fn has_item(&self, node: &MNode, name: &str) -> bool {
+        Self::root_of(node).named_iter("subscreens").any(|subscreens| {
+            subscreens
+                .named_iter("subscreens-item")
+                .any(|item| item.attribute_is("name", name))
+        })
+    }
+
+    /// The `transition` and `transition-include` elements of this file named `name`.
+    fn transitions_named(&self, node: &MNode, name: &str) -> Vec<MNode> {
+        Self::root_of(node)
+            .child_iter()
             .filter(|child| {
                 matches!(child.name().as_str(), "transition" | "transition-include") && child.attribute_is("name", name)
             })
             .collect()
     }
 
-    /// The bindings of a form that submits to the transition `transition` of this file: each field of the form flows
-    /// into the in-parameter of its name of each service the transition calls with the request's parameters (a
-    /// `service-call` with no `in-map`, or `in-map="true"`). A field the service does not take still has its binding,
-    /// to a parameter id no artifact has.
-    fn form_bindings(&mut self, form: &MNode, form_id: &str, transition: &str) {
-        let mut services: Vec<String> = Vec::new();
-        for node in self.transitions_named(form, transition) {
-            for call in node.child_iter().filter(|child| child.name() == "service-call") {
-                let passes = call.attribute("in-map").is_none_or(|map| map.trim() == "true");
-                if let Some(name) = call.attribute("name").filter(|name| passes && refs::is_literal(name)) {
-                    if !services.contains(&name) {
-                        services.push(name);
-                    }
-                }
-            }
+    /// The bindings of a form that submits to the transition `transition`: each field the user fills (not one whose
+    /// only widgets are a `header-field` or a `submit`) has one binding by the path the form posts to,
+    /// `parameter:screen-path:<this screen>#<path>@in.<field>`, which the resolver makes a binding of for each service
+    /// the transition reached passes the request to or maps the field into with a `field-map`
+    /// ([`super::resolve::Resolver::path_bindings`]). A transition of this file (`same_screen`) is a path of its name: a
+    /// subscreen of that name, which the file alone does not show (a directory subscreen, a conf mount), comes before
+    /// it, as Moqui walks the path, and the screens changing walks it again; a field none of its calls takes
+    /// ([`request_calls`]) has none, as a subscreen of the name would take it no more.
+    fn form_bindings(&mut self, form: &MNode, form_id: &str, transition: &str, same_screen: bool) {
+        let transition = transition.trim();
+        if !same_screen && !is_screen_path(transition) {
+            return;
         }
+        // the transition a form posts to: its `post` one, else the one of any method, else the first, as the resolver
+        // walks its path (`Method::Post`)
+        let calls: Vec<RequestCall> = if same_screen {
+            let named = self.transitions_named(form, transition);
+            let method_of = |node: &MNode| node.attribute("method").map(|method| method.to_ascii_lowercase());
+            let chosen = named
+                .iter()
+                .find(|node| method_of(node).as_deref() == Some("post"))
+                .or_else(|| {
+                    named
+                        .iter()
+                        .find(|node| matches!(method_of(node).as_deref(), None | Some("any")))
+                })
+                .or_else(|| named.first());
+            chosen.map(request_calls).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let taken = |name: &str| {
+            !same_screen
+                || calls
+                    .iter()
+                    .any(|call| call.passes || call.maps.iter().any(|(from, _)| from == name))
+        };
+        let path = transition.split(['?', '#']).next().unwrap_or_default();
+        let owner = format!("{SCREEN_PATH_OWNER}{}#{path}", self.info.location);
         let Some(form_key) = form_id.strip_prefix("form:") else {
             return;
         };
@@ -1138,19 +1353,21 @@ impl Reader<'_> {
             let Some(name) = field.attribute("name").filter(|name| !name.is_empty()) else {
                 continue;
             };
-            for service in &services {
-                self.index.bindings.push(BindingRow {
-                    from: form_id.to_string(),
-                    to_id: parameter_id(&format!("service:{service}"), "in", &name),
-                    direction: "in".to_string(),
-                    source_kind: "form-field".to_string(),
-                    source_text: name.clone(),
-                    source_id: Some(format!("form-field:{form_key}@{name}")),
-                    origin: self.origin.to_string(),
-                    origin_hash: self.hash.clone(),
-                    line: field.line(),
-                });
+            if !is_filled(&field) || !taken(&name) {
+                continue;
             }
+            self.index.bindings.push(BindingRow {
+                from: form_id.to_string(),
+                to_id: parameter_id(&owner, "in", &name),
+                direction: "in".to_string(),
+                source_kind: "form-field".to_string(),
+                source_text: name.clone(),
+                source_id: Some(format!("form-field:{form_key}@{name}")),
+                to_path: None,
+                origin: self.origin.to_string(),
+                origin_hash: self.hash.clone(),
+                line: field.line(),
+            });
         }
     }
 
@@ -1379,6 +1596,7 @@ impl Reader<'_> {
             source_kind: source_kind.to_string(),
             source_text: source_text.trim().to_string(),
             source_id,
+            to_path: None,
             origin: self.origin.to_string(),
             origin_hash: self.hash.clone(),
             line: node.line(),
@@ -1725,13 +1943,265 @@ fn is_plain_name(url: &str) -> bool {
 }
 
 /// A URL that is a screen path ([`ToKind::ScreenPath`]): no expression, no scheme (`https:`, `mailto:`), not `.`
-/// alone (the screen it is written in).
+/// alone (the screen it is written in), not only a query or fragment (`?a=1`, `#top`). A sparse path (`//Commons/X`)
+/// is one.
 fn is_screen_path(url: &str) -> bool {
     !url.is_empty()
         && url != "."
+        && !url.starts_with(['#', '?'])
         && refs::is_literal(url)
-        && !url.starts_with("//")
         && !url.split(['/', '?', '#']).next().unwrap_or_default().contains(':')
+}
+
+/// A service a transition calls, with whether it is passed the request's parameters and the `field-map`s that map a
+/// request parameter by its name (`from`) to one of the service's (`field-name`).
+struct RequestCall {
+    service: String,
+    passes: bool,
+    maps: Vec<(String, String)>,
+}
+
+/// The services a transition calls that the request's parameters can reach: its `service-call` (passed them with no
+/// `in-map`, `in-map="true"` or `in-map="context"`), and each `service-call` of its `actions` with `in-map="true"` or
+/// `in-map="context"`; each with its `field-map`s from a plain name. A call with an `in-map` of its own is kept for its
+/// field-maps.
+fn request_calls(transition: &MNode) -> Vec<RequestCall> {
+    let call_of = |call: &MNode, direct: bool| -> Option<RequestCall> {
+        let service = call
+            .attribute("name")
+            .filter(|name| refs::is_literal(name) && !name.is_empty())?;
+        let passes = match call.attribute("in-map").as_deref().map(str::trim) {
+            None => direct,
+            Some("true" | "context") => true,
+            Some(_) => false,
+        };
+        let maps = call
+            .named_iter("field-map")
+            .filter_map(|map| {
+                let parameter = map.attribute("field-name").filter(|name| !name.is_empty())?;
+                let from = map.attribute("from").unwrap_or_else(|| parameter.clone());
+                let from = from.trim().to_string();
+                is_identifier(&from).then_some((from, parameter))
+            })
+            .collect();
+        Some(RequestCall { service, passes, maps })
+    };
+    let mut calls: Vec<RequestCall> = transition
+        .named_iter("service-call")
+        .filter_map(|call| call_of(&call, true))
+        .collect();
+    for actions in transition.named_iter("actions") {
+        let mut stack: Vec<MNode> = actions.child_iter().collect();
+        while let Some(node) = stack.pop() {
+            if node.name() == "service-call" {
+                calls.extend(call_of(&node, false).filter(|call| call.passes));
+            } else {
+                stack.extend(node.child_iter());
+            }
+        }
+    }
+    calls
+}
+
+/// A transition's summary: `calls <service>` for its `service-call`, `own in-map` when that call takes none of the
+/// request's parameters, and `request to <service>` for each service of its actions the request reaches
+/// ([`request_calls`], read back by [`super::resolve::request_services`]).
+fn transition_summary(transition: &MNode) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let direct = transition
+        .first_named("service-call")
+        .and_then(|call| call.attribute("name"));
+    let calls = request_calls(transition);
+    let mut direct_passes = false;
+    // a service named by an expression is none the summary can name
+    if let Some(service) = direct.filter(|service| refs::is_literal(service) && !service.is_empty()) {
+        parts.push(format!("{CALLS_MARK}{service}"));
+        direct_passes = calls.first().is_some_and(|call| call.service == service && call.passes);
+        if !direct_passes {
+            parts.push(OWN_IN_MAP_MARK.to_string());
+        }
+    }
+    for (at, call) in calls.iter().enumerate() {
+        if call.passes && !(at == 0 && direct_passes) {
+            parts.push(format!("{REQUEST_MARK}{}", call.service));
+        }
+    }
+    parts.join(", ")
+}
+
+/// The marks of a service's `auto-parameters` (in its in-parameters and out-parameters) and `implements`
+/// ([`ArtifactRow::marks`]). One whose entity or service is an expression is left out.
+fn service_marks(service: &MNode) -> Vec<String> {
+    let mut marks = Vec::new();
+    for (list, direction) in [("in-parameters", "in"), ("out-parameters", "out")] {
+        let Some(parameters) = service.first_named(list) else {
+            continue;
+        };
+        for auto in parameters.named_iter("auto-parameters") {
+            let entity = auto.attribute("entity-name").filter(|name| !name.trim().is_empty());
+            if entity.as_deref().is_some_and(|name| !refs::is_literal(name)) {
+                continue;
+            }
+            let include = match auto.attribute("include").as_deref() {
+                Some("pk") => "pk",
+                Some("nonpk") => "nonpk",
+                _ => "all",
+            };
+            let excludes: Vec<String> = auto
+                .named_iter("exclude")
+                .filter_map(|exclude| exclude.attribute("field-name"))
+                .collect();
+            marks.push(format!(
+                "auto-parameters {direction} {} {include} {} {}",
+                entity.as_deref().unwrap_or("-"),
+                auto.attribute_is("required", "true"),
+                mark_list(&excludes)
+            ));
+        }
+    }
+    for implements in service.named_iter("implements") {
+        let Some(name) = implements.attribute("service").filter(|name| refs::is_literal(name)) else {
+            continue;
+        };
+        let required = match implements.attribute("required").as_deref() {
+            Some(value) if value.eq_ignore_ascii_case("true") => "true",
+            Some(value) if value.eq_ignore_ascii_case("false") => "false",
+            _ => "-",
+        };
+        marks.push(format!("implements {name} {required}"));
+    }
+    marks
+}
+
+/// The marks of a form's `auto-fields-entity`, `auto-fields-service` and `extends` ([`ArtifactRow::marks`]); its transition's
+/// is added by the caller. A `DbForm` it extends, and an entity or service named by an expression, are left out.
+fn form_marks(form: &MNode) -> Vec<String> {
+    let mut marks = Vec::new();
+    for child in form.child_iter() {
+        let (element, name_attribute, exclude_attribute, include, field_type) = match child.name().as_str() {
+            "auto-fields-entity" => ("auto-fields-entity", "entity-name", "field-name", "all", "find-display"),
+            "auto-fields-service" => ("auto-fields-service", "service-name", "parameter-name", "in", "edit"),
+            _ => continue,
+        };
+        let Some(name) = child.attribute(name_attribute).filter(|name| refs::is_literal(name)) else {
+            continue;
+        };
+        let include = child
+            .attribute("include")
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| include.to_string());
+        let field_type = child
+            .attribute("field-type")
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| field_type.to_string());
+        let excludes: Vec<String> = child
+            .named_iter("exclude")
+            .filter_map(|exclude| exclude.attribute(exclude_attribute))
+            .collect();
+        marks.push(format!(
+            "{element} {} {} {} {}",
+            name.trim(),
+            include.trim(),
+            field_type.trim(),
+            mark_list(&excludes)
+        ));
+    }
+    if let Some(extends) = form.attribute("extends").filter(|extends| refs::is_literal(extends)) {
+        let extends = extends.trim();
+        if !extends.starts_with("moqui.screen.form.DbForm#") && !extends.starts_with("DbForm#") {
+            marks.push(format!("extends {extends}"));
+        }
+    }
+    let given = form_given(form);
+    if !given.is_empty() {
+        marks.push(format!("given {}", mark_list(&given)));
+    }
+    if form.attribute_is("pass-through-parameters", "true") {
+        marks.push("pass-through".to_string());
+    }
+    marks
+}
+
+/// The parameters a form posts that are no field of it: the ids of the rows selected, for a form in a form-list's
+/// `row-selection` (its `parameter`, else its `id-field`), and its `hidden-parameters` (each `parameter` and each key of
+/// a `parameter-map`).
+fn form_given(form: &MNode) -> Vec<String> {
+    static MAP_KEY: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"[\[{,]\s*([A-Za-z_][A-Za-z0-9_]*)\s*:").expect("a valid parameter-map key pattern")
+    });
+    let mut given: Vec<String> = Vec::new();
+    let mut up = form.parent();
+    while let Some(ancestor) = up {
+        if ancestor.has_name("row-selection") {
+            let name = ancestor
+                .attribute("parameter")
+                .or_else(|| ancestor.attribute("id-field"))
+                .filter(|name| !name.trim().is_empty());
+            given.extend(name.map(|name| name.trim().to_string()));
+            break;
+        }
+        if matches!(ancestor.name().as_str(), "form-list" | "screen" | "widgets") {
+            break;
+        }
+        up = ancestor.parent();
+    }
+    for hidden in form.named_iter("hidden-parameters") {
+        given.extend(
+            hidden
+                .named_iter("parameter")
+                .filter_map(|parameter| parameter.attribute("name")),
+        );
+        if let Some(map) = hidden.attribute("parameter-map") {
+            given.extend(MAP_KEY.captures_iter(&map).map(|key| key[1].to_string()));
+        }
+    }
+    given.retain(|name| !name.contains([' ', ',', ';']));
+    given.sort();
+    given.dedup();
+    given
+}
+
+/// The screen location and form name a form's `extends` names, `location#form` or a form of the screen at `location`;
+/// none for a `DbForm` or an expression.
+#[must_use]
+pub fn extended_form(extends: &str, location: &str) -> Option<(String, String)> {
+    let extends = extends.trim();
+    if !refs::is_literal(extends) || extends.starts_with("moqui.screen.form.DbForm#") || extends.starts_with("DbForm#")
+    {
+        return None;
+    }
+    match extends.split_once('#') {
+        Some((base, form)) if !form.is_empty() => Some((base.to_string(), form.to_string())),
+        Some(_) => None,
+        None => Some((location.to_string(), extends.to_string())),
+    }
+}
+
+/// The marks of the services a transition passes the request to, or maps request parameters into, each with whether
+/// it takes the request and its `field-map`s ([`request_calls`], [`MARKS_OPEN`]).
+fn call_marks(transition: &MNode) -> Vec<String> {
+    request_calls(transition)
+        .into_iter()
+        .map(|call| {
+            let maps: Vec<String> = call.maps.iter().map(|(from, to)| format!("{from}={to}")).collect();
+            format!(
+                "call {} {} {}",
+                call.service,
+                if call.passes { "y" } else { "n" },
+                mark_list(&maps)
+            )
+        })
+        .collect()
+}
+
+/// Whether a form field is one the user fills: a widget in its `default-field` or a `conditional-field` that is not
+/// a `submit`. One with only a `header-field`, or only submit buttons, is not.
+fn is_filled(field: &MNode) -> bool {
+    field
+        .child_iter()
+        .filter(|child| matches!(child.name().as_str(), "default-field" | "conditional-field"))
+        .flat_map(|child| child.child_iter().collect::<Vec<_>>())
+        .any(|widget| widget.name() != "submit")
 }
 
 /// The first sentence of a `description` child, at most 160 characters.

@@ -19,6 +19,11 @@ pub(crate) mod rust_services;
 #[cfg(test)]
 mod anonymous_tests;
 pub(crate) mod backup;
+#[cfg(feature = "backup-s3")]
+mod backup_store;
+#[cfg(not(feature = "backup-s3"))]
+#[path = "backup_store_off.rs"]
+mod backup_store;
 pub mod call;
 mod call_media;
 mod chat;
@@ -38,7 +43,7 @@ mod edge;
 mod edge_claims;
 mod external_agent;
 mod fcm;
-pub use eca_rules::{reload as reload_eca_rules, EcaRuleCounts};
+pub use eca_rules::{recheck as recheck_eca_rules, reload as reload_eca_rules, EcaRuleCounts};
 mod email_eca;
 #[cfg(test)]
 mod fence_tests;
@@ -50,9 +55,12 @@ pub mod http_fixtures;
 pub mod info;
 #[cfg(test)]
 mod inline_tests;
+mod job_lease;
 mod jobs;
 pub mod mail_capture;
+mod outbox;
 pub mod pool;
+mod protocol_admin;
 mod recent_auth;
 mod remote;
 mod request_pool;
@@ -63,6 +71,7 @@ mod schedule;
 mod script_ports_tests;
 mod seca;
 mod security_checks;
+mod sign_in_policy;
 mod sip_credential;
 mod speech;
 pub(crate) mod semaphore;
@@ -104,7 +113,9 @@ pub use jobs::{current_job_name, current_job_run_id, in_job_run, run_job_now, Pa
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;
-pub use request_pool::{caps, check_serve_caps, spare_connections, transfer_readers, transfer_workers, RequestPool};
+pub use request_pool::{
+    caps, check_serve_caps, spare_connections, transfer_readers, transfer_workers, RequestPool, RequestPoolStatus,
+};
 #[cfg(test)]
 pub(crate) use rest::install;
 #[cfg(any(test, feature = "test-support"))]

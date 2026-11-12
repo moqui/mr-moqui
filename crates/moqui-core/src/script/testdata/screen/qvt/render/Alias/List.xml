@@ -14,6 +14,7 @@
     <transition name="gone"><default-response type="none"/></transition>
     <actions>
         <set field="rowList" from="[{id: 'I1'}]"/>
+        <set field="fixUrl" value="/fix/I1"/>
         <script>missingPath = sri.buildUrl('NoSuch').path</script>
     </actions>
     <widgets>
@@ -41,6 +42,11 @@
             <field name="post">
                 <default-field>
                     <link text="Post" url="detail" link-type="hidden-form-link" expand-transition-url="false"><parameter name="id"/></link>
+                </default-field>
+            </field>
+            <field name="fix">
+                <default-field>
+                    <link text="Fix" url="${fixUrl}" url-type="plain" link-type="anchor"/>
                 </default-field>
             </field>
         </form-list>

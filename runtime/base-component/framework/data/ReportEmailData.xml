@@ -3,4 +3,9 @@
     <moqui.basic.email.EmailTemplate emailTemplateId="DASHBOARD_REPORT" description="Dashboard report with inline PNG"
         emailServerId="SYSTEM" emailTypeEnumId="EMT_SCREEN_RENDER" bodyScreenLocation="component://framework/screen/DashboardReportEmail.xml"
         webappName="webroot" fromAddress="" fromName="" subject="${title}" sendPartial="Y"/>
+    <!-- a business alert told to a recipient's own account address, the engine's default where an alert audience told by
+        email names no template: the state of each series and a link to the rule -->
+    <moqui.basic.email.EmailTemplate emailTemplateId="REPORT_ALERT" description="Business alert"
+        emailServerId="SYSTEM" emailTypeEnumId="EMT_SCREEN_RENDER" bodyScreenLocation="component://framework/screen/ReportAlertEmail.xml"
+        webappName="webroot" fromAddress="" fromName="" subject="Alert: ${title}" sendPartial="Y"/>
 </entity-facade-xml>

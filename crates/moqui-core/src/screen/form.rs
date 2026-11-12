@@ -355,9 +355,12 @@ pub fn assemble(
     if let Some(found) = def.generated.form(name) {
         return Ok(found);
     }
-    let node = assemble_node(facade, factory, def, name, 0, false, None)?;
-    super::scan::check_form(&node, &def.location);
-    let instance = Arc::new(FormInstance::of(def, &node)?);
+    // the services its fields came from are kept, so a reload of one makes the form again (HL-015)
+    let instance = def.generated.recorded(|| -> Result<Arc<FormInstance>, Error> {
+        let node = assemble_node(facade, factory, def, name, 0, false, None)?;
+        super::scan::check_form(&node, &def.location);
+        Ok(Arc::new(FormInstance::of(def, &node)?))
+    })?;
     if !extends_db_form(def, name) {
         def.generated.put_form(name, Arc::clone(&instance));
     }

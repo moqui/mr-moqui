@@ -18,22 +18,7 @@
 //! listener or integration that was configured did not start.
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::startup::{Entry, Section, State};
-
-/// The listeners in the order the report shows them; one not named here comes after them.
-const LISTENER_ORDER: [&str; 11] = [
-    "HTTP",
-    "HTTPS",
-    "Cluster",
-    "gRPC",
-    "SSH",
-    "SMTP",
-    "Call media",
-    "TURN",
-    "SIP",
-    "XMPP",
-    "Edge tunnels",
-];
+use moqui_core::startup::{Entry, Ready, Section, State, LISTENER_ORDER};
 
 /// What the report shows besides the entries.
 pub(crate) struct Header {
@@ -56,7 +41,14 @@ pub(crate) fn log(factory: &ExecutionContextFactory, routes: &str, listeners: bo
         purpose: property("instance_purpose"),
         role: property("node_role"),
     };
-    let entries: Vec<Entry> = moqui_core::startup::report(factory)
+    let report = moqui_core::startup::report(factory);
+    // scripts read the same report (ec.factory.getStartupReport(), plans/archive/Tools-Fancy.md B1)
+    report.record_ready(Ready {
+        seconds: header.seconds,
+        routes: routes.to_string(),
+        listeners,
+    });
+    let entries: Vec<Entry> = report
         .entries()
         .into_iter()
         .filter(|entry| listeners || entry.section != Section::Listener)
@@ -202,6 +194,22 @@ fn record_integrations(factory: &ExecutionContextFactory) {
     record_calls(&report);
 }
 
+/// The model the merged conf binds Assist to, and that model's name, its properties expanded: (`claude-haiku`,
+/// `claude-haiku-5-5`). A binding an administrator saved (`LlmFeatureBinding`) is not read here.
+fn assist_model(conf_text: &str) -> Option<(String, String)> {
+    let expand = |raw: String| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string();
+    let conf = moqui_lib::node::MNode::parse_text("conf", conf_text).ok()?;
+    let facade = conf.first_named("llm-facade")?;
+    let id = expand(facade.first_named_attrs("bind", &[("feature", "assist")])?.attribute("model")?);
+    let name = facade
+        .named_iter("model")
+        .find(|model| model.attribute("id").map(expand).as_deref() == Some(id.as_str()))
+        .and_then(|model| model.attribute("name"))
+        .map(expand)
+        .unwrap_or_default();
+    Some((id, name))
+}
+
 /// The LLM facade and the agent protocols on it: on by their `llm-facade` settings.
 fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup::StartupReport) {
     let names = ["LLM", "MCP server", "A2A server", "LLM gateway"];
@@ -214,13 +222,16 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
     let setting = |path: &str, name: &str| factory.conf_setting(path, name);
     let facade = setting("llm-facade", "enabled") != "false";
     let model = moqui_lib::env::get_prop_or_env("llm_openai_model").trim().to_string();
+    let assist = assist_model(&factory.conf_text()).filter(|(id, _)| id != "default");
     report.record_default(
         Section::Integration,
         "LLM",
-        match (facade, model.is_empty()) {
-            (false, _) => State::off("llm-facade enabled is false"),
-            (true, true) => State::on("no default model (llm_openai_model is not set)"),
-            (true, false) => State::on(format!("default model {model}")),
+        match (facade, assist, model.is_empty()) {
+            (false, _, _) => State::off("llm-facade enabled is false"),
+            (true, Some((id, name)), _) if name.is_empty() => State::on(format!("Assist on {id}")),
+            (true, Some((id, name)), _) => State::on(format!("Assist on {id} ({name})")),
+            (true, None, true) => State::on("no default model (llm_openai_model is not set)"),
+            (true, None, false) => State::on(format!("default model {model}")),
         },
     );
     for (name, path, attribute, property) in [

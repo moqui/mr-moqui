@@ -1018,6 +1018,7 @@ fn menu_item(value: &serde_json::Value) -> Option<MenuItem> {
         url,
         children,
         disabled: disable_link(value),
+        group: json_field(value, "group"),
     })
 }
 
@@ -1033,6 +1034,7 @@ fn menu_child(value: &serde_json::Value) -> Option<MenuItem> {
             url,
             children: Vec::new(),
             disabled: disable_link(value),
+            group: json_field(value, "group"),
         })
     }
 }
@@ -1093,8 +1095,7 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
                     title.clone()
                 },
                 url: path,
-                children: Vec::new(),
-                disabled: false,
+                ..MenuItem::default()
             });
         }
         let providers = app.get("providers");

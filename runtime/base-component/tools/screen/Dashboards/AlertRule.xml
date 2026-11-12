@@ -1,409 +1,640 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- AlertRule (docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/archive/Admin-Screens-Down.md, Track
+    I; Tools' editor merged with BOSS Insights' AlertDetail): one alert rule, for anyone who reads it (another's unshared
+    rule or none is "not available"); its owner changes it. AlertBasis is the basis every rule has: its name, the
+    reading (the query, the measure, the reduction), the condition and its timing. Then whom it tells, by its kind:
+    - a business rule (one that names an audience or reads a dataset whose rows depend on the viewer; the engine says
+      which): AlertAudience, the owner alone or people and groups with each recipient's result from the engine's check
+      (may be told, or the reason in words; never the other person's grants), in the app and at the account's address,
+      and the group the rule is shared with; AlertDeliveryStatus, each recipient's last outcome for the owner, the
+      viewer's own otherwise, with a safe reason and no value;
+    - an operational rule: its contact points (a notification topic, an email address, a webhook).
+    Either kind has its one-off silences, its mute timings and the shared items it names, where rules have them.
+    OwnAlertState is the state of each series as the viewer may read it (get#AlertState); No data and Error are not
+    Normal. The primary action is Activate while the rule is paused, which runs the reading as the owner and has the
+    engine check every recipient; Copy for a rule that is not the viewer's. With no rule named the same form starts
+    one: over a panel (a dashboard and a panel, from the panel's New alert rule) or from nothing. Every read and write
+    is through template/ReportAlerts.js, which reads no entity.
+    Another app shows the screen under its own root, included in a screen of its own with the transitions it takes in
+    (BOSS Insights › Business alerts › AlertDetail takes recipientChoices, storeAlert, storeAudience, pauseAlert,
+    testAlert, copyAlert and deleteAlert; the contact point, silence, mute timing and shared item transitions and
+    evaluate are not on its route). Its policy (template/ReportMount.js) is what the transitions here read, never a
+    request: a rule is set only where features.alert says so; where the mount tells every rule to an audience
+    (alertAudience) a rule watches a panel's saved query, never one typed, each save writes the audience's topic, email
+    template and link from the policy and drops any contact point, and only business rules open here; the people an
+    audience may name are the holders of the mount's permission (find#ReportRecipients) and its size is the mount's
+    recipient cap. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alert rule" default-menu-include="false">
-    <parameter name="definitionId"/><parameter name="dashboardId"/><parameter name="panelId"/>
-    <transition name="save" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            const previous=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition:null
-            const body=previous?previous.body:{}
-            body.query=JSON.parse(queryJson || '{}')
-            if (!body.query || typeof body.query!=='object' || Array.isArray(body.query)) throw new Error('Query must be a JSON object')
-            for (const value of [threshold || 0,minimum || 0,maximum || 0,pendingSeconds || 0,keepFiringSeconds || 0,intervalSeconds || 60]) if (!Number.isFinite(Number(value))) throw new Error('Thresholds and timing values must be finite numbers')
-            if (['within','outside'].includes(conditionType) && Number(minimum)>Number(maximum)) throw new Error('Range maximum must be at least its minimum')
-            if (recoveryThreshold!=='' && recoveryThreshold!=null && !Number.isFinite(Number(recoveryThreshold))) throw new Error('Recovery threshold must be a number')
-            body.field=valueField || null;body.reduce=reduce || 'last'
-            body.condition={type:conditionType || 'above',threshold:Number(threshold || 0),min:Number(minimum || 0),max:Number(maximum || 0)}
-            if (recoveryThreshold !== '' && recoveryThreshold != null) body.condition.recoveryThreshold=Number(recoveryThreshold)
-            body.pendingSeconds=Math.max(0,Number(pendingSeconds || 0));body.keepFiringSeconds=Math.max(0,Number(keepFiringSeconds || 0));body.intervalSeconds=Math.max(60,Number(intervalSeconds || 60))
-            body.paused=paused==='Y';if (labelFields) body.labelFields=String(labelFields).split(',').map(value=>value.trim()).filter(Boolean);else delete body.labelFields;body.labels=JSON.parse(labelsJson || '{}');body.dashboardId=dashboardId || body.dashboardId;body.panelId=panelId || body.panelId
-            const saved=ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition:{id:definitionId || ruleId,type:'alert',title:ruleTitle,body,version:previous?previous.version:undefined},note:note || 'Updated alert rule'}).call().definition
-            definitionId=saved.id
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <parameter name="definitionId"/>
+    <parameter name="dashboardId"/>
+    <parameter name="panelId"/>
+    <parameter name="queryIndex"/>
+
+    <transition name="recipientChoices" read-only="true">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/ReportAlerts.js').recipientChoices({term:term, selected:selected}))</script></actions>
+        <default-response type="none"/>
     </transition>
-    <transition name="addContact" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            const contact={id:contactId || 'contact-'+Date.now(),type:contactType,topic:topic || 'ReportAlert',userId:contactUserId || undefined,userGroupId:contactGroupId || undefined,
-                emailTemplateId:emailTemplateId || undefined,toAddresses:toAddresses || undefined,url:webhookUrl || undefined,
-                groupBy:String(groupBy || '').split(',').map(value=>value.trim()).filter(Boolean),groupWaitSeconds:Math.max(0,Number(groupWaitSeconds || 30)),repeatSeconds:Math.max(60,Number(repeatSeconds || 14400)),matchers:JSON.parse(matchersJson || '{}')}
-            definition.body.contactPoints=[...(definition.body.contactPoints || []),contact]
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added contact point'}).call()
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <transition name="storeAlert" method="post">
+        <actions>
+            <set field="storedId" from="ec.resource.script('component://tools/template/ReportAlerts.js').store({definitionId:definitionId, dashboardId:dashboardId,
+                    panelId:panelId, queryIndex:queryIndex, title:title, ruleId:ruleId, queryJson:queryJson, valueField:valueField, reduce:reduce,
+                    window:window, conditionType:conditionType, threshold:threshold, recoveryThreshold:recoveryThreshold, minimum:minimum,
+                    maximum:maximum, intervalSeconds:intervalSeconds, pendingSeconds:pendingSeconds, keepFiringSeconds:keepFiringSeconds,
+                    paused:paused, labelFields:labelFields, labelsJson:labelsJson, note:note, expectedVersion:expectedVersion})"/>
+        </actions>
+        <!-- the saved rule alone: a new one's panel is in the rule now -->
+        <default-response url="." parameter-map="{definitionId:storedId, dashboardId:'', panelId:'', queryIndex:''}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId, dashboardId:dashboardId, panelId:panelId, queryIndex:queryIndex}"/>
     </transition>
-    <transition name="addSilence" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            if (!/(Z|[+-]\d\d:\d\d)$/.test(String(silenceFrom)) || !/(Z|[+-]\d\d:\d\d)$/.test(String(silenceThru))) throw new Error('Use ISO times including Z or an explicit UTC offset')
-            const from=new Date(silenceFrom),thru=new Date(silenceThru)
-            if (!Number.isFinite(from.getTime()) || !(thru.getTime()>from.getTime())) throw new Error('Silence must end after it starts')
-            definition.body.silences=[...(definition.body.silences || []),{from:from.toISOString(),thru:thru.toISOString(),comment:silenceComment || '',matchers:JSON.parse(silenceMatchers || '{}')}]
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added silence'}).call()
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <transition name="storeAudience" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').storeAudience({definitionId:definitionId, audienceKind:audienceKind,
+            recipientUserIds:recipientUserIds, recipientGroupIds:recipientGroupIds, emailChannel:emailChannel, userGroupId:userGroupId,
+            expectedVersion:expectedVersion})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
     </transition>
-    <transition name="addMute" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(muteStart)) || !/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(String(muteEnd))) throw new Error('Use HH:mm times')
-            const days=(Array.isArray(weekdays)?weekdays:String(weekdays || '').split(',')).map(Number)
-            if (!days.length || days.some(day=>!Number.isInteger(day) || day<0 || day>6)) throw new Error('Choose weekdays')
-            definition.body.muteTimings=[...(definition.body.muteTimings || []),{name:muteName || '',weekdays:days,start:muteStart,end:muteEnd}]
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added mute timing'}).call()
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <transition name="pauseAlert" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').pause({definitionIds:definitionId, paused:paused})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
     </transition>
-    <transition name="removeItem" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            if (!['contactPoints','silences','muteTimings'].includes(collection)) throw new Error('Unknown rule collection')
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            const list=definition.body[collection] || [],index=Number(itemIndex)
-            if (!Number.isInteger(index) || index<0 || index>=list.length) throw new Error('This item no longer exists')
-            list.splice(index,1);definition.body[collection]=list
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Removed '+collection+' item'}).call()
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <transition name="testAlert" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').test({definitionId:definitionId})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
     </transition>
-    <transition name="addRef" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            const keys={contactPoint:'contactPointRefs',silence:'silenceRefs',muteTiming:'muteTimingRefs'}
-            const shared=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:sharedRef}).call().definition
-            const key=keys[shared.type]
-            if (!key) throw new Error('Choose a shared contact point, silence or mute timing')
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            const refs=definition.body[key] || []
-            if (!refs.includes(shared.id)) definition.body[key]=[...refs,shared.id]
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added shared '+shared.type+' '+shared.id}).call()
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <transition name="copyAlert" method="post">
+        <actions><set field="copiedId" from="ec.resource.script('component://tools/template/ReportAlerts.js').copy({definitionId:sourceDefinitionId})"/></actions>
+        <default-response url="." parameter-map="{definitionId:copiedId}"/>
+        <error-response url="." parameter-map="{definitionId:sourceDefinitionId}"/>
     </transition>
-    <transition name="removeRef" method="post" authz-action="update">
-        <actions><script><![CDATA[
-            if (!['contactPointRefs','silenceRefs','muteTimingRefs'].includes(refKey)) throw new Error('Unknown shared reference list')
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            definition.body[refKey]=(definition.body[refKey] || []).filter(id=>id!==refId)
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Removed shared reference '+refId}).call()
-        ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
+    <transition name="deleteAlert" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').remove({definitionId:definitionId})</script></actions>
+        <default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alerts')}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
     </transition>
-    <transition name="shared"><default-response url="//apps/dashboards/AlertShared"/></transition>
-    <actions><script><![CDATA[
-        ruleDefinition=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition:{id:'',type:'alert',title:'',body:{query:{datasetId:'otel_metrics',from:'now-5m',thru:'now',metricGranularity:'auto',aggregations:[]},condition:{type:'above',threshold:0}}}
-        if (!definitionId && dashboardId && panelId) {
-            const dashboard=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:dashboardId}).call().definition
-            let panel=(dashboard.body.panels || {})[panelId]
-            if (!panel) throw new Error('Panel not found')
-            if (panel.panelRef) panel=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:panel.panelRef}).call().definition.body
-            ruleDefinition.title=panel.title || 'Panel alert';ruleDefinition.body.query={queries:panel.queries || [],transformations:panel.transformations || [],from:'now-5m',thru:'now'}
-        }
-        const body=ruleDefinition.body
-        ruleId=ruleDefinition.id;ruleTitle=ruleDefinition.title;queryJson=JSON.stringify(body.query,null,2);valueField=body.field || '';reduce=body.reduce || 'last'
-        // These JSON numbers are edited with Number(), so use canonical text without locale grouping or display rounding.
-        conditionType=(body.condition || {}).type || 'above';threshold=String((body.condition || {}).threshold ?? 0);minimum=String((body.condition || {}).min ?? 0);maximum=String((body.condition || {}).max ?? 0)
-        recoveryThreshold=String((body.condition || {}).recoveryThreshold ?? '');pendingSeconds=String(body.pendingSeconds || 0);keepFiringSeconds=String(body.keepFiringSeconds || 0);intervalSeconds=String(body.intervalSeconds || 60)
-        paused=body.paused?'Y':'N';labelFields=(body.labelFields || []).join(', ');labelsJson=JSON.stringify(body.labels || {},null,2)
-        contactList=(body.contactPoints || []).map((item,index)=>Object.assign({itemIndex:index},item));silenceList=(body.silences || []).map((item,index)=>Object.assign({itemIndex:index},item));muteList=(body.muteTimings || []).map((item,index)=>Object.assign({itemIndex:index},item,{weekdayNames:(item.weekdays || []).map(day=>ec.l10n.localize(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][Number(day)] || String(day))).join(', ')}))
-        const kinds={contactPoint:'Contact point',silence:'Silence',muteTiming:'Mute timing'}
-        const sharedItems=Object.keys(kinds).flatMap(type=>ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:type}).call().definitions || [])
-        sharedChoices=sharedItems.map(item=>({id:item.id,label:kinds[item.type]+': '+(item.title || item.id)}))
-        refList=[['contactPointRefs','contactPoint'],['silenceRefs','silence'],['muteTimingRefs','muteTiming']].flatMap(([refKey,type])=>(body[refKey] || []).map(refId=>{
-            const item=sharedItems.find(candidate=>candidate.id===refId)
-            return {refKey,refId,kind:kinds[type],title:item?(item.title || refId):refId+' (not available)'}
-        }))
-        queryDatasets=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
-        silenceFrom=new Date().toISOString();silenceThru=new Date(Date.now()+3600000).toISOString()
-    ]]></script></actions>
+    <!-- Tools' own, for rules with contact points: an evaluation now (the administrator's), the rule's contact points,
+        one-off silences and mute timings, and the shared ones it names -->
+    <transition name="evaluate" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').evaluate({definitionId:definitionId})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+    <transition name="addContact" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').addContact({definitionId:definitionId, contactId:contactId,
+            contactType:contactType, topic:topic, contactUserId:contactUserId, contactGroupId:contactGroupId, emailTemplateId:emailTemplateId,
+            toAddresses:toAddresses, webhookUrl:webhookUrl, groupBy:groupBy, groupWaitSeconds:groupWaitSeconds, repeatSeconds:repeatSeconds,
+            matchersJson:matchersJson})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+    <transition name="addSilence" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').addSilence({definitionId:definitionId, silenceFrom:silenceFrom,
+            silenceThru:silenceThru, silenceComment:silenceComment, silenceMatchers:silenceMatchers})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+    <transition name="addMute" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').addMute({definitionId:definitionId, muteName:muteName,
+            weekdays:weekdays, muteStart:muteStart, muteEnd:muteEnd})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+    <transition name="removeItem" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').removeItem({definitionId:definitionId, collection:collection,
+            itemIndex:itemIndex})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+    <transition name="addRef" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').addRef({definitionId:definitionId, sharedRef:sharedRef})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+    <transition name="removeRef" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').removeRef({definitionId:definitionId, refKey:refKey, refId:refId})</script></actions>
+        <default-response url="." parameter-map="{definitionId:definitionId}"/>
+        <error-response url="." parameter-map="{definitionId:definitionId}"/>
+    </transition>
+
+    <actions>
+        <!-- another's unshared rule, or none, reads as not available, without failing the page -->
+        <set field="found" from="ec.resource.script('component://tools/template/ReportAlerts.js').detail({definitionId:definitionId, dashboardId:dashboardId,
+                panelId:panelId, queryIndex:queryIndex})"/>
+        <set field="recordFound" from="found.found"/>
+        <set field="alert" from="found.alert"/>
+        <set field="options" from="found.options"/>
+        <set field="creating" from="found.creating"/>
+        <set field="canEdit" from="found.canEdit"/>
+        <set field="canDistribute" from="found.canDistribute"/>
+        <!-- a rule over a panel's saved query, told to an audience (the mount's); else one whose query is typed or built -->
+        <set field="simple" from="found.audienceOnly"/>
+        <set field="saved" from="recordFound &amp;&amp; !creating &amp;&amp; !alert.template"/>
+        <set field="audience" from="found.audience"/>
+        <set field="seriesStates" from="found.states"/>
+        <set field="deliveries" from="found.deliveries"/>
+        <set field="contactList" from="found.contacts"/>
+        <set field="silenceList" from="found.silences"/>
+        <set field="muteList" from="found.mutes"/>
+        <set field="sharedChoices" from="found.sharedChoices"/>
+        <set field="refList" from="found.refs"/>
+        <!-- the query editor's value and its datasets -->
+        <set field="queryJson" from="alert.queryJson || '{}'"/>
+        <set field="queryDatasets" from="options.datasets"/>
+        <set field="windowOptions" from="(alert.window || creating ? [] : [{value:'', label:'As saved: ' + (alert.windowText || '')}]).concat(options.windows)"/>
+        <set field="intervalOptions" from="options.intervals.some(row =&gt; row.value === alert.intervalSeconds) ? options.intervals
+                : [{value:String(alert.intervalSeconds || ''), label:'As saved: every ' + alert.intervalSeconds + ' seconds'}].concat(options.intervals)"/>
+        <set field="pausedOptions" from="[{value:'N', label:'Active'}, {value:'Y', label:'Paused'}]"/>
+        <set field="audienceOptions" from="[{value:'personal', label:'Only me'}].concat(canDistribute ? [{value:'group', label:'People and groups'}] : [])"/>
+        <set field="yesNo" from="[{value:'N', label:'In the app only'}, {value:'Y', label:'In the app and by email'}]"/>
+        <set field="silenceFrom" from="new Date().toISOString()"/>
+        <set field="silenceThru" from="new Date(Date.now() + 3600000).toISOString()"/>
+    </actions>
     <widgets>
-        <container style="row items-center q-gutter-sm q-mb-sm">
-            <label text="Alert rule" type="h4" style="q-my-none" />
-            <link url="../Alerts" text="All alert rules" />
-        </container>
-        <label type="p" text="Save the rule before adding contact points, silences or mute timings. No Data and Error never count as healthy." style="m-muted" />
-        <form-single name="AlertCondition" transition="save">
-            <field name="dashboardId"><default-field><hidden /></default-field></field>
-            <field name="panelId"><default-field><hidden /></default-field></field>
-            <field name="definitionId"><default-field><hidden /></default-field></field>
-            <field name="ruleId"><default-field title="Rule ID" tooltip="Identifier used when creating a rule. An existing rule keeps its ID."><text-line /></default-field></field>
-            <field name="ruleTitle"><default-field title="Rule name"><text-line /></default-field></field>
-            <field name="queryJson">
-                <default-field title="Query JSON" tooltip="The editor and JSON describe the same query. Save the rule to keep changes.">
-                    <section name="AlertQueryOptions">
-                        <widgets>
-                            <render-mode>
-                                <text type="qvt"><![CDATA[<m-report-definition-editor name="queryJson" query-only heading="Alert query" save-hint="Options update the query below. Save alert rule to keep the changes." :datasets="${WebUtilities.encodeHtml(JSON.stringify(queryDatasets))}"></m-report-definition-editor>]]></text>
-                                <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:JSON.parse(queryJson || '{}'),kind:'query',form:'AlertCondition',field:'queryJson',datasets:queryDatasets,queryOnly:true}})}]]></text>
-                                <text type="html,html-print,text"><![CDATA[<p>The query below uses the same authorized report query pipeline as dashboard panels.</p>]]></text>
-                            </render-mode>
-                        </widgets>
-                    </section>
-                    <text-area rows="8" cols="100" />
-                </default-field>
-            </field>
-            <field name="valueField"><default-field title="Numeric field" tooltip="Leave empty to evaluate each numeric field."><text-line /></default-field></field>
-            <field name="reduce"><default-field title="Reduce values"><drop-down><option key="last" text="Last value" /><option key="min" text="Minimum" /><option key="max" text="Maximum" /><option key="mean" text="Mean" /><option key="sum" text="Sum" /><option key="count" text="Count" /><option key="delta" text="Change (delta)" /><option key="p95" text="95th percentile" /></drop-down></default-field></field>
-            <field name="conditionType"><default-field title="Condition"><drop-down><option key="above" text="Above threshold" /><option key="below" text="Below threshold" /><option key="within" text="Within range" /><option key="outside" text="Outside range" /></drop-down></default-field></field>
-            <field name="threshold"><default-field title="Threshold (above or below)"><text-line size="12" /></default-field></field>
-            <field name="minimum"><default-field title="Range minimum"><text-line size="12" /></default-field></field>
-            <field name="maximum"><default-field title="Range maximum"><text-line size="12" /></default-field></field>
-            <field name="recoveryThreshold"><default-field title="Recovery threshold (optional)" tooltip="For above/below rules after firing. Leave empty to use the alert threshold."><text-line size="12" /></default-field></field>
-            <field name="pendingSeconds"><default-field title="Wait before firing (seconds)"><text-line size="12" /></default-field></field>
-            <field name="keepFiringSeconds"><default-field title="Keep firing after recovery (seconds)"><text-line size="12" /></default-field></field>
-            <field name="intervalSeconds"><default-field title="Evaluate every (seconds)" tooltip="Minimum 60 seconds. Lower values are saved as 60."><text-line size="12" /></default-field></field>
-            <field name="paused"><default-field title="Evaluation" tooltip="Paused rules are saved without scheduled evaluation."><drop-down><option key="N" text="Active" /><option key="Y" text="Paused" /></drop-down></default-field></field>
-            <field name="labelFields"><default-field title="Series label fields" tooltip="Comma-separated fields. Leave empty to use safe bucket dimensions."><text-line /></default-field></field>
-            <field name="labelsJson"><default-field title="Routing labels (JSON)"><text-area rows="3" cols="80" /></default-field></field>
-            <field name="note"><default-field title="Version note"><text-line /></default-field></field>
-            <field name="saveTop"><default-field title=""><submit text="Save alert rule" /></default-field></field>
-            <field name="save"><default-field title=""><submit text="Save alert rule" /></default-field></field>
-            <field-layout>
-                <field-ref name="dashboardId" />
-                <field-ref name="panelId" />
-                <field-ref name="definitionId" />
-                <field-group title="Rule identity and state" box="true">
-                    <field-row>
-                        <field-ref name="ruleTitle" />
-                        <field-ref name="ruleId" />
-                        <field-ref name="paused" />
-                    </field-row>
-                    <field-row-big>
-                        <field-ref name="saveTop" />
-                    </field-row-big>
-                </field-group>
-                <field-col-row>
-                    <field-col xs="12" md="8">
-                        <field-group title="Data to evaluate" box="true">
-                            <field-ref name="queryJson" />
-                        </field-group>
-                    </field-col>
-                    <field-col xs="12" md="4">
-                        <field-group title="Value and condition" box="true">
-                            <field-row>
-                                <field-ref name="valueField" />
-                                <field-ref name="reduce" />
-                            </field-row>
-                            <field-ref name="conditionType" />
-                        </field-group>
-                        <field-group title="Threshold: above or below" box="true">
-                            <field-row>
-                                <field-ref name="threshold" />
-                                <field-ref name="recoveryThreshold" />
-                            </field-row>
-                        </field-group>
-                        <field-group title="Range: within or outside" box="true">
-                            <field-row>
-                                <field-ref name="minimum" />
-                                <field-ref name="maximum" />
-                            </field-row>
-                        </field-group>
-                        <field-group title="Evaluation timing" box="true">
-                            <field-ref name="intervalSeconds" />
-                            <field-row>
-                                <field-ref name="pendingSeconds" />
-                                <field-ref name="keepFiringSeconds" />
-                            </field-row>
-                        </field-group>
-                        <field-group title="Routing labels (optional)" box="true">
-                            <field-ref name="labelFields" />
-                            <field-ref name="labelsJson" />
-                        </field-group>
-                    </field-col>
-                </field-col-row>
-                <field-group title="Save changes" box="true">
-                    <field-ref name="note" />
-                    <field-row-big>
-                        <field-ref name="save" />
-                    </field-row-big>
-                </field-group>
-            </field-layout>
-        </form-single>
-        <section name="SavedRule" condition="definitionId">
-            <widgets>
+        <section name="AlertUnavailable" condition="!recordFound"><widgets>
+            <label text="Alert not available" type="h5"/>
+            <label type="p" text="This alert does not exist or is not shared with you."/>
+            <link id="OpenAlerts" url="${found.listUrl}" text="Back to alerts" link-type="anchor" condition="!!found.listUrl"/>
+        </widgets></section>
+        <section name="AlertRecord" condition="recordFound"><widgets>
+            <container style="m-record-header">
+                <container style="row items-start q-col-gutter-x-md q-col-gutter-y-sm">
+                    <container style="col-12 col-md m-record-title">
+                        <label text="${alert.title || 'New alert rule'}" type="h5"/>
+                        <label type="p" style="text-caption m-muted q-mb-none"
+                                text="${alert.sourceText}${creating ? '' : ' · fires when ' + alert.conditionText + ' · tells ' + alert.audienceText}${alert.ownerName ? ' · owner ' + alert.ownerName : ''}"/>
+                    </container>
+                    <container style="col-12 col-md-auto m-record-status">
+                        <render-mode>
+                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${alert.stateColor}">${
+                                WebUtilities.encodeHtml(alert.stateText)}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: alert.stateText})}]]></text>
+                            <text type="html">${alert.stateText}</text>
+                        </render-mode>
+                    </container>
+                </container>
+                <container style="row items-center q-col-gutter-x-md q-col-gutter-y-sm m-record-foot">
+                    <container style="col-12 col-md">
+                        <label type="p" style="q-mb-none" text="${alert.description}" condition="alert.description"/>
+                        <label type="p" style="q-mb-none" text="${alert.lastText ? 'Last evaluated ' + alert.lastText : ''}" condition="alert.lastText"/>
+                    </container>
+                    <container style="col-12 col-md-auto row items-center q-gutter-y-xs m-record-actions">
+                        <link url="pauseAlert" link-type="hidden-form" text="Activate" btn-type="primary" icon="sym_o_play_arrow"
+                                condition="canEdit &amp;&amp; !creating &amp;&amp; alert.paused == 'Y'"
+                                confirmation="Activate ${alert.title}? Its reading is run as you first, and whom it tells (${alert.audienceText}) is checked."
+                                parameter-map="{definitionId:definitionId, paused:'false'}"/>
+                        <link url="copyAlert" link-type="hidden-form" text="Copy" btn-type="primary" icon="sym_o_content_copy"
+                                condition="found.canCopy &amp;&amp; !canEdit &amp;&amp; !creating"
+                                confirmation="Copy ${alert.title}? The copy is yours alone."
+                                parameter-map="{sourceDefinitionId:definitionId}"/>
+                        <link url="testAlert" link-type="hidden-form" text="Test" icon="sym_o_science" condition="canEdit &amp;&amp; !creating"
+                                parameter-map="{definitionId:definitionId}"/>
+                        <link url="evaluate" link-type="hidden-form" text="Evaluate now" icon="sym_o_bolt"
+                                condition="found.canEvaluate &amp;&amp; saved &amp;&amp; alert.paused != 'Y'"
+                                confirmation="Request an evaluation of ${alert.title} now? Its evaluation interval still applies, and a state change notifies whom it tells."
+                                parameter-map="{definitionId:definitionId}"/>
+                        <link url="pauseAlert" link-type="hidden-form" text="Pause" icon="sym_o_pause" condition="canEdit &amp;&amp; !creating &amp;&amp; alert.paused != 'Y'"
+                                confirmation="Pause ${alert.title}? It is not evaluated and tells nobody until activated again."
+                                parameter-map="{definitionId:definitionId, paused:'true'}"/>
+                        <link url="deleteAlert" link-type="hidden-form" text="Delete" icon="sym_o_delete" condition="canEdit &amp;&amp; !creating"
+                                confirmation="Delete ${alert.title} with its state, its delivery history and its versions? ${alert.audienceText} is no longer told."
+                                parameter-map="{definitionId:definitionId}"/>
+                        <link id="OpenAlerts" url="${found.listUrl}" text="All alerts" link-type="anchor" condition="!!found.listUrl"/>
+                    </container>
+                </container>
+            </container>
+
+            <container style="row q-col-gutter-md">
+                <container style="${simple ? 'col-12 col-md-6' : 'col-12'}">
+                    <container-box>
+                        <box-header title="Reading and condition"/>
+                        <box-body>
+                            <label type="p" style="m-muted" condition="creating &amp;&amp; simple" text="The alert watches this panel's saved query, read as you. It is saved inactive: activate it once its condition and audience are right."/>
+                            <label type="p" style="m-muted" condition="creating &amp;&amp; !simple" text="Save the rule before saying whom it tells. No data and Error never count as healthy."/>
+                            <form-single name="AlertBasis" transition="storeAlert" map="alert">
+                                <field name="definitionId"><default-field><hidden/></default-field></field>
+                                <field name="dashboardId"><default-field><hidden/></default-field></field>
+                                <field name="panelId"><default-field><hidden/></default-field></field>
+                                <field name="expectedVersion"><default-field><hidden/></default-field></field>
+                                <field name="title">
+                                    <conditional-field condition="canEdit" title="Name"><text-line size="50"/></conditional-field>
+                                    <default-field title="Name"><display/></default-field>
+                                </field>
+                                <field name="ruleId">
+                                    <conditional-field condition="canEdit &amp;&amp; creating &amp;&amp; !simple" title="Rule ID" tooltip="Optional: one is made from the name when left empty. A saved rule keeps its ID.">
+                                        <text-line size="30"/>
+                                    </conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="queryIndex">
+                                    <conditional-field condition="creating &amp;&amp; simple &amp;&amp; options.queries.length &gt; 1" title="Query">
+                                        <drop-down><list-options list="options.queries" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <default-field><hidden/></default-field>
+                                </field>
+                                <field name="queryJson">
+                                    <conditional-field condition="canEdit &amp;&amp; !simple" title="Query" tooltip="The editor and the JSON describe the same query. Save the rule to keep changes.">
+                                        <section name="AlertQueryOptions"><widgets>
+                                            <render-mode>
+                                                <text type="qvt"><![CDATA[<m-report-definition-editor name="queryJson" query-only heading="Alert query" save-hint="Options update the query below. Save the rule to keep the changes." :datasets="${WebUtilities.encodeHtml(JSON.stringify(queryDatasets))}"></m-report-definition-editor>]]></text>
+                                                <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:JSON.parse(queryJson || '{}'),kind:'query',form:'AlertBasis',field:'queryJson',datasets:queryDatasets,queryOnly:true}})}]]></text>
+                                                <text type="html,html-print,text"><![CDATA[<p>The query below uses the same authorized report query pipeline as dashboard panels.</p>]]></text>
+                                            </render-mode>
+                                        </widgets></section>
+                                        <text-area rows="8" cols="100"/>
+                                    </conditional-field>
+                                    <conditional-field condition="!simple" title="Query"><display style="m-wrap-anywhere"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="valueField">
+                                    <conditional-field condition="canEdit &amp;&amp; simple" title="Measure" tooltip="One of the query's measures; empty watches each of them">
+                                        <drop-down allow-empty="true"><list-options list="options.measures" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <conditional-field condition="canEdit" title="Measure" tooltip="A numeric field of the result; empty evaluates each of them"><text-line/></conditional-field>
+                                    <default-field title="Measure"><display/></default-field>
+                                </field>
+                                <field name="reduce">
+                                    <conditional-field condition="canEdit" title="Of each series">
+                                        <drop-down><list-options list="options.reductions" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <default-field title="Of each series"><display/></default-field>
+                                </field>
+                                <field name="window">
+                                    <conditional-field condition="canEdit &amp;&amp; simple" title="Range read">
+                                        <drop-down><list-options list="windowOptions" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <conditional-field condition="simple" title="Range read"><display text="${alert.windowText}"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="conditionType">
+                                    <conditional-field condition="canEdit" title="Fires when it is">
+                                        <drop-down><list-options list="options.conditions" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <default-field title="Fires when it is"><display text="${alert.conditionText}"/></default-field>
+                                </field>
+                                <field name="threshold">
+                                    <conditional-field condition="canEdit" title="Threshold" tooltip="For above and below"><text-line size="12"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="recoveryThreshold">
+                                    <conditional-field condition="canEdit" title="Recovers at" tooltip="Optional: the value it must pass to stop firing"><text-line size="12"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="minimum">
+                                    <conditional-field condition="canEdit" title="Range from" tooltip="For inside and outside a range"><text-line size="12"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="maximum">
+                                    <conditional-field condition="canEdit" title="Range to"><text-line size="12"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="intervalSeconds">
+                                    <conditional-field condition="canEdit &amp;&amp; simple" title="Evaluated">
+                                        <drop-down><list-options list="intervalOptions" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <conditional-field condition="canEdit" title="Evaluated every (seconds)" tooltip="At least 60 seconds; a lower value is saved as 60"><text-line size="12"/></conditional-field>
+                                    <default-field title="Evaluated"><display text="every ${alert.intervalSeconds} seconds"/></default-field>
+                                </field>
+                                <field name="pendingSeconds">
+                                    <conditional-field condition="canEdit" title="Pending seconds" tooltip="How long the condition must hold before it fires"><text-line size="8"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="keepFiringSeconds">
+                                    <conditional-field condition="canEdit" title="Keep firing seconds" tooltip="How long it stays firing after the condition ends"><text-line size="8"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="paused">
+                                    <conditional-field condition="canEdit &amp;&amp; !simple" title="Evaluation" tooltip="A paused rule is saved without being evaluated">
+                                        <drop-down><list-options list="pausedOptions" key="${value}" text="${label}"/></drop-down>
+                                    </conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="labelFields">
+                                    <conditional-field condition="canEdit &amp;&amp; !simple" title="Series label fields" tooltip="Comma-separated fields; empty uses the query's own dimensions"><text-line/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="labelsJson">
+                                    <conditional-field condition="canEdit &amp;&amp; !simple" title="Routing labels (JSON)" tooltip="Labels every series of the rule carries, which contact points, silences and mute timings match"><text-area rows="3" cols="80"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="note">
+                                    <conditional-field condition="canEdit &amp;&amp; !simple" title="Version note"><text-line/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="save">
+                                    <conditional-field condition="canEdit"><submit text="${creating ? 'Create alert' : 'Save'}"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field-layout>
+                                    <field-row><field-ref name="title"/><field-ref name="ruleId"/></field-row>
+                                    <field-ref name="queryIndex"/>
+                                    <field-ref name="queryJson"/>
+                                    <field-row><field-ref name="valueField"/><field-ref name="reduce"/></field-row>
+                                    <field-row><field-ref name="intervalSeconds"/><field-ref name="window"/></field-row>
+                                    <field-row><field-ref name="conditionType"/><field-ref name="threshold"/></field-row>
+                                    <field-row><field-ref name="minimum"/><field-ref name="maximum"/></field-row>
+                                    <field-row><field-ref name="recoveryThreshold"/><field-ref name="pendingSeconds"/></field-row>
+                                    <field-row><field-ref name="keepFiringSeconds"/><field-ref name="paused"/></field-row>
+                                    <field-row><field-ref name="labelFields"/><field-ref name="note"/></field-row>
+                                    <field-ref name="labelsJson"/>
+                                    <field-ref name="save"/>
+                                </field-layout>
+                            </form-single>
+                        </box-body>
+                    </container-box>
+                </container>
+                <container style="${simple ? 'col-12 col-md-6' : 'col-12'}">
+                    <section name="AudienceBox" condition="saved &amp;&amp; found.business"><widgets>
+                        <container-box>
+                            <box-header title="Audience"/>
+                            <box-toolbar>
+                                <container-dialog id="EditAudience" button-text="Change audience" condition="canEdit">
+                                    <label type="p" style="m-muted" text="Each person, and every member of each group, is checked when the alert is active and again before every notification: it tells only those who may read exactly what you read, each separately. Share the alert with a group they are in so they can open it."/>
+                                    <form-single name="AlertAudience" transition="storeAudience" map="alert">
+                                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                                        <field name="expectedVersion"><default-field><hidden/></default-field></field>
+                                        <field name="audienceKind"><default-field title="Tell">
+                                            <radio><list-options list="audienceOptions" key="${value}" text="${label}"/></radio>
+                                        </default-field></field>
+                                        <field name="recipientUserIds">
+                                            <conditional-field condition="canDistribute" title="People" tooltip="Each is checked when the alert is active">
+                                                <drop-down allow-multiple="true" allow-empty="true">
+                                                    <dynamic-options transition="recipientChoices" server-search="true" min-length="0"
+                                                            parameter-map="{selected:alert.selectedRecipients}"/>
+                                                </drop-down>
+                                            </conditional-field>
+                                            <default-field><ignored/></default-field>
+                                        </field>
+                                        <field name="recipientGroupIds">
+                                            <conditional-field condition="canDistribute" title="Groups" tooltip="A group you belong to; every member is checked">
+                                                <drop-down allow-multiple="true" allow-empty="true"><list-options list="options.groups" key="${value}" text="${label}"/></drop-down>
+                                            </conditional-field>
+                                            <default-field><ignored/></default-field>
+                                        </field>
+                                        <field name="userGroupId">
+                                            <conditional-field condition="canDistribute" title="Shared with" tooltip="The group that may open this alert; sharing gives no data">
+                                                <drop-down allow-empty="true"><list-options list="options.groups" key="${value}" text="${label}"/></drop-down>
+                                            </conditional-field>
+                                            <default-field><ignored/></default-field>
+                                        </field>
+                                        <field name="emailChannel">
+                                            <conditional-field condition="alert.emailOffered" title="How" tooltip="Email goes to each recipient's own account address">
+                                                <radio><list-options list="yesNo" key="${value}" text="${label}"/></radio>
+                                            </conditional-field>
+                                            <default-field><ignored/></default-field>
+                                        </field>
+                                        <field name="save"><default-field><submit text="Save audience"
+                                                confirmation="Save this audience of ${alert.title}? Each recipient is checked; one who may not read what you read refuses the save while the alert is active."/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                            </box-toolbar>
+                            <box-body>
+                                <label type="p" text="${alert.audienceKind == 'group' ? 'Tells ' + alert.audienceText + ', each in a notification of their own' : 'Tells its owner alone'}${alert.emailChannel == 'Y' ? ', in the app and by email.' : ', in the app.'}"/>
+                                <label type="p" style="m-muted" text="${found.audienceNote}" condition="found.audienceNote"/>
+                            </box-body>
+                            <box-body-nopad>
+                                <form-list name="AudienceResults" list="audience" skip-form="true" paginate="false" condition="audience.length">
+                                    <field name="recipientName"><default-field title="Person"><display/></default-field></field>
+                                    <field name="viaText"><default-field title="How"><display/></default-field></field>
+                                    <field name="resultText"><default-field title="Result">
+                                        <render-mode>
+                                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${resultColor}">${
+                                                WebUtilities.encodeHtml(resultText)}</q-chip>]]></text>
+                                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: resultText})}]]></text>
+                                            <text type="html">${resultText}</text>
+                                        </render-mode>
+                                    </default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="recipientName"/></column>
+                                        <column><field-ref name="resultText"/></column>
+                                    </columns>
+                                </form-list>
+                            </box-body-nopad>
+                        </container-box>
+                    </widgets></section>
+                    <section name="ContactPointsBox" condition="saved &amp;&amp; found.operational &amp;&amp; !found.business"><widgets>
+                        <container-box>
+                            <box-header title="Contact points"/>
+                            <box-toolbar>
+                                <container-dialog id="AddContactPoint" button-text="Add contact point" condition="canEdit">
+                                    <label type="p" style="m-muted" text="A delivery destination for state changes. Use the fields of its type; grouping and repeat apply to every type."/>
+                                    <form-single name="AddContact" transition="addContact">
+                                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                                        <field name="contactId"><default-field title="Contact ID"><text-line/></default-field></field>
+                                        <field name="contactType"><default-field title="Type"><drop-down no-current-selected-key="notification"><option key="notification" text="In-app notification"/><option key="email" text="Email"/><option key="webhook" text="Webhook"/></drop-down></default-field></field>
+                                        <field name="topic"><default-field title="Notification topic"><text-line/><visible-when field="contactType" value="notification"/></default-field></field>
+                                        <field name="contactUserId"><default-field title="Notification user" tooltip="The ID of the user notified in the app"><text-line/><visible-when field="contactType" value="notification"/></default-field></field>
+                                        <field name="contactGroupId"><default-field title="Notification group" tooltip="The ID of the user group notified in the app"><text-line/><visible-when field="contactType" value="notification"/></default-field></field>
+                                        <field name="emailTemplateId"><default-field title="Email template"><text-line/><visible-when field="contactType" value="email"/></default-field></field>
+                                        <field name="toAddresses"><default-field title="Email recipients"><text-line/><visible-when field="contactType" value="email"/></default-field></field>
+                                        <field name="webhookUrl"><default-field title="Webhook URL"><text-line/><visible-when field="contactType" value="webhook"/></default-field></field>
+                                        <field name="groupBy"><default-field title="Group by labels (comma separated)"><text-line/></default-field></field>
+                                        <field name="groupWaitSeconds"><default-field title="Group wait seconds"><text-line/></default-field></field>
+                                        <field name="repeatSeconds"><default-field title="Repeat seconds"><text-line/></default-field></field>
+                                        <field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
+                                        <field name="add"><default-field title=""><submit text="Add contact point"/></default-field></field>
+                                        <field-layout>
+                                            <field-ref name="definitionId"/>
+                                            <field-row><field-ref name="contactType"/><field-ref name="contactId"/></field-row>
+                                            <field-ref name="topic"/>
+                                            <field-row><field-ref name="contactUserId"/><field-ref name="contactGroupId"/></field-row>
+                                            <field-row><field-ref name="emailTemplateId"/><field-ref name="toAddresses"/></field-row>
+                                            <field-ref name="webhookUrl"/>
+                                            <field-ref name="groupBy"/>
+                                            <field-row><field-ref name="groupWaitSeconds"/><field-ref name="repeatSeconds"/></field-row>
+                                            <field-ref name="matchersJson"/>
+                                            <field-ref name="add"/>
+                                        </field-layout>
+                                    </form-single>
+                                </container-dialog>
+                            </box-toolbar>
+                            <box-body>
+                                <label type="p" style="m-muted" text="No contact point has been added here: a state change notifies nobody but through a shared contact point." condition="!contactList.length"/>
+                            </box-body>
+                            <box-body-nopad>
+                                <form-list name="Contacts" list="contactList" skip-form="true" paginate="false" condition="contactList.length">
+                                    <field name="id"><default-field title="ID"><display/></default-field></field>
+                                    <field name="type"><default-field title="Type"><display/></default-field></field>
+                                    <field name="topic"><default-field title="Topic"><display/></default-field></field>
+                                    <field name="userId"><default-field title="User"><display/></default-field></field>
+                                    <field name="userGroupId"><default-field title="User group"><display/></default-field></field>
+                                    <field name="toAddresses"><default-field title="Email recipients"><display/></default-field></field>
+                                    <field name="url"><default-field title="Webhook URL"><display/></default-field></field>
+                                    <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'contactPoints',itemIndex:itemIndex}"/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="id"/><field-ref name="type"/></column>
+                                        <column><field-ref name="topic"/><field-ref name="remove"/></column>
+                                    </columns>
+                                </form-list>
+                            </box-body-nopad>
+                        </container-box>
+                    </widgets></section>
+                </container>
+            </container>
+
+            <section name="QuietingBoxes" condition="saved &amp;&amp; found.operational"><widgets>
                 <container-box>
-                    <box-header title="Shared notification and quieting settings" />
+                    <box-header title="Shared notification and quieting settings"/>
                     <box-body>
-                        <label type="p" text="Link reusable contact points, silences or mute timings to this rule." style="m-muted" />
-                        <form-single name="AddSharedRef" transition="addRef">
-                            <field name="definitionId"><default-field><hidden /></default-field></field>
-                            <field name="sharedRef"><default-field title="Shared item"><drop-down><list-options list="sharedChoices" key="${id}" text="${label}" /></drop-down></default-field></field>
-                            <field name="add"><default-field title=""><submit text="Use shared item" /></default-field></field>
+                        <label type="p" style="m-muted" text="${found.business ? 'Link reusable silences or mute timings to this rule.' : 'Link reusable contact points, silences or mute timings to this rule.'}"/>
+                        <form-single name="AddSharedRef" transition="addRef" condition="canEdit">
+                            <field name="definitionId"><default-field><hidden/></default-field></field>
+                            <field name="sharedRef"><default-field title="Shared item"><drop-down><list-options list="sharedChoices" key="${id}" text="${label}"/></drop-down></default-field></field>
+                            <field name="add"><default-field title=""><submit text="Use shared item"/></default-field></field>
                             <field-layout>
-                                <field-ref name="definitionId" />
-                                <field-row>
-                                    <field-ref name="sharedRef" />
-                                    <field-ref name="add" />
-                                </field-row>
+                                <field-ref name="definitionId"/>
+                                <field-row><field-ref name="sharedRef"/><field-ref name="add"/></field-row>
                             </field-layout>
                         </form-single>
-                        <section name="SharedRefsEmpty" condition="!refList.length">
-                            <widgets>
-                                <label type="p" text="No shared items are linked." style="m-muted" />
-                            </widgets>
-                        </section>
-                        <section name="SharedRefsRows" condition="refList.length">
-                            <widgets>
-                                <form-list name="SharedRefs" list="refList" skip-form="true" paginate="false">
-                                    <field name="kind"><default-field title="Type"><display /></default-field></field>
-                                    <field name="title"><default-field title="Shared item"><link url="shared" text="${title}" link-type="anchor"><parameter name="definitionId" from="refId" /></link></default-field></field>
-                                    <field name="refId"><default-field title="ID"><display /></default-field></field>
-                                    <field name="remove"><default-field><link url="removeRef" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,refKey:refKey,refId:refId}" /></default-field></field>
-                                </form-list>
-                            </widgets>
-                        </section>
+                        <label type="p" style="m-muted" text="No shared items are linked." condition="!refList.length"/>
                     </box-body>
+                    <box-body-nopad>
+                        <form-list name="SharedRefs" list="refList" skip-form="true" paginate="false" condition="refList.length">
+                            <field name="kind"><default-field title="Type"><display/></default-field></field>
+                            <field name="title"><default-field title="Shared item">
+                                <link id="OpenShared" url="${found.sharedUrl}" text="${title}" link-type="anchor" condition="!!found.sharedUrl" parameter-map="{definitionId:refId, sharedType:''}"/>
+                                <label text="${title}" condition="!found.sharedUrl"/>
+                            </default-field></field>
+                            <field name="refId"><default-field title="ID"><display/></default-field></field>
+                            <field name="remove"><default-field title=""><link url="removeRef" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,refKey:refKey,refId:refId}"/></default-field></field>
+                        </form-list>
+                    </box-body-nopad>
                 </container-box>
-                <container-row>
-                    <row-col md="6">
+                <container style="row q-col-gutter-md">
+                    <container style="col-12 col-md-6">
                         <container-box>
-                            <box-header title="Contact points" />
+                            <box-header title="One-off silences"/>
+                            <box-toolbar>
+                                <container-dialog id="AddSilenceDialog" button-text="Add silence" condition="canEdit">
+                                    <label type="p" style="m-muted" text="Quiets matching alerts for a time. Include Z or an explicit UTC offset in both times."/>
+                                    <form-single name="AddSilence" transition="addSilence">
+                                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                                        <field name="silenceFrom"><default-field title="From (ISO time with offset)"><text-line/></default-field></field>
+                                        <field name="silenceThru"><default-field title="Through (ISO time with offset)"><text-line/></default-field></field>
+                                        <field name="silenceComment"><default-field title="Comment"><text-line/></default-field></field>
+                                        <field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
+                                        <field name="add"><default-field title=""><submit text="Add silence"/></default-field></field>
+                                        <field-layout>
+                                            <field-ref name="definitionId"/>
+                                            <field-row><field-ref name="silenceFrom"/><field-ref name="silenceThru"/></field-row>
+                                            <field-ref name="silenceComment"/>
+                                            <field-ref name="silenceMatchers"/>
+                                            <field-ref name="add"/>
+                                        </field-layout>
+                                    </form-single>
+                                </container-dialog>
+                            </box-toolbar>
                             <box-body>
-                                <label type="p" text="Add a delivery destination for state changes. Use the fields for its selected type; grouping and repeat settings apply to every type." style="m-muted" />
-                                <form-single name="AddContact" transition="addContact">
-                                    <field name="definitionId"><default-field><hidden /></default-field></field>
-                                    <field name="contactId"><default-field title="Contact ID"><text-line /></default-field></field>
-                                    <field name="contactType"><default-field title="Type"><drop-down no-current-selected-key="notification"><option key="notification" text="In-app notification" /><option key="email" text="Email" /><option key="webhook" text="Webhook" /></drop-down></default-field></field>
-                                    <field name="topic"><default-field title="Notification topic"><text-line /><visible-when field="contactType" value="notification" /></default-field></field>
-                                    <field name="contactUserId"><default-field title="Notification user" tooltip="User/group ID for this in-app notification."><text-line /><visible-when field="contactType" value="notification" /></default-field></field>
-                                    <field name="contactGroupId"><default-field title="Notification group" tooltip="User/group ID for this in-app notification."><text-line /><visible-when field="contactType" value="notification" /></default-field></field>
-                                    <field name="emailTemplateId"><default-field title="Email template"><text-line /><visible-when field="contactType" value="email" /></default-field></field>
-                                    <field name="toAddresses"><default-field title="Email recipients"><text-line /><visible-when field="contactType" value="email" /></default-field></field>
-                                    <field name="webhookUrl"><default-field title="Webhook URL"><text-line /><visible-when field="contactType" value="webhook" /></default-field></field>
-                                    <field name="groupBy"><default-field title="Group by labels (comma separated)"><text-line /></default-field></field>
-                                    <field name="groupWaitSeconds"><default-field title="Group wait seconds"><text-line /></default-field></field>
-                                    <field name="repeatSeconds"><default-field title="Repeat seconds"><text-line /></default-field></field>
-                                    <field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80" /></default-field></field>
-                                    <field name="add"><default-field title=""><submit text="Add contact point" /></default-field></field>
-                                    <field-layout>
-                                        <field-ref name="definitionId" />
-                                        <field-row>
-                                            <field-ref name="contactType" />
-                                            <field-ref name="contactId" />
-                                        </field-row>
-                                        <field-ref name="topic" />
-                                        <field-row>
-                                            <field-ref name="contactUserId" />
-                                            <field-ref name="contactGroupId" />
-                                        </field-row>
-                                        <field-row>
-                                            <field-ref name="emailTemplateId" />
-                                            <field-ref name="toAddresses" />
-                                        </field-row>
-                                        <field-ref name="webhookUrl" />
-                                        <field-ref name="groupBy" />
-                                        <field-row>
-                                            <field-ref name="groupWaitSeconds" />
-                                            <field-ref name="repeatSeconds" />
-                                        </field-row>
-                                        <field-ref name="matchersJson" />
-                                        <field-row-big>
-                                            <field-ref name="add" />
-                                        </field-row-big>
-                                    </field-layout>
-                                </form-single>
-                                <section name="ContactsEmpty" condition="!contactList.length">
-                                    <widgets>
-                                        <label type="p" text="No contact points have been added here." style="m-muted" />
-                                    </widgets>
-                                </section>
-                                <section name="ContactsRows" condition="contactList.length">
-                                    <widgets>
-                                        <form-list name="Contacts" list="contactList" skip-form="true" paginate="false">
-                                            <field name="id"><default-field title="ID"><display /></default-field></field>
-                                            <field name="type"><default-field title="Type"><display /></default-field></field>
-                                            <field name="topic"><default-field title="Topic"><display /></default-field></field>
-                                            <field name="userId"><default-field title="User"><display /></default-field></field>
-                                            <field name="userGroupId"><default-field title="User group"><display /></default-field></field>
-                                            <field name="toAddresses"><default-field title="Email recipients"><display /></default-field></field>
-                                            <field name="url"><default-field title="Webhook URL"><display /></default-field></field>
-                                            <field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'contactPoints',itemIndex:itemIndex}" /></default-field></field>
-                                        </form-list>
-                                    </widgets>
-                                </section>
+                                <label type="p" style="m-muted" text="No one-off silence has been added here." condition="!silenceList.length"/>
                             </box-body>
+                            <box-body-nopad>
+                                <form-list name="Silences" list="silenceList" skip-form="true" paginate="false" condition="silenceList.length">
+                                    <field name="from"><default-field title="From"><display/></default-field></field>
+                                    <field name="thru"><default-field title="Through"><display/></default-field></field>
+                                    <field name="comment"><default-field title="Comment"><display/></default-field></field>
+                                    <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'silences',itemIndex:itemIndex}"/></default-field></field>
+                                </form-list>
+                            </box-body-nopad>
                         </container-box>
-                    </row-col>
-                    <row-col md="6">
+                    </container>
+                    <container style="col-12 col-md-6">
                         <container-box>
-                            <box-header title="One-off silences" />
+                            <box-header title="Recurring mute timings"/>
+                            <box-toolbar>
+                                <container-dialog id="AddMuteDialog" button-text="Add mute timing" condition="canEdit">
+                                    <label type="p" style="m-muted" text="Quiets alerts on the chosen weekdays and times, in the rule owner's time zone."/>
+                                    <form-single name="AddMute" transition="addMute">
+                                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                                        <field name="muteName"><default-field title="Name"><text-line/></default-field></field>
+                                        <field name="weekdays"><default-field title="Weekdays"><drop-down allow-multiple="true"><option key="0" text="Monday"/><option key="1" text="Tuesday"/><option key="2" text="Wednesday"/><option key="3" text="Thursday"/><option key="4" text="Friday"/><option key="5" text="Saturday"/><option key="6" text="Sunday"/></drop-down></default-field></field>
+                                        <field name="muteStart"><default-field title="Start HH:mm"><text-line/></default-field></field>
+                                        <field name="muteEnd"><default-field title="End HH:mm"><text-line/></default-field></field>
+                                        <field name="add"><default-field title=""><submit text="Add mute timing"/></default-field></field>
+                                        <field-layout>
+                                            <field-ref name="definitionId"/>
+                                            <field-row><field-ref name="muteName"/><field-ref name="weekdays"/></field-row>
+                                            <field-row><field-ref name="muteStart"/><field-ref name="muteEnd"/></field-row>
+                                            <field-ref name="add"/>
+                                        </field-layout>
+                                    </form-single>
+                                </container-dialog>
+                            </box-toolbar>
                             <box-body>
-                                <label type="p" text="Temporarily quiet matching alerts. Include Z or an explicit UTC offset in both timestamps." style="m-muted" />
-                                <form-single name="AddSilence" transition="addSilence">
-                                    <field name="definitionId"><default-field><hidden /></default-field></field>
-                                    <field name="silenceFrom"><default-field title="From (ISO time with offset)"><text-line /></default-field></field>
-                                    <field name="silenceThru"><default-field title="Through (ISO time with offset)"><text-line /></default-field></field>
-                                    <field name="silenceComment"><default-field title="Comment"><text-line /></default-field></field>
-                                    <field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80" /></default-field></field>
-                                    <field name="add"><default-field title=""><submit text="Add silence" /></default-field></field>
-                                    <field-layout>
-                                        <field-ref name="definitionId" />
-                                        <field-row>
-                                            <field-ref name="silenceFrom" />
-                                            <field-ref name="silenceThru" />
-                                        </field-row>
-                                        <field-ref name="silenceComment" />
-                                        <field-ref name="silenceMatchers" />
-                                        <field-row-big>
-                                            <field-ref name="add" />
-                                        </field-row-big>
-                                    </field-layout>
-                                </form-single>
-                                <section name="SilencesEmpty" condition="!silenceList.length">
-                                    <widgets>
-                                        <label type="p" text="No one-off silences have been added here." style="m-muted" />
-                                    </widgets>
-                                </section>
-                                <section name="SilencesRows" condition="silenceList.length">
-                                    <widgets>
-                                        <form-list name="Silences" list="silenceList" skip-form="true" paginate="false">
-                                            <field name="from"><default-field title="From"><display /></default-field></field>
-                                            <field name="thru"><default-field title="Through"><display /></default-field></field>
-                                            <field name="comment"><default-field title="Comment"><display /></default-field></field>
-                                            <field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'silences',itemIndex:itemIndex}" /></default-field></field>
-                                        </form-list>
-                                    </widgets>
-                                </section>
+                                <label type="p" style="m-muted" text="No recurring mute timing has been added here." condition="!muteList.length"/>
                             </box-body>
+                            <box-body-nopad>
+                                <form-list name="MuteTimings" list="muteList" skip-form="true" paginate="false" condition="muteList.length">
+                                    <field name="name"><default-field title="Name"><display/></default-field></field>
+                                    <field name="weekdays"><default-field title="Weekdays"><display text="${weekdayNames}"/></default-field></field>
+                                    <field name="start"><default-field title="Start"><display/></default-field></field>
+                                    <field name="end"><default-field title="End"><display/></default-field></field>
+                                    <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'muteTimings',itemIndex:itemIndex}"/></default-field></field>
+                                </form-list>
+                            </box-body-nopad>
                         </container-box>
-                        <container-box>
-                            <box-header title="Recurring mute timings" />
-                            <box-body>
-                                <label type="p" text="Quiet alerts on the chosen weekdays and times, in the rule owner’s time zone." style="m-muted" />
-                                <form-single name="AddMute" transition="addMute">
-                                    <field name="definitionId"><default-field><hidden /></default-field></field>
-                                    <field name="muteName"><default-field title="Name"><text-line /></default-field></field>
-                                    <field name="weekdays"><default-field title="Weekdays"><drop-down allow-multiple="true"><option key="0" text="Monday" /><option key="1" text="Tuesday" /><option key="2" text="Wednesday" /><option key="3" text="Thursday" /><option key="4" text="Friday" /><option key="5" text="Saturday" /><option key="6" text="Sunday" /></drop-down></default-field></field>
-                                    <field name="muteStart"><default-field title="Start HH:mm"><text-line /></default-field></field>
-                                    <field name="muteEnd"><default-field title="End HH:mm"><text-line /></default-field></field>
-                                    <field name="add"><default-field title=""><submit text="Add mute timing" /></default-field></field>
-                                    <field-layout>
-                                        <field-ref name="definitionId" />
-                                        <field-row>
-                                            <field-ref name="muteName" />
-                                            <field-ref name="weekdays" />
-                                        </field-row>
-                                        <field-row>
-                                            <field-ref name="muteStart" />
-                                            <field-ref name="muteEnd" />
-                                        </field-row>
-                                        <field-row-big>
-                                            <field-ref name="add" />
-                                        </field-row-big>
-                                    </field-layout>
-                                </form-single>
-                                <section name="MuteTimingsEmpty" condition="!muteList.length">
-                                    <widgets>
-                                        <label type="p" text="No recurring mute timings have been added here." style="m-muted" />
-                                    </widgets>
-                                </section>
-                                <section name="MuteTimingsRows" condition="muteList.length">
-                                    <widgets>
-                                        <form-list name="MuteTimings" list="muteList" skip-form="true" paginate="false">
-                                            <field name="name"><default-field title="Name"><display /></default-field></field>
-                                            <field name="weekdays"><default-field title="Weekdays"><display text="${weekdayNames}" /></default-field></field>
-                                            <field name="start"><default-field title="Start"><display /></default-field></field>
-                                            <field name="end"><default-field title="End"><display /></default-field></field>
-                                            <field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'muteTimings',itemIndex:itemIndex}" /></default-field></field>
-                                        </form-list>
-                                    </widgets>
-                                </section>
-                            </box-body>
-                        </container-box>
-                    </row-col>
-                </container-row>
-            </widgets>
-        </section>
+                    </container>
+                </container>
+            </widgets></section>
+
+            <section name="StateBoxes" condition="!creating"><widgets>
+                <container-box>
+                    <box-header title="State"/>
+                    <box-body>
+                        <label type="p" style="m-muted" text="The state of each series as its owner reads it. No data and Error mean the health is not known, never Normal."/>
+                        <label type="p" text="${found.stateNote}" condition="found.stateNote"/>
+                    </box-body>
+                    <box-body-nopad>
+                        <form-list name="OwnAlertState" list="seriesStates" skip-form="true" paginate="false" condition="seriesStates.length">
+                            <field name="seriesText"><default-field title="Series"><display/></default-field></field>
+                            <field name="stateText"><default-field title="State">
+                                <render-mode>
+                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                                        WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
+                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                    <text type="html">${stateText}</text>
+                                </render-mode>
+                            </default-field></field>
+                            <field name="valueText"><default-field title="Value"><display/></default-field></field>
+                            <field name="sinceText"><default-field title="Since"><display/></default-field></field>
+                            <field name="evaluatedText"><default-field title="Evaluated"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="seriesText"/><field-ref name="valueText"/></column>
+                                <column><field-ref name="stateText"/><field-ref name="sinceText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body-nopad>
+                </container-box>
+                <section name="DeliveriesBox" condition="found.business &amp;&amp; !alert.template"><widgets>
+                    <container-box>
+                        <box-header title="Deliveries"/>
+                        <box-body>
+                            <label type="p" style="m-muted" text="${canEdit ? 'Each recipient was told separately; this is the last outcome of each. A failed notification is tried again at the next evaluation.' : 'Your own notifications of this alert.'}"/>
+                            <label type="p" style="m-muted" text="Nobody has been told yet." condition="!deliveries.length"/>
+                        </box-body>
+                        <box-body-nopad>
+                            <form-list name="AlertDeliveryStatus" list="deliveries" skip-form="true" paginate="false" condition="deliveries.length">
+                                <field name="recipientName"><default-field title="Recipient"><display/></default-field></field>
+                                <field name="toldText"><default-field title="Told"><display text="${toldText} · ${channelText}"/></default-field></field>
+                                <field name="stateText"><default-field title="Outcome">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                                            WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${stateText}</text>
+                                    </render-mode>
+                                </default-field></field>
+                                <field name="reasonText"><default-field title="Why"><display/></default-field></field>
+                                <field name="attemptText"><default-field title="When"><display/></default-field></field>
+                                <columns type="mobile">
+                                    <column><field-ref name="recipientName"/><field-ref name="toldText"/></column>
+                                    <column><field-ref name="stateText"/><field-ref name="reasonText"/></column>
+                                </columns>
+                            </form-list>
+                        </box-body-nopad>
+                    </container-box>
+                </widgets></section>
+            </widgets></section>
+        </widgets></section>
     </widgets>
 </screen>

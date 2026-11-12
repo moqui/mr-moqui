@@ -1358,15 +1358,15 @@
       </div>
       <div v-show="rail === 'tasks'" class="col column no-wrap q-pa-xs" id="DevTasks">
         <div class="row items-center no-wrap text-caption"><span class="ellipsis">{{taskList.error ? taskList.sourceLabel + ': ' + taskList.error : 'My tasks · ' + (taskList.sourceLabel || '')}}</span>
-          <q-space></q-space><q-btn dense flat round size="xs" icon="refresh" @click="loadTasks"></q-btn>
-          <q-btn dense flat round size="xs" icon="sym_o_settings" href="/qapps/dev/Tasks" type="a"><q-tooltip>Task source and app</q-tooltip></q-btn></div>
+          <q-space></q-space><q-btn dense flat round size="xs" icon="refresh" aria-label="Refresh tasks" @click="loadTasks"><q-tooltip>Refresh tasks</q-tooltip></q-btn>
+          <q-btn dense flat round size="xs" icon="sym_o_settings" href="/qapps/dev/Tasks" type="a" aria-label="Task source and app"><q-tooltip>Task source and app</q-tooltip></q-btn></div>
         <q-linear-progress v-if="taskList.loading" indeterminate></q-linear-progress>
         <q-list dense class="col scroll">
           <q-item v-for="task in taskList.tasks" :key="task.taskId" :data-task="task.taskId">
             <q-item-section><q-item-label class="ellipsis">{{task.title}}</q-item-label>
               <q-item-label caption>{{task.key}} · {{task.statusId}}{{task.projectName ? ' · ' + task.projectName : ''}}
                 <q-icon v-if="status && status.currentTask === task.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
-            <q-item-section side><q-btn dense flat round size="xs" icon="more_vert"><q-menu><q-list dense style="min-width: 10rem">
+            <q-item-section side><q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + task.key"><q-menu><q-list dense style="min-width: 10rem">
               <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
               <q-item clickable v-close-popup @click="copyText(task.key)"><q-item-section>Copy key</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task)"><q-item-section>Use in commit</q-item-section></q-item>
@@ -1384,7 +1384,7 @@
             @click="active = item.path" :title="item.path" :data-path="item.path">
           <span class="ellipsis">{{item.path.split('/').pop()}}</span><span v-if="isDirtyAll(item)" class="m-dev-dirty">●</span>
           <q-icon v-if="editorsOf(item.path).length" name="sym_o_group" size="xs" class="q-ml-xs text-amber-8"><q-tooltip>being edited by {{editorsOf(item.path).join(', ')}}</q-tooltip></q-icon>
-          <q-btn dense flat round size="xs" icon="close" @click.stop="closeTab(item.path)"></q-btn>
+          <q-btn dense flat round size="xs" icon="close" :aria-label="'Close ' + item.path.split('/').pop()" @click.stop="closeTab(item.path)"></q-btn>
         </div>
       </div>
       <template v-if="current">
@@ -1397,7 +1397,7 @@
           <q-space></q-space>
           <q-btn-toggle v-if="currentViews.length > 1" dense flat no-caps size="sm" :model-value="current.view" @update:model-value="setView(current, $event)"
               :options="currentViews.map(v => ({ label: v.label, value: v.name }))" id="DevViewToggle"></q-btn-toggle>
-          <q-btn v-if="isGit && !guided" dense flat round size="sm" icon="more_vert" id="DevFileMenu"><q-menu><q-list dense style="min-width: 10rem">
+          <q-btn v-if="isGit && !guided" dense flat round size="sm" icon="more_vert" id="DevFileMenu" aria-label="File actions"><q-tooltip>File actions</q-tooltip><q-menu><q-list dense style="min-width: 10rem">
             <q-item clickable v-close-popup @click="diffCurrent"><q-item-section>Diff</q-item-section></q-item>
             <q-item clickable v-close-popup @click="history(current.path)"><q-item-section>History</q-item-section></q-item>
             <q-item clickable v-close-popup @click="toggleBlame"><q-item-section>{{current.blame ? 'Hide blame' : 'Blame'}}</q-item-section></q-item>
@@ -1442,7 +1442,7 @@
           <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>
             <q-space></q-space><q-btn v-if="refs.artifactId" dense flat no-caps size="sm" label="Browse" type="a"
                 :href="'/qapps/dev/Artifacts/Browse?artifactId=' + encodeURIComponent(refs.artifactId)" id="DevBrowseRefs"></q-btn>
-            <q-btn dense flat round size="sm" icon="sym_o_close" @click="refs.title = ''"></q-btn></div>
+            <q-btn dense flat round size="sm" icon="sym_o_close" aria-label="Close references" @click="refs.title = ''"></q-btn></div>
           <q-list dense>
             <q-item v-for="(item, index) in refs.items" :key="index" clickable @click="openArtifact(item)">
               <q-item-section><q-item-label>{{item.label}}</q-item-label><q-item-label caption>{{item.caption}}</q-item-label></q-item-section>
@@ -1497,10 +1497,10 @@
         <div v-for="entry in entries" :key="group + entry.path" class="row items-center no-wrap m-dev-change" :data-path="entry.path">
           <span class="m-file-status" :class="'m-file-status-' + entry.letter">{{entry.letter}}</span>
           <a class="ellipsis q-ml-xs cursor-pointer" @click="showDiff(entry, group === 'staged')">{{entry.path}}</a><q-space></q-space>
-          <q-btn v-if="group === 'staged'" dense flat round size="xs" icon="remove" @click="unstage([entry])"><q-tooltip>Unstage</q-tooltip></q-btn>
-          <q-btn v-else-if="group !== 'conflicts'" dense flat round size="xs" icon="add" @click="stage([entry])"><q-tooltip>Stage</q-tooltip></q-btn>
-          <q-btn v-if="group === 'changes' || group === 'untracked'" dense flat round size="xs" icon="undo" @click="discard([entry])"><q-tooltip>Discard</q-tooltip></q-btn>
-          <q-btn dense flat round size="xs" icon="sym_o_open_in_new" @click="openFile(entry.path)"><q-tooltip>Open</q-tooltip></q-btn>
+          <q-btn v-if="group === 'staged'" dense flat round size="xs" icon="remove" :aria-label="'Unstage ' + entry.path" @click="unstage([entry])"><q-tooltip>Unstage</q-tooltip></q-btn>
+          <q-btn v-else-if="group !== 'conflicts'" dense flat round size="xs" icon="add" :aria-label="'Stage ' + entry.path" @click="stage([entry])"><q-tooltip>Stage</q-tooltip></q-btn>
+          <q-btn v-if="group === 'changes' || group === 'untracked'" dense flat round size="xs" icon="undo" :aria-label="'Discard ' + entry.path" @click="discard([entry])"><q-tooltip>Discard</q-tooltip></q-btn>
+          <q-btn dense flat round size="xs" icon="sym_o_open_in_new" :aria-label="'Open ' + entry.path" @click="openFile(entry.path)"><q-tooltip>Open</q-tooltip></q-btn>
         </div>
       </template>
       <q-separator class="q-my-sm"></q-separator>

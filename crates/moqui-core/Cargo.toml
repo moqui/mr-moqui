@@ -65,7 +65,8 @@ hkdf = { workspace = true, optional = true }
 aes-gcm = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true }
+# fs: statvfs, for the filesystems of the resource readings (context/resources.rs).
+rustix = { workspace = true, features = ["fs"] }
 
 # Default on. The browser build (crates/moqui-browser, plans/archive/Wasm.md) turns them all off so no
 # socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Build-Test.md) pick them through moqui-host.
@@ -74,9 +75,11 @@ rustix = { workspace = true }
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-proto", "dep:prost"]
 # The generated OTLP gRPC services, for the host's receiver.
 grpc = ["telemetry", "opentelemetry-proto/gen-tonic"]
-default = ["http", "cluster-tls", "image", "xlsx", "web-push"]
+default = ["http", "cluster-tls", "image", "xlsx", "web-push", "backup-s3"]
 # remote-rest services, http resource locations, and the OpenSearch backend (blocking reqwest).
 http = ["moqui-lib/http"]
+# The S3 transport and the age encryption of the embedded database backup mirror (service/backup_store.rs).
+backup-s3 = ["http", "moqui-lib/s3"]
 # Web Push to subscribed browsers (org.moqui.ui.NotificationServices.send#WebPush), over blocking HTTP.
 web-push = ["http", "dep:p256", "dep:hkdf", "dep:aes-gcm"]
 # Generated self-signed cluster certificate.

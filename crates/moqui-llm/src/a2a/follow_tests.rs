@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A2A follow and resubscribe (plans/High-Level-Review.md HL-014): resume after a stored sequence, a gap the hub
+//! A2A follow and resubscribe (plans/archive/High-Level-Review.md HL-014): resume after a stored sequence, a gap the hub
 //! missed (a run that moved between nodes), a paused run, a client that left, and a stop or a deadline that ends a
 //! stream or a blocking wait while nothing comes.
 

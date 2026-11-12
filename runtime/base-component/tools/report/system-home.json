@@ -1,0 +1,529 @@
+{
+  "id": "system-home",
+  "type": "dashboard",
+  "title": "System home",
+  "body": {
+    "folder": "System",
+    "description": "The activity strip of the System home (plans/archive/Tools-Fancy.md \u00a73.3): traffic, response time, CPU and memory of this server, or of the instances chosen.",
+    "variables": [
+      {
+        "name": "instance",
+        "label": "Instance",
+        "kind": "query",
+        "datasetId": "otel_metrics",
+        "field": "service.instance.id",
+        "multi": true,
+        "includeAll": true
+      }
+    ],
+    "panels": {
+      "requests": {
+        "title": "Requests and errors",
+        "description": "HTTP requests and those answered with a server error (5xx), in each interval of the range: a minute over an hour.",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "requests",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "errors",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "http.response.status_code",
+                  "op": "range",
+                  "gte": 500
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "time"
+            ]
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "count.2"
+            ],
+            "order": [
+              "time",
+              "requests",
+              "errors"
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 0,
+            "noValue": "0"
+          },
+          "overrides": [
+            {
+              "match": {
+                "name": "requests"
+              },
+              "config": {
+                "displayName": "Requests"
+              }
+            },
+            {
+              "match": {
+                "name": "errors"
+              },
+              "config": {
+                "displayName": "Server errors (5xx)"
+              }
+            }
+          ]
+        }
+      },
+      "responseTime": {
+        "title": "Response time",
+        "description": "The median and the 95th percentile of the HTTP response time.",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count",
+                  "latency.p99",
+                  "latency.stddev",
+                  "latency.bucket.0",
+                  "latency.bucket.1",
+                  "latency.bucket.2",
+                  "latency.bucket.3",
+                  "latency.bucket.4",
+                  "latency.bucket.5",
+                  "latency.bucket.6",
+                  "latency.bucket.7",
+                  "latency.bucket.8",
+                  "latency.bucket.9",
+                  "latency.bucket.10",
+                  "latency.bucket.11",
+                  "latency.bucket.12",
+                  "latency.bucket.13",
+                  "latency.bucket.14"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "decimals": 3
+          },
+          "overrides": [
+            {
+              "match": {
+                "name": "latency.p50"
+              },
+              "config": {
+                "displayName": "p50"
+              }
+            },
+            {
+              "match": {
+                "name": "latency.p95"
+              },
+              "config": {
+                "displayName": "p95"
+              }
+            }
+          ]
+        }
+      },
+      "cpu": {
+        "title": "CPU load",
+        "description": "The machine's 5-minute load as a share of its processors, and this server's share of them.",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.system.cpu.load.utilization\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "systemShare",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "calculate",
+                "left": "systemShare",
+                "value": 100,
+                "operator": "*",
+                "name": "system"
+              },
+              {
+                "type": "organize",
+                "hide": [
+                  "count",
+                  "systemShare"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"process.cpu.utilization\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "processShare",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "calculate",
+                "left": "processShare",
+                "value": 100,
+                "operator": "*",
+                "name": "process"
+              },
+              {
+                "type": "organize",
+                "hide": [
+                  "count",
+                  "processShare"
+                ]
+              }
+            ]
+          }
+        ],
+        "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "time"
+            ]
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "count.2"
+            ],
+            "order": [
+              "time",
+              "system",
+              "process"
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 1,
+            "min": 0
+          },
+          "overrides": [
+            {
+              "match": {
+                "name": "system"
+              },
+              "config": {
+                "displayName": "System load"
+              }
+            },
+            {
+              "match": {
+                "name": "process"
+              },
+              "config": {
+                "displayName": "This server"
+              }
+            }
+          ]
+        }
+      },
+      "memory": {
+        "title": "Memory",
+        "description": "The memory this server holds and what the machine still has available.",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"process.memory.usage\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "process",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"system.linux.memory.available\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "available",
+                "type": "min",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "time"
+            ]
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "count.2"
+            ],
+            "order": [
+              "time",
+              "process",
+              "available"
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "decimals": 1,
+            "min": 0
+          },
+          "overrides": [
+            {
+              "match": {
+                "name": "process"
+              },
+              "config": {
+                "displayName": "This server"
+              }
+            },
+            {
+              "match": {
+                "name": "available"
+              },
+              "config": {
+                "displayName": "Available on the machine"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layout": {
+      "type": "grid",
+      "items": [
+        {
+          "panelId": "requests",
+          "x": 0,
+          "y": 0,
+          "w": 6,
+          "h": 1
+        },
+        {
+          "panelId": "responseTime",
+          "x": 6,
+          "y": 0,
+          "w": 6,
+          "h": 1
+        },
+        {
+          "panelId": "cpu",
+          "x": 12,
+          "y": 0,
+          "w": 6,
+          "h": 1
+        },
+        {
+          "panelId": "memory",
+          "x": 18,
+          "y": 0,
+          "w": 6,
+          "h": 1
+        }
+      ]
+    }
+  }
+}

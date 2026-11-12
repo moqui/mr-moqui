@@ -58,6 +58,17 @@ fn declaration_comment_cdata_entities_and_raw_names() {
 }
 
 #[test]
+fn a_comment_with_a_double_hyphen_parses_here_and_is_reported() {
+    // The license comment left open before the next one starts, a `--flag` in prose and a `--->` ending: this reader
+    // takes each, other parsers refuse the file. A `--` in CDATA or an empty comment is allowed.
+    let xml = "<?xml version=\"1.0\"?>\n<!--\nlicense\n<!-- a note -->\n<root>\n<!-- run with --screens -->\n\
+               <![CDATA[ x -- y <!-- z -- --> ]]>\n<!---->\n<!-- fine -->\n<!-- ends badly --->\n</root>";
+    MNode::parse_text("comments.xml", xml).unwrap();
+    assert_eq!(malformed_comments(xml), vec![4, 6, 10]);
+    assert!(malformed_comments("<root><!-- ok --><!-- also - ok --></root>").is_empty());
+}
+
+#[test]
 fn raw_text_keeps_whitespace() {
     let xml = "<root>\n  <a>  spaced  </a><b> </b><c><![CDATA[ x ]]>\n</c><d/></root>";
     let raw = MNode::parse_text_raw("raw.xml", xml).unwrap();

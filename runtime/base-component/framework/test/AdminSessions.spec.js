@@ -183,6 +183,8 @@ feature("an identity operator reads another user's sessions and ends one, a view
         return {
             viewer: as("spec.sessions.viewer", () => ({
                 found: invoke(S + "find#Sessions", {userId: targetId, activeOnly: true}),
+                // every account's, narrowed to those whose name holds the text, whatever its case
+                named: invoke(S + "find#Sessions", {allUsers: true, text: "SESSIONS.TARGET", activeOnly: true}),
                 revoked: invoke(S + "revoke#Sessions", {sessionKeyList: [visit(2)]}),
                 credentials: invoke(S + "get#AccountCredentials", {userId: targetId})
             })),
@@ -194,6 +196,7 @@ feature("an identity operator reads another user's sessions and ends one, a view
     },
     then({viewer, operator}) {
         viewer.found.error == "" && viewer.found.sessionList.length >= 1
+        viewer.named.sessionList.length >= 1 && viewer.named.sessionList.every(row => row.userId == targetId)
         viewer.revoked.refusedCount == 1 && viewer.revoked.sessionCount == 0
         viewer.credentials.error == ""
         viewer.credentials.credentialList.some(row => row.kind == "accessToken" && row.description == "Spec token")

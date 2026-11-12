@@ -116,6 +116,209 @@ fn a_server_not_reached_is_retryable() {
     );
 }
 
+/// Admin P12: a delivery that failed keeps its outcome and error on the stored message, for the mail queue; the Sent status
+/// clears the outcome, and a send with no stored message keeps nothing.
+#[test]
+fn a_failed_delivery_keeps_its_outcome_on_the_message() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    seed(
+        &facade,
+        &context,
+        MESSAGE,
+        &[("emailMessageId", "P12_OUTCOME"), ("statusId", "ES_READY")],
+    );
+    let message = || {
+        let _authz = context.disable_authz();
+        super::find_one(&facade, MESSAGE, "emailMessageId", "P12_OUTCOME")
+            .unwrap()
+            .unwrap()
+    };
+    let lost = moqui_core::context::Error::new("The SMTP session stopped before its end");
+    super::record_send_failure(&facade, "P12_OUTCOME", &lost, "uncertain");
+    super::record_send_failure(&facade, "", &lost, "uncertain");
+    assert_eq!(field_text(&message(), "sendOutcome"), "uncertain");
+    assert_eq!(field_text(&message(), "sendError"), lost.message());
+    assert_eq!(field_text(&message(), "statusId"), "ES_READY");
+    super::update_sent(&facade, "P12_OUTCOME", "<p12@example.com>").unwrap();
+    assert_eq!(field_text(&message(), "statusId"), "ES_SENT");
+    assert_eq!(field_text(&message(), "sendOutcome"), "");
+}
+
+/// Admin P12 (F179): a send of a stored message that begins supersedes what was kept of the send before. A settlement
+/// (a person's report of an uncertain send) is cleared and a known outcome becomes uncertain before the transport is
+/// contacted, so a send lost part way leaves the message uncertain and unsettled; the audit log keeps the settlement.
+/// A refusal before any attempt (here a host that is not allowed) is no send and leaves the message as it was.
+#[test]
+fn a_send_that_begins_clears_the_settlement_of_the_send_before() {
+    use super::superseded_by_send;
+    // (the outcome is marked uncertain, a settlement is cleared)
+    assert_eq!(superseded_by_send("ES_READY", "retryable", ""), (true, false));
+    assert_eq!(
+        superseded_by_send("ES_READY", "permanent", "notDelivered"),
+        (true, true)
+    );
+    assert_eq!(superseded_by_send("ES_READY", "uncertain", "delivered"), (false, true));
+    assert_eq!(superseded_by_send("ES_READY", "", ""), (false, false));
+    assert_eq!(superseded_by_send("ES_BOUNCED", "", ""), (true, false));
+    assert_eq!(
+        superseded_by_send("ES_BOUNCED", "uncertain", "notDelivered"),
+        (false, true)
+    );
+    assert_eq!(superseded_by_send("ES_SENT", "retryable", "delivered"), (false, true));
+
+    let _lock = lock_tests();
+    let (facade, context) = entered_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
+    let _entered = context.enter();
+    moqui_core::service::load_definitions().unwrap();
+    // the test database keeps no audit log unless asked
+    facade.set_disable_audit_log(false);
+    smtp_server(&facade, &context, "F179_SMTP");
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[("emailServerId", "F179_BAD"), ("smtpHost", "notexample.com")],
+    );
+    let settled = |id: &str, server: &str, outcome: &str, settlement: &str| {
+        seed(
+            &facade,
+            &context,
+            MESSAGE,
+            &[
+                ("emailMessageId", id),
+                ("statusId", "ES_READY"),
+                ("emailServerId", server),
+                ("fromAddress", "from@example.com"),
+                ("toAddresses", "to@example.com"),
+                ("subject", "Settled"),
+                ("bodyText", "Hello"),
+                ("sendOutcome", outcome),
+                ("sendError", "The SMTP session stopped before its end"),
+                ("sendSettlement", settlement),
+                ("sendSettledByUserId", "SETTLER"),
+                ("sendSettledReason", "The relay's log"),
+            ],
+        );
+    };
+    let message = |id: &str| {
+        let _authz = context.disable_authz();
+        super::find_one(&facade, MESSAGE, "emailMessageId", id)
+            .unwrap()
+            .unwrap()
+    };
+    let send = |id: &str| {
+        let _authz = context.disable_authz();
+        let sent = moqui_core::service::sync(
+            "org.moqui.mail.EmailServices.send#EmailMessage",
+            &BTreeMap::from([("emailMessageId".to_string(), Value::string(id))]),
+        );
+        (sent.unwrap_or_default(), context.message().errors().join("\n"))
+    };
+    let sink = SinkGuard::install();
+
+    // the start of a send alone, as a send lost part way leaves it: uncertain, and no settlement
+    settled("F179_LOST", "F179_SMTP", "retryable", "notDelivered");
+    super::begin_send(&facade, &message("F179_LOST")).unwrap();
+    let lost = message("F179_LOST");
+    assert_eq!(field_text(&lost, "statusId"), "ES_READY");
+    assert_eq!(field_text(&lost, "sendOutcome"), "uncertain");
+    for name in [
+        "sendSettlement",
+        "sendSettledByUserId",
+        "sendSettledDate",
+        "sendSettledReason",
+    ] {
+        assert_eq!(field_text(&lost, name), "", "{name}");
+    }
+    // the audit log keeps what was concluded
+    let audits = {
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.entity.EntityAuditLog")
+            .unwrap()
+            .eq("changedEntityName", Value::string(MESSAGE))
+            .eq("changedFieldName", Value::string("sendSettlement"))
+            .eq("pkPrimaryValue", Value::string("F179_LOST"))
+            .list()
+            .unwrap()
+    };
+    assert!(
+        audits
+            .values()
+            .iter()
+            .any(|row| field_text(row, "oldValueText") == "notDelivered" && field_text(row, "newValueText").is_empty()),
+        "{} audit rows",
+        audits.values().len()
+    );
+
+    // a whole send from outside the queue: the transport's result is the state, and the settlement is gone
+    settled("F179_SENT", "F179_SMTP", "uncertain", "delivered");
+    let (sent, errors) = send("F179_SENT");
+    assert_eq!(errors, "");
+    assert!(sent.contains_key("messageId"), "{sent:?}");
+    assert_eq!(sink.messages().len(), 1);
+    let went = message("F179_SENT");
+    assert_eq!(field_text(&went, "statusId"), "ES_SENT");
+    assert_eq!(field_text(&went, "sendOutcome"), "");
+    assert_eq!(field_text(&went, "sendSettlement"), "");
+    assert_eq!(field_text(&went, "sendSettledByUserId"), "");
+
+    // refused before any attempt: nothing began, so the person's conclusion stands
+    settled("F179_REFUSED", "F179_BAD", "uncertain", "notDelivered");
+    let (_, errors) = send("F179_REFUSED");
+    assert!(errors.contains("notexample.com"), "{errors}");
+    assert_eq!(sink.messages().len(), 1);
+    let refused = message("F179_REFUSED");
+    assert_eq!(field_text(&refused, "sendSettlement"), "notDelivered");
+    assert_eq!(field_text(&refused, "sendSettledByUserId"), "SETTLER");
+    assert_eq!(field_text(&refused, "sendOutcome"), "uncertain");
+}
+
+/// Admin P11: a server that is disabled until a test of it passes sends nothing, and one that may not use the private
+/// network (`allowPrivateNetwork` N) is connected to at no internal address; both before any socket.
+#[test]
+fn a_disabled_server_and_an_internal_address_are_refused_before_a_connection() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    for (id, host, field) in [
+        ("OFF", "93.184.216.34", "disabled"),
+        ("INNER", "127.0.0.1", "allowPrivateNetwork"),
+        ("OUTER", "93.184.216.34", "allowPrivateNetwork"),
+    ] {
+        seed(
+            &facade,
+            &context,
+            "moqui.basic.email.EmailServer",
+            &[
+                ("emailServerId", id),
+                ("smtpHost", host),
+                ("smtpPort", "25"),
+                (field, if field == "disabled" { "Y" } else { "N" }),
+            ],
+        );
+    }
+    let server = |id: &str| {
+        super::find_one(&facade, super::SERVER, "emailServerId", id)
+            .unwrap()
+            .unwrap()
+    };
+    let transport = |id: &str| super::smtp_transport(&server(id), &super::SmtpAuth::None, None).map(|_| ());
+    let off = transport("OFF").unwrap_err();
+    assert!(
+        off.to_string().contains("is disabled until a test of it passes"),
+        "{off}"
+    );
+    let inner = transport("INNER").unwrap_err();
+    assert!(inner.to_string().contains("is an internal address"), "{inner}");
+    // nothing was sent, so the message is tried again later, never left as possibly sent
+    assert_eq!(super::delivery_outcome(&server("OFF"), &off), "retryable");
+    assert_eq!(super::delivery_outcome(&server("INNER"), &inner), "retryable");
+    assert_eq!(super::delivery_outcome(&server("OUTER"), &off), "uncertain");
+    // a public address written out is taken as it is: no lookup, no connection yet
+    transport("OUTER").unwrap();
+}
+
 #[test]
 fn host_suffix_matches_on_a_dot_boundary() {
     assert!(host_in("", "smtp.example.com"));

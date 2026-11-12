@@ -18,7 +18,7 @@ feature("an anonymous GET /Login is HTML with a session cookie that is HttpOnly 
 })
 
 feature("redirects are off unless asked: #path", {
-    where: [{ path: "/apps/system/dashboard" }, { path: "/qapps/system/dashboard" }],
+    where: [{ path: "/apps/system/Home" }, { path: "/qapps/system/Home" }],
     when({ path }) { return { off: session().get(path), on: session().get(path, { follow: true }) } },
     then({ off, on }) {
         off.status == 302

@@ -48,6 +48,9 @@ pub enum SessionEvent {
     Log(String),
     /// Whether Alt+L offers the log pane, decided again after a login in the session's dialog.
     LogOffered(bool),
+    /// A client attached again to a session it had left (a reload, another device, plans/Terminal-Fancy.md §5.1): the
+    /// terminal setup is written again and the next frame whole, since the new terminal shows nothing of this one.
+    Reattach,
     /// The channel closed: end without writing more.
     Close,
 }
@@ -187,6 +190,15 @@ fn run<L: ScreenLink + 'static, W: Write>(
                 }
                 SessionEvent::LogOffered(offered) => {
                     view.session_mut().set_log_offered(offered);
+                    changed = true;
+                }
+                SessionEvent::Reattach => {
+                    out.write_all(ENTER)?;
+                    out.write_all(BACKGROUND_QUERY)?;
+                    if view.session().mouse_on() {
+                        out.write_all(MOUSE_ON)?;
+                    }
+                    screen.invalidate();
                     changed = true;
                 }
                 SessionEvent::Close => return Ok(()),

@@ -588,7 +588,7 @@ async fn serve(
         let _ = stream.set_nodelay(true);
         tune_socket(&stream, limits.write);
         // the hold keeps a watch on `closing` too, so an upgraded socket (which outlives its connection's task) is one
-        // the stop's drain waits for, as it waits for a connection (plans/High-Level-Review.md HL-027)
+        // the stop's drain waits for, as it waits for a connection (plans/archive/High-Level-Review.md HL-027)
         let hold: serve::ConnectionHold = Box::new((slot, permit, closing_rx.clone()));
         let builder = builder.clone();
         let closing = closing_rx.clone();
@@ -602,6 +602,7 @@ async fn serve(
                 closing,
                 exporter: None,
                 hold: Some(hold),
+                via: moqui_core::web::RequestVia::Direct,
             };
             match tls {
                 None => run_connection(stream, false, Http::One, serving).await,
@@ -963,6 +964,7 @@ async fn dispatch_screen(
     let mut web = WebRequest::new(parts.method.as_str(), parts.uri.path());
     web.https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing());
     web.peer_ip = peer.ip().to_string();
+    web.via = parts.extensions.get::<moqui_core::web::RequestVia>().copied().unwrap_or_default();
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
     web.raw_query = parts.uri.query().map(str::to_string);

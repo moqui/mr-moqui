@@ -94,7 +94,7 @@ fn declarations_for_framework_and_tools_pass_tsc() {
     // Tools screens: the keys the definition proves, and the package of a server-static shell.
     let screens = get("screens.d.ts");
     let detail = screens
-        .split("interface tools_screen_System_Security_ArtifactGroup_ArtifactGroupDetail {")
+        .split("interface tools_screen_System_Access_ArtifactGroupDetail {")
         .nth(1)
         .and_then(|rest| rest.split("\n    }").next())
         .unwrap();

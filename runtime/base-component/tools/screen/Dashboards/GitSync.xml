@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Definition folders kept in git repositories: a save pushes its file, and a push or fetch to the repository pulls. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Git sync" default-menu-index="9">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Git sync" default-menu-index="11"
+        menu-image="sym_o_sync" menu-image-type="icon">
     <transition name="store" method="post" authz-action="update">
         <service-call name="org.moqui.report.ReportServices.store#DefinitionGitSync"/>
         <default-response url="."/>

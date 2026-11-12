@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- ConnectionDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8.1, §8): one connection of
+    a registered kind (a gateway, a remote system, a mail sign-in provider, a network printer), read from
+    org.moqui.admin.ConfigurationServices.get#Connection and changed through store#Connection at the revision read.
+    NativeConnection is the kind's own form: its settings and its secrets, a secret entered and never shown; a change of an
+    endpoint setting needs the secrets entered again, else the stored ones are cleared, and either way the connection is
+    disabled until a test of it passes (test#Connection), which enables it. ConnectionChecks shows the last test's checks,
+    Consumers where the connection is used. Reading needs ADMIN_CONNECTION_VIEW and a change or a test
+    ADMIN_CONNECTION_MANAGE: the services check them, and every refusal comes back as a reason shown here. The shared parts
+    are template/ConnectionParts.xml, which an app's own connection screen includes too.
+    For the instance administrator (README, "Mounting the administration screens"): RawRemote, for a remote system, the
+    remote's record changed directly, as the Message Remotes screen this one replaced did: any field of it, its stored
+    credentials and keys among them, and the values its enumerations are mapped to. No kind's rule, test or review applies
+    there, so each of its transitions carries raw() as its condition and an app that shows a connection takes in only
+    storeConnection, testConnection and setEnabled. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Connection" default-menu-include="false">
+    <parameter name="adapterKey" required="true"/>
+    <parameter name="connectionKey" required="true"/>
+
+    <!-- a mail relay is MailRelayDetail's: this screen and its transitions answer the kinds of the Connections list -->
+    <always-actions>
+        <if condition="adapterKey === 'relay'">
+            <set field="adapterKey" value="none"/>
+        </if>
+    </always-actions>
+
+    <transition-include name="storeConnection" location="component://tools/template/ConnectionParts.xml"/>
+    <transition-include name="testConnection" location="component://tools/template/ConnectionParts.xml"/>
+    <transition-include name="setEnabled" location="component://tools/template/ConnectionParts.xml"/>
+
+    <!-- the instance administrator's transitions: never under a mount, and only for a user who opens System by their own grant -->
+    <transition name="updateMessageRemote">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.service.message.SystemMessageRemote"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="createMessageRemoteEnumMap">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.service.message.SystemMessageEnumMap"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateMessageRemoteEnumMap">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.service.message.SystemMessageEnumMap"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteMessageRemoteEnumMap">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="delete#moqui.service.message.SystemMessageEnumMap"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="kindTitle" value="Connection"/>
+        <set field="listPath" value="../Connections"/>
+        <set field="listTitle" value="Connections"/>
+        <set field="detailPath" value="."/>
+        <set field="mount" from="ec.resource.script('component://tools/template/AdminMount.js').state()"/>
+        <if condition="mount.raw &amp;&amp; adapterKey === 'remote'">
+            <entity-find-one entity-name="moqui.service.message.SystemMessageRemote" value-field="systemMessageRemote">
+                <field-map field-name="systemMessageRemoteId" from="connectionKey"/>
+            </entity-find-one>
+            <entity-find entity-name="moqui.service.message.SystemMessageEnumMap" list="remoteEnumMapList">
+                <econdition field-name="systemMessageRemoteId" from="connectionKey"/>
+                <order-by field-name="enumId"/>
+            </entity-find>
+            <set field="remoteKeys" from="{adapterKey: adapterKey, connectionKey: connectionKey, systemMessageRemoteId: connectionKey}"/>
+        </if>
+    </actions>
+    <widgets>
+        <section-include name="ConnectionPrepare" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionUnavailable" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionHeader" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="NativeConnectionBox" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionChecksBox" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionConsumersBox" location="component://tools/template/ConnectionParts.xml"/>
+        <section name="RawRemote" condition="mount.raw &amp;&amp; systemMessageRemote">
+            <widgets>
+                <label text="Instance administrator" type="h6" style="q-mt-md q-mb-none"/>
+                <label type="p" style="text-caption m-muted"
+                        text="The remote's record, changed directly: no rule of its kind, test or review applies, and its stored credentials and keys are shown. Use the configuration above where it offers the change."/>
+                <container-row>
+                    <row-col md="6">
+                        <container-box>
+                            <box-header title="All fields"/>
+                            <box-toolbar>
+                                <link url="../SystemMessages" text="Messages of this remote" icon="sym_o_swap_horiz"
+                                        parameter-map="{systemMessageRemoteId:connectionKey, state:'all'}"/>
+                            </box-toolbar>
+                            <box-body>
+                                <form-single name="SystemMessageRemoteForm" map="systemMessageRemote" transition="updateMessageRemote">
+                                    <field name="adapterKey"><default-field><hidden/></default-field></field>
+                                    <field name="connectionKey"><default-field><hidden/></default-field></field>
+                                    <field name="systemMessageRemoteId"><default-field title="Remote ID"><display/></default-field></field>
+                                    <auto-fields-entity entity-name="moqui.service.message.SystemMessageRemote" field-type="edit" include="nonpk"/>
+                                    <field name="description"><default-field><text-line size="40"/></default-field></field>
+                                    <field name="sendUrl"><default-field><text-line size="100"/></default-field></field>
+                                    <field name="sendServiceName"><default-field><text-line size="100"/></default-field></field>
+                                    <field name="messageAuthEnumId">
+                                        <default-field title="Message authentication">
+                                            <widget-template-include location="component://webroot/template/screen/BasicWidgetTemplates.xml#enumDropDown">
+                                                <set field="enumTypeId" value="SystemMessageAuthType"/>
+                                                <set field="allowEmpty" value="true"/>
+                                            </widget-template-include>
+                                        </default-field>
+                                    </field>
+                                    <field name="sendAuthEnumId">
+                                        <default-field title="Send authentication">
+                                            <widget-template-include location="component://webroot/template/screen/BasicWidgetTemplates.xml#enumDropDown">
+                                                <set field="enumTypeId" value="SystemMessageAuthType"/>
+                                                <set field="allowEmpty" value="true"/>
+                                            </widget-template-include>
+                                        </default-field>
+                                    </field>
+                                    <field name="systemMessageTypeId">
+                                        <default-field title="Message type">
+                                            <drop-down allow-empty="true">
+                                                <entity-options key="${systemMessageTypeId}" text="${description}">
+                                                    <entity-find entity-name="moqui.service.message.SystemMessageType">
+                                                        <order-by field-name="description"/>
+                                                    </entity-find>
+                                                </entity-options>
+                                            </drop-down>
+                                        </default-field>
+                                    </field>
+                                    <field name="segmentTerminator"><default-field><text-line size="1" maxlength="1"/></default-field></field>
+                                    <field name="elementSeparator"><default-field><text-line size="1" maxlength="1"/></default-field></field>
+                                    <field name="componentDelimiter"><default-field><text-line size="1" maxlength="1"/></default-field></field>
+                                    <field name="escapeCharacter"><default-field><text-line size="1" maxlength="1"/></default-field></field>
+                                    <field name="publicKey"><default-field><text-area cols="100" maxlength="4000"/></default-field></field>
+                                    <field name="privateKey"><default-field><text-area cols="100" maxlength="4000"/></default-field></field>
+                                    <field name="remotePublicKey"><default-field><text-area cols="100" maxlength="4000"/></default-field></field>
+                                    <field name="submitButton"><default-field title="Update remote"><submit/></default-field></field>
+                                </form-single>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                    <row-col md="6">
+                        <container-box>
+                            <box-header title="Enumeration values at this remote"/>
+                            <box-toolbar>
+                                <container-dialog id="AddRemoteEnumMapDialog" button-text="Add mapped value">
+                                    <form-single name="CreateMessageRemoteEnumMap" transition="createMessageRemoteEnumMap" map="remoteKeys">
+                                        <field name="adapterKey"><default-field><hidden/></default-field></field>
+                                        <field name="connectionKey"><default-field><hidden/></default-field></field>
+                                        <field name="systemMessageRemoteId"><default-field><hidden/></default-field></field>
+                                        <field name="enumId">
+                                            <default-field title="Enumeration">
+                                                <drop-down>
+                                                    <entity-options key="${enumId}" text="${typeDescription} - ${description}">
+                                                        <entity-find entity-name="moqui.basic.EnumerationAndType">
+                                                            <order-by field-name="typeDescription,sequenceNum,description"/>
+                                                        </entity-find>
+                                                    </entity-options>
+                                                </drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="mappedValue"><default-field title="Value at the remote"><text-line size="30"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                            </box-toolbar>
+                            <box-body>
+                                <label type="p" style="m-muted" condition="!remoteEnumMapList.length" text="No enumeration has a value of its own at this remote."/>
+                                <form-list name="SystemMessageEnumMapList" list="remoteEnumMapList" transition="updateMessageRemoteEnumMap" paginate="false">
+                                    <row-actions>
+                                        <entity-find-one entity-name="moqui.basic.Enumeration" value-field="keyEnum" cache="true">
+                                            <field-map field-name="enumId"/>
+                                        </entity-find-one>
+                                    </row-actions>
+                                    <hidden-parameters parameter-map="{adapterKey:adapterKey, connectionKey:connectionKey}"/>
+                                    <field name="systemMessageRemoteId"><default-field><hidden/></default-field></field>
+                                    <field name="enumId">
+                                        <default-field title="Enumeration"><display text="${keyEnum ? keyEnum.description + ' ' : ''}(${enumId})"/></default-field>
+                                    </field>
+                                    <field name="mappedValue"><default-field title="Value at the remote"><text-line size="30"/></default-field></field>
+                                    <field name="submitButton"><default-field title="Update"><submit/></default-field></field>
+                                    <field name="deleteLink">
+                                        <default-field title="">
+                                            <link url="deleteMessageRemoteEnumMap" text="Delete" btn-type="danger"
+                                                    confirmation="Delete the value ${mappedValue} of ${enumId} at the remote ${systemMessageRemoteId}?"
+                                                    parameter-map="{adapterKey:adapterKey, connectionKey:connectionKey, systemMessageRemoteId:systemMessageRemoteId, enumId:enumId}"/>
+                                        </default-field>
+                                    </field>
+                                </form-list>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                </container-row>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

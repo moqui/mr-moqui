@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Errors" default-menu-index="6" default-menu-group="Telemetry" menu-image="sym_o_error" menu-image-type="icon">
+    <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
+    <parameter name="pageIndex"/><parameter name="pageSize"/><parameter name="order"/>
+    <transition name="errorDetail"><default-response url="//apps/system/Monitor/ErrorDetail"/></transition>
+    <actions><script><![CDATA[
+        from = from || 'now-7d'; thru = thru || 'now'
+        const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({
+            datasetId: 'otel_errors', from, thru, queryString: queryString || '',
+            sort: [order === 'oldest' ? 'time' : '-time'], pageIndex: parseInt(pageIndex || '0', 10), pageSize: parseInt(pageSize || '50', 10)
+        }).call()
+        const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return value == null || Number.isNaN(date.getTime()) ? String(value ?? '') : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss') }
+        documentList = (result.hits || []).map(hit => { const body = hit.body || {}; return Object.assign({documentId:hit.documentId || hit.id},body,{
+            messageText:String(body.message || body['exception.type'] || 'Error group').slice(0,200),exceptionType:body['exception.type'] || '',serviceName:body['service.name'] || '',firstSeenText:stamp(body.first_seen),lastSeenText:stamp(body.last_seen)}) })
+        documentListCount = result.total || 0
+        documentListPageIndex = parseInt(pageIndex || '0', 10)
+        documentListPageSize = parseInt(pageSize || '50', 10)
+        documentListPageMaxIndex = Math.max(0,Math.ceil(documentListCount / documentListPageSize)-1)
+        documentListPageRangeLow = documentList.length ? documentListPageIndex*documentListPageSize+1 : 0
+        documentListPageRangeHigh = documentListPageIndex*documentListPageSize+documentList.length
+        queryNotices = (result.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice))
+        // Error groups hold totals, so the chart counts the failed spans: a request's SERVER span or a job's root span.
+        // The current, partial bucket stays (marked partial): the newest failures matter most.
+        errorsFrame = {fields:[]}
+        try {
+            const overTime = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_spans',from,thru,
+                filters:[{field:{name:'status_code',op:'eq',value:'ERROR'}},{bool:{any:[{field:{name:'kind',op:'eq',value:'SERVER'}},{field:{name:'moqui.job.root',op:'eq',value:true}}]}}],
+                aggregations:[{id:'time',type:'date_histogram',role:'x-axis',params:{field:'start',interval:'auto',targetBars:60,min_doc_count:0,drop_partial:false}},
+                    {id:'service',type:'terms',role:'series',params:{field:'service.name',size:10,missing:'(unknown)'}}]}}).call()
+            errorsFrame = (overTime.frames || [])[0] || {fields:[]}
+            queryNotices.push(...(overTime.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
+        } catch (error) { ec.logger.error('Errors over time failed: '+String(error)); queryNotices.push(String(error)) }
+        errorsPanel = {title:'Failed requests and jobs over time',visualization:'timeSeries',queries:[{aggregations:[{id:'time',role:'x-axis'},{id:'service',role:'series'},{id:'count',role:'metric'}]}]}
+    ]]></script></actions>
+    <widgets>
+        <form-single name="SearchOptions" transition=".">
+            <field name="queryString"><default-field title="Query"><text-line size="70"/></default-field></field>
+            <field name="from"><default-field title="From"><text-line default-value="now-7d"/></default-field></field>
+            <field name="thru"><default-field title="Through"><text-line default-value="now"/></default-field></field>
+            <field name="order"><default-field title="Order"><drop-down><option key="newest" text="Newest first"/><option key="oldest" text="Oldest first"/></drop-down></default-field></field>
+            <field name="pageSize"><default-field title="Page size"><drop-down><option key="50"/><option key="100"/><option key="250"/></drop-down></default-field></field>
+            <field name="find"><default-field><submit text="Search"/></default-field></field>
+        </form-single>
+        <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+        <report-panel frame="errorsFrame" panel="errorsPanel"/>
+
+        <form-list name="Errors" list="documentList" skip-form="true">
+            <field name="message"><default-field title="Error"><link url="errorDetail" text="${messageText}" link-type="anchor"><parameter name="fingerprint"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>
+            <field name="exceptionType"><default-field title="Type"><display/></default-field></field>
+            <field name="serviceName"><default-field title="Service"><display/></default-field></field>
+            <field name="count"><default-field title="Occurrences"><display/></default-field></field>
+            <field name="first_seen"><default-field title="First seen"><display text="${firstSeenText}"/></default-field></field>
+            <field name="last_seen"><default-field title="Last seen"><display text="${lastSeenText}"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

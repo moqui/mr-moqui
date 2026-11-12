@@ -56,7 +56,7 @@
     <transition name="service"><service-call name="moqui.Missing.noop"/><default-response type="none"/></transition>
     <subscreens default-item="Home">
         <subscreens-item name="Linked" location="src/screen/testdata/Elsewhere/Other.xml"
-                menu-title="Linked Items" menu-index="1"/>
+                menu-title="Linked Items" menu-index="1" menu-group="Linked group"/>
     </subscreens>
     <pre-actions><script>trace.push('Root.pre')</script></pre-actions>
     <actions><script>trace.push('Root.actions')</script></actions>

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A load's result (plans/LoadRunner.md section 5): the totals and the table by name from the histograms, the bins,
+//! A load's result (plans/archive/LoadRunner.md section 5): the totals and the table by name from the histograms, the bins,
 //! the thresholds and their verdict, the generator's share of the machine, and the console table.
 
 use std::fmt::Write as _;
@@ -274,19 +274,6 @@ pub(crate) fn check_thresholds(limits: &Value) -> Result<(), String> {
             "load: thresholds.names is {{ name: {{ p95, ... }} }}, not {other}"
         )),
     }
-}
-
-/// This process's CPU time (user and system, every thread), from `/proc/self/stat`; `None` off Linux.
-pub(crate) fn process_cpu() -> Option<Duration> {
-    // USER_HZ is 100 on Linux, so a tick is ten milliseconds.
-    const TICK_MILLIS: u64 = 10;
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    // The fields after the name in parentheses: state is the first, utime and stime the 12th and 13th.
-    let (_, rest) = stat.rsplit_once(')')?;
-    let fields: Vec<&str> = rest.split_whitespace().collect();
-    let utime: u64 = fields.get(11)?.parse().ok()?;
-    let stime: u64 = fields.get(12)?.parse().ok()?;
-    Some(Duration::from_millis((utime + stime) * TICK_MILLIS))
 }
 
 /// A count with thousands separators: 2,412.

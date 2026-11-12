@@ -150,7 +150,7 @@
               },
               "config": {
                 "displayName": "Service",
-                "link": "/apps/monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"
+                "link": "/apps/system/Monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"
               }
             }
           ]
@@ -370,7 +370,7 @@
               },
               "config": {
                 "displayName": "Service",
-                "link": "/apps/monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"
+                "link": "/apps/system/Monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"
               }
             },
             {
@@ -379,7 +379,7 @@
               },
               "config": {
                 "displayName": "Endpoint",
-                "link": "/apps/monitor/Services?var-service=${service}&var-endpoint=${endpoint}&from=${__from}&thru=${__thru}"
+                "link": "/apps/system/Monitor/Services?var-service=${service}&var-endpoint=${endpoint}&from=${__from}&thru=${__thru}"
               }
             }
           ]
@@ -621,7 +621,7 @@
               },
               "config": {
                 "displayName": "Service",
-                "link": "/apps/monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"
+                "link": "/apps/system/Monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"
               }
             },
             {
@@ -630,7 +630,7 @@
               },
               "config": {
                 "displayName": "Instance",
-                "link": "/apps/monitor/Services?var-service=${service}&var-instance=${instance}&from=${__from}&thru=${__thru}"
+                "link": "/apps/system/Monitor/Services?var-service=${service}&var-instance=${instance}&from=${__from}&thru=${__thru}"
               }
             },
             {
@@ -1044,7 +1044,7 @@
               },
               "config": {
                 "displayName": "Artifact",
-                "link": "/apps/monitor/Artifacts?var-artifactType=${artifact_type}&var-artifactName=${name}&from=${__from}&thru=${__thru}"
+                "link": "/apps/system/Monitor/Artifacts?var-artifactType=${artifact_type}&var-artifactName=${name}&from=${__from}&thru=${__thru}"
               }
             },
             {

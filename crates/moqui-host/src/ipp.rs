@@ -92,19 +92,24 @@ fn ipp_uri(server: &PrintServer, path: &str) -> String {
     format!("ipp://{authority}{path}")
 }
 
-/// The one HTTP client for every print server, so connections and the TLS setup are reused.
-fn client() -> Result<&'static reqwest::Client, String> {
-    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(TIMEOUT)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|err| err.to_string())
-        })
-        .as_ref()
-        .map_err(Clone::clone)
+/// The HTTP clients for every print server, so connections and the TLS setup are reused: the second sends nothing to
+/// an internal address (a name by its resolver; an address written out is refused in [`send`]). Neither follows a
+/// redirect.
+fn client(deny_internal: bool) -> Result<&'static reqwest::Client, String> {
+    static OPEN: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    static PUBLIC: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    let slot = if deny_internal { &PUBLIC } else { &OPEN };
+    slot.get_or_init(|| {
+        let mut builder = reqwest::Client::builder()
+            .timeout(TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none());
+        if deny_internal {
+            builder = builder.dns_resolver(Arc::new(moqui_lib::http::PublicOnly));
+        }
+        builder.build().map_err(|err| err.to_string())
+    })
+    .as_ref()
+    .map_err(Clone::clone)
 }
 
 /// The path of a printer URI (`ipp://host:631/printers/name` is `/printers/name`), where its requests are posted.
@@ -200,14 +205,37 @@ fn send(server: &PrintServer, path: &str, request: IppRequestResponse) -> Result
         .map_err(|err| Error::new(format!("could not encode the IPP request: {err}")))?;
     let url = format!("{}{path}", base_url(server));
     let shown = url.clone();
+    let deny_internal = server.deny_internal;
+    if deny_internal {
+        // the resolver sees a name only: an internal address written out is refused here
+        let internal = reqwest::Url::parse(&url)
+            .ok()
+            .is_none_or(|parsed| moqui_lib::http::internal_literal(&parsed));
+        if internal {
+            return Err(Error::new(format!(
+                "{} is an internal address, which this printer may not use",
+                server.host
+            )));
+        }
+    }
     let response = crate::edge::block_on(async move {
-        let response = client()?
+        let response = client(deny_internal)?
             .post(&url)
             .header("Content-Type", "application/ipp")
             .body(body)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| {
+                // the resolver's refusal of an internal address is the reason, under reqwest's own text
+                let mut source: Option<&dyn std::error::Error> = Some(&err);
+                while let Some(cause) = source {
+                    if cause.to_string().contains("is an internal address") {
+                        return "an internal address, which this printer may not use".to_string();
+                    }
+                    source = cause.source();
+                }
+                err.to_string()
+            })?;
         let status = response.status();
         let bytes = response.bytes().await.map_err(|err| err.to_string())?;
         if !status.is_success() {
@@ -461,6 +489,7 @@ mod tests {
         let server = PrintServer {
             host: "cups.local".to_string(),
             port: 631,
+            deny_internal: false,
         };
         assert_eq!(base_url(&server), "http://cups.local:631");
         assert_eq!(ipp_uri(&server, "/jobs/7"), "ipp://cups.local:631/jobs/7");
@@ -469,6 +498,7 @@ mod tests {
         let tls = PrintServer {
             host: "cups.example".to_string(),
             port: 443,
+            deny_internal: false,
         };
         assert_eq!(base_url(&tls), "https://cups.example:443");
     }
@@ -478,6 +508,7 @@ mod tests {
         let named = |host: &str| PrintServer {
             host: host.to_string(),
             port: 631,
+            deny_internal: false,
         };
         let server = named("http://cups:632/");
         assert_eq!(base_url(&server), "http://cups:632");

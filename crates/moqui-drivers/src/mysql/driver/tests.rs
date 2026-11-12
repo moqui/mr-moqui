@@ -350,7 +350,7 @@ fn endpoint_at(port: u16) -> Endpoint {
     }
 }
 
-/// A session connects, reads and writes within bounds and keeps TCP keepalive on (plans/High-Level-Review.md HL-019).
+/// A session connects, reads and writes within bounds and keeps TCP keepalive on (plans/archive/High-Level-Review.md HL-019).
 #[test]
 fn a_session_bounds_its_network_waits_and_keeps_alive() {
     let opts = mysql::Opts::from(endpoint_at(3306).opts());

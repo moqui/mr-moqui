@@ -191,7 +191,7 @@ impl<'a> Run<'a> {
     fn item_of(&self, doc: &DocEntry, entry: &RefEntry, direction: Direction) -> Option<Item> {
         let via_type = entry.ref_type.clone();
         let Some(other) = &entry.other else {
-            // a screen in a directory with no screen of its name is no default subscreen: nothing to show
+            // a screen in a directory with no screen of its name is no directory subscreen: nothing to show
             if entry.origin == ORIGIN_DIRECTORY {
                 return None;
             }

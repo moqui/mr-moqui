@@ -4,8 +4,8 @@
 plan({
     title: "What a load user reaches",
     description: "A fixture of the Tools load runner's spec",
-    uses: ["service"],
-    params: { mode: { default: "ec", options: ["ec", "host", "http", "toplevel", "tamper", "spin", "authz", "renew"] } },
+    uses: ["service", "ssh"],
+    params: { mode: { default: "ec", options: ["ec", "host", "http", "ssh", "toplevel", "tamper", "spin", "authz", "renew"] } },
 })
 
 const seen = (fn) => {
@@ -58,6 +58,14 @@ scenario("reach", {
             service.call("example.LoadFixtureServices.leave#AuthzDisabledAccountDisabled", {}, { expect: ["error"] })
             const next = seen(() => service.call("org.moqui.impl.BasicServices.echo#Data", { textIn1: "x" }))
             fail("next " + (next.includes("could not be renewed") ? "refused" : next))
+        } else if (params.mode === "ssh") {
+            // the target rule (load_runner/targets.rs) before a connect: another host refused, loopback tried (nothing
+            // listens on port 1, an error this connect expects, so the iteration's one error is the fail below)
+            fail([
+                "far " + seen(() => ssh.connect({ host: "example.org", port: 22, user: "x", password: "y" })),
+                "near " + seen(() => ssh.connect({ host: "127.0.0.1", port: 1, user: "x", password: "y", timeout: 5,
+                    expect: ["error"] })),
+            ].join("; "))
         } else if (params.mode === "spin") {
             // no host call: only the interrupt of a stop now ends it
             for (;;) { /* spin */ }

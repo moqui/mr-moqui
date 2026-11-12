@@ -9,6 +9,11 @@
 
     <!-- recommended values: production, dev, test; any code may look at these Java System properties to vary behavior (System.getProperty("instance_purpose")) -->
     <default-property name="instance_purpose" value="production"/>
+    <!-- The browser terminal's command line and host sessions (the terminal element): dev for a dev instance only, false off,
+        empty on; and from anywhere but this machine, terminal_remote=true (plans/Terminal-Fancy.md D6, D7). -->
+    <default-property name="terminal_command_line" value="dev"/>
+    <default-property name="terminal_host_sessions" value="dev"/>
+    <default-property name="terminal_remote" value="false"/>
     <!-- Deploying a component from a git URL (System > Components) runs its code and loads its data: it needs the
         sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
         (docs/tools/Component-Deploy.md). -->
@@ -28,6 +33,9 @@
     <default-property name="webapp_https_port" value=""/>
     <default-property name="webapp_https_enabled" value="false"/>
     <default-property name="telemetry_enabled" value="true"/>
+    <!-- The dashboard the System home shows as its Activity strip, by its definition id, in place of the shipped
+        system-home; empty for that one. It gets the period of the home and, as its instance variable, this server. -->
+    <default-property name="system_home_dashboard" value=""/>
     <!-- The share of traces whose spans below the request or job root are kept, decided from the trace id. At 0 every
         root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->
     <default-property name="telemetry_sample_ratio" value="0"/>
@@ -103,7 +111,7 @@
     <default-property name="moqui_chromium_path" value=""/>
 
     <!--
-        Load runs from Tools (org.moqui.dev.LoadServices, plans/LoadRunner.md §10). A run may reach this server (its https
+        Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its https
         URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
         and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
         allows that origin, https://example.com/app/ only under that path); a dev instance may reach any URL. Plain
@@ -490,9 +498,10 @@
         cache, as a service marked transaction="cache" does; false begins it as transaction="use". -->
     <default-property name="screen_tx_cache" value="true"/>
     <!-- A service whose definition has no transaction attribute begins its transaction (when it begins one) with the
-        transaction cache, as one marked transaction="cache" does; false, the default for now, begins it as
-        transaction="use". On test (plans/Profiling3.md S1, D3). -->
-    <default-property name="service_tx_cache" value="false"/>
+        transaction cache, as one marked transaction="cache" does: a service of XML actions or a script, called with no
+        new transaction asked for (a Rust, native or entity-auto service does not); false begins it as
+        transaction="use" (plans/Profiling3.md S1, D3). -->
+    <default-property name="service_tx_cache" value="true"/>
     <!-- A module ec.resource.script loads whose top level only declares (functions, constants, other modules) gives the
         same value for the rest of the outermost script run, made once; false makes it again at each load. -->
     <default-property name="script_module_cache" value="true"/>
@@ -572,7 +581,7 @@
              spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Build-Test.md) -->
         <tool-factory class="moqui_core::service::mail_capture::MailCaptureToolFactory" init-priority="5"/>
         <!-- The HTTP fixtures for specs: while ec.factory.getTool('HttpFixtures') is enabled, outbound HTTP is answered by
-             the spec's fixtures and recorded, and nothing goes to the network (docs/Build-Test.md) -->
+             the spec's fixtures and recorded, and nothing goes to the network (docs/dev/JS-Testkit.md) -->
         <tool-factory class="moqui_core::service::http_fixtures::HttpFixturesToolFactory" init-priority="5"/>
         <!-- The notification capture for specs: ec.factory.getTool('NotificationCapture').enable() listens on the
              notification topic as the host's socket does, so the shell counts are sent, and keeps the messages -->
@@ -651,6 +660,9 @@
             replay-retention-days="7">
         <!-- Business operations: each service call that owns its transaction counts as moqui.operation.runs by name and
              outcome (commit, rollback, retry, pending). The framework's own services are left out. -->
+        <!-- The filesystem gauges are one series per filesystem, by where it is mounted. -->
+        <metric name="system.filesystem.utilization" attributes="system.filesystem.mountpoint"/>
+        <metric name="moqui.system.filesystem.available" attributes="system.filesystem.mountpoint"/>
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
@@ -663,6 +675,16 @@
          telemetry/metric name="..." attributes="..." narrows or widens one instrument's attributes. -->
     <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day. -->
     <report week-start="1" fiscal-start-month="1" fiscal-start-day="1"/>
+    <!-- Resource watch: when a reading of the machine or the process is a warning or critical, in percent (the status
+         map's Resources, the System home and its attention list). A filesystem is also critical with less than
+         disk-free-critical bytes left to write. memory is the process's share of the memory it may use (a container's
+         limit, else the machine's), memory-available the share of the machine's memory still available, cpu-load the
+         5-minute load over the processors. An empty value turns that level off. -->
+    <resource-watch disk-warning="80" disk-critical="90" disk-free-critical="1073741824"
+            inodes-warning="80" inodes-critical="90" memory-warning="80" memory-critical="90"
+            memory-available-warning="10" memory-available-critical="5" cpu-load-warning="80" cpu-load-critical="100"
+            open-files-warning="80" open-files-critical="95" swap-warning="50" swap-critical=""
+            certificate-days-warning="30" certificate-days-critical="7"/>
     <server-stats visit-enabled="true" visit-ip-info-on-login="true" visitor-enabled="true"/>
 
     <webapp-list>
@@ -850,7 +872,7 @@
             to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
             attribute, which would replace these defaults. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -1186,9 +1208,23 @@
     <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
             public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             git-password-auth="false" login-dialog="true"/>
-    <!-- The terminal client's sessions, over SSH and in the browser together: max-sessions at once, and
-        max-sessions-per-user of them for one user; a session in its login dialog counts toward the first only. -->
-    <terminal max-sessions="16" max-sessions-per-user="4"/>
+    <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
+        command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
+        the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
+        host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
+        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, empty on for any
+        purpose) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
+        operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
+        TERMINAL_HOST. From anywhere but this machine those need terminal_remote=true, HTTPS and a sign-in within
+        remote-reauth-minutes (docs/ui/Terminal.md). -->
+    <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
+            command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
+            remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
+            host-directory="">
+        <host-profile name="shell" title="Shell" integration="true"/>
+        <host-profile name="bash" title="bash" command="bash" login="true" integration="true"/>
+        <host-profile name="zsh" title="zsh" command="zsh" login="true" integration="true"/>
+    </terminal>
 
     <!--
         The git server: clone, fetch and push of GitRepository repositories at <public-url>/git/<repositoryId>.git
@@ -1376,7 +1412,7 @@
             development in runtime/conf/MoquiDevConf.xml.
             The embedded cluster's shared-buffers, work-mem, maintenance-work-mem and effective-cache-size (sizes such as
             64MB) may be set on the transactional datasource; when not set the defaults from code apply (shared_buffers
-            16MB), and a change applies when the server starts the cluster. -->
+            128MB, Postgres's own default), and a change applies when the server starts the cluster. -->
         <datasource group-name="transactional" database-conf-name="${entity_ds_db_conf}" schema-name="${entity_ds_schema}"
                 runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
                 pg-stat-statements="false">
@@ -1462,6 +1498,7 @@
         <load-entity location="component://framework/entity/CallEntities.xml"/>
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
         <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
+        <load-entity location="component://framework/entity/TerminalEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1488,6 +1525,10 @@
         <load-data location="component://framework/data/EdgeSetupData.xml"/>
         <load-data location="component://framework/data/DatabaseSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
+        <load-data location="component://framework/data/AdminConfigurationData.xml"/>
+        <load-data location="component://framework/data/AdminAuditData.xml"/>
+        <load-data location="component://framework/data/TerminalTypeData.xml"/>
+        <load-data location="component://framework/data/TerminalSetupData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>

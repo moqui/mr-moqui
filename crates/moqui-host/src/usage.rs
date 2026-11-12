@@ -468,6 +468,9 @@ Options:
   --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
                                   Plain http is only for this machine unless --allow-http.
   --serve                         Start each suite's declared server, as above, instead of --server.
+                                  Its SSH listener, when it has one, is where ssh.connect goes.
+  --ssh host:port                 Where ssh.connect goes when a spec names no host and port (a port
+                                  alone is on the server's host), or MOQUI_TEST_SSH; server.ssh.
   --spec Name[,Name]              Specs to run, with the specs named in their dependsOn.
   --feature text                  Run features whose names contain this text.
   --acceptance                    Run the acceptance client specs of acceptance/client in place of
@@ -496,7 +499,8 @@ Options:
   --offline                       Run only specs with server: false. They open pages at
                                   https://moqui.test with no server and no listening port.
                                   Not with --serve.
-  --insecure                      Accept an invalid server certificate (a WARN says so).
+  --insecure                      Accept an invalid server certificate (a WARN says so), and any SSH
+                                  host key; else a key not pinned is taken only from this machine.
   --allow-http                    Allow plain http to another machine.
   --fail-on-skip                  A skipped spec or feature fails the run.
   --log-level level               Console level: trace, debug, info, warn, or error. The default is
@@ -507,7 +511,8 @@ const TEST_LOAD: &str = "\
 moqui test-load [component | path] [--script Name] [options]
 moqui test-load --compare <result.json> <result.json> [...]
     Run a load script of a component (test/load/<Name>.load.js) against a running server: its
-    scenarios' virtual users over HTTP from this process, as moqui test-client runs client specs.
+    scenarios' virtual users over HTTP, WebSocket and SSH from this process, as moqui test-client runs
+    client specs.
 
 A path is a component directory, its test/load directory, or one .load.js file. With no --script it
 lists the component's scripts with their scenarios and params. This opens no database, binds no
@@ -528,6 +533,8 @@ Options:
   --script Name                   The script test/load/Name.load.js of the component.
   --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
                                   Plain http is only for this machine unless --allow-http.
+  --ssh host:port                 Where the script's ssh.connect goes when it names no host and port
+                                  (a port alone is on the server's host), or MOQUI_TEST_SSH.
   --param name=value              Repeatable; a param of the script's plan. MOQUI_TEST_<NAME>
                                   variables fill the params --param leaves out (MOQUI_TEST_PASSWORD
                                   is password), for a password that should not show in ps.
@@ -549,7 +556,8 @@ Options:
   --compare a.json b.json ...     Print two or more result files side by side, with each value's change
                                   from the first in percent; the files run up to the next option. No
                                   target or run with it.
-  --insecure                      Accept an invalid server certificate (a WARN says so).
+  --insecure                      Accept an invalid server certificate (a WARN says so), and any SSH
+                                  host key; else a key not pinned is taken only from this machine.
   --allow-http                    Allow plain http to another machine.
   --log-level level               Console level: trace, debug, info, warn, or error (warn).
 ";
@@ -666,6 +674,9 @@ fn is_known_command(name: &str) -> bool {
             | "test-load"
             | "serve"
             | "tui"
+            // the browser terminal's helper (`crate::terminal_helper`), hidden from the help
+            | "term-exec"
+            | "term-hold"
     )
 }
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The notification socket registry's user index (plans/High-Level-Review.md HL-009). The registry is the process's,
+//! The notification socket registry's user index (plans/archive/High-Level-Review.md HL-009). The registry is the process's,
 //! so each test names its own users and removes its own sockets.
 
 use super::*;

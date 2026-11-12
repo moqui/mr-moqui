@@ -2,7 +2,8 @@
 
 Status 2026-11-10: M1 to M4 and M6 are built (Profiling2 Round 54), and W1, W2, W4 to W10 and W12 to W17 (Round 55);
 W3 is not built and W11 goes with S4a. S1's first part (Round 57), S2 (Round 58, in mr-moqui without a fork change)
-and S3a and S3b (Round 59) are built; S4a, S5a and S5b are sized and not built. The rest is the plan. It reads the numbers of [Profiling2](Profiling2.md), the
+and S3a and S3b (Round 59) are built; S4a, S5a and S5b are sized and not built. Round 60 ran the load flows, set the
+pools (D6) and turned the transaction cache on by default (D3). The rest is the plan. It reads the numbers of [Profiling2](Profiling2.md), the
 archived rounds and the bench repository again with the code beside them, and proposes what to measure and what to
 change next. No benchmark was run for it. Two figures were computed from files already kept (the Mantle census and
 the action bodies under `runtime/`, both in [§10](#10-sources)); every other number cites its round. A `file:line` is
@@ -207,7 +208,7 @@ Each of these is small, and each decides an item of §6. M1 and M2 come first: t
     holds, a service call inside a loop.
 - **M4. Thread rows.** `speed::Rows::run_threads` (R7) on 1, 2, 4, 8 and 16 threads for noop#Inline, a cached find
   from actions, a find in the database from a script, and List html. Then `perf c2c` on what stops scaling.
-  [LoadRunner](LoadRunner.md) does the same for whole flows over HTTP once built.
+  [LoadRunner](archive/LoadRunner.md) does the same for whole flows over HTTP once built.
 - **M5. A clean render profile.** `perf` of the current build for Entities and Cache Elements in html and qvt, the
   render profile off, split by layer with R33's `layers.py`. The output now streams (0a1f1a41), so this is also the
   new base.
@@ -461,8 +462,10 @@ locally on its rows and tests, then committed; the Sweep, the Mantle runs and th
 - **D5. Row templates need not be byte-equal to today's output (S4b).** The markup may change for other reasons
   after later reviews anyway. Whitespace is content in some documents and must be kept there; in others it is not,
   and stripping it for html and the like could be an option that also simplifies the output.
-- **D6. The pool sizes are not fixed (§3, S6).** The defaults (eight request workers, 25 service workers) get tuned
-  when load testing with real-ish loads begins ([LoadRunner](LoadRunner.md)). If a test before that shows a default
+- **D3, result (Round 60):** on by default for XML-actions and script services; Rust, native and entity-auto services
+  and force-new calls keep their definition's attribute.
+- **D6. The pool sizes are not fixed (§3, S6).** Round 60: 16 request and 22 service workers, pools of 90. The defaults (eight request workers, 25 service workers) get tuned
+  when load testing with real-ish loads begins ([LoadRunner](archive/LoadRunner.md)). If a test before that shows a default
   should change, M4's thread rows for one, change it then and keep tuning.
 
 Nothing is open as of 2026-11-10. A question that comes up in the work goes here.
@@ -489,4 +492,4 @@ Nothing is open as of 2026-11-10. A question that comes up in the work goes here
 - **[MantleUSL-Performance-Audit](MantleUSL-Performance-Audit.md)** and
   **[MantleUSL-Execution-Benchmark-Plan](MantleUSL-Execution-Benchmark-Plan.md):** the loop counts, the execution
   methods compared (S3c is its method I with a choice per body), Stage B.
-- **[LoadRunner](LoadRunner.md):** the order to cash flow for M4 and M8.
+- **[LoadRunner](archive/LoadRunner.md):** the order to cash flow for M4 and M8.

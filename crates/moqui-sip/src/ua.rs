@@ -29,7 +29,7 @@
 //! - **Floods.** New requests are held to a rate per source, and dropped while the endpoint runs its most
 //!   transactions; stream connections past their cap are closed ([`crate::guard::RequestGate`]). A TLS client is
 //!   counted from its accept: at most [`MAX_TLS_HANDSHAKES`] handshakes at once, [`TLS_HANDSHAKES_PER_SOURCE`] from one
-//!   source, each within [`TLS_HANDSHAKE`] or closed (plans/High-Level-Review.md HL-031); this UA accepts TLS itself
+//!   source, each within [`TLS_HANDSHAKE`] or closed (plans/archive/High-Level-Review.md HL-031); this UA accepts TLS itself
 //!   and hands the stream to rsipstack, whose own TLS listener has no handshake deadline.
 //! - **Credentials.** A trunk's digest credentials answer only its realm and the algorithms its profile allows
 //!   ([`crate::digest::answer`]); a challenge for anything else fails the registration or the call, with the reason.

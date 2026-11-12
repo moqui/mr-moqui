@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- DatasetDetail (docs/tools/Monitoring.md, "Business datasets"; plans/archive/Admin-Screens-Down.md, Track I; first BOSS
+    Insights'): one business dataset for its steward, from get#BusinessDataset: its identity and scope (EditDataDocument:
+    name, time field, a registered scope policy and the field that carries a row's scope; a shipped dataset's are its
+    component's), its index (feed, index, last build and lag, Rebuild index through index#BusinessDataset), its admission
+    checks (DatasetValidation: Admit is the primary action and refused while a check fails) and the definitions that use
+    it (DatasetUses). A time field or scope change returns it to review. Each change goes through the engine's guarded
+    operations, which check the dataset's own update artifact; a dataset the viewer does not steward is not shown. With no
+    mount the dataset's definition opens in the definition editor (definition). Another app shows the screen under its own
+    root in a screen of its own, taking in storeDataset, admitDataset, retireDataset and rebuildIndex (BOSS Insights ›
+    Report builder › DatasetDetail). The scope field's words, and the name of its parameter under a policy that registers
+    none, are the mount's policy (template/ReportMount.js). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Dataset" default-menu-include="false">
+    <parameter name="datasetId" required="true"/>
+
+    <transition name="storeDataset">
+        <actions>
+            <set field="request" from="ec.resource.script('component://tools/template/ReportDatasets.js').storeRequest(context)"/>
+            <service-call name="org.moqui.report.ReportServices.store#BusinessDataset" in-map="request"/>
+        </actions>
+        <default-response url="." parameter-map="{datasetId:datasetId}"/>
+        <error-response url="." parameter-map="{datasetId:datasetId}"/>
+    </transition>
+    <transition name="admitDataset">
+        <service-call name="org.moqui.report.ReportServices.store#BusinessDataset"
+                in-map="{datasetId:datasetId, admit:true, expectedVersion:expectedVersion}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Dataset admitted</message></if></actions>
+        <default-response url="." parameter-map="{datasetId:datasetId}"/>
+        <error-response url="." parameter-map="{datasetId:datasetId}"/>
+    </transition>
+    <transition name="retireDataset">
+        <service-call name="org.moqui.report.ReportServices.store#BusinessDataset"
+                in-map="{datasetId:datasetId, retire:true, expectedVersion:expectedVersion}"/>
+        <default-response url="." parameter-map="{datasetId:datasetId}"/>
+        <error-response url="." parameter-map="{datasetId:datasetId}"/>
+    </transition>
+    <transition name="rebuildIndex">
+        <service-call name="org.moqui.report.ReportServices.index#BusinessDataset" in-map="{datasetId:datasetId}" out-map="indexed"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Index rebuilt: ${indexed.documentsIndexed} documents</message></if></actions>
+        <default-response url="." parameter-map="{datasetId:datasetId}"/>
+        <error-response url="." parameter-map="{datasetId:datasetId}"/>
+    </transition>
+    <!-- Tools' own (no mount): the dataset's definition in the definition editor -->
+    <transition name="definition"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
+
+    <actions>
+        <set field="detail" from="ec.resource.script('component://tools/template/ReportDatasets.js').detail(datasetId)"/>
+        <set field="failure" from="detail.failure"/>
+        <set field="recordFound" from="detail.found"/>
+        <set field="dataset" from="detail.dataset"/>
+        <set field="checks" from="detail.checks"/>
+        <set field="uses" from="detail.uses"/>
+        <set field="policyChoices" from="detail.policyChoices"/>
+        <set field="exploreUrl" from="detail.exploreUrl"/>
+        <set field="editValues" from="{datasetId:datasetId, title:dataset.title, timeField:dataset.timeField, scopePolicyId:dataset.scopePolicyId,
+                scopeField:dataset.scopeField, expectedVersion:dataset.version}"/>
+        <set field="canAdmit" from="recordFound &amp;&amp; dataset.status === 'review'"/>
+    </actions>
+    <widgets>
+        <section name="DatasetFound" condition="recordFound">
+            <widgets>
+                <!-- the header card: the id and name with the state at their right, the scope with the actions -->
+                <container style="m-record-header">
+                    <container style="row items-start q-col-gutter-x-md q-col-gutter-y-sm">
+                        <container style="col-12 col-md m-record-title">
+                            <container style="row items-center no-wrap">
+                                <render-mode>
+                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none q-mr-sm text-mono">${WebUtilities.encodeHtml(datasetId)}</q-chip>]]></text>
+                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", id: "DatasetKey", style: "strong", text: datasetId})}]]></text>
+                                </render-mode>
+                                <label text="${dataset.title}" type="h5"/>
+                            </container>
+                            <label type="p" style="text-caption m-muted q-mb-none"
+                                    text="${dataset.documentName || dataset.dataDocumentId}${dataset.component ? ' · shipped by ' + dataset.component : ''}"/>
+                        </container>
+                        <container style="col-12 col-md-auto m-record-status">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${dataset.statusColor}">${
+                                    WebUtilities.encodeHtml(dataset.statusName)}</q-chip>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: dataset.statusName})}]]></text>
+                                <text type="html">${dataset.statusName}</text>
+                            </render-mode>
+                        </container>
+                    </container>
+                    <container style="row items-center q-col-gutter-x-md q-col-gutter-y-sm m-record-foot">
+                        <container style="col-12 col-md"><label type="p" style="q-mb-none" text="Rows scoped by ${dataset.scopeText}"/></container>
+                        <container style="col-12 col-md-auto row items-center q-gutter-y-xs m-record-actions">
+                            <!-- the primary action: Admit while it waits for review, else Rebuild index -->
+                            <link url="admitDataset" link-type="hidden-form" text="Admit" btn-type="primary" icon="sym_o_verified" condition="canAdmit"
+                                    confirmation="Admit ${dataset.title}? Its readers will read the rows its scope policy gives each of them."
+                                    parameter-map="{datasetId:datasetId, expectedVersion:dataset.version}"/>
+                            <link url="rebuildIndex" link-type="hidden-form" text="Rebuild index" btn-type="primary" icon="sym_o_sync" condition="!canAdmit"
+                                    confirmation="Rebuild the index of ${dataset.title}?" parameter-map="{datasetId:datasetId}"/>
+                            <link url="rebuildIndex" link-type="hidden-form" text="Rebuild index" icon="sym_o_sync" condition="canAdmit"
+                                    confirmation="Rebuild the index of ${dataset.title}?" parameter-map="{datasetId:datasetId}"/>
+                            <button-menu text="More" icon="more_horiz" style="q-ml-xs">
+                                <link url="../DatasetFields" text="Fields and conditions" icon="sym_o_list" parameter-map="{datasetId:datasetId}"/>
+                                <link url="../DatasetView" text="Preview rows" icon="sym_o_visibility" parameter-map="{datasetId:datasetId}" condition="dataset.readable"/>
+                                <link url="${exploreUrl}" text="Explore" icon="sym_o_search" parameter-map="{datasetId:datasetId}" condition="!!exploreUrl"/>
+                                <link url="definition" text="Definition" icon="sym_o_data_object" parameter-map="{definitionId:datasetId}" condition="!detail.mounted"/>
+                                <link url="retireDataset" link-type="hidden-form-link" text="Retire" icon="sym_o_archive" btn-type="danger"
+                                        condition="dataset.status !== 'retired'" confirmation="Retire ${dataset.title}? Its readers lose it; its definitions stay."
+                                        parameter-map="{datasetId:datasetId, expectedVersion:dataset.version}"/>
+                            </button-menu>
+                        </container>
+                    </container>
+                </container>
+                <container-row>
+                    <row-col md="6">
+                        <container-box>
+                            <box-header title="Admission checks"/>
+                            <box-body-nopad>
+                                <form-list name="DatasetValidation" list="checks" skip-form="true" paginate="false">
+                                    <field name="name"><default-field title="Check"><display/></default-field></field>
+                                    <field name="passedText">
+                                        <default-field title="Result">
+                                            <render-mode>
+                                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${passed ? 'positive' : 'warning'}">${
+                                                    WebUtilities.encodeHtml(passedText)}</q-chip>]]></text>
+                                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: passedText})}]]></text>
+                                                <text type="html">${passedText}</text>
+                                            </render-mode>
+                                        </default-field>
+                                    </field>
+                                    <field name="message"><default-field title="Explanation"><display/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="name"/><field-ref name="message"/></column>
+                                        <column><field-ref name="passedText"/></column>
+                                    </columns>
+                                </form-list>
+                            </box-body-nopad>
+                        </container-box>
+                        <container-box>
+                            <box-header title="Index"/>
+                            <box-body>
+                                <label type="p" text="Feed: ${dataset.dataFeedId || 'none registered'} · index ${dataset.indexName || ''}"/>
+                                <label type="p" text="Last rebuilt ${dataset.lastIndexedText} (${dataset.lagText} ago), ${dataset.lastIndexedCount ?? 0} documents"
+                                        condition="dataset.lastIndexedText"/>
+                                <label type="p" text="Not rebuilt here; its feed indexes records as they are written." condition="!dataset.lastIndexedText"/>
+                                <label type="p" text="Admitted ${dataset.admittedText}" condition="dataset.admittedText"/>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                    <row-col md="6">
+                        <container-box>
+                            <box-header title="Identity and scope"/>
+                            <box-body>
+                                <form-single name="EditDataDocument" transition="storeDataset" map="editValues">
+                                    <field name="datasetId"><default-field><hidden/></default-field></field>
+                                    <field name="expectedVersion"><default-field><hidden/></default-field></field>
+                                    <field name="title">
+                                        <conditional-field title="Name" condition="!dataset.readOnly"><text-line size="40"/></conditional-field>
+                                        <default-field title="Name"><display/></default-field>
+                                    </field>
+                                    <field name="timeField">
+                                        <conditional-field title="Time field" condition="!dataset.readOnly"><text-line size="30"/></conditional-field>
+                                        <default-field title="Time field"><display/></default-field>
+                                    </field>
+                                    <field name="scopePolicyId">
+                                        <conditional-field title="Rows scoped by" condition="!dataset.readOnly">
+                                            <drop-down allow-empty="true"><list-options list="policyChoices" key="${key}" text="${text}"/></drop-down>
+                                        </conditional-field>
+                                        <default-field title="Rows scoped by"><display text="${dataset.scopeText}"/></default-field>
+                                    </field>
+                                    <field name="scopeField">
+                                        <conditional-field title="${detail.scope.label}" tooltip="${detail.scope.help}" condition="!dataset.readOnly"><text-line size="30"/></conditional-field>
+                                        <default-field title="${detail.scope.label}"><display/></default-field>
+                                    </field>
+                                    <field name="submitButton">
+                                        <conditional-field title="Save" condition="!dataset.readOnly"><submit/></conditional-field>
+                                        <default-field title=""><display text="Shipped by ${dataset.component}; its definition is changed there."/></default-field>
+                                    </field>
+                                </form-single>
+                            </box-body>
+                        </container-box>
+                        <container-box>
+                            <box-header title="Used in"/>
+                            <box-body-nopad>
+                                <form-list name="DatasetUses" list="uses" skip-form="true" paginate="false">
+                                    <field name="title"><default-field title="Definition"><display/></default-field></field>
+                                    <field name="type"><default-field title="Kind"><display/></default-field></field>
+                                    <field name="shipped"><default-field title="Shipped"><display text="${shipped ? 'Shipped' : ''}"/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="title"/></column>
+                                        <column><field-ref name="type"/></column>
+                                    </columns>
+                                </form-list>
+                                <label type="p" style="q-pa-md m-muted" condition="!uses.length &amp;&amp; detail.usesAvailable" text="No dashboard, panel or alert you can read uses this dataset."/>
+                                <label type="p" style="q-pa-md m-muted" condition="!detail.usesAvailable" text="The definitions that use this dataset could not be listed."/>
+                            </box-body-nopad>
+                        </container-box>
+                    </row-col>
+                </container-row>
+            </widgets>
+            <fail-widgets>
+                <label type="h5" text="Not available"/>
+                <label type="p" text="${failure || 'This dataset is not available.'}"/>
+                <link url="../Datasets" text="Back to datasets" link-type="anchor"/>
+            </fail-widgets>
+        </section>
+    </widgets>
+</screen>

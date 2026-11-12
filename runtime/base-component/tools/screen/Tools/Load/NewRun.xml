@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- A run of a load script (plans/LoadRunner.md §8, Task): the target its plan allows, the plan's params each by its
+<!-- A run of a load script (plans/archive/LoadRunner.md §8, Task): the target its plan allows, the plan's params each by its
     kind, each scenario's users, ramp, duration and iterations, a label, and Start, which opens the run's page. With
     runId (Run again) it is filled from that run: its script and target are resolved again among the loaded components'
     scripts (template/LoadRuns.js planForm, which ../planForm answers), and start#LoadRun checks them again; a secret

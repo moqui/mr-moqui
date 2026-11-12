@@ -496,7 +496,7 @@ fn report_rows(facade: &EntityFacade) -> Result<Vec<String>, LibError> {
 /// Stop delivering for local nodes that are no longer paired (revoked, or gone): their rows fail, logged, with no
 /// report (there is no node to tell), and their messages are removed. Only the pending rows of such nodes are read, at
 /// most [`UNPAIRED_ROWS`] a round: the paired nodes are few, so they go in the condition, and a backlog of a paired
-/// node's rows costs no row read a round (plans/High-Level-Review.md HL-039). The rows read, for the tests.
+/// node's rows costs no row read a round (plans/archive/High-Level-Review.md HL-039). The rows read, for the tests.
 fn fail_unpaired(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Result<usize, LibError> {
     let active: Vec<Value> = facade
         .find("moqui.edge.EdgeClient")?

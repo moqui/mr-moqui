@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Localization (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §7 Localization): the
+    translations, for a holder of ADMIN_SETTINGS_VIEW (reads) and ADMIN_SETTINGS_MANAGE (changes), which
+    org.moqui.admin.ConfigurationServices check themselves. LocalizationFind chooses messages or labels, a locale, text
+    and whether to list what is missing in the locale. MessageTranslations are the message translations
+    (find#LocalizedMessages, store#LocalizedMessage); EntityTranslations the translations of the registered label targets
+    only (status, option, unit and place names: find#LocalizedEntityFields, store#LocalizedEntityField), never a record's
+    own values. A translation must keep the original's ${} placeholders exactly and is saved at the revision read; an
+    empty one removes it; each change is in the audit log.
+    For the instance administrator (README, "Mounting the administration screens"): RawRows, the stored rows of
+    moqui.basic.LocalizedMessage and moqui.basic.LocalizedEntityField found, created, changed and deleted directly, as the
+    Localization screens this one replaced did (any original, entity, field and locale; no placeholder check, no
+    revision, no registered label target), shown in place of the translations with rows=Y, messages or labels by kind
+    (one list at a time: two lists on a page would share pageIndex). Its six transitions carry raw() as their condition
+    and an app that shows this screen takes in only storeMessage and storeLabel. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Localization" default-menu-index="2" menu-image="sym_o_translate" menu-image-type="icon">
+    <parameter name="kind"/>
+    <parameter name="locale"/>
+    <parameter name="text"/>
+    <parameter name="missing"/>
+    <parameter name="targetKey"/>
+    <parameter name="pageIndex"/>
+    <!-- Y: the stored rows in place of the translations, for the instance administrator -->
+    <parameter name="rows"/>
+
+    <transition name="storeMessage">
+        <actions>
+            <service-call name="org.moqui.admin.ConfigurationServices.store#LocalizedMessage" out-map="stored"
+                    in-map="{original:original, locale:translationLocale, localized:(localized || ''),
+                        expectedRevision:(expectedRevision || ''), reason:(reason || null)}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.applied ? 'Translation saved' : stored.reason, stored.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."><parameter name="kind" value="messages"/><parameter name="locale"/><parameter name="text"/>
+            <parameter name="missing"/><parameter name="pageIndex"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <transition name="storeLabel">
+        <actions>
+            <service-call name="org.moqui.admin.ConfigurationServices.store#LocalizedEntityField" out-map="stored"
+                    in-map="{entityName:entityName, fieldName:fieldName, pkValue:pkValue, locale:translationLocale,
+                        localized:(localized || ''), expectedRevision:(expectedRevision || ''), reason:(reason || null)}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.applied ? 'Translation saved' : stored.reason, stored.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."><parameter name="kind" value="labels"/><parameter name="locale"/><parameter name="text"/>
+            <parameter name="missing"/><parameter name="targetKey"/><parameter name="pageIndex"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <!-- the instance administrator's transitions: never under a mount, and only for a user who opens System by their own grant -->
+    <transition name="createLocalizedMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.basic.LocalizedMessage"/>
+        <default-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="messages"/></default-response>
+        <error-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="messages"/></error-response>
+    </transition>
+    <transition name="updateLocalizedMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.basic.LocalizedMessage"/>
+        <default-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="messages"/></default-response>
+        <error-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="messages"/></error-response>
+    </transition>
+    <transition name="deleteLocalizedMessage">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="delete#moqui.basic.LocalizedMessage"/>
+        <default-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="messages"/></default-response>
+        <error-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="messages"/></error-response>
+    </transition>
+    <transition name="createLocalizedEntityField">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.basic.LocalizedEntityField"/>
+        <default-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="labels"/></default-response>
+        <error-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="labels"/></error-response>
+    </transition>
+    <transition name="updateLocalizedEntityField">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.basic.LocalizedEntityField" multi="true"/>
+        <default-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="labels"/></default-response>
+        <error-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="labels"/></error-response>
+    </transition>
+    <transition name="deleteLocalizedEntityField">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="delete#moqui.basic.LocalizedEntityField"/>
+        <default-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="labels"/></default-response>
+        <error-response url="."><parameter name="rows" value="Y"/><parameter name="kind" value="labels"/></error-response>
+    </transition>
+
+    <actions>
+        <set field="mount" from="ec.resource.script('component://tools/template/AdminMount.js').state()"/>
+        <set field="showStored" from="mount.raw &amp;&amp; rows === 'Y'"/>
+        <set field="kind" from="kind == 'labels' ? 'labels' : 'messages'"/>
+        <set field="wantMissing" from="missing == 'true' || missing == 'Y'"/>
+        <set field="pageSize" from="50"/>
+        <if condition="mount.raw &amp;&amp; showStored">
+            <if condition="kind == 'messages'">
+                <entity-find entity-name="moqui.basic.LocalizedMessage" list="localizedMessageList" use-clone="true">
+                    <search-form-inputs default-order-by="^original,locale"/>
+                </entity-find>
+                <else>
+                    <entity-find entity-name="moqui.basic.LocalizedEntityField" list="localizedEntityFieldList" use-clone="true">
+                        <search-form-inputs default-order-by="entityName,fieldName,locale"/>
+                    </entity-find>
+                </else>
+            </if>
+            <else>
+                <!-- a refusal is shown as its reason (AdminCalls.read; ignore-error would clear it) -->
+                <set field="called" from="kind == 'messages' ? ec.resource.script('component://framework/service/org/moqui/admin/AdminCalls.js').read('org.moqui.admin.ConfigurationServices.find#LocalizedMessages',
+                        {locale:(locale || null), text:(text || null), missing:wantMissing, pageIndex:(pageIndex || 0), pageSize:pageSize},
+                        'The translations are not available to you.')
+                    : ec.resource.script('component://framework/service/org/moqui/admin/AdminCalls.js').read('org.moqui.admin.ConfigurationServices.find#LocalizedEntityFields',
+                        {targetKey:(targetKey || null), locale:(locale || null), text:(text || null), missing:wantMissing, pageIndex:(pageIndex || 0),
+                            pageSize:pageSize}, 'The translations are not available to you.')"/>
+                <set field="found" from="called.out"/>
+                <set field="failure" from="called.failure"/>
+            </else>
+        </if>
+        <script><![CDATA[
+            const placeholders = value => Array.from(new Set(String(value || '').match(/\$\{[^}]*\}/g) || [])).join(' ')
+            messages = kind === 'messages' ? Array.from(found?.messageList || []).map((row, index) => Object.assign({}, row, {
+                rowKey: 'm' + index, keepText: placeholders(row.original), translationLocale: row.locale})) : []
+            labels = kind === 'labels' ? Array.from(found?.fieldList || []).map((row, index) => Object.assign({}, row, {
+                rowKey: 'l' + index, keepText: placeholders(row.original), translationLocale: row.locale})) : []
+            listCount = Number((kind === 'messages' ? found?.messageListCount : found?.fieldListCount) || 0)
+            shownCount = messages.length + labels.length
+            canManage = !!found?.canManage
+            truncated = !!found?.truncated
+            localeOptions = Array.from(found?.localeOptions || []).map(value => ({key: value, text: value}))
+            targetOptions = Array.from(found?.targetList || []).map(row => ({key: row.targetKey, text: row.title}))
+            kindOptions = [{key: 'messages', text: 'Messages'}, {key: 'labels', text: 'Labels'}]
+            // missing translations are listed for one locale (and for labels one kind of label)
+            missingNeeds = wantMissing && (!locale || (kind === 'labels' && !targetKey))
+                ? (kind === 'labels' ? 'Choose a kind of label and a locale to list what is missing.' : 'Choose a locale to list what is missing.') : ''
+            filtered = !!(locale || text || wantMissing || targetKey)
+            findValues = {kind, locale, text, missing: wantMissing ? 'true' : '', targetKey}
+            firstRow = Number(pageIndex || 0) * pageSize
+        ]]></script>
+    </actions>
+    <widgets>
+        <container style="row items-center q-col-gutter-sm q-mb-sm">
+            <container style="col">
+                <label text="Localization" type="h5"/>
+                <label text="Translations of the messages people read and of the names of statuses, options, units and places. A translation keeps the original's \${...} values."
+                        type="p" style="text-caption m-muted q-mb-none"/>
+            </container>
+            <container style="col-auto">
+                <container-dialog id="NewMessageTranslationDialog" button-text="New translation" icon="sym_o_translate" type="primary" width="640"
+                        title="Translate a message" condition="canManage &amp;&amp; kind == 'messages' &amp;&amp; !showStored">
+                    <form-single name="NewMessageTranslation" transition="storeMessage" map="{translationLocale:locale}" focus-field="original">
+                        <field name="original"><default-field title="Original" tooltip="The message exactly as it is shown in the default language"><text-area rows="2" cols="70" maxlength="255"/></default-field></field>
+                        <field name="translationLocale"><default-field title="Locale" tooltip="A language (es) or a language and country (pt_BR)"><text-line size="8"/></default-field></field>
+                        <field name="localized"><default-field title="Translation"><text-area rows="4" cols="70"/></default-field></field>
+                        <field name="reason"><default-field title="Reason"><text-line size="50"/></default-field></field>
+                        <field name="submitButton"><default-field title="Save translation"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </container>
+            <container style="col-auto">
+                <section name="RawRowsLinks" condition="mount.raw">
+                    <widgets>
+                        <link url="." text="Stored rows" icon="sym_o_table_rows" link-type="anchor" condition="!showStored" parameter-map="{rows:'Y', kind:kind, pageIndex:''}"/>
+                        <link url="." text="Translations" icon="sym_o_translate" link-type="anchor" condition="showStored" parameter-map="{kind:kind, rows:'', pageIndex:''}"/>
+                    </widgets>
+                </section>
+            </container>
+        </container>
+        <section name="TranslationsSection" condition="!showStored">
+            <widgets>
+                <form-single name="LocalizationFind" transition="." map="findValues">
+                    <field name="kind">
+                        <default-field title="Translate">
+                            <drop-down><list-options list="kindOptions" key="${key}" text="${text}"/></drop-down>
+                        </default-field>
+                    </field>
+                    <field name="targetKey">
+                        <default-field title="Kind of label" tooltip="For labels: status, option, unit or place names">
+                            <drop-down allow-empty="true"><list-options list="targetOptions" key="${key}" text="${text}"/></drop-down>
+                        </default-field>
+                    </field>
+                    <field name="locale">
+                        <default-field title="Locale" tooltip="${localeOptions.length ? 'In use: ' + localeOptions.map(row =&gt; row.key).join(', ') : 'A language (es) or a language and country (pt_BR)'}">
+                            <text-line size="8"/>
+                        </default-field>
+                    </field>
+                    <field name="text"><default-field title="Text"><text-line size="24"/></default-field></field>
+                    <field name="missing">
+                        <default-field title="Show">
+                            <drop-down allow-empty="true"><option key="true" text="Missing in the locale"/></drop-down>
+                        </default-field>
+                    </field>
+                    <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                    <field-layout>
+                        <field-row-big>
+                            <field-ref name="kind"/>
+                            <field-ref name="targetKey"/>
+                            <field-ref name="locale"/>
+                            <field-ref name="text"/>
+                            <field-ref name="missing"/>
+                            <field-ref name="submitButton"/>
+                        </field-row-big>
+                    </field-layout>
+                </form-single>
+                <label type="p" style="text-negative" condition="failure" text="${failure}"/>
+                <label type="p" style="m-muted" condition="missingNeeds" text="${missingNeeds}"/>
+                <section name="MessageSection" condition="kind == 'messages'">
+                    <widgets>
+                        <container-box>
+                            <box-body-nopad>
+                                <form-list name="MessageTranslations" list="messages" skip-form="true" paginate="false">
+                                    <field name="original"><default-field title="Original"><display/></default-field></field>
+                                    <field name="locale"><default-field title="Locale"><display/></default-field></field>
+                                    <field name="localized"><default-field title="Translation"><display text="${missing ? 'Not translated' : localized}"/></default-field></field>
+                                    <field name="actions">
+                                        <default-field title="">
+                                            <container-dialog id="TranslateMessage_${rowKey}" button-text="${missing ? 'Translate' : 'Change'}" icon="sym_o_edit" width="640"
+                                                    title="${original}" condition="canManage">
+                                                <label type="p" style="m-muted" condition="keepText" text="Keep exactly: ${keepText}"/>
+                                                <form-single name="TranslateMessage" transition="storeMessage"
+                                                        map="{original:original, translationLocale:translationLocale, localized:localized, expectedRevision:revision,
+                                                            locale:locale, text:text, missing:(wantMissing ? 'true' : ''), pageIndex:pageIndex}">
+                                                    <field name="original"><default-field><hidden/></default-field></field>
+                                                    <field name="translationLocale"><default-field><hidden/></default-field></field>
+                                                    <field name="expectedRevision"><default-field><hidden/></default-field></field>
+                                                    <field name="localized"><default-field title="Translation (${translationLocale})" tooltip="Empty removes the translation"><text-area rows="4" cols="70"/></default-field></field>
+                                                    <field name="reason"><default-field title="Reason"><text-line size="50"/></default-field></field>
+                                                    <field name="submitButton"><default-field title="Save translation"><submit/></default-field></field>
+                                                </form-single>
+                                            </container-dialog>
+                                        </default-field>
+                                    </field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="original"/><field-ref name="locale"/></column>
+                                        <column><field-ref name="localized"/><field-ref name="actions"/></column>
+                                    </columns>
+                                </form-list>
+                                <label type="p" style="q-pa-md m-muted" condition="!messages.length &amp;&amp; !failure &amp;&amp; !missingNeeds"
+                                        text="${filtered ? 'No message matches.' : 'No message is translated yet.'}"/>
+                            </box-body-nopad>
+                        </container-box>
+                    </widgets>
+                </section>
+                <section name="LabelSection" condition="kind == 'labels'">
+                    <widgets>
+                        <container-box>
+                            <box-body-nopad>
+                                <form-list name="EntityTranslations" list="labels" skip-form="true" paginate="false">
+                                    <field name="targetTitle"><default-field title="Kind of label"><display/></default-field></field>
+                                    <field name="pkValue"><default-field title="Key"><display/></default-field></field>
+                                    <field name="original"><default-field title="Label"><display/></default-field></field>
+                                    <field name="locale"><default-field title="Locale"><display/></default-field></field>
+                                    <field name="localized"><default-field title="Translation"><display text="${missing ? 'Not translated' : localized}"/></default-field></field>
+                                    <field name="actions">
+                                        <default-field title="">
+                                            <container-dialog id="TranslateLabel_${rowKey}" button-text="${missing ? 'Translate' : 'Change'}" icon="sym_o_edit" width="640"
+                                                    title="${targetTitle}: ${original || pkValue}" condition="canManage">
+                                                <label type="p" style="m-muted" condition="keepText" text="Keep exactly: ${keepText}"/>
+                                                <form-single name="TranslateLabel" transition="storeLabel"
+                                                        map="{entityName:entityName, fieldName:fieldName, pkValue:pkValue, translationLocale:translationLocale,
+                                                            localized:localized, expectedRevision:revision, locale:locale, text:text,
+                                                            missing:(wantMissing ? 'true' : ''), targetKey:targetKey, pageIndex:pageIndex}">
+                                                    <field name="entityName"><default-field><hidden/></default-field></field>
+                                                    <field name="fieldName"><default-field><hidden/></default-field></field>
+                                                    <field name="pkValue"><default-field><hidden/></default-field></field>
+                                                    <field name="translationLocale"><default-field><hidden/></default-field></field>
+                                                    <field name="expectedRevision"><default-field><hidden/></default-field></field>
+                                                    <field name="targetKey"><default-field><hidden/></default-field></field>
+                                                    <field name="localized"><default-field title="Translation (${translationLocale})" tooltip="Empty removes the translation"><text-area rows="3" cols="70"/></default-field></field>
+                                                    <field name="reason"><default-field title="Reason"><text-line size="50"/></default-field></field>
+                                                    <field name="submitButton"><default-field title="Save translation"><submit/></default-field></field>
+                                                </form-single>
+                                            </container-dialog>
+                                        </default-field>
+                                    </field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="original"/><field-ref name="locale"/></column>
+                                        <column><field-ref name="localized"/><field-ref name="actions"/></column>
+                                    </columns>
+                                </form-list>
+                                <label type="p" style="q-pa-md m-muted" condition="!labels.length &amp;&amp; !failure &amp;&amp; !missingNeeds"
+                                        text="${filtered ? 'No label matches.' : 'No label is translated yet. Choose a kind of label and a locale, and show what is missing, to start.'}"/>
+                            </box-body-nopad>
+                        </container-box>
+                    </widgets>
+                </section>
+                <section name="Paging" condition="listCount &gt; shownCount || firstRow &gt; 0">
+                    <widgets>
+                        <container style="row items-center q-gutter-sm q-mt-xs">
+                            <link url="." text="Previous" link-type="anchor" condition="firstRow &gt; 0"
+                                    parameter-map="{kind:kind, locale:locale, text:text, missing:(wantMissing ? 'true' : ''), targetKey:targetKey, pageIndex:(Number(pageIndex || 0) - 1)}"/>
+                            <label text="${firstRow + 1} to ${firstRow + shownCount} of ${listCount}" style="m-muted"/>
+                            <link url="." text="Next" link-type="anchor" condition="firstRow + shownCount &lt; listCount"
+                                    parameter-map="{kind:kind, locale:locale, text:text, missing:(wantMissing ? 'true' : ''), targetKey:targetKey, pageIndex:(Number(pageIndex || 0) + 1)}"/>
+                        </container>
+                    </widgets>
+                </section>
+                <label type="p" style="m-muted" condition="truncated" text="More than the search reads were found; add text to narrow it."/>
+            </widgets>
+        </section>
+        <section name="RawRows" condition="mount.raw &amp;&amp; showStored">
+            <widgets>
+                <label text="Instance administrator" type="h6" style="q-mt-md q-mb-none"/>
+                <label type="p" style="text-caption m-muted"
+                        text="The stored rows, changed directly: any original, entity, field and locale, with no placeholder check, revision or registered label target. Use Translations where it offers the change."/>
+                <container style="row items-center q-gutter-sm q-mb-sm">
+                    <link url="." text="Messages" link-type="anchor" condition="kind != 'messages'" parameter-map="{rows:'Y', kind:'messages', pageIndex:''}"/>
+                    <label text="Messages" type="strong" condition="kind == 'messages'"/>
+                    <link url="." text="Labels" link-type="anchor" condition="kind != 'labels'" parameter-map="{rows:'Y', kind:'labels', pageIndex:''}"/>
+                    <label text="Labels" type="strong" condition="kind == 'labels'"/>
+                </container>
+                <section name="RawMessages" condition="mount.raw &amp;&amp; kind == 'messages'">
+                    <widgets>
+                        <container-dialog id="CreateMessageDialog" button-text="New message row" icon="sym_o_add" width="720" title="Create a message row directly">
+                            <form-single name="CreateLocalizedMessage" transition="createLocalizedMessage" focus-field="original">
+                                <field name="original"><default-field title="Original"><text-line size="80" maxlength="255"/></default-field></field>
+                                <field name="locale"><default-field title="Locale"><text-line size="5"/></default-field></field>
+                                <field name="localized"><default-field title="Localized"><text-area rows="5" cols="80"/></default-field></field>
+                                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <form-list name="UpdateLocalizedMessages" list="localizedMessageList" transition="updateLocalizedMessage" multi="true">
+                            <field name="rows"><header-field><hidden/></header-field></field>
+                            <field name="kind"><header-field><hidden/></header-field></field>
+                            <field name="original">
+                                <header-field title="Original" show-order-by="case-insensitive"><text-find hide-options="true" size="15"/></header-field>
+                                <default-field><display/></default-field>
+                            </field>
+                            <field name="locale">
+                                <header-field title="Locale" show-order-by="true"><text-find hide-options="true" size="5"/></header-field>
+                                <default-field><display/></default-field>
+                            </field>
+                            <field name="localized">
+                                <header-field title="Localized" show-order-by="case-insensitive"><text-find hide-options="true" size="30"/></header-field>
+                                <default-field><text-area rows="2" cols="60"/></default-field>
+                            </field>
+                            <field name="_useRowSubmit"><default-field><hidden default-value="true"/></default-field></field>
+                            <field name="_rowSubmit"><default-field title="Update"><check><option key="true" text=" "/></check></default-field></field>
+                            <field name="delete">
+                                <header-field title="Find"><submit/></header-field>
+                                <default-field>
+                                    <link text="Delete" url="deleteLocalizedMessage" btn-type="danger"
+                                            confirmation="Delete the ${locale} row of ${original}?">
+                                        <parameter name="original"/><parameter name="locale"/>
+                                    </link>
+                                </default-field>
+                            </field>
+                            <field name="update"><default-field title="Update"><submit/></default-field></field>
+                        </form-list>
+                    </widgets>
+                </section>
+                <section name="RawLabels" condition="mount.raw &amp;&amp; kind == 'labels'">
+                    <widgets>
+                        <container-dialog id="CreateEntityFieldDialog" button-text="New label row" icon="sym_o_add" width="720" title="Create a label row directly">
+                            <form-single name="CreateLocalizedEntityField" transition="createLocalizedEntityField" focus-field="entityName">
+                                <field name="entityName"><default-field title="Entity"><text-line size="80"/></default-field></field>
+                                <field name="fieldName"><default-field title="Field"><text-line size="30"/></default-field></field>
+                                <field name="pkValue"><default-field title="Key"><text-line size="20"/></default-field></field>
+                                <field name="locale"><default-field title="Locale"><text-line size="5"/></default-field></field>
+                                <field name="localized"><default-field title="Localized"><text-area rows="5" cols="80"/></default-field></field>
+                                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <form-list name="UpdateLocalizedEntityFields" list="localizedEntityFieldList" transition="updateLocalizedEntityField" multi="true">
+                            <field name="rows"><header-field><hidden/></header-field></field>
+                            <field name="kind"><header-field><hidden/></header-field></field>
+                            <field name="entityName">
+                                <header-field title="Entity" show-order-by="true"><text-find hide-options="true" size="12"/></header-field>
+                                <default-field><display/></default-field>
+                            </field>
+                            <field name="fieldName">
+                                <header-field title="Field" show-order-by="true"><text-find hide-options="true" size="12"/></header-field>
+                                <default-field><display/></default-field>
+                            </field>
+                            <field name="pkValue">
+                                <header-field title="Key" show-order-by="true"><text-find hide-options="true" size="12"/></header-field>
+                                <default-field><display/></default-field>
+                            </field>
+                            <field name="locale">
+                                <header-field title="Locale" show-order-by="true"><text-find hide-options="true" size="4"/></header-field>
+                                <default-field><display/></default-field>
+                            </field>
+                            <field name="localized"><default-field title="Localized"><text-area rows="2" cols="35"/></default-field></field>
+                            <field name="update"><default-field title="Update"><submit/></default-field></field>
+                            <field name="delete">
+                                <header-field title="Find"><submit/></header-field>
+                                <default-field>
+                                    <link text="Delete" url="deleteLocalizedEntityField" btn-type="danger"
+                                            confirmation="Delete the ${locale} row of ${entityName} ${fieldName} ${pkValue}?">
+                                        <parameter name="entityName"/><parameter name="fieldName"/><parameter name="pkValue"/><parameter name="locale"/>
+                                    </link>
+                                </default-field>
+                            </field>
+                        </form-list>
+                    </widgets>
+                </section>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

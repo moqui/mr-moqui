@@ -49,7 +49,7 @@ pub trait PageSocket: Send {
     /// Send a text frame.
     fn send(&self, text: String);
 
-    /// Send a binary frame; a client's sockets carry text only.
+    /// Send a binary frame; only the terminal's sockets carry them.
     ///
     /// # Errors
     ///
@@ -63,6 +63,23 @@ impl PageSocket for Socket {
     fn send(&self, text: String) {
         Socket::send(self, text);
     }
+
+    fn send_binary(&self, bytes: Vec<u8>) -> Result<(), String> {
+        Socket::send_binary(self, bytes);
+        Ok(())
+    }
+}
+
+/// A binary frame a page sends, in base64 as its bridge writes it.
+///
+/// # Errors
+///
+/// Returns an error when `text` is not base64.
+pub fn decode_binary(text: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(text)
+        .map_err(|_| "The frame is not base64".to_string())
 }
 
 /// A socket held, with the page it is for.
@@ -199,12 +216,18 @@ impl Sockets {
     }
 }
 
-/// What the page's `__moquiSocketEvent` takes for an event: `{kind}` and the text of a frame.
+/// What the page's `__moquiSocketEvent` takes for an event: `{kind}` and the text of a frame, a binary frame's bytes in
+/// base64, or the reason of a close.
 pub fn event_json(event: &Event) -> Value {
+    use base64::Engine;
     match event {
         Event::Open => json!({ "kind": "open" }),
         Event::Text(text) => json!({ "kind": "text", "text": text }),
+        Event::Binary(bytes) => {
+            json!({ "kind": "binary", "data": base64::engine::general_purpose::STANDARD.encode(bytes) })
+        }
         Event::Closed => json!({ "kind": "closed" }),
+        Event::Ended(reason) => json!({ "kind": "closed", "reason": reason }),
         Event::Revoked => json!({ "kind": "revoked" }),
     }
 }
@@ -242,12 +265,12 @@ pub fn open_remote(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str,
             }
             match event {
                 // the page opens another, as it would after a browser socket closed
-                Event::Closed => sink_client.sockets.remove(id),
+                Event::Closed | Event::Ended(_) => sink_client.sockets.remove(id),
                 Event::Revoked => {
                     sink_client.sockets.remove(id);
                     sink_host.check_key(&sink_account);
                 }
-                Event::Open | Event::Text(_) => {}
+                Event::Open | Event::Text(_) | Event::Binary(_) => {}
             }
         });
         let socket = crate::socket::open(&account.server, &key, path, sink).map_err(|err| err.to_string())?;
@@ -273,7 +296,8 @@ fn notified(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str, accoun
                 }
             }
         }
-        Event::Closed | Event::Revoked => {
+        Event::Binary(_) => {}
+        Event::Closed | Event::Ended(_) | Event::Revoked => {
             // pushes may be missed until it is back: newer events are a gap until the mirror reads them again
             client.mirror.dropped(&account.id);
             mark_stale(client, &account.id);

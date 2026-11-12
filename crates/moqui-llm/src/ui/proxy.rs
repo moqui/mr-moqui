@@ -286,6 +286,20 @@ fn cell_text(cell: &Json) -> String {
     }
 }
 
+/// A field's text in a cell: the lines of a text of several lines (the render's array of its lines, which a field's own
+/// pieces never make, since its texts join one line) as the text they were, else the cell's text.
+fn field_text(part: &Json) -> String {
+    match part {
+        Json::Array(lines) if lines.len() > 1 && lines.iter().all(Json::is_string) => lines
+            .iter()
+            .filter_map(Json::as_str)
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => cell_text(other),
+    }
+}
+
 fn cell_link(cell: &Json) -> Option<String> {
     match cell {
         Json::Array(parts) => parts.iter().find_map(cell_link),
@@ -354,11 +368,11 @@ pub fn rows_of(list: &Json, names: &[String]) -> Json {
             match cell {
                 Json::Array(parts) if parts.len() == fields.len() && fields.len() > 1 => {
                     for (field, part) in fields.iter().zip(parts) {
-                        out.insert(field.clone(), json!(cell_text(part)));
+                        out.insert(field.clone(), json!(field_text(part)));
                     }
                 }
                 _ => {
-                    out.insert(fields[0].clone(), json!(cell_text(cell)));
+                    out.insert(fields[0].clone(), json!(field_text(cell)));
                     for field in &fields[1..] {
                         out.entry(field.clone()).or_insert(json!(""));
                     }

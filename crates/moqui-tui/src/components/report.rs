@@ -533,6 +533,12 @@ fn trend_lines(frame: &Value, panel: &Value, width: usize, stat: bool) -> Vec<Li
 
 fn sparkline(values: &[Value], width: usize) -> String {
     let values: Vec<Option<f64>> = values.iter().map(number).collect();
+    bars(&values, width)
+}
+
+/// Numbers as a row of bars at most `width` wide, the lowest the shortest, a space where there is none: a report's
+/// sparkline and a number card's.
+pub(crate) fn bars(values: &[Option<f64>], width: usize) -> String {
     let min = values.iter().flatten().copied().fold(f64::INFINITY, f64::min);
     let max = values.iter().flatten().copied().fold(f64::NEG_INFINITY, f64::max);
     let bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -1000,7 +1006,7 @@ fn selection_line(frame: &Value, panel: &Value, state: &ComponentState) -> Line 
     )]
 }
 /// The path of a report screen where the app that renders the dashboard mounts it: `appLinks` (Dashboard.xml, on a
-/// dashboard or a standalone panel) maps `definition`, `panel`, `explore`, `alertRule` and `dashboard` to server paths,
+/// dashboard or a standalone panel) maps `definition`, `panel`, `explore`, `alertRule`, `dashboard` and `drill` to server paths,
 /// and a link the app leaves out or sets to null is not offered (None). Without `appLinks` it is Tools' Dashboards
 /// screen (`tools`).
 fn app_link(owner: &Value, key: &str, tools: &str) -> Option<String> {
@@ -1112,6 +1118,9 @@ fn span_stamp(span: &Value) -> u64 {
 }
 
 /// The time picker's quick ranges, as the web picker lists them: from, through and label.
+/// The route of System › Monitor, where a trace opens.
+const MONITOR_PATH: &str = "/apps/system/Monitor";
+
 const QUICK_RANGES: [(&str, &str, &str); 22] = [
     ("now-5m", "now", "Last 5 minutes"),
     ("now-15m", "now", "Last 15 minutes"),
@@ -1150,6 +1159,9 @@ fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static s
         items.push(("explore", "Explore"));
     }
     items.push(("inspect", "Inspect"));
+    if drill_link(dashboard).is_some() {
+        items.push(("drill", "Drill"));
+    }
     if dashboard["editable"] == true && app_link(dashboard, "dashboard", "Dashboard").is_some() {
         items.push(("duplicate", "Duplicate"));
         items.push(("remove", "Remove"));
@@ -1165,6 +1177,13 @@ fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static s
         items.push(("alert", "New alert rule"));
     }
     items
+}
+
+/// The drill screen the dashboard's screen sends (`appLinks.drill`: Tools' own, or a mounting app's): a mount that
+/// names none sends none, so there is no fallback.
+fn drill_link(dashboard: &Value) -> Option<String> {
+    dashboard["appLinks"].as_object()?;
+    app_link(dashboard, "drill", "")
 }
 
 /// Explore over the panel's first query, with its filters and the dashboard's filters on the same dataset, and the range.
@@ -1229,6 +1248,25 @@ fn panel_menu_act(item: &str, dashboard: &Value, id: &str, panel: &Value, state:
             dashboard_url(dashboard, "", Some(id), None)
         ))],
         "explore" => explore_url(dashboard, panel).map_or_else(Vec::new, |url| vec![Act::Follow(url)]),
+        "drill" => drill_link(dashboard).map_or_else(Vec::new, |drill| {
+            let mut url = format!(
+                "{drill}?definitionId={}&panelId={}",
+                encoded(definition),
+                encoded(source)
+            );
+            for key in ["from", "thru"] {
+                if let Some(value) = dashboard["absoluteTime"][key].as_str() {
+                    url.push_str(&format!("&{key}={}", encoded(value)));
+                }
+            }
+            if dashboard["variableValues"].is_object() {
+                url.push_str(&format!(
+                    "&variablesJson={}",
+                    encoded(&dashboard["variableValues"].to_string())
+                ));
+            }
+            vec![Act::Follow(url)]
+        }),
         "inspect" => {
             state.closed.insert("__report_inspector".into());
             state.local["inspectionRequest"] = Value::Bool(true);
@@ -1985,7 +2023,7 @@ impl Component for LogTail {
                         .and_then(|hit| hit["body"]["trace_id"].as_str())
                         .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
                     {
-                        return Some(vec![Act::Follow(format!("/apps/monitor/TraceDetail?traceId={trace}"))]);
+                        return Some(vec![Act::Follow(format!("{MONITOR_PATH}/TraceDetail?traceId={trace}"))]);
                     }
                 }
                 _ => {}

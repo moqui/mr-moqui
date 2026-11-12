@@ -527,6 +527,9 @@ pub enum Node {
         value: String,
         #[serde(default)]
         url: String,
+        /// The value's recent history, oldest first, a gap where there is none: drawn as bars under the value.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        spark: Vec<Option<f64>>,
     },
     /// The stages of a status, and its transitions as links (`c`), each posting the new status.
     StatusBar {

@@ -36,6 +36,34 @@ pub(crate) struct Server {
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) secure: bool,
+    /// Where `ssh.connect` goes when it names no host and port: `--ssh`, the ready file of `--serve`, or the SSH
+    /// listener of the server a load run from Tools runs in (plans/archive/LoadRunner.md L7).
+    pub(crate) ssh: Option<SshTarget>,
+}
+
+/// An SSH server's host and port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SshTarget {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+}
+
+impl SshTarget {
+    /// `host:port`, `[::1]:port`, or a port alone, which is on `default_host`.
+    pub(crate) fn parse(text: &str, default_host: &str) -> Result<Self, String> {
+        let text = text.trim();
+        let bad = || format!("--ssh {text}: give host:port or a port");
+        let (host, port) = match text.rsplit_once(':') {
+            Some((host, port)) => (host.trim_start_matches('[').trim_end_matches(']'), port),
+            None => (default_host, text),
+        };
+        let port = port.parse::<u16>().ok().filter(|port| *port > 0).ok_or_else(bad)?;
+        let host = if host.is_empty() { default_host } else { host };
+        Ok(Self {
+            host: host.to_string(),
+            port,
+        })
+    }
 }
 
 impl Server {
@@ -68,7 +96,14 @@ impl Server {
             host: host.trim_start_matches('[').trim_end_matches(']').to_string(),
             port,
             secure,
+            ssh: None,
         })
+    }
+
+    /// The server with `ssh` as its SSH listener.
+    pub(crate) fn with_ssh(mut self, ssh: Option<SshTarget>) -> Self {
+        self.ssh = ssh;
+        self
     }
 
     /// `path` on the server; a full URL is taken as it is.
@@ -83,7 +118,11 @@ impl Server {
     }
 
     pub(crate) fn to_json(&self) -> Value {
-        json!({ "url": self.url, "host": self.host, "port": self.port, "secure": self.secure })
+        let ssh = self
+            .ssh
+            .as_ref()
+            .map(|ssh| json!({ "host": ssh.host, "port": ssh.port }));
+        json!({ "url": self.url, "host": self.host, "port": self.port, "secure": self.secure, "ssh": ssh })
     }
 }
 
@@ -498,7 +537,7 @@ fn plain(value: &Value) -> String {
 
 /// Send `ask` on the session, following redirects when it says so, and take each answer's cookies and token. `allow`
 /// is asked before each request is sent, the first and each redirect's: a load run in a server refuses a URL it may
-/// not reach (plans/LoadRunner.md §10 Targets).
+/// not reach (plans/archive/LoadRunner.md §10 Targets).
 pub(crate) fn send(
     client: &reqwest::blocking::Client,
     session: &mut Session,

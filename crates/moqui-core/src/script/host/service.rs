@@ -49,7 +49,9 @@ pub(super) static SERVICE_FACADE: HostClass = HostClass {
 pub(super) static SERVICE_CALL: HostClass = HostClass {
     name: "host:ServiceCall",
     methods: &[
-        method!("ec.service.sync()", "name", [Text], name),
+        method!("ec.service.sync()", "name", [Text, OptValue, OptValue], name),
+        method!("ec.service.sync()", "getServiceName", [], get_service_name),
+        method!("ec.service.sync()", "getCurrentParameters", [], get_current_parameters),
         method!("ec.service.sync()", "disableAuthz", [], disable_authz),
         method!("ec.service.sync()", "multi", [Value], multi),
         method!("ec.service.sync()", "throwOnError", [Bool], throw_on_error),
@@ -160,9 +162,38 @@ fn flag(call: &Call<'_>, index: usize) -> Option<bool> {
     }
 }
 
+/// Java's three forms of a service name: `name("path.verb#noun")`, `name(verb, noun)` and `name(path, verb, noun)`.
+pub(super) fn joined_name(first: &str, second: Option<String>, third: Option<String>) -> String {
+    let part = |text: Option<String>| text.filter(|text| !text.is_empty());
+    match (part(second), part(third)) {
+        (Some(verb), Some(noun)) if first.is_empty() => format!("{verb}#{noun}"),
+        (Some(verb), Some(noun)) => format!("{first}.{verb}#{noun}"),
+        (Some(noun), None) => format!("{first}#{noun}"),
+        (None, _) => first.to_string(),
+    }
+}
+
 fn name(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let name = call.text(0).unwrap_or_default().to_string();
+    let name = joined_name(call.text(0).unwrap_or_default(), call.opt_text(1), call.opt_text(2));
     changed(call, |state| state.name = name)
+}
+
+/// Java's `getServiceName()`.
+fn get_service_name(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let builder = call.this::<Builder>()?;
+    let name = running(&builder)?.name.clone();
+    Ok(name.into())
+}
+
+/// Java's `getCurrentParameters()`: the parameters set so far.
+fn get_current_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let builder = call.this::<Builder>()?;
+    let entries: moqui_lib::object::ValueMap = running(&builder)?
+        .parameters
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    Ok(Ret::Value(Value::Map(entries)))
 }
 
 fn disable_authz(call: &mut Call<'_>) -> Result<Ret, HostError> {

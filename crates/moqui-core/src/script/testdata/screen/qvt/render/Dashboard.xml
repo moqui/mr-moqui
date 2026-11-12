@@ -18,5 +18,15 @@
         <link url="Orders?statusId=Open&amp;sort=-date" text="All open" link-type="anchor"/>
         <dashboard><number-card title="Held orders" value="1" link="Orders?statusId=${orderStatus}"/></dashboard>
         <link url="${'Orders'}" text="Dynamic orders" link-type="anchor"><parameter name="sort" value="-date"/></link>
+        <dashboard id="Featured" min-width="280">
+            <nav-card title="Orders" text="Find {{x}} &amp; open orders" icon="sym_o_receipt_long" link="Orders" size="lg">
+                <link url="Orders?statusId=Open" text="Open ones"/>
+                <link url="Orders?statusId=Held" text="Hidden ones" condition="showHidden"/>
+                <link url="https://example.com/help" url-type="plain" text="Help"/>
+            </nav-card>
+            <nav-card id="Late" title="Late" link="https://example.com/late" style="wide"/>
+            <nav-card title="Hidden tile" text="Not shown" link="Orders" condition="showHidden"/>
+            <nav-card title="Counted" text="${openCount} open" icon="fa fa-hashtag"/>
+        </dashboard>
     </widgets>
 </screen>

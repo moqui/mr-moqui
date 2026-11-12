@@ -129,10 +129,10 @@ along with this software (see the LICENSE.md file). If not, see
             // screen render; the screen path is the one the Java test uses, apps/system
             const renderCalls = Math.floor(baseCallsNum / 100) || 1
             timed("Render System Dashboard Screen", "", renderCalls, () => {
-                for (let i = 0; i < renderCalls; i++) ec.screen.render({screenPath: "apps/system/dashboard", renderMode: "html"})
+                for (let i = 0; i < renderCalls; i++) ec.screen.render({screenPath: "apps/system/Home", renderMode: "html"})
             })
             timed("Render Monitor Artifacts Dashboard", "", renderCalls, () => {
-                for (let i = 0; i < renderCalls; i++) ec.screen.render({screenPath: "apps/monitor/Artifacts",
+                for (let i = 0; i < renderCalls; i++) ec.screen.render({screenPath: "apps/system/Monitor/Artifacts",
                     renderMode: "html", parameters: {"var-artifactType": "AT_XML_SCREEN"}})
             })
             // The Java test also calls the REST API through RestClient; there is no RestClient in the script host.

@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- The test mount's dashboard: Tools' Dashboard screen with its transitions here. -->
+<!-- The test mount's dashboard: Tools' Dashboard screen with its transitions here, and what template/ReportMount.js answers
+    under the mount, as a transition's answer (no render). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Board">
     <transition-include name="edit" location="component://tools/screen/Dashboards/Dashboard.xml"/>
     <transition-include name="inspectPanel" location="component://tools/screen/Dashboards/Dashboard.xml"/>
     <transition-include name="duplicatePanel" location="component://tools/screen/Dashboards/Dashboard.xml"/>
+    <transition-include name="share" location="component://tools/screen/Dashboards/Dashboard.xml"/>
+    <transition name="mountState" method="get" read-only="true">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/ReportMount.js').state())</script></actions>
+        <default-response type="none"/>
+    </transition>
     <widgets><include-screen location="component://tools/screen/Dashboards/Dashboard.xml" share-scope="true"/></widgets>
 </screen>

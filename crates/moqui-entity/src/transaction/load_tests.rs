@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Connection admission near pool capacity (`plans/High-Level-Review.md` HL-022), opt-in: streamed database downloads
+//! Connection admission near pool capacity (`plans/archive/High-Level-Review.md` HL-022), opt-in: streamed database downloads
 //! (each window a permit of the transfer limit and one autocommit read), request transactions and agent steps on one
 //! pool, with a reserve probe. Statements sleep to stand for database time. Prints, per scenario, the ordinary
 //! high-water mark, pool waits, wakeups per returned connection, checkout wait percentiles, how many waiters a later

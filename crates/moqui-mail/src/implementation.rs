@@ -213,8 +213,10 @@ pub(super) fn send_template(
     }
     if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
         note_message(format!("Error sending email: {err}"));
+        let outcome = delivery_outcome(&server, &err);
+        record_send_failure(facade, &email_message_id, &err, outcome);
         let mut out = ids(&email_message_id, "");
-        out.insert("deliveryOutcome".into(), Value::string(delivery_outcome(&server, &err)));
+        out.insert("deliveryOutcome".into(), Value::string(outcome));
         return Ok(out);
     }
     if !email_message_id.is_empty() {
@@ -364,9 +366,23 @@ pub(super) fn send_message(
     if let Err(err) = stored_attachments(facade, &email_message_id, &mut letter) {
         return Ok(send_failed(&email_message_id, &err));
     }
+    // the send begins here: what was known or concluded of the send before no longer holds for this one
+    if !client {
+        if let Err(err) = begin_send(facade, &message) {
+            return fail(format!(
+                "Email Message {email_message_id} was not sent: the start of its send could not be recorded: {err}"
+            ));
+        }
+    }
     if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+        let outcome = delivery_outcome(&server, &err);
+        // a client message's result is the mail client's to write (record#SendResult, which keeps the outcome too): its
+        // row may be locked by the transaction this runs in
+        if !client {
+            record_send_failure(facade, &email_message_id, &err, outcome);
+        }
         let mut out = send_failed(&email_message_id, &err);
-        out.insert("deliveryOutcome".into(), Value::string(delivery_outcome(&server, &err)));
+        out.insert("deliveryOutcome".into(), Value::string(outcome));
         return Ok(out);
     }
     if status == "ES_READY" || status == "ES_BOUNCED" {
@@ -712,8 +728,88 @@ fn mark_sent(facade: &EntityFacade, id: &str, message_id: &str) -> Result<(), Li
     set_text(&mut row, "messageId", message_id);
     row.set("sentDate", now_stamp());
     row.set("sendClaimDate", Value::Null);
+    row.set("sendOutcome", Value::Null);
     row.update(facade)?;
     Ok(())
+}
+
+/// What a send that begins supersedes on its stored message: `(uncertain, settlement)`, whether its outcome is to be
+/// marked uncertain and whether a settlement is to be cleared. The outcome of the send before (retryable or permanent:
+/// nothing was sent; none on a bounced message) is not this send's, which may go out: until its result is written the
+/// message is uncertain, so a send lost part way never reads as known not sent. A Ready message with no outcome
+/// already reads so and is left. A settlement (`sendSettlement`: what a person reported of an uncertain send) was of
+/// the send before, whatever the message's status.
+fn superseded_by_send(status: &str, outcome: &str, settlement: &str) -> (bool, bool) {
+    let known = match status {
+        "ES_READY" => outcome == "retryable" || outcome == "permanent",
+        "ES_BOUNCED" => outcome != "uncertain",
+        _ => false,
+    };
+    (known, !settlement.is_empty())
+}
+
+/// The start of a send of a stored message that is not a mail client's (Admin's mail queue, F179), written in a
+/// transaction of its own before the transport is contacted, as [`superseded_by_send`] says: a settlement is cleared
+/// (the audit log of `sendSettlement` keeps what was concluded and by whom) and a known outcome becomes uncertain, so
+/// that whoever sends the message again (the queue's retry, a screen's resend, any caller of send#EmailMessage) and
+/// however the send ends, the row never keeps a conclusion about an earlier send. Nothing is written for a message
+/// with neither. A refusal before this (no body, no server, a host not allowed, no recipient allowed, an attachment
+/// that cannot be read) is no send: the message is left as it was. A mail client's message is claimed by the mail
+/// client (claim#DraftSend), which may hold its row, and is never settled.
+fn begin_send(facade: &EntityFacade, message: &EntityValue) -> Result<(), LibError> {
+    let (uncertain, settlement) = superseded_by_send(
+        &field_text(message, "statusId"),
+        &field_text(message, "sendOutcome"),
+        &field_text(message, "sendSettlement"),
+    );
+    if !uncertain && !settlement {
+        return Ok(());
+    }
+    force_new(facade, || {
+        let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+        let mut row = facade.make_value(MESSAGE)?;
+        set_text(&mut row, "emailMessageId", &field_text(message, "emailMessageId"));
+        if uncertain {
+            set_text(&mut row, "sendOutcome", "uncertain");
+        }
+        if settlement {
+            for name in [
+                "sendSettlement",
+                "sendSettledByUserId",
+                "sendSettledDate",
+                "sendSettledReason",
+            ] {
+                row.set(name, Value::Null);
+            }
+        }
+        row.update(facade)?;
+        Ok(())
+    })
+}
+
+/// A delivery that failed, kept on the stored message for whoever reconciles it (Admin's mail queue,
+/// `org.moqui.admin.OperationServices.find#MailOutcomes`): `sendOutcome` is the `deliveryOutcome` answered (retryable:
+/// nothing was sent; permanent: refused for good; uncertain: it may have gone, so it is never sent again on its own),
+/// with the error's text as `sendError`. A mail client's message gets both from record#SendResult instead. In a
+/// transaction of its own, as the Sent status is; a message with no row, or a write that fails, is logged and the send's
+/// answer stands.
+fn record_send_failure(facade: &EntityFacade, id: &str, error: &Error, outcome: &str) {
+    if id.is_empty() {
+        return;
+    }
+    let written = force_new(facade, || {
+        let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+        let mut row = facade.make_value(MESSAGE)?;
+        set_text(&mut row, "emailMessageId", id);
+        set_text(&mut row, "sendOutcome", outcome);
+        let text: String = error.message().chars().take(4000).collect();
+        set_text(&mut row, "sendError", &text);
+        row.update(facade)?;
+        Ok(())
+    });
+    if let Err(err) = written {
+        tracing::error!(email_message = %id, error = %err, "The outcome of a failed send could not be kept on its message");
+    }
 }
 
 pub(super) fn force_new<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, LibError>) -> Result<T, LibError> {
@@ -724,6 +820,7 @@ pub(super) fn force_new<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<
 /// [`force_new`] as a transaction-cache frame (plans/archive/TX-Cache.md): its writes go to the database at the commit, in one
 /// batch, and a row it read or wrote is not read again. For a message stored with its attachments and labels, and the
 /// change rows every one of those writes makes for the users who keep a cursor.
+#[cfg(feature = "imap")]
 pub(super) fn force_cache<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, LibError>) -> Result<T, LibError> {
     let tx = facade.transactions_for(MESSAGE)?;
     tx.run(TransactionAttribute::ForceCache, None, body)
@@ -1471,6 +1568,8 @@ fn own_listener(server: &EntityValue) -> bool {
 /// What an SMTP session sends: a message lettre formats, or one formatted already (DKIM-signed, a built notice).
 enum Payload {
     Message(lettre::Message),
+    /// Built only by the inbound half: a DKIM-signed message, a delivery notice.
+    #[cfg(feature = "imap")]
     Raw(lettre::address::Envelope, Vec<u8>),
 }
 
@@ -1478,6 +1577,7 @@ impl Payload {
     fn send(&self, transport: &lettre::SmtpTransport) -> Result<(), lettre::transport::smtp::Error> {
         match self {
             Self::Message(message) => lettre::Transport::send(transport, message).map(|_| ()),
+            #[cfg(feature = "imap")]
             Self::Raw(envelope, raw) => lettre::Transport::send_raw(transport, envelope, raw).map(|_| ()),
         }
     }
@@ -1493,17 +1593,17 @@ thread_local! {
 }
 
 /// A shorter SMTP session limit for the sends of this thread while the guard lives.
-#[cfg(test)]
+#[cfg(all(test, feature = "imap"))]
 pub(crate) struct SessionLimitGuard(Option<Duration>);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "imap"))]
 impl SessionLimitGuard {
     pub(crate) fn set(limit: Duration) -> Self {
         Self(SESSION_LIMIT.with(|slot| slot.replace(Some(limit))))
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "imap"))]
 impl Drop for SessionLimitGuard {
     fn drop(&mut self) {
         SESSION_LIMIT.with(|slot| slot.set(self.0));
@@ -1594,12 +1694,26 @@ fn smtp_send_retry(
 /// The `deliveryOutcome` of a send through `server` that failed with `error`: through the edge node it was not queued
 /// (not paired, the kind not listed), so nothing was sent and it is retryable; else as [`smtp_delivery_outcome`].
 fn delivery_outcome(server: &EntityValue, error: &Error) -> &'static str {
-    if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) {
+    if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) || refused_before_connecting(server, error) {
         "retryable"
     } else {
         smtp_delivery_outcome(error)
     }
 }
+
+/// [`smtp_transport`] refused the server before any connection (it is disabled until a test of it passes, or it may not
+/// use the private network and its address is internal or was not found): nothing was sent, so the message is tried
+/// again once the server is tested or allowed, never left as possibly sent.
+fn refused_before_connecting(server: &EntityValue, error: &Error) -> bool {
+    let text = error.to_string();
+    (field_text(server, "disabled") == "Y" && text.contains(DISABLED_SERVER))
+        || (field_text(server, "allowPrivateNetwork") == "N"
+            && (text.contains(INTERNAL_SERVER) || text.contains(SERVER_NOT_FOUND)))
+}
+
+const DISABLED_SERVER: &str = "is disabled until a test of it passes";
+const INTERNAL_SERVER: &str = "is an internal address, which this server may not use";
+const SERVER_NOT_FOUND: &str = "could not be looked up";
 
 /// An explicit SMTP rejection may be retried or treated as permanent, and so may a server that was not reached
 /// (refused, not resolved, the connect timed out): nothing was sent. A connection lost after
@@ -1697,11 +1811,27 @@ fn smtp_transport(
     // Every SMTP connection starts here, so nothing reaches a mail server under the read fence.
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, &host)?;
     let port = parse_port(&field_text(server, "smtpPort"), 25)?;
+    // A server an administrator disabled, or whose host, port or sign-in changed and has not passed a test since
+    // (org.moqui.admin.ConfigurationServices store#Connection), sends nothing; test#EmailServer tries it all the same.
+    if field_text(server, "disabled") == "Y" {
+        return Err(Error::new(format!(
+            "Email server {} {DISABLED_SERVER}",
+            field_text(server, "emailServerId")
+        )));
+    }
+    // A server that may not use the private network (allowPrivateNetwork N: a delegated administrator's on a production
+    // instance) is looked up once here, refused when any of its addresses is internal, and connected to at the address
+    // found, so a second lookup cannot answer another; TLS still verifies the host's name.
+    let connect_host = if field_text(server, "allowPrivateNetwork") == "N" {
+        public_address(&host, port)?
+    } else {
+        host.clone()
+    };
     // smtpSsl is TLS from the start. smtpStartTls upgrades when the server offers it, as Java's setStartTLSEnabled
     // (not required), so a server without STARTTLS still takes the mail. Both trust `email-client` `tls-ca-file` too.
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
     use lettre::transport::smtp::client::Tls;
-    let mut builder = lettre::SmtpTransport::builder_dangerous(&host).port(port);
+    let mut builder = lettre::SmtpTransport::builder_dangerous(connect_host.as_str()).port(port);
     if field_text(server, "smtpSsl") == "Y" {
         builder = builder.tls(Tls::Wrapper(smtp_tls(&host)?));
     } else if field_text(server, "smtpStartTls") == "Y" {
@@ -1718,6 +1848,23 @@ fn smtp_transport(
             .authentication(vec![Mechanism::Xoauth2]),
     };
     Ok(builder.build())
+}
+
+/// The address to connect to for `host`, a server that may not use the private network: an error when the name does
+/// not resolve or any of its addresses is loopback, private, link-local or otherwise internal.
+fn public_address(host: &str, port: u16) -> Result<String, Error> {
+    let refused = || Error::new(format!("{host} {INTERNAL_SERVER}"));
+    let addresses = moqui_lib::net::public_addresses(host, port).map_err(|err| {
+        if err.to_string().contains("internal address") {
+            refused()
+        } else {
+            Error::new(format!("{host} {SERVER_NOT_FOUND}"))
+        }
+    })?;
+    addresses
+        .first()
+        .map(|address| address.ip().to_string())
+        .ok_or_else(|| Error::new(format!("{host} has no address")))
 }
 
 pub(super) fn build_lettre(letter: &Letter) -> Result<lettre::Message, Error> {
@@ -2050,6 +2197,8 @@ pub(super) fn test_server(
     let Some(mut server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
         return fail(format!("No EmailServer found for ID [{server_id}]"));
     };
+    // a server that is disabled until a test of it passes is tried all the same: this is the test
+    server.set("disabled", Value::Null);
     // an SMTP sign-in to try before it is stored: smtpUsername as given (empty for the store's), smtpPassword when given
     if let Some(user) = parameters.get("smtpUsername").filter(|value| !value.is_null()) {
         server.set("smtpUsername", Value::string(to_plain_string(user).trim()));

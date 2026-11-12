@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Library panels" default-menu-index="4">
+<!-- The library panels: a preview of one as the viewer, over the dashboard list with its type fixed to panel. Another app
+    shows it under its own root by location (BOSS Insights › Library panels): the list's links go by the mount's reportLinks
+    (docs/tools/Monitoring.md, "Mounting the report screens"), a panel opening in the app's panel editor where the viewer
+    authors. The menu image is for an app's menu that shows one for each item. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Library panels" default-menu-index="4"
+        menu-image="sym_o_bar_chart" menu-image-type="icon">
     <parameter name="previewPanelId"/>
     <!-- The included Home list's links run here. -->
     <transition-include name="dashboard" location="component://tools/screen/Dashboards/Home.xml"/>

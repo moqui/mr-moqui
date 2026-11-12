@@ -384,4 +384,576 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="type" type="text-short"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
     </entity>
+
+    <!-- ========== Instance settings (Admin P8) ========== -->
+    <!-- The instance setting registry and the instance preferences (mr-boss plan/design-admin.md §7 InstanceSettings, §17.2
+        InstancePreference; impl-admin P8), read and changed through org.moqui.admin.ConfigurationServices. A setting is
+        registered by seed data of the component that reads it: a preference (editable Y, its value an InstancePreference row
+        when one is set, else the conf property it names, else its default) or a deployment configuration value shown read
+        only (editable N, a default-property of the conf). The registration fixes the type, allowed values, limits and
+        default; there is no unregistered key, JSON or code value, and a secret is never a preference: a setting marked
+        secret, or whose property name reads as one, is never returned, only whether it is set. -->
+    <entity entity-name="InstanceSetting" package="moqui.server" use="configuration" cache="true">
+        <field name="settingKey" type="id-long" is-pk="true"><description>Stable, dotted: the area and the setting
+            (instance.displayName, report.groupRecipientCeiling)</description></field>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="settingGroup" type="text-short"><description>The heading it is listed under (Presentation, Sign-in,
+            Reports, Deployment)</description></field>
+        <field name="valueTypeEnumId" type="id"><description>Text, whole number, yes or no, one of the allowed values, a
+            locale or a time zone</description></field>
+        <field name="allowedValues" type="text-long"><description>Comma separated, for a choice</description></field>
+        <field name="minValue" type="number-integer"><description>The least whole number</description></field>
+        <field name="maxValue" type="number-integer"><description>The greatest whole number</description></field>
+        <field name="maxLength" type="number-integer"><description>The longest text (255 when empty, never more)</description></field>
+        <field name="defaultValue" type="text-medium"><description>The value with no preference and no conf property</description></field>
+        <field name="propertyName" type="text-medium"><description>The conf default-property (or environment variable) that
+            holds the value of a configuration setting, or is a preference's value until one is set</description></field>
+        <field name="confAttribute" type="text-medium"><description>For a configuration setting no property holds: the conf
+            attribute it shows, one of those ConfigurationServices.get#SignInPolicyValues answers
+            (user-facade/password/@min-length, webapp/session-config/@timeout); the value is the one the server runs
+            with</description></field>
+        <field name="editable" type="text-indicator"><description>Y: an instance preference, changed at runtime through
+            store#InstancePreference; otherwise deployment configuration, read only</description></field>
+        <field name="isSecret" type="text-indicator"><description>Y: the value is never returned, only whether it is set;
+            never Y for a preference</description></field>
+        <field name="restartRequired" type="text-indicator"><description>Y: a change of the conf value is read at the next
+            start; a preference always applies at once</description></field>
+        <field name="managePermission" type="id-long"><description>A permission a change needs beside
+            ADMIN_SETTINGS_MANAGE, if any</description></field>
+        <field name="operatorNote" type="text-medium"><description>How an operator changes a configuration value</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"><description>Y leaves the setting out</description></field>
+        <relationship type="one" title="InstanceSettingValueType" related="moqui.basic.Enumeration">
+            <key-map field-name="valueTypeEnumId"/></relationship>
+        <relationship type="one-nofk" title="Manage" related="moqui.security.UserPermission">
+            <key-map field-name="managePermission" related="userPermissionId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Instance Setting Value Type" enumTypeId="InstanceSettingValueType"/>
+            <moqui.basic.Enumeration description="Text" enumId="IsvText" enumTypeId="InstanceSettingValueType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Whole number" enumId="IsvInteger" enumTypeId="InstanceSettingValueType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Yes or no" enumId="IsvBoolean" enumTypeId="InstanceSettingValueType" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Choice" enumId="IsvChoice" enumTypeId="InstanceSettingValueType" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Locale" enumId="IsvLocale" enumTypeId="InstanceSettingValueType" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Time zone" enumId="IsvTimeZone" enumTypeId="InstanceSettingValueType" sequenceNum="6"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="InstancePreference" package="moqui.server" use="configuration" cache="true">
+        <description>The value of a registered instance preference (InstanceSetting, editable Y): text as its type reads it,
+            with who changed it, when and why. Its revision is lastUpdatedStamp; the audit log keeps each value, and a
+            removal is recorded there by the service. No row means the conf property or the registered default.</description>
+        <field name="settingKey" type="id-long" is-pk="true"/>
+        <field name="preferenceValue" type="text-medium" enable-audit-log="true"/>
+        <field name="changeReason" type="text-medium"/>
+        <field name="changedByUserId" type="id"/>
+        <field name="changedDate" type="date-time"/>
+        <relationship type="one" related="moqui.server.InstanceSetting"/>
+        <relationship type="one-nofk" title="ChangedBy" related="moqui.security.UserAccount">
+            <key-map field-name="changedByUserId" related="userId"/></relationship>
+    </entity>
+    <!-- A registered label target of delegated translation (design §7 Localization EntityTranslations; impl-admin P8): a field
+        whose values are labels, which ConfigurationServices.store#LocalizedEntityField may translate. A row is used only when
+        its field is enable-localization and not encrypted, on a configuration entity with one primary key field; another is
+        logged by name when read and left out, so translation access never reaches a business record or a sensitive value.
+        Each component seeds its own. -->
+    <entity entity-name="LocalizedLabelTarget" package="moqui.basic" use="configuration" cache="true">
+        <field name="entityName" type="text-medium" is-pk="true"/>
+        <field name="fieldName" type="text-short" is-pk="true"/>
+        <field name="title" type="text-medium"><description>What the labels are, in the translator's words (Status names)</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <!-- The connection adapters of delegated connection administration (mr-boss plan/design-admin.md §8.1, §14 "Connection
+        adapter"; impl-admin P11): a registry over the native configuration records (SystemMessageRemote, EmailServer,
+        EmailOAuthProvider, NetworkPrinter here; Mantle's gateway configurations), which stay the records their owners
+        read. org.moqui.admin.ConfigurationServices find#Connections, get#Connection, store#Connection, test#Connection and
+        find#ConnectionConsumers work through it. The rows are trusted component definitions (seed data, each component
+        its own), never a name an administrator enters: a row naming a service that does not exist is logged by name
+        when read and left out. -->
+    <entity entity-name="ConnectionAdapter" package="moqui.server" use="configuration" cache="true">
+        <field name="adapterKey" type="id" is-pk="true"><description>The kind of connection: remote, relay, mailOAuth,
+            printer; paymentGateway, shippingGateway, taxGateway (Mantle's)</description></field>
+        <field name="title" type="text-medium"><description>What one is called (Remote system, Mail relay)</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="adapterGroup" type="text-short"><description>The list it belongs to: integration (Connections) or mail
+            (MailRelays)</description></field>
+        <field name="adapterServiceName" type="text-medium"><description>The adapter's service, one implementing
+            org.moqui.admin.ConfigurationServices.run#ConnectionAdapter; empty for the framework's own kinds, which
+            ConfigurationConnections.js holds</description></field>
+        <field name="creatable" type="text-indicator"><description>Y: store#Connection starts a new one</description></field>
+        <field name="organizationBinding" type="text-indicator"><description>Y: its use is permitted per organization
+            (payment gateways: PaymentGatewayOrganization), a record its owner's service writes</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"><description>Y leaves the kind out</description></field>
+    </entity>
+    <entity entity-name="ConnectionConsumerProvider" package="moqui.server" use="configuration" cache="true">
+        <description>A service that answers where a connection of a kind is used, beside the kind's own answer: the owner
+            of the records that name it (Mantle's gateways and store integrations naming a remote, facilities naming a
+            printer). It implements org.moqui.admin.ConfigurationServices.find#AdapterConsumers; seed data, as
+            ConnectionAdapter.</description>
+        <field name="providerKey" type="id" is-pk="true"/>
+        <field name="adapterKey" type="id"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" related="moqui.server.ConnectionAdapter"/>
+    </entity>
+    <entity entity-name="ConnectionCheck" package="moqui.server" use="configuration" cache="never">
+        <description>What Admin knows of one connection beside its native record: the last explicit test
+            (test#Connection) with its safe diagnostics, the mark of a passing test (the fingerprint of the endpoint fields
+            it ran against, never a secret, by whom and when), whether the connection waits for a test because its
+            endpoint changed, and whether that change cleared a stored secret that has not been entered again (no test
+            sends anything until it is). Written by ConfigurationServices only. The last result of a protocol check
+            (test#Protocol, impl-admin P12) is kept here too, under the adapter key protocol and the protocol's and
+            check's keys.</description>
+        <field name="adapterKey" type="id" is-pk="true"/>
+        <field name="connectionKey" type="id-long" is-pk="true"/>
+        <field name="testedConfigHash" type="text-medium"/>
+        <field name="testedDate" type="date-time"/>
+        <field name="testedByUserId" type="id"/>
+        <field name="pendingTest" type="text-indicator"><description>Y: disabled by the endpoint-change rule (or new), so a
+            passing test enables it; a connection an administrator disabled stays disabled after a test</description></field>
+        <field name="secretCleared" type="text-indicator"><description>Y: an endpoint change cleared a stored secret and
+            none has been entered since</description></field>
+        <field name="lastCheckDate" type="date-time"/>
+        <field name="lastCheckPassed" type="text-indicator"/>
+        <field name="lastCheckByUserId" type="id"/>
+        <field name="lastCheckText" type="text-long"><description>The checks of the last test as JSON: each a name, ok or
+            failed and a text that names hosts and statuses, never a secret or a response body</description></field>
+    </entity>
+
+    <!-- Admin P12 (mr-boss plan/impl-admin.md P12; design-admin §9 MailQueue, §14): who owns a send outcome, and what an
+        operation answered -->
+    <entity entity-name="MailOutcomeOwner" package="moqui.server" use="configuration" cache="true">
+        <description>A registered owner of mail send outcomes (org.moqui.admin.OperationServices.find#MailOutcomes): a
+            component whose own ledger holds the attempts of messages it sends (Mantle's delivery ledger) seeds a row, so
+            the mail queue never retries or settles such a message beside its owner. ownerService answers which of a list
+            of EmailMessages are its own, with their state at the owner (it implements
+            OperationServices.find#MailOutcomeOwners); recoverService, when it names one, is the owner's own retry and
+            reconciliation of such a message (OperationServices.recover#OwnedMailOutcome), which checks the owner's
+            permission itself: the registration adds no right. A row naming a service that is not there is logged by name
+            when read and left out, and every message is then held for its owner (no retry here) until it answers.</description>
+        <field name="ownerKey" type="id" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerService" type="text-medium"/>
+        <field name="recoverService" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="OperationResult" package="moqui.server" cache="never">
+        <description>What an operation of org.moqui.admin.OperationServices answered, by the operation key its caller gave
+            (a retry, a reconciliation; later a recovery action): a repeat of the request with the same key answers the
+            first result and does nothing again. A key is one operation's: one kind, one target, one user. The result is
+            the service's safe answer (no secret, address, subject or body). Written by OperationServices only.</description>
+        <field name="operationKey" type="id-long" is-pk="true"/>
+        <field name="operationKind" type="text-short"/>
+        <field name="targetKey" type="text-medium"/>
+        <field name="userId" type="id"/>
+        <field name="operationDate" type="date-time"/>
+        <field name="resultText" type="text-long"/>
+    </entity>
+
+    <!-- Admin P13 (mr-boss plan/impl-admin.md P13; design-admin §8.1, §14 "Operational recovery"): what may be recovered
+        through org.moqui.admin.OperationServices, and which handlers a message type may be given -->
+    <entity entity-name="RecoveryDescriptor" package="moqui.server" use="configuration" cache="true">
+        <description>A registered recovery of one kind of operational record (org.moqui.admin.OperationServices
+            preview#Recovery and execute#Recovery): its owner seeds a row, and without one nothing is retried, settled or
+            cancelled from there. targetKind is the kind of record (SystemMessage; ServiceJob, a scheduled job, whose targetKey is the jobName and whose retry is a run outside its schedule) and targetKey
+            what of that kind the row covers (for SystemMessage the systemMessageTypeId), with direction (in, out, or
+            empty for both) for a message. Each action has a mode: native (the framework's own action on the record, which
+            the owner hereby says is safe to repeat: the receiver or the consuming service answers the same record once),
+            owner (recoverService, the owner's own service, implementing OperationServices.recover#OwnedTarget, which
+            checks the owner's permission and scope itself) or empty (not offered). retryStates narrows the states a retry
+            is offered in. managePermission is the owner's permission an actor needs besides ADMIN_OPERATION_MANAGE, and
+            dataPermission the one a reader needs to be shown the record's payload. describeService, when named
+            (OperationServices.find#RecoveryTargets), answers per record what its owner would take now, whether its
+            outcome is unknown there, and whether this reader may see its diagnostics and payload. The registration adds
+            no right. A row naming a service that is not defined is logged by name when read and left out, and its
+            records are then offered nothing.</description>
+        <field name="descriptorKey" type="id" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="targetKind" type="text-short"/>
+        <field name="targetKey" type="text-medium"/>
+        <field name="direction" type="text-short"><description>in, out or empty (both)</description></field>
+        <field name="retryMode" type="text-short"><description>native, owner or empty</description></field>
+        <field name="reconcileMode" type="text-short"><description>native, owner or empty</description></field>
+        <field name="cancelMode" type="text-short"><description>native, owner or empty</description></field>
+        <field name="retryStates" type="text-medium"><description>The states a retry is offered in, comma separated;
+            empty for the kind's own (a message: failed, retrying)</description></field>
+        <field name="managePermission" type="text-medium"/>
+        <field name="dataPermission" type="text-medium"/>
+        <field name="describeService" type="text-medium"/>
+        <field name="recoverService" type="text-medium"/>
+        <field name="idempotencyNote" type="text-medium"><description>What makes a repeat safe, in words, shown before
+            an action is confirmed</description></field>
+        <field name="ownerRoute" type="text-medium"><description>The owner's own place for such a record, as a key the
+            application showing it resolves (never a URL)</description></field>
+        <field name="itemsService" type="text-medium"><description>For a job (targetKind ServiceJob, targetKey the
+            jobName): the owner's service answering the independent items of one run
+            (OperationServices.find#JobRunItems), which checks the owner's permission and scope itself</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="MessageHandler" package="moqui.server" use="configuration" cache="true">
+        <description>A handler a message type may be given in delegated administration
+            (org.moqui.admin.ConfigurationServices.store#MessageType): the type's owner seeds a row for each service that
+            may send (handlerRole send) or consume (consume) messages of that one type. store#MessageType sets a type's
+            send or consume service only to a handler registered for that type and role, by its key, never to a service
+            name from the request; a type with no row here is not changed there at all. The service that receives a type's
+            messages is never chosen there. A row naming a service that is not defined is logged by name when read and
+            left out.</description>
+        <field name="handlerKey" type="id" is-pk="true"/>
+        <field name="systemMessageTypeId" type="id"/>
+        <field name="handlerRole" type="text-short"><description>send or consume</description></field>
+        <field name="serviceName" type="text-medium"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <!-- Admin P14 (mr-boss plan/impl-admin.md P14; design-admin §10 Jobs, JobDetail, Topics and TopicDetail): what of a
+        scheduled job and of a notification topic may be changed in delegated administration -->
+    <entity entity-name="JobRegistration" package="moqui.server" use="configuration" cache="true">
+        <description>A scheduled job (moqui.service.job.ServiceJob) its owner registers for delegated administration
+            (org.moqui.admin.OperationServices.store#Job): without a row a job is read only there. The row says which of
+            the job's scheduling controls may be changed: its schedule (scheduleEditable, with minIntervalMinutes, the
+            shortest time between two runs a schedule set there may have), its pause (pauseEditable), its priority
+            (priorityEditable) and its wait after an error (retryEditable). Its parameters are changed only where a
+            JobParameterDefinition registers one, and its notification recipients only when recipientPermission names
+            the permission a recipient must hold (a job's notification carries the run's errors, parameters and
+            results). managePermission is the owner's permission an actor needs besides ADMIN_OPERATION_MANAGE. The
+            job's service, the identity it runs as, its topic, its time limits and its lock settings are the owner's
+            deployment and are never changed there. A run outside the schedule is a registered recovery
+            (RecoveryDescriptor, targetKind ServiceJob). The registration adds no right.</description>
+        <field name="jobName" type="text-short" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="managePermission" type="text-medium"/>
+        <field name="scheduleEditable" type="text-indicator"/>
+        <field name="minIntervalMinutes" type="number-integer"><description>1 when empty</description></field>
+        <field name="pauseEditable" type="text-indicator"/>
+        <field name="priorityEditable" type="text-indicator"/>
+        <field name="retryEditable" type="text-indicator"/>
+        <field name="recipientPermission" type="text-medium"/>
+        <field name="ownerRoute" type="text-medium"><description>The owner's own place for the job's work, as a key the
+            application showing it resolves (never a URL)</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="JobParameterDefinition" package="moqui.server" use="configuration" cache="true">
+        <description>A parameter of a registered job that is safe to change in delegated administration
+            (OperationServices.store#Job): its owner seeds a row with the type its value has (valueType integer,
+            decimal, boolean, option or text) and its bounds (minValue and maxValue of a number, optionValues comma
+            separated, maxLength of a text). A text is letters, digits, spaces and . , : _ - only: never an expression,
+            a path, a URL or an address. A parameter with no row is shown by name and never changed there; a row naming
+            a parameter the job's service does not declare is logged by name when read and left out.</description>
+        <field name="jobName" type="text-short" is-pk="true"/>
+        <field name="parameterName" type="text-short" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="valueType" type="text-short"><description>integer, decimal, boolean, option or text</description></field>
+        <field name="minValue" type="number-decimal"/>
+        <field name="maxValue" type="number-decimal"/>
+        <field name="optionValues" type="text-medium"/>
+        <field name="maxLength" type="number-integer"><description>Of a text: 60 when empty, at most 255</description></field>
+        <field name="required" type="text-indicator"><description>If Y the parameter is never cleared</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+    </entity>
+    <entity entity-name="TopicRegistration" package="moqui.server" use="configuration" cache="true">
+        <description>A notification topic (moqui.security.user.NotificationTopic) its owner registers for delegated
+            administration (OperationServices.store#TopicDefaults and store#TopicSubscription): without a row a topic
+            is read only there. editableFields names, comma separated, the delivery settings that may be changed
+            (description, showAlert, alertNoAutoHide, persistOnSend, receiveNotifications, emailNotifications,
+            pushNotifications, digestDefault); a topic's title, error title and link templates, its email template,
+            its approval services, its inbox and whether it is private are never changed there.
+            subscriptionPermission is the topic's audience: the permission a user must hold for an administrator to
+            set that user's subscription, and for the subscription to be listed by name; with none, no subscription is
+            set there. Receiving every message of a topic (NotificationTopicUser.allNotifications) is never set there,
+            only ended. The registration adds no right.</description>
+        <field name="topic" type="text-medium" is-pk="true"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="purpose" type="text-medium"/>
+        <field name="editableFields" type="text-medium"/>
+        <field name="subscriptionPermission" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <!-- Admin P15 (mr-boss plan/impl-admin.md P15; design-admin §11.1, §14 "Import/export target"): what may be imported
+        through org.moqui.admin.DataTransferServices, and the batch of a target that has no batch of its owner's -->
+    <entity entity-name="TransferTarget" package="moqui.server" use="configuration" cache="true">
+        <description>A registered target of a business data transfer (org.moqui.admin.DataTransferServices): its owner seeds
+            a row, and without one nothing is staged, applied, exported or listed there. direction is import or export.
+            An export target (impl-admin P16) has targetMode file (its owner's exportService, implementing
+            DataTransferServices.run#TargetExport, writes a file of its own format), rows (the exportService answers rows
+            and the file is written here, delimited text) or wizard (exported in its owner's own place: only ownerRoute
+            is registered); for file and rows columnsJson names the only fields an export may hold (name, label,
+            permission: what a caller must hold for the field to be written, comma separated; required; selected false
+            for one left out unless asked for), optionsJson the options of a selection, scopeService the scopes a caller
+            may export from, maxRows and maxBytes the bounds of one file (5000 rows and 2097152 bytes when empty, at
+            most 50000 and 16777216; a larger one is refused whole), exportPermission
+            what a caller must hold besides the owner's own checks, viewPermission who reads the records of others'
+            exports, and retentionDays how long the record of an export is kept (366 when empty). For an import target
+            targetMode says what the owner registers. steps: the owner keeps its own batch
+            and names the five steps (stageService, configureService, validateService, applyService, getService, with an
+            optional reportService, sampleService and kindsService), each carrying the import contract's parameters, as
+            mantle.product.ProductImportServices. rows: the owner has no batch, and the framework keeps one (TransferBatch,
+            TransferItem) for it: columnsJson names the only fields a row may carry (name, label, required), keyFields the
+            fields that may not repeat in one file, optionsJson the options of a whole batch (name, label, type integer,
+            text or option, with min, max, maxLength, options and default), refusedColumns words that refuse a file with
+            such a column (beside the secret names every file is refused for), validateRowService
+            (DataTransferServices.validate#TargetRow, which changes nothing) and applyRowService (apply#TargetRow, one row
+            in a transaction of its own under an operation key), scopeService (find#TargetScopes: the scopes, such as
+            organizations, the caller may import into and read), maxBytes and maxRows the bounds of a file and
+            retentionDays how long a batch's staged rows are kept. wizard: the owner keeps its own wizard, and only its
+            place (ownerRoute, a key the application showing it resolves, never a URL) is registered. For every mode
+            findService (find#TargetRuns), when named, answers the owner's runs the caller may read there; a target with
+            none and no batch here keeps no runs. importPermission and viewPermission name, comma separated, the
+            permissions a caller must hold besides what the owner's services check themselves. fixedValuesJson holds
+            values the registration gives every row's services (never from a request). The registration adds no right: an
+            owner's service is called as the caller, under the caller's own authorization
+            (call#TargetService). A row naming a service that is not defined, or one without its contract's parameters,
+            is logged by name when read and left out.</description>
+        <field name="targetId" type="id" is-pk="true"/>
+        <field name="direction" type="text-short"><description>import</description></field>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="effectsNote" type="text-medium"><description>What applying it does, in words, shown before it is confirmed</description></field>
+        <field name="ownerApp" type="text-short"/>
+        <field name="targetVersion" type="text-short"/>
+        <field name="targetMode" type="text-short"><description>steps, rows or wizard</description></field>
+        <field name="fieldLabel" type="text-short"><description>What a field of the target is called in the wizard, such as Catalog field</description></field>
+        <field name="stepFeatures" type="text-medium"><description>For steps: what its wizard offers, comma separated: kinds, updateMode, formats, clearFields, forceNew, sample</description></field>
+        <field name="clearableFields" type="text-medium"/>
+        <field name="stageService" type="text-medium"/>
+        <field name="configureService" type="text-medium"/>
+        <field name="validateService" type="text-medium"/>
+        <field name="applyService" type="text-medium"/>
+        <field name="getService" type="text-medium"/>
+        <field name="reportService" type="text-medium"/>
+        <field name="sampleService" type="text-medium"/>
+        <field name="kindsService" type="text-medium"/>
+        <field name="columnsJson" type="text-long"/>
+        <field name="keyFields" type="text-medium"/>
+        <field name="optionsJson" type="text-long"/>
+        <field name="fixedValuesJson" type="text-long"/>
+        <field name="refusedColumns" type="text-medium"/>
+        <field name="validateRowService" type="text-medium"/>
+        <field name="applyRowService" type="text-medium"/>
+        <field name="scopeService" type="text-medium"/>
+        <field name="scopeLabel" type="text-short"/>
+        <field name="maxBytes" type="number-integer"><description>Of an import's file: 1048576 when empty, at most 2097152</description></field>
+        <field name="maxRows" type="number-integer"><description>Of an import's file: 2000 when empty, at most 5000</description></field>
+        <field name="retentionDays" type="number-integer"><description>30 when empty</description></field>
+        <field name="findService" type="text-medium"/>
+        <field name="viewPermission" type="text-medium"/>
+        <field name="importPermission" type="text-medium"/>
+        <field name="exportService" type="text-medium"/>
+        <field name="exportPermission" type="text-medium"/>
+        <field name="ownerRoute" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="TransferBatch" package="moqui.server" cache="never">
+        <description>One export of an export target (state exported: who, the target, scopeKey, the selection and field
+            names in requestJson, rowCount, the file's name and the hash of its content, never the content; the record
+            of the export, removed after the target's retention), or one import of a target that has no batch of its
+            owner's (TransferTarget, targetMode rows), written by
+            org.moqui.admin.DataTransferServices only. For an import: transferId is the import's operation key: the one its caller gave,
+            or one made of the user, the target, the scope and the content's hash, so the same file staged again answers
+            the same batch. scopeKey is the scope the import is for (an organization), userId who staged it: the batch
+            and its rows are read by that user, and by a holder of the target's view permission whom the target's scope
+            service admits. requestJson holds the file's headers, the mapping, defaults, value mappings and batch
+            options; inputFingerprint the revision of the last validation, which an apply must name. state is staged,
+            mapped, validated, applying, complete or partial. The staged rows are removed after the target's retention
+            (purgedDate), the outcomes kept.</description>
+        <field name="transferId" type="id-long" is-pk="true"/>
+        <field name="targetId" type="id"/>
+        <field name="scopeKey" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="state" type="text-short"/>
+        <field name="filename" type="text-medium"/>
+        <field name="fileHash" type="text-medium"/>
+        <field name="requestJson" type="text-very-long"/>
+        <field name="inputFingerprint" type="text-medium"/>
+        <field name="lastError" type="text-medium"/>
+        <field name="rowCount" type="number-integer"/>
+        <field name="stagedDate" type="date-time"/>
+        <field name="appliedDate" type="date-time"/>
+        <field name="completedDate" type="date-time"/>
+        <field name="purgedDate" type="date-time"/>
+        <index name="TRANSFER_BATCH_TARGET"><index-field name="targetId"/><index-field name="stagedDate"/></index>
+    </entity>
+    <entity entity-name="TransferItem" package="moqui.server" cache="never">
+        <description>One row of a TransferBatch: what the file held (sourceJson), what validation made of it (previewJson:
+            the values its apply would be given, warnings and the source's revision) and its outcome: result staged,
+            valid, invalid, skipped, applied or failed, with the reason, the owner's reference of what it made
+            (resultRef), the operation key its apply carried and the number of attempts. An applied row is never applied
+            again.</description>
+        <field name="transferId" type="id-long" is-pk="true"/>
+        <field name="itemSeqId" type="number-integer" is-pk="true"/>
+        <field name="rowNumber" type="number-integer"/>
+        <field name="sourceJson" type="text-very-long"/>
+        <field name="previewJson" type="text-very-long"/>
+        <field name="result" type="text-short"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="errorMessage" type="text-medium"/>
+        <field name="resultRef" type="text-medium"/>
+        <field name="resultText" type="text-medium"/>
+        <field name="operationKey" type="text-medium"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="completedDate" type="date-time"/>
+    </entity>
+
+    <!-- Admin P17 (mr-boss plan/impl-admin.md P17; design-admin §12 AuditChanges, §14): what of the audit log a delegated
+        audit reader may be shown through org.moqui.admin.AuditServices -->
+    <entity entity-name="AuditProjection" package="moqui.server" use="configuration" cache="true">
+        <description>A registered projection of the audit log (moqui.entity.EntityAuditLog) for
+            org.moqui.admin.AuditServices.find#Changes: one field of one entity whose changes may be shown, and how. Its
+            owner seeds a row; a change of an entity or a field with no row is never found, listed or counted there
+            (the whole audit log is the instance administrator's, in Tools System's Audit). valueMode is show (the values before and after, as
+            text) or marker (only that a value was set, changed or cleared; the default for anything else); a field the
+            entity definition encrypts, or whose name reads as a secret, is a marker whatever its row says. sourceService
+            is empty for a record of the whole instance (read here, by a holder of ADMIN_AUDIT_VIEW), or the service of
+            the owner whose records belong to an organization (implementing AuditServices.find#OwnedChanges): it answers
+            only the ids of the audit rows within the caller's own scope, and a row it does not answer is not shown.
+            viewPermission, when set, is needed besides ADMIN_AUDIT_VIEW (comma separated, every one). primaryKeyKind
+            and secondaryKeyKind say what a key value is, for its name: user (an account), group (a user group), plain
+            (shown as it is) or hidden (never shown); primaryKeyTitle and secondaryKeyTitle are the words for them.
+            linkKey names the owner's place for the record, which an app resolves to a route; never a path.</description>
+        <field name="auditProjectionId" type="id" is-pk="true"/>
+        <field name="changedEntityName" type="text-medium"/>
+        <field name="changedFieldName" type="text-short"/>
+        <field name="category" type="text-short"><description>access, identity, signIn, configuration, connection,
+            operation, transfer or backup.</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="valueMode" type="text-short"/>
+        <field name="sourceService" type="text-medium"/>
+        <field name="viewPermission" type="text-medium"/>
+        <field name="primaryKeyKind" type="text-short"/>
+        <field name="primaryKeyTitle" type="text-short"/>
+        <field name="secondaryKeyKind" type="text-short"/>
+        <field name="secondaryKeyTitle" type="text-short"/>
+        <field name="linkKey" type="text-short"/>
+        <field name="disabled" type="text-indicator"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <index name="AUDIT_PROJECTION_FIELD" unique="true"><index-field name="changedEntityName"/>
+            <index-field name="changedFieldName"/></index>
+    </entity>
+
+    <!-- The registries of readiness, refresh and settings (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss
+        plan/design-admin.md §14): what org.moqui.admin.ReadinessServices reads. Each row is a trusted component definition
+        its owner seeds in its own data, never a service name a person types. A row naming a service or a permission
+        that does not exist is logged by name when read and left out, and the others still answer. The registration adds
+        no right: an owner's service is called as the caller, under the caller's own authorization. How a component
+        registers: docs/dev/Practices-App-Dev.md "Readiness, refresh and settings registrations". -->
+    <entity entity-name="ReadinessProvider" package="moqui.server" use="configuration" cache="true">
+        <description>A readiness provider: a nonmutating check its owner calculates, read through
+            ReadinessServices.get#Readiness by the Health screen, the support summary and the System home's attention
+            list. The owner's service answers the contract: called with providerKey and the scope parameters the row
+            names, it returns checks, each {checkKey, title, state (ready, warning, failed or unavailable), reasonCode,
+            message, subject (whom or what it is for, in words), scope (the scope parameters that narrow to it),
+            watermark, coverage, fixRoute, fixId, fixParameters}. It checks the caller's permission and scope itself and
+            refuses with a reason code (PERMISSION_DENIED, RECORD_UNAVAILABLE and the like), which leaves the provider
+            out; any other failure names it as not checked.</description>
+        <field name="providerKey" type="id-long" is-pk="true"/>
+        <field name="version" type="number-integer"/>
+        <field name="ownerApp" type="text-short"><description>The app that owns the check, in words</description></field>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="healthGroupEnumId" type="id"><description>The group it is shown in (AdminHealthGroup): identity,
+            business setup, transport, storage and backup, observability</description></field>
+        <field name="scopeEnumId" type="id"><description>What one check covers, for display (AdminRegistryScope): the
+            framework seeds the instance, an app adds its own (an organization, a store)</description></field>
+        <field name="serviceName" type="text-medium"><description>The owner's service, answering the contract</description></field>
+        <field name="requiredPermission" type="id-long"><description>The permission the caller needs to read the
+            provider, if any; the owner's service checks its own again</description></field>
+        <field name="scopeParameters" type="text-medium"><description>The names of the scope parameters the owner's
+            service takes from a request (comma separated), such as an organization: any other is dropped. The scope
+            is the owner's to understand and to check. A provider that takes none of the scope a request names is
+            left out of that request</description></field>
+        <field name="fixRoute" type="text-medium"><description>The owner's place that fixes it, as a key the application
+            showing it resolves (never a URL); a check may answer its own</description></field>
+        <field name="fixId" type="text-medium"><description>The record the fix place opens, under the route's id
+            parameter, if any</description></field>
+        <field name="expectedFrequencyMinutes" type="number-integer"><description>The freshness facet of a data source:
+            how often it should be refreshed</description></field>
+        <field name="maxLagMinutes" type="number-integer"><description>The freshness facet: the lag past which the
+            source is stale</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" title="AdminHealthGroup" related="moqui.basic.Enumeration" short-alias="healthGroup">
+            <key-map field-name="healthGroupEnumId" related="enumId"/></relationship>
+        <relationship type="one" title="AdminRegistryScope" related="moqui.basic.Enumeration" short-alias="scope">
+            <key-map field-name="scopeEnumId" related="enumId"/></relationship>
+        <relationship type="one" related="moqui.security.UserPermission" short-alias="permission">
+            <key-map field-name="requiredPermission" related="userPermissionId"/></relationship>
+    </entity>
+    <entity entity-name="RefreshOperation" package="moqui.server" use="configuration" cache="true">
+        <description>A refresh operation: the owner's service that refreshes a source (an index, a feed, a projection),
+            run through ReadinessServices.request#Refresh by its key, never by a service or index name from a request.
+            The owner's service is called with refreshKey, the operation key, the reason and the scope parameters the
+            row names, and checks the caller's permission and scope itself.</description>
+        <field name="refreshKey" type="id-long" is-pk="true"/>
+        <field name="version" type="number-integer"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="sourceKindEnumId" type="id"><description>index, feed or projection (AdminRefreshSource)</description></field>
+        <field name="sourceName" type="text-medium"><description>The source it refreshes, as its owner names it</description></field>
+        <field name="requiredPermission" type="id-long"><description>The permission the caller needs to run it</description></field>
+        <field name="scopeParameters" type="text-medium"><description>The names of the scope parameters passed to the
+            owner's service from the request (comma separated); any other is dropped</description></field>
+        <field name="providerKey" type="id-long"><description>The readiness provider whose source it refreshes, for the
+            Health screen's row action</description></field>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" title="AdminRefreshSource" related="moqui.basic.Enumeration" short-alias="sourceKind">
+            <key-map field-name="sourceKindEnumId" related="enumId"/></relationship>
+        <relationship type="one" related="moqui.security.UserPermission" short-alias="permission">
+            <key-map field-name="requiredPermission" related="userPermissionId"/></relationship>
+        <relationship type="one" related="moqui.server.ReadinessProvider" short-alias="provider" fk-name="SRV_REFRESH_PROVIDER">
+            <key-map field-name="providerKey"/></relationship>
+    </entity>
+    <entity entity-name="SettingsEntry" package="moqui.server" use="configuration" cache="true">
+        <description>A settings entry: an owner's settings landing in the settings index
+            (ReadinessServices.find#Settings), shown only to a caller whose own grants open its screen and who holds its
+            view permission. The owner resolves scope and makes every change; the entry grants nothing. A component
+            that shows the same settings in a screen of its own seeds the entry again under the same key with its own
+            screenLocation.</description>
+        <field name="settingsKey" type="id-long" is-pk="true"/>
+        <field name="version" type="number-integer"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="settingsGroupEnumId" type="id"><description>The index's group (AdminSettingsGroup): the framework
+            seeds Applications and Instance, an app adds its own</description></field>
+        <field name="scopeEnumId" type="id"><description>What it applies to, for display (AdminRegistryScope)</description></field>
+        <field name="destinationRoute" type="text-medium"><description>The settings' own place, as a key the application
+            showing the index resolves (never a URL); an entry whose key has no route there is not shown there</description></field>
+        <field name="screenLocation" type="text-medium"><description>The screen whose authorization decides whether the
+            entry is shown: the caller's own grants must open it, counted down its component's screen directory as the
+            framework counts a screen path (an always-allow or an inheritable allow above it, no deny). It need not be
+            a file where the screen is mounted by location. An entry that names none is not shown</description></field>
+        <field name="viewPermission" type="id-long"><description>A permission the destination checks besides its screen
+            authorization, if any</description></field>
+        <field name="configuredBy" type="text-medium"><description>Who configures it, in the owner's words</description></field>
+        <field name="providerKey" type="id-long"><description>The readiness provider of what it configures, if any</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" title="AdminSettingsGroup" related="moqui.basic.Enumeration" short-alias="settingsGroup">
+            <key-map field-name="settingsGroupEnumId" related="enumId"/></relationship>
+        <relationship type="one" title="AdminRegistryScope" related="moqui.basic.Enumeration" short-alias="scope">
+            <key-map field-name="scopeEnumId" related="enumId"/></relationship>
+        <relationship type="one" related="moqui.security.UserPermission" short-alias="permission">
+            <key-map field-name="viewPermission" related="userPermissionId"/></relationship>
+        <relationship type="one" related="moqui.server.ReadinessProvider" short-alias="provider" fk-name="SRV_SETTINGS_PROVIDER">
+            <key-map field-name="providerKey"/></relationship>
+    </entity>
 </entities>

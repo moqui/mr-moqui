@@ -82,6 +82,54 @@ pub(crate) fn set_ports_open(config_dir: &Path, open: bool) -> std::io::Result<(
     }
 }
 
+/// The file in the app's config directory that says the node runs as a dev instance (`dev`): the Dev AIDE, the browser
+/// terminal's command line and shells, and the rest of the dev tools (the tray's Developer tools). Without it the conf
+/// says, which for a bundle is production. `MOQUI_DESKTOP_PURPOSE` (`dev`, or anything else for not) is taken first.
+pub(crate) const PURPOSE_FILE: &str = "node-purpose";
+
+/// Whether the node runs as a dev instance: `env` (`MOQUI_DESKTOP_PURPOSE`) when set, else `saved` (the purpose file).
+pub(crate) fn dev_purpose(env: Option<&str>, saved: Option<&str>) -> bool {
+    match env.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(text) => text == "dev",
+        None => saved.is_some_and(|text| text.trim() == "dev"),
+    }
+}
+
+/// Whether this run's node is a dev instance, from `MOQUI_DESKTOP_PURPOSE` and the purpose file in `config_dir`.
+pub(crate) fn dev_tools_on(config_dir: &Path) -> bool {
+    let env = std::env::var("MOQUI_DESKTOP_PURPOSE").ok();
+    let saved = std::fs::read_to_string(config_dir.join(PURPOSE_FILE)).ok();
+    dev_purpose(env.as_deref(), saved.as_deref())
+}
+
+/// Keep whether the node runs as a dev instance, for the next start.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be written or removed.
+pub(crate) fn set_dev_tools(config_dir: &Path, on: bool) -> std::io::Result<()> {
+    let path = config_dir.join(PURPOSE_FILE);
+    if on {
+        std::fs::create_dir_all(config_dir)?;
+        std::fs::write(path, "dev\n")
+    } else {
+        match std::fs::remove_file(path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The node's purpose property when the dev tools are on: `instance_purpose=dev`, which the conf's default gives way
+/// to, so the Dev AIDE and the other `purpose="dev"` components load. Off, nothing: the conf's own purpose.
+pub(crate) fn purpose_properties(dev: bool) -> Vec<(&'static str, String)> {
+    if dev {
+        vec![("instance_purpose", "dev".to_string())]
+    } else {
+        Vec::new()
+    }
+}
+
 impl Mode {
     /// `sidecar`, `in-process` or `client`, as in `MOQUI_DESKTOP_NODE` and the mode file.
     pub(crate) fn parse(text: &str) -> Option<Self> {

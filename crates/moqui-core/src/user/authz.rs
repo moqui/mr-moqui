@@ -373,6 +373,40 @@ pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<()
     }
 }
 
+/// Whether the user's own authorization records allow `action` on an artifact, asked and not used: nothing is taken
+/// from the stack (no inheritable authorization of a frame below, no deny of one), no hit is counted and no failure
+/// recorded. For a screen that shows or refuses a part by whether the user holds another artifact's grant themselves,
+/// whatever mount they came through: the System screens' instance administrator sections under another app's root,
+/// whose inheritable always-allow would answer [`authorize`] for everyone (plans/archive/Admin-Screens-Down.md).
+///
+/// # Errors
+///
+/// Returns an error when the user's authorization records cannot be read.
+pub fn permitted_own(artifact_type: &str, name: &str, action: &str) -> Result<bool, Error> {
+    if !context_entered() {
+        return Ok(true);
+    }
+    let StackAuthz {
+        authz_disabled: disabled,
+        ..
+    } = ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or(StackAuthz::NO_CONTEXT);
+    let (permitted, _) = is_permitted(
+        artifact_type,
+        name,
+        action,
+        &Permit {
+            requires_authz: true,
+            authz_disabled: disabled,
+            count_tarpit: false,
+            is_access: false,
+            parameters: None,
+        },
+        None,
+        /* ancestor_deny */ false,
+    )?;
+    Ok(permitted)
+}
+
 /// What a push asks of [`is_permitted`].
 pub(crate) struct Permit<'a> {
     pub(crate) requires_authz: bool,
@@ -822,7 +856,7 @@ fn cached<T: Clone>(
 /// # Errors
 ///
 /// Returns an error when the memberships cannot be read.
-pub(crate) fn current_user_groups() -> Result<Arc<HashSet<String>>, Error> {
+pub fn current_user_groups() -> Result<Arc<HashSet<String>>, Error> {
     let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
         return Ok(Arc::new(HashSet::from(["ALL_USERS".to_string()])));
     };

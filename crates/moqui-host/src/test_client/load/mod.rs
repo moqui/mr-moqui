@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The load engine (plans/LoadRunner.md section 5; plans/archive/ClientTestHarness.md 5.6): a [`Load`]'s virtual
+//! The load engine (plans/archive/LoadRunner.md section 5; plans/archive/ClientTestHarness.md 5.6): a [`Load`]'s virtual
 //! users, each a thread of [`moqui_devkit::testkit::run_script_on_thread`] with its own engine and default session,
 //! the samples they record, the live [`Load::snapshot`] and the two stops, and the result. `load(opts)` of a client
 //! spec, `moqui test-load` and a run in a server all start users with [`start`].
@@ -51,7 +51,7 @@ use record::{Pending, Recorder, ScenarioCounts, Shared};
 pub(crate) use schedule::Target;
 use schedule::{Schedule, Take};
 pub(crate) use script::{LoadScript, ScenarioSettings};
-pub(crate) use stats::{grouped, process_cpu, table, table_ms};
+pub(crate) use stats::{grouped, table, table_ms};
 
 /// The errors a load result keeps whole, the first.
 pub(crate) const ERROR_SAMPLES: usize = 20;
@@ -70,6 +70,11 @@ pub(crate) enum Kind {
     Raw,
     /// `service.call` in a server's process.
     Service,
+    /// A WebSocket handshake, a named send, or a receive (`ws`).
+    Ws,
+    /// An SSH connect, exec, or a shell's `expect` (`ssh`).
+    #[cfg_attr(not(feature = "ssh"), allow(dead_code))]
+    Ssh,
     /// `step(name, fn)`: the whole of `fn`, whose requests are counted under their own names too.
     Step,
 }
@@ -80,6 +85,8 @@ impl Kind {
             Kind::Http => "http",
             Kind::Raw => "raw",
             Kind::Service => "service",
+            Kind::Ws => "ws",
+            Kind::Ssh => "ssh",
             Kind::Step => "step",
         }
     }
@@ -168,7 +175,7 @@ impl Load {
         lock(&LOADS).remove(&self.id);
     }
 
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
+    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/archive/LoadRunner.md L2, L3)
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
@@ -779,6 +786,28 @@ pub(crate) fn record(name: impl FnOnce() -> String, sample: Sample) -> Result<()
     .unwrap_or(Ok(()))
 }
 
+/// Count one operation of a load user's scenario that has an outcome label (a `ws` receive's `timeout`, an `ssh`
+/// exec's `exit 1`): `failure` says why it is an error, unless `expect` names the label. Outside a load's scenario this
+/// does nothing.
+pub(crate) fn observe_outcome(
+    name: impl FnOnce() -> String,
+    kind: Kind,
+    outcome: Cow<'static, str>,
+    failure: Option<String>,
+    elapsed: Duration,
+    expect: &[String],
+) -> Result<(), String> {
+    let error = failure.filter(|_| !expect.iter().any(|label| *label == outcome));
+    let sample = Sample {
+        kind,
+        outcome,
+        status: None,
+        elapsed,
+        error,
+    };
+    record(name, sample)
+}
+
 /// What one HTTP request answered, for [`observe`].
 pub(crate) struct Observed<'a> {
     /// The status, or `None` for a transport error.
@@ -1035,7 +1064,7 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
         .filter(|seconds| *seconds > 0.0)
         .unwrap_or_else(|| scenarios.iter().map(ScenarioSettings::timeout).fold(0.0, f64::max));
     let load = Load::new(&scenarios);
-    let cpu = stats::process_cpu();
+    let cpu = moqui_core::context::resources::process_cpu_time();
     let mut running = Running {
         load: Arc::clone(&load),
         handles: Vec::new(),
@@ -1195,7 +1224,7 @@ impl Running {
         let second = elapsed.as_secs();
         shared.bins.note_users(second, load.active_users());
         shared.bins.close_before(second + 1);
-        let cpu = match (self.cpu, stats::process_cpu()) {
+        let cpu = match (self.cpu, moqui_core::context::resources::process_cpu_time()) {
             (Some(before), Some(after)) => Some(after.saturating_sub(before)),
             _ => None,
         };

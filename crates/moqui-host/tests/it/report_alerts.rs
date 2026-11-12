@@ -241,7 +241,7 @@ fn alerts_persist_timers_serialize_workers_and_route_only_complete_observations(
             payload["title"], id,
             "the original title remains in the contact payload"
         );
-        assert_eq!(payload["link"], format!("/apps/dashboards/Alerts?definitionId={id}"));
+        assert_eq!(payload["link"], format!("/apps/dashboards/AlertRule?definitionId={id}"));
         assert_eq!(payload["labels"], json!({"team":"operations"}));
         assert_eq!(payload["events"].as_array().unwrap().len(), 2);
     }

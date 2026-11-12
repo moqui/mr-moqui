@@ -881,8 +881,7 @@ impl Session {
                         title
                     },
                     url: json_text(find, "pathWithParams"),
-                    children: Vec::new(),
-                    disabled: false,
+                    ..MenuItem::default()
                 }
             })
             .collect();

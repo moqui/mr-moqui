@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The cost of the JSON round trip between composed report queries (plans/High-Level-Review.md HL-016), opt-in:
+//! The cost of the JSON round trip between composed report queries (plans/archive/High-Level-Review.md HL-016), opt-in:
 //! `cargo test -p moqui-report --test frame_cost -- --ignored --nocapture`.
 //!
 //! A composed dashboard panel of 4 queries, each compared with the previous period, gives its parent 8 child results.

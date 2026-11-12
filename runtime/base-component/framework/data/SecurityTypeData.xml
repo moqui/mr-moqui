@@ -122,6 +122,17 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference|check#GrantProposal|apply#GrantProposal)|IdentityServices\.(check#AdministrationPath|find#Sessions|revoke#Sessions|get#AccountCredentials|revoke#AccountAccess))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminAccessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAccessServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- Admin P9: AccessServices' read projections (the capability matrix, the row rules and the access review), each checking
+        ADMIN_ACCESS_VIEW itself; a member row of its own, so an installed database gets it beside the row above -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.AccessServices\.(get#Capabilities|get#ScopeRules|get#GrantReview)"/>
+    <!-- Admin P10: the lockout preview of a group's sign-in rules, checking ADMIN_ACCESS_VIEW itself; a member row of its own -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.AccessServices\.preview#GroupSignInRules"/>
+    <!-- The capability matrix as the Capabilities screen shows and changes it (plans/archive/Admin-Screens-Down.md A3), each checking
+        ADMIN_ACCESS_VIEW or ADMIN_ACCESS_MANAGE itself and calling the services above; a member row of its own -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.AccessServices\.(get#MatrixContext|apply#MatrixChanges)"/>
     <!-- Admin P6 (mr-boss plan/impl-admin.md P6, F31): the owner change of a shared drive and of a shared mail account, which an
         account's lifecycle uses when the owner leaves (the owned-resource contract of org.moqui.admin.IdentityServices). Their
         owner may hand them over; another user's need these permissions, granted to ADMIN (an app grants them to its identity
@@ -164,11 +175,17 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The built-in SSH server (ssh_port): SFTP over ssh-server sftp-root, and the admin command shell, which runs JavaScript. -->
     <moqui.security.UserPermission userPermissionId="SSH_SFTP" description="SSH: SFTP file access"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_SFTP" fromDate="0"/>
-    <moqui.security.UserPermission userPermissionId="SSH_SHELL" description="SSH: admin command shell"/>
+    <moqui.security.UserPermission userPermissionId="SSH_SHELL" description="SSH: admin command shell; on a dev instance also the browser terminal's moqui> command line"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SSH_SHELL" fromDate="0"/>
+    <!-- Programs on the server's operating system in the browser terminal and at the moqui> prompt (sh), on a dev instance
+        only (plans/Terminal-Fancy.md D6): they run as the server's OS user, with its files, keys and processes, so it goes
+        only to people trusted with that account. Sealed: only a holder grants it. -->
+    <moqui.security.UserPermission userPermissionId="TERMINAL_HOST" description="Terminal: programs on the server's operating system, on a dev instance"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="TERMINAL_HOST" fromDate="0"/>
     <!-- The terminal client (plans/archive/Screen-TUI-Impl.md 4.2, 4.4) needs no permission: every user gets the apps over SSH
         and in the browser terminal, every screen is still checked as the user, and files are not downloaded. SSH_SHELL
-        adds the admin shell's prompt before them, for a login by key or password at the SSH level. -->
+        adds the admin shell's prompt before them, for a login by key or password at the SSH level, and on a dev instance
+        the same moqui> command line in the browser terminal (plans/Terminal-Fancy.md D6). -->
     <!-- git-upload-pack and git-receive-pack over SSH (git clone ssh://...); AT_GIT_REPOSITORY still gates each
         repository. Grant it to the groups of developers. Git takes a connection that logged in by key (UserSshKey)
         unless ssh-server git-password-auth is true. -->
@@ -184,4 +201,14 @@ along with this software (see the LICENSE.md file). If not, see
             artifactGroupId="GitRepositories" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     <moqui.security.UserPermission userPermissionId="LOAD_RUNNER" description="Tools: Load testing (run load scripts against this or an allowed server)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LOAD_RUNNER" fromDate="0"/>
+    <!-- Admin P18 (mr-boss plan/impl-admin.md P18; docs/security/Shared-Devices.md): the shared-device services,
+        org.moqui.admin.DeviceServices, for every signed-in user: find#RouteGroups and find#Devices check ADMIN_ACCESS_VIEW
+        and register#Device, issue#DeviceCode and revoke#Device ADMIN_ACCESS_MANAGE themselves; inheritable, so their own reads and writes are
+        authorized as them. redeem#Device and get#DeviceStatus are the public device page's and need no grant. A device's
+        own requests reach none of these: its route group is its allow-list (crates/moqui-core/src/user/device.rs). -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminDeviceServices" description="Admin shared-device services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminDeviceServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DeviceServices\.(find#RouteGroups|find#Devices|register#Device|issue#DeviceCode|revoke#Device)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminDeviceServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminDeviceServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

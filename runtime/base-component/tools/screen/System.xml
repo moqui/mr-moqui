@@ -15,7 +15,11 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="System" menu-image="sym_o_devices" menu-image-type="icon">
-    <subscreens default-item="dashboard"/>
+    <!-- System's own administration screens: no mount (README, "Mounting the administration screens"), so a request
+        parameter never sets a mount's routes or hidden parts here, and the instance administrator's parts show to a
+        user who opens System by their own grant (template/AdminMount.js) -->
+    <always-actions><script>adminMount=null</script></always-actions>
+    <subscreens default-item="Home"/>
     <widgets>
         <subscreens-panel id="system-panel" type="popup"/>
     </widgets>

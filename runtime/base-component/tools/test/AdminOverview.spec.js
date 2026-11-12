@@ -20,7 +20,7 @@ spec({
 
 feature("recovery editors load configuration, keep rejected blanks and separate new IDs from updates", {
     expect() {
-        const source = ec.resource.getLocationText("component://tools/screen/Monitor/Recovery.xml")
+        const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/Recovery.xml")
         const actions = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script><\/actions>/m.exec(source)[1]
         const policy = {policyId: "UI_RECOVERY_EDIT", description: "Loaded recovery policy", enabled: "N", sequenceNum: 1000000,
             serviceName: "example.*", minSeverity: "critical", mode: "advisory", ladderJson: '[{"action":"escalate"}]',
@@ -91,7 +91,7 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
                 value.create()
             }
         })
-        const page = render("Recovery", "Monitor", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
+        const page = render("Monitor/Recovery", "System", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
         assert.equal(page.status, 200)
         assert.equal(page.errors, "")
         assert(!/Error rendering|Exception in render/.test(page.output))
@@ -110,13 +110,13 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
         assert(page.output.includes("Review the incident before doing anything."))
         // Exercise the actual transition boundary: a message + check-errors must skip the store, redirect,
         // and save the rejected inputs. An isolated script throw would bypass this entire recovery path.
-        const test = ec.screen.makeTest().rootScreen("component://tools/screen/Monitor.xml").renderMode("html")
+        const test = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html")
         // The adapter transition has the same shape; one duplicate POST covers the boundary.
         for (const [kind, id, entityName] of [["Policy", policy.policyId, "moqui.monitor.RecoveryPolicy"]]) {
             const idName = kind === "Policy" ? "policyId" : "adapterId"
             const submitted = {moquiFormName: "Store" + kind, [idName]: id, ["recovery" + kind + "Mode"]: "create",
                 description: "", enabled: "N", ladderJson: "[]", adapterType: "manual", instructions: "Rejected instructions"}
-            const rejected = test.render("Recovery/store" + kind, submitted, "post")
+            const rejected = test.render("Monitor/Recovery/store" + kind, submitted, "post")
             assert.equal(rejected.status, 302, kind + " duplicate uses its error response")
             assert(rejected.errorMessages.join(" | ").includes("ID already exists"))
             assert(String(rejected.header("Location")).includes("_openDialog=" + kind + "Dialog"))
@@ -137,29 +137,86 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
     }
 })
 
-feature("the instance overview formats its start time and names unavailable metrics", {
+// The System home (plans/archive/Tools-Fancy.md §3), its one render: plain XML widgets, so html alone. `moqui test` serves no
+// requests, so the runtime report has no listeners and the page says so; a server's page has a row for each.
+feature("the System home shows the instance, its listeners or their absence, and what needs attention", {
     when() {
         const status = ec.factory.getStatusMap(true)
-        const page = render("dashboard")
+        const report = ec.factory.getStartupReport()
+        const page = render("Home")
         return {
             page,
-            started: ec.l10n.format(status.Runtime.Start, null),
-            memory: status.Process.MemoryUsed,
-            threads: status.Process.Threads,
-            loadAvailable: status.System.OsName === "linux"
+            version: report.version,
+            listeners: Array.from(report.listeners || []),
+            started: ec.l10n.format(status.Runtime.Start, "MMM d, HH:mm"),
+            processCpu: status.Resources.Cpu.ProcessPercent
         }
     },
-    then({page, started, memory, threads, loadAvailable}) {
+    then({page, version, listeners, started, processCpu}) {
         page.status == 200
         page.errors == ""
         !/Error rendering|Exception in render/.test(page.output)
-        page.output.includes("Instance overview")
-        page.output.includes("Started: " + started)
-        memory != null || page.output.includes("Memory used: Unavailable")
-        threads != null || page.output.includes("Threads: Unavailable")
-        loadAvailable || page.output.includes("Load: Unavailable")
-        !page.output.includes("Threads: null")
-        !page.output.includes("Hazelcast")
+        // present whatever the data
+        page.output.includes("MR Moqui " + version)
+        page.output.includes("since " + started)
+        page.output.includes("Listeners and integrations")
+        page.output.includes('id="SystemCounters"')
+        listeners.length > 0
+            ? page.output.includes('id="ListenerList_table"') && page.output.includes(">" + listeners[0].name + "<")
+            : page.output.includes("This process reported no listeners")
+        // the empty attention state or its rows, each with its level as a word
+        page.output.includes("Nothing needs attention") ||
+            (page.output.includes('id="AttentionList_table"') &&
+                /<span data-level>(Critical|Warning|Note)<\/span>/.test(page.output))
+        // a reading that is not reported is a dash with its reason, never zero or null
+        processCpu != null || page.output.includes('title="Not reported by this platform"')
+        !/>null<|: null|>undefined</.test(page.output.slice(page.output.indexOf('id="SystemIdentity"')))
+        // the navigation comes from the catalog and the menu; what left the page is gone
+        page.output.includes('id="NavFeaturedCards"')
+        page.output.includes(">Users and access</a>")
+        page.output.includes('id="NavGroupBoxes"')
+        !page.output.includes("Loaded components")
+        !page.output.includes("Database connections</h5>")
+        // auto refresh is offered, off by default (it is in the address); a reading that is a share has its meter
+        page.output.includes(">Auto refresh</a>")
+        !page.output.includes('http-equiv="refresh"')
+        processCpu == null || page.output.includes('<progress max="100"')
+    }
+})
+
+// The Tools home (plans/archive/Tools-Fancy.md §4), its one render: plain XML widgets, so html alone. john.doe holds the four
+// Tools permissions; the line names each one whether or not it is held. The lists of what the user left off and of what
+// is running are hidden when empty, so they are not checked here.
+feature("the Tools home shows the instance, what the user may do, the jump row, the counters and the main tools", {
+    when() {
+        return {page: render("Home", "Tools"), purpose: ec.factory.getStartupReport().purpose, entities: ec.entity.getAllEntityNames().length}
+    },
+    then({page, purpose, entities}) {
+        page.status == 200
+        page.errors == ""
+        !/Error rendering|Exception in render/.test(page.output)
+        // present whatever the data: the instance line, the permission line with each permission named
+        page.output.includes('id="ToolsInstance"')
+        !purpose || page.output.includes(">" + purpose)
+        page.output.includes("You can:")
+        ["SQL_RUNNER_WEB", "DATABASE_ADMIN", "DATABASE_EXTERNAL", "LOAD_RUNNER"].every(permission =>
+            page.output.includes("You hold the permission " + permission) || page.output.includes("Needs the permission " + permission)
+        )
+        // the jump row and the counters
+        page.output.includes("Open an entity")
+        page.output.includes("Open a service")
+        page.output.includes('id="ToolsCounters"')
+        entities > 0
+        !/>null<|: null|>undefined<|>NaN</.test(page.output.slice(page.output.indexOf('id="ToolsInstance"')))
+        // the main tools and the rest come from the catalog and the menu
+        page.output.includes('id="NavFeaturedLargeCards"')
+        page.output.includes(">Data grid</a>")
+        page.output.includes('id="NavGroupBoxes"')
+        page.output.includes(" REST API</a>")
+        page.output.includes(" Terminal UI</a>")
+        // what left the page is gone
+        !page.output.includes("API reference")
+        !page.output.includes("External databases</a>")
     }
 })
 
@@ -219,7 +276,7 @@ feature("thread counts and scheduler checks distinguish unavailable from zero an
     expect() {
         // Test the screens' display expressions with both available and unavailable metrics, independent of the host OS.
         const threads = ec.resource.getLocationText("component://tools/screen/System/ThreadList.xml")
-        const jobs = ec.resource.getLocationText("component://tools/screen/System/ServiceJob/Jobs/ServiceJobList.xml")
+        const jobs = ec.resource.getLocationText("component://tools/screen/System/Operations/Jobs.xml")
         const expression = (source, field) => new RegExp('<set field="' + field + '" from="([^"]+)"').exec(source)[1]
             .replace(/&amp;/g, "&").replace(/&gt;/g, ">").replace(/&lt;/g, "<")
         const stamp = ec.user.nowTimestamp
@@ -240,6 +297,26 @@ feature("thread counts and scheduler checks distinguish unavailable from zero an
             runInContext("actual = " + expression(threads, "threadCountText"), state)
             assert.equal(state.actual, expected)
         }
+    }
+})
+
+// One html render of Threads, which has logic of its own: the thread that renders it runs this screen, so its row has
+// what it runs and the artifact stack, whatever else the process is doing.
+feature("the thread list shows what a thread runs and offers nothing this server cannot do", {
+    when() {
+        return {page: render("ThreadList", "System", {show: "running"})}
+    },
+    then({page}) {
+        page.status == 200
+        page.errors == ""
+        !/Error rendering|Exception in render/.test(page.output)
+        page.output.includes("Service worker pool")
+        page.output.includes("Request pool")
+        page.output.includes("(xml screen)")
+        page.output.includes("ThreadList.xml")
+        page.output.includes("StackDialog_")
+        !page.output.includes("Interrupt")
+        !page.output.includes("Lock Owner")
     }
 })
 
@@ -344,79 +421,57 @@ feature("service selection accepts implicit entity services and rejects missing 
 })
 
 
-feature("job run outcome and timing distinguish incomplete history and retain diagnostic windows", {
+feature("a job run's trace and log windows surround the run, and an item links by the mount's route for it", {
     expect() {
-        // The existing tools acceptance sweep owns this screen's HTML render. Check its actual display rules here.
-        const source = ec.resource.getLocationText("component://tools/screen/System/ServiceJob/JobRuns/JobRunDetail.xml")
+        // The run's outcome is the service's (framework AdminJobs); the screen's own rules are its diagnostic windows and item links.
+        const source = ec.resource.getLocationText("component://tools/screen/System/Operations/JobRunDetail.xml")
         const actions = /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]
-        const start = new Date("2026-11-04T18:28:00.123Z")
-        const end = new Date("2026-11-04T18:28:00.130Z")
-        const run = (overrides) => ({jobRunId: "UI_JOB", jobName: "ui.fixture", userId: "EX_JOHN_DOE",
-            startTime: start, endTime: end, hasError: "N", errors: "", runThread: 'worker "one"', ...overrides})
-        const inspect = serviceJobRun => {
-            const state = {ec, serviceJobRun, runUser: {username: "john.doe", userFullName: "John Doe"},
-                runOutcomeText: null, runOutcomeStyle: null, runOutcomeDetail: null, runElapsedText: null,
-                runStartText: null, runEndText: null, runUserText: null,
-                logFrom: null, logThru: null, traceFrom: null, traceThru: null, logQueryString: null}
+        const run = overrides => ({jobRunId: "UI_JOB", jobName: "ui.fixture", title: "UI fixture", timeZone: "UTC", state: "succeeded",
+            startTime: "2026-11-04T18:28:00.123Z", endTime: "2026-11-04T18:28:00.130Z", traceId: "abc", runThread: 'worker "one"', ...overrides})
+        const itemList = [
+            {title: "Message 1", state: "failed", recoveryKind: "SystemMessage", recoveryTargetId: "M1"},
+            {title: "Job 1", state: "failed", recoveryKind: "ServiceJob", recoveryTargetId: "job.one"},
+            {title: "Other", state: "done", recoveryKind: "Unknown", recoveryTargetId: "X"}
+        ]
+        const inspect = (found, routes) => {
+            const state = {ec, found: {run: found, parameterList: [], itemList}, recordFound: !!found, mount: {routes},
+                run: null, stateColor: null, traceOpen: null, traceParameters: null, logParameters: null, evidence: null,
+                errorLines: null, parameters: null, items: null}
             runInContext(actions, state)
             return state
         }
-        const complete = inspect(run({results: '{"removedCount":0}'}))
-        assert.equal(complete.runOutcomeText, "Completed successfully")
-        assert.equal(complete.runElapsedText, "7 ms")
-        assert.equal(complete.runStartText, ec.l10n.format(start, "yyyy-MM-dd HH:mm:ss.SSS") + " " + ec.user.timeZone)
-        assert.equal(complete.runEndText, ec.l10n.format(end, "yyyy-MM-dd HH:mm:ss.SSS") + " " + ec.user.timeZone)
-        assert(complete.runStartText.includes(".123"), "display retains millisecond precision")
-        assert.equal(complete.runUserText, "john.doe — John Doe (EX_JOHN_DOE)")
-        assert.equal(complete.serviceJobRun.results, '{"removedCount":0}')
-        assert.equal(complete.logFrom, "2026-11-04T18:28:00.123Z")
-        assert.equal(complete.logThru, "2026-11-04T18:28:01.130Z")
-        assert.equal(complete.traceFrom, "2026-11-04T18:27:00.123Z")
-        assert.equal(complete.traceThru, "2026-11-04T18:29:00.130Z")
-        assert.equal(complete.logQueryString, 'thread.name:' + JSON.stringify('worker "one"'))
-        for (const [row, outcome, duration] of [
-            [run({hasError: "Y", errors: "Fixture failure"}), "Completed with errors", "7 ms"],
-            [run({errors: "An error was recorded without a flag"}), "Completed with errors", "7 ms"],
-            [run({hasError: null}), "Finished — outcome not recorded", "7 ms"],
-            [run({endTime: null}), "Not finished", "Unavailable"],
-            [run({endTime: null, hasError: "Y"}), "Not finished", "Unavailable"],
-            [run({startTime: null, endTime: null}), "Not finished", "Unavailable"],
-            [run({endTime: "not a timestamp"}), "Completion time unavailable", "Unavailable"],
-            [run({startTime: end, endTime: start}), "Completed successfully", "Unavailable"],
-            [run({startTime: 0, endTime: 0}), "Completed successfully", "0 ms"],
-            [null, "Run unavailable", "Unavailable"]
-        ]) {
-            const state = inspect(row)
-            assert.equal(state.runOutcomeText, outcome)
-            assert.equal(state.runElapsedText, duration)
-        }
-        const unfinished = inspect(run({endTime: null}))
-        assert(unfinished.runOutcomeDetail.includes("may still be active or may have stopped"))
-        assert.equal(unfinished.runEndText, "Not recorded")
-        assert.equal(unfinished.logThru, "now")
-        assert.equal(unfinished.traceThru, "now")
-        const missing = inspect(null)
-        assert.equal(missing.logFrom, "now-1d")
-        assert.equal(missing.traceFrom, "now-7d")
-        assert.equal(missing.logQueryString, "")
+        const messageRoute = {adminSystemMessage: {url: "//Mount/Messages/Detail", idParameter: "messageId", parameters: {tab: "recovery"}}}
+        const complete = inspect(run({}), messageRoute)
+        assert.equal(complete.traceParameters.from, "2026-11-04T18:27:00.123Z")
+        assert.equal(complete.traceParameters.thru, "2026-11-04T18:29:00.130Z")
+        assert.equal(complete.logParameters.from, "2026-11-04T18:28:00.123Z")
+        assert.equal(complete.logParameters.thru, "2026-11-04T18:28:01.130Z")
+        assert.equal(complete.logParameters.queryString, "thread.name:" + JSON.stringify('worker "one"'))
+        // an item recovered on a page of its own: a message by the mount's route with its parameters, a job beside this screen
+        assert.equal(complete.items[0].itemUrl, "//Mount/Messages/Detail")
+        assert.equal(JSON.stringify(complete.items[0].itemParameters), JSON.stringify({tab: "recovery", messageId: "M1"}))
+        assert.equal(complete.items[1].itemUrl, "../JobDetail")
+        assert.equal(complete.items[1].itemParameters.jobName, "job.one")
+        assert.equal(complete.items[2].itemUrl, "")
+        // a mount with no place for a message links none
+        assert.equal(inspect(run({}), {}).items[0].itemUrl, "")
+        // a run still going ends now; one that never started has the widest window
+        const unfinished = inspect(run({endTime: null}), {})
+        assert.equal(unfinished.traceParameters.thru, "now")
+        assert.equal(unfinished.logParameters.thru, "now")
+        const waiting = inspect(run({startTime: null, endTime: null, runThread: null}), {})
+        assert.equal(waiting.traceParameters.from, "now-7d")
+        assert.equal(waiting.logParameters.from, "now-1d")
+        assert.equal(waiting.logParameters.queryString, "")
     }
 })
 
 
 feature("alert evaluation feedback distinguishes requests, skipped rules and reported failures", {
     expect() {
-        // A service 'evaluated' count also includes interval/claim skips; no extra Alerts render is needed.
-        const source = ec.resource.getLocationText("component://tools/screen/Dashboards/Alerts.xml")
-        const transition = /<transition name="evaluate"[\s\S]*?<\/transition>/.exec(source)[0]
-        const actions = /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(transition)[1]
-        const inspect = (evaluation, hasError = false) => {
-            const messages = []
-            runInContext(actions, {evaluation, ec: {message: {
-                hasError: () => hasError,
-                addMessage: (text, type) => messages.push({text, type})
-            }}})
-            return messages
-        }
+        // A service 'evaluated' count also includes interval/claim skips; no extra Alerts render is needed: the words are
+        // the alert screens' module's, which the evaluate transitions show.
+        const inspect = ec.resource.script("component://tools/template/ReportAlerts.js").evaluationMessages
         const processed = inspect({evaluated: 1, failed: 0, notices: []})
         assert.equal(processed.length, 1)
         assert.equal(processed[0].type, "info")
@@ -436,7 +491,6 @@ feature("alert evaluation feedback distinguishes requests, skipped rules and rep
         assert(failed[0].text.includes("server logs"))
         assert.equal(failed[1].text, "Fixture series limit")
         assert.equal(failed[1].type, "warning")
-        assert.equal(inspect({evaluated: 1, failed: 0}, true).length, 0)
         assert.equal(inspect(null).length, 0)
     }
 })
@@ -444,7 +498,8 @@ feature("alert evaluation feedback distinguishes requests, skipped rules and rep
 
 feature("alert numeric edit values round trip without grouping or display precision loss", {
     expect() {
-        // Execute the screens' actual field assignments and the formatter used by text-line, without another screen render.
+        // The values the forms show and the formatter used by text-line, without another screen render: AlertRule's are its
+        // module's (template/ReportAlerts.js basisValues), AlertShared's its own field assignments.
         const fields = [
             ["AlertRule", "threshold", "threshold", true, 0],
             ["AlertRule", "minimum", "min", true, 0],
@@ -456,17 +511,17 @@ feature("alert numeric edit values round trip without grouping or display precis
             ["AlertShared", "groupWaitSeconds", "groupWaitSeconds", false, 30],
             ["AlertShared", "repeatSeconds", "repeatSeconds", false, 14400]
         ]
-        const actions = {}
-        for (const screen of ["AlertRule", "AlertShared"]) {
-            const source = ec.resource.getLocationText("component://tools/screen/Dashboards/" + screen + ".xml")
-            actions[screen] = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/m.exec(source)[1]
-        }
+        const basisValues = ec.resource.script("component://tools/template/ReportAlerts.js").basisValues
+        const source = ec.resource.getLocationText("component://tools/screen/Dashboards/AlertShared.xml")
+        const sharedActions = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/m.exec(source)[1]
         for (const [screen, field, key, condition, fallback] of fields) {
-            const expression = new RegExp("(?:^|[;\\n])\\s*" + field + "=([^;\\n]+)").exec(actions[screen])[1]
+            const expression = screen === "AlertShared"
+                ? new RegExp("(?:^|[;\\n])\\s*" + field + "=([^;\\n]+)").exec(sharedActions)[1] : null
             for (const value of [1000000000, -12.12345678901234, 0.000000000000123, 0.1, 0, null]) {
                 const body = condition ? {condition: {[key]: value}} : {[key]: value}
                 const state = {body, actual: null}
-                runInContext("actual = " + expression, state)
+                if (expression) runInContext("actual = " + expression, state)
+                else state.actual = basisValues(body)[field]
                 const expected = value == null || (field === "intervalSeconds" && value === 0) ? fallback : value
                 assert.equal(typeof state.actual, "string", screen + "." + field)
                 assert.equal(state.actual, String(expected))
@@ -483,7 +538,7 @@ feature("incident display dates preserve raw values and missing records retain t
     expect() {
         // The existing Monitoring acceptance owns the screens' renders. Exercise their actual data mapping only.
         const scripts = Object.fromEntries(["Incidents", "IncidentDetail"].map(name => {
-            const source = ec.resource.getLocationText("component://tools/screen/Monitor/" + name + ".xml")
+            const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/" + name + ".xml")
             return [name, /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]]
         }))
         const instant = new Date("2026-11-04T18:28:00.123Z"), epoch = instant.getTime()

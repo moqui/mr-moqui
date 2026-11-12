@@ -4,10 +4,10 @@
 // before each spec file. There is no execution context: `ec` and the server helpers throw, naming what to use instead.
 (function (g) {
     const define = (name, value) => Object.defineProperty(g, name, { value, writable: true, configurable: true });
-    // A load script's state in this engine (plans/LoadRunner.md section 4): the run's raw params, its plan and scenarios,
+    // A load script's state in this engine (plans/archive/LoadRunner.md section 4): the run's raw params, its plan and scenarios,
     // and whether its top level is running, where a request is refused.
     const loadState = { topLevel: false, raw: {}, plan: null, scenarios: {}, order: [] };
-    const TOP_LEVEL_REFUSED = new Set(["http.request", "http.raw", "ws.connect", "browser.newPage", "service.call"]);
+    const TOP_LEVEL_REFUSED = new Set(["http.request", "http.raw", "ws.connect", "ssh.connect", "browser.newPage", "service.call"]);
     const host = (name, args) => {
         if (loadState.topLevel && TOP_LEVEL_REFUSED.has(name)) throw new Error("a load script makes no request at its top level");
         return JSON.parse(__moquiTestHost.call(name, JSON.stringify(args === undefined ? null : args)));
@@ -42,7 +42,7 @@
     };
     const plainArgs = (args) => args === undefined ? null : __moquiTest.plain(args, 0);
 
-    // Virtual users (plans/archive/ClientTestHarness.md 5.6, plans/LoadRunner.md): each a thread with its own engine and
+    // Virtual users (plans/archive/ClientTestHarness.md 5.6, plans/archive/LoadRunner.md): each a thread with its own engine and
     // default session (`http`) runs setup once, scenario until the duration ends or for its iterations, then teardown.
     // They run from their source text, so they cannot use the spec file's variables; args are copied as JSON. With
     // `script`, the users run a load script's scenarios instead, the file evaluated whole in each user's engine. The
@@ -71,7 +71,7 @@
             setup: sourceOf(o.setup, "setup"), scenario: sourceOf(o.scenario, "scenario"), teardown: sourceOf(o.teardown, "teardown") }));
     });
 
-    // A load script's top level (plans/LoadRunner.md section 4): plan() resolves the run's params over its defaults,
+    // A load script's top level (plans/archive/LoadRunner.md section 4): plan() resolves the run's params over its defaults,
     // of the defaults' types, into `params`; scenario() registers a group of users.
     const paramDef = (def) => def && typeof def === "object" && !Array.isArray(def) ? def : { default: def };
     const typeOf = (value) => typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "text";
@@ -193,7 +193,7 @@
     // Ends the iteration as an error with the message.
     define("fail", (message) => { throw new Error(message == null || message === "" ? "failed" : String(message)); });
     // service.call(name, parameters, { name, expect }): in a load run in a server, the service in process as the user
-    // who started the run (plans/LoadRunner.md section 6), timed as a sample named the service (or opts.name); its
+    // who started the run (plans/archive/LoadRunner.md section 6), timed as a sample named the service (or opts.name); its
     // out-parameters. An error ends the iteration, unless expect lists "error": then the answer is { error }.
     define("service", Object.freeze({
         call(name, parameters, opts) {
@@ -409,22 +409,108 @@
         }
     }));
 
+    // In a load (plans/archive/LoadRunner.md L7) the handshake, a send given a name, and each receive are samples of kind ws, and
+    // `expect` lists the outcomes that are not errors there: a handshake's status, a receive's "timeout" or "closed".
+    const sampleOpts = (o) => ({ name: o.name == null ? null : String(o.name),
+        expect: Array.isArray(o.expect) ? o.expect.map(String) : null });
     class Socket {
         constructor(data) { Object.assign(this, data); }
-        send(text) { host("ws.send", { id: this.id, text: String(text) }); }
+        send(text, opts) { host("ws.send", { id: this.id, text: String(text), name: sampleOpts(options(opts)).name }); }
         // The next text frame, or null on timeout (seconds) or close.
         receive(opts) {
             const o = options(opts);
-            return host("ws.receive", { id: this.id, timeout: o.timeout == null ? null : Number(o.timeout) });
+            return host("ws.receive", { id: this.id, timeout: o.timeout == null ? null : Number(o.timeout), ...sampleOpts(o) });
         }
         close() { if (this.open) host("ws.close", { id: this.id }); this.open = false; }
     }
     define("ws", Object.freeze({
-        // A refused handshake does not throw: open is false and status is the HTTP answer.
+        // A refused handshake does not throw: open is false and status is the HTTP answer (in a load it is an error,
+        // unless expect lists the status).
         connect(path, opts) {
             const o = options(opts);
             return new Socket(host("ws.connect", { path: String(path), session: (o.session || g.http).id, headers: o.headers || {},
-                origin: o.origin == null ? null : String(o.origin), timeout: o.timeout == null ? null : Number(o.timeout) }));
+                origin: o.origin == null ? null : String(o.origin), timeout: o.timeout == null ? null : Number(o.timeout),
+                ...sampleOpts(o) }));
+        }
+    }));
+
+    // SSH (plans/archive/LoadRunner.md L7, test_client/ssh.rs): a connection logged in as `user`, to `host` and `port` or else
+    // the server's SSH listener (server.ssh: --ssh, or the server a --serve run started). exec runs one command and
+    // answers { status, stdout, stderr }; agentApps a session of the server's agent-apps, whose commands answer its
+    // JSON; shell a pty to send to and expect from. In a load a connect, an exec and an expect are samples of kind ssh:
+    // an exec's outcome is `exit <status>`, an error from 1 unless expect lists the status; an expect's ok, timeout or
+    // closed. An exec that exits non-zero does not throw outside a load.
+    const sshOpts = (o) => ({ name: o.name == null ? null : String(o.name), timeout: o.timeout == null ? null : Number(o.timeout),
+        expect: Array.isArray(o.expect) ? o.expect.map(String) : null });
+    const agentAnswer = (ran, what) => {
+        try {
+            return JSON.parse(ran.stdout);
+        } catch (e) {
+            throw new Error(`${what}: agent-apps answered no JSON (exit ${ran.status}): ${String(ran.stdout || ran.stderr).slice(0, 300)}`);
+        }
+    };
+    class SshShell {
+        constructor(id) { this.id = id; this.open = true; }
+        send(text) { host("ssh.send", { shell: this.id, text: String(text) }); }
+        // Wait until the output (escape sequences taken out) matches pattern, a RegExp or a string: { match, groups,
+        // before }, the output up to the match's end then read. A timeout throws, unless expect lists "timeout".
+        expect(pattern, opts) {
+            const o = options(opts);
+            const p = pattern instanceof RegExp ? { source: pattern.source, flags: pattern.flags } : { literal: String(pattern) };
+            return host("ssh.expect", { shell: this.id, ...p, ...sshOpts(o) });
+        }
+        close() { if (this.open) host("ssh.closeShell", { shell: this.id }); this.open = false; }
+    }
+    class AgentApps {
+        constructor(connection, opened) { this.connection = connection; this.session = opened.session; this.answer = opened; }
+        // One agent-apps command line: its answer ({ ok, reason, path, title, screen, elements, ... }). An answer of
+        // "--- error" (exit 1) is an error in a load unless expect lists "error".
+        command(line, opts) {
+            const o = options(opts);
+            const text = String(line);
+            const expect = Array.isArray(o.expect) ? o.expect.map((label) => label === "error" ? 1 : label) : null;
+            const ran = this.connection.exec(`agent-apps ${this.session} ${text}`, { name: o.name ?? `agent-apps ${text.split(/\s+/)[0]}`,
+                timeout: o.timeout, expect });
+            if (ran.status === 2) throw new Error(`agent-apps ${text}: ${String(ran.stdout).trim()}`);
+            return (this.answer = agentAnswer(ran, `agent-apps ${text}`));
+        }
+        close(opts) {
+            if (!this.session) return;
+            const o = options(opts);
+            this.connection.exec(`agent-apps ${this.session} close`, { name: o.name ?? "agent-apps close", expect: [1, 2] });
+            this.session = null;
+        }
+    }
+    class SshConnection {
+        constructor(id) { this.id = id; this.open = true; }
+        exec(command, opts) {
+            const o = options(opts);
+            return host("ssh.exec", { id: this.id, command: String(command), input: o.input == null ? null : String(o.input), ...sshOpts(o) });
+        }
+        // A session of the server's agent-apps (docs/ui/TUI.md "For agents") on `path`, its answers JSON.
+        agentApps(path, opts) {
+            const o = options(opts);
+            let p = path == null || path === "" ? "/apps" : String(path);
+            if (!p.startsWith("/")) p = "/" + p;
+            const size = o.size == null ? "" : ` --size ${String(o.size)}`;
+            const ran = this.exec(`agent-apps open ${p}${size} --json`, { name: o.name ?? "agent-apps open", timeout: o.timeout });
+            if (ran.status !== 0) throw new Error(`agent-apps open ${p}: ${String(ran.stdout || ran.stderr).trim()}`);
+            return new AgentApps(this, agentAnswer(ran, `agent-apps open ${p}`));
+        }
+        shell(opts) {
+            const o = options(opts);
+            return new SshShell(host("ssh.shell", { id: this.id, cols: o.cols == null ? null : Number(o.cols),
+                rows: o.rows == null ? null : Number(o.rows), term: o.term == null ? null : String(o.term),
+                timeout: o.timeout == null ? null : Number(o.timeout) }).id);
+        }
+        close() { if (this.open) host("ssh.close", { id: this.id }); this.open = false; }
+    }
+    define("ssh", Object.freeze({
+        connect(opts) {
+            const o = options(opts);
+            const text = (value) => value == null ? null : String(value);
+            return new SshConnection(host("ssh.connect", { host: text(o.host), port: o.port == null ? null : Number(o.port),
+                user: text(o.user), password: text(o.password), key: text(o.key), fingerprint: text(o.fingerprint), ...sshOpts(o) }).id);
         }
     }));
 

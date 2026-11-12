@@ -68,6 +68,7 @@ SSH channel, in the server's process, for any user, as the browser is for any us
 ssh -p <ssh_port> <user>@<host>             the apps; with SSH_SHELL and a key or password login, the admin shell first
 ssh -t -p <ssh_port> <user>@<host> apps     the apps, for any account
 moqui> apps                                 from the admin shell; quitting the apps (Ctrl+Q) comes back to the prompt
+moqui> attach <id>                          one of your kept terminal sessions (sessions lists them); Ctrl+\ detaches
 ```
 
 - **Login.** A key (an active `UserSshKey`) logs in at the SSH level and goes straight in. With no key, the client is
@@ -92,8 +93,8 @@ moqui> apps                                 from the admin shell; quitting the a
 - **Files.** Exports are not downloaded, because the client runs on the server; the text export still shows in a
   dialog. Uploads are off.
 - **Log.** Alt+L opens the log pane, with the WARN and ERROR lines from the session's start, for a user who may view
-  the Monitor app and read the `otel_logs` dataset (Monitor › Logs reads the same log). Others are told the log is not
-  offered.
+  the System app and read the `otel_logs` dataset, both granted with `SYSTEM_APP` (Monitor › Logs reads the same log).
+  Others are told the log is not offered.
 - **Background.** The client asks the terminal for its background color (OSC 11) and takes the dark or light colors
   to match; a terminal that does not answer keeps what `COLORFGBG` says, else dark.
 
@@ -102,11 +103,15 @@ moqui> apps                                 from the admin shell; quitting the a
 The account menu (the user's name in the header) has **Terminal UI**, for every signed in user: `/qapps/Terminal`, the
 same client in xterm.js, on the `/termws` WebSocket (`crates/moqui-host/src/termws.rs`). It runs as the browser's user
 with no login of its own, and the apps alone, as a dialog login over SSH does. The socket is checked by origin and
-session cookie as `/notws` is; a logout closes it within a minute. The limits, the idle close, the files and the log are
-as over SSH. When the socket closes, its reason shows with Reconnect. `enabled="false"` on the webapp's `/termws` `endpoint` in
-the conf turns the socket and the menu item off. While the terminal has focus it takes the keys, except those a browser keeps (Ctrl+W, Ctrl+T, Ctrl+N,
-and in some browsers Ctrl+Q); leaving the page ends the session as Ctrl+Q does. A link the client writes (`o`) opens
-in a new tab.
+session cookie as `/notws` is. The limits, the idle close, the files and the log are as over SSH. `enabled="false"` on
+the webapp's `/termws` `endpoint` in the conf turns the socket and the menu item off. While the terminal has focus it
+takes the keys, except those a browser keeps (Ctrl+W, Ctrl+T, Ctrl+N, and in some browsers Ctrl+Q) and the terminal's
+own Ctrl+Shift chords. A link the client writes (`o`) opens in a new tab.
+
+The Terminal is a workspace of sessions in tabs and splits that outlive the page, with the `moqui>` command line and
+shells on the server for a user who may on a dev instance, floating terminals and a status per session: an apps
+session left by a reload or a dropped connection is kept two minutes and draws itself again for the next window, and a
+logout leaves it. See [Terminal](Terminal.md).
 
 ## For agents
 
@@ -180,7 +185,7 @@ agent-apps hFY74uac key Right                        its account
 agent-apps hFY74uac do Add Group
 agent-apps hFY74uac set Group My Account Users
 agent-apps hFY74uac do Add                           message Saved
-agent-apps hFY74uac go /apps/system/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_ServiceJobRun_daily
+agent-apps hFY74uac go /apps/system/Operations/JobDetail?jobName=clean_ServiceJobRun_daily
 agent-apps hFY74uac do Run Job                       overlay confirm "Run job now ...", choices No|Yes
 agent-apps hFY74uac do Yes                           message Done
 agent-apps hFY74uac close
@@ -376,6 +381,9 @@ A screen needs nothing extra for the terminal: forms, lists, boxes, rows, dialog
 they are. Where a screen has gone custom for the browser (a `.qvue` screen, or a `render-mode` text of type `qvt`), it
 needs a `tui` text of its own beside it to show in the terminal; until it has one, the terminal shows a placeholder with
 the browser address. `moqui lint --screens` lists those parts under "TUI worklist".
+
+A screen's `menu-group` (or its `default-menu-group`) is a heading in the drawer above the first of each run of menu
+items that share it, as the caption in the browser's drawer ([Qvt-Client](Qvt-Client.md), Menu groups).
 
 A `tui` text is one node or an array of nodes of the model, in JSON:
 

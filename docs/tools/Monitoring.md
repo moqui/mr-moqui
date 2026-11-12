@@ -1,9 +1,9 @@
 # Monitoring, dashboards and reports
 
 Moqui records its own work as OpenTelemetry spans, metrics and logs, takes in OTLP from other systems, and keeps all of
-it in SearchFacade indexes on Postgres or OpenSearch. The Monitor app reads those indexes. The Dashboards app is a
-general reporting tool over the same indexes and over business DataDocuments: datasets, report queries, panels,
-dashboards, alerts and scheduled reports. The design and the build record are in
+it in SearchFacade indexes on Postgres or OpenSearch. Monitor, a section of the System app, reads those indexes. The
+Dashboards app is a general reporting tool over the same indexes and over business DataDocuments: datasets, report
+queries, panels, dashboards, alerts and scheduled reports. The design and the build record are in
 [plans/Monitoring.md](../../plans/Monitoring.md). As of Oct 27, 2026 (M1–M7 and the review pass built).
 
 The code: `crates/moqui-core/src/telemetry/` (the SDK wiring, sampling, the bounded worker, OTLP in and out, rollups
@@ -11,7 +11,7 @@ and retention), `crates/moqui-report/src/` (datasets, queries, frames, transform
 annotations, the scheduled reports in `schedule.rs` and the ingest keys in `monitor.rs`),
 `crates/moqui-core/src/search/telemetry.rs` (the index mappings), and the host side in `crates/moqui-host/src/http.rs`
 (request spans) and `crates/moqui-host/src/monitor/` (the OTLP receiver: `receiver.rs` over HTTP, `grpc.rs` over gRPC). Screens:
-`runtime/base-component/tools/screen/Monitor/` and `Dashboards/`; widgets in
+`runtime/base-component/tools/screen/System/Monitor/` and `Dashboards/`; widgets in
 `webroot/screen/webroot/js/WebrootReport.js` with TUI twins in `crates/moqui-tui/src/components/report.rs`.
 
 ## What is recorded
@@ -29,6 +29,14 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
 - **Metrics.** `http.server.request.duration`, `moqui.artifact.duration` (by type, name and action),
   `db.client.operation.duration`, `moqui.job.runs` (by outcome) and process gauges, written once a minute as one
   document per active series, then rolled up to hours and days.
+- **Resource gauges.** Each minute, from the resource readings ([Run-Deploy](../Run-Deploy.md#resource-watch)):
+  `system.cpu.load_average.1m` and `.5m`, `moqui.system.cpu.load.utilization` (the 5-minute load over the processors),
+  `process.cpu.utilization`, `process.memory.usage`, `moqui.process.memory.utilization` (of the memory limit in
+  force), `system.linux.memory.available`, `process.thread.count`, `process.unix.file_descriptor.count`,
+  `system.filesystem.utilization` and `moqui.system.filesystem.available` (one series per filesystem, by
+  `system.filesystem.mountpoint`), `moqui.service.pool.active` and `.queued`, and `moqui.request.pool.busy` beside
+  `moqui.request.queue.depth` and the `moqui.db.pool.*` gauges. A utilization is a share from 0 to 1. The shipped
+  `system-home` dashboard and the `system-db-pool` library panel (folder System) chart them.
 - **Business operations.** A service call that owns its transaction (the outermost, or a `force-new` one) is an
   operation, named by the service, by its `operation` attribute, or by a `telemetry/operations` rule. Each run counts
   as `moqui.operation.runs`, and its time as `moqui.operation.duration`, by `moqui.operation.name` and `outcome`, taken
@@ -195,7 +203,7 @@ holding up the others.
   page of this same server, that page's request span, unless sampled, decides the trace first and the CLIENT child is
   left out; the check span and the page's span are still kept.)
 - The shipped `monitor-checks` dashboard shows runs and mean duration per check, failures, runs by status over time,
-  and scrape targets' `up`. Targets and checks are set by a `MONITOR_APP` user and may be internal addresses.
+  and scrape targets' `up`. Targets and checks are set by a `SYSTEM_APP` user and may be internal addresses.
 
 ## Deploy markers and annotations
 
@@ -208,9 +216,39 @@ alert state changes and notes.
 - A signed-in user or a script with a login key can post the same to `/rest/s1/moqui/monitor/annotations`.
 - Dashboards › Annotations lists them and adds notes by hand.
 
-## The Monitor app
+### Business events
 
-Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/report/` and Explore presets.
+A domain's event (a price list published, a promotion's dates, a fiscal period closed) is an annotation of source `business`,
+which a dashboard over business data draws like any other marker.
+
+- **Writing.** `ReportServices.create#Annotation` with `source: "business"`, `text` (a name of at most 255 bytes, never an
+  amount), `time` (and `timeEnd` for a band), `organizationPartyId`, `event` (the event's type), and optionally `recordType` and
+  `recordId` (the record behind it) or `link` (a path on this server). It needs the artifact
+  `org.moqui.report.annotation.business` (create), `ADMIN`'s; `MONITOR_INGEST` and the ingest keys do not write one. The owner
+  of an event writes it from its own service after its commit, with authorization off (mr-mantle's
+  `mantle.party.BusinessEventServices.record#BusinessEvent`, registered on commit by the publication, promotion and period close
+  services, reads the marker from the stored record). With an `eventKey` and the same `time` the event keeps one marker.
+- **Reading.** A domain registers a source: a `ReportAnnotationSource` enumeration whose `enumCode` is a dataset over the
+  annotations (`indexName: "monitor_annotations"`) with the domain's row filter (mr-mantle's `mantle-business-events`, scoped to
+  the viewer's organizations by `get#OrganizationRowFilter`). A dashboard with a panel over a business dataset reads each
+  registered source as the viewer and adds its `business` markers to every panel: the dataset's own artifact and row filter
+  decide, a source the viewer may not read adds nothing, and only `business` markers are taken from a source whatever its
+  dataset says. A marker carries `event`, `organizationPartyId`, `recordType`, `recordId` and `link`; an app resolves the record
+  to a screen by the viewer's own permissions. Technical dashboards show none, and the technical marker list leaves them out.
+- The regression spec is `framework/test/ReportAnnotations.spec.js`.
+
+## Monitor
+
+Monitor is a section of the System app: `/apps/system/Monitor/<Screen>`, second in System's menu, opening on Overview.
+It is mostly dashboards shipped from `tools/report/` and Explore presets. It has no grant of its own: a holder of
+`SYSTEM_APP` uses it, and so reads the telemetry (traces with their users, logs, errors); the permissions named below
+(`MONITOR_INCIDENT`, `MONITOR_REPLAY`, `MONITOR_SETTINGS` and the others) each gate one thing inside it. "Monitor › X"
+is the short name of its screens.
+
+The System home shows the shipped `system-home` dashboard as its Activity strip. To show another there, set
+`system_home_dashboard` to that dashboard's definition id (a conf property, so System › Configuration or the
+environment): it gets the home's period and, as its `instance` variable, this server. A reader who may not read it sees
+the shipped one.
 
 | Screen | What it shows |
 | --- | --- |
@@ -232,18 +270,36 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Recovery | The emergency stop, the recovery policies and adapters (changed with `MONITOR_RECOVER_ADMIN`), and the newest actions |
 | Settings | Logging and telemetry settings with their on-disk values, changed for a while with `MONITOR_SETTINGS` ([below](#changing-settings-for-a-while)) |
 | Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
-| Evals | Agent evals ([below](#agent-evals)): experiments, datasets, scorers, and recent runs with their scores |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
-export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
-for the same reason. The System app's Visit screens list a visit's
-requests from the request spans, and a job run links to its trace and its logs.
+export, inspect and tail links work for a holder of `SYSTEM_APP` without `DASHBOARDS_APP`; Log context and Compare are
+mounted under Monitor for the same reason.
+
+### Monitor's screens in other places
+
+Some of what Monitor has also shows where its reader already is. Monitor's screen or dashboard stays the owner; none
+of these copies it.
+
+| From Monitor | Also in | How |
+| --- | --- | --- |
+| Settings | System › Configuration › Logging and telemetry (`/apps/system/Conf/Logging`) | The same screen mounted a second time; changing still needs `MONITOR_SETTINGS` |
+| AI | System › LLM and Agents › Traces (`/apps/system/Llm/Traces`) | The same screen mounted a second time |
+| The AI dashboard (`monitor-ai`) | LLM and Agents › Overview | Its `calls` and `tokens` panels over seven days, embedded |
+| Artifacts (`monitor-artifacts`) | Tools › Service, a service's detail; Tools › Schema, an entity, while the entity artifact type's metrics are on | Its `activity` panel narrowed to that artifact (its hits over seven days), embedded, with a link to Monitor › Artifacts narrowed the same way |
+| The database pool gauges | Tools › Database › Overview | The `system-db-pool` library panel over the last hour, embedded |
+| Metrics, incidents, errors, checks, sources | The System home | The `system-home` dashboard embedded as the Activity strip, and the counts of Needs attention, each linking to its Monitor screen |
+| Traces | System › Security, a user's detail | A link, Requests by this user |
+
+The three embeds in Tools show only to a reader of the `otel_metrics` dataset (granted with System), since a user may
+hold Tools without System; the screen checks before it embeds ([Embedding](#the-dashboards-app)). The System app's
+Visit screens list a visit's requests from the request spans, and a job run links to its trace and its logs.
 
 ## Agent evals
 
-Monitor › Evals tests an agent against fixed cases and scores what it does. The entities are in
-`framework/entity/AgentEvalEntities.xml`, the services in `org.moqui.agent.AgentEvalServices` (`AgentEval.js`), and
-the seed data (types, the built-in scorers, the jobs and the permissions) in `framework/data/AgentEvalData.xml`.
+System › LLM and Agents › Evals (`/apps/system/Llm/Evals`) tests an agent against fixed cases and scores what it does.
+The entities are in `framework/entity/AgentEvalEntities.xml`, the services in `org.moqui.agent.AgentEvalServices`
+(`AgentEval.js`), and the seed data (types, the built-in scorers, the jobs and the permissions) in
+`framework/data/AgentEvalData.xml`.
 
 - **Scorers** (`AgentScorer`) give an output a score from 0 to 1 and a reason, with a pass threshold. A *service*
   scorer is a service with `input`, `output`, `groundTruth`, `runId`, `metadata` and `config` in and `score` and
@@ -280,6 +336,15 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
   row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
   currency shows it and a sum across currencies shows a plain number.
+- **The dataset screens** (Datasets, with the hidden DatasetDetail, DatasetFields and DatasetView) are the
+  [business datasets](#business-datasets)' list and stewardship: the datasets the viewer reads, and a steward's waiting
+  for review, each with its state, source, scope, index and last build; a new dataset over a registered feed's document;
+  one dataset for its steward (identity and scope, admission checks, Admit, Rebuild index, Retire, the definitions that
+  use it); its document's fields and conditions; and its rows as the viewer reads them, with their export as CSV or
+  JSON. Below the business list, where no app mounts the screen, Datasets shows Tools' other datasets: the telemetry
+  indexes, the DataDocument indexes and the saved datasets that are not business ones, each opened in Explore, a saved
+  one in the definition editor, with the fields of the one chosen. Their presentation is `tools/template/ReportDatasets.js`,
+  which reads no entity: every read and write is a `ReportServices` operation called as the viewer.
 - **Explore** queries one dataset: a query string (the Lucene subset), filter pills (pin, negate, disable, label),
   a field sidebar with top values, a count over time, the document table, Split to compare two ranges or filters,
   saved searches, and "add to dashboard".
@@ -296,9 +361,14 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   with the time range (`now-6h`, `now/d`, `now-1M/M`, `now/fy`; `<report week-start fiscal-start-month
   fiscal-start-day/>` in the conf sets the week and fiscal year). Keys: `t-` zooms out, `t←`/`t→` shift the range,
   `e` edits, `v` views a panel, `i` inspects, `d k` toggles kiosk mode, and Esc leaves kiosk mode, then the single-panel
-  view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display.
+  view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display
+  ([Playlists and the wall display](#playlists-and-the-wall-display)); a
+  playlist of one dashboard loads it again at each turn, and `m-report-playlist` with `kiosk` (the `WallDisplay` page, which a shared device opens under BOSS Insights) offers no link out, retries a
+  failed load at the next turn instead of pausing, and reloads the page (at most once a minute) when a load is refused
+  (401, 403), so the server's plain refusal page replaces it, or when the playlist changed under it ([Shared devices](../security/Shared-Devices.md)).
   The time picker has quick ranges, the viewer's recent ranges and an absolute range. Each panel's menu has view,
-  edit, share (a link with the time made absolute), explore, inspect, duplicate, remove and new alert rule. The
+  edit, share (a link with the time made absolute), explore, inspect, drill ([Drill](#drill)), duplicate, remove and
+  new alert rule. A dashboard's owner shares it with a group from its Share dialog ([Sharing](#sharing)). The
   editor suggests visualizations from the query's or the data's columns. Tables can have footer calculations
   (computed from every row, not the ones shown) and sparkline cells; text panels take `${name}` variables and
   `${__from}`/`${__thru}`, escaped as text, and a data link takes `${__from}`/`${__thru}` too, so a drill-down (such as
@@ -349,19 +419,25 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
     file once the delete commits, and Push now removes any left behind.
 - **Embedding.** `<report-embed definition-id="" panel-id="" from="now-7d" thru="now" variables="[map expression]"/>`
   places a saved dashboard, one of its panels or a library panel on any screen. It renders as the viewer, so a
-  visitor who is not signed in (such as on a public site) gets nothing, and one that cannot be read logs a warning
-  and renders nothing.
+  visitor who is not signed in (such as on a public site) gets nothing, and a definition the viewer may not read logs
+  a warning and renders nothing. A definition the viewer may read over a dataset the viewer may not is drawn, each such
+  panel saying "Not available: viewer may not read dataset …": a screen that embeds for readers who may lack the
+  dataset checks first (`list#Datasets` leaves out what the user may not read) and leaves the embed out, as Tools'
+  service and entity detail do.
 - **Reusing the dashboard list.** `Dashboards/Home.xml`'s links run through its own transitions (`dashboard`, `star`,
   `edit`, `new`, `explore`), so a screen that includes it takes them in with `transition-include`, as
-  `Dashboards/Panels.xml` and BOSS Insights › Dashboards do. A dashboard then opens in that screen's sibling `Dashboard`
-  screen (in BOSS, Insights › Dashboard); editing and Explore open the Dashboards app.
+  `Dashboards/Panels.xml` and BOSS Insights › Dashboards do. With no mount a dashboard then opens in that screen's
+  sibling `Dashboard` screen, and editing and Explore open the Dashboards app; under a mount each goes where the
+  mount's `reportLinks` send it ([below](#mounting-the-report-screens): in BOSS, Insights › Dashboard, its editors and
+  Report builder › Explore), and a link the mount does not offer is not shown.
 - **Definitions.** Dashboards, library panels, datasets, saved searches, alert rules and report schedules are JSON in
   `moqui.report.Definition`, with versions (diff and restore) and references (the "used in" lists, export and
   import). Components ship them as `report/*.json`, one file each with `id`, `type`, `title` and `body`; shipped ones
   are read-only until saved as a copy. A shipped alert rule is a template: it runs only once copied, which gives it an
   owner. The owner can delete a saved definition (`delete#Definition`; Delete on the Definition, Alerts and shared item
   screens) with its versions and an alert rule's state; a shipped one cannot be deleted, nor one that other definitions
-  still reference (the error names them). Deletes are logged to `moqui.report.audit`.
+  still reference (the error names them). Deletes are logged to `moqui.report.audit`. A definition is its owner's, and
+  is read by one group beside them when it is shared ([Sharing](#sharing)).
 - **Alerts.** A rule is a report query, a reduce to one value per series, and a condition (above, below, within or
   outside, with an optional recovery threshold). The `evaluate_ReportAlerts_minute` job runs each rule at its own
   interval, as its owner. States: Normal, Pending, Firing, Recovering, No Data and Error; missing or failed data never
@@ -382,44 +458,200 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   variables, rendered by the server's Chromium to PDF (`orientation` portrait or landscape, `layout` grid or rows,
   `appendix` for table data, `paper` letter or a4), a PNG inline in the email with a link to the live dashboard, CSV
   or xlsx: one CSV, or one sheet, per table panel (a dashboard with no table panel exports each panel with data), and
-  a preview of several CSVs downloads as a zip. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
-  location needs `REPORT_SAVE_LOCATION`.
+  a preview of several CSVs downloads as a zip. An empty report is skipped. Saving to a server location needs
+  `REPORT_SAVE_LOCATION`. Dashboards › Reports previews and downloads a dashboard or report, opens the composer of a
+  multi-dashboard report, links the playlists, and schedules a report in owner mode (`create#Schedule`: to one address
+  line, a group or a server location, as its owner); the schedules themselves are on the delivery screens.
+- **Analysis** builds an aggregate over a dataset from typed choices and saves it as a library panel
+  ([Analysis](#analysis)). **Playlists** lists, makes and shares the dashboard playlists; one plays in the app
+  (`Playlist`) or full screen and unattended (`WallDisplay`).
+- **The delivery screens** (Scheduled reports, `Schedules`, with the hidden `ScheduledReportDetail` and `ReportDelivery`)
+  are the viewer's side of [report delivery](#report-delivery). Schedules lists Mine (the schedules that go to the viewer
+  alone, the owner-mode ones and the screen schedules they set up for themselves), Shared administration (the group
+  schedules they own, for one who may deliver to others) and Received (the reports delivered to them, each with their
+  own report rendered again), and makes a schedule: a dashboard or report the viewer reads, a timing and a format, for
+  themselves or for people and groups, each checked by the engine. ScheduledReportDetail is one schedule for its owner:
+  its timing and output, its recipients beside each one's result of the engine's check, the viewer's own preview, its
+  runs, and Resume, Send now and Pause (an owner-mode schedule is paused, resumed and sent there, and its timing and
+  output changed, its recipients, template and location kept as they were made).
+  ReportDelivery is one run: what ran and each recipient's outcome for its owner (who retries the failed and
+  reconciles the uncertain) and for the administrator (with its owner by name), a recipient's own delivery alone, and
+  the same statuses as CSV. What a viewer is offered follows their own grant of each operation, so nothing is asked that
+  would only be refused. Their presentation is `tools/template/ReportDelivery.js`, which reads no entity: every read and
+  write is a `ReportServices` operation called as the viewer.
+- **The alert screens** (Alerts, with the hidden `AlertRule` and `AlertShared`). Alerts is one list: All (every rule
+  the viewer reads), Mine, Received (the rules that told them, with their own delivery) and Templates (the shipped
+  rules, each copied to the viewer over a dataset they read), each rule with its kind (an operational rule tells
+  contact points, a [business rule](#business-alerts) an audience), its condition, whom it tells and the most severe
+  state of its series; pause, activate (which runs the rule's reading as its owner first) and delete, one rule or
+  several; and below, the state of each series and the shared contact points, silences and mute timings. AlertRule is
+  one rule, for anyone who reads it: the basis every rule has (its name, the query, the measure and its reduction, the
+  condition and its timing), then whom it tells by its kind: an operational rule's contact points, or a business
+  rule's audience (the owner alone, or people and groups, each with the result of the engine's check, in the app and
+  at the account's address, and the group it is shared with) and each recipient's last delivery; either kind's
+  silences, mute timings and shared items; and the state of each series as the viewer may read it. A rule's kind and
+  state are the engine's (`get#AlertState`): no screen reads an alert instance. AlertShared is a shared contact point,
+  silence or mute timing. Their presentation is `tools/template/ReportAlerts.js`, which reads no entity.
 
 ### Mounting the report screens
 
-An app mounts the Dashboards screens under its own root (BOSS Insights does: impl-insights P2) with a screen of its own
-per Tools screen that includes it (`include-screen share-scope="true"`) and takes in its transitions
-(`transition-include`): Home (the list, with `definitionType` set), Dashboard, Definition, Panels, Explore, Split and
-Playlist. The screens run under the app's authorization; using them needs no `DASHBOARDS_APP` or
-`REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses and each dataset's own artifact.
+An app shows the Dashboards screens under its own root (BOSS Insights does: impl-insights P2,
+[plans/archive/Admin-Screens-Down.md](../../plans/archive/Admin-Screens-Down.md) Track I), each in one of two ways:
+
+- **By location**: a `subscreens-item` of the app names the Tools screen file. Every transition of the screen is then
+  on the app's route, so this is for a screen with nothing that only an instance administrator may do, that no grant of
+  the app names, and to which the app adds nothing.
+- **Included**: a screen of the app's own includes the Tools screen (`include-screen share-scope="true"`) and takes in
+  the transitions it wants (`transition-include`); a transition it does not take in does not exist on its route. The
+  app's screen can then carry a grant of its own, set what depends on the request in its `always-actions`, and put its
+  own parts around the Tools screen.
+
+| Tools screen | How an app shows it | In BOSS Insights |
+|---|---|---|
+| Home (the list) | Included, with `definitionType` set; `dashboard`, `star`, `edit`, `new` and `explore` taken in | Dashboards |
+| Dashboard | Included; `edit`, `setVariable`, `exportPanel`, `inspectPanel`, `duplicatePanel`, `removePanel` and `share` taken in; the app's screen sets `reportFixedVariables` | Dashboard, with the organization in scope and the measures' meaning around it; the Share dialog is the Tools screen's |
+| Definition | Included, once for each editor; `save`, `copy`, `restore`, `delete`, `export`, `reference` and `dashboard` taken in (never `import`, unless the app mounts it); the app's screen sets `reportDefinitionTypes` and carries the authors' grant | DashboardEditor, PanelDetail |
+| Panels | By location | Library panels |
+| Explore | By location | Report builder › Explore |
+| Split | By location | Report builder › Compare, hidden from the menu |
+| Playlists | A screen of the app's own around its sections (`PlaylistsHeader`, the `Playlists` list, extended), with the page from `ReportPlaylists.js` `list()`; `createPlaylist`, `play`, `edit` and `sharePlaylist` taken in | Wall display (`Playlists`): the wall displays' share links, the devices showing each playlist and Register as display around the list |
+| Playlist | Included; `data` taken in | the same screen, with a playlist chosen |
+| WallDisplay | Included at the app's own location, with `data` taken in: a shared device's route group and its display account's grant name that location and that transition alone | WallDisplay, hidden from the menu |
+| Drill | A screen of the app's own around its sections (`DrillUnavailable`, `DrillBreakdownRefused`, `DrillPanelBuckets`, `DrillBreakdownRows`, `DrillSourceRows`, the `Breakdown` form extended), with the page from the app's service over `ReportDrill.js` `view(request, options)`; it has no transition | Drill, hidden from the menu: the organization in scope, the cost filter, the measure's meaning and each record's Insights screen |
+| Analysis | A screen of the app's own around its sections (`AnalysisSource`, `AnalysisRefused`, `AnalysisResult`), with the page and `saveAnalysis` from the app's services over `ReportAnalysis.js` (`fieldsOf`, `choicesOf`, `queryOf`, `resultOf`); Tools' `saveAnalysis` is not taken in | Report builder › Analysis, the author's and the steward's: the admitted datasets, the organization's calendar, Insights' reason codes |
+| Datasets | Included; `createDataset` taken in (never `explore` and `definition`, the links of Tools' other datasets, which are not shown under a mount) | Report builder › Datasets, the author's and the steward's |
+| DatasetDetail | Included; `storeDataset`, `admitDataset`, `retireDataset` and `rebuildIndex` taken in (never `definition`, the dataset in Tools' definition editor) | Report builder › DatasetDetail, the steward's |
+| DatasetFields | Included; `storeFields` and `storeConditions` taken in | Report builder › DatasetFields, the steward's |
+| DatasetView | Included; `exportDocuments` taken in | Report builder › DatasetView, the author's and the steward's |
+| Schedules, ScheduledReportDetail, ReportDelivery | By location, the three under one parent whose `always-actions` add the recipient cap to the policy (`policyWith`, below) | Scheduled reports › Schedules (the default), ScheduledReportDetail and ReportDelivery, every Insights user's to open |
+| Alerts | Included; `copyAlert`, `pauseAlerts` and `deleteAlert` taken in (never `evaluate` and `deleteShared`, Tools' own, unless the app's rules have contact points) | Business alerts › Rules (the default), every Insights user's to open |
+| AlertRule | Included; `recipientChoices`, `storeAlert`, `storeAudience`, `pauseAlert`, `testAlert`, `copyAlert` and `deleteAlert` taken in (never `addContact`, `addSilence`, `addMute`, `removeItem`, `addRef`, `removeRef` and `evaluate`, unless the app's rules have contact points); under the same parent as the list, whose `always-actions` add the recipient cap | Business alerts › AlertDetail |
+| AlertShared | Not shown by an app whose rules tell an audience | (none: `alertShared` is null) |
+
+The dataset screens link each other as siblings (`../DatasetDetail`, `../DatasetView`, `../DatasetFields`,
+`../Datasets`), so an app shows the four under one parent with these names; they open a dataset in Explore by the
+mount's `explore` link, as a link of their own and not a transition, so an app takes in nothing for it. The delivery
+screens link each other as siblings too (`../Schedules`, `../ScheduledReportDetail`, `../ReportDelivery`); every
+transition of theirs is on the app's route, and each reads the mount's policy, never the request (below). The alert
+screens link each other by the mount's `alerts`, `alertRule` and `alertShared` links, as links of their own and not
+transitions, so an app's two screens need not be named as Tools' are (Insights: `Rules` and `AlertDetail`). The
+playlist screens link by `playlists`, `playlist` and `wallDisplay`, and Drill and Analysis by `drill`, `analysis`,
+`dashboard` and `panel`, the same way. A screen of the app's own around a Tools screen's sections (`section-include`,
+`form-list extends`) sets what those sections read under the same names (`playlistView`, `drill`, `analysisView`),
+from the Tools module or from its own service, and adds its own parts: a record's row links the screen the app gives
+it (`recordUrl`), a list gains the app's columns. The other
+Dashboards screens (Reports, Annotations, Git sync, Log context) are not shown by an app: Reports, Tools' own desk
+with the owner-mode schedule form, is linked from Schedules only where there is no mount. The screens run under the app's authorization;
+using them needs no `DASHBOARDS_APP` or `REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses
+and each dataset's own artifact.
 
 The app's root sets, in its `always-actions` so that the transitions read them too:
 
 | Context | What it does |
 |---|---|
-| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlists` (the list of playlists), `playlist` (where one plays in the app), `wallDisplay` (the page one plays on full screen), `analysis`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the drill screen, which each panel's menu offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`). Without a mount the screens keep Tools' own (`//apps/dashboards/...`; the list opens a dashboard in its sibling `Dashboard`); under a mount a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `split` or `logContext` hides Explore's Compare and Surrounding entries; no `import` hides import; no `drill` hides the panel menu's Drill, no `wallDisplay` Play full screen, no `analysis` Drill's Open as analysis; a `share` (the screen the app shares in; Tools names none, and shares on Dashboard and Playlists beside the editor's group field) hides the editor's group field and the editor's save keeps the saved group, whatever group is posted. `alertRule` is where a rule opens, for anyone who reads it (the alerts a user receives link it), so a mount names it for every user; a panel's New alert rule is offered there only where the policy lets the viewer set one (`features.alert`). `alerts` (the alert list) and `alertShared` (a shared contact point, silence or mute timing) are where the alert screens link each other |
+| `reportPolicy` | What the app's policy is for the report screens it shows (the table below). Data only: a screen shown under a mount still asks its service, and the service decides. An area of the app adds to it for the screens below it by setting it again in its own `always-actions`, from `ReportMount.js`'s `policyWith(fields)` (the root's map with the area's fields): a field that costs a read the root should not make on every request, as the recipient cap of the area that delivers |
 | `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
-| `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
+| `reportHiddenComponents` | Components whose shipped definitions the dashboard list leaves out, and the schedule list does not offer or take for a new schedule (Insights: `tools`, the telemetry dashboards) |
 | `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
 
+`reportPolicy`'s fields, each with what Tools' own screens do, which is also what a mount gets for a field it leaves
+out, but for the features: a mount offers one only when its map says so.
+
+| Field | What it is | With no mount | Read by |
+|---|---|---|---|
+| `features.alert` | Whether the viewer may set an alert rule here: new, copy, change, pause, activate and delete. Every such transition of the alert screens refuses without it, and none is offered | true | Alerts, AlertRule, AlertShared (every transition that writes); Dashboard (a panel's New alert rule) |
+| `features.share` | Whether the viewer may share a dashboard or a playlist of their own here. The share transitions refuse without it, and no sharing is offered ([Sharing](#sharing)) | true | Dashboard (`share`), Playlists (`sharePlaylist`), Analysis (`saveAnalysis`, for a group named) |
+| `range` | `{from, thru}`: the range a screen opens on when the request names none; the wall display's range, whatever its request names | `now-7d` to `now` | Dashboard (and its panel export and inspect), Explore (and its tail), DatasetView (and its export), Playlist (and its `data`), WallDisplay (and its `data`, always), Drill, Analysis (and `saveAnalysis`) |
+| `datasetIdPrefix` | What the id of a dataset created here starts with, before the form's short name. The engine creates a dataset only under an id whose own update artifact the creator holds, so the prefix names what the app's stewards are granted and gives no right | none | Datasets (`createDataset`) |
+| `datasetScopeLabel`, `datasetScopeHelp` | The words of the dataset forms' scope field; the `rowFilterParameters` entry it is sent in is the scope policy's own, from its registration ([Business datasets](#business-datasets)) | "Scope field", "The field that carries each row's scope; the policy's own when left empty" | Datasets, DatasetDetail |
+| `recipientPermissionId` | The permission a person holds to be proposed and accepted as a recipient: the schedule and alert screens ask `find#ReportRecipients` with it for the choices and again, in the transition, for the people a save names, and refuse the save when one is not among its holders | the engine's own rule (an active internal account) | Schedules (`createSchedule`, `recipientChoices`), ScheduledReportDetail (`storeAudience`, `recipientChoices`), AlertRule (`storeAudience`, `recipientChoices`) |
+| `reportEmailTemplateId` | The `EmailTemplate` every save of a report schedule here is sent with to `store#Schedule` | the engine's (`DASHBOARD_REPORT`, or the one the schedule has) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`) |
+| `alertAudience` | `{topic, emailTemplateId, detailLink}`: the fixed parts of an alert rule told to an audience of users and groups. A mount that names it tells every rule set there to an audience: each save writes the three from the policy (the template where email is a channel) and drops any contact point; a rule there watches a panel's saved query, never one typed; only business rules are listed and opened; and contact points, silences, mute timings, shared items and Evaluate now are not shown | null: a rule's kind is the engine's, an operational rule has contact points and a business rule the audience it is given, on the engine's own topic | Alerts, AlertRule (every save, copy and activation) |
+| `shareGroups` | `[{value, label}]`: groups a definition is offered to be shared with beside the viewer's own, by the app's words for them (its wall displays). Being here gives no right: such a group is offered, and taken by `save#Definition`, only for a viewer whose own grant holds its share artifact ([Sharing](#sharing)) | none | Dashboard (`share`), Playlists (`sharePlaylist`) |
+| `recipientCap` | The most recipients a group delivery is saved and checked with, sent with every save to `store#Schedule`, which refuses a larger audience and holds the cap under the instance ceiling; and written into the audience of an alert rule at every save, which `save#Definition` checks the same way. Added by the area that delivers (`policyWith`), not by the root | the engine's (50, under the ceiling) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`, and the audience shown), Alerts and AlertRule (every save of a rule told to an audience, and the audience shown) |
+| `calendar` | `{timeZone, weekOffset}`: the zone a time grain's buckets are cut in and a week bucket's offset (the engine's `time_zone` and `offset`), in the query Analysis builds, runs and saves. The root's is that of the scope it knows; a screen of the app's own with a scope choice of its own passes its own (Insights' Analysis: the chosen organization's) | the viewer's zone, the instance's week | Analysis (the result and `saveAnalysis`) |
+
+`tools/template/ReportMount.js` is the one reader of the two maps: `state()` gives `{mounted, links, policy}` in a
+screen's actions, every link key present (null when not offered) and every policy field with its default, and
+`url(key)` is a transition's response, the mount's screen or Tools' own. `policyWith(fields)` is the root's policy with
+an area's fields added, for the area to set as `reportPolicy`; with no mount it is null, so an area adds to a mount and
+never makes one. A screen never reads `reportLinks` or `reportPolicy` from the context itself. A value that is not a map
+is a mount with nothing in it: no link is offered and no feature.
+
+**The policy is not authority, and a request cannot stand in for it.** The roots set or null the maps in
+`always-actions`, which run before every transition too, so what a screen or a transition reads through the module is
+the mount's, whatever a request sends. Where a field says what a save may hold, the transition that saves reads it
+there and never takes it from its parameters, and that transition is the only way to the operation for the app's
+users: a service is reached from outside the server only through a screen's transition, a REST resource that names it
+(`tools/service/moqui.rest.xml` names the query, document and dataset reads and the annotation write, no schedule
+operation) or an agent tool row that opts it in (none does); an app's users hold no grant on Tools' own routes; and an
+app that adds a screen, a resource or a tool over one of these operations owes the same reading of its policy. So for the delivery screens: the recipients a schedule names are accepted by
+`find#ReportRecipients` under the mount's permission in `createSchedule` and `storeAudience`, before `store#Schedule`,
+which then checks each one's scope; the template and the recipient cap are put on the request by the same
+transitions and by `storeSchedule`, a posted `emailTemplateId` or `recipientCap` being no parameter of theirs; and a
+definition of a hidden component is refused by `createSchedule`. For the alert screens: every transition that sets a
+rule (`storeAlert`, `storeAudience`, `pauseAlert` and `pauseAlerts`, `copyAlert`, `deleteAlert`, `testAlert`, and
+Tools' own) first asks the policy's `features.alert`, so a user whose grant opens the engine's `save#Definition` for
+another purpose (in BOSS, a dataset steward) sets no alert through the app; under a mount that names `alertAudience`
+the same transitions write the audience's topic, template and link and the recipient cap into the rule at every save
+and take no query, contact point, topic, link or cap from the request; and the people and groups an audience names,
+and the group a rule is shared with, are accepted by `find#ReportRecipients` under the mount's permission in
+`storeAudience`, before `save#Definition`, which then checks each one's scope for an active rule. For sharing:
+Dashboard's `share` and Playlists' `sharePlaylist` first ask the policy's `features.share`, so a user whose grant
+opens the engine's `save#Definition` for another purpose (in BOSS, a steward or a distributor) shares nothing through
+the app; the group posted must be one the transition offers (the viewer's own, or one of the policy's `shareGroups`
+that the viewer may name), and `save#Definition` then asks the same of the group itself, whatever the policy lists:
+a group the saver belongs to, or one whose share artifact their own grant holds. For the wall display: the range of
+its page and of its `data` is the policy's, and `from` and `thru` are no parameters that are read. For Analysis: the
+calendar of a time grain's buckets is written into the query by the screen's own actions and by `saveAnalysis`, and no
+parameter names it. What does not depend
+on the mount is the engine's own, checked whatever calls it: the owner, the group a definition is shared with, the
+group delivery artifact for anyone but oneself, each recipient's scope fingerprint at the save, at a resume and before
+each message, and the cap under the instance ceiling.
+
 Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
-`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`), and Explore's count over time carries its own
-`explore`; the panel menu, the `e` key, Explore from a panel, a filter outside a dashboard and the duplicate and remove
-posts use them, and a dashboard without them uses Tools' screens. Under a mount the editor's dataset choices are the
-datasets the author may read (`list#Datasets`, each dataset's artifact), a new panel starts on the first of them, and
-Explore and Split open on one of them. A panel the viewer may not read (a dataset refused, a failed query) says "Not
+`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`, and `drill` where there is a drill screen), and
+Explore's count over time carries its own `explore`; the panel menu, the `e` key, Explore from a panel, a filter outside
+a dashboard and the duplicate and remove posts use them, and a dashboard without them uses Tools' screens. Under a mount
+the editor's dataset choices are the datasets the author may read (`list#Datasets`, each dataset's artifact), a new
+panel starts on the first of them, and Explore and Split open on one of them. A viewer who reads no dataset, and asks
+for none, is told so by Explore and Split, which then query nothing (under Tools too), where they would open on a
+telemetry dataset and show its refusal. A panel the viewer may not read (a dataset refused, a failed query) says "Not
 available" with the reason, never "No data". Saving a definition still checks every dataset it references as the
 author, so a copy of a dashboard over a dataset the author may not read is refused until the dataset is granted.
 
 Request parameters are names in a screen's context, so these names are set only by screens: Tools' Dashboards and
-Monitor roots set them to null, and a mount sets each in `always-actions` of the screen that reads it.
+Monitor roots set all five to null, and a mount sets each in `always-actions`, its root's or those of the screen that
+reads it.
 
 The mount's root grant is inherited by the screens it mounts (impl-admin F34): deny, on the screens of an area only some
 groups use, the root's groups and grant the others there, and take in only the transitions the area needs. An
 inheritable `AUTHZT_ALWAYS` on a screen passes every deny below it, including the engine operations' own, so grant such
 an area with `inheritAuthz="N"` on the screen and on its transitions by name (`AT_XML_SCREEN_TRANS`, `<screen>/<transition>`,
-as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. The regression
-spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`.
+as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. A
+grant names the app's own screen, never a Tools location, which would open the screen in the Dashboards app too. The
+regression spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`: the
+links, the policy and its defaults under the mount, with no mount and with a forged request parameter, and, read from
+the screens' sources, that both Tools roots null the five names and that no screen reads the two maps but through the
+module. The dataset screens under a mount (the id prefix, the scope field's parameter and words, the transitions an app
+does not take in) are held by the app's own spec through its route (mr-boss `test/Insights/InsightsDatasets.spec.js`),
+and with no mount by the cargo tests that render them (`tools_screens.rs`, `monitor_tui.rs`). The delivery screens are
+held the same way: under a mount by mr-boss `test/Insights/InsightsDelivery.spec.js` (the recipients kept to the
+permission's holders, the template and the cap of every save whatever is posted, a hidden component's dashboard and
+Tools' owner-mode form refused or absent on the app's route and taken on Tools' own), with no mount by the cargo tests,
+and the operations they read and write by `framework/test/ReportAudience.spec.js`. The alert screens likewise: under a
+mount by mr-boss `test/Insights/InsightsAlerts.spec.js` (a save refused to a user without the alert feature who holds
+the engine's save, and taken for one with it; the topic, link and cap of every save whatever is posted; an audience
+kept to the permission's holders, the viewer's own groups and the cap; Tools' contact point, silence, mute timing,
+shared item and evaluation transitions absent on the app's route and taken on Tools' own), with no mount by the cargo
+tests, and the engine's rules by `framework/test/BusinessAlerts.spec.js`. Sharing, the playlists, the wall display,
+Drill and Analysis likewise: the share feature and the groups a share takes by `tools/test/ReportMounts.spec.js`
+(under the test mount) and by mr-boss `test/Insights/InsightsDashboards.spec.js` and `InsightsWallDisplay.spec.js`
+(a distributor's share refused and an author's taken; the wall displays' group taken from the author alone; the
+device's route, which opens the app's wall display and nothing of Tools'), Insights' drill and analysis around the
+Tools sections by `InsightsRecords.spec.js`, the screens with no mount by the cargo tests, and the group rule of
+`save#Definition` and `find#ShareGroups` by `framework/test/ReportAudience.spec.js`.
 
 ### Business datasets
 
@@ -441,9 +673,15 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   `userId`, the dataset's id and the dataset's `rowFilterParameters` (such as `{"organizationField": "vendorPartyId"}`), so one
   policy serves every dataset by naming its field; a registered policy runs without a grant of its own (it is the engine's,
   reviewed code), any other with the viewer's. Its filter is added before documents, suggestions, value counts, aggregations,
-  panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it.
+  panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it. A
+  registration also names the policy's scope parameter, the `rowFilterParameters` entry in which a dataset names the field
+  that carries a row's scope, as the enumeration's `optionValue` (`groupField` for `ReportUserGroups`): the engine answers it
+  as each dataset's `scopeParameter`, and the dataset forms send their one scope field under it, whichever policy is
+  chosen. A policy that registers none is asked for no field.
 - **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document with a registered policy, owned by the
-  steward, waiting for review; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
+  steward, waiting for review; its creator holds the dataset-save artifact `org.moqui.report.dataset` and the update artifact
+  of the dataset named, so a steward granted the datasets of a name pattern creates only under it, whatever id a caller
+  sends; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
   a git pull, returns it to review, and deleting the definition deletes its admission), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
   it to review; a shipped dataset's definition is its component's; steward; admit; retire; `expectedVersion`),
   `store#BusinessDatasetFields` (plain field paths only, no expression, secret or encrypted entity field; unique names; removing or renaming a field
@@ -454,9 +692,347 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   not grant.
 - **The document is read through its dataset.** A dataset that is not a business one (a DataDocument by its id, an `index:`
   alias, a definition without the signal) over a document some business dataset reads is opened only to a holder of that
-  dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
-  reaches no unfiltered rows.
+  dataset's update artifact who also holds the update artifact of the document by its own id
+  (`org.moqui.report.dataset.<document>`; `ADMIN`), so a view grant on such an artifact, by pattern or by mistake, reaches no
+  unfiltered rows, and neither does a steward's own dataset: a steward granted the datasets they name by a pattern reads a
+  business document through a business dataset and its registered policy only ([Dataset aliases](#dataset-aliases)).
+- **What the screens read** beside these is two operations in `framework/service/org/moqui/report/ReportReads.js`, so that
+  a screen an app shows under its own root reads no entity. `get#BusinessDataset` answers one dataset as
+  `find#BusinessDatasets` does, to a caller who reads or stewards it (any other dataset, and one that does not exist, is
+  "not available"), and to its steward also its document's `fields` and `conditions` and the definitions over it that the
+  caller reads (`uses`; `usesAvailable` false when they could not be listed); a reader gets the dataset alone.
+  `get#BusinessDatasetOptions` answers what a dataset form offers: the registered `policies` with their `scopeParameter`
+  and the `operators` and `functions` a steward may use, to any signed-in caller, and `canCreate` (the dataset-save
+  artifact by the caller's own grant) with, only then, the `documents` of registered feeds (never a telemetry index). It
+  takes nothing from the request. Both are granted with the other `ReportServices` operations (`DASHBOARDS_APP`'s
+  pattern); an app grants them to the groups that list datasets.
 - The regression spec is `framework/test/BusinessDatasets.spec.js`.
+
+### Dataset aliases
+
+A dataset definition may read a source that has a dataset artifact of its own, under a filter the definition chooses: a
+telemetry index (`"indexName": "otel_logs"`, or the index named as its `documentType`), or a business dataset's document
+without the business signal. The alias's own artifact says nothing of the source, and an application may grant it by a name
+pattern to whoever saves datasets, so the engine asks for the source's own artifact (`crates/moqui-report/src/alias.rs`), when
+the definition is saved (`save#Definition`, a copy, a restore, an import, a git pull) and each time it is read:
+
+- **A telemetry index** (`org.moqui.report.dataset.otel_logs`, view; `SYSTEM_APP` and `REPORT_DATASETS_ADMIN` hold them).
+  The saver must hold it. A reader reads the alias when they hold it themselves, or when the definition's owner does: the
+  owner is asked at each read, in a context of their own, so an alias an administrator saves and shares is a narrowed view
+  for readers who do not hold the index (a registered annotation source's dataset, for one), and it stops answering when its
+  owner loses the grant, when the owner's account is closed (disabled for good or past its end date, as their session and
+  schedules stop), or when the definition is handed to an owner without the grant. `transfer#DefinitionOwner` hands an alias
+  on only while the owner it leaves holds the index, so one that has stopped answering is not opened again by the grant of
+  whoever takes it; left behind, it answers a holder of the index only. A definition a component ships
+  (`report/*.json`) is that component's reviewed code and is read by its own artifact, as mr-mantle's
+  `mantle-business-events` is. An alias still needs a row filter in its definition, and a dataset has no field list: a
+  reader of the alias reads each matching line whole.
+- **A business dataset's document** (`org.moqui.report.dataset.<document>`, update): the saver and every reader, shipped
+  or saved, beside the alias's own update artifact (above). No owner's holding opens it to others: a business document is
+  read by others through an admitted dataset. A definition that says `signal: "business"` with no registered scope policy as
+  its `rowFilterService` is held to this too, saved and read: the signal alone does not let its steward read the document
+  unfiltered before admission.
+
+A row written past the save (an entity write, an older row) is held to the same rule when read. The rule's unit tests are
+`alias_tests.rs`; the refusals, saved and stored, are a feature of `framework/test/BusinessDatasets.spec.js`.
+
+### Semantic guards
+
+What a business dataset's `fieldDefaults` declare about a measure decides which aggregations of it mean something; the engine
+refuses the others with a coded reason, for every caller (a panel, Explore, `run#Query`, an alert, a schedule, a drill). A
+dataset that is not a business one is read as before.
+
+| Declared on a field | Refused | Until |
+|---|---|---|
+| `unitField` (an amount's currency, a quantity's unit) | `UNIT_MIXED`: a sum, average, least or greatest over records of several units (it was shown without a unit) | the query groups by the unit field (a terms aggregation of it above the amount, not beside it), or is filtered to one unit; a count of the field is in no unit; a measure the owner converts to one unit has a fixed `unit` and no `unitField`. Rows grouped by the unit are not added again: `subtotals`, a footer total (`totals`), or a `reduce`, `groupBy` or `pivot` step that adds across the unit is `UNIT_MIXED` too |
+| `ratio: {numerator, denominator}` (a stored rate) | `RATIO_AGGREGATE`: a sum or an average of it | the group's rate is computed from the summed numerator and denominator (a calculate step) |
+| `nonAdditive: [dimension, ...]` (a balance or snapshot) | `NONADDITIVE`: a sum across one of the dimensions | each is a group of the query, or pinned to one value by a filter |
+
+A document query returns a page: when more records match than were read, the result carries a `bounded_result` notice with
+`returned` and `total` (`sourceCount` stays the engine's own count of what matches), and a total, a `reduce`, a `groupBy` or a
+`pivot` of those rows is refused (`BOUNDED_RESULT`).
+
+A dataset whose definition says `rows: "restricted"` gives its readers aggregates only: its records (`query#Documents`, a
+query of mode `documents`, a top-hits aggregation, a drill's records) need the artifact `org.moqui.report.rows.<id>` (view),
+and are refused with `ROWS_RESTRICTED` otherwise. The rules are in `crates/moqui-report/src/semantics.rs`; the regression spec
+is `framework/test/ReportDrill.spec.js`.
+
+### Drill
+
+`ReportServices.get#Drill` goes from a value of a saved panel to a breakdown and the records behind it. The request names a
+definition the viewer reads (`definitionId`: a dashboard with `panelId`, or a library panel), one of the panel's queries
+(`queryReference`, its index, 0 by default), the `range` (or `from`, `thru`), the dashboard's `variables`, the buckets chosen
+(`selectedBuckets`: `field` and `value` as the panel showed them), an optional `breakdownDimension` and a page. It never takes a
+query, a dataset, an entity or a service.
+
+- The engine reads the definition as the viewer and runs the panel as its dashboard does: variables fill the saved variables
+  only, and each dataset's artifact, admission and row filter apply again.
+- Each chosen bucket's predicate is taken from the panel's own result, where the engine recorded it, so an "Other" bucket is
+  everything but the buckets shown and a missing bucket the records without the field. A bucket that is not in the result is
+  refused.
+- The answer is the saved query narrowed by those predicates: `selected`, `panelFrames` (the panel's result, whose buckets may
+  be chosen), `dimensions` (the dataset's aggregatable fields), `breakdown` (the saved measures by one of them, or `refused` with
+  a guard's reason), and `rows` with `columns` (the query's time, groups and measured fields), `total` and `bounded` (a page is
+  a sample). A page holds at most 100 records and the pages reach the first 10,000; past that the viewer chooses a bucket or
+  a shorter range.
+- A viewer who reads the dataset's aggregates and not its records gets `rowsAvailable` false with `rowsReason` and no record
+  (nothing is fetched). A panel the viewer cannot read, or whose value is not an aggregate of a dataset, answers `available`
+  false with its reason.
+
+Dashboards › Drill (`tools/screen/Dashboards/Drill.xml`, hidden from the menu, with no transition) is its page, opened
+from each panel's menu: the panel's buckets to choose from, a breakdown by one more of the dataset's dimensions (or
+why the guards refuse it), and a page of the records with the query's own columns, a sample when more match; back to
+the dashboard, and on to Analysis over the same dataset. `tools/template/ReportDrill.js` `view(request, options)` asks
+the engine as the viewer and presents its answer; under a mount the default range and the fixed variables are the
+mount's (`reportPolicy.range`, `reportFixedVariables`). An app with business parts of its own shows the screen's
+sections in a screen of its own and calls `view` from its service with its parts as `options`, each decided by the
+service and never by a request: `fixedVariables` (its scope), `range`, `permitted` (which fields a viewer may see as
+a column or a dimension), `row` (what it adds to a record's row: `recordUrl` and `recordParameters`, the app's screen
+for the record) and `carry` (further parameters its links keep). A mount that names no `drill` link offers none. The
+code is `crates/moqui-report/src/drill.rs`; the regression spec is `framework/test/ReportDrill.spec.js`.
+
+### Analysis
+
+Dashboards › Analysis (`tools/screen/Dashboards/Analysis.xml`, `tools/template/ReportAnalysis.js`) builds an aggregate
+over a dataset the viewer reads from typed choices: the dataset (`list#Datasets`), how a measure is aggregated (count,
+sum, average, least, greatest, distinct values) and of which number field, up to two groups, a time grain (day to
+year), one equality filter and the range. No query language is added: the choices become the engine's own query, each
+field checked against the dataset's fields (`get#Dataset`, with what the dataset's definition declares of each: its
+unit field, a ratio, the dimensions it is not added across), and `run#Query` runs it as the viewer. The result shows
+each bucket with its measures and units, the engine's count of the records behind them (never the number of rows
+shown) and its notices; what the [semantic guards](#semantic-guards) refuse is shown as its reason ("Not a meaningful
+result"), and nothing is computed around it. Save analysis (`saveAnalysis`) runs the choices again and saves them as
+a library panel the viewer owns (`save#Definition`: an ordinary panel, which the definition editor then refines),
+private or shared with a group offered to them ([Sharing](#sharing)), and optionally placed by reference on a dashboard
+of their own; it is offered to a viewer whose own grant opens the save where there is a panel editor. Under a mount
+the default range and the calendar of a time grain's buckets are the mount's (`reportPolicy.range`, `calendar`), read
+by the screen and by the transition, never from a request. An app with business parts of its own (which datasets are
+offered, who may build one, a scope choice with its own calendar, reason codes) shows the screen's sections in a
+screen of its own, with the page and the save from its own services built on the module's `fieldsOf`, `choicesOf`,
+`queryOf(choices, source, bucketParameters, deny)` and `resultOf`.
+
+### Sharing
+
+A definition has one owner and at most one group (`userGroupId`): the group reads the definition, and nothing else.
+Each of its members still reads a dataset by their own grant and row filter, so a share never gives data.
+
+- **The group rule is `save#Definition`'s**, whatever saves (a screen, a copy, a restore, an import, a pull): the group
+  is one the saver belongs to by a membership of their own (never the implicit `ALL_USERS`), or one whose share
+  artifact, `org.moqui.report.share.<userGroupId>` (update), the saver's own authorization records hold, with nothing
+  inherited from the screen or service that asks. Any other group is refused (`SHARE_GROUP_UNAVAILABLE`). A group the
+  definition already has is kept by a later save without being asked again, so an owner who left a group still saves
+  their definition. `ADMIN` holds `org.moqui.report.share.*` (`REPORT_SHARE_ADMIN`); an app grants the artifact of a
+  group no person is in to those who share with it (BOSS Insights: its wall displays' group, to its authors).
+- **`find#ShareGroups`** answers the groups the caller may share with, by name: their own (`own` true), and of the
+  `groupIds` named those they may share with by the artifact; a group named that is neither, or does not exist, is in
+  `refusedGroupIds`. It grants nothing.
+- **On the screens** (`tools/template/ReportShare.js`): Dashboard's Share dialog (`share`) and Playlists' Share a
+  playlist (`sharePlaylist`) are offered to the owner of a saved dashboard or playlist: one of the groups
+  `find#ShareGroups` answers (their own, and the mount's `reportPolicy.shareGroups` they may name, by the mount's
+  words), or none to make it private again. The transitions hold the mount's `features.share` first and refuse a
+  group they do not offer; the engine's save then checks the owner, the version the dialog read and the group. With no
+  mount a viewer shares with a group of their own there, and the definition editor has its group field too, where
+  `ADMIN` names any group; under a mount that names a `share` link the editor keeps a definition's group as it is.
+  Analysis' save shares its new panel the same way.
+
+### Playlists and the wall display
+
+A playlist is a report definition of kind `playlist`: one to fifty dashboards in an order, each shown for five to 3600
+seconds. Three screens (`tools/template/ReportPlaylists.js`):
+
+- **Playlists** (in the menu) lists the playlists the viewer reads, each with its dashboards, its seconds and the group
+  it is shared with; makes one (`createPlaylist`: dashboards the viewer reads, saved as their own; it is ordered in the
+  definition editor), for a viewer whose own grant opens the save where there is an editor (the transition refuses
+  where the mount gives none, `reportLinks.definition` null: the engine's save alone would not hold it, since an app
+  may grant the save to users who author nothing); and shares one
+  ([Sharing](#sharing)). A playlist opens in Playlist or, by Play full screen, on WallDisplay in a window of its own.
+- **Playlist** plays one in the app, for whoever sits at it: the dashboards in turn in kiosk mode over the request's
+  range (the mount's when it names none), each also opened on its own. Its `data` transition answers the dashboard at
+  an index of the stored playlist, rendered as the viewer.
+- **WallDisplay** plays one unattended, on a page of its own and not the app shell: standalone, its html is a bare
+  document (no navigation, menu, account or instance header) that loads the client's files and mounts the screen's
+  qvt render as an island, `m-report-playlist` in kiosk mode. What an unattended browser may not choose is not taken
+  from its request: the range is `reportPolicy.range` (Tools' seven days with no mount), never `from` and `thru`; only
+  a dashboard of the stored playlist is rendered, by its index; a panel's failure is shown as "not available" with
+  its text in the log, with no query inspection; any failure answers one fixed sentence; the screen has no transition
+  but `data`, and nothing writes. Everything runs as the viewer: a dashboard they may not read is left out and logged
+  by name.
+
+A wall display on a [shared device](../security/Shared-Devices.md) is an app's: the app includes WallDisplay in a
+screen at its own location with `data` taken in, and the device's route group and its display account's grant name
+that location and that transition alone, so the Tools file opens nothing for a device and nothing else of the app
+does either; the framework puts the registered playlist over whatever the browser asks for; and the app's root sets
+the range for a device's request. The display account reads a playlist and its dashboards when they are shared with
+a group it is in, which no person is in: its owner shares them there by the group's share artifact
+(BOSS Insights: `BOSS_INSIGHTS_DISPLAY`, the mount's `shareGroups`, the route group `INSIGHTS_PLAYLISTS` over
+`Insights/WallDisplay`).
+
+### Report delivery
+
+A schedule renders as its owner. A **business schedule** sends that result to another user only when it is what that user
+would see, and to each recipient in a message of their own. A schedule is a business one when `store#Schedule` saved it (its
+`deliveryMode` is `personal` or `group`) or when its definition reads a business dataset or any other dataset whose rows
+depend on the viewer (one with a `rowFilterService` or `contextFilters`, such as a business events dataset over the
+annotations), whatever wrote its row: one made by `create#Schedule`, or by an entity write, is held to the same check at each
+run. A technical schedule (telemetry and other datasets that give every reader the same rows) is delivered as before, in
+owner mode, to one address line.
+
+- **The scope fingerprint.** A user's fingerprint for a definition is a hash of what they read of the definition and of
+  everything it references (each dashboard and library panel, read or not), the documents of each dataset they may read, each
+  dataset's resolved row filter (`rowFilter`, `contextFilters` and the `rowFilterService`'s answer, in a form that does not
+  depend on the order of its values) and, for a dataset whose records are restricted, whether they hold them. What a
+  dashboard reads without naming it counts too: the telemetry dataset of a query that names none, the change markers
+  (`monitor_annotations`) and, over a business dataset, each registered source of business events. It is computed in
+  a context of its own signed in as that user, so a screen's inheritable grant or a disabled authorization never enters it.
+  Two users are owner-equivalent when their fingerprints are equal. A policy that names the viewer's own groups
+  (`ReportUserGroups`) gives users of different groups different filters, so different fingerprints; a policy that answers the
+  organizations a user works in gives every user of those organizations the same one. A definition over a service source is
+  not comparable (the service decides its scope in its own code), so it goes to its owner alone.
+- **`check#ReportAudience`** answers, for a definition the viewer would own a schedule of, each proposed recipient's result:
+  the named users and the members in date of the named groups, each `eligible` or not with a `reasonCode` and a `reason` in
+  words: `not-shared` (the definition, or a dashboard or panel it uses, is not theirs to read: its owner shares it),
+  `scope-differs`, `not-comparable`, `denied-source` (the owner does not read a source), `inactive`, `external`,
+  `no-address`. A reason never says what the other user holds. Recipients other than the viewer need the artifact
+  `org.moqui.report.delivery.group` (`REPORT_DELIVERY_ADMIN`, `ADMIN`'s; an app grants it to its distributors).
+- **`store#Schedule`** creates or changes a business schedule its viewer owns, delivered by email only (no save location). The
+  server sets the mode: `personal` when the owner is the only recipient, `group` otherwise, with its recipients in
+  `moqui.report.ReportScheduleRecipient`. An active group schedule is saved only when every recipient passes
+  (`RECIPIENT_REFUSED`, naming each with its reason code; a group's member without an address or an active account is not a
+  refusal, they are skipped at each run) and the audience is within the cap (`RECIPIENT_CAP`). The cap is `recipientCap`, 50
+  without one, held under the instance preference `report.groupRecipientCeiling` (Admin's, 200 by default). A change needs
+  the revision read (`expectedRevision`, `STALE_REVISION`). `pause#Schedule` resumes a group schedule only when its recipients
+  pass again. An owner-mode schedule (made by `create#Schedule`, with no `deliveryMode`) changed with no recipient list is
+  changed in its timing and output alone (cron, render mode, skipping when empty, subject and dates, at the revision read):
+  its definition, recipients, template and location are kept and it stays in owner mode. Sent recipient lists make it a
+  business schedule.
+- **A run** opens a `moqui.report.ReportOccurrence` (a cron occurrence keyed by the schedule and the cron instant, or a Send
+  now), pins the owner, the schedule's revision and the definition's version, and for each recipient, just before their
+  message: checks the lease, the owner and the schedule again, computes the recipient's fingerprint again, and sends one
+  message to their one address, or records why not. Each recipient has a `moqui.report.ReportRecipientDelivery` row: `sent`
+  with its message id, `skipped` with a safe reason (`scope-differs`, `inactive`, `no-address`, `over-cap`,
+  `owner-unauthorized`, `delivery-blocked`, `schedule-changed`, `removed-audience`), `failed` (`transport-failure`,
+  `source-failure`) or `uncertain` (the transport does not know whether the message was accepted). One recipient's failure
+  does not stop the others. An occurrence that runs again (a run that ended before its schedule's last run time was
+  kept) sends to nobody whose delivery is `sent` or `uncertain`. One render serves every recipient of a locale (`renderCount`): they share the definition's
+  version and the fingerprint. A data export's message carries its files; a PDF's or a picture's also the dashboard inline.
+- **No row keeps a report.** An occurrence and its deliveries are evidence: who, when, which revision and version, what state
+  and which reason code. `find#ReportOccurrences` lists the viewer's own schedules' occurrences as status and counters; with
+  `received` the deliveries to the viewer; with `administrative`, for a holder of `ADMIN_TRANSFER_VIEW`, every owner's, without
+  titles. `get#ReportOccurrence` answers each recipient's outcome to the schedule's owner (and to that administrator), and to
+  a recipient their own delivery alone. `get#RecipientReport` renders a delivered report again as its recipient, and only
+  while their fingerprint is still the one the delivery was sent under (`scope-changed` otherwise); another user's delivery
+  id is refused as one that does not exist.
+- **Retry.** `retry#ReportRecipients` sends again to the failed deliveries named, for the schedule's owner, at the
+  occurrence's revision read, with each recipient checked again; a sent delivery is never replayed, and a schedule or
+  definition changed since the occurrence is refused (`DEFINITION_CHANGED`: send a new occurrence). An uncertain delivery is
+  never retried blind: `reconcile#ReportRecipient` records what a person found (sent, or failed and so retryable).
+- **Ownership.** A business schedule whose owner is disabled or gone pauses (`pausedReason` `owner-disabled`) at its next
+  run. `find#OwnedSchedules`, `pause#OwnedSchedules` and `transfer#DefinitionOwner` carry the owned-resource contract of
+  `org.moqui.admin.IdentityServices` for an account's lifecycle: the user's own, or another user's for a holder of
+  `REPORT_OWNER_CHANGE` (`ADMIN`'s). A transfer hands one schedule, with its definition and the definitions that references
+  which the leaving owner owns, to an active internal user who may store a schedule, reads every source and, for a group
+  schedule, may deliver to a group (`NEW_OWNER_REFUSED` otherwise). The schedule stays paused (`transfer-pending`) until the
+  new owner resumes it, which checks the recipients against the new owner's fingerprint; nothing is sent meanwhile, by Send
+  now or a retry either. The caller of these gains no report data.
+- **Screen schedules** (a `ScreenScheduled` with a `screenPath` and no report definition) render as their user. One that
+  names a `userGroupId` is sent to the group only when its screen path is registered as a `ReportLegacyAdapter` enumeration
+  (`enumCode` the path), then one message a member, and only to members the saved find is shared with; without a
+  registration the group is not sent to and the user's own delivery continues.
+- **What the screens read and write** beside these (`framework/service/org/moqui/report/ReportReads.js` and
+  `ReportWrites.js`), so that the [delivery screens](#the-dashboards-app), which an app shows under its own root, touch no
+  entity:
+  - `find#ReportRecipients` answers who may be proposed and accepted as a recipient, to a caller who may deliver to
+    others (`canDeliver`: the group delivery artifact by the caller's own grant): a page of the active internal accounts
+    by name (`users`: `userId`, `username`, `name`; `term` searches the full name and the username, ignoring case), the
+    caller's own groups (`groups`, never `ALL_USERS`: a delivery goes to a group its owner belongs to) and, of the
+    `userIds` and `groupIds` named, which may be recipients (`selectedUsers`) and which may not (`refusedUserIds`,
+    `refusedGroupIds`). With `permissionId` only the holders of that permission are proposed and accepted, which is how
+    an app keeps its reports to its own readers (`reportPolicy.recipientPermissionId`). The caller is always accepted;
+    a caller who may not deliver to others is answered no account and no group and every other name refused. Being
+    accepted grants nothing: the engine checks each recipient's scope.
+  - `find#ScreenSchedules` answers the screen schedules the caller set up for themselves (the caller as `userId`, no
+    report definition), each with its saved find's description and whether the group it names is sent to
+    (`groupAdmitted`); `store#ScreenSchedule` changes such a schedule's timing, format, skipping when empty, active
+    interval, subject (plain text: one that holds an expression is refused, since the subject is expanded when the
+    schedule runs) and pause, and never its screen, find, user, group, template or location. Another user's schedule,
+    a report schedule and one that does not exist are refused alike (`SCHEDULE_UNAVAILABLE`).
+  - `get#ReportOccurrence` answers the run's owner by name too (`ownerName`), with the whole run: to its owner and to
+    the administrator.
+
+  They are granted with the other `ReportServices` operations (`DASHBOARDS_APP`'s pattern); an app grants the three
+  new ones to the groups that schedule (BOSS: `BOSS_INS_REPORT_OWN`).
+
+The code is `crates/moqui-report/src/delivery.rs` (and `schedule.rs` for the run); the regression spec is
+`framework/test/ReportAudience.spec.js`, which also holds what the three screen operations answer and refuse.
+
+### Business alerts
+
+An alert rule is evaluated once, as its owner. A **business rule** tells that one state and its values to another user only
+when it is what that user would have read: when their scope fingerprint for the rule equals the owner's, the check of
+[Report delivery](#report-delivery). A rule is a business one when its body names an `audience`, or when its query reads a
+business dataset or any other dataset whose rows depend on the viewer (a `rowFilterService`, `contextFilters`), whatever
+wrote its row. A technical rule (telemetry and other datasets that give every reader the same rows, with no audience) is
+evaluated and delivered to its contact points as before.
+
+- **The audience in place of contact points.** A business rule is saved through `save#Definition` with
+  `audience`: `recipientUserIds`, `recipientGroupIds`, `channels` (`notification`, the default, a private in-app
+  notification on `topic`, `ReportAlert` without one; and `email`, the recipient's own account address through
+  `emailTemplateId`, else the framework's `REPORT_ALERT`, written into the audience at save), `recipientCap`, and the
+  grouping and timing a contact point has (`groupBy`, `groupWaitSeconds`, `repeatSeconds`). Nobody named is the owner
+  alone; the owner is told only when named or alone. A contact point, a shared
+  contact reference, a webhook or any other audience field (an address, a URL) refuses the save
+  (`BUSINESS_CONTACT_REFUSED`, `BUSINESS_AUDIENCE_REFUSED`). The server sets `audience.deliveryMode`: `personal` when the
+  owner is the only recipient, `group` otherwise. A rule may also name `detailLink`, a plain path on this server its
+  notifications link to with `?definitionId=` (an app's own rule screen), in place of Tools' AlertRule
+  (`/apps/dashboards/AlertRule?definitionId=`), where the notifications of a rule that names none open.
+- **The default alert email.** `REPORT_ALERT` (`framework/data/ReportEmailData.xml`,
+  `framework/screen/ReportAlertEmail.xml`) is the rule's title, the state of each series told with the recipient's own
+  value, and a link to the rule. Like `DASHBOARD_REPORT` it ships with no from address, and the `SYSTEM` mail server it
+  names has no SMTP host on a fresh instance: an administrator sets both before any is sent (Health's report mail check
+  warns of the server, which both templates name). With no mount the alert screens offer email for any audience; under a
+  mount that names `alertAudience`, only where it names its template.
+- **At save.** An active business rule is saved only when every recipient passes the check as it stands for the rule
+  (`RECIPIENT_REFUSED`, naming each with its reason code; a missing address refuses only where `email` is a channel) and
+  the audience is within the cap (`RECIPIENT_CAP`, the cap and ceiling of report delivery); recipients other than the owner
+  need `org.moqui.report.delivery.group`. `check#ReportAudience` answers the same for an alert rule the viewer reads. As
+  for a schedule, a recipient must read the rule itself (`not-shared` otherwise: share it with a group they are in). A
+  paused rule may be saved with a recipient to be mended.
+- **Inactive until its owner activates it.** `copy#Definition` and `import#Definitions` of a business rule drop its contact
+  points and save it paused (`pausedReason` `not-validated`), and so does a git sync's pull of a rule that is not already
+  active here. Its owner activates it by saving it with `paused` false, which is the save above.
+- **At each notification** every recipient is checked again and told separately, one notification or message a recipient;
+  one whose scope changed is skipped with `scope-differs` (and the other codes of report delivery), one past the cap with
+  `over-cap`, and one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
+  that state is not told it again until the repeat interval. Each recipient's last outcome for a notification group on a
+  channel is a `moqui.report.AlertRecipientDelivery` row: the outcome, a safe reason code and, for one it was sent to, the
+  state's name; never a value or a series label, and no state for one skipped. A business rule's notification row keeps no
+  payload. The in-app notification goes to that one user: a subscription to every message of the topic
+  (`NotificationTopicUser.allNotifications`) receives none of them (`NotificationMessage::direct_only`).
+- **No Data, Error and stale are never Normal.** As for every rule, an empty result is `NoData` and a failed or incomplete
+  query is `Error`; for a business rule so is a source whose index is older than its fields (the admission check `index`).
+  A series removed after going missing (`pruneAfterMissing`) is told as Normal to a technical rule's contacts; a business
+  rule's recipients are told nothing more of it (its last word is No data) and it leaves the rule's state.
+  A business rule's state changes write no marker on the shared time series (`monitor_annotations`) and open no incident.
+- **Reads.** `get#AlertState` answers a rule the viewer reads with each series' labels, state, times and last value
+  (`AlertInstance.lastValue`): for a business rule to its owner, and to a recipient of its audience whose fingerprint equals
+  the owner's now; anyone else gets `available` false with a reason code. Any other rule's state is answered to a reader of
+  the rule who also reads its sources. It also answers what a screen needs to show any rule it reads: whether it is a
+  business rule (`business`), a shipped template (`template`), paused, and its owner by name (`ownerName`; none for a
+  shipped rule), so the [alert screens](#the-dashboards-app) read no alert instance and no account. `find#AlertDeliveries` lists the last outcome of each recipient of the rules the viewer
+  owns, with `received` the deliveries to the viewer, and with `administrative`, for a holder of `ADMIN_TRANSFER_VIEW`, every
+  owner's business rules as counters (sent, skipped, failed, paused, last evaluated) with no title, series, recipient or
+  value.
+- **Ownership.** A business rule whose owner cannot sign in pauses (`owner-disabled`) at its next evaluation and tells
+  nobody. `find#OwnedAlertRules`, `pause#OwnedAlertRules` and `transfer#AlertRuleOwner` carry the owned-resource contract, as
+  the schedule services do, for the user themselves or a holder of `REPORT_OWNER_CHANGE`. A transfer hands one rule, with the
+  shared silences and mute timings it names that the leaving owner owns, to an active internal user who may save
+  definitions, reads its sources and, for a group audience, may deliver to a group (`NEW_OWNER_REFUSED`); it stays paused
+  (`transfer-pending`) until the new owner saves it active, which checks the audience against the new owner's fingerprint.
+  A transfer removes the rule's series states and sent-notification records, which were the leaving owner's readings: the
+  new owner's first evaluation starts from nothing.
+
+The code is `crates/moqui-report/src/alert_delivery.rs` (with `alert.rs` for the evaluation); the regression spec is
+`framework/test/BusinessAlerts.spec.js`.
 
 ## Regressions and incidents
 
@@ -600,24 +1176,31 @@ conf or restarting, for a while: to see full traces or DEBUG lines of one module
   annotation tagged `runtime-override` and the key: a set is a band to its expiry, an extend or an early revert a
   point. Incidents list them as changes, and dashboards draw them.
 
-Seeing the screen needs Monitor access; changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo
-ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`, `set#RuntimeSetting`,
-`revert#RuntimeSetting` and `revert#AllRuntimeSettings`; the code is `crates/moqui-core/src/live_settings/` and
+The same screen is System › Configuration › Logging and telemetry. Seeing it needs System access (`SYSTEM_APP`);
+changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. The services are
+`org.moqui.monitor.MonitorServices.list#RuntimeSettings`, `set#RuntimeSetting`, `revert#RuntimeSetting` and
+`revert#AllRuntimeSettings`; the code is `crates/moqui-core/src/live_settings/` and
 `crates/moqui-report/src/settings.rs`.
 
 ## Security
 
 - Every query runs as the viewer. A dataset is authorized as the artifact `org.moqui.report.dataset.<id>`
-  (`MONITOR_APP` holds the `otel_*` ones; `REPORT_DATASETS_ADMIN` holds all), plus `DataDocumentUserGroup` for a
+  (`SYSTEM_APP` holds the `otel_*` ones; `REPORT_DATASETS_ADMIN` holds all), plus `DataDocumentUserGroup` for a
   DataDocument. A saved panel never widens access.
 - A business dataset is read only once admitted, and its row filter is a registered scope policy
   ([Business datasets](#business-datasets)).
+- A dataset that reads a telemetry index or a business dataset's document needs that source's own artifact, of its saver
+  and of its reader or owner, whatever grants the dataset's own name ([Dataset aliases](#dataset-aliases)). So the update
+  grant on `org.moqui.report.dataset` (saving dataset definitions) with a pattern over the saver's own dataset names is
+  not a way to the logs or past a business dataset's row filter.
 - Row filters (`rowFilter`, `contextFilters` from the signed-in identity, or a `rowFilterService`) are added by the
   server before documents, ranking, totals, aggregations and exports; a client never supplies them. Existing entity
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
   only the datasets they should read.
 - Alerts and scheduled reports run as their owner, whose access is checked at each run; recipients do not set what
-  the report may read.
+  the report may read. A schedule over business data goes only to recipients whose scope equals the owner's, one message
+  each ([Report delivery](#report-delivery)), and so does an alert over business data, which takes no contact point,
+  address or webhook ([Business alerts](#business-alerts)).
 - Queries have row, bucket and time limits, and a timeout. Exports and scheduled deliveries are logged to the
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
@@ -658,10 +1241,36 @@ take the index refresh interval to appear.
   ```
 
   Then set the report email template's SMTP server.
+- **Monitor in System.** Monitor's routes are `/apps/system/Monitor/<Screen>` (`/apps/monitor` is gone, with no
+  alias), Evals is `/apps/system/Llm/Evals`, and the `MONITOR_APP` artifact group is no longer shipped: its datasets,
+  services and entities are members of `SYSTEM_APP`. On an existing database load
+  `runtime/base-component/tools/data/ToolsSecurityData.xml` for those members. The database keeps its `MONITOR_APP`
+  rows, which name a screen that is gone: they still grant the telemetry datasets and Monitor's services, and no
+  longer any screen. A user group that was granted only `MONITOR_APP` needs `SYSTEM_APP` to open Monitor, which also
+  opens the rest of System to it. The `MONITOR_*` permissions are unchanged. The old routes answer 404.
 - **Business datasets** (Insights P3): the entity check creates `moqui.report.BusinessDataset`; load `ReportSetupData.xml` again
   for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
   business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of
   one sees it as not admitted until a steward admits it ([Business datasets](#business-datasets)).
+- **Business events, drill and the semantic guards** (Insights P6): load `ReportSetupData.xml` (the `ReportAnnotationSource`
+  type), `MonitoringSecurityData.xml` (`REPORT_BUSINESS_ADMIN`: the business annotation artifact and the restricted records
+  artifacts, `ADMIN`'s) and mr-mantle's `MonitoringSalesSecurityData.xml` (its source) again. The annotations index gains four
+  fields (`organizationPartyId`, `event`, `recordType`, `recordId`), added to an existing table in place. From then on a panel
+  over a business dataset that sums an amount across several currencies without grouping by the currency says so
+  (`UNIT_MIXED`) instead of showing a number without a unit: group it by its unit field or filter it to one.
+- **Report delivery** (Insights P7): the entity check creates `moqui.report.ReportScheduleRecipient`, `ReportOccurrence` and
+  `ReportRecipientDelivery` and adds `deliveryMode`, `recipientCap`, `pausedReason` and `versionNumber` to `ScreenScheduled`.
+  Load `ReportSetupData.xml` (the occurrence and delivery states, `REPORT_OWNER_CHANGE`, the `ReportLegacyAdapter` type) and
+  `MonitoringSecurityData.xml` (`REPORT_DELIVERY_ADMIN`) again. From then on an existing report schedule whose definition
+  reads a business dataset sends each recipient their own message, and only to recipients whose scope equals its owner's;
+  and a screen schedule that names a user group stops sending to the group until its screen path is registered as a
+  `ReportLegacyAdapter` (its user's own delivery continues).
+- **Business alerts** (Insights P8): the entity check creates `moqui.report.AlertRecipientDelivery` and adds `lastValue` to
+  `AlertInstance`; no seed data changes. From then on a saved alert rule whose query reads a business dataset, or another
+  whose rows depend on the viewer, tells its owner alone in the app until it is saved with an audience: the contact points
+  its row holds (a notification to a group, an email address, a webhook) are no longer delivered to, a save that still
+  names one is refused, and its state changes no longer write a marker on the time series or open an incident. Rules
+  over telemetry are as they were.
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,

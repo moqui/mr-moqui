@@ -262,7 +262,8 @@ pub(crate) fn show_main(app: &AppHandle) {
 }
 
 /// The tray icon: Show brings the window back, Restart node stops and starts the node, the node item switches its
-/// mode, the client item makes the app a client of a server (or a node again), Quit stops the node and quits. A client
+/// mode, Developer tools makes the node a dev instance with the Dev AIDE (a build with `devtools`), the client item
+/// makes the app a client of a server (or a node again), Quit stops the node and quits. A client
 /// has no node items and no backups.
 fn tray(app: &AppHandle, mode: node::Mode) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show MR Moqui", true, None::<&str>)?;
@@ -291,6 +292,19 @@ fn tray(app: &AppHandle, mode: node::Mode) -> tauri::Result<()> {
             )?;
             menu.insert(&ports, 3)?;
         }
+        // the Dev AIDE and the rest of the dev tools: a build without them has no item
+        if cfg!(feature = "devtools") {
+            let on = node::dev_tools_on(&app.path().app_config_dir()?);
+            let dev_tools = tauri::menu::CheckMenuItem::with_id(
+                app,
+                "node-devtools",
+                "Developer tools (Dev AIDE)",
+                true,
+                on,
+                None::<&str>,
+            )?;
+            menu.insert(&dev_tools, 3)?;
+        }
         menu
     };
     os::add_tray_items(app, &menu)?;
@@ -306,6 +320,7 @@ fn tray(app: &AppHandle, mode: node::Mode) -> tauri::Result<()> {
             "restart-node" => restart(app),
             "node-mode" => switch_node_mode(app),
             "node-ports" => switch_ports(app),
+            "node-devtools" => switch_dev_tools(app),
             "client-mode" => switch_client_mode(app),
             updates::ITEM => updates::chosen(app),
             "quit" => app.exit(0),
@@ -363,6 +378,30 @@ fn switch_ports(app: &AppHandle) {
             app.request_restart();
         }
         Err(err) => tracing::error!("Could not change the node's ports: {err}"),
+    }
+}
+
+/// Make the node a dev instance (the Dev AIDE and the dev tools), or not, from the next start; restart into it.
+fn switch_dev_tools(app: &AppHandle) {
+    let switched = app
+        .path()
+        .app_config_dir()
+        .map_err(|err| err.to_string())
+        .and_then(|dir| {
+            let on = !node::dev_tools_on(&dir);
+            node::set_dev_tools(&dir, on)
+                .map(|()| on)
+                .map_err(|err| err.to_string())
+        });
+    match switched {
+        Ok(on) => {
+            tracing::info!(
+                "Restarting with the developer tools {}",
+                if on { "on" } else { "off" }
+            );
+            app.request_restart();
+        }
+        Err(err) => tracing::error!("Could not change the developer tools: {err}"),
     }
 }
 
@@ -446,7 +485,12 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             runtime.display()
         );
     }
-    let properties = backup::node_properties(app);
+    let mut properties = backup::node_properties(app);
+    let dev_tools = app.path().app_config_dir().is_ok_and(|dir| node::dev_tools_on(&dir));
+    if dev_tools {
+        tracing::info!("The node is a dev instance: the Dev AIDE and the dev tools (Developer tools in the tray)");
+    }
+    properties.extend(node::purpose_properties(dev_tools));
     let start = NodeStart {
         mode,
         runtime,

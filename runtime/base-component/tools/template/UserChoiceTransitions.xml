@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The user accounts a System screen's drop-down searches (a transition-include of each screen that has one): every
+    account of the instance by id, username or name, so it is the instance administrator's, taken in only by the
+    System screens' own parts and never by an app that shows a System screen under its root; it carries
+    template/AdminMount.js's raw() as its condition, as every transition of such a part does. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="getUserList">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <actions>
+            <entity-find entity-name="moqui.security.UserAccount" list="userList" limit="20">
+                <econditions combine="or">
+                    <econdition field-name="userId" operator="like" value="%${term}%" ignore-case="true"/>
+                    <econdition field-name="username" operator="like" value="%${term}%" ignore-case="true"/>
+                    <econdition field-name="userFullName" operator="like" value="%${term}%" ignore-case="true"/>
+                </econditions>
+                <order-by field-name="username"/>
+            </entity-find>
+            <script>
+                const outList = []
+                for (const user of userList)
+                    outList.push({value: user.userId, label: `${user.username ?? ''} ${user.userFullName ?? ''} [${user.userId}]`})
+                ec.web.sendJsonResponse(outList)
+            </script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets/>
+</screen>

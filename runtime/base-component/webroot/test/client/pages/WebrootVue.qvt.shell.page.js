@@ -769,6 +769,23 @@ test("a deeper path is a level more for each screen, the last one current, a scr
     assert.equal(new Set(rows.map((row) => row.key)).size, rows.length);
 });
 
+test("a menu group is the caption of the first row of each run of siblings that share it", () => {
+    const item = (name, group) => ({ name, title: name, path: "/apps/Hub/" + name, pathWithParams: "/apps/Hub/" + name, group });
+    const app = { name: "Hub", title: "Hub", path: "/apps/Hub", pathWithParams: "/apps/Hub",
+        subscreens: [item("Home"), item("Caches", "Server"), item("Threads", "Server"), item("Users", "Security"), item("Print"), item("Jobs", "Server")] };
+    const rows = moqui.drawerRows([appsRoot("Hub"), app]);
+    assert.deepEqual(rows.map((row) => [row.title, row.caption || ""]), [["Hub", ""], ["Home", ""], ["Caches", "Server"], ["Threads", ""],
+        ["Users", "Security"], ["Print", ""], ["Jobs", "Server"], ["Orders", ""]]);
+    // the open screen's own subscreens are between two rows of one group: the second is still not the first of its run
+    const caches = Object.assign(item("Caches", "Server"), { subscreens: [item("Entries", "Detail")] });
+    app.subscreens[1].active = true;
+    const deeper = moqui.drawerRows([appsRoot("Hub"), app, caches]);
+    assert.deepEqual(deeper.map((row) => [row.level, row.title, row.caption || ""]).slice(2, 5), [[1, "Caches", "Server"], [2, "Entries", "Detail"],
+        [1, "Threads", ""]]);
+    // a menu with no group has no caption
+    assert.ok(moqui.drawerRows([appsRoot("Hub"), hubApp("")]).every((row) => !row.caption));
+});
+
 test("a screen whose active child is its own list (same title) shows the list in its place, one level up", () => {
     const app = { name: "Hub", title: "Hub", path: "/apps/Hub", pathWithParams: "/apps/Hub",
         subscreens: [{ name: "WorkItems", title: "Work items", path: "/apps/Hub/WorkItems", pathWithParams: "/apps/Hub/WorkItems", active: true },

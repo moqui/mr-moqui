@@ -39,7 +39,7 @@
 //! A feed's receive service defaults to `index#DataDocuments` and its delete service to
 //! `delete#DataDocument`. Other feeds, such as notifications, receive through their own service.
 //!
-//! A row that keeps failing stays, and the drain says so (plans/High-Level-Review.md HL-043): a row whose delivery
+//! A row that keeps failing stays, and the drain says so (plans/archive/High-Level-Review.md HL-043): a row whose delivery
 //! fails when it has been pending for the drain's `stuck_after` or longer makes [`FeedReport::stuck`], which the drain
 //! service turns into an error, so its job run is kept and the job's error handling fires. Each drain also sets the
 //! gauges `moqui.search.feed.pending`, `moqui.search.feed.oldest_pending_seconds` and `moqui.search.feed.search_down`,

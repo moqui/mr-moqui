@@ -14,7 +14,7 @@
 
 //! The seeded server of Gate 3 and the plain HTTP client its tests use, shared by `gate3.rs` and `gate3_browser.rs`.
 //!
-//! The fixture is `component://tools/screen/System/Security/ArtifactGroup/ArtifactGroupDetail.xml`. The tools screens are
+//! The fixture is `component://tools/screen/System/Access/ArtifactGroupDetail.xml`. The tools screens are
 //! not mounted under any app by the conf in this repository, so the setup adds the mount in a `conf/MoquiDevConf.xml` of its
 //! temporary runtime, which is where a deployment would.
 
@@ -32,7 +32,7 @@ use moqui_host::{load_data, start_server, LoadFlags};
 pub mod cdp;
 
 /// The fixture screen under the plain `html` root.
-pub const FIXTURE: &str = "/System/Security/ArtifactGroup/ArtifactGroupDetail";
+pub const FIXTURE: &str = "/System/Access/ArtifactGroupDetail";
 
 /// The conf of the test runtime. `companion` is the location of a screen with qjs and qvue text of its own, `widgets` and `static_list`
 /// the screens of the browser smoke.
@@ -871,7 +871,7 @@ fn start_seeded_under(
     copy_dir(&template.cluster, &cluster_dir);
     if static_fixture {
         let component = runtime.join("component/gate-static");
-        let extend = component.join("screen-extend/tools/screen/System/Security/ArtifactGroup");
+        let extend = component.join("screen-extend/tools/screen/System/Access");
         std::fs::create_dir_all(&extend).unwrap();
         std::fs::write(component.join("component.xml"), r#"<component name="gate-static"/>"#).unwrap();
         std::fs::write(extend.join("ArtifactGroupDetail.xml"), STATIC_EXTEND).unwrap();

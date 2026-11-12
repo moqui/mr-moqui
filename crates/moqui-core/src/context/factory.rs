@@ -865,6 +865,18 @@ impl ExecutionContextFactory {
         self.conf_setting_on_disk(path, name)
     }
 
+    /// [`Self::conf_setting`], or `None` when the conf has no such attribute (and no live override): for a setting
+    /// whose empty value says something other than its absence.
+    pub fn conf_setting_if_set(&self, path: &str, name: &str) -> Option<String> {
+        let overlaid = self.conf_overlaid.load(std::sync::atomic::Ordering::Acquire)
+            && read(&self.conf_overlay).contains_key(&format!("{path}@{name}"));
+        if overlaid || self.conf().element_attr(path, name).is_some() {
+            Some(self.conf_setting(path, name))
+        } else {
+            None
+        }
+    }
+
     /// [`Self::conf_setting`] from the merged conf alone, with no live override.
     pub fn conf_setting_on_disk(&self, path: &str, name: &str) -> String {
         self.conf()
@@ -1126,10 +1138,26 @@ impl ExecutionContext {
     /// Push an artifact frame without any check, for a frame that is already authorized.
     pub fn push(&self, artifact_type: &str, name: &str, action: &str) {
         let errors = self.errors_at_push();
-        self.state
-            .artifacts
-            .borrow_mut()
-            .push_with(artifact_type, name, action, AuthInfo::default(), errors);
+        let wants_user =
+            self.state
+                .artifacts
+                .borrow_mut()
+                .push_with(artifact_type, name, action, AuthInfo::default(), errors);
+        self.note_activity_user(wants_user);
+    }
+
+    /// Tell the thread's activity mirror the user of the work it runs, when a push asked for it. The session is read
+    /// only if nothing holds it: a push inside a change of the session goes without, and a later one tells it.
+    fn note_activity_user(&self, wants_user: bool) {
+        if wants_user {
+            let user_id = self
+                .state
+                .session
+                .try_borrow()
+                .ok()
+                .and_then(|session| session.user_id().map(str::to_string));
+            super::activity::note_user(user_id);
+        }
     }
 
     fn errors_at_push(&self) -> super::artifact::ErrorsAtPush {
@@ -1188,10 +1216,12 @@ impl ExecutionContext {
             return Err(crate::user::denied(artifact_type, name, action, &info));
         }
         let errors = self.errors_at_push();
-        self.state
+        let wants_user = self
+            .state
             .artifacts
             .borrow_mut()
             .push_with(artifact_type, name, action, info, errors);
+        self.note_activity_user(wants_user);
         Ok(())
     }
 
@@ -1442,6 +1472,11 @@ impl ExecutionContext {
         self.state.artifacts.borrow().name_string()
     }
 
+    /// Java's `getStack`: each frame of the artifact stack as (name, type, action), top first.
+    pub fn artifact_stack_frames(&self) -> Vec<(String, String, String)> {
+        self.state.artifacts.borrow().frames()
+    }
+
     /// The entity of the entity frame on top of the artifact stack, if one is, and the first other artifact below it
     /// (the query stats' artifact). Both `None` while the stack is being changed (an authorization check's own find).
     pub fn statement_artifact(&self) -> (Option<String>, Option<String>) {
@@ -1571,7 +1606,12 @@ fn install_session_flush(factory: &Arc<ExecutionContextFactory>) {
         let Some(factory) = weak.upgrade() else {
             return;
         };
-        if let Err(err) = crate::user::session::flush_dirty(&factory) {
+        // Bounded, resuming where the last pass stopped, so many dirty sessions do not hold the scheduler (HL-020).
+        let bound = crate::user::session::FlushBound {
+            sessions: crate::user::session::FLUSH_PASS_SESSIONS,
+            time: crate::user::session::FLUSH_PASS_TIME,
+        };
+        if let Err(err) = crate::user::session::flush_dirty_bounded(&factory, bound) {
             tracing::warn!("session flush failed: {err}");
         }
         let expired = crate::user::session::take_expired(&factory);
@@ -1916,7 +1956,7 @@ fn is_secret(name: &str, flag: Option<&str>) -> bool {
     flag != "false" && (flag == "true" || name.contains("pass") || name.contains("pw") || name.contains("key"))
 }
 
-fn leave_sentinel(name: &str) -> bool {
+pub(super) fn leave_sentinel(name: &str) -> bool {
     name == "entity_ds_crypt_pass_old"
 }
 
@@ -1931,7 +1971,7 @@ fn ensure_env_readable(path: &Path) -> Result<(), Error> {
     }
 }
 
-fn generate_secret() -> Result<String, Error> {
+pub(super) fn generate_secret() -> Result<String, Error> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes)
         .map_err(|err| Error::new(format!("could not read random bytes for a secret property: {err}")))?;

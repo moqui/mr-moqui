@@ -389,7 +389,8 @@ pub fn run_task(
     })
 }
 
-/// `ec.llm.summarize`: the summary of `text`.
+/// `ec.llm.summarize`: the summary of `text`; with a transaction open, refused unless `allow_in_transaction` (as
+/// [`run_task`]).
 ///
 /// # Errors
 ///
@@ -399,12 +400,13 @@ pub fn summarize(
     facade: &EntityFacade,
     text: &str,
     max_words: Option<u64>,
+    allow_in_transaction: bool,
 ) -> Result<String, Error> {
     let mut input = json!({"text": text});
     if let Some(words) = max_words {
         input["maxWords"] = json!(words);
     }
-    let done = run_task(factory, facade, "summarize", &input, None, false)?;
+    let done = run_task(factory, facade, "summarize", &input, None, allow_in_transaction)?;
     Ok(done
         .output
         .get("summary")
@@ -413,7 +415,7 @@ pub fn summarize(
         .to_string())
 }
 
-/// `ec.llm.classify`: the label of `text` among `labels`.
+/// `ec.llm.classify`: the label of `text` among `labels`; `allow_in_transaction` as [`summarize`].
 ///
 /// # Errors
 ///
@@ -423,6 +425,7 @@ pub fn classify(
     facade: &EntityFacade,
     text: &str,
     labels: &[String],
+    allow_in_transaction: bool,
 ) -> Result<String, Error> {
     let done = run_task(
         factory,
@@ -430,7 +433,7 @@ pub fn classify(
         "classify",
         &json!({"text": text, "labels": labels}),
         None,
-        false,
+        allow_in_transaction,
     )?;
     Ok(done
         .output
@@ -440,7 +443,8 @@ pub fn classify(
         .to_string())
 }
 
-/// `ec.llm.extract`: the values of `fields` (name to description) in `text`.
+/// `ec.llm.extract`: the values of `fields` (name to description) in `text`; `allow_in_transaction` as
+/// [`summarize`].
 ///
 /// # Errors
 ///
@@ -450,6 +454,7 @@ pub fn extract(
     facade: &EntityFacade,
     text: &str,
     fields: &Json,
+    allow_in_transaction: bool,
 ) -> Result<Json, Error> {
     let done = run_task(
         factory,
@@ -457,7 +462,7 @@ pub fn extract(
         "extract",
         &json!({"text": text, "fields": fields}),
         None,
-        false,
+        allow_in_transaction,
     )?;
     Ok(done.output.get("values").cloned().unwrap_or(Json::Null))
 }
@@ -899,7 +904,7 @@ struct FieldRecord {
 fn field_record(facade: &EntityFacade, parameters: &Parameters) -> Result<FieldRecord, String> {
     let entity = param(parameters, "entityName").ok_or("propose#AiFieldValue needs an entityName")?;
     let field = param(parameters, "fieldName").ok_or("propose#AiFieldValue needs a fieldName")?;
-    let (pk, is_field, hidden) = facade
+    let (pk, is_field, hidden, opted_out) = facade
         .with_entity(&entity, |definition, _, _| {
             let pk: Vec<String> = definition.pk_field_names().into_iter().map(str::to_string).collect();
             let found = definition.fields.iter().find(|candidate| candidate.name == field);
@@ -907,11 +912,16 @@ fn field_record(facade: &EntityFacade, parameters: &Parameters) -> Result<FieldR
                 pk,
                 found.is_some(),
                 found.is_some_and(|found| found.encrypt || crate::tools::data::secret_name(&found.name)),
+                found.is_some_and(|found| found.ai_opt_out),
             ))
         })
         .map_err(|error| error.to_string())?;
     if !is_field {
         return Err(format!("{entity} has no field {field}"));
+    }
+    // design-people PE-21: no Update with AI on a field whose text reaches no model
+    if opted_out {
+        return Err(format!("{field} of {entity} is opted out of AI (ai-opt-out)"));
     }
     if pk.contains(&field) || hidden {
         return Err(format!(

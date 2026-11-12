@@ -125,7 +125,7 @@ fn tools_services_run_on_postgres() {
         "org.moqui.impl.PrintServices.print#ScreenDocument",
         &[
             ("networkPrinterId", "GATE_PRINTER"),
-            ("screenLocation", "component://tools/screen/System/dashboard.xml"),
+            ("screenLocation", "component://tools/screen/System/Home.xml"),
         ],
     );
     if browser.is_none() {
@@ -213,6 +213,23 @@ fn tools_services_run_on_postgres() {
     );
     let snapshots = page(address, &john, "/Tools/Data/Snapshots.html");
     assert!(snapshots.contains("GateSnapshot.zip"), "{snapshots}");
+    // Upload Snapshot writes the file beside the exported ones, where the list and Import find it.
+    let boundary = "gateSnapshotBoundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"snapshotFile\"; filename=\"GateUploaded.zip\"\r\n\
+         Content-Type: application/zip\r\n\r\nnot really a zip\r\n--{boundary}--\r\n"
+    );
+    let content_type = format!("multipart/form-data; boundary={boundary}");
+    let request = http_request(
+        "POST",
+        "/Tools/Data/Snapshots/uploadSnapshot",
+        &[("Authorization", &john), ("Content-Type", &content_type)],
+        &body,
+    );
+    let (status, _, text) = exchange(address, &request);
+    assert!(matches!(status, 200 | 302), "{status}: {text}");
+    let snapshots = page(address, &john, "/Tools/Data/Snapshots.html");
+    assert!(snapshots.contains("GateUploaded.zip"), "{snapshots}");
     let (status, imported) = run(
         address,
         &john,

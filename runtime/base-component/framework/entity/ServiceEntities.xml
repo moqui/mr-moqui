@@ -133,11 +133,37 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="instanceId" type="text-short"><description>The server instance (cluster member) holding the lock.
             A lock whose instance is not a live cluster member, or is this instance but not running the job here, is
             taken over before expireLockTime.</description></field>
+        <field name="leaseExpireDate" type="date-time"><description>While a run holds the lock, when its lease lapses
+            (the database's time). The instance running it renews the lease every minute, for three minutes, until the
+            run ends or goes on past its job timeout; a lock whose lease lapsed is taken over, even from a live
+            instance. Empty for a lock held with no lease (a backup run started by hand), which only a gone instance or
+            expireLockTime frees.</description></field>
         <field name="runCount" type="number-integer"><description>How many runs have been started when the job's
             errorHistoryOnly is Y, including runs whose success row was removed. repeatCount uses this instead of
             counting ServiceJobRun rows. Empty until the first such run, or until older rows are counted once.</description></field>
         <relationship type="one" related="moqui.service.job.ServiceJob"/>
         <relationship type="one" related="moqui.service.job.ServiceJobRun"/>
+    </entity>
+    <entity entity-name="ServiceOutbox" package="moqui.service.job" use="transactional" cache="never">
+        <description>The tx-commit service ECA rules of a call, written in the transaction that commits, so they run
+            after it even when the process stops first (plans/archive/High-Level-Review.md HL-025). The run after the commit
+            deletes the row in its own transaction, so its effects and the delete commit together; a row still here
+            after availableDate (its run was lost to a crash, a stop or a full service queue, or failed) is run by the
+            scheduler on a job worker, claimed with a conditional update of attemptCount, up to five attempts, later
+            ones waiting longer. Delivery is at least once: a rule with an effect outside the database (an email)
+            de-duplicates. Only for a call in the default entity group's transaction; a sim session writes none.</description>
+        <field name="outboxId" type="id" is-pk="true"/>
+        <field name="serviceName" type="text-medium"><description>The service whose rules these are.</description></field>
+        <field name="phase" type="text-short"><description>The rules' when: tx-commit.</description></field>
+        <field name="queuedCall" type="text-very-long"><description>The call as JSON, as ServiceJob.queuedCall: the
+            parameters and results keeping their lists and maps, the user and agent run that made it, and the
+            authorization the rules run under.</description></field>
+        <field name="availableDate" type="date-time"><description>When the scheduler may run it: a minute after the
+            commit, then later after each attempt.</description></field>
+        <field name="attemptCount" type="number-integer"><description>Runs tried that did not commit.</description></field>
+        <field name="lastAttemptDate" type="date-time"/>
+        <field name="lastError" type="text-very-long"><description>The error of the last attempt that failed.</description></field>
+        <index name="SVC_OUTBOX_AVAIL" unique="false"><index-field name="availableDate"/></index>
     </entity>
 
     <!-- ========================================================= -->
@@ -197,6 +223,17 @@ along with this software (see the LICENSE.md file). If not, see
 
         <field name="triggerVisitId" type="id"><description>Active visit when SystemMessage triggered (mainly produced) to track
             the user who did so; independent of the message transport which could have separate remote system and other Visit-like data.</description></field>
+
+        <!-- MR Moqui only. The settlement of a send or consume whose outcome is unknown (the message stayed Sending or
+            Consuming), kept apart from statusId, which only the transport's own result sets
+            (org.moqui.admin.OperationServices.execute#Recovery, reconcile): what a person concluded, who, when and why. It
+            marks nothing as sent or consumed and no reader of statusId takes it for a delivery; it holds for the attempt
+            it was made for, and the next send or consume clears it (claim#SystemMessage; the audit log keeps it). -->
+        <field name="outcomeSettlement" type="text-short" enable-audit-log="true"><description>What a person reported of an
+            attempt whose outcome is unknown: done or notDone. Empty for a message nobody settled.</description></field>
+        <field name="outcomeSettledByUserId" type="id"/>
+        <field name="outcomeSettledDate" type="date-time"/>
+        <field name="outcomeSettledReason" type="text-medium"/>
 
         <!-- the follow may be useful for other types of messages, but come specifically from the OAGIS specification;
             leave out for now, senderId and messageId with combined fields may be adequate and are more generic
@@ -267,6 +304,9 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgProduced" toStatusId="SmsgError" transitionName="Error"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgError" toStatusId="SmsgProduced" transitionName="Back to Produced"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgError" toStatusId="SmsgSending" transitionName="Sending"/>
+            <!-- MR Moqui only: a message in Error that is sent again (send#ProducedSystemMessage takes one) and fails goes
+                back to Error; without this the failed send left it Sending for good -->
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgSending" toStatusId="SmsgError" transitionName="Back to Error"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgError" toStatusId="SmsgSent" transitionName="Send"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgSent" toStatusId="SmsgError" transitionName="Error"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgReceived" toStatusId="SmsgError" transitionName="Error"/>
@@ -398,6 +438,16 @@ along with this software (see the LICENSE.md file). If not, see
 
         <field name="preAuthMessageRemoteId" type="id">
             <description>Remote system related to this remote system but for pre-auth purposes, like a separate single sign on server</description></field>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no message is sent to the
+            remote (send#ProducedSystemMessage and send#SystemMessageRest refuse it; a gateway whose connection it is
+            reports it as its problem); receiving is not affected. Set by an administrator, or by
+            org.moqui.admin.ConfigurationServices.store#Connection when the remote's address or sign-in changed, until a
+            test of it passes (mr-boss plan/design-admin.md §8.1)</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N:
+            send#SystemMessageRest sends nothing to a loopback, private or link-local address for this remote, redirects
+            included. store#Connection saves N for a remote a delegated administrator started or repointed on a
+            production instance and never changes it back: an instance administrator allows a remote on the instance's
+            own network. Empty or Y: as before. A send service of its own reads the flag itself.</description></field>
 
         <relationship type="one" title="SystemMessageAuthType" related="moqui.basic.Enumeration" short-alias="messageAuthEnum">
             <key-map field-name="messageAuthEnumId"/></relationship>

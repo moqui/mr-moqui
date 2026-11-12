@@ -1487,39 +1487,47 @@
             '</q-dialog>',
         methods: {
             onShow() {
-                if (this.draggable && this.$refs.dialogHeader) this.$refs.dialogHeader.$el.addEventListener("mousedown", this.onGrab);
+                const header = this.dragHeader();
+                if (header) {
+                    header.addEventListener("pointerdown", this.onGrab);
+                    header.classList.add("m-dialog-drag");
+                }
                 this.focusFirst();
                 this.$emit("onShow");
             },
             onHide() {
-                if (this.draggable) {
-                    root.document.removeEventListener("mousemove", this.onDrag);
-                    root.document.removeEventListener("mouseup", this.onLetGo);
-                    if (this.$refs.dialogHeader) this.$refs.dialogHeader.$el.removeEventListener("mousedown", this.onGrab);
+                const header = this.dragHeader();
+                if (header) {
+                    header.removeEventListener("pointerdown", this.onGrab);
+                    header.classList.remove("m-dialog-drag");
                 }
                 this.$emit("onHide");
             },
-            onDrag(e) {
-                const target = this.$refs.dialogCard.$el;
+            dragHeader() { return this.draggable && this.$refs.dialogHeader ? this.$refs.dialogHeader.$el : null; },
+            // The header drags the card by any pointer, mouse, touch or pen (moqui.pointer): from where it was by the pointer's
+            // way since the press, kept 10 px inside the window; a lost pointer puts it back. Not from a button in the header,
+            // and not while the dialog fills a phone's screen.
+            onGrab(event) {
+                const target = this.$refs.dialogCard && this.$refs.dialogCard.$el;
+                if (!target || !moqui.pointer.primary(event) || this.$q.screen.lt.sm) return;
+                if (event.target && event.target.closest && event.target.closest(".q-btn, button, a, input")) return;
+                event.preventDefault();
                 const styles = root.getComputedStyle(target);
-                let newLeft = (parseInt(styles.left, 10) || 0) + e.movementX;
-                let newTop = (parseInt(styles.top, 10) || 0) + e.movementY;
-                const halfW = root.innerWidth / 2;
-                const halfH = root.innerHeight / 2;
-                const elW = target.offsetWidth / 2;
-                const elH = target.offsetHeight / 2;
-                newLeft = Math.max(-(halfW - elW - 10), Math.min(halfW - elW - 10, newLeft));
-                newTop = Math.max(-(halfH - elH - 10), Math.min(halfH - elH - 10, newTop));
-                target.style.left = newLeft + "px";
-                target.style.top = newTop + "px";
-            },
-            onLetGo() {
-                root.document.removeEventListener("mousemove", this.onDrag);
-                root.document.removeEventListener("mouseup", this.onLetGo);
-            },
-            onGrab() {
-                root.document.addEventListener("mousemove", this.onDrag);
-                root.document.addEventListener("mouseup", this.onLetGo);
+                const left = parseInt(styles.left, 10) || 0;
+                const top = parseInt(styles.top, 10) || 0;
+                const startX = event.clientX, startY = event.clientY;
+                const place = (newLeft, newTop) => {
+                    const halfW = root.innerWidth / 2 - target.offsetWidth / 2 - 10;
+                    const halfH = root.innerHeight / 2 - target.offsetHeight / 2 - 10;
+                    target.style.left = Math.max(-halfW, Math.min(halfW, newLeft)) + "px";
+                    target.style.top = Math.max(-halfH, Math.min(halfH, newTop)) + "px";
+                };
+                const follow = (x, y) => place(left + x - startX, top + y - startY);
+                moqui.pointer.track(event, {
+                    move: follow,
+                    end: (x, y) => { if (Number.isFinite(x) && Number.isFinite(y)) follow(x, y); },
+                    cancel: () => place(left, top)
+                }, null);
             },
             // the .default-focus field, else the first visible field of a form in the dialog
             focusFirst() {
@@ -2295,7 +2303,7 @@
             '<q-form v-if="!formList || (formList.paginate && formList.paginate.pageMaxIndex > 4)" @submit.prevent="goPage" class="q-mx-xs">' +
                 '<q-input dense outlined hide-bottom-space v-model="pageIndex" type="text" name="pageIndex" placeholder="Page #" style="width:96px;" input-class="text-center"' +
                     ' :rules="[val => /^\\d*$/.test(val) || \'digits only\', val => !val || ((formList && +val <= formList.paginate.pageMaxIndex + 1) || (maxIndex && +val <= maxIndex + 1)) || \'higher than max\']">' +
-                    '<template v-slot:append><q-btn flat round dense size="sm" type="submit" icon="arrow_forward"></q-btn></template>' +
+                    '<template v-slot:append><q-btn flat round dense size="sm" type="submit" icon="arrow_forward" aria-label="Go to page"></q-btn></template>' +
                 '</q-input>' +
             '</q-form>',
         methods: {
@@ -3338,7 +3346,7 @@
             '<div v-else-if="editorType === \'md\'" class="m-text-area-editor">' +
                 '<q-input type="textarea" dense outlined stack-label hide-bottom-space :label="label" :model-value="local" @update:model-value="onInput" :name="name" :for="id" :rows="rows"' +
                     ' :readonly="readonly" :disable="disable" :form="form" :bg-color="bg" autogrow v-bind="errorAttrs">' +
-                    '<template v-slot:after><q-btn flat round dense size="sm" :icon="preview ? \'edit\' : \'visibility\'" @click="togglePreview"><q-tooltip>Preview</q-tooltip></q-btn></template>' +
+                    '<template v-slot:after><q-btn flat round dense size="sm" :icon="preview ? \'edit\' : \'visibility\'" :aria-label="preview ? \'Edit\' : \'Preview\'" :aria-pressed="preview ? \'true\' : \'false\'" @click="togglePreview"><q-tooltip>{{preview ? \'Edit\' : \'Preview\'}}</q-tooltip></q-btn></template>' +
                 '</q-input>' +
                 '<div v-if="preview" class="q-pa-sm markdown-preview" v-html="previewHtml"></div>' +
             '</div>' +
@@ -4092,11 +4100,11 @@
         props: { modelValue: String, name: String, id: String, label: String, form: String, disable: Boolean, readonly: Boolean, tooltip: String,
             light: Boolean, placeholder: String, rows: [String, Number], enter: { type: String, default: "newline" }, mentionUrl: String,
             mentionParameters: Object, recordUrl: String, recordParameters: Object, plain: Boolean, plainToggle: { type: Boolean, default: true }, autofocus: Boolean,
-            collab: Object },
+            collab: Object, aiOptOut: Boolean },
         emits: ["update:modelValue", "update:plain", "submit", "mention", "failed"],
         data() {
             richTextCount += 1;
-            return { state: "loading", isPlain: this.plain, focused: false, plainFocused: false, htmlBeforePlain: "", plainText: "",
+            return { state: "loading", isPlain: this.plain, focused: false, plainFocused: false, htmlBeforePlain: "", plainText: "", aiOffInside: false,
                 active: {}, blockLabel: "Paragraph", asking: null, askValue: "", proposal: null,
                 mention: { open: false, items: [], index: 0, loading: false }, uid: "m-rich-text-" + richTextCount };
         },
@@ -4188,8 +4196,10 @@
                 { key: "deleteRow", label: "Delete row" }, { key: "deleteColumn", label: "Delete column" }, { key: "deleteTable", label: "Delete table" }]; },
             canEdit() { return !this.disable && !this.readonly; },
             editable() { return this.state === "ready" && this.canEdit; },
-            // Assist's text actions when the server offers them (bootstrap.features.textActions), never on a shared document
-            textActions() { const assist = moqui.assist; return assist && assist.textActionsOn && !this.collab && assist.textActionsOn() ? assist.textActionList() : []; },
+            // Assist's text actions when the server offers them (bootstrap.features.textActions), never on a shared document, nor on
+            // a field opted out of AI: the ai-opt-out prop, or inside a [data-ai-opt-out] field, section or screen (design-people PE-21)
+            aiOff() { return this.aiOptOut || this.aiOffInside; },
+            textActions() { const assist = moqui.assist; return assist && assist.textActionsOn && !this.collab && !this.aiOff && assist.textActionsOn() ? assist.textActionList() : []; },
             assistLabel() { return moqui.assist ? moqui.assist.labels.textActions : "Assist"; },
             minHeight() {
                 const rows = parseInt(this.rows, 10) || (this.light ? 2 : 6);
@@ -4298,6 +4308,7 @@
             textAction(item) {
                 const assist = moqui.assist;
                 const editor = this.editor;
+                if (!assist || this.aiOff) return;
                 let source;
                 if (this.isPlain) {
                     const area = this.$refs.plainArea;
@@ -4558,6 +4569,7 @@
             }
         },
         mounted() {
+            this.aiOffInside = !!(this.$el && this.$el.closest && this.$el.closest("[data-ai-opt-out]"));
             loadTiptap().then(() => {
                 if (this.unmountedNow) return;
                 try {
@@ -5427,7 +5439,8 @@
     // with no subscreens and a screen after it has that one as its child; the last screen's saved finds are its children. A screen
     // on the path whose active subscreen has its title (its own list) gives way to it, its subtree a level up. Each row:
     // {key, kind (app, screen or find), level, title, image, imageType, to (none for a disabled link), onPath, current (the
-    // screen shown, or its active saved find), inApp (a row of the open app, its own row too)}. Pure, for the node tests.
+    // screen shown, or its active saved find), inApp (a row of the open app, its own row too), group, and caption on the first
+    // row of a run of siblings in one group}. Pure, for the node tests.
     moqui.drawerRows = (navMenuList) => {
         const list = Array.isArray(navMenuList) ? navMenuList.filter(Boolean) : [];
         const rows = [];
@@ -5442,7 +5455,7 @@
             kind: kind || (index === appIndex ? "app" : "screen"), level: Math.max(0, index - appIndex),
             title: entry.title || entry.name || "", image: entry.image || "", imageType: entry.imageType || "",
             to: entry.disableLink ? "" : (entry.pathWithParams || entry.path || ""), onPath: !!onPath, current: !!current,
-            inApp: !!onPath && index >= appIndex
+            inApp: !!onPath && index >= appIndex, group: kind === "find" ? "" : (entry.group || "")
         });
         const walk = (index) => {
             const entry = list[index];
@@ -5476,6 +5489,16 @@
             for (let j = i; j < end - 1; j++) rows[j].level--;
             i--;
         }
+        // a menu group (the menu data's group, a menu-group): the first row of each run of siblings that share one has it as
+        // its caption, drawn above it; a row with no group has none
+        rows.forEach((item, i) => {
+            if (!item.group) return;
+            let before = null;
+            for (let j = i - 1; j >= 0 && rows[j].level >= item.level; j--) {
+                if (rows[j].level === item.level) { before = rows[j]; break; }
+            }
+            if (!before || before.kind !== item.kind || before.group !== item.group) item.caption = item.group;
+        });
         return rows;
     };
 
@@ -5486,7 +5509,9 @@
         props: { mini: Boolean },
         template:
             '<q-list dense class="m-drawer" :class="{\'m-drawer-mini\': mini}">' +
-                '<q-item v-for="row in shownRows" :key="row.key" :to="row.to || undefined" :clickable="!!row.to" :title="mini ? undefined : row.title" @keydown.enter.prevent' +
+                '<template v-for="row in shownRows" :key="row.key">' +
+                '<q-item-label v-if="row.caption && !mini" header class="m-drawer-group" :class="{\'m-drawer-in-app\': row.inApp}" :style="rowStyle(row)">{{row.caption}}</q-item-label>' +
+                '<q-item :to="row.to || undefined" :clickable="!!row.to" :title="mini ? undefined : row.title" @keydown.enter.prevent' +
                         ' :class="rowClass(row)" :style="rowStyle(row)">' +
                     '<q-item-section v-if="row.kind === \'app\' || row.image || row.kind === \'find\'" avatar>' +
                         '<q-icon v-if="row.kind === \'find\' && !row.image" name="sym_o_bookmark" size="xs"></q-icon>' +
@@ -5497,6 +5522,7 @@
                     '<q-item-section v-if="!mini"><div class="ellipsis">{{row.title}}</div></q-item-section>' +
                     '<q-tooltip v-if="mini" anchor="center right" self="center left">{{row.title}}</q-tooltip>' +
                 '</q-item>' +
+                '</template>' +
             '</q-list>',
         computed: {
             rows() { return moqui.drawerRows(this.$root.navMenuList); },
@@ -6057,8 +6083,8 @@
                     '<div class="m-calendar-bar row items-center no-wrap">' +
                         '<q-btn unelevated dense no-caps class="m-btn-tonal q-px-sm" :label="labels.today" @click="goToday"></q-btn>' +
                         '<template v-if="calMode !== \'list\'">' +
-                            '<q-btn flat dense round icon="chevron_left" class="m-cal-prev" @click="shift(-1)"><q-tooltip>{{labels.previous}}</q-tooltip></q-btn>' +
-                            '<q-btn flat dense round icon="chevron_right" class="m-cal-next" @click="shift(1)"><q-tooltip>{{labels.next}}</q-tooltip></q-btn>' +
+                            '<q-btn flat dense round icon="chevron_left" class="m-cal-prev" :aria-label="labels.previous" @click="shift(-1)"><q-tooltip>{{labels.previous}}</q-tooltip></q-btn>' +
+                            '<q-btn flat dense round icon="chevron_right" class="m-cal-next" :aria-label="labels.next" @click="shift(1)"><q-tooltip>{{labels.next}}</q-tooltip></q-btn>' +
                         '</template>' +
                         '<div class="m-calendar-title ellipsis q-ml-sm" :class="phone ? \'text-subtitle1 text-weight-medium\' : \'text-h6\'">{{rangeTitle}}</div>' +
                         '<q-space></q-space>' +
@@ -6159,7 +6185,7 @@
                     '<div class="m-peek-bar row items-center no-wrap">' +
                         '<q-space></q-space>' +
                         '<q-btn v-if="peekKey" flat dense no-caps icon="sym_o_open_in_full" class="m-peek-full" :label="labels.openFull" @click="openFull"></q-btn>' +
-                        '<q-btn flat dense round icon="sym_o_close" class="m-peek-close" @click="peekSelect(\'\')"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
+                        '<q-btn flat dense round icon="sym_o_close" class="m-peek-close" :aria-label="labels.close" @click="peekSelect(\'\')"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
                     '</div>' +
                     '<m-dynamic-container v-if="peekSrc" :key="peekSrc" :id="uid + \'_peek\'" :url="peekSrc"></m-dynamic-container>' +
                     '<div v-else class="m-peek-empty m-muted q-pa-md">{{labels.peekEmpty}}</div>' +
@@ -7806,15 +7832,48 @@
             icon: sign > 0 ? "sym_o_trending_up" : sign < 0 ? "sym_o_trending_down" : "sym_o_trending_flat" };
     };
 
+    // Whether a page that reads itself again on a timer may do so now: it is in view, no dialog or menu is open over it, and
+    // the user is not typing in a field. Pure over the document, for the node tests.
+    moqui.pageRefreshDue = (doc) => {
+        if (!doc || doc.visibilityState === "hidden") return false;
+        if (doc.querySelector && doc.querySelector(".q-dialog, .q-menu")) return false;
+        const active = doc.activeElement;
+        return !(active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || ""));
+    };
+
+    // m-page-refresh: a screen that shows live readings (the System home) puts one in its page to be read again every
+    // `seconds` (ten at least), through the shell's reloadSubscreens, while moqui.pageRefreshDue allows it. It draws nothing,
+    // and its timer ends with the page it is in.
+    component("m-page-refresh", {
+        name: "mPageRefresh",
+        props: { seconds: [Number, String] },
+        template: '<span class="m-page-refresh" hidden></span>',
+        mounted() {
+            const seconds = Number(this.seconds);
+            if (!(seconds > 0)) return;
+            this.timer = setInterval(() => {
+                if (moqui.pageRefreshDue(document) && this.$root && this.$root.reloadSubscreens) this.$root.reloadSubscreens();
+            }, Math.max(10, seconds) * 1000);
+        },
+        beforeUnmount() { if (this.timer) clearInterval(this.timer); }
+    });
+
     // The number-card element (style-guide §8.2): a q-card flat bordered with the title as text-overline, the value (text-h5 for
-    // size md, h6 for sm, h4 for lg), the delta in the tone of numberCardDelta and the icon; with href the whole card is a link,
+    // size md, h6 for sm, h4 for lg), the delta in the tone of numberCardDelta, a sparkline of its recent values (numbers with
+    // commas, drawn with moqui.sparklinePath) and the icon; with href the whole card is a link,
     // m-link for a screen (the shell's setUrl) and a plain anchor when external.
     component("m-number-card", {
         name: "mNumberCard",
         props: { title: String, value: [String, Number], delta: [String, Number], deltaGood: { type: String, default: "up" },
-            icon: String, href: String, external: Boolean, size: { type: String, default: "md" } },
+            icon: String, href: String, external: Boolean, size: { type: String, default: "md" }, sparkline: [String, Array] },
         computed: {
             deltaInfo() { return moqui.numberCardDelta(this.delta, this.deltaGood); },
+            // the sparkline's numbers (a list, or its text with commas; an empty place is a gap) as a path, none under two numbers
+            sparkPath() {
+                const values = Array.isArray(this.sparkline) ? this.sparkline : String(this.sparkline || "").split(",").map((text) => text.trim());
+                const numbers = values.map((value) => (value === "" || value === null || value === "null" ? null : Number(value)));
+                return numbers.filter((value) => value !== null && Number.isFinite(value)).length > 1 ? moqui.sparklinePath(numbers) : "";
+            },
             deltaClass() {
                 const tone = this.deltaInfo ? this.deltaInfo.tone : "neutral";
                 return tone === "good" ? "text-positive" : tone === "bad" ? "text-negative" : "m-muted";
@@ -7833,11 +7892,42 @@
                             '<div v-if="deltaInfo" class="text-caption row no-wrap items-center m-number-card-delta" :class="deltaClass">' +
                                 '<q-icon :name="deltaInfo.icon" size="xs" class="q-mr-xs"></q-icon><span>{{delta}}</span>' +
                             '</div>' +
+                            '<svg v-if="sparkPath" class="m-number-card-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">' +
+                                '<path :d="sparkPath" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"></path></svg>' +
                         '</div>' +
                         '<m-menu-icon v-if="icon" :name="icon" size="sm" class="m-number-card-icon"></m-menu-icon>' +
                     '</q-card-section>' +
                 '</q-card>' +
             '</component>'
+    });
+
+    // The nav-card element (plans/archive/Tools-Fancy.md B6): a q-card flat bordered with the icon in a tonal avatar, the title
+    // (text-subtitle1, medium) and one line of text (text-caption, muted); size lg has the larger avatar. With href the title is
+    // the card's link, m-link for a screen (the shell's setUrl) and a plain anchor when external, and it covers the whole card
+    // (m-nav-card-link in the style sheet), so the card is one link; the default slot holds the element's child links, text
+    // links along the bottom that stay above the card's own.
+    component("m-nav-card", {
+        name: "mNavCard",
+        props: { title: String, text: String, icon: String, href: String, external: Boolean, size: { type: String, default: "md" } },
+        computed: {
+            wrapper() { return this.href ? (this.external ? "a" : "m-link") : "div"; },
+            large() { return this.size === "lg"; },
+            avatarSize() { return this.large ? "48px" : "36px"; },
+            iconSize() { return this.large ? "md" : "sm"; }
+        },
+        template:
+            '<q-card flat bordered class="m-nav-card column no-wrap" :class="[\'m-nav-card-\' + size, {\'m-nav-card-link\': !!href}]">' +
+                '<q-card-section class="col row no-wrap q-pa-md" :class="large ? \'items-start\' : \'items-center\'">' +
+                    '<q-avatar v-if="icon" rounded :size="avatarSize" class="m-nav-card-avatar q-mr-md">' +
+                        '<m-menu-icon :name="icon" :size="iconSize"></m-menu-icon>' +
+                    '</q-avatar>' +
+                    '<div class="col m-nav-card-body">' +
+                        '<component :is="wrapper" :href="href || undefined" class="m-nav-card-title text-subtitle1 text-weight-medium">{{title}}</component>' +
+                        '<div v-if="text" class="text-caption m-muted m-nav-card-text">{{text}}</div>' +
+                    '</div>' +
+                '</q-card-section>' +
+                '<div v-if="$slots.default" class="m-nav-card-links row items-center q-px-md q-pb-sm"><slot></slot></div>' +
+            '</q-card>'
     });
 
     // The screen context of the suite shell (the context element of a screen): while mounted it registers recordEntity, recordId,
@@ -8659,7 +8749,23 @@
             out.forEach((group) => group.rows.forEach((row) => { row.index = index; index += 1; }));
             return out;
         },
-        rows(groups) { return [].concat(...(groups || []).map((group) => group.rows)); }
+        rows(groups) { return [].concat(...(groups || []).map((group) => group.rows)); },
+        // Actions of the client's own (the terminal's, Terminal-Fancy §9.6): rows with run(), not a url, by source. A source
+        // registers its rows again to change them, and a function gives them anew each time the palette asks.
+        client: (root.Vue && root.Vue.reactive ? root.Vue.reactive({}) : {}),
+        registerActions(source, rows) {
+            palette.client[source] = rows;
+            return () => { delete palette.client[source]; };
+        },
+        clientActions() {
+            const out = [];
+            Object.keys(palette.client).forEach((source) => {
+                const given = palette.client[source];
+                const rows = typeof given === "function" ? given() : given;
+                (rows || []).forEach((row) => { if (row && typeof row.run === "function") out.push(Object.assign({ icon: "sym_o_bolt" }, row)); });
+            });
+            return out;
+        }
     };
     moqui.shellPalette = palette;
 
@@ -8957,6 +9063,12 @@
                     if (moqui.assist) moqui.assist.ask(row.text);
                     return;
                 }
+                // a client action: its function (a copy of the row keeps it)
+                if (row && typeof row.run === "function") {
+                    this.$root.paletteOpen = false;
+                    row.run();
+                    return;
+                }
                 if (!row || !row.url) return;
                 const newTab = !!(event && (event.ctrlKey || event.metaKey));
                 this.$root.paletteOpen = false;
@@ -8969,35 +9081,51 @@
     // The tray panel (design §1.4): one panel at the right of the canvas, 400 px from 600 px and the full width below, with a tab
     // for each tray screen the theme names. A tab is an m-dynamic-container loaded on its first opening and kept (v-show), so
     // its state lasts across navigation; the root keeps the open state, the tab and each tab's scroll position.
+    // Undocked (plans/Terminal-Fancy.md §10.6, D17) a tab is a float of kind tray on its own: its body is held in a teleport that
+    // targets the float's body while it floats ($root.trayFloatTarget) and is off while docked, so the tab's screen is the same
+    // instance in both places (a chat's draft stays); it leaves the strip, and the tray shows only the docked tabs.
     component("m-shell-tray", {
         name: "mShellTray",
         // the containers and scroll elements of the tabs, by key, from the function refs: not reactive
         data() { return { containers: markRaw({}), bodies: markRaw({}) }; },
+        computed: {
+            // the floated tabs whose window has its body, as text: a change is a move
+            moved() { return this.$root.trayTabs.filter((tab) => this.$root.trayFloatTarget(tab.key)).map((tab) => tab.key).join(","); },
+            // Undock is offered where something may float (not below 600 px nor on a handheld screen)
+            canFloat() { return !!(moqui.floats && moqui.floats.canFloat()); }
+        },
         template:
-            '<q-page-sticky v-if="$root.trayMounted" v-show="$root.trayOpen" position="right" expand class="m-tray-sticky">' +
+            '<q-page-sticky v-if="$root.trayMounted" v-show="$root.trayOpen && $root.trayDockedTabs.length" position="right" expand class="m-tray-sticky">' +
                 '<q-card id="m-tray" flat bordered square class="m-tray column no-wrap">' +
                     '<div class="row items-center no-wrap q-pl-xs">' +
                         '<q-tabs :model-value="$root.trayTab" @update:model-value="$root.openTray($event)" dense no-caps inline-label narrow-indicator align="left"' +
                                 ' class="col text-grey-7" active-color="primary" indicator-color="primary">' +
-                            '<q-tab v-for="tab in $root.trayTabs" :key="tab.key" :name="tab.key" :icon="tab.icon" :label="tab.label">' +
+                            '<q-tab v-for="tab in $root.trayDockedTabs" :key="tab.key" :name="tab.key" :icon="tab.icon" :label="tab.label">' +
                                 '<q-badge v-if="$root.countOf(tab.key)" color="negative" rounded floating>{{$root.countText(tab.key)}}</q-badge></q-tab>' +
                         '</q-tabs>' +
+                        '<q-btn v-if="canFloat" flat round dense icon="sym_o_picture_in_picture_alt" id="m-tray-undock" :aria-label="$root.labels.undockTab" @click="$root.undockTrayTab($root.trayTab)">' +
+                            '<q-tooltip>{{$root.labels.undockTab}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_close" :aria-label="$root.labels.closeTray" @click="$root.closeTray()"><q-tooltip>{{$root.labels.closeTray}}</q-tooltip></q-btn>' +
                     '</div>' +
                     '<q-separator></q-separator>' +
-                    '<div v-for="tab in $root.trayTabs" :key="tab.key" v-show="$root.trayTab === tab.key" :ref="(el) => { bodies[tab.key] = el; }"' +
-                            ' class="col scroll q-pa-sm m-tray-body" @scroll="onScroll(tab.key, $event)">' +
-                        '<m-dynamic-container v-if="$root.trayLoaded[tab.key]" :ref="(vm) => { containers[tab.key] = vm; }" :id="\'m-tray-\' + tab.key" :url="tab.loadUrl"></m-dynamic-container>' +
-                    '</div>' +
+                    '<template v-for="tab in $root.trayTabs" :key="tab.key">' +
+                        '<teleport :to="$root.trayFloatTarget(tab.key) || \'body\'" :disabled="!$root.trayFloatTarget(tab.key)">' +
+                            '<div v-show="$root.trayTab === tab.key || $root.trayFloating[tab.key]" :ref="(el) => { bodies[tab.key] = el; }"' +
+                                    ' class="col scroll q-pa-sm m-tray-body" :data-tray-tab="tab.key" @scroll="onScroll(tab.key, $event)">' +
+                                '<m-dynamic-container v-if="$root.trayLoaded[tab.key]" :ref="(vm) => { containers[tab.key] = vm; }" :id="\'m-tray-\' + tab.key" :url="tab.loadUrl"></m-dynamic-container>' +
+                            '</div>' +
+                        '</teleport>' +
+                    '</template>' +
                 '</q-card>' +
             '</q-page-sticky>',
         methods: {
             onScroll(key, event) { this.$root.keepTrayScroll(key, event.target.scrollTop); },
-            // the tab's last scroll position, once it shows again (a hidden element loses it)
+            // the tab's last scroll position, once it shows again (a hidden element loses it, and so does one moved to or from a
+            // float); taken now, as the move may report a scroll of 0
             restoreScroll(key) {
+                const top = this.$root.trayScroll[key];
                 this.$nextTick(() => {
                     const body = this.bodies[key];
-                    const top = this.$root.trayScroll[key];
                     if (body && top) body.scrollTop = top;
                 });
             },
@@ -9010,7 +9138,12 @@
         },
         watch: {
             "$root.trayTab"(key) { if (key) this.restoreScroll(key); },
-            "$root.trayOpen"(open) { if (open && this.$root.trayTab) this.restoreScroll(this.$root.trayTab); }
+            "$root.trayOpen"(open) { if (open && this.$root.trayTab) this.restoreScroll(this.$root.trayTab); },
+            // a tab moved into a float or back: its scroll put back
+            moved(now, before) {
+                const was = before ? before.split(",") : [], is = now ? now.split(",") : [];
+                was.filter((key) => key && is.indexOf(key) < 0).concat(is.filter((key) => key && was.indexOf(key) < 0)).forEach((key) => this.restoreScroll(key));
+            }
         },
         mounted() { this.$root.shellTray = this; },
         unmounted() { if (this.$root.shellTray === this) this.$root.shellTray = null; }
@@ -9276,7 +9409,7 @@
         "        <template v-for=\"counter in headerCounters\" :key=\"counter.key\">\n" +
         "        <q-separator v-if=\"counter.dividerBefore\" vertical inset class=\"q-mx-xs m-header-divider\"></q-separator>\n" +
         "        <q-btn flat round dense :id=\"'m-counter-' + counter.key\" :icon=\"counter.icon\" :aria-label=\"counter.label\"\n" +
-        "                :class=\"{'text-primary': counter.tray && trayOpen && (counter.any || trayTab === counter.key)}\" @click=\"counter.tray ? toggleTray(counter.any ? null : counter.key) : setUrl(counter.url)\">\n" +
+        "                :class=\"{'text-primary': counter.tray && ((trayOpen && (counter.any || trayTab === counter.key)) || trayFloatShown(counter.key))}\" @click=\"counter.tray ? toggleTray(counter.any ? null : counter.key) : setUrl(counter.url)\">\n" +
         "            <q-badge v-if=\"counterCount(counter)\" floating rounded color=\"negative\">{{counterText(counter)}}</q-badge>\n" +
         "            <span v-if=\"counter.key === 'chat' && myPresence\" class=\"m-avatar-presence m-shell-presence\" :class=\"'m-presence-' + myPresence\"></span>\n" +
         "            <q-tooltip>{{counter.label}}</q-tooltip>\n" +
@@ -9373,6 +9506,8 @@
         "        </q-btn>\n" +
         // the Assist toggle, rightmost (WebrootAssist.js, for a user who may use it); its right q-drawer (view LpR) below, the
         // screen context and assistReach its inputs (IronStone impl-drawers-commons R1)
+        // the browser terminal's button while the user has sessions: its menu lists them (WebrootTerminal.js, Terminal-Fancy §10.4)
+        "        <m-terminal-button v-if=\"terminalOn && !handheld\"></m-terminal-button>\n" +
         "        <m-assist-button v-if=\"assistOn && !handheld\"></m-assist-button>\n" +
         "    </q-toolbar></q-header>\n" +
         "\n" +
@@ -9401,6 +9536,11 @@
         "        <div v-html=\"shell.footerHtml\" class=\"row full-width\"></div>\n" +
         "    </q-footer>\n" +
         "</q-layout>\n" +
+        // the floating windows (WebrootFloats.js, plans/Terminal-Fancy.md §10.1): outside #m-canvas and over the layout, below the
+        // dialogs, menus and notices; what floats is its owner's content, moved into a window's body
+        "<m-float-layer v-if=\"floatsOn\"></m-float-layer>\n" +
+        // the copy a terminal's program made that the browser refused, to copy by hand (WebrootTerminal.js)
+        "<m-terminal-copy v-if=\"terminalOn\"></m-terminal-copy>\n" +
         "\n" +
         "<m-dialog v-model=\"reLoginShow\" width=\"400\" :title=\"labels.reLogin\">\n" +
         "    <div v-if=\"reLoginMfaData\">\n" +
@@ -9434,7 +9574,7 @@
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
     qvt.shellLabels = { terminal: "Terminal UI", menu: "Menu", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
-        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray",
+        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray", undockTab: "Undock this tab",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
@@ -9634,7 +9774,12 @@
             pollShellCounts() {
                 if (this.notificationClient && this.notificationClient.isOpen()) return;
                 this.loadShellCounts();
-                if (this.trayOpen) this.reloadTrayTab(this.trayTab);
+                this.reloadShownTrayTabs();
+            },
+            // the tabs in view: the tray's open tab and every floated one (a floated tab refreshes as a docked one, §10.6)
+            reloadShownTrayTabs() {
+                const keys = (this.trayOpen && !this.trayFloating[this.trayTab] ? [this.trayTab] : []).concat(Object.keys(this.trayFloating));
+                keys.forEach((key) => this.reloadTrayTab(key));
             },
             // A message of the notification socket: shellCounts sets the badges and reloads the open tab; todayItems, a chatRoom:
             // topic, notifications and the apps' notification-topic providers reload their tab. A chat signal (typing, read) does
@@ -9646,7 +9791,7 @@
                     let counts = jsonObj.message;
                     if (moqui.isString(counts)) { try { counts = JSON.parse(counts); } catch (err) { counts = null; } }
                     if (moqui.isPlainObject(counts)) this.shellCounts = counts;
-                    if (this.trayOpen) this.reloadTrayTab(this.trayTab);
+                    this.reloadShownTrayTabs();
                 } else if (topic === "todayItems") this.reloadTrayTab("today");
                 else if (topic.indexOf("chatRoom:") === 0) { if (!moqui.chat || moqui.chat.trayReloads(jsonObj)) this.reloadTrayTab("chat"); }
                 else if (topic === "notifications" || this.shellNotificationTopics.indexOf(topic) >= 0) this.reloadTrayTab("notifications");
@@ -9672,6 +9817,9 @@
             openPalette() { this.paletteOpen = true; },
             openTray(key) {
                 if (!this.trayTabs.some((tab) => tab.key === key)) return;
+                // a floated tab: its window shows and is raised in place of the tray (§10.6)
+                const float = this.trayFloating[key] ? moqui.floats.find("tray", key) : null;
+                if (float) { moqui.floats.focus(float.id); return; }
                 this.trayTab = key;
                 this.trayLoaded[key] = true;
                 this.trayMounted = true;
@@ -9680,13 +9828,61 @@
             },
             closeTray() { this.trayOpen = false; this.saveTray(); },
             // key null: the one tray button of a phone header, which closes the tray, or opens it on its last tab (else the first)
+            // A floated tab's button shows, raises or hides its window; with every tab floated the tray has nothing to open.
             toggleTray(key) {
                 if (key === null || key === undefined) {
+                    const docked = this.trayDockedTabs;
                     if (this.trayOpen) this.closeTray();
-                    else this.openTray(this.trayTabs.some((tab) => tab.key === this.trayTab) ? this.trayTab : (this.trayTabs[0] || {}).key);
+                    else if (docked.length) this.openTray(docked.some((tab) => tab.key === this.trayTab) ? this.trayTab : docked[0].key);
                     return;
                 }
+                if (this.trayFloating[key]) { moqui.floats.toggle("tray", key); return; }
                 if (this.trayOpen && this.trayTab === key) this.closeTray(); else this.openTray(key);
+            },
+            // a header button's tab floating and in view
+            trayFloatShown(key) {
+                const float = key && this.trayFloating[key] ? moqui.floats.find("tray", key) : null;
+                return !!float && moqui.floats.shown(float);
+            },
+            // the float body a tab's teleport targets, while it floats and the body is mounted (moqui.floats.target)
+            trayFloatTarget(key) { return this.trayFloating[key] ? moqui.floats.target("tray", key) : null; },
+            // Undock (§10.6): the tab becomes a float, 400 by 560 at the right to start, with the tab's label and its count, and
+            // leaves the strip; the tray, when it was open on it, closes. restore: at a load, as it was. Answers whether it floats.
+            undockTrayTab(key, restore) {
+                const floats = this.trayFloatKind();
+                if (!floats || !floats.canFloat() || !this.trayTabs.some((tab) => tab.key === key)) return false;
+                this.trayLoaded[key] = true;
+                this.trayMounted = true;
+                if (!floats.open("tray", key, { restore: !!restore })) return false;
+                if (this.trayTab === key) {
+                    const next = this.trayDockedTabs[0];
+                    this.trayTab = next ? next.key : "";
+                    this.trayOpen = false;
+                }
+                this.saveTray();
+                return true;
+            },
+            // The float kind of the tray's tabs: in Assist's reach (a floated Chat is read as the docked one, D18); Dock puts the tab
+            // back and opens the tray on it, Close puts it back in the strip and leaves the tray as it was.
+            trayFloatKind() {
+                const floats = moqui.floats;
+                if (!floats) return null;
+                const tabOf = (key) => this.trayTabs.find((tab) => tab.key === key) || {};
+                if (!floats.kinds.tray || floats.kinds.tray.owner !== this) floats.register("tray", { owner: this, inReach: true, place: "right",
+                    defaultSize: { w: 400, h: 560 }, minSize: { w: 280, h: 240 },
+                    title: (key) => tabOf(key).label || key, icon: (key) => tabOf(key).icon,
+                    badge: (key) => (this.countOf(key) ? this.countText(key) : ""),
+                    dock: (shown, key) => { if (shown) this.openTray(key); else this.saveTray(); },
+                    // dragged to the right edge it docks: the tray panel's strip at the right of the canvas
+                    home: () => {
+                        const area = floats.state.area;
+                        const canvas = root.document && root.document.getElementById("m-canvas");
+                        const box = canvas ? canvas.getBoundingClientRect() : null;
+                        const right = box && box.width ? Math.min(box.right, area.x + area.w) : area.x + area.w;
+                        const w = Math.min(400, area.w);
+                        return { edge: "right", rect: { x: right - w, y: area.y, w, h: area.h } };
+                    } });
+                return floats;
             },
             reloadTrayTab(key) { if (key && this.trayLoaded[key] && this.shellTray) this.shellTray.reload(key); },
             keepTrayScroll(key, top) {
@@ -9698,11 +9894,13 @@
             saveTray() {
                 try { root.sessionStorage.setItem("moqui.shell.tray", JSON.stringify({ open: this.trayOpen, tab: this.trayTab, scroll: this.trayScroll })); } catch (err) { /* no storage */ }
             },
+            // the tabs that floated come back floated (localStorage, per device, §10.9); then the tray's own state (sessionStorage)
             restoreTray() {
                 let saved = null;
                 try { saved = JSON.parse(root.sessionStorage.getItem("moqui.shell.tray") || "null"); } catch (err) { saved = null; }
-                if (!moqui.isPlainObject(saved) || !saved.tab || !this.trayTabs.some((tab) => tab.key === saved.tab)) return;
-                if (moqui.isPlainObject(saved.scroll)) this.trayScroll = Object.assign({}, saved.scroll);
+                if (moqui.isPlainObject(saved) && moqui.isPlainObject(saved.scroll)) this.trayScroll = Object.assign({}, saved.scroll);
+                if (moqui.floats) this.trayTabs.forEach((tab) => { if (moqui.floats.wasFloated("tray", tab.key)) this.undockTrayTab(tab.key, true); });
+                if (!moqui.isPlainObject(saved) || !saved.tab || !this.trayDockedTabs.some((tab) => tab.key === saved.tab)) return;
                 if (saved.open) this.openTray(saved.tab);
                 else this.trayTab = saved.tab;
             },
@@ -9784,7 +9982,7 @@
                 this.notifyHistoryList = [{ message, type, time, link, icon }].concat(this.notifyHistoryList).slice(0, 25);
             },
             setPreference(key, value) {
-                moqui.request(this.appRootPath + "/apps/setPreference", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, preferenceKey: key, preferenceValue: value } })
+                return moqui.request(this.appRootPath + "/apps/setPreference", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, preferenceKey: key, preferenceValue: value } })
                     .catch(moqui.handleAjaxError);
             },
             // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this
@@ -10023,8 +10221,11 @@
             },
             // The ids of the elements Assist may reach (IronStone design §1.1): the canvas, the tray panel while it is there and the
             // quick-create dialog while it is open; not the header, the drawer or the palette.
+            // A float is in reach only when its kind says so (plans/Terminal-Fancy.md §10.7, D18): a floated tray tab's body is, a
+            // floated Assist is not; whatever carries data-assist-self (Assist's body, a terminal) never is, wherever it is.
             assistReach() {
-                return ["m-canvas"].concat(this.trayMounted && this.trayOpen ? ["m-tray"] : [], this.quickCreateShow ? ["m-quick-create"] : []);
+                return ["m-canvas"].concat(this.trayMounted && this.trayOpen && this.trayDockedTabs.length ? ["m-tray"] : [], this.quickCreateShow ? ["m-quick-create"] : [],
+                    moqui.floats ? moqui.floats.reach() : []);
             },
 
             // ---- the suite shell ----
@@ -10082,6 +10283,13 @@
                     { key: "dialer", icon: "sym_o_dialpad", label: labels.trayDialer, title: labels.dialer, url: values.trayDialer }]
                     .filter((tab) => tab.url).map((tab) => Object.assign(tab, { loadUrl: this.shellLoadPath(tab.url) }));
             },
+            // the tabs that float, by key (moqui.floats, kept with the float places), and the ones left in the tray's strip
+            trayFloating() {
+                const out = {};
+                if (moqui.floats) moqui.floats.state.floats.forEach((float) => { if (float.kind === "tray") out[float.key] = true; });
+                return out;
+            },
+            trayDockedTabs() { return this.trayTabs.filter((tab) => !this.trayFloating[tab.key]); },
             // the header's count buttons in their order: the ones that open the tray, in the tray's tab order (Today, Chat, Notifications),
             // then the links to screens (Mail and Messages, Missed calls), each when its theme value is set; `counts` are the shellCounts
             // keys of its badge, and the first link after a tray button has dividerBefore (a separator between the two kinds). Below
@@ -10122,6 +10330,9 @@
             // Assist (WebrootAssist.js): for a signed in user whose bootstrap answered with an agent to use
             assistOn() { return !!(moqui.assist && this.userId && moqui.assist.state.available); },
             callsOn() { return !!(moqui.call && this.userId && moqui.config && moqui.config.calls); },
+            // floats (WebrootFloats.js): the layer, on any page that loads the store
+            floatsOn() { return !!moqui.floats; },
+            terminalOn() { return !!(moqui.terminal && this.userId); },
             // an Assist canvas covers the page (the page under it stays mounted)
             assistCanvasShown() { return !!(this.assistOn && moqui.assist.canvasShown && moqui.assist.canvasShown()); },
             myPresence() { return moqui.chat && this.userId ? moqui.chat.myPresence() : ""; },
@@ -10141,7 +10352,7 @@
                     seen[action.url] = true;
                     out.push({ title: action.label, subtitle: app.title, icon: action.icon || "sym_o_bolt", url: action.url });
                 }));
-                return out;
+                return out.concat(palette.clientActions());
             },
             // the saved finds of the screens on the current path, from its menu data
             paletteSavedFinds() {
@@ -10211,6 +10422,8 @@
             if (moqui.assist) moqui.assist.start(this);
             // calls: the pushes of the user's calls and the calls going on after a reload (WebrootCall.js)
             if (moqui.call) moqui.call.start(this);
+            // the browser terminal: floating terminals back where they were, the quick terminal's key (WebrootTerminal.js)
+            if (moqui.terminal && this.userId) moqui.terminal.startShell(this);
             // the suite shell: its data once, its keys, and the counts every 5 minutes while the socket is down
             this.loadShellData();
             this.shellKeysOff = keymap.registerScope("global", this.shellKeyBindings());

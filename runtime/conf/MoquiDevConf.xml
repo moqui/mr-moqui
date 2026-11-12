@@ -16,6 +16,13 @@
     <!-- A local model server (OpenAI-compatible, LM Studio's port) for the default llm-facade endpoint; set the model -->
     <default-property name="llm_openai_url" value="http://127.0.0.1:1234"/>
     <default-property name="llm_openai_model" value=""/>
+    <!-- Claude on the Claude API (platform.claude.com), the llm-facade's claude-haiku below: its key, and the model the
+        dev instance's features use. Set both in runtime/.env (never here), as
+            llm_anthropic_api_key=sk-ant-...
+            llm_dev_model=claude-haiku
+        llm_dev_model is a model id of the llm-facade; default is the local model above. -->
+    <default-property name="llm_anthropic_api_key" value=""/>
+    <default-property name="llm_dev_model" value="default"/>
 
     <!-- minimal overrides for testing on local mysql8:
     <default-property name="entity_ds_db_conf" value="mysql8"/>
@@ -89,6 +96,23 @@
     <llm-facade>
         <!-- The default endpoint is on this machine -->
         <endpoint id="default" local="true"/>
+        <!-- Claude Haiku 5.5 on the Claude API, native Messages (llm_anthropic_api_key above). Thinking is adaptive and on
+            unless turned off; effort is the reasoning level (Haiku's own default is medium). context-window keeps a
+            conversation under 200k tokens; prompts over 100k cost five times as much. Prices are per million tokens. -->
+        <endpoint id="anthropic" protocol="anthropic-messages" url="https://api.anthropic.com" api-key="${llm_anthropic_api_key}"/>
+        <model id="claude-haiku" endpoint="anthropic" name="claude-haiku-5-5" tier="fast" context-window="200000"
+                max-output="16000" price-input="0.10" price-output="0.50">
+            <reasoning level="none">{"thinking":{"type":"disabled"},"output_config":{"effort":"low"}}</reasoning>
+            <reasoning level="low">{"output_config":{"effort":"low"}}</reasoning>
+            <reasoning level="medium">{"output_config":{"effort":"medium"}}</reasoning>
+            <reasoning level="high">{"output_config":{"effort":"high"}}</reasoning>
+        </model>
+        <!-- the framework's features on the model llm_dev_model names (the default conf binds them to the local model) -->
+        <bind feature="assist" model="${llm_dev_model}" reasoning="low"/>
+        <bind feature="title" model="${llm_dev_model}" reasoning="none"/>
+        <bind feature="summarize" model="${llm_dev_model}" reasoning="none"/>
+        <bind feature="classify" model="${llm_dev_model}" reasoning="none"/>
+        <bind feature="ai-field" model="${llm_dev_model}" reasoning="low"/>
         <!-- Example settings for Qwen in LM Studio, with the content of calls kept for testing:
         <model id="default" endpoint="default" name="qwen3.8-27b-imatrix-nvfp4-mtp" tier="balanced" context-window="32768"
                 max-output="6144" prompt-variant="small" result-cap-chars="4000" list-limit="10" reasoning-replay="none"

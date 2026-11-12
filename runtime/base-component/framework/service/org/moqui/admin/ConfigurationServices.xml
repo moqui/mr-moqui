@@ -1,0 +1,699 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Effective configuration and guarded configuration writes for delegated administration (mr-boss plan/design-admin.md §7,
+    §17.2; impl-admin P8 and later). The file grows by parts, each a section below with its bodies in a module of its own
+    beside ConfigurationLib.js, which they share: the instance settings (ConfigurationSettings.js) and the translations
+    (ConfigurationLocalization.js) here; identity providers, connections, protocols and message types append theirs at the end
+    (message types: ConfigurationMessageTypes.js, impl-admin P13).
+    Each service checks its own permission with ec.user.hasPermission (ADMIN_SETTINGS_VIEW for reads, ADMIN_SETTINGS_MANAGE for
+    changes in the parts below) and names the revision it read on a change; a refusal a person can act on is answered (applied
+    false, reasonCode, reason), never written; a missing permission or a malformed request is an error. A secret is never
+    returned. ALL_USERS may call the services named in data/AdminConfigurationData.xml AdminConfigurationServices: each refuses
+    without its permission. No dependency on Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== Instance settings (ConfigurationSettings.js; impl-admin P8) ========== -->
+
+    <service verb="get" noun="EffectiveSettings" allow-remote="false">
+        <description>The registered instance settings (moqui.server.InstanceSetting) with their effective values: each with its
+            key, title, group, type, allowed values or limits, value, source (preference: an instance preference; configuration:
+            the deployment's conf or environment; default), whether it is editable here and by the caller, whether a change of
+            its conf value waits for a restart, the operator's note, and for a preference its revision and who changed it,
+            when and why. A secret is masked: value null, valueSet whether it is set. Narrowed by settingGroup, kind
+            (preference or configuration) and settingKey. Needs ADMIN_SETTINGS_VIEW; with ADMIN_ACCESS_VIEW alone, the
+            sign-in settings only (the groups Sign-in and Sign-in policy), which the access administrator reads beside the
+            groups' sign-in rules; with ADMIN_CONNECTION_VIEW or ADMIN_OPERATION_VIEW alone, the protocols' settings only
+            (the groups named "Protocols: ...", impl-admin P12).</description>
+        <in-parameters>
+            <parameter name="settingKey"/>
+            <parameter name="settingGroup"/>
+            <parameter name="kind"><description>preference or configuration</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settingList" type="List"/>
+            <parameter name="groupList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('getEffectiveSettings', context))</script></actions>
+    </service>
+    <service verb="get" noun="InstancePreference" allow-remote="false">
+        <description>The effective value of one registered instance preference, for the code that uses it (the report
+            engine's group recipient ceiling, the new-device sign-in window): the stored preference, else the conf property
+            its registration names, else its registered default; numberValue for a whole number. An error for a key that is
+            not a registered preference. A preference is nonsecret by registration, so no permission is
+            needed.</description>
+        <in-parameters><parameter name="settingKey" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="value"/>
+            <parameter name="numberValue" type="Integer"/>
+            <parameter name="source"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('getInstancePreference', context))</script></actions>
+    </service>
+    <service verb="store" noun="InstancePreference" allow-remote="false">
+        <description>The value of one registered instance preference, as its registration types and limits it, at the
+            revision read (expectedRevision as get#EffectiveSettings gives it, empty when none is set); an empty value removes
+            the preference, so the conf property or the default applies again. Refused, with the reason, for a key that is
+            not a registered preference (NOT_REGISTERED), a value outside its type, allowed values or limits (VALUE_INVALID)
+            and a stale revision (STALE_REVISION). Who, when and why are kept on the row and each value in the audit log.
+            Needs ADMIN_SETTINGS_MANAGE and the setting's own manage permission, if it names one.</description>
+        <in-parameters>
+            <parameter name="settingKey" required="true"/>
+            <parameter name="value"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+            <parameter name="value"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('storeInstancePreference', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="SignInPolicyValues" type="rust" location="moqui_core::service::sign_in_policy::get_sign_in_policy_values"
+            allow-remote="false">
+        <description>The sign-in policy the server runs with (impl-admin P10, F110): a fixed list of nonsecret conf attributes
+            no property holds, each by its key (user-facade/password/@min-length and the other password minimums, history
+            and change rules; user-facade/login-key/@expire-hours and device-expire-hours; user-facade/login/@max-failures,
+            disable-minutes and history-store; webapp/session-config/@timeout) with the conf's value, else the one the code
+            falls back to. get#EffectiveSettings shows them through the settings that name one as confAttribute. Needs
+            ADMIN_SETTINGS_VIEW or ADMIN_ACCESS_VIEW.</description>
+        <out-parameters><parameter name="valueMap" type="Map"/></out-parameters>
+    </service>
+
+    <!-- ========== Localization (ConfigurationLocalization.js; impl-admin P8) ========== -->
+
+    <service verb="find" noun="LocalizedMessages" allow-remote="false">
+        <description>The message translations (moqui.basic.LocalizedMessage), by locale and text (original or translation,
+            ignoring case), a page at a time, each with its revision; with missing and a locale, the originals translated in
+            another locale and not in this one (truncated when more were found than are read). Needs
+            ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters>
+            <parameter name="locale"/>
+            <parameter name="text"/>
+            <parameter name="missing" type="Boolean" default="false"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="messageList" type="List"/>
+            <parameter name="messageListCount" type="Integer"/>
+            <parameter name="localeOptions" type="List"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('findLocalizedMessages', context))</script></actions>
+    </service>
+    <service verb="store" noun="LocalizedMessage" allow-remote="false">
+        <description>The translation of a message in a locale, at the revision read (empty for a new one); empty removes it.
+            Refused, with the reason, when the translation does not keep exactly the original's ${} placeholders
+            (PLACEHOLDER_MISMATCH), for an original that is a link, a path or a link type or whose ${} values are more than
+            names and simple calls (PLACEHOLDER_UNSUPPORTED: Tools', an instance administrator's), for a locale that is not
+            one (LOCALE_INVALID) and for a stale revision (STALE_REVISION); markup and a link are not accepted. The audit log keeps the text before and after. Needs
+            ADMIN_SETTINGS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="original" required="true"/>
+            <parameter name="locale" required="true"/>
+            <parameter name="localized"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('storeLocalizedMessage', context))</script></actions>
+    </service>
+    <service verb="find" noun="LocalizedEntityFields" allow-remote="false">
+        <description>The label translations (moqui.basic.LocalizedEntityField) of the registered label targets
+            (moqui.basic.LocalizedLabelTarget, targetList), by target (targetKey, the entity and field), locale and text, a
+            page at a time, each with the label it translates and its revision; with missing, a target and a locale, that
+            target's labels with no translation in the locale. Needs ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters>
+            <parameter name="targetKey"/>
+            <parameter name="locale"/>
+            <parameter name="text"/>
+            <parameter name="missing" type="Boolean" default="false"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="fieldListCount" type="Integer"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="localeOptions" type="List"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('findLocalizedEntityFields', context))</script></actions>
+    </service>
+    <service verb="store" noun="LocalizedEntityField" allow-remote="false">
+        <description>The translation of one label (pkValue) of a registered label target in a locale (or default, the
+            fallback of every locale), at the revision read; empty removes it. Refused, with the reason, for an entity field
+            that is not a registered label target (NOT_REGISTERED), a label that does not exist (LABEL_UNAVAILABLE), a
+            translation that does not keep the label's ${} placeholders (PLACEHOLDER_MISMATCH; PLACEHOLDER_UNSUPPORTED as
+            store#LocalizedMessage), a locale that is not one
+            (LOCALE_INVALID) and a stale revision (STALE_REVISION). The audit log keeps the text before and after. Needs
+            ADMIN_SETTINGS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="pkValue" required="true"/>
+            <parameter name="locale" required="true"/>
+            <parameter name="localized"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('storeLocalizedEntityField', context))</script></actions>
+    </service>
+
+    <!-- ========== Identity providers (ConfigurationProviders.js; impl-admin P10) ========== -->
+    <!-- The sign-in providers (moqui.security.sso.AuthFlow with its OpenID Connect, OAuth and SAML row, AuthFlowFieldMap and
+        AuthFlowRoleMap). Reading needs ADMIN_CONNECTION_VIEW or ADMIN_ACCESS_VIEW; the configuration ADMIN_CONNECTION_MANAGE;
+        the role mappings, the default group, the link rule and enabling ADMIN_ACCESS_MANAGE, each group by the grant
+        proposal's rules for the actor and never a privileged group or one granting a sealed permission. A secret is
+        write-only. -->
+
+    <service verb="find" noun="IdentityProviders" allow-remote="false">
+        <description>The sign-in providers: each with its name, type, whether it is enabled, its readiness (enabled, untested,
+            tested, needsTest, incomplete, unavailable for SAML, inbound) and the callback URL to register at the provider;
+            narrowed by text, type and state (enabled or disabled). With authFlowId, that provider alone (provider): its
+            configuration with each secret as whether it is set, never its value, its identity mappings (an expression or a
+            mapping service marked advanced, never shown), its role mappings each with whether a sign-in may give the group
+            and why not, its link rule and default group, its revision, and the options its forms offer (the groups only for
+            a caller who may map them). Needs ADMIN_CONNECTION_VIEW or ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="authFlowId"/>
+            <parameter name="text"/>
+            <parameter name="authFlowTypeEnumId"/>
+            <parameter name="state"><description>enabled or disabled</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="providerList" type="List"/>
+            <parameter name="provider" type="Map"/>
+            <parameter name="typeOptions" type="List"/>
+            <parameter name="clientTypeOptions" type="List"/>
+            <parameter name="algorithmOptions" type="List"/>
+            <parameter name="accountLinkOptions" type="List"/>
+            <parameter name="localFieldOptions" type="List"/>
+            <parameter name="groupOptions" type="List"/>
+            <parameter name="canConfigure" type="Boolean"/>
+            <parameter name="canMap" type="Boolean"/>
+            <parameter name="canEnable" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('findIdentityProviders', context))</script></actions>
+    </service>
+    <service verb="store" noun="IdentityProvider" allow-remote="false">
+        <description>A new sign-in provider (no authFlowId, or a new one; OpenID Connect or OAuth; saved disabled), or
+            changes of one at the revision read (expectedRevision as find#IdentityProviders gives it); only what is given
+            changes. The configuration (name, icon, order, the type's fields, a secret, the identity mappings: a claim name
+            onto the full name, email address, locale or time zone, never an expression) needs ADMIN_CONNECTION_MANAGE; the
+            role mappings, the default group, the link rule and enabling need ADMIN_ACCESS_MANAGE. Refused, with the reason
+            and nothing written: a stale revision (STALE_REVISION); a mapped or default group the actor may not assign, a
+            privileged group or one granting a sealed permission (UNREGISTERED_BUNDLE, NOT_DELEGABLE, PRIVILEGED_GROUP,
+            SEALED_PERMISSION; roleMapList names each); enabling without a passing test of the configuration as it is now
+            (TEST_REQUIRED), or while a linked account holds access beyond the actor's (HELD_BEYOND); disabling the provider
+            the last administrator signs in by (ADMINISTRATION_PATH); an inbound flow (UNSUPPORTED_PROVIDER); SAML enabled, or
+            another type started (UNSUPPORTED_TYPE); identity mappings an instance administrator wrote as expressions
+            (ADVANCED_MAPPING). A change of the client type, client id, issuer, discovery or metadata URL, realm, an endpoint
+            or the Apple team or key needs the secret entered again in the same save, else the stored one is cleared
+            (secretCleared); either way the provider is saved disabled and its test mark cleared (design-admin §8.1), with
+            the reason saying so, as a change of the token signature or the nonce does with the secret kept. URLs are https
+            (http only for the server's own machine on an instance that is not production). The audit log keeps before and after, a secret as replaced or cleared, never its
+            value.</description>
+        <in-parameters>
+            <parameter name="authFlowId"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="authFlowTypeEnumId"><description>For a new provider: AftOidc or AftOauth</description></parameter>
+            <parameter name="description"/>
+            <parameter name="iconName"/>
+            <parameter name="sequenceNum"/>
+            <parameter name="clientTypeEnumId"/>
+            <parameter name="clientId"/>
+            <parameter name="secret"><description>Write-only: the client secret (Apple: the private key), replaced when given</description></parameter>
+            <parameter name="discoveryUri"/>
+            <parameter name="realm"/>
+            <parameter name="baseUri"/>
+            <parameter name="preferredJwsAlgorithmEnumId"/>
+            <parameter name="useNonce"/>
+            <parameter name="appleTeamId"/>
+            <parameter name="appleKeyId"/>
+            <parameter name="authorizeUrl"/>
+            <parameter name="tokenUrl"/>
+            <parameter name="userInfoUrl"/>
+            <parameter name="scope"/>
+            <parameter name="serviceProviderEntityId"/>
+            <parameter name="identityProviderMetadataLocation"/>
+            <parameter name="forceAuth"/>
+            <parameter name="passive"/>
+            <parameter name="keystorePassword"><description>Write-only</description></parameter>
+            <parameter name="privateKeyPassword"><description>Write-only</description></parameter>
+            <parameter name="accountLinkEnumId"/>
+            <parameter name="defaultUserGroupId"/>
+            <parameter name="fieldMapList" type="List"><description>When given, every identity mapping: each {srcFieldName, dstFieldName}</description></parameter>
+            <parameter name="roleMapList" type="List"><description>When given, every role mapping: each {roleName, userGroupId}</description></parameter>
+            <parameter name="enabled"><description>true to enable, false to disable</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="authFlowId"/>
+            <parameter name="revision"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="secretCleared" type="Boolean"/>
+            <parameter name="testRequired" type="Boolean"/>
+            <parameter name="roleMapList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('storeIdentityProvider', context))</script></actions>
+    </service>
+    <service verb="test" noun="IdentityProvider" allow-remote="false">
+        <description>The explicit check of a provider as it is configured now, enabled or not (checkList, each ok or failed
+            with its text): the configuration is complete, every mapped and default group may still be given by a sign-in,
+            and a sign-in could start (org.moqui.sso.AuthServices.check#Flow: an OpenID provider's discovery document is
+            read and the client built as a sign-in builds it). No account is made, nobody is signed in and no token is asked
+            for; a failure's text names URLs and never a secret or a token. A pass is marked on the provider for the
+            configuration it ran against, which enabling requires; a failure clears the mark and leaves the provider as
+            it was. With testRoles, the roles of a test identity, grantPreview says which group each would give.
+            callbackUrl is the redirect URI to register at the provider. Needs ADMIN_CONNECTION_MANAGE or
+            ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="authFlowId" required="true"/>
+            <parameter name="testRoles"><description>Comma or space separated, or a List</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="callbackUrl"/>
+            <parameter name="authorizeHost"/>
+            <parameter name="grantPreview" type="List"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="testedDate"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('testIdentityProvider', context))</script></actions>
+    </service>
+
+    <!-- ========== Connections and mail relays (ConfigurationConnections.js; impl-admin P11) ========== -->
+    <!-- One list, detail, save and test over the native connection records, each kind through its registered adapter
+        (moqui.server.ConnectionAdapter): the framework's remote (SystemMessageRemote), relay (an EmailServer no EmailAccount
+        owns), mailOAuth (EmailOAuthProvider) and printer (NetworkPrinter); a component's kinds through its adapter service
+        (Mantle's payment, shipping and tax gateways). Reading needs ADMIN_CONNECTION_VIEW, a change or a test
+        ADMIN_CONNECTION_MANAGE. A secret is write-only; a change of an endpoint clears the secrets not entered again and
+        disables the connection until a test of it passes (design-admin §8.1). -->
+
+    <service verb="find" noun="Connections" allow-remote="false">
+        <description>The connections of the registered kinds: each with its kind (adapterKey, adapterTitle), key, name,
+            provider, endpoint summary (a host, never a path or a credential), whether it is enabled, its state (ready,
+            untested, needsTest: disabled until a test passes, disabled, incomplete, readOnly) and its last test; narrowed by
+            kind, group (integration: the Connections list; mail: the mail relays), text, state (enabled, disabled,
+            attention) and, for kinds permitted per organization, the organization; a page at a time. adapterList is the
+            kinds, each with whether one is started here. An EmailServer a mail account owns is never listed. Needs
+            ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="adapterKey"/>
+            <parameter name="adapterGroup"/>
+            <parameter name="text"/>
+            <parameter name="state"><description>enabled, disabled or attention</description></parameter>
+            <parameter name="organizationPartyId"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="connectionList" type="List"/>
+            <parameter name="connectionListCount" type="Integer"/>
+            <parameter name="adapterList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('findConnections', context))</script></actions>
+    </service>
+    <service verb="get" noun="Connection" allow-remote="false">
+        <description>One connection (connection; null when it is not available, as an EmailServer a mail account owns never
+            is): what find#Connections lists, its fields (fieldList: each a name, label, kind, value, options, whether it is
+            an endpoint field, help), its secrets as whether each is set, never a value (secretList), what it lacks
+            (problem), why it is not changed here (readOnlyReason), its test mark and the checks of its last test
+            (checkList: a host, a status, a kind of failure; never a response body), whether the server may reach it on the
+            private network, what its kind adds (a payment gateway's organizations) and its revision. Needs
+            ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="connection" type="Map"/>
+            <parameter name="adapter" type="Map"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('getConnection', context))</script></actions>
+    </service>
+    <service verb="store" noun="Connection" allow-remote="false">
+        <description>A new connection of a kind that is started here (no connectionKey; values.connectionId its id where the
+            kind takes one; saved disabled), or changes of one at the revision read (expectedRevision as get#Connection
+            gives it): values holds the kind's fields and secrets by name, and only those given change, each validated by
+            its kind; a name the kind does not declare is ignored, and an executable name is never one. Refused, with the
+            reason and nothing written: a stale revision (STALE_REVISION); an EmailServer a mail account owns
+            (ACCOUNT_OWNED); a connection of a transport or sign-in that is not changed here (READ_ONLY); a kind that is not
+            started here (NOT_CREATABLE) or an id in use (KEY_IN_USE); enabling one that lacks something (INCOMPLETE) or has
+            no passing test of its configuration as it is (TEST_REQUIRED); the kind's own refusals (a relay that signs in
+            without TLS: INSECURE_TRANSPORT; a gateway's validation). A change of an endpoint field (a host, port, URL,
+            user or kind of sign-in) needs the secrets entered again in the same save, else the stored ones are cleared
+            (secretCleared); either way the connection is saved disabled and its test mark cleared, and a passing
+            test#Connection enables it (design-admin §8.1). On a production instance a connection started or repointed
+            here reaches no loopback, private or link-local address (the record's allowPrivateNetwork N, which its sender
+            enforces and this service never sets back). The audit log keeps before and after, a secret as replaced or
+            cleared, never its value. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="values" type="Map" allow-html="any"><description>The kind's fields and write-only secrets by
+                name; each is validated by its kind</description></parameter>
+            <parameter name="enabled"><description>true to enable, false to disable</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="connectionKey"/>
+            <parameter name="revision"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="secretCleared" type="Boolean"/>
+            <parameter name="testRequired" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('storeConnection', context))</script></actions>
+    </service>
+    <service verb="test" noun="Connection" allow-remote="false" transaction-timeout="120">
+        <description>The explicit test of a connection as it is configured now, enabled or not (checkList, each ok or failed
+            with its text): its configuration is complete, then the kind's own check: a remote's address answers one
+            request with no credentials and no body (HEAD, ten seconds, the status only); a relay connects and signs in
+            (org.moqui.mail.EmailServices.test#EmailServer), and with testKind send one fixed message goes to the caller's
+            own address; a printer takes a fixed test page (org.moqui.impl.PrintServices.print#Document); a mail sign-in
+            provider is checked for its client without a request. Nothing is sent while the configuration is incomplete
+            or a secret an endpoint change cleared has not been entered again, and nothing to a loopback, private or
+            link-local address for a connection that may not use the private network. A text names a host, a status code
+            or a kind of failure, never a secret, a response body or the remote's own words. A pass is marked for the
+            configuration it ran against and enables a connection that waited for it (enabledByTest); a failure clears the
+            mark and leaves the connection as it was. An EmailServer a mail account owns is refused (ACCOUNT_OWNED). Needs
+            ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+            <parameter name="testKind"><description>send: a relay's named test message after its connection test</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="enabledByTest" type="Boolean"/>
+            <parameter name="testedDate"/>
+            <parameter name="connectionKey"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('testConnection', context))</script></actions>
+    </service>
+    <service verb="find" noun="ConnectionConsumers" allow-remote="false">
+        <description>Where a connection is used (consumerList: each an ownerName, recordType, recordId, recordName, use and
+            state): the kind's own answer (the messages of a remote, the templates of a relay, a printer's jobs), then that
+            of each registered provider (moqui.server.ConnectionConsumerProvider: the owner of records that name it), which
+            answers only what the caller may see there. Counts and names, never a message, an address or a credential.
+            Needs ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="consumerList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('findConnectionConsumers', context))</script></actions>
+    </service>
+    <service verb="run" noun="ConnectionAdapter" type="interface">
+        <description>What a component's connection adapter implements (moqui.server.ConnectionAdapter.adapterServiceName):
+            one operation of its kind, list, get, store, test or consumers, answered as result with what the operation of
+            the framework's own kinds answers (connectionList; connection; store#Connection's and test#Connection's
+            out-parameters; consumerList). It is called by the services above only, checks ADMIN_CONNECTION_VIEW or
+            ADMIN_CONNECTION_MANAGE itself with its own domain rules, and is built with the engine of
+            ConfigurationConnections.js (lib.engine), so the endpoint-change rule, the write-only secrets and the test
+            mark are the same for every kind. No group is authorized to call it directly.</description>
+        <in-parameters>
+            <parameter name="operation" required="true"/>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey"/>
+            <parameter name="values" type="Map" allow-html="any"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="enabled"/>
+            <parameter name="reason"/>
+            <parameter name="testKind"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+    </service>
+    <service verb="find" noun="AdapterConsumers" type="interface">
+        <description>What a connection consumer provider implements (moqui.server.ConnectionConsumerProvider.serviceName):
+            the records of its owner that use the connection, as find#ConnectionConsumers lists them, only those the caller
+            may see there. A consumer with ownsConnection true is a record of another kind whose connection this is (a
+            gateway's remote): the connection is then read only as its own kind and changed through that record's kind,
+            whose rules hold on every path; that answer is not narrowed by what the caller may see.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="consumerList" type="List"/></out-parameters>
+    </service>
+
+    <!-- ========== Protocols (ConfigurationProtocols.js; impl-admin P12) ========== -->
+    <!-- What each protocol of the server is doing, and the diagnostics that may be run on it (design-admin §9 ProtocolsHome,
+        ServerConfiguration). The conf stays the deployment's: nothing here changes it, and the settings a protocol runs with
+        are get#EffectiveSettings' rows of the Protocols groups. get#ProtocolFacts and probe#ProtocolTarget are the server's
+        own answers (crates/moqui-core/src/service/protocol_admin.rs), each from a fixed list; they are in no group's grant
+        and check their permission themselves. -->
+    <service verb="get" noun="ProtocolReadiness" allow-remote="false">
+        <description>The protocols of the server (protocolList), each with its state told apart: absent (this build leaves
+            it out, or no build has it), disabled (built, and the conf does not turn it on), failing (turned on and it did
+            not start, with the reason the server recorded, or its last check did not pass), untrusted (running while what
+            it trusts does not hold), notStarted (turned on, in a process that opened no listeners) and ready. Each also:
+            built and the build feature, enabled, the reason, where its listener is bound, where the answer comes from
+            (Build, Startup or Configuration), the settings group get#EffectiveSettings shows its configuration under,
+            the owner its links open (ownerKey) and its checks with their last results (checkList, also flat as
+            checkList of the answer). SMTP reception answers its trust: trusted only while it listens,
+            smtp_allowed_addresses names addresses that are no range of every address and can reach the address it is
+            bound to, and smtp_authserv_id is set; a mismatch is never ready (untrusted, trustProblems in words), and a
+            listener that takes mail from the internet trusts no gateway (direct). Narrowed to one protocolKey. No
+            secret, key or key file is read. Needs ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or
+            ADMIN_OPERATION_VIEW.</description>
+        <in-parameters><parameter name="protocolKey"/></in-parameters>
+        <out-parameters>
+            <parameter name="protocolList" type="List"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="serverStarted" type="Boolean"/>
+            <parameter name="packageName"/>
+            <parameter name="checkedDate"/>
+            <parameter name="canTest" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProtocols.js').execute('getProtocolReadiness', context))</script></actions>
+    </service>
+    <service verb="test" noun="Protocol" allow-remote="false" transaction-timeout="120">
+        <description>Run one check of a protocol (checkKey, one of its checkList) and keep its result as the check's last:
+            configuration (the readiness read again; nothing is sent), listener (one TCP connection from this server to
+            the address the conf binds, closed at once) or publicAddress (the name the deployment gives its clients is
+            looked up and its port connected to from this server, closed at once). A check that leaves the server runs
+            only with confirmed true (CONFIRM_REQUIRED otherwise, and nothing is sent); a protocol that is not built
+            (NOT_BUILT) or is off (NOT_ENABLED) is sent nothing. The target is the conf's own, from the server's fixed
+            list: none is taken from the request. The result names a host, a port and a kind of failure, never the
+            other side's words. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="protocolKey" required="true"/>
+            <parameter name="checkKey" required="true"/>
+            <parameter name="confirmed" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="protocolKey"/>
+            <parameter name="checkKey"/>
+            <parameter name="target"/>
+            <parameter name="resultText"/>
+            <parameter name="checkedDate"/>
+            <parameter name="external" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProtocols.js').execute('testProtocol', context))</script></actions>
+    </service>
+    <service verb="get" noun="ProtocolFacts" type="rust" location="moqui_core::service::protocol_admin::get_protocol_facts"
+            allow-remote="false">
+        <description>What the server knows of its protocols, which a script cannot read: the build (packageName,
+            featureList), the entries of the startup report for a fixed list of listeners and integrations (entryList:
+            section, name, state on, off, failed, skipped or notBuilt, detail), whether this process opened its listeners
+            (serverStarted) and a fixed list of nonsecret conf attributes of smtp-server, ssh-server and git-server by
+            element/@attribute (confMap). get#ProtocolReadiness reads it. Needs ADMIN_CONNECTION_VIEW,
+            ADMIN_SETTINGS_VIEW or ADMIN_OPERATION_VIEW.</description>
+        <out-parameters>
+            <parameter name="packageName"/>
+            <parameter name="featureList" type="List"/>
+            <parameter name="entryList" type="List"/>
+            <parameter name="serverStarted" type="Boolean"/>
+            <parameter name="confMap" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="probe" noun="ProtocolTarget" type="rust" location="moqui_core::service::protocol_admin::probe_protocol_target"
+            allow-remote="false" transaction="ignore">
+        <description>One TCP connection, closed as soon as it is made, to a target of the server's fixed list by its key
+            (smtp.listener, ssh.listener, xmpp.listener, sip.listener, turn.listener: the address the conf binds;
+            web.public, ssh.public, turn.public, xmpp.public: the public name and port the conf gives clients), whose
+            host and port are the conf's own properties: target, external, reached, failureKind (notConfigured, notFound,
+            refused, timedOut, unreachable), internalAddress and millis. A public target is tried only with confirmed
+            true. test#Protocol calls it. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="targetKey" required="true"/>
+            <parameter name="confirmed" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetKey"/>
+            <parameter name="target"/>
+            <parameter name="external" type="Boolean"/>
+            <parameter name="reached" type="Boolean"/>
+            <parameter name="failureKind"/>
+            <parameter name="internalAddress" type="Boolean"/>
+            <parameter name="millis" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== Message types (ConfigurationMessageTypes.js; impl-admin P13) ========== -->
+
+    <service verb="find" noun="MessageTypes" allow-remote="false">
+        <description>The instance's message types (moqui.service.message.SystemMessageType), by name, a page at a time
+            (typeList, typeCount): id, name, content type, direction (out, in, both or none, from what it is routed by),
+            its send, consume and receive handlers (a registered handler by its title, another by its service name), its
+            owner, what recovery is registered for its messages, its file transport options, whether it is changed here
+            (configurable: its owner registered a handler for delegated administration; canChange with
+            ADMIN_CONNECTION_MANAGE too) and its revision. Narrowed by a term (id or name) and direction. Needs
+            ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="term"/>
+            <parameter name="direction"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="typeList" type="List"/>
+            <parameter name="typeCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('findMessageTypes', context))</script></actions>
+    </service>
+    <service verb="get" noun="MessageTypeUse" allow-remote="false">
+        <description>One message type's contract and use: its row as find#MessageTypes answers it (messageType); its
+            handlers by role (handlerList: send and consume with the current service, whether it may be chosen here and
+            the handlers its owner registered for it, each by key, title and owner; receive, never chosen here); the
+            service that documents its producer; the remotes of this type (remoteList, each with whether it is disabled);
+            what its owner registered for the recovery of its messages (recoveryList: owner, each action's mode in words,
+            the owner's permission, the permission that reads a payload, what makes a repeat safe); and its messages of
+            the last countDays days by status (countList). Needs ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters><parameter name="systemMessageTypeId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="messageType" type="Map"/>
+            <parameter name="handlerList" type="List"/>
+            <parameter name="producerText"/>
+            <parameter name="remoteList" type="List"/>
+            <parameter name="recoveryList" type="List"/>
+            <parameter name="countDays" type="Integer"/>
+            <parameter name="countList" type="List"/>
+            <parameter name="receiveResponseList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('getMessageTypeUse', context))</script></actions>
+    </service>
+    <service verb="store" noun="MessageType" allow-remote="false">
+        <description>Change a message type its owner registered for delegated administration, at the revision read: its
+            name, content type and file transport options (sendPath, which may hold only the names the sender gives;
+            receivePath, receiveFilePattern, receiveMovePath and receiveResponseEnumId, which hold no ${}), and its send or
+            consume service, set only to a handler registered for this type and role (moqui.server.MessageHandler), by the
+            registration's key. A parameter not given is left as it is; an empty text clears an optional one; a handler is
+            never cleared; the service that receives the type's messages is never chosen here; no service name is taken
+            from the request. Refused, with the reason: a type with no registered handler (NOT_CONFIGURABLE), a key that
+            is not a handler of this type and role (HANDLER_NOT_REGISTERED), a stale revision (STALE_REVISION). Each
+            changed field leaves an audit row with the reason. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="systemMessageTypeId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="description"/>
+            <parameter name="contentType"/>
+            <parameter name="sendHandlerKey"/>
+            <parameter name="consumeHandlerKey"/>
+            <parameter name="sendPath"/>
+            <parameter name="receivePath"/>
+            <parameter name="receiveFilePattern"/>
+            <parameter name="receiveMovePath"/>
+            <parameter name="receiveResponseEnumId"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changed" type="Boolean"/>
+            <parameter name="changedFieldList" type="List"/>
+            <parameter name="systemMessageTypeId"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('storeMessageType', context))</script></actions>
+    </service>
+
+    <!-- ========== The import of message translations (ConfigurationLocalization.js; impl-admin P15) ========== -->
+    <!-- The row services of the import target messageTranslations (data/AdminConfigurationData.xml), called by
+        org.moqui.admin.DataTransferServices for each row of a staged file, as the importer. -->
+    <service verb="validate" noun="MessageTranslationRow" allow-remote="false">
+        <implements service="org.moqui.admin.DataTransferServices.validate#TargetRow"/>
+        <description>Whether a row (original, locale, localized) may be saved as a message translation, by the rules of
+            store#LocalizedMessage, changing nothing: sourceRevision is the translation's revision now, and a row that
+            is already so is skipped. Needs ADMIN_SETTINGS_MANAGE.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('validateMessageTranslationRow', context))</script></actions>
+    </service>
+    <service verb="apply" noun="MessageTranslationRow" allow-remote="false">
+        <implements service="org.moqui.admin.DataTransferServices.apply#TargetRow"/>
+        <description>Save a row's translation at the revision its validation read (sourceRevision), as
+            store#LocalizedMessage does and with its refusals. Needs ADMIN_SETTINGS_MANAGE.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('applyMessageTranslationRow', context))</script></actions>
+    </service>
+
+    <!-- ========== The export of message translations (ConfigurationLocalization.js; impl-admin P16) ========== -->
+    <!-- The export service of the export target messageTranslationsExport (data/AdminConfigurationData.xml), called by
+        org.moqui.admin.DataTransferServices as the exporter. -->
+    <service verb="export" noun="MessageTranslationRows" allow-remote="false">
+        <implements service="org.moqui.admin.DataTransferServices.run#TargetExport"/>
+        <description>The message translations of one locale (selection.locale) or of every locale, as rows of the fields
+            asked for (original, locale, localized): what the import of translations reads. Needs ADMIN_SETTINGS_VIEW.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('exportMessageTranslationRows', context))</script></actions>
+    </service>
+</services>

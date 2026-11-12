@@ -19,7 +19,7 @@
 //! they say nothing.
 //!
 //! The import is bounded by a window of messages, not by the size of the archive or of the folder
-//! (plans/High-Level-Review.md HL-011): each source is read as a stream (an upload from its spool file, a location
+//! (plans/archive/High-Level-Review.md HL-011): each source is read as a stream (an upload from its spool file, a location
 //! through `ResourceFacade::open`), an mbox one message at a time, and the messages are taken [`BATCH`] at a time
 //! (or [`BATCH_BYTES`]), whose Message-IDs are looked for in the folder in one query. The Message-IDs taken in this
 //! import are kept, so a message twice in the archive is imported once; one with no Message-ID is never taken for a

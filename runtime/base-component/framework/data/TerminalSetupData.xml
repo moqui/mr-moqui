@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal (plans/Terminal-Fancy.md §5.7): the job that keeps its audit rows (moqui.terminal.TerminalSession) for
+    90 days. -->
+<entity-facade-xml type="seed-initial">
+    <moqui.service.job.ServiceJob jobName="clean_TerminalSessions_daily" description="Delete terminal session audit rows older than 90 days"
+            serviceName="org.moqui.terminal.TerminalServices.clean#TerminalSessions" cronExpression="0 37 4 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+</entity-facade-xml>

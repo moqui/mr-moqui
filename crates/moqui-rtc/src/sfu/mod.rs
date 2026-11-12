@@ -388,7 +388,7 @@ const SPEAKER_FLOOR: f32 = 67.0;
 /// The looks a new speaker must lead.
 const SPEAKER_LOOKS: u8 = 2;
 
-/// Counts of the SFU's per-packet work since it started (plans/High-Level-Review.md HL-008), to size the node-wide
+/// Counts of the SFU's per-packet work since it started (plans/archive/High-Level-Review.md HL-008), to size the node-wide
 /// passes before changing them: each received datagram is offered to peers until one accepts it, and each accepted
 /// datagram, timeout and signalling input drives every peer of the node.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -409,7 +409,7 @@ pub struct SfuStats {
 
 /// The rooms of one media node.
 ///
-/// Only the peers with work are polled (plans/High-Level-Review.md HL-008): the peer a datagram or a command was for,
+/// Only the peers with work are polled (plans/archive/High-Level-Review.md HL-008): the peer a datagram or a command was for,
 /// the peers a peer's output fans out to, and the peers whose deadline (str0m's timeout, or the next look at the
 /// layers) has come. A datagram is offered first to the peer that last took one on its addresses.
 pub struct Sfu {

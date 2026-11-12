@@ -132,6 +132,41 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
 
+    <service verb="claim" noun="SystemMessage" allow-remote="false">
+        <description>MR Moqui only. Internal to send#ProducedSystemMessage and consume#ReceivedSystemMessage, which call it
+            in a transaction of its own: take a message for one send or consume. With the row locked, only a message
+            still in fromStatusId is set to toStatusId (SmsgSending or SmsgConsuming) with the attempt's time (claimed
+            true). A second sender or consumer that read the same status (the scheduled job and an operator's retry, two
+            runs of the job) finds it taken (claimed false) and sends or consumes nothing, where the unconditional update
+            this replaces let both go on. A settlement of an earlier attempt (outcomeSettlement) is cleared: it was of
+            that attempt, and this one's result is the message's state.</description>
+        <in-parameters>
+            <parameter name="systemMessageId" required="true"/>
+            <parameter name="fromStatusId" required="true"/>
+            <parameter name="toStatusId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="claimed" type="Boolean"/></out-parameters>
+        <actions>
+            <set field="claimed" from="false"/>
+            <if condition="toStatusId != 'SmsgSending' &amp;&amp; toStatusId != 'SmsgConsuming'">
+                <return error="true" message="A system message is claimed for sending or consuming only"/></if>
+            <entity-find-one entity-name="moqui.service.message.SystemMessage" value-field="systemMessage" for-update="true"/>
+            <if condition="systemMessage == null || systemMessage.get('statusId') != fromStatusId"><return/></if>
+            <script>
+                systemMessage.set('statusId', toStatusId)
+                systemMessage.set('lastAttemptDate', ec.user.nowTimestamp)
+                if (systemMessage.get('outcomeSettlement')) {
+                    systemMessage.set('outcomeSettlement', null)
+                    systemMessage.set('outcomeSettledByUserId', null)
+                    systemMessage.set('outcomeSettledDate', null)
+                    systemMessage.set('outcomeSettledReason', null)
+                }
+            </script>
+            <entity-update value-field="systemMessage"/>
+            <set field="claimed" from="true"/>
+        </actions>
+    </service>
+
     <!-- TODO: this service called async by an anonymous-all scheduled job so needs anonymous-all here too, but should
         find a way to restrict it when not called through the scheduled service so no anonymous-all service exists to do
         this, tighten security on it a bit -->
@@ -162,14 +197,26 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="systemMessageRemote" from="systemMessage.findRelatedOne('moqui.service.message.SystemMessageRemote', null, null)"/>
                 <if condition="systemMessageRemote.get('sendServiceName')">
                     <set field="sendServiceName" from="systemMessageRemote.get('sendServiceName')"/></if>
+                <!-- MR Moqui only. A remote an administrator disabled, or whose address or sign-in changed and has not
+                    passed a test since (org.moqui.admin.ConfigurationServices.store#Connection), is sent nothing, whatever
+                    its send service: the message waits as it is, tried again after the retry time, its failures not
+                    counted (the message is not at fault). -->
+                <if condition="systemMessageRemote.get('disabled') == 'Y'">
+                    <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"
+                            in-map="{systemMessageId, lastAttemptDate:ec.user.nowTimestamp}"/>
+                    <return error="true" message="System message ${systemMessageId} not sent: its remote ${systemMessage.get('systemMessageRemoteId')} is disabled until a test of it passes"/>
+                </if>
             </if>
 
             <if condition="!sendServiceName">
                 <return error="true" message="While sending system message ${systemMessageId} type ${systemMessageType.get('systemMessageTypeId')} has no sendServiceName, not sending."/></if>
 
-            <!-- update the status to SmsgSending, in a separate TX -->
-            <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"
-                    in-map="{systemMessageId, statusId:'SmsgSending', lastAttemptDate:ec.user.nowTimestamp}"/>
+            <!-- set the status to SmsgSending, in a separate TX. MR Moqui only: as a claim (claim#SystemMessage), so of two
+                senders that read the same status (the scheduled job and an operator's retry) only one sends -->
+            <service-call name="org.moqui.impl.SystemMessageServices.claim#SystemMessage" transaction="force-new" out-map="claimOut"
+                    in-map="{systemMessageId, fromStatusId:initialStatusId, toStatusId:'SmsgSending'}"/>
+            <if condition="!claimOut?.claimed">
+                <return error="true" message="System message ${systemMessageId} was taken by another send, not sending."/></if>
 
             <!-- The send call and a catch that adds a thrown error to the message facade. The Groovy split a try/finally over
                 three script elements around a service-call; here the call is in one script, and the follow up below always
@@ -209,7 +256,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="send" noun="SystemMessageRest" type="rust" location="moqui_core::service::system_sync::message::send_rest">
         <description>POST the message text to SystemMessageRemote.sendUrl, expanded with remoteMessageId,
-            systemMessageTypeId, and systemMessageRemoteId, with the auth of SystemMessageRemote.messageAuthEnumId (basic
+            systemMessageTypeId, and systemMessageRemoteId, with the auth of SystemMessageRemote.sendAuthEnumId when the remote
+            has one, else messageAuthEnumId, and signed with sendSharedSecret when set, else sharedSecret (basic
             auth for SmatLogin or none set, an HMAC header for SmatHmacSha256, SmatHmacSha512 and SmatHmacSha256Timestamp, nothing for
             SmatNone). The body is Rust (crates/moqui-core/src/service/system_sync/message.rs).</description>
         <implements service="org.moqui.impl.SystemMessageServices.send#SystemMessage"/>
@@ -352,9 +400,13 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!consumeServiceName">
                 <return error="true" message="While consuming system message [${systemMessageId}] system message type [${systemMessageType.get('systemMessageTypeId')}] has no consumeServiceName, not consuming."/></if>
 
-            <!-- update the status to SmsgSending, in a separate TX -->
-            <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"
-                    in-map="{systemMessageId, statusId:'SmsgConsuming', lastAttemptDate:ec.user.nowTimestamp}"/>
+            <!-- set the status to SmsgConsuming, in a separate TX. MR Moqui only: as a claim (claim#SystemMessage), so of
+                two consumers that read the same status (the scheduled job and an operator's retry) only one runs the
+                consume service -->
+            <service-call name="org.moqui.impl.SystemMessageServices.claim#SystemMessage" transaction="force-new" out-map="claimOut"
+                    in-map="{systemMessageId, fromStatusId:initialStatusId, toStatusId:'SmsgConsuming'}"/>
+            <if condition="!claimOut?.claimed">
+                <return error="true" message="System message [${systemMessageId}] was taken by another consume, not consuming."/></if>
 
             <!-- The consume call and a catch that adds a thrown error to the message facade, in place of the Groovy try/finally
                 split over three script elements; the follow up below always runs, as the finally did. -->

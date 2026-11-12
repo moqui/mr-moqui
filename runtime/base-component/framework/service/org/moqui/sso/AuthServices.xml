@@ -44,6 +44,24 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
 
+    <service verb="check" noun="Flow" type="rust" location="moqui_core::service::sso::check_flow" allow-remote="false">
+        <description>Whether a login through the AuthFlow could start as it is configured now, enabled or not (the test of
+            org.moqui.admin.ConfigurationServices.test#IdentityProvider): its protocol row is complete, an OpenID
+            provider's discovery document is read, the endpoints are URLs and the client is built, exactly as login#User
+            starts a login. Nothing is kept in the session, nobody is redirected, no account is made and no token is asked
+            for, so the client secret is not proven. passed, else message with the reason, which names URLs and never the
+            secret; authorizeHost is the host a browser would be sent to and callbackUrl the redirect URI to register at
+            the provider. Needs ADMIN_CONNECTION_MANAGE or
+            ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters><parameter name="authFlowId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="authorizeHost"/>
+            <parameter name="callbackUrl"/>
+        </out-parameters>
+    </service>
+
     <!-- An installed app's sign-in through SSO (RFC 8252, plans/Mobile-Desktop.md "Remote applications and
         authentication"; crates/moqui-core/src/service/sso_app.rs): the desktop or mobile client opens the system browser
         at /sso/appLogin; after the provider signs the browser in, /sso/appCode asks the user to let the app in, and on

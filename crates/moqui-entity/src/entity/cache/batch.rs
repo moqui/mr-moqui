@@ -48,6 +48,8 @@ struct Merged {
     operation: Op,
     sealed: FieldMap,
     writes: u64,
+    /// The first write is a quiet create and nothing merged into it ([`Held::if_missing`]).
+    if_missing: bool,
 }
 
 /// Merge each row's writes into one where moving a write cannot change what the database checks, keeping the held
@@ -84,6 +86,8 @@ fn merge(facade: &EntityFacade, writes: impl Iterator<Item = Rc<Held>>) -> Vec<M
                     .sealed
                     .extend(held.sealed.iter().map(|(name, value)| (name.clone(), value.clone())));
                 merged.writes += 1;
+                // a write merged into a quiet create changes it: it goes out as a create
+                merged.if_missing = false;
                 if merged.operation == Op::Update && held.operation == Op::Upsert {
                     merged.operation = Op::Upsert;
                 }
@@ -97,6 +101,7 @@ fn merge(facade: &EntityFacade, writes: impl Iterator<Item = Rc<Held>>) -> Vec<M
                 out.push(Merged {
                     operation: held.operation,
                     sealed: held.sealed.clone(),
+                    if_missing: held.if_missing,
                     first: held,
                     writes: 1,
                 });
@@ -142,16 +147,21 @@ pub(super) fn flush_writes(
         let statement = facade
             .with_group(&held.entity_name, |entity, dialect, _, _| {
                 let mysql = moqui_db::sql::is_mysql(dialect);
+                if write.if_missing && moqui_db::sql::supports_insert_if_missing(dialect) {
+                    return Ok(Some((if_missing_statement(facade, entity, dialect, &write.sealed)?, mysql, true)));
+                }
                 Ok(
                     cached_statement(facade, entity, dialect, write.operation, &write.sealed)?
-                        .map(|statement| (statement, mysql)),
+                        .map(|statement| (statement, mysql, false)),
                 )
             })
             .map_err(named)?;
-        let Some(((sql, params), mysql)) = statement else {
+        let Some(((sql, params), mysql, if_missing)) = statement else {
             continue;
         };
         match write.operation {
+            // one statement of its own, which writes nothing when the row is there by now
+            Op::Create if if_missing => conn.execute_deferred(&sql, params, None),
             Op::Create | Op::Upsert => conn.execute_deferred_row(&sql, params, row_key(held)),
             // A row the frame locked is there until the commit and needs no check. Another must change a row: the
             // driver has the server check that where it can, so the COMMIT need not wait for it.
@@ -185,6 +195,20 @@ type Statement = (Arc<str>, Vec<Value>);
 /// The statement of one merged write, its SQL rendered once per entity, operation and columns (`sql_cache`). A create
 /// writes every column, null where unset, so the creates of an entity share one statement and the driver can join
 /// them (no column has a database default); an update writes the columns it holds; `None` is an update of none.
+/// A held quiet create's statement: every field, as a held create writes them, in an insert that writes nothing when
+/// the key is there ([`moqui_db::sql::insert_if_missing`]).
+fn if_missing_statement(
+    facade: &EntityFacade,
+    entity: &EntityDefinition,
+    dialect: &Dialect,
+    values: &FieldMap,
+) -> Result<Statement, Error> {
+    let columns: Vec<&str> = entity.fields.iter().map(|field| field.name.as_str()).collect();
+    let key = format!("{}|{}|txc-insert-if-missing", entity.full_name, dialect.name);
+    let sql = sql_cache::cached(facade, &key, || moqui_db::sql::insert_if_missing(entity, dialect, &columns))?;
+    Ok((sql, bind_columns(&columns, values)))
+}
+
 fn cached_statement(
     facade: &EntityFacade,
     entity: &EntityDefinition,

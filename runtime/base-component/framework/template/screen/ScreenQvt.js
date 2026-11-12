@@ -246,7 +246,7 @@
         const reset = () => {
             Object.assign(st, {
                 formName: "", fieldForm: "", owner: "", entry: "", multi: false, skipForm: false, inForm: false, inList: false, rowTexts: null,
-                accordion: "", accIndex: 0, accActive: "", disabled: false, selectedForm: false
+                accordion: "", accIndex: 0, accActive: "", disabled: false, selectedForm: false, textLinks: false
             });
             saved.length = 0;
         };
@@ -1020,7 +1020,9 @@
             if (l.fieldName === undefined) {
                 l.fieldName = fname(n);
                 l.formName = formName(n);
-                l.urlId = "_" + l.url.replace(/\./g, "_");
+                // an expression url has no fixed text, so its id is the expression's names (`${fixUrl}` is `_fixUrl`)
+                l.urlId = l.url.indexOf("${") >= 0 ? "_" + l.url.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "")
+                    : "_" + l.url.replace(/\./g, "_");
             }
             return (st.fieldForm || xn(l.formName)) + "_" + l.fieldName + entry() + sec() + l.urlId;
         };
@@ -1067,9 +1069,9 @@
             const accessibleLabel = iconOnlyLabel(n, parts);
             const linkType = l.linkType;
             const btnType = xn(l.btnType);
-            // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons, or the filled
-            // primary button with btn-type="primary".
-            const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
+            // A screen link in a form-list cell is text (as is link-type anchor anywhere, and every link of a nav-card); the others
+            // are tonal buttons, or the filled primary button with btn-type="primary".
+            const textLink = st.textLinks || linkType === "anchor" || (st.inList && linkType !== "anchor-button");
             if (parts.disabled) {
                 if (parts.anchor && textLink) return '<span class="text-grey-5">' + linkBody(n, parts.text, parts.img) + "</span>";
                 return "<span><q-btn" + A({
@@ -1368,10 +1370,12 @@
             pop();
         };
 
-        const fieldBox = (when, containerStyle, big) => {
+        // aiOff: the name of an ai-opt-out field, so the page's Assist leaves it alone (m-rich-text's text actions, the page state)
+        const aiOffAttrs = (aiOff) => (aiOff ? { "data-ai-opt-out": "field", "data-ai-field": String(aiOff) } : {});
+        const fieldBox = (when, containerStyle, big, aiOff) => {
             const style = visibleStyle(when);
             const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
-            w("<div" + A({ class: box, ":style": style }) + ">");
+            w("<div" + A(Object.assign({ class: box, ":style": style }, aiOffAttrs(aiOff))) + ">");
         };
 
         const rowOpen = (kind, style) => w("<div" + A({ class: cls(kind, xn(style) || null) }) + ">");
@@ -1788,7 +1792,7 @@
                     w('<div class="thead"><div class="tr">');
                     if (rowSel) {
                         w('<div class="th"><span class="q-my-auto"><q-checkbox dense size="sm" v-model="formProps.checkboxAllState" @update:model-value="formProps.setCheckboxAllState"><q-tooltip>{{formProps.checkboxAllState ? ' + sq(L("Unselect All")) + " : " + sq(L("Select All")) +
-                            '}}</q-tooltip></q-checkbox><q-btn flat round dense size="sm" icon="more_vert" :color="formProps.checkboxStates && formProps.checkboxStates.includes(true) ? \'primary\' : \'grey-7\'"><q-tooltip>' + t(L("Row Actions")) + '</q-tooltip><q-menu anchor="top left" self="bottom left">');
+                            '}}</q-tooltip></q-checkbox><q-btn flat round dense size="sm" icon="more_vert" :color="formProps.checkboxStates && formProps.checkboxStates.includes(true) ? \'primary\' : \'grey-7\'" aria-label="' + e(L("Row Actions")) + '"><q-tooltip>' + t(L("Row Actions")) + '</q-tooltip><q-menu anchor="top left" self="bottom left">');
                         selectedRowCard(cfg);
                         w("</q-menu></q-btn></span></div>");
                     }
@@ -1943,8 +1947,8 @@
         };
 
         // A list cell for one field. The final row of a multi form has none.
-        const rowCellOpen = (style, align, final) => {
-            if (!final) w('<div class="form-group' + (style ? " " + e(style) : "") + (align === "right" ? " text-right" : align === "center" ? " text-center" : "") + '">');
+        const rowCellOpen = (style, align, final, aiOff) => {
+            if (!final) w('<div class="form-group' + (style ? " " + e(style) : "") + (align === "right" ? " text-right" : align === "center" ? " text-center" : "") + '"' + A(aiOffAttrs(aiOff)) + ">");
         };
         const rowCellClose = (final) => {
             if (!final) w("</div>");
@@ -2356,9 +2360,7 @@
         // A number-card (style-guide §8.2): an m-number-card with the title localized, the value and delta as expanded, and the
         // link as a screen link resolves (a path or transition of this screen, with its query); a link to something other than a
         // screen is a plain anchor (external). Nothing for a false condition.
-        const numberCard = (n) => {
-            if (at(n, "condition") && !cond(at(n, "condition"))) return;
-            const value = (text) => (text && text !== "null" ? text : null);
+        const cardLink = (n) => {
             let href = null;
             let external = null;
             if (at(n, "link")) {
@@ -2369,11 +2371,34 @@
                     external = screen ? null : true;
                 }
             }
+            return { href, external };
+        };
+        const numberCard = (n) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return;
+            const value = (text) => (text && text !== "null" ? text : null);
+            const { href, external } = cardLink(n);
             w("<m-number-card" + A({
                 id: nodeId(n) || null, title: value(x(at(n, "title"))), value: value(xn(at(n, "value"))), delta: value(xn(at(n, "delta"))),
                 "delta-good": at(n, "delta-good") || null, icon: value(xn(at(n, "icon"))), href, external, size: at(n, "size") || null,
-                class: xn(at(n, "style")) || null
+                sparkline: value(xn(at(n, "sparkline"))), class: xn(at(n, "style")) || null
             }) + "></m-number-card>\n");
+        };
+        // A nav-card (plans/archive/Tools-Fancy.md B6): an m-nav-card with the title and the text localized and the link as a number-card's;
+        // its child links follow in the default slot, each a text link (st.textLinks). False, and nothing, for a false condition.
+        const navCardOpen = (n) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return false;
+            const value = (text) => (text && text !== "null" ? text : null);
+            const { href, external } = cardLink(n);
+            w("<m-nav-card" + A({
+                id: nodeId(n) || null, title: value(x(at(n, "title"))), text: value(x(at(n, "text"))), icon: value(xn(at(n, "icon"))),
+                href, external, size: at(n, "size") || null, class: xn(at(n, "style")) || null
+            }) + ">");
+            st.textLinks = true;
+            return true;
+        };
+        const navCardClose = () => {
+            st.textLinks = false;
+            w("</m-nav-card>\n");
         };
 
         const h = {
@@ -2385,7 +2410,7 @@
             formList, rowCellOpen, rowCellClose, valueText, sectionPaginate, headerCell,
             accordion: (id, active) => { st.accordion = id; st.accIndex = 0; st.accActive = active; },
             endAccordion: () => { st.accordion = ""; },
-            quasarColor, icon, iconTag, tooltipTag, tonal, btnKind, js: js_, screenContext, numberCard, chatter, recordFiles, splitOpen, htmlView, statusBar,
+            quasarColor, icon, iconTag, tooltipTag, tonal, btnKind, js: js_, screenContext, numberCard, navCardOpen, navCardClose, chatter, recordFiles, splitOpen, htmlView, statusBar,
             markdownView,
             codeView
         };
@@ -2442,6 +2467,14 @@
     // cell themselves, so the field names its source to the render just before it.
     const stampCode = (node) => (node.src ? `sri.stamp(${lit(node.src)});\n` : "");
 
+    // ai-opt-out (design-people PE-21): a field's box and cell carry data-ai-opt-out="field", a section and a screen are in a
+    // display:contents div with data-ai-opt-out="section" or "screen"; m-rich-text offers no text actions inside one, and
+    // Assist's page state leaves their values out (docs/ai/Assist.md "AI opt-out").
+    const aiOff = (node) => !!node && attr(node, "ai-opt-out") === "true";
+    const aiOffArg = (field) => (aiOff(field) ? ", " + lit(attr(field, "name") || "field") : "");
+    const aiOffWrap = (node, kind, code) => (aiOff(node) && code
+        ? `sri.write('<div class="m-ai-opt-out" data-ai-opt-out="${kind}">');\n${code}\nsri.write("</div>");\n` : code);
+
     const singleFieldCode = (field, bigRow) => {
         const code = fieldChain(field, (sub) => {
             if (child(sub, "ignored")) return "";
@@ -2449,7 +2482,7 @@
             const style = attr(sub, "container-style");
             const when = child(sub, "visible-when");
             return stampCode(field) + js`
-                $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, ${!!bigRow});
+                $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, ${!!bigRow}${aiOffArg(field)});
                 sri.pushContext();
                 try {
                     ${setCode(sub)}
@@ -2577,11 +2610,11 @@
         const style = attr(sub, "container-style");
         const align = attr(field, "align");
         const inner = isHidden ? subWidgets(sub) : !S.cellNeedsContext(sub) ? stampCode(field) + js`
-            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
+            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2${aiOffArg(field)});
             ${subWidgets(sub)}
             $v.rowCellClose($m === 2);
         ` : stampCode(field) + js`
-            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
+            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2${aiOffArg(field)});
             sri.pushContext();
             try {
                 ${setCode(sub)}
@@ -2625,7 +2658,7 @@
         const style = attr(sub, "container-style");
         const when = child(sub, "visible-when");
         const body = isHidden ? subWidgets(sub) : js`
-            $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, false);
+            $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, false${aiOffArg(field)});
             sri.pushContext();
             try {
                 ${setCode(sub)}
@@ -2956,16 +2989,24 @@
         const inField = node.parent && node.parent.name.endsWith("-field");
         return `$v.link(${wlit(node, true)}, ${inField});\n`;
     });
+    // A nav-card: the card, then its child links in its default slot.
+    const navCardMacro = stmt((node, children) => js`
+        if ($v.navCardOpen(${wlit(node, false)})) {
+            ${children}
+            $v.navCardClose();
+        }
+    `);
 
     const submitMacro = stmt((node) => `$v.submit(${wlit(node, true)});\n`);
     const resetMacro = stmt((node) => `$v.reset_(${wlit(node, false)});\n`);
 
     const sectionIterateMacro = stmt((node) => {
         const name = attr(node, "name");
-        const code = `sri.renderSection(${lit(name)});\n`;
+        const code = aiOffWrap(node, "section", `sri.renderSection(${lit(name)});\n`);
         if (attr(node, "paginate") !== "true") return code;
         return `$v.sectionPaginate(${lit(attr(node, "list"))});\n${code}`;
     });
+    const sectionMacro = stmt((node) => aiOffWrap(node, "section", `sri.renderSection(${lit(attr(node, "name"))});`));
 
     const sectionIncludeMacro = stmt((node) => js`
         {
@@ -2978,13 +3019,14 @@
     const tableOfFormNoops = noops(S.allElements);
 
     const macros = Object.assign({}, tableOfFormNoops, S.anyMacros(MODE), {
-        "screen": stmt((node, children) => children),
+        "screen": stmt((node, children) => aiOffWrap(node, "screen", children)),
         "widgets": widgetsMacro("widgets"),
         "fail-widgets": widgetsMacro("fail-widgets"),
         "dynamic-form": stmt((node, children) => children),
         "subscreens-menu": widget("subscreensTabs", false),
         "subscreens-panel": widget("subscreensPanel", false),
         "subscreens-active": stmt(() => `sri.write("<m-subscreens-active></m-subscreens-active>");\n`),
+        "section": sectionMacro,
         "section-iterate": sectionIterateMacro,
         "section-include": sectionIncludeMacro,
 
@@ -3021,6 +3063,7 @@
         "report-embed": reportWidget,
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
+        "nav-card": navCardMacro,
         "chatter": widget("chatter", false),
         "record-files": widget("recordFiles", false),
         "html-view": widget("htmlView", false),

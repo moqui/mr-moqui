@@ -14,7 +14,7 @@
 
 //! The held writes of one transaction-cache frame (`cache` and `force-cache`), kept in flush order and indexed by
 //! entity and primary key, so a write and a find touch only the rows of their entity and key, and the stored row under
-//! a held update is read once per frame (plans/High-Level-Review.md HL-034).
+//! a held update is read once per frame (plans/archive/High-Level-Review.md HL-034).
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -35,6 +35,9 @@ pub(super) struct Held {
     /// The service on the artifact stack when the write was held, for the errors of a later find or of the flush
     /// (plans/archive/TX-Cache.md G5).
     pub(super) service: Option<Arc<str>>,
+    /// A quiet create (`create_if_missing`): it goes out as one that writes nothing when another transaction made the
+    /// row first, as it would have at once, not as a create that fails the commit on its key.
+    pub(super) if_missing: bool,
 }
 
 impl Held {

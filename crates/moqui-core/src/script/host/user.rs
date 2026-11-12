@@ -34,6 +34,15 @@ pub(super) static USER: HostClass = HostClass {
         ),
         method!("ec.user", "logoutUser", [], None, logout_user),
         method!("ec.user", "internalLoginUser", [Text], None, internal_login_user),
+        method!("ec.user", "loginUserKey", [Text], None, login_user_key),
+        method!(
+            "ec.user",
+            "loginAnonymousIfNoUser",
+            [],
+            None,
+            login_anonymous_if_no_user
+        ),
+        method!("ec.user", "getVisitorId", [], None, leaf, visitor_id),
         method!("ec.user", "getPreference", [Text], None, get_preference),
         method!("ec.user", "getLocale", [], locale),
         method!("ec.user", "getTimeZone", [], time_zone),
@@ -84,7 +93,15 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "getPreferences", [], None, all_preferences),
     ],
     shim_js: Some(USER_JS),
-    shim_members: &["getPreferences", "context"],
+    shim_members: &[
+        "getPreferences",
+        "context",
+        "getVisitUserId",
+        "currencyUomId",
+        "setCurrencyUomId",
+        "getPeriodDescription",
+        "getNowCalendar",
+    ],
 };
 
 /// `getPreferences(keyRegexp)` filters in the script, so the key pattern is a JavaScript regular expression matched
@@ -127,7 +144,68 @@ const USER_JS: &str = r#"(function (proto, hidden) {
                 ? { value: read(key), writable: true, enumerable: true, configurable: true } : undefined;
         }
     });
+    // Java's getVisitUserId: the user of the visit, which a later login in the same visit does not change
+    proto.getVisitUserId = function () { const visit = this.visit; return visit ? (visit.userId ?? null) : null; };
+    // The user's currency, on the account (Java keeps it there too). Setting it with nobody logged in changes nothing.
+    Object.defineProperty(proto, "currencyUomId", {
+        get() { const account = this.userAccount; return account ? (account.currencyUomId ?? null) : null; },
+        enumerable: false, configurable: true
+    });
+    proto.setCurrencyUomId = function (uomId) {
+        const userId = this.userId;
+        if (!userId) return;
+        const ec = globalThis.ec;
+        const already = ec.artifactExecution.disableAuthz();
+        try {
+            const account = ec.entity.find("moqui.security.UserAccount").condition("userId", userId).one();
+            if (account) { account.set("currencyUomId", uomId == null ? null : String(uomId)); account.update(); }
+        } finally { if (!already) ec.artifactExecution.enableAuthz(); }
+    };
+    // Java's getPeriodDescription: "This Month (2026-11-01 to 2026-11-30)", the end date inclusive
+    proto.getPeriodDescription = function (period, poffset, pdate) {
+        const ec = globalThis.ec, l10n = ec.l10n;
+        period = String(period ?? ""); poffset = String(poffset ?? "0");
+        const range = this.getPeriodRange(period, poffset, pdate ?? "");
+        const offsets = { "0": "This", "-1": "Last", "1": "Next" };
+        const periods = { day: "Day", week: "Week", weeks: "Weeks", month: "Month", months: "Months",
+            quarter: "Quarter", year: "Year" };
+        let text = (offsets[poffset] ? l10n.localize(offsets[poffset]) : poffset) + " ";
+        if (period === "7d" || period === "30d") text += period.slice(0, -1) + " " + l10n.localize("Days");
+        else if (period === "7r" || period === "30r") text += "+/-" + period.slice(0, -1) + "d";
+        else if (periods[period]) text += l10n.localize(periods[period]);
+        if (pdate) text += " " + l10n.localize("from##period") + " " + pdate;
+        const day = 24 * 60 * 60 * 1000;
+        const from = l10n.format(this.timestampMillis(range[0]), "yyyy-MM-dd");
+        const thru = l10n.format(this.timestampMillis(range[1]) - day, "yyyy-MM-dd");
+        return text + " (" + from + " " + l10n.localize("to##period") + " " + thru + ")";
+    };
+    // Java's getNowCalendar, as a Date of the effective time
+    proto.getNowCalendar = function () { return new Date(this.timestampMillis(this.nowTimestamp)); };
 })"#;
+
+/// Java's `loginUserKey`: whether the login key logged its user in. A key that does not is an error message, as a
+/// failed `loginUser` is.
+fn login_user_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let key = call.text_or_empty(0);
+    match crate::user::login_user_key(&key) {
+        Ok(()) => Ok(true.into()),
+        Err(err) => {
+            with_ec(|ec| ec.message().add_error(err.message().to_string()))?;
+            Ok(false.into())
+        }
+    }
+}
+
+/// Java's `loginAnonymousIfNoUser`: with nobody logged in the session becomes anonymous; whether this call did that.
+fn login_anonymous_if_no_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::user::login_anonymous()
+        .map(Ret::from)
+        .map_err(|err| user_error(&err))
+}
+
+fn visitor_id(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    text_or_null(crate::user::visitor_id())
+}
 
 fn user_error(err: &Error) -> HostError {
     HostError::message(err.message())

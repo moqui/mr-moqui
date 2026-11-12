@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <!-- The new-device sign-in notice by email (org.moqui.admin.IdentityServices.notify#NewDeviceSignIn; mr-boss
+        plan/design-admin.md §4 Sessions, §16): the time, the client summary and the network of the sign-in, and where its
+        owner signs that session out. The fields are the notification's wrapped message (NotificationEmail.xml); message is
+        the notice's own map (signInText, clientSummary, network, place). Never the user agent or the whole address. -->
+    <actions>
+        <set field="notice" from="message || {}"/>
+        <if condition="link">
+            <if condition="webHostName"><then>
+                <set field="linkUrl" from="'https://' + webHostName + (link.startsWith('/') ? '' : '/') + link"/>
+            </then><else>
+                <set field="rootUrl" from="ec.web.getWebappRootUrl(sri?.webappName || 'webroot', null, true, false)"/>
+                <set field="linkUrl" from="rootUrl &amp;&amp; !rootUrl.includes('localhost') ? rootUrl + (link.startsWith('/') ? '' : '/') + link : link"/>
+            </else></if>
+        </if>
+        <set field="whereText" from="[notice.network, notice.place].filter(Boolean).join(', ')"/>
+    </actions>
+    <widgets><render-mode>
+        <text type="html"><![CDATA[
+<html><body>
+    <h3>${html(title)}</h3>
+    <p>${html(ec.l10n.localize("Your account was signed in to from a device it has not been used from lately."))}</p>
+    <p>${html(ec.l10n.localize("When"))}: ${html(notice.signInText ?? "")}<br/>
+    ${html(ec.l10n.localize("Device"))}: ${html(notice.clientSummary ?? "")}<#if whereText><br/>
+    ${html(ec.l10n.localize("Network"))}: ${html(whereText)}</#if></p>
+    <p>${html(ec.l10n.localize("If this was you, there is nothing to do. If it was not, sign that session out and change your password."))}</p>
+    <#if linkUrl><p><#if linkUrl.startsWith("http")><a href="${html(linkUrl)}">${html(ec.l10n.localize("Sign out that session"))}</a><#else>${html(ec.l10n.localize("Sign out that session"))}: ${html(linkUrl)}</#if></p></#if>
+</body></html>
+        ]]></text>
+        <text type="text"><![CDATA[
+${title}
+
+${ec.l10n.localize("Your account was signed in to from a device it has not been used from lately.")}
+
+${ec.l10n.localize("When")}: ${notice.signInText ?? ""}
+${ec.l10n.localize("Device")}: ${notice.clientSummary ?? ""}
+<#if whereText>${ec.l10n.localize("Network")}: ${whereText}
+</#if>
+${ec.l10n.localize("If this was you, there is nothing to do. If it was not, sign that session out and change your password.")}
+
+<#if linkUrl>${ec.l10n.localize("Sign out that session")}: ${linkUrl}</#if>
+        ]]></text>
+    </render-mode></widgets>
+</screen>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Operations (plans/archive/Admin-Screens-Down.md): the instance's scheduled jobs and their runs, and the notification topics, over
+    org.moqui.admin.OperationServices, which check ADMIN_OPERATION_VIEW and ADMIN_OPERATION_MANAGE themselves; and Health,
+    the readiness checks of every registered provider, with the support summary it links, over
+    org.moqui.admin.ReadinessServices, which check each provider's permission and ADMIN_OVERVIEW_VIEW. Its screens are
+    the files of Operations/, with the sibling names an app that shows them under its own root uses (README, "Mounting the
+    administration screens"), so their links to each other are relative. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Operations" default-menu-index="6" default-menu-group="Administration" menu-image="sym_o_monitor_heart" menu-image-type="icon">
+    <subscreens default-item="Jobs"/>
+    <widgets>
+        <subscreens-panel id="SystemOperationsPanel" type="tab"/>
+    </widgets>
+</screen>

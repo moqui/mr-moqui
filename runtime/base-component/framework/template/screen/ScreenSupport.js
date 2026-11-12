@@ -38,7 +38,7 @@
         "container-row", "row-col", "container-panel", "panel-header", "panel-left", "panel-center",
         "panel-right", "panel-footer", "container-dialog", "dynamic-container", "dynamic-dialog", "button-menu",
         "tree", "tree-node", "tree-sub-node", "label", "link", "image", "parameter", "dialog",
-        "render-dynamic-form", "dynamic-form", "form-list-user-columns", "context", "dashboard", "number-card",
+        "render-dynamic-form", "dynamic-form", "form-list-user-columns", "context", "dashboard", "number-card", "nav-card",
         "chatter", "record-files", "container-split", "split-side", "split-main", "html-view", "status-bar", "markdown-view",
         "code-view", "report-panel", "report-dashboard", "report-embed"
     ];

@@ -21,9 +21,10 @@ feature("the tray fits its layout when a scrollbar reduces the available width",
             <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             const app=Vue.createApp({data(){return {trayMounted:true,trayOpen:true,trayTab:'today',trayLoaded:{},trayScroll:{},shellTray:null,
-                trayTabs:[{key:'today',label:'Today',icon:'sym_o_today'}],labels:{closeTray:'Close tray'}};},
+                trayTabs:[{key:'today',label:'Today',icon:'sym_o_today'}],trayFloating:{},labels:{closeTray:'Close tray'}};},
+                computed:{trayDockedTabs(){return this.trayTabs;}},
                 methods:{countOf(){return 0;},countText(){return '';},openTray(key){this.trayTab=key;this.trayOpen=true;},
-                    closeTray(){this.trayOpen=false;},keepTrayScroll(){}}});
+                    closeTray(){this.trayOpen=false;},keepTrayScroll(){},trayFloatTarget(){return null;}}});
             app.use(Quasar);app.config.globalProperties.moqui=moqui;
             app.component('m-shell-tray',moqui.qvt.components['m-shell-tray']);window.trayApp=app.mount('#app');
             window.trayGeometry=()=>{const canvas=document.querySelector('.q-page-container').getBoundingClientRect();
@@ -94,3 +95,45 @@ feature("the compact wizard retains named previous steps and prevents forward he
 })
 
 
+feature("a dialog's header drags it by touch and pen as by mouse, but not from its close button or when it fills a phone", {
+    expect() {
+        const page = browser.newPage({ viewport: { width: 1280, height: 900 } })
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css"></head><body><div id="app">
+            <m-dialog v-model="open" title="Drag me" width="400"><p>Body</p></m-dialog></div>
+            <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            const app=Vue.createApp({data(){return {open:false};}});
+            app.use(Quasar);app.component('m-dialog',moqui.qvt.components['m-dialog']);window.dialogApp=app.mount('#app');
+            // opened as a screen opens one: its show sets up the drag
+            dialogApp.open=true;
+            const card=()=>document.querySelector('.q-dialog .q-card');
+            const header=()=>card().querySelector('.m-dialog-drag');
+            window.offset=()=>({left:parseInt(card().style.left||'0',10),top:parseInt(card().style.top||'0',10)});
+            // a drag by synthetic pointer events: down on el, two moves, up
+            window.dragBy=(el,type,dx,dy)=>{const box=el.getBoundingClientRect();const x=box.left+5,y=box.top+5;
+                const ev=(name,px,py)=>el.dispatchEvent(new PointerEvent(name,{pointerId:3,pointerType:type,button:0,buttons:1,
+                    clientX:px,clientY:py,bubbles:true,cancelable:true}));
+                ev('pointerdown',x,y);header().dispatchEvent(new PointerEvent('pointermove',{pointerId:3,pointerType:type,clientX:x+dx/2,clientY:y+dy/2,bubbles:true}));
+                header().dispatchEvent(new PointerEvent('pointermove',{pointerId:3,pointerType:type,clientX:x+dx,clientY:y+dy,bubbles:true}));
+                header().dispatchEvent(new PointerEvent('pointerup',{pointerId:3,pointerType:type,clientX:x+dx,clientY:y+dy,bubbles:true}));
+                return offset();};
+            </script></body></html>`)
+        page.waitFor(() => !!document.querySelector('.q-dialog .q-card .m-dialog-drag'))
+        assert.equal(page.evaluate(() => getComputedStyle(document.querySelector('.m-dialog-drag')).touchAction), 'none',
+            'a touch on the header drags rather than scrolls')
+        assert.deepEqual(page.evaluate(() => dragBy(document.querySelector('.m-dialog-drag'), 'touch', 60, 40)), { left: 60, top: 40 })
+        assert.deepEqual(page.evaluate(() => dragBy(document.querySelector('.m-dialog-drag'), 'pen', -20, 10)), { left: 40, top: 50 })
+        assert.deepEqual(page.evaluate(() => dragBy(document.querySelector('.m-dialog-drag'), 'mouse', 10, 0)), { left: 50, top: 50 })
+        // kept inside the window: half the window less half the card and 10 px
+        const far = page.evaluate(() => dragBy(document.querySelector('.m-dialog-drag'), 'touch', 5000, 0))
+        assert.equal(far.left, page.evaluate(() => Math.floor(innerWidth / 2 - document.querySelector('.q-dialog .q-card').offsetWidth / 2 - 10)))
+        const before = page.evaluate(() => offset())
+        assert.deepEqual(page.evaluate(() => dragBy(document.querySelector('.m-dialog-drag .q-btn'), 'touch', -80, -80)), before,
+            'a press on the close button does not drag')
+        // a phone's width: the dialog fills the screen and does not move
+        page.evaluate(() => { Quasar.Screen.setSizes({ sm: 2000, md: 2200, lg: 2400, xl: 2600 }); return true })
+        page.waitFor(() => !!document.querySelector('.q-dialog__inner--maximized'))
+        assert.deepEqual(page.evaluate(() => dragBy(document.querySelector('.m-dialog-drag'), 'touch', -100, 0)), before)
+    },
+})

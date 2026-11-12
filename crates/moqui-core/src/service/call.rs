@@ -593,7 +593,7 @@ fn sync_input(
     let mut finished = false;
     let outcome = tx.run(attribute, options.timeout.or(def.timeout), || {
         // A service that begins no transaction is still bounded by a `transaction-timeout` it declares, on any thread
-        // and for an async call too (plans/High-Level-Review.md HL-035); a job adds its own limit around the call.
+        // and for an async call too (plans/archive/High-Level-Review.md HL-035); a job adds its own limit around the call.
         let _deadline = crate::script::DeadlineGuard::new(tx.time_remaining().or(def.timeout));
         if let Some(run) = &mut operation {
             run.watch(&tx)?;
@@ -673,7 +673,11 @@ fn sync_input(
 
 /// The transaction a call of `def` begins, before the call's own options: the definition's, or, with the
 /// `service_tx_cache` property on, `cache` for a service whose definition and call say nothing of the transaction or
-/// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way.
+/// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way. Only a service of
+/// XML actions or a script holds by default: a Rust or native service manages its own statements (the git server's
+/// pushes, the artifact index), and an entity-auto one is a single statement. A call that asks for a new transaction
+/// keeps the definition's too: that is how a body makes a row a racing caller may make first (ChatServices'
+/// `ensure#UserStates` under `record#UserChange`), whose write must meet the race at its statement, not at a commit.
 fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttribute {
     static DEFAULT_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let default_cache =
@@ -682,7 +686,8 @@ fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttri
         && !def.transaction_declared
         && !def.no_tx_cache
         && options.use_transaction_cache.is_none()
-        && def.kind != ServiceKind::EntityAuto
+        && options.require_new_transaction != Some(true)
+        && matches!(def.kind, ServiceKind::Inline | ServiceKind::Script)
     {
         return TransactionAttribute::Cache;
     }
@@ -960,26 +965,34 @@ fn register_tx_rules(
             &format!("the {when} rules of {service}"),
         )?;
     }
-    let authz = ExecutionContext::with_current(ExecutionContext::registered_authz).unwrap_or_default();
-    let service = service.to_string();
-    let parameters = parameters.clone();
-    let results = results.cloned();
+    let rules = super::pool::TxRules {
+        service: service.to_string(),
+        when: when.to_string(),
+        parameters: parameters.clone(),
+        results: results.cloned(),
+        authz: ExecutionContext::with_current(ExecutionContext::registered_authz).unwrap_or_default(),
+    };
+    // Tx-commit rules are kept in the outbox, written in this transaction, so a crash before they run does not lose
+    // them; their run deletes the row (HL-025). A sim session writes none.
+    let outbox = match current_facade() {
+        Some(facade) if when == "tx-commit" && !sim => super::outbox::write(
+            &facade,
+            tx,
+            &rules,
+            crate::user::current_username().ok().flatten().as_deref(),
+            super::pool::current_origin().as_ref(),
+        )
+        .map_err(LibError::from)?,
+        _ => None,
+    };
     let hook = move || {
         if sim {
-            tracing::info!("Skipping {when} rules of {service} in a sim session");
+            tracing::info!("Skipping {when} rules of {} in a sim session", rules.service);
             return;
         }
-        // A full or stopping queue stores the run as a queued job instead of dropping it (HL-025).
-        factory.service_pools().spawn_rules(
-            &factory,
-            super::pool::TxRules {
-                service,
-                when: when.to_string(),
-                parameters,
-                results,
-                authz,
-            },
-        );
+        // A full or stopping queue leaves the outbox row for the scheduler, or with none stores the run as a queued
+        // job, instead of dropping it (HL-025).
+        factory.service_pools().spawn_rules(&factory, rules, outbox);
     };
     if when == "tx-commit" {
         tx.on_commit(hook)
@@ -989,10 +1002,13 @@ fn register_tx_rules(
 }
 
 /// Run the `when` rules of `service` in a transaction of their own, on the current context: the worker side of
-/// [`register_tx_rules`], from the service queue or from a queued job.
+/// [`register_tx_rules`], from the service queue, from the outbox or from a queued job. With `outbox`, the row is
+/// deleted first in that transaction, so the rules' effects and its delete commit together, and a row another run took
+/// already runs nothing (HL-025).
 pub(crate) fn run_tx_rules(
     factory: &crate::context::ExecutionContextFactory,
     rules: &mut super::pool::TxRules,
+    outbox: Option<&str>,
 ) -> Result<(), Error> {
     let facade = factory
         .entity()
@@ -1009,6 +1025,12 @@ pub(crate) fn run_tx_rules(
     let action = resolve(service, Some(&facade)).map_or("all", |def| verb_action(&def.verb));
     let _restored = ExecutionContext::with_current(|ctx| ctx.restore_authz(authz, "AT_SERVICE", service, action));
     tx.run(TransactionAttribute::UseOrBegin, None, || {
+        if let Some(id) = outbox {
+            if !super::outbox::take(&facade, id).map_err(LibError::from)? {
+                tracing::info!(service = %service, when = %when, outbox = id, "the tx rules were run from the outbox already");
+                return Ok(());
+            }
+        }
         super::seca::run_seca_rules(service, when, parameters, results.as_mut()).map_err(Into::into)
     })
     .map_err(Into::into)

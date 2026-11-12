@@ -17,22 +17,39 @@
 //! its entity, a service or the entity of an entity-auto name, a screen by its location or its path under a `screen`
 //! directory, a transition or anchor of a screen.
 //!
-//! A screen path (a `link`'s or a response's `url`, [`ToKind::ScreenPath`]) is walked as Moqui walks a screen URL,
-//! from the screen the path is written in: `..` goes up to the screen's parent, `.` stays, and each other segment is a
-//! subscreen of the screen reached (a `subscreens-item`, else the default subscreen of the screen's directory:
-//! `Foo/Bar.xml` of `Foo.xml`) or, the last one, a transition of it. A path starting with `/` is walked from the webroot
-//! screen. A path that cannot be walked stays unresolved.
+//! A screen path (a `link`'s or a response's `url`, a form's `transition`, a `default-item`, [`ToKind::ScreenPath`]) is
+//! walked as Moqui walks a screen URL (`moqui_core::screen::url`), from the screen the path is written in: `.` and
+//! `~name=value` segments are dropped, `..` goes up to the screen's parent, and each other segment is a subscreen of the
+//! screen reached (its mount in the conf or a `SubscreensItem` row, its `subscreens-item`, else the directory
+//! subscreen: `Foo/Bar.xml` of `Foo.xml`), through a `no-sub-path` item that holds it, or a transition of it, which
+//! ends the path (the rest is extra path). `Name.<mode>` is the screen or transition `Name` in a render mode. At a
+//! screen with `allow-extra-path` a segment it has nothing for ends the path there, the rest extra path. A transition of
+//! several methods is the request's ([`Method`]: `get` for a link or response, `post` for a form), else the one of any
+//! method, else the first. A path starting with `/` is walked from the webroot screen, and one starting with `//` is
+//! searched for under it as Moqui's `findSubscreenPath` does. A path that cannot be walked, or that `..` walks from more
+//! than one parent to different artifacts, stays unresolved. A reference to a transition of its own screen by name goes
+//! to a subscreen of that name first, as the walk does.
 //!
 //! An entity-auto name (`create#moqui.example.Example`) that no file defines a service for gets a derived service
 //! ([`Resolver::derive`], origin `derived`), with the in and out parameters the entity-auto runner takes and gives
 //! (`moqui_core::service::call::run_entity`), so a call's `field-map`s resolve to its parameters as to a defined
 //! service's.
+//!
+//! What an artifact declares to be filled in from elsewhere is expanded here too ([`Resolver::expand`], `expand.rs`):
+//! a service's parameters from its `auto-parameters` and `implements`, a form's fields from its `auto-fields-entity`,
+//! `auto-fields-service` and `extends`, with their bindings; and every form's fields, bound by the path the form posts
+//! to (its own screen's transition by its name too), to every service the transition reached passes the request to or
+//! maps the field into ([`Resolver::path_bindings`]).
 
-use std::collections::HashMap;
+mod expand;
+
+pub use expand::{path_seed, Expansion, FormCall};
+
+use std::collections::{HashMap, HashSet};
 
 use super::extract::{
-    parameter_id, parameter_name, short_of, ArtifactRow, BindingRow, RefRow, ToKind, DERIVED_PATH, ORIGIN_DERIVED,
-    PK_MARK,
+    parameter_id, parameter_name, short_of, ArtifactRow, BindingRow, RefRow, ToKind, CALLS_MARK, CONF_ITEM,
+    DERIVED_PATH, NO_SUB_PATH_MARK, ORIGIN_DERIVED, OWN_IN_MAP_MARK, PK_MARK, REQUEST_MARK, ROW_ITEM,
 };
 
 /// A field of an entity, as the entity-auto services take it.
@@ -42,6 +59,10 @@ struct AutoField {
     /// The field's type (`id`, `text-medium`), or what an alias names.
     kind: String,
     pk: bool,
+    /// Its file and line, for an order that does not depend on the order the rows were read in
+    /// ([`Resolver::ordered_fields`]).
+    path: String,
+    line: u32,
 }
 
 /// The ids of the artifacts known, with what resolving needs besides.
@@ -57,11 +78,49 @@ pub struct Resolver {
     fields: HashMap<String, Vec<AutoField>>,
     /// The derived services known ([`Self::derive`]): each id with its rows (the service, then its parameters).
     derived: HashMap<String, Vec<ArtifactRow>>,
-    /// A screen's location to its `subscreens-item`s: each item's name and the location it names.
-    items: HashMap<String, Vec<(String, String)>>,
-    /// A screen's location to the screens whose `subscreens-item`s name it.
+    /// A screen's location to its subscreens items: its own (and its `screen-extend`s'), its conf mounts and its
+    /// `SubscreensItem` rows.
+    items: HashMap<String, Vec<Item>>,
+    /// A screen's location to the screens whose items name it, once for each item.
     item_parents: HashMap<String, Vec<String>>,
+    /// A screen's location to its directory subscreens' locations (`Foo/Bar.xml` of `Foo.xml`).
+    directory: HashMap<String, Vec<String>>,
+    /// A transition's id without its method (`transition:<screen>#<name>`) to its ids with one.
+    transitions: HashMap<String, Vec<String>>,
+    /// A transition's id to the services it passes the request's parameters to ([`request_services`]).
+    requests: HashMap<String, Vec<String>>,
+    /// The screens with `allow-extra-path`: a path that goes on past one where nothing is ends at it.
+    extra_path: HashSet<String>,
+    /// The services, forms and transitions whose summaries carry marks of what is derived from them
+    /// ([`super::extract::ArtifactRow::marks`]), by id.
+    /// Each definition of one (an override defines it again), by id.
+    owners: HashMap<String, Vec<expand::Owner>>,
+    /// A service's declared top-level parameters, of each file that defines it, by the service's id.
+    params: HashMap<String, Vec<expand::Param>>,
+    /// A form's declared fields, by the form's id.
+    form_fields: HashMap<String, Vec<expand::DeclaredField>>,
+    /// The fields the forms of `screen-extend`s add to a base screen's form, by the base form's id.
+    form_extensions: HashMap<String, Vec<expand::DeclaredField>>,
+    /// The files that define an entity (not its `extend-entity`s), by its full name.
+    entity_paths: HashMap<String, Vec<String>>,
+    /// The rows expanded for each owner ([`Self::expand`]) as they were written, by the owner's id.
+    expanded: HashMap<String, Vec<ArtifactRow>>,
 }
+
+/// One subscreens item of a screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Item {
+    name: String,
+    location: String,
+    no_sub_path: bool,
+    /// Which wins for a name, as Moqui merges them: 1 a `subscreens-item` of the screen or a `screen-extend`, 2 a conf
+    /// mount, 3 a `SubscreensItem` row of a user group, 4 a row of every user. A directory subscreen loses to any of
+    /// them.
+    rank: u8,
+}
+
+/// How deep a screen path's walk or search goes, as Moqui's.
+const FIND_DEPTH: usize = 24;
 
 /// The root screen an absolute screen path (`/apps/...`) is walked from.
 const WEBROOT_SCREEN: &str = "component://webroot/screen/webroot.xml";
@@ -70,6 +129,16 @@ impl Resolver {
     /// Know `artifact`.
     pub fn add(&mut self, artifact: &ArtifactRow) {
         *self.ids.entry(artifact.id.clone()).or_insert(0) += 1;
+        if super::extract::is_expanded(&artifact.origin) {
+            if let Some(owner) = &artifact.parent {
+                let rows = self.expanded.entry(owner.clone()).or_default();
+                if !rows.iter().any(|row| row.id == artifact.id) {
+                    rows.push(artifact.clone());
+                }
+            }
+            return;
+        }
+        self.add_declared(artifact);
         if artifact.origin == ORIGIN_DERIVED {
             let service = match artifact.kind.as_str() {
                 "service" => Some(artifact.id.clone()),
@@ -98,17 +167,37 @@ impl Resolver {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.insert(tail.to_string(), artifact.name.clone());
                 }
+                if super::extract::split_marks(&artifact.marks).contains(&"allow-extra-path") {
+                    self.extra_path.insert(artifact.name.clone());
+                }
+                if let Some(parent) = directory_parent(&artifact.name) {
+                    let children = self.directory.entry(parent).or_default();
+                    let at = children.partition_point(|known| *known <= artifact.name);
+                    children.insert(at, artifact.name.clone());
+                }
             }
             "subscreen" => {
-                if let Some((parent, location)) = item_of(artifact) {
-                    self.items
-                        .entry(parent.to_string())
-                        .or_default()
-                        .push((artifact.name.clone(), location.to_string()));
+                if let Some((parent, item)) = item_of(artifact) {
                     self.item_parents
-                        .entry(location.to_string())
+                        .entry(item.location.clone())
                         .or_default()
-                        .push(parent.to_string());
+                        .push(parent.clone());
+                    // in name and rank order, for [`Self::children`]
+                    let items = self.items.entry(parent).or_default();
+                    let at = items.partition_point(|known| (&known.name, known.rank) <= (&item.name, item.rank));
+                    items.insert(at, item);
+                }
+            }
+            "transition" => {
+                if let Some((plain, _)) = artifact.id.rsplit_once(':') {
+                    self.transitions
+                        .entry(plain.to_string())
+                        .or_default()
+                        .push(artifact.id.clone());
+                }
+                let services = request_services(&artifact.summary);
+                if !services.is_empty() {
+                    self.requests.insert(artifact.id.clone(), services);
                 }
             }
             "field" => {
@@ -123,6 +212,8 @@ impl Resolver {
                             name: artifact.short_name.clone(),
                             kind: kind.to_string(),
                             pk,
+                            path: artifact.path.clone(),
+                            line: artifact.line,
                         });
                     }
                 }
@@ -146,6 +237,7 @@ impl Resolver {
             summary: String::new(),
             parent: None,
             origin: String::new(),
+            marks: String::new(),
         });
     }
 
@@ -162,6 +254,14 @@ impl Resolver {
             }
             None => false,
         };
+        if super::extract::is_expanded(&artifact.origin) {
+            if let Some(owner) = &artifact.parent {
+                remove_one(&mut self.expanded, owner, |known| known.id == artifact.id);
+            }
+            return;
+        }
+        // what one file declared goes with it, though another file defines the id too
+        self.remove_declared(artifact);
         if artifact.origin == ORIGIN_DERIVED {
             // forgotten as derived even while a file defines the id too (the file's then answers)
             if artifact.kind == "service" {
@@ -185,26 +285,22 @@ impl Resolver {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.remove(tail);
                 }
+                self.extra_path.remove(&artifact.name);
+                if let Some(parent) = directory_parent(&artifact.name) {
+                    remove_one(&mut self.directory, &parent, |known| *known == artifact.name);
+                }
             }
             "subscreen" => {
-                if let Some((parent, location)) = item_of(artifact) {
-                    if let Some(items) = self.items.get_mut(parent) {
-                        if let Some(at) = items.iter().position(|(name, _)| *name == artifact.name) {
-                            items.remove(at);
-                        }
-                        if items.is_empty() {
-                            self.items.remove(parent);
-                        }
-                    }
-                    if let Some(parents) = self.item_parents.get_mut(location) {
-                        if let Some(at) = parents.iter().position(|known| known == parent) {
-                            parents.remove(at);
-                        }
-                        if parents.is_empty() {
-                            self.item_parents.remove(location);
-                        }
-                    }
+                if let Some((parent, item)) = item_of(artifact) {
+                    remove_one(&mut self.items, &parent, |known| *known == item);
+                    remove_one(&mut self.item_parents, &item.location, |known| *known == parent);
                 }
+            }
+            "transition" => {
+                if let Some((plain, _)) = artifact.id.rsplit_once(':') {
+                    remove_one(&mut self.transitions, plain, |known| *known == artifact.id);
+                }
+                self.requests.remove(&artifact.id);
             }
             "field" => {
                 if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
@@ -271,7 +367,7 @@ impl Resolver {
             let base = self.screen(&reference.to_scope);
             reference.to_id = base
                 .as_deref()
-                .and_then(|base| self.base_transition(base, &reference.to_name));
+                .and_then(|base| self.base_transition(base, &reference.to_name, Method::Get));
             reference.resolved = base.is_some();
             return;
         }
@@ -296,12 +392,20 @@ impl Resolver {
                         })
                 }
             }
-            // a default subscreen of a directory names its parent screen in the scope: an edge while both are there
+            // a directory subscreen names its parent screen in the scope: an edge while both are there
             ToKind::Screen => self
                 .screen(&reference.to_name)
-                .filter(|_| reference.to_scope.is_empty() || self.screen(&reference.to_scope).is_some())
+                .filter(|_| reference.to_scope.is_empty() || self.has(&format!("screen:{}", reference.to_scope)))
                 .map(|location| format!("screen:{location}")),
-            ToKind::ScreenPath => self.screen_path(&reference.to_scope, &reference.to_name),
+            // a form posts; a link, a response and a default item get
+            ToKind::ScreenPath => {
+                let method = if reference.ref_type == "form" {
+                    Method::Post
+                } else {
+                    Method::Get
+                };
+                self.screen_path_as(&reference.to_scope, &reference.to_name, method)
+            }
             ToKind::Location => {
                 // a widget-template-include names `<file>#<template>`
                 let found = ["screen", "script", "data", "skill", "widget-template"]
@@ -316,15 +420,27 @@ impl Resolver {
                 found
             }
             ToKind::Transition => {
-                let id = format!("transition:{}#{}", reference.to_scope, reference.to_name);
-                self.has(&id).then_some(id)
+                // a subscreen of the name comes first, as Moqui walks a path: a directory subscreen or a conf mount the
+                // file of the reference does not show
+                let plain = reference
+                    .to_name
+                    .rsplit_once(':')
+                    .map_or(reference.to_name.as_str(), |(name, _)| name);
+                match self.step(&reference.to_scope, plain, Method::Get) {
+                    // through a `no-sub-path` item too, as the path the form's binding is walked by
+                    Some(Step::Screen(child)) => Some(format!("screen:{child}")),
+                    _ => {
+                        let id = format!("transition:{}#{}", reference.to_scope, reference.to_name);
+                        self.has(&id).then_some(id)
+                    }
+                }
             }
             ToKind::Anchor => self.screen(&reference.to_scope).and_then(|base| {
                 ["form", "anchor", "transition"]
                     .iter()
                     .map(|kind| format!("{kind}:{base}#{}", reference.to_name))
                     .find(|id| self.has(id))
-                    .or_else(|| self.base_transition(&base, &reference.to_name))
+                    .or_else(|| self.base_transition(&base, &reference.to_name, Method::Get))
             }),
             ToKind::TransitionAnchor => None,
             ToKind::Parameter => self.service_parameter(&reference.to_scope, "in", &reference.to_name),
@@ -347,7 +463,19 @@ impl Resolver {
 
     /// `binding`'s target as the index knows it: the derived service's parameter of an entity-auto name named by the
     /// entity's short name (`create#Example`). Left as it is otherwise.
+    ///
+    /// A form field's binding into a transition by its path (`parameter:screen-path:<screen>#<path>@in.<field>`) is one
+    /// of a list ([`Self::path_bindings`]): it is given the target of its slot (`#<k>` at the end of its
+    /// [`BindingRow::to_path`]), else the first's.
     pub fn resolve_binding(&self, binding: &mut BindingRow) {
+        if let Some((_, slot)) = expand::path_seed(binding) {
+            let mut found = self.path_bindings(binding);
+            let at = if slot < found.len() { slot } else { 0 };
+            let chosen = found.swap_remove(at);
+            binding.to_id = chosen.to_id;
+            binding.to_path = chosen.to_path;
+            return;
+        }
         if self.has(&binding.to_id) {
             return;
         }
@@ -445,6 +573,7 @@ impl Resolver {
                 summary,
                 parent: Some(parent),
                 origin: ORIGIN_DERIVED.to_string(),
+                marks: String::new(),
             };
         let mut rows = vec![row(
             id.to_string(),
@@ -465,8 +594,8 @@ impl Resolver {
                 id.to_string(),
             ));
         };
-        let fields: &[AutoField] = self.fields.get(full).map_or(&[], Vec::as_slice);
-        let keys: Vec<&AutoField> = fields.iter().filter(|field| field.pk).collect();
+        let fields: Vec<&AutoField> = self.ordered_fields(full);
+        let keys: Vec<&AutoField> = fields.iter().copied().filter(|field| field.pk).collect();
         for (at, key) in keys.iter().enumerate() {
             let required = match verb {
                 "update" | "delete" => true,
@@ -494,73 +623,248 @@ impl Resolver {
     }
 
     /// The screen or transition the screen path `path` names, written in the screen at `from` (see the module doc):
-    /// `screen:<location>` or `transition:<location>#<name>:<method>`. The query and fragment are not part of it.
+    /// `screen:<location>` or `transition:<location>#<name>:<method>`, as a link or response reaches it (a `get`
+    /// transition first, [`Method`]). The query and fragment are not part of it.
     #[must_use]
     pub fn screen_path(&self, from: &str, path: &str) -> Option<String> {
-        let path = path.split(['?', '#']).next().unwrap_or_default();
-        let (mut at, rest) = match path.strip_prefix('/') {
-            Some(rest) => (self.screen(WEBROOT_SCREEN)?, rest),
-            None => (self.screen(from)?, path),
-        };
-        let segments: Vec<&str> = rest.split('/').filter(|segment| !segment.is_empty()).collect();
-        for (index, segment) in segments.iter().enumerate() {
-            match *segment {
-                "." => {}
-                ".." => at = self.parent_screen(&at)?,
-                name => match self.subscreen(&at, name) {
-                    Some(child) => at = child,
-                    None if index + 1 == segments.len() => return self.base_transition(&at, name),
-                    None => return None,
-                },
-            }
-        }
-        Some(format!("screen:{at}"))
+        self.screen_path_as(from, path, Method::Get)
     }
 
-    /// The location of the subscreen `name` of the screen at `screen`: its `subscreens-item` of that name, else the
-    /// default subscreen of its directory (`Foo/<name>.xml` of `Foo.xml`).
+    /// [`Self::screen_path`] for a request of `method`: a transition of several methods is the one of that method, else
+    /// the one of any method, as Moqui matches a request.
+    #[must_use]
+    pub fn screen_path_as(&self, from: &str, path: &str, method: Method) -> Option<String> {
+        let path = path.trim();
+        let path = path.split(['?', '#']).next().unwrap_or_default();
+        if let Some(rest) = path.strip_prefix("//") {
+            let names = path_segments(rest, false);
+            return self.sparse(&self.screen(WEBROOT_SCREEN)?, &names, 0, &mut HashSet::new(), method);
+        }
+        let (start, segments) = match path.strip_prefix('/') {
+            Some(rest) => (self.screen(WEBROOT_SCREEN)?, path_segments(rest, false)),
+            None => (self.screen(from)?, path_segments(path, true)),
+        };
+        let mut found = Vec::new();
+        self.walk(&start, &segments, 0, &mut found, method);
+        match found.len() {
+            1 => found.pop(),
+            _ => None,
+        }
+    }
+
+    /// Walk `segments` from the screen at `at`, adding each artifact a walk ends at to `found` (more than one only when
+    /// a `..` goes up to several parents).
+    fn walk(&self, at: &str, segments: &[&str], depth: usize, found: &mut Vec<String>, method: Method) {
+        if depth > FIND_DEPTH || found.len() > 1 {
+            return;
+        }
+        let Some((first, rest)) = segments.split_first() else {
+            let id = format!("screen:{at}");
+            if !found.contains(&id) {
+                found.push(id);
+            }
+            return;
+        };
+        if *first == ".." {
+            for parent in self.parents(at) {
+                self.walk(&parent, rest, depth + 1, found, method);
+            }
+            return;
+        }
+        match self.step(at, first, method) {
+            Some(Step::Screen(child)) => self.walk(&child, rest, depth + 1, found, method),
+            // a transition ends the path: the rest is extra path
+            Some(Step::Transition(id)) if !found.contains(&id) => found.push(id),
+            // nothing of the name under a screen with `allow-extra-path`: the path ends at it, the rest extra path
+            None if self.extra_path.contains(at) => {
+                let id = format!("screen:{at}");
+                if !found.contains(&id) {
+                    found.push(id);
+                }
+            }
+            Some(Step::Transition(_)) | None => {}
+        }
+    }
+
+    /// Where the segment `name` goes from the screen at `at`, as Moqui's walk takes it: into a `no-sub-path` item
+    /// that holds a child of that name first, then a subscreen, else a transition, else `Name.<mode>`'s screen or
+    /// transition `Name`.
+    fn step(&self, at: &str, name: &str, method: Method) -> Option<Step> {
+        let before = name
+            .split_once('.')
+            .map(|(before, _)| before)
+            .filter(|before| !before.is_empty());
+        let wrapper = self.items.get(at).and_then(|items| {
+            items
+                .iter()
+                .filter(|item| item.no_sub_path)
+                .filter_map(|item| self.screen(&item.location))
+                .find(|wrapper| {
+                    self.has_child(wrapper, name) || before.is_some_and(|before| self.has_child(wrapper, before))
+                })
+        });
+        let at = wrapper.as_deref().unwrap_or(at);
+        if let Some(child) = self.subscreen(at, name) {
+            return Some(Step::Screen(child));
+        }
+        if let Some(transition) = self.base_transition(at, name, method) {
+            return Some(Step::Transition(transition));
+        }
+        let before = before?;
+        if let Some(child) = self.subscreen(at, before) {
+            return Some(Step::Screen(child));
+        }
+        self.base_transition(at, before, method).map(Step::Transition)
+    }
+
+    /// Whether the screen at `screen` has a subscreen or a transition named `name`.
+    fn has_child(&self, screen: &str, name: &str) -> bool {
+        self.subscreen(screen, name).is_some() || self.base_transition(screen, name, Method::Get).is_some()
+    }
+
+    /// The artifact a sparse path (`//Commons/Party`, `names` its segments) names, searched for under the screen at
+    /// `screen` as Moqui's `findSubscreenPath` searches: the first name a subscreen (its rest walked from it) or a
+    /// transition, else a grandchild's subscreen, else the whole path under each child in turn.
+    ///
+    /// `tried` holds each screen searched with each rest of the names (by its length): a second search of it would
+    /// find nothing again, and a cycle of items ends.
+    fn sparse(
+        &self,
+        screen: &str,
+        names: &[&str],
+        depth: usize,
+        tried: &mut HashSet<(String, usize)>,
+        method: Method,
+    ) -> Option<String> {
+        let (first, rest) = names.split_first()?;
+        if depth >= FIND_DEPTH || !tried.insert((screen.to_string(), names.len())) {
+            return None;
+        }
+        if let Some(child) = self.subscreen(screen, first) {
+            if rest.is_empty() {
+                return Some(format!("screen:{child}"));
+            }
+            return self.sparse(&child, rest, depth + 1, tried, method);
+        }
+        if let Some(transition) = self.base_transition(screen, first, method) {
+            return Some(transition);
+        }
+        if let Some(grand) = self.children(screen).find_map(|child| self.subscreen(&child, first)) {
+            if rest.is_empty() {
+                return Some(format!("screen:{grand}"));
+            }
+            return self.sparse(&grand, rest, depth + 1, tried, method);
+        }
+        self.children(screen)
+            .find_map(|child| self.sparse(&child, names, depth + 1, tried, method))
+    }
+
+    /// The locations of the subscreens of the screen at `screen`: its items' (the screens indexed; of several of a
+    /// name the one that wins), in name order, then its directory subscreens not named by an item, in location order.
+    fn children<'a>(&'a self, screen: &str) -> impl Iterator<Item = String> + 'a {
+        let items: &'a [Item] = self.items.get(screen).map_or(&[], Vec::as_slice);
+        let winners = items
+            .iter()
+            .enumerate()
+            // the items are in name and rank order: the last of a name wins
+            .filter(move |(at, item)| items.get(at + 1).is_none_or(|next| next.name != item.name))
+            .filter_map(move |(_, item)| self.screen(&item.location));
+        let directory = self
+            .directory
+            .get(screen)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .filter(move |location| {
+                let name = file_stem(location);
+                items.binary_search_by(|item| item.name.as_str().cmp(name)).is_err()
+            })
+            .cloned();
+        winners.chain(directory)
+    }
+
+    /// The location of the subscreen `name` of the screen at `screen`: the item of that name that wins (a row, else a
+    /// conf mount, else a `subscreens-item`), else the directory subscreen (`Foo/<name>.xml` of `Foo.xml`).
     #[must_use]
     pub fn subscreen(&self, screen: &str, name: &str) -> Option<String> {
         let item = self
             .items
             .get(screen)
-            .and_then(|items| items.iter().find(|(item, _)| item == name))
-            .and_then(|(_, location)| self.screen(location));
+            .and_then(|items| {
+                items
+                    .iter()
+                    .filter(|item| item.name == name)
+                    .reduce(|best, item| if item.rank >= best.rank { item } else { best })
+            })
+            .and_then(|item| self.screen(&item.location));
         item.or_else(|| {
             let location = format!("{}/{name}.xml", screen.strip_suffix(".xml")?);
             self.has(&format!("screen:{location}")).then_some(location)
         })
     }
 
-    /// The parent of the screen at `screen`, which a path's `..` goes up to: the screen of its directory (`Foo.xml` of
-    /// `Foo/Bar.xml`), else the first (by location) of the screens whose `subscreens-item` names it.
+    /// The screens a path's `..` may go up to from the screen at `screen`: the screen of its directory (`Foo.xml` of
+    /// `Foo/Bar.xml`) and each screen with an item that names it, in location order.
     #[must_use]
-    pub fn parent_screen(&self, screen: &str) -> Option<String> {
-        directory_parent(screen)
+    pub fn parents(&self, screen: &str) -> Vec<String> {
+        let mut parents: Vec<String> = directory_parent(screen)
             .filter(|parent| self.has(&format!("screen:{parent}")))
-            .or_else(|| {
-                self.item_parents
-                    .get(screen)
-                    .and_then(|parents| parents.iter().min())
-                    .cloned()
-            })
+            .into_iter()
+            .collect();
+        parents.extend(self.item_parents.get(screen).into_iter().flatten().cloned());
+        parents.sort();
+        parents.dedup();
+        parents
     }
 
-    /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one.
-    fn base_transition(&self, base: &str, name: &str) -> Option<String> {
+    /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one: the one of `method`,
+    /// else the one of any method, else the first.
+    fn base_transition(&self, base: &str, name: &str, method: Method) -> Option<String> {
         let plain = format!("transition:{base}#{name}");
         if self.has(&plain) {
             return Some(plain);
         }
         // Extension anchors identify a named XML element, independent of request dispatch.
         // Keep them navigable after transitions acquire method-qualified IDs.
-        let prefix = format!("{plain}:");
-        let any = format!("{prefix}any");
-        if self.has(&any) {
-            Some(any)
-        } else {
-            self.ids.keys().filter(|id| id.starts_with(&prefix)).min().cloned()
+        let ids = self.transitions.get(&plain)?;
+        [method.as_str(), "any"]
+            .iter()
+            .map(|method| format!("{plain}:{method}"))
+            .find(|id| ids.contains(id))
+            .or_else(|| ids.iter().min().cloned())
+    }
+
+    /// The names a path walks by that a screen, subscreens item or transition `id` answers to: a transition's and an
+    /// item's own name, a screen's as a directory subscreen and the name of each item that mounts it; a path through one
+    /// of them may go elsewhere when it changes ([`super::walk_again`]).
+    #[must_use]
+    pub fn names_walked(&self, id: &str) -> Vec<String> {
+        let name_after = |rest: &str| rest.rsplit_once('#').map(|(_, name)| name.to_string());
+        if let Some(location) = id.strip_prefix("screen:") {
+            let mut names = vec![file_stem(location).to_string()];
+            for items in self.items.values() {
+                for item in items {
+                    let mounts = item.location == location || self.screen(&item.location).as_deref() == Some(location);
+                    if mounts && !names.contains(&item.name) {
+                        names.push(item.name.clone());
+                    }
+                }
+            }
+            return names;
         }
+        if let Some(rest) = id.strip_prefix("subscreen:") {
+            // `<screen>#<name>`, `@conf` or `@row[:group]` after a mount's
+            return name_after(rest)
+                .map(|name| name.split('@').next().unwrap_or_default().to_string())
+                .into_iter()
+                .collect();
+        }
+        if let Some(rest) = id.strip_prefix("transition:") {
+            return name_after(rest)
+                .map(|name| name.split(':').next().unwrap_or_default().to_string())
+                .into_iter()
+                .collect();
+        }
+        Vec::new()
     }
 
     /// The names a reference to one of `ids` would carry, for finding the unresolved references an added artifact may
@@ -630,14 +934,129 @@ fn entity_auto(name: &str) -> Option<(&str, &str)> {
     (matches!(verb, "create" | "update" | "store" | "delete") && !noun.is_empty()).then_some((verb, noun))
 }
 
-/// The parent screen and the named location of a `subscreens-item` artifact of a screen, when it names one.
-fn item_of(artifact: &ArtifactRow) -> Option<(&str, &str)> {
-    let parent = artifact.parent.as_deref()?.strip_prefix("screen:")?;
-    let location = artifact.summary.as_str();
-    location.contains("://").then_some((parent, location))
+/// The method of the request a screen path is walked for: a transition of several methods is the one of the request's
+/// method, else the one of any method.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Method {
+    /// A link, a response, a redirect.
+    Get,
+    /// A form's submit.
+    Post,
 }
 
-/// The screen whose default subscreen the screen at `location` is, by Moqui's directory rule: `Foo.xml` beside the
+impl Method {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+        }
+    }
+}
+
+/// Where a step of a screen path goes.
+enum Step {
+    Screen(String),
+    Transition(String),
+}
+
+/// The segments of a screen path as Moqui cleans them (`cleanupPathNameList`): no empty ones, no `.`, no `~name=value`,
+/// and a `..` taking off the segment before it. With `up`, a `..` with none before it is kept, for the walk to go up
+/// from the screen the path is written in; else it is dropped.
+fn path_segments(path: &str, up: bool) -> Vec<&str> {
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            _ if segment.starts_with('~') => {}
+            ".." => match segments.last() {
+                Some(last) if *last != ".." => {
+                    segments.pop();
+                }
+                _ if up => segments.push(".."),
+                _ => {}
+            },
+            _ => segments.push(segment),
+        }
+    }
+    segments
+}
+
+/// Remove one value of `key`'s list that `matches`, and the key once its list is empty.
+fn remove_one<T>(map: &mut HashMap<String, Vec<T>>, key: &str, matches: impl Fn(&T) -> bool) {
+    if let Some(values) = map.get_mut(key) {
+        if let Some(at) = values.iter().position(matches) {
+            values.remove(at);
+        }
+        if values.is_empty() {
+            map.remove(key);
+        }
+    }
+}
+
+/// The file name of a location without its `.xml`.
+fn file_stem(location: &str) -> &str {
+    let name = location.rsplit('/').next().unwrap_or(location);
+    name.strip_suffix(".xml").unwrap_or(name)
+}
+
+/// The screen an item artifact belongs to and the item: a `subscreens-item` of a screen or of a `screen-extend` (an
+/// item of the screen it extends), or a conf mount or `SubscreensItem` row (ids ending `@conf`, `@row`). An item with
+/// no location names `<the screen's directory>/<name>.xml`, as Moqui takes it.
+fn item_of(artifact: &ArtifactRow) -> Option<(String, Item)> {
+    let parent = artifact.parent.as_deref()?;
+    let parent = match parent.strip_prefix("screen-extend:") {
+        Some(extend) => super::extract::extended_location(extend),
+        None => parent.strip_prefix("screen:")?.to_string(),
+    };
+    let (location, no_sub_path) = match artifact.summary.strip_suffix(NO_SUB_PATH_MARK) {
+        Some(location) => (location, true),
+        None => (artifact.summary.as_str(), false),
+    };
+    let location = if location.is_empty() {
+        format!("{}/{}.xml", parent.strip_suffix(".xml")?, artifact.name)
+    } else if location.contains("://") {
+        location.to_string()
+    } else {
+        return None;
+    };
+    // a row of every user (`@row`) wins over one of a user group (`@row:<group>`), which only its members see
+    let mark = artifact.id.rsplit_once('#').map_or("", |(_, item)| item);
+    let rank = match mark.rsplit_once(ROW_ITEM) {
+        Some((_, "")) => 4,
+        Some((_, group)) if group.starts_with(':') => 3,
+        _ if mark.ends_with(CONF_ITEM) => 2,
+        _ => 1,
+    };
+    Some((
+        parent,
+        Item {
+            name: artifact.name.clone(),
+            location,
+            no_sub_path,
+            rank,
+        },
+    ))
+}
+
+/// The services a transition passes the request's parameters to, as its summary says them ([`super::extract`]'s
+/// transition summary: `calls <service>`, `own in-map` when that call takes none, `request to <service>` for each other).
+#[must_use]
+pub fn request_services(summary: &str) -> Vec<String> {
+    let parts: Vec<&str> = summary.split(", ").collect();
+    let own = parts.contains(&OWN_IN_MAP_MARK);
+    parts
+        .iter()
+        .filter_map(|part| match part.strip_prefix(CALLS_MARK) {
+            Some(service) => (!own).then_some(service),
+            None => part.strip_prefix(REQUEST_MARK),
+        })
+        .filter(|service| crate::refs::is_literal(service))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The screen whose directory subscreen the screen at `location` is, by Moqui's directory rule: `Foo.xml` beside the
 /// directory `Foo/` that holds it. None for a screen directly in its component's `screen` directory.
 #[must_use]
 pub fn directory_parent(location: &str) -> Option<String> {

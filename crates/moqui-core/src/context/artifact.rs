@@ -18,6 +18,7 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use moqui_lib::object::Value;
@@ -27,7 +28,8 @@ use crate::user::AuthInfo;
 
 struct Frame {
     artifact_type: Cow<'static, str>,
-    name: String,
+    /// Shared with the thread's activity mirror ([`super::activity`]).
+    name: Arc<str>,
     action: Cow<'static, str>,
     info: AuthInfo,
     telemetry_span: crate::telemetry::Span,
@@ -96,6 +98,7 @@ impl Drop for ArtifactStack {
         // after its parent when an exception leaves frames unpopped.
         while let Some(frame) = self.frames.pop() {
             drop(frame);
+            super::activity::pop();
         }
     }
 }
@@ -105,7 +108,8 @@ impl ArtifactStack {
         Self::default()
     }
 
-    /// Push a frame that has already been decided. `info` is what the decision recorded.
+    /// Push a frame that has already been decided. `info` is what the decision recorded. Returns whether the thread's
+    /// activity mirror wants the user of this work ([`super::activity::note_user`]).
     pub(super) fn push_with(
         &mut self,
         artifact_type: &str,
@@ -113,10 +117,10 @@ impl ArtifactStack {
         action: &str,
         info: AuthInfo,
         errors: ErrorsAtPush,
-    ) {
+    ) -> bool {
         crate::telemetry::profile::count_artifact(artifact_type, action);
         let artifact_type = known(artifact_type);
-        let name = name.to_string();
+        let name: Arc<str> = Arc::from(name);
         let action = known(action);
         // the calls observed on a dev instance, for the artifact index (plans/design-dev-aide.md 7.1)
         if crate::devtools::calls::enabled() {
@@ -143,10 +147,20 @@ impl ArtifactStack {
             .unwrap_or_else(crate::telemetry::Span::noop);
         if telemetry_span.is_recording() {
             telemetry_span.set_attribute("moqui.artifact.type", Value::string(artifact_type.as_ref()));
-            telemetry_span.set_attribute("moqui.artifact.name", Value::string(&name));
+            telemetry_span.set_attribute("moqui.artifact.name", Value::string(&*name));
             telemetry_span.set_attribute("moqui.artifact.action", Value::string(action.as_ref()));
         }
         let telemetry_context = crate::telemetry::attach(telemetry_span.context().or_else(crate::telemetry::capture));
+        let started = Instant::now();
+        let wants_user = super::activity::push(
+            super::activity::MirrorFrame {
+                artifact_type: artifact_type.clone(),
+                name: Arc::clone(&name),
+                action: action.clone(),
+                started,
+            },
+            || telemetry_span.context().map(|context| context.trace_id.to_string()),
+        );
         self.frames.push(Frame {
             artifact_type,
             name,
@@ -156,11 +170,12 @@ impl ArtifactStack {
             telemetry_context,
             telemetry_suppression: None,
             legacy_slow,
-            started: Instant::now(),
+            started,
             hit: HitDetail::default(),
             errors,
             render_depth: crate::screen::active_depth(),
         });
+        wants_user
     }
 
     /// Info of the top frame, and whether any frame carries a deny, of the frames above the base of an isolated check.
@@ -204,10 +219,10 @@ impl ArtifactStack {
         let mut frames = self.frames.iter().rev().peekable();
         let entity = frames
             .next_if(|frame| frame.artifact_type == "AT_ENTITY")
-            .map(|frame| frame.name.clone());
+            .map(|frame| frame.name.to_string());
         let artifact = frames
             .find(|frame| frame.artifact_type != "AT_ENTITY")
-            .map(|frame| frame.name.clone());
+            .map(|frame| frame.name.to_string());
         (entity, artifact)
     }
 
@@ -216,9 +231,24 @@ impl ArtifactStack {
         self.frames
             .iter()
             .rev()
-            .map(|frame| frame.name.as_str())
+            .map(|frame| &*frame.name)
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// Each frame's name, type and action, top first: Java's `getStack`.
+    pub(super) fn frames(&self) -> Vec<(String, String, String)> {
+        self.frames
+            .iter()
+            .rev()
+            .map(|frame| {
+                (
+                    frame.name.to_string(),
+                    frame.artifact_type.to_string(),
+                    frame.action.to_string(),
+                )
+            })
+            .collect()
     }
 
     /// Whether the top frame is a service's and no screen render began since it was pushed: code running now is that
@@ -239,7 +269,9 @@ impl ArtifactStack {
 
     /// Whether the top frame's span records, so a caller builds an attribute's value only for one that does.
     pub(super) fn top_recording(&self) -> bool {
-        self.frames.last().is_some_and(|frame| frame.telemetry_span.is_recording())
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.telemetry_span.is_recording())
     }
 
     pub(super) fn set_top_attribute(&mut self, key: &str, value: Value) {
@@ -304,6 +336,7 @@ impl ArtifactStack {
     /// Pop the top frame and close its telemetry span and metric.
     pub(super) fn pop(&mut self) -> Result<(), Error> {
         let frame = self.frames.pop().ok_or_else(|| Error::new("artifact stack is empty"))?;
+        super::activity::pop();
         let elapsed = frame.started.elapsed();
         let mut frame = frame;
         if !frame.hit.track {
@@ -327,7 +360,7 @@ impl ArtifactStack {
                             .set_attribute("moqui.artifact.type", Value::string(frame.artifact_type.as_ref()));
                         frame
                             .telemetry_span
-                            .set_attribute("moqui.artifact.name", Value::string(&frame.name));
+                            .set_attribute("moqui.artifact.name", Value::string(&*frame.name));
                         frame
                             .telemetry_span
                             .set_attribute("moqui.artifact.action", Value::string(frame.action.as_ref()));
@@ -357,7 +390,7 @@ impl ArtifactStack {
                 if crate::web::attribute("moqui.telemetry.artifact.name")
                     .as_ref()
                     .and_then(Value::as_str)
-                    == Some(frame.name.as_str())
+                    == Some(&*frame.name)
                 {
                     crate::web::set_attribute("moqui.telemetry.artifact.slow", Some(Value::Bool(slow)));
                 }

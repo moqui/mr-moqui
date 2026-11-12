@@ -27,6 +27,7 @@ fn row(id: &str, kind: &str, name: &str, component: &str, path: &str, line: u32)
         summary: format!("about {name}"),
         parent: None,
         origin: String::new(),
+        marks: String::new(),
     }
 }
 

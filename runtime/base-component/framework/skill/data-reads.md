@@ -18,6 +18,8 @@ the same screen with its id, then `more: data offset=25`. Page on with the same 
 - `{"name": "%acme%"}` contains; `{"name": "acme%"}` begins with.
 - `{"orderDate": ">=2026-01-01"}`, `"<=..."`, `">..."`, `"<..."` compare; `{"ownerId": "!=X"}` is not.
 - `{"orderDate": {"from": "start of last month", "thru": "end of last month"}}` is a range.
+- `{"orderDate": "last 7 days"}` (or `past 2 weeks`) is from that long ago until now; a day (`"2026-01-05"`,
+  `"yesterday"`) or a period (`"last month"`) given alone is that whole span.
 - `{"note": null}` is empty.
 A date may be a phrase (`today`, `3 days ago`, `start of last week`, `end of this month`); the answer's
 `resolved:` line shows the date used. Not valid: SQL (`status = 'Open'`), `AND`/`OR` text, field names you guessed.

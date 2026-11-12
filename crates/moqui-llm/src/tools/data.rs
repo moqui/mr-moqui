@@ -20,7 +20,8 @@
 //!   `field_not`), `order` its `orderByField`, `limit` and `offset` its `pageSize` and `pageIndex` (a list that does
 //!   not page is cut here).
 //! - An entity of the conf's `data-entity` patterns (`entity`; by default the `moqui.basic` package: enumerations,
-//!   status items, units, geos), read directly with authorization off as Java's `find_basic`, encrypted fields never.
+//!   status items, units, geos), read directly with authorization off as Java's `find_basic`, encrypted and
+//!   `ai-opt-out` fields never.
 //! - A spilled result of the conversation (`artifact`): its lines from `offset`, or the lines that hold `grep`; a text
 //!   file the user attached to the conversation (`F12`) the same way.
 //!
@@ -141,6 +142,22 @@ impl AgentTool for Data {
     }
 }
 
+/// For a read that found no rows: when a `where` value is plain text (no `%`, comparison, list or range), that it was
+/// matched as the whole value, with how to write begins-with and contains. A model asked for what "starts with" a text
+/// writes the text alone and reads "no rows" as none there.
+fn whole_value_hint(filters: &serde_json::Map<String, Json>) -> Option<String> {
+    let (field, value) = filters.iter().find_map(|(field, value)| {
+        let text = value.as_str()?.trim();
+        let operator = ['%', '>', '<', '!'].iter().any(|mark| text.contains(*mark));
+        // an id matches whole by its nature: no rows for one is the answer, not a hint to search
+        let id = field.ends_with("Id") || field.ends_with("ID") || field == "id";
+        (!text.is_empty() && !operator && !id && !dates::is_date_name(field)).then_some((field, text))
+    })?;
+    Some(format!(
+        "a where value matches the whole field: {field} is exactly \"{value}\"; \"{value}%\" begins with it, \"%{value}%\" contains it"
+    ))
+}
+
 /// What a read asks for, besides where it reads.
 struct Read<'a> {
     filters: &'a serde_json::Map<String, Json>,
@@ -223,6 +240,7 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
     let mut tests = Vec::new();
     let mut resolved = BTreeMap::new();
     let week = jiff::civil::Weekday::Monday;
+    let mut spans: Vec<(String, String)> = Vec::new();
     let mut date = |field: &str, text: &str, end: bool| -> String {
         if !dates::is_date_name(field) {
             return text.to_string();
@@ -268,6 +286,14 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
                     .filter(|head| !head.is_empty() && !head.contains('%'))
                 {
                     Test::Begins(begins.to_string())
+                } else if let Some((from, thru)) = dates::is_date_name(field)
+                    .then(|| dates::range(text, now, week))
+                    .flatten()
+                {
+                    // a span with no comparison (`last 7 days`, a day, `last month`) is a range, not a value to equal
+                    spans.push((field.clone(), format!("{from} thru {thru}")));
+                    tests.push((field.clone(), Test::From(from)));
+                    Test::Thru(thru)
                 } else {
                     Test::Equals(date(field, text, false))
                 }
@@ -275,6 +301,7 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
         };
         tests.push((field.clone(), test));
     }
+    resolved.extend(spans);
     (tests, resolved)
 }
 
@@ -422,6 +449,9 @@ fn answer(rows: &Rows, read: &Read<'_>, after: &[String]) -> String {
         ));
         if rows.rows.is_empty() {
             lines.push("no rows".to_string());
+            if let Some(hint) = whole_value_hint(read.filters) {
+                lines.push(hint);
+            }
         } else {
             lines.push(format::table(&header, &body));
         }
@@ -492,7 +522,9 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
         for field in fields {
             if let Value::Map(field) = field {
                 let name = field.get("name").map(to_plain_string).unwrap_or_default();
-                let encrypted = matches!(field.get("encrypt"), Some(Value::Bool(true)));
+                // an encrypted field, and one whose text reaches no model (ai-opt-out, design-people PE-21), is never read
+                let encrypted = matches!(field.get("encrypt"), Some(Value::Bool(true)))
+                    || matches!(field.get("aiOptOut"), Some(Value::Bool(true)));
                 let kind = field.get("type").map(to_plain_string).unwrap_or_default();
                 all_fields.push((name, encrypted, kind));
             }
@@ -707,6 +739,26 @@ fn read_list(ctx: &TurnContext<'_>, path: &str, list: Option<&str>, read: &Read<
             }
         }
     };
+    // a find or sort by an ai-opt-out field would tell its text by the rows it keeps: none is answered (design-people PE-21)
+    let ordered = read.order.iter().flat_map(|order| order.split(',')).filter_map(|part| {
+        part.trim()
+            .trim_start_matches(['-', '+', '^'])
+            .split_whitespace()
+            .next()
+    });
+    let named: Vec<&str> = tests.iter().map(|(field, _)| field.as_str()).chain(ordered).collect();
+    if let Some(off) = named
+        .iter()
+        .find(|field| chosen.ai_off.iter().any(|name| name == *field))
+    {
+        return Err(ToolError::new(
+            "ai_opt_out",
+            format!(
+                "{off} of {} is not shared with AI, so data neither finds nor sorts by it. Use another field.",
+                chosen.name
+            ),
+        ));
+    }
     let mut after: Vec<String> = Vec::new();
     if list.is_none() && lists.len() > 1 {
         after.push(format!("other lists: {} (data list=name)", names[1..].join(", ")));
@@ -800,6 +852,8 @@ struct ListData {
     count: usize,
     /// The field names its columns show, in order: the keys of a canvas read's rows.
     keys: Vec<String>,
+    /// Its `ai-opt-out` fields (the agent's render shows a placeholder for them): no `where` or `order` names one.
+    ai_off: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -892,6 +946,13 @@ fn list_of(node: &Json) -> ListData {
             .and_then(Json::as_u64)
             .and_then(|count| usize::try_from(count).ok())
             .unwrap_or(rows.len()),
+        ai_off: node
+            .get("aiOff")
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|field| field.as_str().map(str::to_string))
+            .collect(),
         rows,
     }
 }
@@ -1027,6 +1088,31 @@ mod tests {
             .unwrap(),
             "resolved: {thruDate: \"2026-09-30 23:59:59\"}"
         );
+    }
+
+    /// A date field given a span with no comparison reads it as a range: `last 7 days` until now, a bare day as that
+    /// day; the resolved line shows both ends.
+    #[test]
+    fn a_span_on_a_date_field_is_a_range() {
+        let now: Zoned = "2026-10-21T14:30:00[UTC]".parse().unwrap();
+        let filters = json!({"fromDate": "last 7 days", "thruDate": "2026-10-20", "statusId": "Open"});
+        let (tests, resolved) = tests_of(filters.as_object().unwrap(), &now);
+        let parameters = find_parameters(&tests);
+        let has = |key: &str, value: &str| parameters.iter().any(|(k, v)| k == key && v == value);
+        assert!(has("fromDate_from", "2026-10-14 14:30") && has("fromDate_thru", "2026-10-21 14:30"), "{parameters:?}");
+        assert!(has("thruDate_from", "2026-10-20 00:00") && has("thruDate_thru", "2026-10-20 23:59:59"), "{parameters:?}");
+        assert!(has("statusId", "Open"), "a value that is no date stays a value: {parameters:?}");
+        assert_eq!(resolved.get("fromDate").map(String::as_str), Some("2026-10-14 14:30 thru 2026-10-21 14:30"));
+    }
+
+    #[test]
+    fn a_plain_where_value_that_finds_nothing_says_it_is_whole() {
+        let filters = json!({"initialRequest": "/agent-eval-chart/"});
+        let hint = whole_value_hint(filters.as_object().unwrap()).unwrap();
+        assert!(hint.contains("\"/agent-eval-chart/%\" begins with it"), "{hint}");
+        for written in [json!({"userGroupId": "AGENT_EVAL_NONE"}), json!({"name": "acme%"}), json!({"orderDate": ">=2026-01-01"}), json!({"statusId": ["A", "B"]}), json!({"fromDate": "today"})] {
+            assert_eq!(whole_value_hint(written.as_object().unwrap()), None, "{written}");
+        }
     }
 
     #[test]

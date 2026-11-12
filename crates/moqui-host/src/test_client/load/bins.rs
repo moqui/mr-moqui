@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A load's time series (plans/LoadRunner.md section 5): one bin a second from the run's start, with its active users,
+//! A load's time series (plans/archive/LoadRunner.md section 5): one bin a second from the run's start, with its active users,
 //! requests, errors, the scheduled starts dropped in it (a rate scenario's), mean, p50, p95, p99 and max, computed from that second's samples when it closes, after which they
 //! are dropped. Past [`BIN_CAP`] bins, neighbours merge and the bin length doubles. Per name, [`Series`] keeps count,
 //! errors and mean in bins of 10 seconds, merged the same way.

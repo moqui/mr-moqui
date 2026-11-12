@@ -116,8 +116,8 @@ pub fn value_items(value: &Value) -> Option<Vec<Value>> {
             if let Some(list) = object.downcast::<ScriptList>() {
                 return Some(
                     list.cells()
-                        .iter()
-                        .map(|cell| Value::Object(HostObject(Arc::clone(cell) as Arc<dyn std::any::Any + Send + Sync>)))
+                        .into_iter()
+                        .map(|cell| Value::Object(HostObject(cell as Arc<dyn std::any::Any + Send + Sync>)))
                         .collect(),
                 );
             }

@@ -7,7 +7,7 @@
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
      Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Board               │ ┌─ All enumerations ───┐ ┌─ Screen Theme Resour─┐
-     Calendar            │ │ 501                  │ │ 33                   │
+     Calendar            │ │ 527                  │ │ 33                   │
      Split               │ └──────────────────────┘ └──────────────────────┘
      Settings            │                          ┌─ DB Form Field Type ─┐
      Wizard              │                          │ 20                   │
@@ -19,8 +19,8 @@
      Message             │                          │ 14                   │
      Views               │                          └──────────────────────┘
      Handheld            │                          ┌─ Geo Type ───────────┐
- ▾ Home                  │                          │ 13                   │
-                         │                          └──────────────────────┘
+     Nav cards           │                          │ 13                   │
+ ▾ Home                  │                          └──────────────────────┘
                          │ ┌─ Assigned to me ─────────────────────────────────────────────────────────────────────┐ ┌─ Shortcuts ────────────────────────────────────────────────┐
                          │ │ All enumerations                                                                     │ │ New enumeration  Find enumerations  Theme type detail      │
                          │ │   Title                                 Kind                           Due          ▸│ │ John Doe 360  Status flows                                 │

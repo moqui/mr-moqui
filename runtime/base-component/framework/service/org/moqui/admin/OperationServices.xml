@@ -1,0 +1,703 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Operational evidence and recovery for delegated administration (mr-boss plan/design-admin.md §8.1, §9, §10, §17.2;
+    impl-admin P12 and later): scoped, safe projections of what the instance sent and ran, and the dispatch of an eligible
+    recovery to its owner. No replacement queue, scheduler or monitor. The file grows by parts, each a section below with its
+    bodies in a module of its own beside OperationLib.js, which they share: the mail queue (OperationMail.js), system messages
+    (OperationMessages.js), recovery (OperationRecovery.js), jobs (OperationJobs.js) and notification topics
+    (OperationTopics.js). Each service checks its own permission with ec.user.hasPermission (ADMIN_OPERATION_VIEW to read,
+    ADMIN_OPERATION_MANAGE to act; a topic's delivery defaults are ADMIN_SETTINGS_MANAGE's); an action names the revision it read
+    and may carry an operation key, whose repeat answers the first result; a refusal a person can act on is answered (applied
+    false, reasonCode, reason), never written; a missing permission or a malformed request is an error. ALL_USERS may call the
+    services named in data/AdminConfigurationData.xml AdminOperationServices: each refuses without its permission. No
+    dependency on Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== The mail queue (OperationMail.js; impl-admin P12) ========== -->
+
+    <service verb="find" noun="MailOutcomes" allow-remote="false">
+        <description>The send outcomes of the instance's stored outgoing mail (EmailMessage: Ready, Sent, Bounced or
+            Cancelled; never a draft, a scheduled message or received mail), newest first, a page at a time
+            (outcomeList, outcomeCount). Each: the message's id, status, state (retryable: not sent; permanent: refused;
+            bounced; uncertain: it may have been sent; settled: a person reported what became of an uncertain send, with
+            settlement delivered or notDelivered, its text, settledByUserId, settledByName, settledDate and settledReason;
+            sending; sent: only what a send of it succeeded in, never a settlement; cancelled) with its text, the outcome the
+            mail service kept, the time, the number of recipients, the error with every address struck out, its mail server,
+            template and binding (account: a mail account's message; instance: the instance's own), its owner (ownerKind
+            mailAccount, registered with the owner's key, title, reference and state, or mailService), what may be done
+            here (retryEligible, reconcileEligible, abandonEligible, each only with ADMIN_OPERATION_MANAGE), the next step
+            in words and the revision an action names. Never a subject, body, header, address or attachment: no parameter
+            returns one. Narrowed by state (attention, the default: Ready and Bounced that nobody settled; retryable,
+            permanent, uncertain, bounced, settled, sent, all), mail server, template, binding, one message and dates (by default the last defaultDays
+            days). An owner that could not be asked is named in unansweredOwnerList, and nothing of the instance's own is
+            then offered a retry. Needs ADMIN_OPERATION_VIEW; with ADMIN_CONNECTION_VIEW alone, only the instance's own mail
+            is read (instanceOnly), never a mail account's message.</description>
+        <in-parameters>
+            <parameter name="state"/>
+            <parameter name="emailMessageId"/>
+            <parameter name="emailServerId"/>
+            <parameter name="emailTemplateId"/>
+            <parameter name="binding"><description>account or instance</description></parameter>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="outcomeList" type="List"/>
+            <parameter name="outcomeCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="instanceOnly" type="Boolean"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="unansweredOwnerList" type="List"/>
+            <parameter name="defaultDays" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('findMailOutcomes', context))</script></actions>
+    </service>
+    <service verb="retry" noun="MailOutcome" allow-remote="false" transaction-timeout="300">
+        <description>Send again a message that is known not sent (retryable, permanent or bounced) or that a person
+            settled as not delivered, through its owner, at
+            the revision read. A message of the mail service's own (no mail account, no registered owner) is claimed first
+            and then sent by org.moqui.mail.EmailServices.send#EmailMessage: the same stored message, never a new one. A
+            registered owner's message is retried by that owner's own service when it offers one (OWNER_RETRIES when it
+            does not). The mail service clears a settlement when the send begins, and the send's own result is then the
+            message's state. Refused, with
+            the reason: a message that may have been sent and that nobody settled (RECONCILE_REQUIRED), one settled as
+            delivered (SETTLED), one in a mail account's Outbox (OWNER_ONLY: its sender's), one already sent or
+            cancelled (NOT_FAILED), one being sent (IN_PROGRESS), a stale revision (STALE_REVISION), an owner that could
+            not be asked (OWNER_UNAVAILABLE) and a send that fails again (SEND_FAILED, with the new state). With an
+            operationKey a repeat answers the first result (repeated) and sends nothing. Needs
+            ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="reason"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="state"/>
+            <parameter name="revision"/>
+            <parameter name="ownerStateText"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('retryMailOutcome', context))</script></actions>
+    </service>
+    <service verb="reconcile" noun="MailOutcome" allow-remote="false">
+        <description>What a person concluded about a message whose send is uncertain, with the reason (required), at the
+            revision read: delivered (the mail server's own log shows it went) or notDelivered. Either is recorded as the
+            message's settlement (EmailMessage sendSettlement with who, when and the reason, and an audit log row), apart
+            from its sent state: the status and sendOutcome stay what the transport left, the message is never marked
+            Sent, and it is then listed as settled, out of what needs attention. One settled as notDelivered may be sent
+            again (retry#MailOutcome). A settled message is not settled again (ALREADY_SETTLED). abandon closes a failed
+            or uncertain message of the mail service's own (Cancelled: not offered again). Nothing is sent. A registered
+            owner's message is reconciled by that owner's own service first, which checks the owner's permission
+            (OWNER_RECONCILES when it offers none), and the settlement is then recorded here the same way; a mail
+            account's message is its sender's (OWNER_ONLY). Refused too for a message that is not uncertain
+            (NOT_UNCERTAIN, for delivered and notDelivered), one sent or cancelled (NOT_FAILED), a stale revision and an
+            owner that could not be asked. With an operationKey a repeat answers the first result. Needs
+            ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="resolution" required="true"><description>delivered, notDelivered or abandon</description></parameter>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="resolution"/>
+            <parameter name="state"/>
+            <parameter name="revision"/>
+            <parameter name="settlement"/>
+            <parameter name="settlementText"/>
+            <parameter name="settledByUserId"/>
+            <parameter name="settledDate"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('reconcileMailOutcome', context))</script></actions>
+    </service>
+    <service verb="claim" noun="MailOutcomeRetry" allow-remote="false">
+        <description>Internal to retry#MailOutcome (in no group's grant; it checks ADMIN_OPERATION_MANAGE itself): in a
+            transaction of its own, the message locked and, while it is still at the revision read and still known not
+            sent, marked uncertain with the claim's time, so a second request and a server that stops part way both find
+            it held; a settlement as not delivered is cleared by the mail service when the send begins, not here. With
+            release the claim's time is cleared.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="release" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="claimed" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('claimMailOutcomeRetry', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="MailOutcomeOwners" type="interface">
+        <description>What a registered owner of mail send outcomes answers (moqui.server.MailOutcomeOwner ownerService):
+            which of the given EmailMessages are its own (ownerList: emailMessageId, ownerRef the owner's own record,
+            ownerStateText its state there in words, retryEligible and reconcileEligible when its recover service would
+            take that action now, selfRetrying when it tries the message again on its own). A message it does not answer
+            is not its own. It reads its own records only and returns no address, subject or body.</description>
+        <in-parameters><parameter name="emailMessageIdList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="ownerList" type="List"/></out-parameters>
+    </service>
+    <service verb="recover" noun="OwnedMailOutcome" type="interface">
+        <description>A registered owner's own action on one of its messages (MailOutcomeOwner recoverService): retry (send
+            it again its own way), or the reconciliation of an uncertain send, sent or notSent. The owner checks its own
+            permission and its record's state, and answers applied, or reasonCode and reason; the registration adds no
+            right.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="ownerRef"/>
+            <parameter name="action" required="true"><description>retry, sent or notSent</description></parameter>
+            <parameter name="reason"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="ownerStateText"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== System messages (OperationMessages.js; impl-admin P13) ========== -->
+
+    <service verb="find" noun="Messages" allow-remote="false">
+        <description>The instance's system messages (moqui.service.message.SystemMessage), newest first, a page at a time
+            (messageList, messageCount). Each: its id, type, remote (and whether that remote is disabled), direction,
+            status and state (waiting; retrying: failed and tried again on its own; failed; inProgress; uncertain: a send
+            or a consume that never answered, so it may have been sent or applied; settled: an uncertain one a person
+            settled, which stays in its status and is never listed as done, with settlement (done or notDone),
+            settlementText, settledByName, settledDate and settledReason; done; staged; rejected; cancelled) with
+            its text, its times and failed attempts, the class of its last error and, unless its owner answers per
+            message and does not let this reader (a store's or an organization's scope is the owner's), its remote, its
+            correlation ids (messageId, remoteMessageId), who settled it and why, and one line of the error with what a
+            remote answered, addresses, URL paths and tokens struck out; what is registered for it (the owner, its own state there, the key of its own
+            place) and what may be done here (retryEligible, requeueEligible, reconcileEligible, cancelEligible, each only
+            with ADMIN_OPERATION_MANAGE and a registered recovery) with the next step in words, and the revision an action
+            names. Never a message's text. Narrowed by state (attention, the default: failed and uncertain; failed,
+            uncertain, settled, waiting, done, closed, all), type, remote, direction (in, out), a reference (a whole message id,
+            envelope id or remote id) and dates (by default the last defaultDays days). Needs
+            ADMIN_OPERATION_VIEW.</description>
+        <in-parameters>
+            <parameter name="state"/>
+            <parameter name="systemMessageTypeId"/>
+            <parameter name="systemMessageRemoteId"/>
+            <parameter name="direction"><description>in or out</description></parameter>
+            <parameter name="reference"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="messageList" type="List"/>
+            <parameter name="messageCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="typeList" type="List"/>
+            <parameter name="defaultDays" type="Integer"/>
+            <parameter name="maxTargets" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMessages.js').execute('findMessages', context))</script></actions>
+    </service>
+    <service verb="get" noun="Message" allow-remote="false">
+        <description>One system message's evidence: its row as find#Messages answers it (message, with its content type,
+            the length of its text and the number of messages split from it), its failed attempts (attemptList: time, what
+            was attempted, the error's class and, where its owner lets this reader, its masked line), its status history
+            from the audit log (historyList: time, from, to and, where its owner lets this reader, who and the reason), and each recovery action with whether it
+            may be taken now, why not, and what it would do (actionList, as preview#Recovery). Its payload (payloadText,
+            cut to 20,000 characters, values of fields named like a credential struck out) is answered only when asked
+            for (includePayload) and only when the type's owner registered the permission that reads it, the reader holds
+            it and, where the owner answers per message, the owner says this reader may see it; otherwise
+            payloadHiddenReason says why not. Needs ADMIN_OPERATION_VIEW.</description>
+        <in-parameters>
+            <parameter name="systemMessageId" required="true"/>
+            <parameter name="includePayload" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="message" type="Map"/>
+            <parameter name="attemptList" type="List"/>
+            <parameter name="historyList" type="List"/>
+            <parameter name="actionList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="payloadVisible" type="Boolean"/>
+            <parameter name="payloadHiddenReason"/>
+            <parameter name="payloadText"/>
+            <parameter name="payloadTruncated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMessages.js').execute('getMessage', context))</script></actions>
+    </service>
+    <service verb="apply" noun="MessageRecovery" allow-remote="false">
+        <description>Internal to execute#Recovery (in no group's grant; it checks ADMIN_OPERATION_MANAGE itself): one step
+            on a system message in a transaction of its own, the row locked, still at the revision read and still in the
+            state the step is for. claim marks the attempt, so a second request at that revision finds the message
+            changed (one reported not done is moved to Error with its settlement cleared, for the send or consume that
+            follows); requeue (reset#SystemMessageInError) and cancel (cancel#SystemMessage) take a message in Error only;
+            done and notDone record the settlement of one whose outcome is unknown (outcomeSettlement with who, when and
+            the reason): its status is left as the transport left it, never set Sent or Consumed by a person's word.</description>
+        <in-parameters>
+            <parameter name="systemMessageId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="step" required="true"><description>claim, requeue, cancel, done or notDone</description></parameter>
+            <parameter name="reason"><description>Kept with a settlement</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="taken" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMessages.js').execute('applyMessageRecovery', context))</script></actions>
+    </service>
+
+    <!-- ========== Recovery (OperationRecovery.js; impl-admin P13) ========== -->
+
+    <service verb="preview" noun="Recovery" allow-remote="false">
+        <description>What may be done now to each of up to 25 operational records of one kind (targetKind: SystemMessage, or
+            ServiceJob, a scheduled job by its jobName, whose one action is retry: a run outside its schedule),
+            and what it would do; nothing is changed. previewList, in the order asked: targetId, found, title, state and
+            its text, the revision an action names, what is registered for it (descriptorKey, ownerApp, ownerTitle,
+            ownerRoute, ownerPermission, idempotencyNote, the owner's own reference and state) and actionList: for each
+            action of the kind (a message: retry, requeue, reconcile, cancel) its label, eligible, the reason when not
+            (reasonCode NOT_REGISTERED: no owner registered a recovery for it; NOT_OFFERED; OWNER_PERMISSION;
+            RECONCILE_REQUIRED: its outcome is unknown, so it is settled, never retried; NOT_UNCERTAIN; ALREADY_SETTLED;
+            SETTLED: reported done by the person who settled it, so never sent or consumed again; NOT_FAILED;
+            IN_PROGRESS; REMOTE_DISABLED; OWNER_UNAVAILABLE; NOT_OWNED; OWNER_REFUSES; PERMISSION), the consequence in
+            words and a reconciliation's resolutions. Needs ADMIN_OPERATION_VIEW; an action is eligible only with
+            ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="targetIdList" type="List"/>
+            <parameter name="targetId"><description>One id, or several comma separated, when no list is given</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetKind"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="previewList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationRecovery.js').execute('previewRecovery', context))</script></actions>
+    </service>
+    <service verb="execute" noun="Recovery" allow-remote="false" transaction-timeout="1800">
+        <description>The registered action (retry, requeue, reconcile with a resolution done or notDone, cancel) on each of
+            up to 25 records of one kind, with the reason (required, kept in the audit log), each named with the revision
+            it was read at (targetList of targetId and expectedRevision, or one targetId and expectedRevision). Each
+            record is on its own: read again, refused when it changed (STALE_REVISION) or is not eligible now (the reasons
+            of preview#Recovery), claimed in a transaction of its own, then acted on by what its owner registered: the
+            framework's own action for that same record (a message is sent or consumed again as itself, never as a new
+            one), or the owner's own service, which checks the owner's permission and scope. A record whose outcome is
+            unknown is never retried: it is reconciled, and nothing is sent by that, nor is the record marked sent or
+            consumed: the settlement is kept beside it (reported done, or reported not done, which may then be retried).
+            One that is refused or fails
+            (RETRY_FAILED, OWNER_REFUSED, FAILED) is named in its result and the others go on: resultList has a row per
+            record (targetId, applied, reasonCode, reason, its state and revision afterwards), with appliedCount and
+            refusedCount; applied says whether any was. With an operationKey a repeat of the same batch by the same user
+            answers the first results (repeated) and does nothing again. Needs ADMIN_OPERATION_MANAGE, and the owner's
+            permission where its registration names one.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="resolution"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="targetId"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="targetKind"/>
+            <parameter name="action"/>
+            <parameter name="appliedCount" type="Integer"/>
+            <parameter name="refusedCount" type="Integer"/>
+            <parameter name="resultList" type="List"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationRecovery.js').execute('executeRecovery', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="RecoveryTargets" type="interface">
+        <description>What the owner of a registered recovery answers about its records (moqui.server.RecoveryDescriptor
+            describeService): for those of the given ids that are its own (targetList: targetId, ownerRef the owner's own
+            record, ownerStateText its state there in words), what its recover service would take now for this caller
+            (retryEligible, reconcileEligible, cancelEligible, and reason when none), whether the outcome is unknown at
+            the owner (uncertain: it is then reconciled, never retried), and whether this caller may see the record's
+            diagnostics (detailVisible) and payload (payloadVisible) by the owner's own permission and scope. A record it
+            does not answer is not its own. It changes nothing and returns no payload.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="targetIdList" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="targetList" type="List"/></out-parameters>
+    </service>
+    <service verb="recover" noun="OwnedTarget" type="interface">
+        <description>A registered owner's own action on one of its records (RecoveryDescriptor recoverService): retry,
+            reconcile (resolution done or notDone) or cancel, with the reason and an operation key whose repeat the owner
+            answers with its first result. The owner checks its own permission, scope and the record's state, keeps the
+            record's identity, and answers applied, or reasonCode and reason; the registration adds no right.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="targetId" required="true"/>
+            <parameter name="ownerRef"/>
+            <parameter name="action" required="true"/>
+            <parameter name="resolution"/>
+            <parameter name="reason"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="ownerStateText"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== Jobs (OperationJobs.js; impl-admin P14) ========== -->
+
+    <service verb="find" noun="Jobs" allow-remote="false">
+        <description>The instance's service jobs (moqui.service.job.ServiceJob) by name, a page at a time (jobList,
+            jobCount); never a queued call (those are counted, queuedCallCount). Each: its name, title and description,
+            whether its owner registered it for administration here (registered, ownerApp), its service, its schedule
+            as an expression and in words, its state (scheduled, due, requested: a run was asked for, running, failing:
+            its newest run failed, late: due for more than ten minutes and not started, paused, ended: outside its
+            dates, manual: no schedule) with its text, its next run and its last (as times, and as text in the
+            machine's time zone, timeZone, which is the zone a schedule is read in), the run its lock holds, the class
+            of its last error and whether a run outside its schedule is registered. Narrowed by state (all, the
+            default; attention: failing or late; failing, late, paused, running), owner (ownerApp; _none for the
+            unregistered) and a term of its name or description. A job run carries no organization: the jobs of every
+            organization are listed. Needs ADMIN_OPERATION_VIEW.</description>
+        <in-parameters>
+            <parameter name="state"/>
+            <parameter name="ownerApp"/>
+            <parameter name="term"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="jobList" type="List"/>
+            <parameter name="jobCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="ownerList" type="List"/>
+            <parameter name="failingCount" type="Integer"/>
+            <parameter name="lateCount" type="Integer"/>
+            <parameter name="pausedCount" type="Integer"/>
+            <parameter name="queuedCallCount" type="Integer"/>
+            <parameter name="timeZone"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('findJobs', context))</script></actions>
+    </service>
+    <service verb="get" noun="Job" allow-remote="false">
+        <description>One job as find#Jobs answers it (job), with its wait after an error, its lock's expiry and its
+            time limit (read only), what of it may be changed here by its registration and this caller
+            (scheduleEditable with minIntervalMinutes, pauseEditable, priorityEditable, retryEditable,
+            parametersEditable, recipientsEditable with recipientPermission; readOnlyReason when nothing is), the
+            revision a change names (revision) and the one a run names (runRevision). parameterList: the parameters its
+            owner registered as safe (name, title, type, bounds in words, options, the stored value) and, by name only,
+            the others it is deployed with (a value only where it is a number or a yes or no). recipientList: who is told
+            when a run ends (name, whether notified, whether the account still signs in and still holds the permission a
+            recipient needs). actionList: a run outside the schedule as preview#Recovery answers it. Needs
+            ADMIN_OPERATION_VIEW.</description>
+        <in-parameters><parameter name="jobName" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="job" type="Map"/>
+            <parameter name="parameterList" type="List"/>
+            <parameter name="recipientList" type="List"/>
+            <parameter name="actionList" type="List"/>
+            <parameter name="registration" type="Map"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('getJob', context))</script></actions>
+    </service>
+    <service verb="store" noun="Job" allow-remote="false">
+        <description>Change what a job's owner registered as changed here (moqui.server.JobRegistration), at the revision
+            read; every change is checked before any is written. cronExpression: only where the schedule is registered
+            as editable, an expression the scheduler reads that comes due no more often than the registration's
+            minIntervalMinutes; never cleared, never given to a job that has none. paused (Y or N), priority (0 to 999)
+            and minRetryTime (1 to 1440 minutes): each only where registered. A parameter (parameterName with
+            parameterValue, or parameterMap): only one its owner registered (JobParameterDefinition), a value of its
+            type within its bounds, a text of letters, digits, spaces and . , : _ - only; an empty value clears one that
+            is not required. A recipient (recipientUsername with recipientAction add, mute or remove): only where the
+            registration names the permission a recipient must hold, and to add, only an account that signs in and
+            holds it. No parameter names the job's service, the identity it runs as, its topic, its time limits, its
+            lock settings or its dates: they are never written here. Refused, with the reason: an unregistered job
+            (NOT_REGISTERED), a control or parameter its owner did not register (NOT_EDITABLE,
+            NOT_REGISTERED_PARAMETER), INVALID_SCHEDULE, INVALID_VALUE, NOT_ELIGIBLE, the owner's permission
+            (OWNER_PERMISSION) and a stale revision. Each change leaves an audit row with the reason. Answers the new
+            revision and the job's state and next run in the machine's time zone. Needs
+            ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="jobName" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="cronExpression"/>
+            <parameter name="paused"/>
+            <parameter name="priority"/>
+            <parameter name="minRetryTime"/>
+            <parameter name="parameterName"/>
+            <parameter name="parameterValue"/>
+            <parameter name="parameterMap" type="Map"/>
+            <parameter name="recipientUsername"/>
+            <parameter name="recipientAction"><description>add (the default), mute or remove</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changedList" type="List"/>
+            <parameter name="revision"/>
+            <parameter name="state"/>
+            <parameter name="stateText"/>
+            <parameter name="nextRun"/>
+            <parameter name="nextRunText"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('storeJob', context))</script></actions>
+    </service>
+    <service verb="find" noun="JobRuns" allow-remote="false">
+        <description>Job runs (moqui.service.job.ServiceJobRun), newest first, a page at a time (runList, runCount),
+            within a bounded range: from fromDate (by default defaultDays days back, at most rangeDays) to thruDate.
+            Each: its id and job, its state (failed; running: the run its job's lock holds; stopped: never ended and not
+            what the lock holds; itemsFailed: ended without an error while its own results count failed items, which is
+            never listed as a success; succeeded) with its text, its start (also in the machine's time zone) and
+            duration, the class of its error and one masked line of it, the numbers among its results (countList), its
+            trace id and whether a person or the scheduler started it. Never a message, a result text or a parameter.
+            Narrowed by job and state (all, failed, running, ended). A job run carries no organization. Needs
+            ADMIN_OPERATION_VIEW.</description>
+        <in-parameters>
+            <parameter name="jobName"/>
+            <parameter name="state"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runList" type="List"/>
+            <parameter name="runCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="defaultDays" type="Integer"/>
+            <parameter name="rangeDays" type="Integer"/>
+            <parameter name="timeZone"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('findJobRuns', context))</script></actions>
+    </service>
+    <service verb="get" noun="JobRun" allow-remote="false">
+        <description>One run's evidence: its row as find#JobRuns answers it (run), with up to five masked lines of its
+            errors (every address, URL path, credential and long token struck out), the number of lines of its messages,
+            the names of what else it answered, where it ran and whether its job's lock still holds it; its state counts
+            its owner's items too, so a run without an error whose items failed is itemsFailed. parameterList: the names
+            of the parameters it was started with, and a value only where it is a number, a yes or no, or a parameter
+            its job's owner registered as safe. itemList (with itemsAvailable, itemsReason, itemCount): as
+            get#JobRunItems. Needs ADMIN_OPERATION_VIEW.</description>
+        <in-parameters><parameter name="jobRunId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="run" type="Map"/>
+            <parameter name="parameterList" type="List"/>
+            <parameter name="itemsAvailable" type="Boolean"/>
+            <parameter name="itemsReason"/>
+            <parameter name="itemList" type="List"/>
+            <parameter name="itemCount" type="Integer"/>
+            <parameter name="itemsOwnerApp"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('getJobRun', context))</script></actions>
+    </service>
+    <service verb="get" noun="JobRunItems" allow-remote="false">
+        <description>What each independent item of a run came to, by the job's owner: the service its registered
+            recovery names (moqui.server.RecoveryDescriptor of targetKind ServiceJob, itemsService, implementing
+            find#JobRunItems), called as this caller, so the owner's own permission and scope decide what is answered.
+            itemList (at most 200, an owner lists the failed first): itemKey, title, state (done, failed, skipped,
+            uncertain, waiting) with its text, the reason, the owner's reference, the next step and, where the item is
+            itself recovered here, its kind and id (recoveryKind SystemMessage or ServiceJob, recoveryTargetId); every
+            text is cut and masked. A successful item is never replayed from here. With no registered provider
+            itemsAvailable is false and itemsReason says so. Needs ADMIN_OPERATION_VIEW.</description>
+        <in-parameters><parameter name="jobRunId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="jobRunId"/>
+            <parameter name="jobName"/>
+            <parameter name="itemsAvailable" type="Boolean"/>
+            <parameter name="itemsReason"/>
+            <parameter name="itemList" type="List"/>
+            <parameter name="itemCount" type="Integer"/>
+            <parameter name="failedItemCount" type="Integer"/>
+            <parameter name="ownerApp"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('getJobRunItems', context))</script></actions>
+    </service>
+    <service verb="apply" noun="JobRecovery" allow-remote="false">
+        <description>Internal to execute#Recovery (in no group's grant; it checks ADMIN_OPERATION_MANAGE itself): one step
+            on a job in a transaction of its own, its lock row locked, the job still as it was read and no run holding
+            the lock. check takes nothing (an owner's own run follows). request marks the job due, by setting the lock's
+            last run time just before the schedule's last occurrence, so the scheduler's next pass claims the lock and
+            runs the job as it runs every run. The lock's run is never cleared and its row never deleted.</description>
+        <in-parameters>
+            <parameter name="jobName" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="step" required="true"><description>check or request</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="taken" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('applyJobRecovery', context))</script></actions>
+    </service>
+    <service verb="find" noun="JobRunItems" type="interface">
+        <description>What the owner of a job answers about one run of it (moqui.server.RecoveryDescriptor itemsService):
+            its independent items (itemList: itemKey, title, state done, failed, skipped, uncertain or waiting, reason,
+            ownerRef, nextStep, and recoveryKind with recoveryTargetId where the item is a record recovered through
+            execute#Recovery), the failed first, with how many there are in all (itemCount) and how many failed
+            (failedItemCount). It checks its own permission and scope for this caller, changes nothing and returns no
+            payload, address or credential.</description>
+        <in-parameters>
+            <parameter name="jobName" required="true"/>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="startTime" type="Long"/>
+            <parameter name="endTime" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="itemList" type="List"/>
+            <parameter name="itemCount" type="Integer"/>
+            <parameter name="failedItemCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="MessageJobRunItems" allow-remote="false">
+        <implements service="org.moqui.admin.OperationServices.find#JobRunItems"/>
+        <description>The framework's own items of its two system message jobs (the registered itemsService of
+            send_AllProducedSystemMessages_frequent and consume_AllReceivedSystemMessages_frequent; in no group's
+            grant): the messages a run tried, by the time of their last attempt, each with its id, type and state now and,
+            as a SystemMessage recovery target, its id. Needs ADMIN_OPERATION_VIEW.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('findMessageJobRunItems', context))</script></actions>
+    </service>
+
+    <!-- ========== Notification topics (OperationTopics.js; impl-admin P14) ========== -->
+
+    <service verb="find" noun="Topics" allow-remote="false">
+        <description>The notification topics (moqui.security.user.NotificationTopic) by description, a page at a time
+            (topicList, topicCount). Each: its name and description, whether its owner registered it for administration
+            here (registered, ownerApp, purpose), whether it is private, its inbox, whether it asks for a decision
+            (actionable), its delivery defaults in words (in app, email, push, digest), whether it shows an alert and is
+            kept, how many users have a setting for it and how many receive every message of it, and its revision. Never
+            a title or link template, an approval service or an email template. Needs ADMIN_OPERATION_VIEW or
+            ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters>
+            <parameter name="term"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="topicList" type="List"/>
+            <parameter name="topicCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManageDefaults" type="Boolean"/>
+            <parameter name="canManageSubscriptions" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationTopics.js').execute('findTopics', context))</script></actions>
+    </service>
+    <service verb="get" noun="Topic" allow-remote="false">
+        <description>One topic as find#Topics answers it (topic), with the permission that is its registered audience
+            and why its defaults or its subscriptions are not changed here, when they are not; fieldList: each delivery
+            setting with its value and whether this caller may change it (only what its owner registered, with
+            ADMIN_SETTINGS_MANAGE); subscriptionList: the settings of the users of its registered audience, by name, for
+            a holder of ADMIN_OPERATION_VIEW only (each with its choices, whether the user receives every message of the
+            topic and the revision a change names); the settings of everyone else are counted (otherSubscriptionCount),
+            as are the users outside the audience who receive every message (allNotificationsOutsideCount). Needs
+            ADMIN_OPERATION_VIEW or ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters><parameter name="topic" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="topic" type="Map"/>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="subscriptionList" type="List"/>
+            <parameter name="otherSubscriptionCount" type="Integer"/>
+            <parameter name="allNotificationsOutsideCount" type="Integer"/>
+            <parameter name="canManageDefaults" type="Boolean"/>
+            <parameter name="canManageSubscriptions" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationTopics.js').execute('getTopic', context))</script></actions>
+    </service>
+    <service verb="store" noun="TopicDefaults" allow-remote="false">
+        <description>Change a topic's delivery settings, at the revision read: only those its owner registered
+            (moqui.server.TopicRegistration editableFields) among description, showAlert, alertNoAutoHide, persistOnSend,
+            receiveNotifications, emailNotifications, pushNotifications (Y, N or default: by its inbox) and
+            digestDefault. Whether a topic is private, its title, error title and link templates, its email template, its
+            approval services and its inbox are never written: no parameter names one. A topic that asks for a decision
+            keeps its notifications (APPROVAL_KEPT), and email is not turned on for a topic with no email template
+            (NO_EMAIL_TEMPLATE). Refused too: an unregistered topic (NOT_REGISTERED), a setting its owner did not register
+            (NOT_EDITABLE) and a stale revision. Each change leaves an audit row with the reason. Needs
+            ADMIN_SETTINGS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="topic" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="description"/>
+            <parameter name="showAlert"/>
+            <parameter name="alertNoAutoHide"/>
+            <parameter name="persistOnSend"/>
+            <parameter name="receiveNotifications"/>
+            <parameter name="emailNotifications"/>
+            <parameter name="pushNotifications"/>
+            <parameter name="digestDefault"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changedList" type="List"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationTopics.js').execute('storeTopicDefaults', context))</script></actions>
+    </service>
+    <service verb="store" noun="TopicSubscription" allow-remote="false">
+        <description>Set one user's delivery choices for a topic (NotificationTopicUser receiveNotifications,
+            emailNotifications, pushNotifications, digest: each Y, N or default), remove the user's setting, or end the
+            user's receiving of every message of the topic (endAllNotifications), at the revision read (empty for a user
+            with no setting). Only for a topic whose owner registered an audience (TopicRegistration
+            subscriptionPermission), and only for an account that signs in and holds that permission: the caller's own
+            account too, so nobody is subscribed to a private topic, or to any other, outside the audience its owner
+            registered (NOT_REGISTERED; NOT_ELIGIBLE, one answer for an unknown name and for a user outside the
+            audience). Receiving every message of a topic (allNotifications) is never set by this service: no parameter
+            turns it on. Each change leaves an audit row with the reason. Needs ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="topic" required="true"/>
+            <parameter name="username" required="true"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="receiveNotifications"/>
+            <parameter name="emailNotifications"/>
+            <parameter name="pushNotifications"/>
+            <parameter name="digest"/>
+            <parameter name="endAllNotifications" type="Boolean"/>
+            <parameter name="remove" type="Boolean"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changedList" type="List"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationTopics.js').execute('storeTopicSubscription', context))</script></actions>
+    </service>
+</services>

@@ -371,6 +371,10 @@ fn every_base_component_screen_generates_in_all_three_modes() {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                // a screen-extend file changes a screen of another component: it is not a screen to load on its own
+                if path.file_name().is_some_and(|name| name == "screen-extend") {
+                    continue;
+                }
                 collect(&path, out);
             } else if path.extension().is_some_and(|ext| ext == "xml") && path.to_string_lossy().contains("/screen/") {
                 out.push(path);

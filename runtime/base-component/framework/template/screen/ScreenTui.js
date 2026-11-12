@@ -60,8 +60,8 @@ const $xc = (text) => {
     return found;
 };
 const $openRender = (fields) => {
-    // A nested render writes to the output itself, so it cannot be captured.
-    if ($sink) throw new Error("a section, include or subscreen in a list cell's dialog is not supported");
+    // A nested render writes to the output itself, so it cannot be captured (a section is taken as a value instead).
+    if ($sink) throw new Error("an include or subscreen in a list cell's dialog is not supported");
     $sep();
     $w($scrub(fields).slice(0, -1) + ',"c":');
 };
@@ -151,6 +151,9 @@ const $withRemote = ($w, $r, $urlKey, $paramsKey) => {
     return $w;
 };
 // A list cell: its parts, a field's texts joined on one line and a node a part of its own; one part is the cell itself.
+// A text of several lines (a score per line) is one part that is the array of its lines, which the client draws a line
+// each, as a stacked column; $cellOf keeps a cell to $cellLines lines.
+const $cellLines = 4;
 const $addPart = ($parts, $start, $piece) => {
     if ($piece == null) return;
     if (Array.isArray($piece)) {
@@ -163,10 +166,30 @@ const $addPart = ($parts, $start, $piece) => {
     }
     const $text = String($piece);
     if (!$text) return;
-    if ($parts.length > $start && typeof $parts[$parts.length - 1] === "string") $parts[$parts.length - 1] += " " + $text;
-    else $parts.push($text);
+    const $lines = $text.includes("\\n") ? $text.split("\\n").map(($line) => $line.trim()).filter(($line) => $line) : [$text];
+    if (!$lines.length) return;
+    // the field's text before this joins its last line, as one line of text did
+    const $last = $parts.length > $start ? $parts[$parts.length - 1] : null;
+    if (typeof $last === "string" || Array.isArray($last)) {
+        $parts.pop();
+        const $before = typeof $last === "string" ? [$last] : $last;
+        $lines.splice(0, 1, ...$before.slice(0, -1), $before[$before.length - 1] + " " + $lines[0]);
+    }
+    $parts.push($lines.length === 1 ? $lines[0] : $lines);
 };
-const $cellOf = ($parts) => ($parts.length === 0 ? "" : $parts.length === 1 ? $parts[0] : $parts);
+// A cell of its parts, at most $cellLines lines: the lines of a text past them join its last line kept.
+const $cellOf = ($parts) => {
+    let $room = $cellLines - $parts.filter(($part) => !Array.isArray($part)).length;
+    for (let $at = 0; $at < $parts.length; $at++) {
+        const $lines = $parts[$at];
+        if (!Array.isArray($lines)) continue;
+        const $keep = Math.max(1, $room);
+        if ($lines.length > $keep) $lines.splice($keep - 1, $lines.length, $lines.slice($keep - 1).join(" "));
+        $room -= $lines.length;
+        if ($lines.length === 1) $parts[$at] = $lines[0];
+    }
+    return $parts.length === 0 ? "" : $parts.length === 1 ? $parts[0] : $parts;
+};
 const $range = ($from, $thru) => ($from && $thru ? $from + " – " + $thru : $from ? $from + " –" : $thru ? "– " + $thru : "");
 // A list of ids: an array, a list, or a comma list.
 const $ids = ($value) => {
@@ -189,6 +212,11 @@ const $screenUrlWith = ($pairs, $remove) => {
     for (const $pair of $pairs) $url.addParameter($pair[0], $pair[1]);
     return $url.getUrlWithParams();
 };
+// An agent's render (an Assist screen session, the data tool, agent-apps: sri.isAgentRender()) writes this in place of the
+// text of an ai-opt-out field, section or screen, so that text reaches no model (design-people PE-21, docs/ai/Assist.md).
+let $agentRender = null;
+const $isAgent = () => ($agentRender === null ? ($agentRender = !!sri.isAgentRender()) : $agentRender);
+const $aiOffText = () => String(ec.l10n.localize("Not shared with AI"));
 $w("[");
 `;
     const epilogue = `
@@ -196,6 +224,10 @@ $w("]");
 `;
 
     const typeNames = (type) => (type || "").split(",").map((name) => name.trim()).filter((name) => name);
+    // ai-opt-out on a field, section or screen: in an agent's render its text is $aiOffText() (design-people PE-21)
+    const aiOff = (node) => !!node && attr(node, "ai-opt-out") === "true";
+    const aiOffNames = (fields) => fields.filter(aiOff).map((field) => attr(field, "name")).filter((name) => name);
+    const aiOffBranch = (node, placeholder, code) => (aiOff(node) && code ? `if ($isAgent()) ${placeholder}\nelse {\n${code}}\n` : code);
     const exprOf = (text) => (text && String(text).includes("${") ? S.expandExpr(text) : jsString(text || ""));
     const exprNoL10n = (text) => (text && String(text).includes("${") ? S.expandNoL10nExpr(text) : jsString(text || ""));
     // A title as the other modes show it: expanded and localized.
@@ -297,7 +329,7 @@ $w("]");
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             ${kind ? `$link.kind = ${jsString(kind)};` : ""}
             ${attr(node, "btn-type") ? `$link.btnType = ${jsString(attr(node, "btn-type"))};` : ""}
-            ${attr(node, "icon") ? `$link.icon = ${jsString(attr(node, "icon"))};` : ""}
+            ${attr(node, "icon") ? `$link.icon = String(${S.expandExpr(attr(node, "icon"))} || "");` : ""}
             ${attr(node, "badge") ? `$link.badge = String(${S.expandNoL10nExpr(attr(node, "badge"))} || "");` : ""}
             ${attr(node, "tooltip") ? `$link.tooltip = String(${S.expandExpr(attr(node, "tooltip"))} || "");` : ""}
             ${kind === "hidden-form-link" ? `$link.method = "post";` : ""}
@@ -604,7 +636,11 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     const fieldHasSet = (field) => childrenNamed(field, "default-field").concat(childrenNamed(field, "conditional-field")).some((sub) => child(sub, "set"));
     const emitField = (field) => {
         if (!field || attr(field, "hide") === "true") return "";
-        return ownContext(fieldHasSet(field), S.fieldChain(field, (sub) => emitSub(field, sub)));
+        const code = ownContext(fieldHasSet(field), S.fieldChain(field, (sub) => emitSub(field, sub)));
+        // an agent's render: the field's title with the placeholder as a display, never its value
+        const sub = child(field, "default-field") || child(field, "conditional-field");
+        const placeholder = `$emit({t:"field",id:$uid(${jsString(fieldIdOf(field))}),name:${jsString(attr(field, "name") || "field")},title:String(${sub ? S.localizedTitle(sub) : '""'} || ""),w:{kind:"display",text:$aiOffText()}});`;
+        return aiOffBranch(field, placeholder, code);
     };
     const layoutCode = (form) => {
         const fields = childrenNamed(form, "field");
@@ -721,10 +757,19 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
             suffixExpr: multi ? `"_" + $index` : ""
         };
     };
+    // A section or section-iterate: rendered in place, or, inside a captured list row dialog, as the value of its node.
+    const sectionCode = (node, extra) => {
+        const fields = `t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}${extra}`;
+        const name = jsString(attr(node, "name") || "");
+        const code = `if ($sink) $emit({${fields},c:JSON.parse(sri.renderSectionValue(${name}))});\nelse { $openRender({${fields}});\nsri.renderSection(${name});\n$closeRender(); }\n`;
+        // an agent's render runs nothing of an ai-opt-out section: its placeholder in place of it
+        return aiOffBranch(node, `$emit({${fields},c:[{t:"text",id:$uid(${jsString(idOf(node) + ".aiOff")}),text:$aiOffText()}]});`, code);
+    };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
         if (widget.name === "section") {
-            return `JSON.parse(sri.renderSectionValue(${jsString(attr(widget, "name") || "")}))`;
+            const value = `JSON.parse(sri.renderSectionValue(${jsString(attr(widget, "name") || "")}))`;
+            return aiOff(widget) ? `($isAgent() ? $aiOffText() : ${value})` : value;
         }
         if (["container", "container-row", "row-col"].includes(widget.name)) {
             const pieces = widget.children.filter((kid) => !notWidget(kid)).map((kid) => cellPiece(field, sub, kid, list));
@@ -800,7 +845,7 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
                     });
                     return inner;
                 });
-                if (body) code += S.hideGuard(field, `$start = $parts.length;\n${ownContext(fieldHasSet(field), body)}`);
+                if (body) code += S.hideGuard(field, `$start = $parts.length;\n${aiOffBranch(field, "$addPart($parts, $start, $aiOffText());", ownContext(fieldHasSet(field), body))}`);
             });
             code += `$cells.push($cellOf($parts));\n`;
             if (hidden) code += `}\n`;
@@ -817,12 +862,13 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         if (!name || SECRET.has(name.toLowerCase())) return "";
         if (!rowSubs(field).some((sub) => sub.children.some(postsHidden))) return "";
         const nameExpr = multi ? `${jsString(name + "_")} + $index` : jsString(name);
-        return S.fieldChain(field, (sub) => {
+        const code = S.fieldChain(field, (sub) => {
             const kept = sub.children.filter(postsHidden);
             if (!kept.length) return "";
             return S.setCode(sub) + kept.map((widget) =>
                 `$rowHidden.push({name:${nameExpr},value:String(sri.getFieldValuePlainString(${S.fieldLit(widget)}, ${jsString(widget.name === "hidden" ? attr(widget, "default-value") : "")}) || "")});\n`).join("");
         });
+        return aiOff(field) && code ? `if (!$isAgent()) {\n${code}}\n` : code;
     }).join("");
     // The submit and reset buttons of a multi form, once for the list.
     const listButtonsCode = (fields) => fields.map((field) => {
@@ -857,7 +903,8 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
                     ? `$headerFields.push(${expr});\n`
                     : `$headerFields.push({t:"placeholder",id:$uid(${jsString(fieldIdOf(field) + "." + widget.name)}),text:${jsString(widget.name)}});\n`;
             });
-            code += ownContext(hasSet, own);
+            // an agent finds by no ai-opt-out field: its find field is left out of an agent's render
+            code += aiOff(field) && own ? `if (!$isAgent()) {\n${ownContext(hasSet, own)}}\n` : ownContext(hasSet, own);
         });
         return code;
     };
@@ -890,15 +937,18 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     }
     `
             : "";
+        // the hidden values of ai-opt-out fields are not in an agent's render
+        const offNames = aiOffNames(childrenNamed(node, "field"));
+        const offCode = offNames.length ? `const $aiOffNames = $isAgent() ? ${JSON.stringify(offNames)} : [];\n    ` : "";
         return `sri.pushSingleFormMapContext(${map});
 try {
     const $hidden = [];
-    ${passCode}const $hiddenMap = sri.getFormHiddenParameters(${S.nodeLit(node, true)}) || {};
+    ${offCode}${passCode}const $hiddenMap = sri.getFormHiddenParameters(${S.nodeLit(node, true)}) || {};
     const $hiddenKeys = Object.keys($hiddenMap);
     for (let $hi = 0; $hi < $hiddenKeys.length; $hi++) {
         const $key = $hiddenKeys[$hi];
         const $value = $hiddenMap[$key];
-        if ($value == null || $value === "") continue;
+        if ($value == null || $value === ""${offNames.length ? " || $aiOffNames.includes($key)" : ""}) continue;
         if ($secret.has(String($key).toLowerCase()) || $hidden.some(($h) => $h.name === $key)) continue;
         $hidden.push({name:String($key),value:String($value)});
     }
@@ -1078,9 +1128,12 @@ try {
         }
         ` : "";
         const exports = exportCode(node);
+        // a list's exports render it in another mode (text, csv, xlsx, pdf), which writes every field's value: an agent's
+        // render of a list with an ai-opt-out field offers none but Show all (design-people PE-21)
+        const exportsOff = aiOffNames(fields).length ? `if ($isAgent()) $exports.splice(0, $exports.length, ...$exports.filter(($e) => $e.kind === "all"));\n            ` : "";
         const exportsBlock = exports ? `try {
             const $exports = [];
-            ${exports}if ($exports.length) $list.exports = $exports;
+            ${exports}${exportsOff}if ($exports.length) $list.exports = $exports;
         } catch ($err) {
             ${fail("exports")}
         }
@@ -1103,7 +1156,12 @@ try {
         }).join("") : "";
         const titles = (columns) => columns.map((column) => {
             const parts = column.map((field) => {
+                // a title the field gives, even an empty one (a column of Remove links), is the header, as qvt's titleCode:
+                // the header-field's, else the default-field's, else that of the part the header is drawn from
                 const sub = S.headerSub(field);
+                const holder = [child(field, "header-field"), child(field, "default-field"), sub]
+                    .find((part) => part?.attrs?.title !== undefined);
+                if (holder) return attr(holder, "title") ? `String(${S.localizedTitle(holder)} || "")` : '""';
                 return sub ? `String(${S.localizedTitle(sub)} || "")` : jsString(attr(field, "name") || "");
             });
             // orderBy is the orderByField value for the column's first field with show-order-by, as the html header links send it
@@ -1160,9 +1218,9 @@ try {
             const field = fieldByName[name];
             const dflt = field ? child(field, "default-field") : null;
             const widget = dflt ? dflt.children.find((kid) => kid.name && kid.name !== "hidden" && kid.name !== "ignored") : null;
-            if (!widget) return `String(ec.context.get(${jsString(name)}) ?? "")`;
-            if (widget.name === "link") return `String(${S.linkTextExpr(widget)} ?? "")`;
-            return `String(${cellText(widget)} ?? "")`;
+            const text = !widget ? `String(ec.context.get(${jsString(name)}) ?? "")`
+                : widget.name === "link" ? `String(${S.linkTextExpr(widget)} ?? "")` : `String(${cellText(widget)} ?? "")`;
+            return aiOff(field) ? `($isAgent() ? $aiOffText() : ${text})` : text;
         };
         const boardFields = namesOf(vb("card-fields"));
         const calendarFields = namesOf(vc("card-fields"));
@@ -1285,7 +1343,8 @@ try {
             if ($value != null && $value !== "") $paging[$key] = $whole($value);
         }
         const $list = {t:"formList",id:$uid(${jsString(id)}),name:${jsString(name)},domId:${domIdExpr(node)},columns:$columns,rows:$rows,paging:$paging,headerFields:$headerFields};
-        ${selection ? `${selectCondition ? "if ($selOn) " : ""}$list.rowSelection = {idField:${jsString(selectIdField)},parameter:${jsString(attr(selection, "parameter") || selectIdField)}${attr(selection, "list-mode") ? `,listMode:${jsString(attr(selection, "list-mode"))}` : ""}};
+        ${aiOffNames(fields).length ? `if ($isAgent()) $list.aiOff = ${JSON.stringify(aiOffNames(fields))};
+        ` : ""}${selection ? `${selectCondition ? "if ($selOn) " : ""}$list.rowSelection = {idField:${jsString(selectIdField)},parameter:${jsString(attr(selection, "parameter") || selectIdField)}${attr(selection, "list-mode") ? `,listMode:${jsString(attr(selection, "list-mode"))}` : ""}};
         ` : ""}${listFormBlock}${savedFindsBlock}${selectColumnsBlock}${exportsBlock}${viewsBlock}$emit($list);
 ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
         sri.safeCloseList($info);
@@ -1453,7 +1512,8 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
         `$openChildren({t:${jsString(type)},id:$uid(${jsString(idOf(node))})${extra ? extra(node) : ""}});\n${children}$closeChildren();\n`);
 
     const overrides = {
-        "screen": pass,
+        // an ai-opt-out screen: in an agent's render its placeholder in place of its widgets and the subscreens in them
+        "screen": stmt((node, children) => aiOffBranch(node, `$emit({t:"text",id:$uid("aiOff"),text:$aiOffText()});`, children)),
         "widgets": pass,
         "fail-widgets": pass,
         "dynamic-form": pass,
@@ -1532,10 +1592,10 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         // A report-embed is a report-dashboard of the definition, or nothing when the viewer may not see it.
         "report-embed": stmt((node) => guarded(node, `{ const $reportProps = ${S.reportPropsExpr(node)};\nif ($reportProps) $emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-dashboard",props:$reportProps});\n}\n`)),
         "dashboard": group("dashboard"),
-        "section": stmt((node) =>
-            `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}});\nsri.renderSection(${jsString(attr(node, "name") || "")});\n$closeRender();\n`),
-        "section-iterate": stmt((node) =>
-            `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")},iterate:true});\nsri.renderSection(${jsString(attr(node, "name") || "")});\n$closeRender();\n`),
+        // A section in a list row's dialog (written while $captured runs) is its nodes as a value, as a section in a list cell
+        // is (sri.renderSectionValue: its conditions, actions and fail-widgets); anywhere else it renders in place.
+        "section": stmt((node) => sectionCode(node, "")),
+        "section-iterate": stmt((node) => sectionCode(node, ",iterate:true")),
         "section-include": stmt((node) =>
             `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}});\nsri.renderSectionInclude(${S.bareLit(node)});\n$closeRender();\n`),
         "subscreens-active": stmt((node) =>
@@ -1581,8 +1641,27 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         }),
         "form-single": formSingle,
         "form-list": formList,
-        "number-card": stmt((node) => guarded(node,
-            `$emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:String(${S.expandNoL10nExpr(attr(node, "url") || "")} || "")});\n`)),
+        // A number-card's link is a screen link, as a nav-card's: no url for a card without one or one the user may not follow.
+        "number-card": stmt((node) => guarded(node, `{
+    const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
+    // the sparkline's numbers (an empty place is a gap), left out of the node when there is none
+    const $sparkText = String(${S.expandNoL10nExpr(attr(node, "sparkline") || "")} || "");
+    const $spark = $sparkText ? {spark: $sparkText.split(",").map((text) => text.trim() === "" || text.trim() === "null" ? null : Number(text)).filter((value) => value === null || Number.isFinite(value))} : {};
+    $emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),...$spark,url:$made && !$made.getDisableLink() ? $made.getUrlWithParams() || "" : ""});
+}
+`)),
+        // A nav-card is a container of a link (the title, the card's link; a text without one), the text and the child links.
+        "nav-card": stmt((node, children) => guarded(node, `$openChildren({t:"container",id:$uid(${jsString(idOf(node))})});
+{
+    const $title = String(${S.expandExpr(attr(node, "title") || "")} || "");
+    const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
+    if ($made && !$made.getDisableLink()) $emit({t:"link",id:$uid(${jsString(idOf(node) + ".link")}),text:$title,url:$made.getUrlWithParams() || "",kind:"anchor"});
+    else if ($title) $emit({t:"text",id:$uid(${jsString(idOf(node) + ".title")}),text:$title});
+    const $text = String(${S.expandExpr(attr(node, "text") || "")} || "");
+    if ($text && $text !== "null") $emit({t:"text",id:$uid(${jsString(idOf(node) + ".text")}),text:$text});
+}
+${children}$closeChildren();
+`)),
         "dynamic-dialog": stmt((node) => guarded(node, `{
     const $made = sri.makeUrlByType(${jsString(attr(node, "transition") || "")}, "transition", ${S.nodeLit(node, true)}, "true");
     let $button = String(${S.expandExpr(attr(node, "button-text") || "")} || "");${attr(node, "icon") ? `

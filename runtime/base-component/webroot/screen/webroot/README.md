@@ -20,6 +20,7 @@ a request with a `v` parameter and an hour with revalidation for the rest. The h
 | `sw.js` | the PWA's service worker: caches only versioned shell assets, shows Web Push notifications; served uncached with `Service-Worker-Allowed: /` ([Qvt-Client](../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
 | `WebPush.xml` | not a file but the `/WebPush` transitions: status, store and delete of the browser's push subscription |
 | `ChatKeys.xml` | not a file but the `/ChatKeys` transitions: the browser's crypto device, its keys and to-device messages ([Chat keys](../../../../../docs/interfaces/Chat-Keys.md)) |
+| `Device.xml` | not a file but the `/Device` page: a shared device's browser enters its registration code there, with nobody signed in ([Shared devices](../../../../../docs/security/Shared-Devices.md)) |
 | `ReAuth.xml` | not a file but the `/ReAuth` transitions: the recent sign-in check and the re-authentication of sensitive actions (`js/WebrootReAuth.js`, [Recent sign-in](../../../../../docs/security/Recent-Auth.md)) |
 
 ## Vendored browser libraries (`libs/`)

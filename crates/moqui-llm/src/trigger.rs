@@ -679,9 +679,19 @@ pub fn fire(factory: &Arc<ExecutionContextFactory>, trigger_id: &str, cause: &st
     })
 }
 
-/// The scheduler's tick: fire each document trigger whose batch window has closed (from its oldest waiting event).
-/// Failure tolerant: a trigger that fails to fire is logged and the others go on.
+/// The most triggers one [`sweep`] fires; the others whose window has closed fire on the next pass.
+pub(crate) const SWEEP_FIRES: usize = 50;
+
+/// The scheduler's tick: fire each document trigger whose batch window has closed (from its oldest waiting event), at
+/// most [`SWEEP_FIRES`] of them, those waiting longest first, so a backlog does not hold the scheduler thread; the rest
+/// fire on the next pass (plans/archive/High-Level-Review.md HL-020). Failure tolerant: a trigger that fails to fire is logged
+/// and the others go on.
 pub fn sweep(factory: &Arc<ExecutionContextFactory>) {
+    sweep_at_most(factory, SWEEP_FIRES);
+}
+
+/// [`sweep`], firing at most `fires` triggers.
+pub(crate) fn sweep_at_most(factory: &Arc<ExecutionContextFactory>, fires: usize) {
     let Some(facade) = factory.entity() else {
         return;
     };
@@ -715,7 +725,16 @@ pub fn sweep(factory: &Arc<ExecutionContextFactory>) {
             .or_insert(received);
     }
     let now = run::now_millis();
-    for (trigger_id, received) in oldest {
+    let mut waiting_longest: Vec<(i64, String)> = oldest
+        .into_iter()
+        .map(|(trigger_id, received)| (received, trigger_id))
+        .collect();
+    waiting_longest.sort();
+    let mut fired = 0;
+    for (received, trigger_id) in waiting_longest {
+        if fired >= fires {
+            break;
+        }
         let due = quietly(|| Trigger::load(&facade, &trigger_id))
             .ok()
             .flatten()
@@ -723,6 +742,7 @@ pub fn sweep(factory: &Arc<ExecutionContextFactory>) {
         if !due {
             continue;
         }
+        fired += 1;
         if let Err(error) = fire(factory, &trigger_id, "batch") {
             tracing::error!("agent trigger {trigger_id} failed to fire its batch: {error}");
         }
@@ -983,14 +1003,18 @@ pub fn inbox(_factory: &ExecutionContextFactory, user_ids: &[String], title: &st
     if user_ids.is_empty() {
         return;
     }
-    let map = match moqui_lib::json::from_json(message) {
+    let mut map = match moqui_lib::json::from_json(message) {
         Value::Map(map) => map,
         _ => indexmap::IndexMap::default(),
     };
+    // A notification's title is a template expanded as a script when it is sent, and an inbox title quotes text a model
+    // or an administrator wrote (an approval's summary, an agent or trigger id): taken from the message by name, it is
+    // expanded once and nothing in it runs.
+    map.insert("inboxTitle".to_string(), Value::string(title));
     let sent = moqui_core::notify::NotificationMessage::new()
         .topic(INBOX_TOPIC)
         .user_ids(user_ids.iter().cloned())
-        .title(title)
+        .title("${inboxTitle}")
         .message_map(map)
         .send();
     if let Err(error) = sent {

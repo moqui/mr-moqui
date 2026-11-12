@@ -78,6 +78,11 @@ pub const RULES: &[(&str, &str, &str)] = &[
     ),
     ("reference.location", "References", "Nothing is at this location."),
     (
+        "reference.required",
+        "References",
+        "A required in-parameter of a service the form's transition calls is given by no field, field-map or parameter.",
+    ),
+    (
         "expression",
         "Expressions",
         "Expressions and scripts are JavaScript, and this one does not parse.",
@@ -403,7 +408,110 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
 #[must_use]
 pub fn check_extensions(factory: &ExecutionContextFactory) -> Vec<Problem> {
     let index = crate::index::MemoryIndex::build(factory);
-    extension_problems(&index.extensions(&[]))
+    let mut problems = extension_problems(&index.extensions(&[]));
+    problems.extend(required_problems(&index));
+    problems
+}
+
+/// The forms whose transition calls a service with a required in-parameter that has no default and that nothing the
+/// form posts gives: no field of the form (its own, its `auto-fields`, the form it extends), no `field-map` of the call,
+/// no `parameter` of the transition or its screen, none of its `hidden-parameters`, and not the ids of the rows
+/// selected when it is a form of a `row-selection` (its `parameter`, else its `id-field`). A warning on the form: an
+/// `in-map` expression or a parameter of the URL may give it at run time. A form whose transition has a call with an
+/// `in-map` of its own, which the index cannot read, one with `pass-through-parameters`, and a service the index
+/// knows no parameters of, are not checked.
+#[must_use]
+pub fn required_problems(index: &crate::index::MemoryIndex) -> Vec<Problem> {
+    use std::collections::{HashMap, HashSet};
+    // the parameters of each transition and screen, and the parameters each form's bindings reach
+    let mut parameters: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for artifact in index.artifacts.iter().filter(|artifact| artifact.kind == "parameter") {
+        if let (Some(parent), Some((_, _, name))) = (
+            artifact.parent.as_deref(),
+            crate::index::extract::parse_parameter_id(&artifact.id),
+        ) {
+            if parent.starts_with("transition:") || parent.starts_with("screen:") {
+                parameters.entry(parent).or_default().insert(name);
+            }
+        }
+    }
+    let mut bound: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for (_, binding) in &index.bindings {
+        bound
+            .entry(binding.from.as_str())
+            .or_default()
+            .insert(binding.to_id.as_str());
+    }
+    let mut problems = Vec::new();
+    for form in index
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == "form" && artifact.origin.is_empty())
+    {
+        let calls = index.resolver.form_calls(&form.id);
+        if calls.is_empty() || calls.iter().any(|call| !call.passes) {
+            continue;
+        }
+        // a form that passes on its URL's parameters may give any of them
+        let (form_given, pass_through) = index.resolver.form_given(&form.id);
+        if pass_through {
+            continue;
+        }
+        let screen_of = |id: &str| -> String {
+            id.split_once(':')
+                .and_then(|(_, rest)| rest.rsplit_once('#'))
+                .map(|(screen, _)| format!("screen:{screen}"))
+                .unwrap_or_default()
+        };
+        let mut given: HashSet<&str> = form_given.iter().map(String::as_str).collect();
+        for owner in [
+            calls[0].transition.clone(),
+            screen_of(&calls[0].transition),
+            screen_of(&form.id),
+        ] {
+            given.extend(parameters.get(owner.as_str()).into_iter().flatten().copied());
+        }
+        let posted = bound.get(form.id.as_str());
+        for call in &calls {
+            let Some(params) = index.resolver.in_parameters(&call.service) else {
+                continue;
+            };
+            let missing: Vec<&str> = params
+                .iter()
+                .filter(|(_, required, default)| *required && !*default)
+                .map(|(name, _, _)| name.as_str())
+                .filter(|name| !given.contains(name))
+                .filter(|name| !call.maps.iter().any(|(_, to)| to == name))
+                .filter(|name| {
+                    !posted.is_some_and(|ids| {
+                        ids.iter().any(|id| {
+                            crate::index::extract::parse_parameter_id(id)
+                                .is_some_and(|(of, _, to)| to == *name && of.starts_with("service:"))
+                        })
+                    })
+                })
+                .collect();
+            if missing.is_empty() {
+                continue;
+            }
+            problems.push(problem(
+                &form.path,
+                form.line,
+                form.column,
+                Severity::Warning,
+                "reference.required",
+                &format!(
+                    "form {} posts to {}, whose service {} has required in-parameter {} (an in-map expression or a URL \
+                     parameter may give it at run time)",
+                    form.name,
+                    call.transition,
+                    call.service,
+                    missing.join(", ")
+                ),
+            ));
+        }
+    }
+    problems
 }
 
 /// The problems of the extensions whose targets are gone.

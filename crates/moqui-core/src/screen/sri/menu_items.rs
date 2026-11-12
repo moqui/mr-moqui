@@ -100,7 +100,7 @@ fn menu_entry(
     parents: &[Arc<ScreenDef>],
     item: &SubscreensItem,
 ) -> Result<Option<MenuEntry>, Error> {
-    let url = match prefix {
+    let mut url = match prefix {
         Some(names) => {
             let mut full = names.to_vec();
             full.push(item.name.clone());
@@ -110,6 +110,11 @@ fn menu_entry(
     };
     if !url.exists {
         return Ok(None);
+    }
+    let in_path = state.url_info.full_path.starts_with(&url.minimal_names);
+    // The page and sort of the list being shown are not another screen's (a link or the current URL keeps them).
+    if !in_path {
+        url.drop_list_state();
     }
     let target = state.facade.screen_def(&state.factory, &item.location)?;
     if !crate::screen::menu::permitted_under(parents, &target) {
@@ -138,7 +143,7 @@ fn menu_entry(
         url: url.minimal_path_url_with_params(),
         disabled,
         parameter_missing,
-        in_path: state.url_info.full_path.starts_with(&url.minimal_names),
+        in_path,
         image: image.0,
         image_type: image.1,
         location: item.location.clone(),

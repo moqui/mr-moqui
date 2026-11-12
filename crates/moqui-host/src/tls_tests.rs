@@ -207,3 +207,33 @@ async fn handshake_serves_known_domain_and_refuses_unknown() {
     assert!(connect("nope.test").await.is_err(), "no certificate for nope.test");
     let _ = std::fs::remove_dir_all(dir.parent().unwrap());
 }
+
+/// The resource readings' certificates: each pair's leaf with the day it expires, a file that is not a certificate
+/// left out.
+#[test]
+fn the_expiry_of_each_pair_is_read_from_its_certificate() {
+    let dir = temp_dir("expiry");
+    let key = rcgen::KeyPair::generate().unwrap();
+    let mut params = rcgen::CertificateParams::new(vec!["soon.example.com".to_string()]).unwrap();
+    params.not_after = rcgen::date_time_ymd(2031, 3, 9);
+    let cert = params.self_signed(&key).unwrap();
+    std::fs::write(dir.join("soon.example.com.crt"), pem("CERTIFICATE", cert.der())).unwrap();
+    std::fs::write(
+        dir.join("soon.example.com.key"),
+        pem("PRIVATE KEY", &key.serialize_der()),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("broken.example.com.crt"),
+        pem("CERTIFICATE", b"not a certificate"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("broken.example.com.key"), "not a key").unwrap();
+
+    let found = certificate_expiries(&dir);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].name, "soon.example.com");
+    // 2031-03-09 00:00:00 UTC
+    assert_eq!(found[0].not_after, 1_930_780_800);
+    assert!(certificate_expiries(&dir.join("none")).is_empty());
+}

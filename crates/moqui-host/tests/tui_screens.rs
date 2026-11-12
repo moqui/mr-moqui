@@ -61,6 +61,7 @@ const GALLERY: &[&str] = &[
     "RecordFiles",
     "Search",
     "Handheld",
+    "NavCards",
 ];
 
 #[test]
@@ -410,26 +411,27 @@ fn drive_tools(link: &HostLink) {
     assert!(!tabs.iter().any(|url| url.contains("EntitySyncDetail") || url.contains("EntitySyncHistory")), "{tabs:?}");
     // Run a service job and read its run.
     let mut view = AppView::with_session(
-        Session::start("/apps/system/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_ServiceJobRun_daily"),
+        Session::start("/apps/system/Operations/JobDetail?jobName=clean_ServiceJobRun_daily"),
         link.clone(),
     );
     view.run_requests();
     assert!(
-        view.session().path().ends_with("ServiceJobDetail"),
+        view.session().path().ends_with("JobDetail"),
         "{} {}",
         view.session().path(),
         view.session().message()
     );
-    let run = link_with_text(&view, "Run Job");
+    // the instance administrator's direct run (JobDetail's RawJob part)
+    let run = link_with_text(&view, "Run directly now");
     focus(&mut view, &run);
     view.on_key(&press(Key::Enter));
     view.on_key(&press(Key::Char('y')));
     assert!(!view.session().message_is_error(), "{}", view.session().message());
-    let runs = link_with_text(&view, "Job Runs");
+    let runs = link_with_text(&view, "Runs");
     focus(&mut view, &runs);
     view.on_key(&press(Key::Enter));
     assert!(
-        view.session().path().ends_with("JobRunList"),
+        view.session().path().ends_with("JobRuns"),
         "{}",
         view.session().path()
     );
@@ -452,17 +454,17 @@ fn drive_tools(link: &HostLink) {
     assert!(lone_error(view.session().model()).is_none());
     // A link to a transition that leaves a message: the message comes with the screen the transition goes back to.
     let mut view = AppView::with_session(
-        Session::start("/apps/system/ThreadList/interruptThread?threadName=nobody"),
+        Session::start("/apps/system/Cache/CacheList/clearCache?cacheName=l10n.message"),
         link.clone(),
     );
     view.run_requests();
     assert!(
-        view.session().path().ends_with("ThreadList"),
+        view.session().path().ends_with("CacheList"),
         "{}",
         view.session().path()
     );
     assert!(
-        view.session().message().contains("not interrupted"),
+        view.session().message().contains("Cleared cache l10n.message"),
         "{}",
         view.session().message()
     );

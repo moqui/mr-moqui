@@ -18,7 +18,8 @@
 //!   embedded Postgres, loaded with every data type. Removed when the run ends, unless kept.
 //! - `snapshot`: the same, but the loaded database is dumped to `runtime/save/test-<hash>/moqui.dump`, by a hash of the
 //!   components the load reads, their entity and data files and the day; a later run that day that loads the same
-//!   components with the same files restores the dump instead of loading. Snapshots unused for two days are removed.
+//!   components with the same files restores the dump instead of loading. When a run ends it removes the other
+//!   snapshots, superseded by a later day or changed files, that no run has used for an hour ([`prune_snapshots`]).
 //! - `existing`: the runtime's own database as it is, the way `gradle test` ran against a loaded database. Tests change
 //!   its data.
 
@@ -49,6 +50,8 @@ pub struct TestFixture {
     db: Option<EntityDb>,
     /// The scratch runtime to remove, when there is one.
     scratch: Option<PathBuf>,
+    /// The snapshot (`runtime/save/test-*`) this run restored or made: kept when the run ends, the others pruned.
+    snapshot: Option<PathBuf>,
     /// Whether the run is on a scratch runtime (`fresh`, `snapshot`), removed or kept, rather than the runtime itself.
     pub on_scratch: bool,
     pub runtime_dir: PathBuf,
@@ -73,6 +76,12 @@ impl Drop for TestFixture {
                 tracing::warn!("could not remove the scratch runtime {}: {err}", scratch.display());
             }
         }
+        // the snapshots this run did not use, at its end: a later run today restores this one
+        if let Some(snapshot) = self.snapshot.take() {
+            if let Some(save) = snapshot.parent() {
+                prune_snapshots(save, &snapshot);
+            }
+        }
     }
 }
 
@@ -80,6 +89,7 @@ impl TestFixture {
     /// Shut the factory and the database down as a drop does, and leave the scratch runtime for a server to run on
     /// (`moqui test --serve`). Returns the scratch runtime to remove once that server stops: none when it is kept.
     pub fn close_keeping_runtime(mut self) -> Option<PathBuf> {
+        // the snapshots are pruned by the drop below all the same
         let scratch = self.scratch.take();
         drop(self);
         scratch
@@ -92,6 +102,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
     let framework = canonical(framework)?;
     // The first attach wins: the log files stay in the runtime's log directory, not a scratch runtime that goes.
     let log_dir = crate::logging::attach_files(&runtime, None);
+    let mut snapshot = None;
     let (run_runtime, scratch) = match mode {
         DbMode::None => return Err(Error::new("--db none does not open a database")),
         DbMode::Existing => (runtime.clone(), None),
@@ -104,12 +115,15 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
             if keep {
                 let _ = std::fs::write(scratch.join(super::interrupt::KEEP_MARK), "");
             }
-            if let Err(err) = prepare_database(&runtime, &framework, &scratch, mode) {
-                if !keep {
-                    super::interrupt::untrack(&scratch);
-                    let _ = std::fs::remove_dir_all(&scratch);
+            match prepare_database(&runtime, &framework, &scratch, mode) {
+                Ok(used) => snapshot = used,
+                Err(err) => {
+                    if !keep {
+                        super::interrupt::untrack(&scratch);
+                        let _ = std::fs::remove_dir_all(&scratch);
+                    }
+                    return Err(err);
                 }
-                return Err(err);
             }
             (scratch.clone(), (!keep).then_some(scratch))
         }
@@ -130,6 +144,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
             db: Some(db),
             on_scratch: run_runtime != runtime,
             scratch,
+            snapshot,
             runtime_dir: run_runtime,
             log_dir,
         }),
@@ -218,7 +233,9 @@ fn copy_files(from: &Path, to: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMode) -> Result<(), Error> {
+/// Load the test database into `scratch`, or restore it from its snapshot. Answers the snapshot's directory
+/// (`runtime/save/test-*`) when the run restored or made one.
+fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMode) -> Result<Option<PathBuf>, Error> {
     let cluster = scratch.join("db/embedded");
     let dump = match mode {
         DbMode::Snapshot => Some(
@@ -234,12 +251,19 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
         tracing::warn!("Restoring the test database from {}", dump.display());
         crate::db::embedded::load_save(scratch, &cluster, dump)?;
         tracing::warn!("Restored in {:.1}s", started.elapsed().as_secs_f64());
-        return Ok(());
+        let dir = dump.parent().map(Path::to_path_buf);
+        if let Some(dir) = &dir {
+            mark_used(dir);
+        }
+        return Ok(dir);
     }
     let started = Instant::now();
     tracing::warn!("Loading the test database (all data types) in {}", scratch.display());
     let flags = crate::LoadFlags {
         data_types: Some(vec!["all".to_string()]),
+        // a snapshot keeps the artifact index of a dev instance, so each spec's server does not build it again from
+        // every component's files (the dev-aide specs; moqui-devkit index)
+        build_artifact_index: matches!(mode, DbMode::Snapshot),
         ..crate::LoadFlags::default()
     };
     crate::load_data(scratch, framework, &cluster, &flags)?;
@@ -250,34 +274,58 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
         }
         crate::db::embedded::save_db(scratch, &cluster, &dump)?;
         tracing::warn!("Saved the test database to {}", dump.display());
-        prune_snapshots(&runtime.join("save"), &dump);
+        let dir = dump.parent().map(Path::to_path_buf);
+        if let Some(dir) = &dir {
+            mark_used(dir);
+        }
+        return Ok(dir);
     }
-    Ok(())
+    Ok(None)
 }
 
-/// Remove the test snapshots (`test-*`) not used for two days, other than `kept`'s: a snapshot is of one day
-/// ([`data_hash`]), so those are of days gone. A failure to remove one is logged; the others still go.
+/// The file whose change time is a snapshot's last use: written at each restore and at its save.
+const USED_MARK: &str = "used";
+/// How long a snapshot no run has used is kept: another run of the same runtime may be restoring it now.
+const SNAPSHOT_IDLE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Note that a run restored or made the snapshot at `dir` now. A failure is logged: the snapshot is then pruned by its
+/// dump's age, as before the mark.
+fn mark_used(dir: &Path) {
+    if let Err(err) = std::fs::write(dir.join(USED_MARK), "") {
+        tracing::warn!(error = %err, path = %dir.display(), "could not mark a test snapshot used");
+    }
+}
+
+/// Remove the test snapshots (`test-*`) under `save` other than `kept`, each once no run has used it for
+/// [`SNAPSHOT_IDLE`]: a snapshot is good for its day and its components' files, so another one is superseded, and the
+/// hour leaves one a concurrent run of this runtime is restoring. Its last use is its [`USED_MARK`]'s change time, else
+/// its dump's. A failure to remove one is logged (one already gone is not); the others still go.
 fn prune_snapshots(save: &Path, kept: &Path) {
-    let keep = kept.parent();
     let Ok(entries) = std::fs::read_dir(save) else {
         return;
     };
-    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60);
+    let Some(cutoff) = SystemTime::now().checked_sub(SNAPSHOT_IDLE) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let is_snapshot = path
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with("test-"));
-        if !is_snapshot || Some(path.as_path()) == keep {
+        if !is_snapshot || path == kept {
             continue;
         }
-        let used = std::fs::metadata(path.join("moqui.dump"))
-            .and_then(|meta| meta.modified())
-            .ok();
+        let used = [USED_MARK, "moqui.dump"]
+            .iter()
+            .find_map(|name| std::fs::metadata(path.join(name)).and_then(|meta| meta.modified()).ok());
         if used.is_some_and(|used| used < cutoff) {
-            if let Err(err) = std::fs::remove_dir_all(&path) {
-                tracing::warn!(error = %err, path = %path.display(), "could not remove an old test snapshot");
+            match std::fs::remove_dir_all(&path) {
+                Ok(()) => tracing::info!(path = %path.display(), "removed a test snapshot no run has used for an hour"),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, path = %path.display(), "could not remove an old test snapshot")
+                }
             }
         }
     }
@@ -294,6 +342,8 @@ fn prune_snapshots(save: &Path, kept: &Path) {
 fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    // what a snapshot holds besides the data: the artifact index of a dev instance since this mark
+    "artifact-index".hash(&mut hasher);
     // The day of the load, local: the demo data is dated from it (a task due today, an invoice ten days overdue), so a
     // snapshot of yesterday's load reads as a day old to the specs that count on it.
     jiff::Zoned::now().date().to_string().hash(&mut hasher);
@@ -365,6 +415,10 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
         }
     };
     let pdf = crate::install_pdf(&factory);
+    // the SSO client, as a server has it: a spec tests a provider's configuration through it (an OAuth flow with its
+    // endpoints given starts with no request; an OpenID discovery is the provider's to answer)
+    #[cfg(feature = "sso")]
+    crate::sso::install();
     factory.init_tools().map_err(Error::from)?;
     Ok((factory, facade, sim, search, pdf, db))
 }

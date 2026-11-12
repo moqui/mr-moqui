@@ -22,7 +22,7 @@ use super::*;
 
 const CHART: &str = r#"root = Stack([CardHeader("Hits"), chart, table])
 $type = "AT_SERVICE"
-hits = Query("request", {path: "/apps/monitor/Artifacts", query: {artifactType: $type}}, {rows: []})
+hits = Query("request", {path: "/apps/system/Monitor/Artifacts", query: {artifactType: $type}}, {rows: []})
 typeSelect = Select("type", $type, [SelectItem("AT_SERVICE", "Services")])
 chart = BarChart(hits.rows.artifactName, [Series("Hits", hits.rows.hitCount)])
 table = Table([Col("Service", hits.rows.artifactName), Col("Hits", hits.rows.hitCount)])"#;
@@ -186,7 +186,7 @@ fn unknown_names_get_the_nearest_ones() {
 #[test]
 fn a_visible_filter_no_query_reads_is_not_wired() {
     let program = "root = Stack([FormControl(\"Type\", Select(\"type\", $type, [SelectItem(\"A\", \"A\")])), t])\n\
-        hits = Query(\"request\", {path: \"/apps/monitor/Artifacts\", query: {artifactType: \"AT_SERVICE\"}}, {rows: []})\n\
+        hits = Query(\"request\", {path: \"/apps/system/Monitor/Artifacts\", query: {artifactType: \"AT_SERVICE\"}}, {rows: []})\n\
         t = Table([Col(\"Name\", hits.rows.artifactName)])";
     let problems = problems_of(program);
     assert_eq!(sections(&problems), ["verify"], "{problems:?}");
@@ -195,7 +195,7 @@ fn a_visible_filter_no_query_reads_is_not_wired() {
     assert_eq!(problems_of(&wired), Vec::new());
     // a control in a Form posts with the form: not a filter
     let form = "root = Stack([f, t])\nf = Form(\"ask\", Button(\"Go\"), [Input(\"note\", $note)])\n\
-        hits = Query(\"request\", {path: \"/apps/monitor/Artifacts\"}, {rows: []})\n\
+        hits = Query(\"request\", {path: \"/apps/system/Monitor/Artifacts\"}, {rows: []})\n\
         t = Table([Col(\"Name\", hits.rows.artifactName)])";
     assert_eq!(problems_of(form), Vec::new());
 }
@@ -273,17 +273,14 @@ fn a_patch_merges_once_and_a_rename_is_the_edit_section() {
 fn a_mutation_is_evaluated_from_the_program_with_the_posted_state() {
     let sources = test_sources();
     let program = "root = Stack([b])\n$description = \"\"\n\
-        save = Mutation(\"request\", {method: \"POST\", path: \"/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup\", body: {userGroupId: \"ADMIN\", description: $description}})\n\
+        save = Mutation(\"request\", {method: \"POST\", path: \"/apps/system/Access/GroupDetail/updateUserGroup\", body: {userGroupId: \"ADMIN\", description: $description}})\n\
         b = Button(\"Save\", Action([@Run(save)]))";
     let (tool, args) = evaluate_mutation(&sources, program, "save", &json!({"description": "Renamed"}))
         .unwrap()
         .unwrap();
     assert_eq!(tool, "request");
     assert_eq!(args["body"], json!({"userGroupId": "ADMIN", "description": "Renamed"}));
-    assert_eq!(
-        args["path"],
-        json!("/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup")
-    );
+    assert_eq!(args["path"], json!("/apps/system/Access/GroupDetail/updateUserGroup"));
     assert_eq!(evaluate_mutation(&sources, program, "other", &json!({})).unwrap(), None);
 }
 

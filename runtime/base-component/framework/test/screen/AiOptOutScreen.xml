@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The AiOptOut spec's screen opted out of AI as a whole (test only, never mounted). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-title="AI opt-out screen" ai-opt-out="true">
+    <widgets>
+        <label text="Confidential screen E"/>
+    </widgets>
+</screen>

@@ -138,16 +138,48 @@ const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
     }
 })"#;
 
-/// What QuickJS's engine puts under `ec` outside the host table, which the host table's shims extend (`runtime.rs`,
-/// `install_ec`): `ec.context`, the context stack's `get` and the two names a form reads. A small text that names it
-/// goes to QuickJS (the static check does not allow it), so it is what the shims need, not the whole QuickJS object.
-/// The global `sri` is the `sri` shim's own.
-const EC_EXTRAS_JS: &str = r#"(function (ec, context) {
-    const made = { get: (name) => context.get(String(name)) };
-    for (const name of ["formListFindId", "orderByField"]) {
-        Object.defineProperty(made, name, { get: () => context[name], enumerable: true });
+/// Run once the shims are in: the property and method forms of each `ec` member's getters, as Groovy reads a Java
+/// getter either way (`ec.user.userId` and `ec.user.getUserId()`), so a member bound in one form has both. A getter or
+/// plain value `x` gets `getX()`; a `getX` or `isX` that needs no argument gets the property `x`; `ec.getUser()` and the like
+/// return `ec`'s members. Nothing that is already there is replaced. `ec.context` is the stack, with its own methods.
+const EC_TWINS_JS: &str = r#"(function (ec) {
+    const upper = (name) => name.charAt(0).toUpperCase() + name.slice(1);
+    const twin = (object) => {
+        const seen = new Set();
+        for (let level = object; level && level !== Object.prototype; level = Object.getPrototypeOf(level)) {
+            for (const name of Object.getOwnPropertyNames(level)) {
+                if (seen.has(name)) continue;
+                seen.add(name);
+                const held = Object.getOwnPropertyDescriptor(level, name);
+                // Groovy reads a boolean `isX()` as the property `x` too
+                const method = /^(?:get|is)([A-Z])(\w*)$/.exec(name);
+                if (typeof held.value === "function") {
+                    if (!method || held.value.length !== 0) continue;
+                    const property = method[1].toLowerCase() + method[2];
+                    if (property in object) continue;
+                    Object.defineProperty(level, property, {
+                        get() { return this[name](); }, enumerable: false, configurable: true
+                    });
+                } else if (!method && /^[a-z]\w*$/.test(name)) {
+                    const getter = "get" + upper(name);
+                    if (getter in object) continue;
+                    Object.defineProperty(level, getter, {
+                        value: function () { return this[name]; }, writable: true, enumerable: false, configurable: true
+                    });
+                }
+            }
+        }
+    };
+    for (const name of Object.getOwnPropertyNames(ec)) {
+        // a plain member only: a getter of `ec` is not run at the start
+        const member = Object.getOwnPropertyDescriptor(ec, name).value;
+        if (member == null || typeof member !== "object") continue;
+        if (name !== "context") twin(member);
+        const getter = "get" + upper(name);
+        if (!(getter in ec)) ec[getter] = () => ec[name];
     }
-    ec.context = made;
+    if (!("getContextRoot" in ec)) ec.getContextRoot = () => ec.contextRoot;
+    delete globalThis.__moquiContextMethods;
 })"#;
 
 /// Why an oxide run gave no result.
@@ -883,13 +915,8 @@ impl OxideEngine {
         )?;
         super::bind::install_ec(&mut context.clone(), &ec, std::rc::Rc::new(EngineHooks))?;
         super::resource::install(&context, &ec)?;
-        let extras = super::compiled::eval_start(&mut context.clone(), EC_EXTRAS_JS)?;
-        let extras = match &extras {
-            Value::Object(object) => context.as_callable(object)?,
-            _ => None,
-        }
-        .ok_or(RuntimeError::Invariant("the ec extras"))?;
-        context.call(&extras, Value::Undefined, &[Value::Object(ec), Value::Object(stack_object)])?;
+        // `ec.context` is the stack itself, as Java's `ec.getContext()` is the `context` a script names
+        context.set_property(&ec, &key("context").map_err(conv_runtime)?, Value::Object(stack_object))?;
         super::decimal::install_to_decimal(&context)?;
         super::compiled::eval_start(&mut context.clone(), TO_NUMBER_JS)?;
         counts::STARTED.fetch_add(1, Relaxed);
@@ -941,6 +968,13 @@ impl OxideEngine {
     /// [`Self::finish_start`]'s installs.
     fn install_host(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
+        // the stack's methods, lent to the shims that add to them (`host/context.rs`); [`EC_TWINS_JS`] drops the name
+        let global = context.global_object()?;
+        context.set_property(
+            &global,
+            &key("__moquiContextMethods").map_err(conv_runtime)?,
+            Value::Object(self.protos.context_methods.clone()),
+        )?;
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
         // the host's globals and helper functions QuickJS installs outside the table, then its helper script over them
         super::bind::install_one_shim(
@@ -950,7 +984,6 @@ impl OxideEngine {
             std::rc::Rc::new(EngineHooks),
         )?;
         super::compiled::eval_start(&mut context, crate::script::runtime::HELPERS_JS)?;
-        let global = context.global_object()?;
         // a script names the helper objects as QuickJS's bare names answered them. Frozen below.
         for name in ["ObjectUtilities", "CollectionUtilities", "StringUtilities", "WebUtilities", "UserSecurityChecks"] {
             let name = key(name).map_err(conv_runtime)?;
@@ -966,6 +999,13 @@ impl OxideEngine {
             }
             _ => return Err(RuntimeError::Invariant("the tools shim made no __moquiWrap")),
         }
+        let twins = match super::compiled::eval_start(&mut context, EC_TWINS_JS)? {
+            Value::Object(object) => context.as_callable(&object)?,
+            _ => None,
+        }
+        .ok_or(RuntimeError::Invariant("the ec twins"))?;
+        let ec = context.get_property(&global, &key("ec").map_err(conv_runtime)?)?;
+        context.call(&twins, Value::Undefined, &[ec])?;
         let freeze = match super::compiled::eval_start(&mut context, FREEZE_HOST_GLOBALS_JS)? {
             Value::Object(object) => context.as_callable(&object)?,
             _ => None,

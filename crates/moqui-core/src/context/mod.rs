@@ -14,6 +14,7 @@
 
 //! Factory, conf, components, resources, cache, messages, and the artifact stack.
 
+pub mod activity;
 mod anonymous;
 mod artifact;
 mod background;
@@ -27,6 +28,7 @@ pub(crate) mod identity;
 mod locate;
 mod message;
 mod resource;
+pub mod resources;
 pub mod status;
 
 pub use anonymous::{AnonymousAccess, AnonymousLogin};

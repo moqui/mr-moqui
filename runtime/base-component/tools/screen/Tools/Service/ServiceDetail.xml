@@ -31,11 +31,25 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="inParameterNodes" from="serviceNode.first('in-parameters')?.children('parameter')"/>
         <set field="outParameterNodes" from="serviceNode.first('out-parameters')?.children('parameter')"/>
         <set field="secas" from="ec.service.secaRulesByServiceName.get(sd.serviceNameNoHash)"/>
+        <set field="devAide" from="ec.resource.script('component://tools/template/HomeCatalog.js').devMounted(sri, ec)"/>
+        <script><![CDATA[
+            // Monitor's numbers are shown to a reader of the telemetry only (the otel_metrics dataset, granted with System):
+            // to anyone else a report-embed says "Not available", so it is left out. list#Datasets leaves out, without an
+            // error, the datasets the user may not read.
+            monitorMetrics = false
+            try {
+                monitorMetrics = (ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call()?.datasets || [])
+                    .some((dataset) => dataset.id === 'otel_metrics')
+            } catch (e) { ec.logger.warn('The report datasets could not be listed: ' + String(e)) }
+        ]]></script>
     </actions>
     <widgets>
         <container-box><box-header><label type="h5" text="${sd.serviceName}"/></box-header><box-toolbar>
             <link url="serviceReference" text="Service List"/>
             <link url="serviceRun" text="Run Service"/>
+            <!-- on a dev instance: the service in Dev AIDE, which edits it -->
+            <link url="//apps/dev/Services/Edit" text="Edit in Dev AIDE" icon="sym_o_code_blocks" condition="devAide"
+                    parameter-map="{artifact: 'service:' + sd.serviceName}"/>
         </box-toolbar><box-body>
             <label type="strong" text="${serviceNode.first('description')?.text || ''}" display-if-empty="false"/>
             <!-- <label type="p" text="${serviceNode.attributes}"/> -->
@@ -43,6 +57,14 @@ along with this software (see the LICENSE.md file). If not, see
             <label type="p" text="Service Type: ${sd.serviceType}${sd.location ? ', Location: ' + sd.location : ''}${sd.method ? ', Method: ' + sd.method : ''}"/>
             <label type="p" text="Tx Ignore: ${sd.txIgnore}, Force New: ${sd.txForceNew}, Use Tx Cache: ${sd.txUseCache}, Timeout: ${sd.txTimeout != null ? sd.txTimeout : ec.l10n.localize('Default')}"/>
         </box-body></container-box>
+
+        <!-- this service's hits over seven days, from Monitor › Artifacts' dashboard (report/monitor-artifacts.json) -->
+        <section name="ActivitySection" condition="monitorMetrics"><widgets>
+            <link url="//apps/system/Monitor/Artifacts" text="Performance in Monitor" icon="sym_o_deployed_code" link-type="anchor"
+                    parameter-map="{'var-artifactType': 'AT_SERVICE', 'var-artifactName': sd.serviceName, from: 'now-7d', thru: 'now'}"/>
+            <report-embed id="ServiceActivityEmbed" definition-id="monitor-artifacts" panel-id="activity" from="now-7d"
+                    variables="{artifactType: 'AT_SERVICE', artifactName: sd.serviceName}"/>
+        </widgets></section>
 
         <container-box><box-header><label type="h5" text="In Parameters"/></box-header><box-body-nopad>
             <form-list name="InParameters" list="inParameterNodes" list-entry="parameterNode" skip-form="true">

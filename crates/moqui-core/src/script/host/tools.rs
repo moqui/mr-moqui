@@ -96,15 +96,70 @@ macro_rules! tools_js {
             if (node.xml == null && node.parsed === true) node.xml = writeXml(node, 0);
             return node.xml || "";
         };
+        // Java's MNode, the rest: the changes forget the text the node was parsed from, so toString writes it again
+        const changed = () => { node.xml = null; node.parsed = true; };
+        node.getName = () => node.name;
+        node.getText = () => node.text ?? null;
+        node.setText = (text) => { node.text = text == null ? null : String(text); changed(); return node; };
+        node.getAttributes = () => node.attributes;
+        node.setAttribute = (name, value) => {
+            if (value == null) delete node.attributes[name]; else node.attributes[name] = String(value);
+            changed();
+            return node;
+        };
+        // append(name, attributes) makes the child and gives it; append(node) adds a node (a copy keeps its own parent's)
+        node.append = (nameOrNode, attributes) => {
+            const kid = nameOrNode !== null && typeof nameOrNode === "object" ? nameOrNode
+                : wrap("Node", { name: String(nameOrNode), attributes: Object.assign({}, attributes || {}), children: [], parsed: true });
+            all.push(kid);
+            changed();
+            return kid;
+        };
+        // remove(name) the children of that name, or remove(index); whether any went
+        node.remove = (which) => {
+            const before = all.length;
+            if (typeof which === "number") all.splice(which, 1);
+            else for (let i = all.length - 1; i >= 0; i--) if (all[i].name === which) all.splice(i, 1);
+            if (all.length !== before) changed();
+            return all.length !== before;
+        };
+        node.deepCopy = () => wrap("Node", { name: node.name, attributes: Object.assign({}, node.attributes), text: node.text ?? null,
+            children: all.map((kid) => kid.deepCopy()), parsed: true });
+        // the nodes below this one the function holds for, children before or after their own children
+        node.depthFirst = (matches) => {
+            const found = [];
+            for (const kid of all) { found.push(...kid.depthFirst(matches)); if (matches(kid)) found.push(kid); }
+            return found;
+        };
+        node.breadthFirst = (matches) => {
+            const found = [];
+            let level = all.slice();
+            while (level.length) {
+                found.push(...level.filter((kid) => matches(kid)));
+                level = level.flatMap((kid) => kid.childNodes);
+            }
+            return found;
+        };
+        // descendants(name) the nodes of that name at any depth; descendants(names) an object of them by name
+        node.descendants = (names) => {
+            if (typeof names === "string") return node.breadthFirst((kid) => kid.name === names);
+            const wanted = Array.from(names || []), found = {};
+            for (const name of wanted) found[name] = [];
+            for (const kid of node.breadthFirst((kid) => wanted.includes(kid.name))) found[kid.name].push(kid);
+            return found;
+        };
         return node;
     };
     const makeNode = (data) => wrap("Node", data);
+    // Java's MNode statics: parseText(location, text), parse(location) of a resource location, and a new node
+    globalThis.MNode = {
+        parseText: (location, text) => makeNode(host.parseNode(String(text))),
+        parse: (location) => makeNode(host.parseNode(String(host.resourceText(String(location)) ?? ""))),
+        make: (name, attributes) => wrap("Node", { name: String(name), attributes: Object.assign({}, attributes || {}), children: [], parsed: true })
+    };
     // a rule or tree that a screen shows with `toString()`
     wrappers.Text = (data) => Object.assign(data, { toString: () => data.text || "" });
     const makeText = (text) => wrap("Text", { text: text });
-
-    // `ec.context.putAll(map)`: each entry on the stack by name
-    ec.context.putAll = (map) => { for (const [key, value] of Object.entries(map || {})) globalThis[key] = value; };
 
     // ---- cache ----
     ec.cache.cacheExists = host.cacheExists;
@@ -183,6 +238,27 @@ macro_rules! tools_js {
         });
         return ed;
     };
+    // Java's fastFindOne(entityName, useCache, disableAuthz, pkValue...): by the primary key values in the entity's
+    // key order; null when the entity has more key fields than values given
+    ec.entity.fastFindOne = function (entityName, useCache, disableAuthz, ...values) {
+        const definition = ec.entity.getEntityDefinition(entityName);
+        if (definition == null) throw new Error("No entity named " + entityName);
+        const names = definition.getPkFieldNames();
+        if (values.length === 1 && Array.isArray(values[0])) values = values[0];
+        if (values.length < names.length) return null;
+        const find = ec.entity.find(entityName);
+        names.forEach((name, index) => find.condition(name, values[index]));
+        if (useCache != null) find.useCache(useCache === true);
+        if (disableAuthz === true) find.disableAuthz();
+        return find.one();
+    };
+    // Java's getEntityGroupName(entityName): the entity's group, null for no such entity
+    ec.entity.getEntityGroupName = function (entityName) {
+        const definition = ec.entity.getEntityDefinition(entityName);
+        return definition == null ? null : (definition.groupName ?? null);
+    };
+    // Java's createBulk(values): each created, in order
+    ec.entity.createBulk = function (values) { for (const value of values || []) value.create(); };
     ec.entity.getEntityDefinition = function (entityName) {
         const info = host.entityDefinitionInfo(entityName);
         if (info == null) return null;
@@ -617,6 +693,10 @@ macro_rules! tools_js {
     ec.resource.isTextFilename = (filename) => host.isTextFilename(filename == null ? "" : String(filename));
     globalThis.ResourceReference = { isTextFilename: ec.resource.isTextFilename };
     ec.resource.getLocationReference = (location) => makeRef(String(location));
+    // Java's getUriReference takes a URI; a location is one here
+    ec.resource.getUriReference = (uri) => makeRef(String(uri));
+    // Java's getLocationStream: the file as a stream, null for a file that is not there
+    ec.resource.getLocationStream = (location) => makeRef(String(location)).openStream();
     // the line diff between two texts, as getVersionDiff returns it: {fromName, toName, unifiedDiff, html, stats, hunks}
     ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
         newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
@@ -686,10 +766,25 @@ macro_rules! tools_js {
         try { return JSON.parse(this.body); }
         catch (e) { throw new Error("Error parsing JSON response from request to " + this.client.uriString + ": " + e.message); }
     };
+    // Java's checkError(): a status outside 200 to 299 throws; else the response, for a chain
+    RestResponse.prototype.checkError = function () {
+        if (this.statusCode < 200 || this.statusCode >= 300)
+            throw new Error("Error response " + this.statusCode + (this.reasonPhrase ? " " + this.reasonPhrase : "") +
+                " from request to " + this.client.uriString);
+        return this;
+    };
+    RestResponse.prototype.headers = function () { return this.headerMap; };
+    RestResponse.prototype.getClient = function () { return this.client; };
+    RestResponse.prototype.getUri = function () { return this.client.uriString; };
+    RestResponse.prototype.getBodyText = RestResponse.prototype.text;
+    RestResponse.prototype.getResponseText = RestResponse.prototype.text;
+    // the body parsed as XML, as an MNode
+    RestResponse.prototype.xmlNode = function () { this.loadBody(); return makeNode(host.parseNode(this.body)); };
     function RestUriBuilder(client) {
         this.client = client; this.protocolText = "http"; this.hostText = null; this.portNumber = 80; this.pathText = "";
-        this.parameterList = [];
+        this.parameterList = []; this.fragmentText = null;
     }
+    RestUriBuilder.prototype.fragment = function (fragment) { this.fragmentText = fragment == null ? null : String(fragment); return this; };
     RestUriBuilder.prototype.protocol = function (protocol) {
         if (!protocol) throw new Error("Empty protocol not allowed");
         this.protocolText = String(protocol); return this;
@@ -719,7 +814,7 @@ macro_rules! tools_js {
         if (!this.hostText) throw new Error("No host specified, call the host() method before build()");
         const query = restQuery(this.parameterList);
         return this.client.uri(this.protocolText + "://" + this.hostText + ":" + this.portNumber + (this.pathText || "/") +
-            (query ? "?" + query : ""));
+            (query ? "?" + query : "") + (this.fragmentText ? '#' + encodeURIComponent(this.fragmentText) : ""));
     };
     function RestClient() {
         this.methodName = "GET"; this.uriString = null; this.headerList = []; this.bodyText = null;
@@ -730,6 +825,23 @@ macro_rules! tools_js {
     RestClient.prototype.uri = function (uri) {
         if (arguments.length === 0) return new RestUriBuilder(this);
         this.uriString = String(uri); return this;
+    };
+    RestClient.prototype.getMethod = function () { return this.methodName; };
+    // Java's basicAuth(username, password): the Authorization header of HTTP basic authentication
+    RestClient.prototype.basicAuth = function (username, password) {
+        return this.addHeader("Authorization", "Basic " + su.base64Encode(String(username ?? "") + ":" + String(password ?? "")));
+    };
+    // Java's acceptContentType: the Accept header, where call() would send the content type
+    RestClient.prototype.acceptContentType = function (contentType) { return this.addHeader("Accept", contentType); };
+    // Java's encoding(characterEncoding): named on the Content-Type of a text body that names none; the text is sent
+    // as UTF-8 here whatever is named
+    RestClient.prototype.encoding = function (characterEncoding) {
+        this.encodingText = characterEncoding == null ? null : String(characterEncoding); return this;
+    };
+    // Java's callFuture(): the call is made now, on this thread, and the future holds its response
+    RestClient.prototype.callFuture = function () {
+        const response = this.call();
+        return { get: () => response, isDone: () => true, isCancelled: () => false, cancel: () => false };
     };
     RestClient.prototype.getUri = function () { return this.uriString; };
     RestClient.prototype.getUriString = function () { return this.uriString; };
@@ -783,7 +895,8 @@ macro_rules! tools_js {
         if (query) uri += (uri.includes("?") ? "&" : "?") + query;
         const headers = this.headerList.slice();
         const hasHeader = (name) => headers.some(([key]) => key.toLowerCase() === name);
-        if (this.bodyText && !hasHeader("content-type")) headers.push(["Content-Type", this.contentTypeText]);
+        if (this.bodyText && !hasHeader("content-type")) headers.push(["Content-Type", this.contentTypeText +
+            (this.encodingText && !/charset=/i.test(this.contentTypeText) ? "; charset=" + this.encodingText : "")]);
         if (!hasHeader("accept")) headers.push(["Accept", this.contentTypeText]);
         const sent = host.restSend({ method: this.methodName, uri: uri, headers: headers, body: this.bodyText,
             timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag });
@@ -800,6 +913,8 @@ macro_rules! tools_js {
 
     // `ScreenUrlInfo.isPermitted(ec, null, AUTHZA_ALL)` as a check of one artifact: the screen, the type, the action.
     ec.artifactExecution = { isPermitted: host.isPermitted, getFindFiltersForUser: host.getFindFiltersForUser,
+        // the same question of the user's own authorization records, with nothing inherited from the stack
+        isPermittedOwn: host.isPermittedOwn,
         // Java's: disable returns whether entity ECA was already disabled, and the caller that found it so leaves it so
         disableEntityEca: host.disableEntityEca, enableEntityEca: host.enableEntityEca,
         entityEcaDisabled: host.entityEcaDisabled, getStackNameString: host.stackNameString,
@@ -821,7 +936,19 @@ macro_rules! tools_js {
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
-        disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit };
+        disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit,
+        // Java's stack: each frame as {name, typeEnumId, actionEnumId}, top first. No history is kept here: what ran
+        // is in the telemetry traces (docs/tools/Monitoring.md).
+        getStack: host.artifactStack, getStackArray: host.artifactStack,
+        peek: () => host.artifactStack()[0] ?? null,
+        // Java's push(name, type, action, requiresAuthz): the frame is checked as any is, and throws when the user may
+        // not; the caller pops it. The type and action are Java's enum ids (AT_OTHER, AUTHZA_VIEW) or the short forms.
+        push: (name, type, action, requiresAuthz) => host.artifactPush(String(name), type == null ? null : String(type),
+            action == null ? null : String(action), requiresAuthz !== false),
+        pop: host.artifactPop,
+        // Java's: what runs under the top frame is authorized for an anonymous user, for every action or for view
+        setAnonymousAuthorizedAll: () => host.artifactAnonymous(true),
+        setAnonymousAuthorizedView: () => host.artifactAnonymous(false) };
 
     // `Locale.getAvailableLocales()` with English display names. Java lists every JVM locale; the port has no locale
     // database, so this is a fixed list of the common ones.
@@ -852,8 +979,12 @@ macro_rules! tools_js {
         getOwnPropertyDescriptor: (target, key) => typeof key !== "symbol" && host.sharedHas(key)
             ? { value: host.sharedGet(key), enumerable: true, configurable: true, writable: true } : undefined
     });
-    Object.defineProperty(ec.context, "sharedMap", { get: () => sharedMap, enumerable: false, configurable: true });
-    ec.context.getSharedMap = () => sharedMap;
+    // on the stack's methods (`ec.context` is the stack itself, where an assignment would set a name)
+    const contextMethods = globalThis.__moquiContextMethods;
+    if (contextMethods) {
+        Object.defineProperty(contextMethods, "sharedMap", { get: () => sharedMap, enumerable: false, configurable: true });
+        contextMethods.getSharedMap = () => sharedMap;
+    }
 
     // ---- user and messages ----
     // `getPeriodRange(baseName, inputs)`: from `{base}_period`, `_poffset`, and `_pdate`, else `_from` and `_thru`.
@@ -867,11 +998,24 @@ macro_rules! tools_js {
         if (period) return host.periodRange(String(period), String(inputs[baseName + "_poffset"] ?? ""), String(inputs[baseName + "_pdate"] ?? ""));
         return [inputs[baseName + "_from"] || null, inputs[baseName + "_thru"] || null];
     };
-    Object.defineProperty(ec.message, "messageInfos", { get: host.messageInfos });
 
     // ---- factory and web ----
     ec.factory.getStatusMap = host.getStatusMap;
     ec.factory.getComponentInfoList = host.getComponentInfoList;
+    // Java's getComponentBaseLocations: each component's location by its name, in load order
+    ec.factory.getComponentBaseLocations = () => {
+        const out = {};
+        for (const info of host.getComponentInfoList()) out[info.name] = info.location;
+        return out;
+    };
+    // the factory outlives every script it runs
+    ec.factory.isDestroyed = () => false;
+    // Java's factory-level facades: the same objects as ec's here, as there is one context per thread of work
+    for (const name of ["entity", "service", "l10n", "resource", "cache", "screen", "logger"]) {
+        Object.defineProperty(ec.factory, name, { get: () => ec[name], enumerable: false, configurable: true });
+    }
+    // What the server reported when it became ready (moqui_core::startup): the listeners, integrations and tools.
+    ec.factory.getStartupReport = host.getStartupReport;
     ec.factory.getRuntimePath = host.getRuntimePath;
     // This server's instance id, as its telemetry and the database audit name it (Tools' Database › Queries).
     ec.factory.getInstanceId = host.getInstanceId;
@@ -937,7 +1081,9 @@ pub(super) static SHIM: Shim = Shim {
         super::pass::pass_js!(),
         ")(ec, hidden);\n    (",
         super::files::files_js!(),
-        ")(ec, hidden);\n})"
+        ")(ec, hidden);\n    (",
+        super::context::context_js!(),
+        ")(ec, hidden, global);\n})"
     ),
     hidden: &[
         METHODS,
@@ -945,6 +1091,7 @@ pub(super) static SHIM: Shim = Shim {
         super::archive::METHODS,
         super::pass::METHODS,
         super::files::METHODS,
+        super::context::METHODS,
     ],
 };
 
@@ -1023,6 +1170,7 @@ static METHODS: &[Method] = &[
     method!("tools", "getScreenInfoList", [Text, OptValue], get_screen_info_list),
     method!("tools", "getStatusMap", [OptValue], get_status_map),
     method!("tools", "getComponentInfoList", [], get_component_info_list),
+    method!("tools", "getStartupReport", [], get_startup_report),
     method!("tools", "getRuntimePath", [], get_runtime_path),
     method!("tools", "getInstanceId", [], get_instance_id),
     method!(
@@ -1068,8 +1216,13 @@ static METHODS: &[Method] = &[
     method!("tools", "transitionInfo", [Text, Text, Text, Text], transition_info),
     method!("tools", "valuesFromPlainMap", [Value, Text], values_from_plain_map),
     method!("tools", "isPermitted", [Text, OptText, OptText], is_permitted),
+    method!("tools", "isPermittedOwn", [Text, OptText, OptText], is_permitted_own),
     method!("tools", "disableEntityEca", [], disable_entity_eca),
     method!("tools", "enableEntityEca", [], enable_entity_eca),
+    method!("tools", "artifactStack", [], None, leaf, artifact_stack),
+    method!("tools", "artifactPush", [Text, OptValue, OptValue, OptValue], artifact_push),
+    method!("tools", "artifactPop", [], artifact_pop),
+    method!("tools", "artifactAnonymous", [Value], None, leaf, artifact_anonymous),
     method!("tools", "disableAuthz", [], disable_authz),
     method!("tools", "enableAuthz", [], enable_authz),
     method!("tools", "authzDisabled", [], authz_disabled),
@@ -1090,7 +1243,6 @@ static METHODS: &[Method] = &[
         get_all_entity_names_with_master
     ),
     method!("tools", "periodRange", [Text, Text, Text], period_range),
-    method!("tools", "messageInfos", [], message_infos),
     method!("tools", "resourceText", [Text], resource_text),
     method!("tools", "resourceTextIn", [Text, Text], resource_text_in),
     method!("tools", "resourcePutText", [Text, Text], resource_put_text),
@@ -1998,6 +2150,12 @@ fn get_status_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Value(Value::Map(map)))
 }
 
+/// `ec.factory.getStartupReport()`: [`crate::startup::script_value`].
+fn get_startup_report(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    Ok(Ret::Value(Value::Map(crate::startup::script_value(&factory))))
+}
+
 /// `ec.factory.getInstanceId()`: this server's instance id ([`crate::drain::instance_id`]).
 fn get_instance_id(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     let factory = factory()?;
@@ -2861,6 +3019,61 @@ fn stack_name_string(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     )?))
 }
 
+/// `ec.artifactExecution.getStack()`: each frame as `{name, typeEnumId, actionEnumId}`, top first.
+fn artifact_stack(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let frames = with_ec(crate::context::ExecutionContext::artifact_stack_frames)?;
+    let rows = frames
+        .into_iter()
+        .map(|(name, artifact_type, action)| {
+            let mut row = moqui_lib::object::ValueMap::default();
+            row.insert("name".to_string(), Value::String(name));
+            row.insert("typeEnumId".to_string(), Value::String(artifact_type));
+            row.insert("actionEnumId".to_string(), Value::String(action));
+            row
+        })
+        .collect();
+    Ok(list(rows))
+}
+
+/// `ec.artifactExecution.push(name, type, action, requiresAuthz)`: a frame checked as a push checks any, an error
+/// when the user is not authorized. The type defaults to `AT_OTHER` and the action to `AUTHZA_VIEW`.
+fn artifact_push(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let artifact_type = call.opt_text(1).filter(|text| !text.is_empty());
+    let action = call.opt_text(2).filter(|text| !text.is_empty());
+    let artifact_type = artifact_type.unwrap_or_else(|| "AT_OTHER".to_string());
+    let action = action.unwrap_or_else(|| "AUTHZA_VIEW".to_string());
+    let requires_authz = call.value(3).is_none_or(super::truthy);
+    let pushed = with_ec(|ec| {
+        ec.push_checked(
+            &artifact_type,
+            &name,
+            &action,
+            crate::context::Authz::required_if(requires_authz),
+            crate::context::Tarpit::Count,
+            None,
+        )
+    })?;
+    pushed.map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Undefined)
+}
+
+fn artifact_pop(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    with_ec(crate::context::ExecutionContext::pop)?.map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Undefined)
+}
+
+/// `setAnonymousAuthorizedAll()` (true) and `setAnonymousAuthorizedView()`: the grant on the top frame.
+fn artifact_anonymous(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let access = if call.value(0).is_some_and(super::truthy) {
+        crate::context::AnonymousAccess::All
+    } else {
+        crate::context::AnonymousAccess::View
+    };
+    with_ec(|ec| ec.grant_anonymous(access, None))?;
+    Ok(Ret::Undefined)
+}
+
 fn entity_eca_disabled(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(
         crate::context::ExecutionContext::entity_eca_disabled,
@@ -2877,6 +3090,20 @@ fn is_permitted(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(
         crate::user::authorize(&artifact_type, &name, &action).is_ok(),
     ))
+}
+
+/// Whether the user's own authorization records allow `action` on the artifact, with nothing inherited from the
+/// frames on the stack ([`crate::user::permitted_own`]): what a screen mounted under another app's inheritable
+/// always-allow asks before it shows a part that is another artifact's to grant.
+fn is_permitted_own(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let artifact_type = call.text(1).map(str::to_string);
+    let action = call.text(2).map(str::to_string);
+    let artifact_type = artifact_type.unwrap_or_else(|| "AT_XML_SCREEN".to_string());
+    let action = action.unwrap_or_else(|| "view".to_string());
+    let permitted =
+        crate::user::permitted_own(&artifact_type, &name, &action).map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::from(permitted))
 }
 
 /// `getFindFiltersForUser(entityName)`: the `EntityFilter` records that apply to a find on the entity now, or null
@@ -2958,21 +3185,6 @@ fn period_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let (from, thru) =
         crate::user::period_range(&period, &offset, &basis).map_err(|err| HostError::message(err.message()))?;
     Ok(Ret::Value(Value::List(vec![from, thru])))
-}
-
-/// `ec.message.messageInfos`: the messages as `{message, typeString}`. The port keeps no type with a message.
-fn message_infos(_call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let messages = with_ec(|ec| ec.message().messages().to_vec())?;
-    let rows = messages
-        .into_iter()
-        .map(|message| {
-            let mut row = indexmap::IndexMap::default();
-            row.insert("message".to_string(), Value::String(message));
-            row.insert("typeString".to_string(), Value::string("info"));
-            row
-        })
-        .collect();
-    Ok(list(rows))
 }
 
 /// `TimeZone.getAvailableIDs()`: the zone names of the time zone database, sorted.

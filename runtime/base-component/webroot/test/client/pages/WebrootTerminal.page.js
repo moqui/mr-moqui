@@ -12,29 +12,27 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-const componentReady = fetch("/files/runtime/base-component/webroot/screen/webroot/apps/Terminal.qvue")
-    .then(response => response.text())
-    .then(source => moqui.parseVue(source))
 const write = (term, text) => new Promise(resolve => term.write(text, resolve))
 const painted = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+let made = 0
 
+// A session of the store with no socket, shown in a box of the page; what it sends is kept.
 const terminal = async dark => {
-    const component = await componentReady
+    const store = moqui.terminal
+    store.setDark(dark)
+    const key = "spec-" + (++made)
+    const replies = []
     const screen = document.createElement("div")
     screen.style.cssText = "width:800px;height:320px"
     document.body.appendChild(screen)
-    const replies = []
-    const context = {dark, $refs: {screen}, connect() {}}
-    for (const [name, method] of Object.entries(component.methods)) context[name] = method.bind(context)
     // Keep the test offline; xterm's real input reply still crosses the same send boundary as the socket.
-    context.connect = () => {}
-    context.send = bytes => replies.push(new TextDecoder().decode(bytes))
-    context.open()
+    const session = store.create(key, {kind: "apps", connect: false, send: bytes => replies.push(new TextDecoder().decode(bytes))})
+    store.attach(key, screen)
     return {
-        component, context, replies, screen,
+        store, key, session, replies, screen,
+        get term() { return session.term },
         dispose() {
-            context.observer.disconnect()
-            context.term.dispose()
+            store.end(key)
             screen.remove()
         }
     }
@@ -43,17 +41,17 @@ const terminal = async dark => {
 test("switching background reports its new color without resetting terminal content", async () => {
     const view = await terminal(false)
     try {
-        const {component, context, replies} = view
-        const term = context.term
+        const {store, replies} = view
+        const term = view.term
         await write(term, "Unsubmitted field value")
-        component.watch.dark.call(context, true)
+        store.setDark(true)
         await write(term, "")
         assert.ok(replies.some(reply => reply.includes("11;rgb:1616/1818/1d1d")), "dark background reaches the TUI decoder")
         assert.equal(term.buffer.active.getLine(0).translateToString(true), "Unsubmitted field value")
-        component.watch.dark.call(context, false)
+        store.setDark(false)
         await write(term, "")
         assert.ok(replies.some(reply => reply.includes("11;rgb:ffff/ffff/ffff")), "light background reaches the TUI decoder")
-        assert.equal(context.term, term)
+        assert.equal(store.session(view.key).term, term)
         assert.equal(term.buffer.active.getLine(0).translateToString(true), "Unsubmitted field value")
     } finally {
         view.dispose()
@@ -72,7 +70,7 @@ const contrast = (foreground, background) => {
 test("muted terminal text remains readable on both browser backgrounds", async () => {
     const view = await terminal(true)
     try {
-        await write(view.context.term, "\u001b[38;2;110;110;110mSection heading")
+        await write(view.term, "\u001b[38;2;110;110;110mSection heading")
         await painted()
         const foreground = () => {
             const text = [...view.screen.querySelectorAll(".xterm-rows span")].find(span => span.textContent.includes("Section heading"))
@@ -80,11 +78,283 @@ test("muted terminal text remains readable on both browser backgrounds", async (
             return getComputedStyle(text).color.match(/[\d.]+/g).slice(0, 3).map(Number)
         }
         assert.ok(contrast(foreground(), [22, 24, 29]) >= 4.5, "dark terminal heading contrast")
-        view.component.watch.dark.call(view.context, false)
-        await write(view.context.term, "\r\u001b[38;2;150;150;150mSection heading")
+        view.store.setDark(false)
+        await write(view.term, "\r\u001b[38;2;150;150;150mSection heading")
         await painted()
         assert.ok(contrast(foreground(), [255, 255, 255]) >= 4.5, "light terminal heading contrast")
     } finally {
         view.dispose()
+    }
+})
+
+test("a session's terminal moves to another view with its screen and nothing reconnects", async () => {
+    const view = await terminal(false)
+    const other = document.createElement("div")
+    other.style.cssText = "width:640px;height:240px"
+    document.body.appendChild(other)
+    try {
+        const {store, key, session} = view
+        await write(view.term, "kept across the move")
+        store.detach(key, view.screen)
+        assert.equal(view.screen.childElementCount, 0, "the first view gave the element up")
+        store.attach(key, other)
+        assert.equal(session.el.parentNode, other, "the element is in the second view")
+        assert.equal(store.session(key), session, "the same session, not a new one")
+        assert.equal(view.term.buffer.active.getLine(0).translateToString(true), "kept across the move")
+        store.detach(key, view.screen)
+        assert.equal(session.el.parentNode, other, "a view that no longer holds it takes nothing away")
+    } finally {
+        view.dispose()
+        other.remove()
+    }
+})
+
+test("a tab's layout splits, closes and moves focus as a tree of panes", async () => {
+    const tree = moqui.terminal.tree
+    const first = tree.pane("s1")
+    let root = tree.split(first, first.id, "row", "s2")
+    const second = tree.panes(root)[1]
+    root = tree.split(root, second.id, "column", "s3")
+    assert.deepEqual(tree.sessions(root), ["s1", "s2", "s3"])
+    assert.equal(tree.neighbor(root, first.id, true).session, "s2")
+    assert.equal(tree.neighbor(root, first.id, false).session, "s3", "wraps around")
+    root = tree.remove(root, second.id)
+    assert.deepEqual(tree.sessions(root), ["s1", "s3"], "its sibling takes the split's place")
+    assert.equal(tree.remove(tree.remove(root, first.id), tree.panes(root)[1].id), null, "no panes left")
+})
+
+test("a kept session attaches with what it drew, acknowledges what it draws, and resumes after a drop", async () => {
+    const store = moqui.terminal
+    const sockets = []
+    const openSocket = moqui.openSocket
+    moqui.openSocket = url => {
+        const socket = {url, readyState: 1, sent: [], send(message) { this.sent.push(message) }, close() { this.readyState = 3 }}
+        sockets.push(socket)
+        return socket
+    }
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:320px"
+    document.body.appendChild(screen)
+    const key = "kept-" + (++made)
+    try {
+        store.create(key, {kind: "command", connect: false})
+        store.connect(key)
+        store.attach(key, screen)
+        const socket = sockets[0]
+        assert.ok(socket.url.endsWith("/termws?session=" + key), socket.url)
+        socket.onopen()
+        const attach = JSON.parse(socket.sent.find(message => typeof message === "string" && message.includes('"attach"')))
+        assert.equal(attach.have, null, "a first attach has drawn nothing")
+        socket.onmessage({data: JSON.stringify({type: "attached", kind: "command", from: 0, reset: true})})
+        const chunk = new TextEncoder().encode("x".repeat(store.ACK_EVERY + 10)).buffer
+        socket.onmessage({data: chunk})
+        await write(store.session(key).term, "")
+        const ack = socket.sent.map(message => typeof message === "string" ? JSON.parse(message) : null).find(message => message && message.type === "ack")
+        assert.equal(ack && ack.count, store.ACK_EVERY + 10, "the page says what it drew")
+        // the connection drops with no reason: the page attaches again, saying how far it got
+        socket.onclose({code: 1006, reason: ""})
+        assert.ok(store.state.views[key].reconnecting)
+        await new Promise(resolve => setTimeout(resolve, 600))
+        const again = sockets[1]
+        assert.ok(again, "a second socket")
+        again.onopen()
+        const resume = JSON.parse(again.sent.find(message => typeof message === "string" && message.includes('"attach"')))
+        assert.equal(resume.have, store.ACK_EVERY + 10)
+        // taken by another window: no attach of its own, and Take it back
+        again.onclose({code: 1000, reason: "opened elsewhere"})
+        assert.ok(store.state.views[key].taken && store.state.views[key].closed)
+    } finally {
+        moqui.openSocket = openSocket
+        store.end(key)
+        screen.remove()
+    }
+})
+
+test("the terminal's own keys pass over xterm.js, and copy and paste stay its own", () => {
+    const key = (key, extra) => Object.assign({key, ctrlKey: true, shiftKey: true, altKey: false, metaKey: false}, extra)
+    assert.ok(moqui.terminal.isOwnKey(key("D")))
+    assert.ok(moqui.terminal.isOwnKey(key("Enter")))
+    assert.ok(!moqui.terminal.isOwnKey(key("C")), "copy")
+    assert.ok(!moqui.terminal.isOwnKey(key("V")), "paste")
+    assert.ok(!moqui.terminal.isOwnKey(key("d", {shiftKey: false})), "Ctrl+D is the program's")
+})
+
+test("the terminal's components and the Terminal screen compile", async () => {
+    const compiler = globalThis.VueCompilerDOM
+    const compile = (name, template) => {
+        const errors = []
+        compiler.compile(template, {mode: "function", onError: err => errors.push(err.message)})
+        assert.deepEqual(errors, [], name)
+    }
+    for (const name of ["m-terminal-view", "m-terminal-node", "m-terminal-copy"]) compile(name, moqui.qvtComponents[name].template)
+    const source = await fetch("/files/runtime/base-component/webroot/screen/webroot/apps/Terminal.qvue").then(response => response.text())
+    const screen = moqui.parseVue(source)
+    compile("Terminal.qvue", screen.template)
+    for (const id of ["TerminalNew", "TerminalSessionsToggle", "TerminalSettingsOpen", "TerminalSessions"]) assert.ok(screen.template.includes('id="' + id + '"'), id)
+})
+
+test("several lines pasted into a shell ask first, unless its program takes a bracketed paste", async () => {
+    const store = moqui.terminal
+    const key = "paste-" + (++made)
+    const sent = []
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:320px"
+    document.body.appendChild(screen)
+    const asked = []
+    const quasar = window.Quasar
+    window.Quasar = { Dialog: { create(options) { asked.push(options); const chain = { onOk(fn) { chain.ok = fn; return chain }, onDismiss() { return chain } }; asked.chain = chain; return chain } } }
+    try {
+        store.create(key, { kind: "host", connect: false, send: bytes => sent.push(new TextDecoder().decode(bytes)) })
+        store.attach(key, screen)
+        store.paste(key, "one line")
+        assert.equal(sent.join(""), "one line", "one line goes straight in")
+        store.paste(key, "rm -rf build\nmake")
+        assert.equal(asked.length, 1, "several lines ask")
+        assert.ok(!sent.join("").includes("make"), "nothing pasted before the answer")
+        asked.chain.ok()
+        assert.ok(sent.join("").includes("rm -rf build\rmake"), sent.join(""))
+        // the program asked for bracketed paste: it takes the lines as one paste, so nothing is asked
+        await write(store.session(key).term, "\u001b[?2004h")
+        store.paste(key, "a\nb")
+        assert.equal(asked.length, 1)
+        assert.ok(sent.join("").includes("\u001b[200~a\rb\u001b[201~"), JSON.stringify(sent))
+        // the addons: wide characters at their width, and search
+        assert.equal(store.session(key).term.unicode.activeVersion, "11")
+        await write(store.session(key).term, "\r\nfind the needle here\r\n")
+        assert.ok(store.find(key, "needle"), "found in the buffer")
+    } finally {
+        window.Quasar = quasar
+        store.end(key)
+        screen.remove()
+    }
+})
+
+test("a floating terminal takes the session's element, stays out of Assist's reach, and docks without ending it", async () => {
+    const store = moqui.terminal
+    const floats = moqui.floats
+    const key = "float-" + (++made)
+    store.create(key, { kind: "host", connect: false, send: () => {} })
+    store.startShell()
+    const id = store.float(key)
+    assert.ok(id, "the window opened")
+    // the layer would mount the window's body; here it is made by hand
+    const body = document.createElement("div")
+    body.id = floats.bodyId(id)
+    body.style.cssText = "width:600px;height:300px"
+    document.body.appendChild(body)
+    floats.bodyReady(id, true)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const session = store.session(key)
+    try {
+        assert.equal(session.el.parentNode, body, "the terminal's element is in the window")
+        assert.ok(store.state.floating[key])
+        assert.equal(session.el.getAttribute("data-assist-self"), "terminal", "never in Assist's reach")
+        assert.ok(!floats.reach().includes(floats.bodyId(id)), "the kind says it is not in reach")
+        // Close docks it closed: the session goes on, its terminal kept
+        floats.close(id)
+        assert.ok(!store.state.floating[key])
+        assert.equal(store.session(key), session, "the same session")
+        assert.equal(session.el.parentNode, null, "taken out of the window")
+    } finally {
+        store.end(key)
+        body.remove()
+    }
+})
+
+test("prompts the shell marks are places to jump to in the scrollback", async () => {
+    const store = moqui.terminal
+    const key = "marks-" + (++made)
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:200px"
+    document.body.appendChild(screen)
+    try {
+        store.create(key, { kind: "host", connect: false, send: () => {} })
+        store.attach(key, screen)
+        const term = store.session(key).term
+        let text = ""
+        for (let n = 0; n < 3; n++) {
+            text += "\u001b]133;A\u0007$ cmd " + n + "\r\n"
+            for (let line = 0; line < 40; line++) text += "output " + n + "." + line + "\r\n"
+        }
+        await write(term, text)
+        assert.equal(store.session(key).prompts.length, 3, "a marker for each prompt")
+        term.scrollToBottom()
+        assert.ok(store.jumpPrompt(key, true))
+        const line = term.buffer.active.viewportY
+        assert.ok(term.buffer.active.getLine(line).translateToString(true).startsWith("$ cmd 2"), "the last prompt")
+        assert.ok(store.jumpPrompt(key, true))
+        assert.ok(term.buffer.active.getLine(term.buffer.active.viewportY).translateToString(true).startsWith("$ cmd 1"))
+    } finally {
+        store.end(key)
+        screen.remove()
+    }
+})
+
+test("the phone's key bar sends what a phone's keyboard has not got", async () => {
+    const store = moqui.terminal
+    const key = "keys-" + (++made)
+    const sent = []
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:400px;height:200px"
+    document.body.appendChild(screen)
+    try {
+        store.create(key, { kind: "host", connect: false, send: bytes => sent.push(new TextDecoder().decode(bytes)) })
+        store.attach(key, screen)
+        store.key(key, "esc")
+        store.key(key, "tab")
+        store.key(key, "up")
+        assert.deepEqual(sent, ["\u001b", "\t", "\u001b[A"])
+        // in application cursor mode the arrows are ESC O
+        await write(store.session(key).term, "\u001b[?1h")
+        store.key(key, "left")
+        assert.equal(sent[3], "\u001bOD")
+        // Ctrl, then a letter typed on the phone's keyboard: its control character, once
+        store.key(key, "ctrl")
+        assert.ok(store.mods(key).ctrl)
+        assert.equal(store.applyModifiers(store.session(key), "c"), "\u0003")
+        assert.ok(!store.mods(key).ctrl, "Ctrl applies once")
+        store.key(key, "alt")
+        assert.equal(store.applyModifiers(store.session(key), "b"), "\u001bb")
+        // the bar compiles
+        const errors = []
+        globalThis.VueCompilerDOM.compile(moqui.qvtComponents["m-terminal-keys"].template, { mode: "function", onError: err => errors.push(err.message) })
+        assert.deepEqual(errors, [])
+    } finally {
+        store.end(key)
+        screen.remove()
+    }
+})
+
+test("the terminal's actions are in the command palette, and files with lines in a shell are links", async () => {
+    // the palette's registry, as WebrootVue.qvt.js has it, for this page with no shell
+    const registered = {}
+    moqui.shellPalette = moqui.shellPalette || { registerActions(source, rows) { registered[source] = rows; return () => {} } }
+    const store = moqui.terminal
+    store.paletteOff = null
+    store.state.options = { kinds: ["apps", "command", "host"], profiles: [] }
+    store.registerPaletteActions()
+    const rows = (registered.terminal || moqui.shellPalette.client.terminal)()
+    const titles = rows.map(row => row.title)
+    for (const title of ["New command line", "New terminal of the apps", "New shell on the server", "Show or hide the quick terminal"])
+        assert.ok(titles.includes(title), title)
+    assert.ok(rows.every(row => typeof row.run === "function"))
+    // the links
+    const key = "links-" + (++made)
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:200px"
+    document.body.appendChild(screen)
+    try {
+        store.create(key, { kind: "host", connect: false, send: () => {} })
+        store.attach(key, screen)
+        await write(store.session(key).term, "error at src/term/mod.rs:42:7 and (./web/x.js:3) not a.b: or http://x\r\n")
+        // every link provider asked for the first line: the web links addon's and the store's
+        const term = store.session(key).term
+        const providers = term._core._linkProviderService ? term._core._linkProviderService.linkProviders : []
+        const answers = await Promise.all(providers.map(provider => new Promise(resolve => provider.provideLinks(1, links => resolve(links || [])))))
+        const found = [].concat(...answers).map(link => link.text).filter(text => !text.startsWith("http"))
+        assert.deepEqual(found, ["src/term/mod.rs:42:7", "./web/x.js:3"], JSON.stringify(found))
+    } finally {
+        store.end(key)
+        screen.remove()
     }
 })

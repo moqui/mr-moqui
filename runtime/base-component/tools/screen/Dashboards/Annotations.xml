@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Annotations" default-menu-index="8">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Annotations" default-menu-index="10"
+        menu-image="sym_o_edit_note" menu-image-type="icon">
     <!-- Explore's links and forms resolve against this screen's URL, so its transitions run here, under this app's authorization. -->
     <transition-include name="remember" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition-include name="trace" location="component://tools/screen/Dashboards/Explore.xml"/>

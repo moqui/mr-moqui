@@ -94,6 +94,20 @@ fn a_list_read_answers_rows_keyed_by_field_name() {
     assert_eq!(proxy::title_key("Hit Count"), "hitCount");
 }
 
+/// A text of several lines is one part of its cell, the array of its lines: the rows keep it as that field's text, in a
+/// column of its own or stacked under another field.
+#[test]
+fn a_cell_text_of_several_lines_stays_its_fields_text() {
+    let list = json!({"name": "Results", "columns": [{"title": "Scores", "fields": ["scores"]},
+            {"title": "Item / Notes", "fields": ["item", "notes"]}],
+        "rows": [{"cells": [["one: 1", "two: 0"], ["A", ["first", "second"]]]}]});
+    let answer = proxy::rows_of(&list, &["Results".to_string()]);
+    assert_eq!(
+        answer["rows"][0],
+        json!({"scores": "one: 1\ntwo: 0", "item": "A", "notes": "first\nsecond"})
+    );
+}
+
 #[test]
 fn a_mutation_body_becomes_flat_request_parameters() {
     let parameters = write::parameters_of(&json!({"a": "x", "n": 3, "flag": true, "list": ["p", "q"], "none": null}));

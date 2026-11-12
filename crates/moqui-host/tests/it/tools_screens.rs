@@ -40,7 +40,14 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.service.message.SystemMessageRemote systemMessageRemoteId="GateRemote" description="Gate remote"/>
     <moqui.service.message.SystemMessage systemMessageId="GATE_MSG" systemMessageTypeId="GateSmsg" statusId="SmsgProduced"
         isOutgoing="Y" messageText="{}"/>
+    <moqui.security.sso.AuthFlow authFlowId="GATE_FLOW" authFlowTypeEnumId="AftOauth" description="Gate sign-in" disabled="Y"/>
+    <moqui.basic.email.EmailServer emailServerId="GATE_RELAY" smtpHost="smtp.gate.example.test" smtpPort="465" smtpSsl="Y"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_SYNC" description="Gate sync" statusId="EsNotStarted" forPull="N"/>
+    <moqui.server.TransferBatch transferId="GATE_IMPORT" targetId="messageTranslations" userId="EX_JOHN_DOE" state="partial"
+        filename="gate-translations.csv" fileHash="0000" rowCount="1" stagedDate="2026-01-02 03:04:05"
+        requestJson="{&quot;headers&quot;:[&quot;original&quot;,&quot;locale&quot;,&quot;localized&quot;]}"/>
+    <moqui.server.TransferItem transferId="GATE_IMPORT" itemSeqId="1" rowNumber="2" result="failed" errorMessage="Gate row reason"
+        sourceJson="{&quot;sourceValues&quot;:{&quot;original&quot;:&quot;Gate original&quot;}}"/>
     <moqui.resource.GitRepository repositoryId="GATE_GIT" description="Gate git" repositoryKind="db"/>
     <moqui.server.Visit visitId="GATE_VISIT" userId="EX_JOHN_DOE" clientIpAddress="127.0.0.1" fromDate="2026-01-02 03:04:05"/>
     <moqui.server.instance.AppInstance appInstanceId="GATE_AI" instanceName="gate" hostName="gate.example"/>
@@ -67,33 +74,79 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="02" fieldPath="description"/>
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="03" fieldPath="(enumId + ' / ' + description)"
         fieldNameAlias="enumLabel" defaultDisplay="Y"/>
+    <!-- a business dataset over the document, in a registered feed and waiting for review, for the dataset screens of Dashboards -->
+    <moqui.entity.feed.DataFeed dataFeedId="GateFeed" dataFeedTypeEnumId="DTFDTP_MAN_PULL" feedName="Gate feed"/>
+    <moqui.entity.feed.DataFeedDocument dataFeedId="GateFeed" dataDocumentId="GateDoc"/>
+    <moqui.report.Definition definitionId="gate-business" definitionType="dataset" title="Gate business dataset" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1"
+        bodyJson='{"documentType":"GateDoc","timeField":"_timestamp","signal":"business","rowFilterService":"org.moqui.report.ReportServices.get#UserGroupRowFilter","rowFilterParameters":{"groupField":"enumTypeId"}}'/>
+    <!-- the delivery screens of Dashboards: a schedule that goes to its owner alone with one run and its delivery, a
+        schedule made in owner mode, and a screen schedule its user set up for themselves -->
+    <moqui.screen.ScreenScheduled screenScheduledId="GATE_SCHEDULE" screenPath="/apps/dashboards/Reports" reportDefinitionId="monitor-overview"
+        reportOwnerId="EX_JOHN_DOE" userId="EX_JOHN_DOE" cronExpression="0 0 6 ? * MON" renderMode="csv" deliveryMode="personal"
+        emailSubject="Gate weekly overview" paused="Y" noResultsAbort="Y" versionNumber="1"/>
+    <moqui.screen.ScreenScheduledLock screenScheduledId="GATE_SCHEDULE"/>
+    <moqui.screen.ScreenScheduled screenScheduledId="GATE_OWNER_MODE" screenPath="/apps/dashboards/Reports" reportDefinitionId="monitor-overview"
+        reportOwnerId="EX_JOHN_DOE" cronExpression="0 0 7 ? * *" renderMode="pdf" saveToLocation="dbresource://gate/reports"
+        emailSubject="Gate owner mode" paused="Y" noResultsAbort="Y"/>
+    <moqui.screen.ScreenScheduledLock screenScheduledId="GATE_OWNER_MODE"/>
+    <moqui.screen.ScreenScheduled screenScheduledId="GATE_SCREEN_SCHEDULE" screenPath="/apps/system/Operations/Jobs" userId="EX_JOHN_DOE"
+        cronExpression="0 0 8 ? * *" renderMode="csv" emailSubject="Gate saved list" paused="Y"/>
+    <moqui.report.ReportOccurrence occurrenceId="GATE_OCCURRENCE" screenScheduledId="GATE_SCHEDULE" occurrenceKey="GATE_OCCURRENCE"
+        occurrenceKind="manual" occurrenceDate="2026-01-02 03:04:05" completedDate="2026-01-02 03:04:06" ownerUserId="EX_JOHN_DOE"
+        scheduleRevision="1" definitionId="monitor-overview" definitionVersion="1" renderMode="csv" deliveryMode="personal"
+        statusId="RptOccComplete" recipientCount="1" sentCount="1" skippedCount="0" failedCount="0" uncertainCount="0" renderCount="1"
+        versionNumber="1"/>
+    <moqui.report.ReportRecipientDelivery deliveryId="GATE_DELIVERY" occurrenceId="GATE_OCCURRENCE" userId="EX_JOHN_DOE" channel="email"
+        statusId="RptDlvSent" attemptCount="1" attemptDate="2026-01-02 03:04:06"/>
+    <!-- the alert screens of Dashboards: an operational rule of the viewer's with a contact point, a shared one and the
+        state of one series; a rule over the business dataset, which tells an audience; and the shared contact point -->
+    <moqui.report.Definition definitionId="gate-alert" definitionType="alert" title="Gate memory alert" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1"
+        bodyJson='{"query":{"datasetId":"otel_metrics","from":"now-5m","thru":"now","aggregations":[]},"field":"share","reduce":"last","condition":{"type":"above","threshold":90},"intervalSeconds":60,"paused":true,"contactPoints":[{"id":"gate-ops","type":"notification","topic":"ReportAlert","userId":"EX_JOHN_DOE"}],"contactPointRefs":["gate-contact"]}'/>
+    <moqui.report.AlertInstance definitionId="gate-alert" seriesId="gate-series" state="Firing" stateSince="2026-01-02 03:04:05"
+        lastEvaluated="2026-01-02 03:05:05" labelsJson='{"instance":"gate-node"}' lastValue="97.5"/>
+    <moqui.report.Definition definitionId="gate-business-alert" definitionType="alert" title="Gate business alert" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1"
+        bodyJson='{"query":{"datasetId":"gate-business","from":"now-1d","thru":"now","aggregations":[{"id":"rows","type":"count","role":"metric"}]},"field":"rows","reduce":"last","condition":{"type":"above","threshold":0},"intervalSeconds":3600,"paused":true,"audience":{"recipientUserIds":[],"recipientGroupIds":[],"channels":["notification"],"topic":"ReportAlert","deliveryMode":"personal"}}'/>
+    <moqui.report.Definition definitionId="gate-contact" definitionType="contactPoint" title="Gate contact" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1" bodyJson='{"type":"notification","topic":"ReportAlert","userId":"EX_JOHN_DOE"}'/>
 </entity-facade-xml>"#;
 
 /// Detail screens with the parameters of a record in [`DATA`] or the seed data.
 const DETAILS: &[&str] = &[
     "/System/Cache/CacheElements?cacheName=l10n.message",
     "/System/Print/PrintJob/PrintJobDetail?printJobId=GATE_PJ",
-    "/System/ServiceJob/JobRuns/JobRunDetail?jobRunId=GATE_RUN",
-    "/System/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_TelemetryData_daily",
+    "/System/Operations/JobRunDetail?jobRunId=GATE_RUN",
+    "/System/Operations/JobDetail?jobName=clean_TelemetryData_daily",
     "/System/Security/UserAccount/UserAccountDetail?userId=EX_JOHN_DOE",
     // Its render sets up a TOTP factor for the user, so it is not the user the test signs in as.
     "/System/Security/UserAccount/UserAccountDetail/VerifyTotp?userId=GATE_TOTP_USER",
-    "/System/Security/UserGroup/UserGroupDetail?userGroupId=ADMIN",
-    "/System/Security/UserGroup/GroupUsers?userGroupId=ADMIN",
-    "/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
-    "/System/SystemMessage/Type/MessageTypeDetail?systemMessageTypeId=GateSmsg",
-    "/System/SystemMessage/Remote/MessageRemoteDetail?systemMessageRemoteId=GateRemote",
-    "/System/SystemMessage/Message/SystemMessageDetail?systemMessageId=GATE_MSG",
-    "/System/SystemMessage/Message/SystemMessageDetail/EditMessageText?systemMessageId=GATE_MSG",
+    "/System/Access/GroupDetail?userGroupId=ADMIN",
+    "/System/Access/AccessReview?groups=ADMIN",
+    "/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
+    "/System/Security/IdentityProviderDetail?authFlowId=GATE_FLOW",
+    // the instance administrator's view of Sessions: the visits by user
+    "/System/Security/Sessions?visits=Y",
+    // and of the changes: the whole audit log, here an account's rows
+    "/System/Audit/AuditChanges?log=Y&changedEntityName=moqui.security.UserAccount",
+    // the Data area: an import kept by the framework, and the export wizard at its review
+    "/System/Data/ImportDetail?targetId=messageTranslations&operationKey=GATE_IMPORT",
+    "/System/Data/DataExport?targetId=messageTranslationsExport&option1=es&review=true",
+    "/System/Integrations/MessageTypeDetail?systemMessageTypeId=GateSmsg",
+    "/System/Integrations/ConnectionDetail?adapterKey=remote&connectionKey=GateRemote",
+    "/System/Integrations/SystemMessageDetail?systemMessageId=GATE_MSG",
+    "/System/Integrations/SystemMessageDetail/EditMessageText?systemMessageId=GATE_MSG",
+    "/System/Protocols/MailRelayDetail?connectionKey=GATE_RELAY",
     "/System/EntitySync/EntitySyncDetail?entitySyncId=GATE_SYNC",
     "/System/EntitySync/EntitySyncHistory?entitySyncId=GATE_SYNC",
     "/System/Resource/GitRepositoryDetail?repositoryId=GATE_GIT",
     "/System/Visit/VisitDetail?visitId=GATE_VISIT",
     "/System/Instance/InstanceDetail?appInstanceId=GATE_AI",
-    "/System/DataDocument/Edit/EditDataDocument?dataDocumentId=GateDoc",
-    "/System/DataDocument/Edit/ViewDataDocument?dataDocumentId=GateDoc",
-    "/System/DataDocument/Edit/DataDocFields?dataDocumentId=GateDoc",
-    "/System/DataDocument/Edit/DataDocFields/FieldList?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/EditDataDocument?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/ViewDataDocument?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/DataDocFields?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/DataDocFields/FieldList?dataDocumentId=GateDoc",
     "/System/Cache/CacheList?filterRegexp=l10n",
     "/System/Llm/Models/ModelDetail?modelId=default",
     "/System/Llm/Models/EndpointDetail?endpointId=default",
@@ -296,7 +349,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
     // The obsolete Groovy shell has no screen or placeholder route.
     let (status, shell) = get(address, &john, "/Tools/GroovyShell");
     assert_eq!(status, 404, "{shell}");
-    let (status, logs) = get(address, &john, "/apps/monitor/Logs");
+    let (status, logs) = get(address, &john, "/apps/system/Monitor/Logs");
     assert_eq!(status, 200, "{logs}");
     assert!(!logs.contains("Error rendering"), "{logs}");
 
@@ -373,6 +426,505 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         assert!(run.contains(&format!("name=\"{name}\"")), "{name}: {run}");
     }
     assert!(run.contains("type=\"datetime-local\""), "{run}");
+    // The dataset screens of Dashboards, with no mount: the business datasets first, with what a new one may be made
+    // over and Tools' words for the scope field, then Tools' other datasets with the fields of the one chosen.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Datasets?otherDatasetId=otel_logs",
+        &[
+            "Gate business dataset",
+            "Needs review",
+            "data-dialog=\"CreateDataset\"",
+            "Gate Document (gate)",
+            "Scope field",
+            "Other datasets",
+            "New dataset definition",
+            "Fields of otel_logs",
+            "severity_text",
+        ],
+    );
+    // A dataset for its steward: the checks, the scope by the policy's registered parameter, and its definition in
+    // Tools' editor.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetDetail?datasetId=gate-business",
+        &[
+            "Admission checks",
+            "indexed by the GateFeed feed",
+            "user groups on enumTypeId",
+            "/apps/dashboards/DatasetDetail/admitDataset",
+            "/apps/dashboards/Definition?definitionId=gate-business",
+        ],
+    );
+    // A dataset made here has no prefix before its short name, and its scope field goes under the parameter its policy
+    // registers.
+    let create = "/apps/dashboards/Datasets/createDataset";
+    let (status, page) = post(
+        address,
+        &john,
+        create,
+        &[
+            ("title", "Gate made dataset"),
+            ("name", "Gate made"),
+            ("dataDocumentId", "GateDoc"),
+            ("scopePolicyId", "ReportUserGroups"),
+            ("scopeField", "enumId"),
+        ],
+    );
+    ran(create, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetDetail?datasetId=gate-made",
+        &["Gate made dataset", "user groups on enumId"],
+    );
+    // Its document's fields, the expression one among them, with the engine's functions and operators.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetFields?datasetId=gate-business",
+        &[
+            "Fields of Gate business dataset",
+            "enumLabel",
+            "count distinct",
+            "not between",
+        ],
+    );
+    // Its rows: the steward reads it before admission; a dataset that is not a business one is not previewed here.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetView?datasetId=gate-business",
+        &["Dataset", "Through"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/DatasetView?datasetId=otel_logs",
+        &["Dataset otel_logs is not available"],
+    );
+    // The delivery screens of Dashboards, with no mount: the viewer's schedules (the one checked for each recipient, the
+    // owner-mode one and the screen schedule of their own), New schedule with people and groups for one who may deliver
+    // to others, and Tools' link to Reports.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Schedules",
+        &[
+            "Gate weekly overview",
+            "Gate owner mode",
+            "Gate saved list",
+            "Jobs (saved list)",
+            "data-dialog=\"NewSchedule\"",
+            "People and groups",
+            "/apps/dashboards/Reports",
+            "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_SCHEDULE",
+            "/apps/dashboards/ReportDelivery?occurrenceId=GATE_OCCURRENCE",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Schedules?view=received",
+        &["Monitor overview", "Open my report"],
+    );
+    // One schedule: its timing, its recipients, the viewer's own preview and its runs; an owner-mode one has its timing
+    // and output changed here (its location kept), and a screen schedule has its timing alone.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_SCHEDULE",
+        &[
+            "Timing and output",
+            "Sent to you alone.",
+            "Change recipients",
+            "Your preview",
+            "1 sent",
+            "/apps/dashboards/ScheduledReportDetail/storeSchedule",
+        ],
+    );
+    let owner_mode = "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_OWNER_MODE";
+    assert_page(
+        address,
+        &john,
+        owner_mode,
+        &[
+            "· PDF · Owner mode",
+            "As now:",
+            "This schedule delivers in owner mode",
+            "Its timing and output change here",
+            "/apps/dashboards/ScheduledReportDetail/storeSchedule",
+        ],
+    );
+    let store = "/apps/dashboards/ScheduledReportDetail/storeSchedule";
+    let (status, page) = post(
+        address,
+        &john,
+        store,
+        &[
+            ("screenScheduledId", "GATE_OWNER_MODE"),
+            ("expectedRevision", "0"),
+            ("cronSelected", "0 0 6 ? * MON-FRI"),
+            ("renderMode", "csv"),
+            ("noResultsAbort", "Y"),
+            ("emailSubject", "Gate owner mode"),
+        ],
+    );
+    ran(store, status, &page);
+    // the new format in the heading, and the new time one of the presets (no "As now" choice); still in owner mode
+    let (status, page) = get(address, &john, owner_mode);
+    assert!(
+        status == 200
+            && page.contains("· CSV · Owner mode")
+            && !page.contains("As now:")
+            && page.contains("This schedule delivers in owner mode"),
+        "{}",
+        failure(owner_mode, status, &page)
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_SCREEN_SCHEDULE",
+        &["Jobs (saved list)", "Timing and output"],
+    );
+    // A schedule made here: of one of Tools' own dashboards, which an app that hides Tools' definitions does not offer,
+    // for the viewer alone, with the engine's own template and recipient cap.
+    let create = "/apps/dashboards/Schedules/createSchedule";
+    let (status, page) = post(
+        address,
+        &john,
+        create,
+        &[
+            ("newDefinitionId", "monitor-services"),
+            ("cronSelected", "0 0 6 ? * MON-FRI"),
+            ("renderMode", "csv"),
+            ("emailSubject", "Gate made schedule"),
+            ("audienceKind", "personal"),
+        ],
+    );
+    ran(create, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Schedules?state=active",
+        &["Gate made schedule", "Weekdays"],
+    );
+    // A run: what ran, each recipient's outcome and the viewer's own delivery, with its status export.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ReportDelivery?occurrenceId=GATE_OCCURRENCE",
+        &[
+            "Monitor overview",
+            "Schedule revision 1, report version 1",
+            "Your delivery",
+            "Open my report",
+            "/apps/dashboards/ReportDelivery/exportAudit",
+        ],
+    );
+    let (status, audit) = get(
+        address,
+        &john,
+        "/apps/dashboards/ReportDelivery/exportAudit?occurrenceId=GATE_OCCURRENCE",
+    );
+    assert!(
+        status == 200 && audit.starts_with("Report,Run,Kind,Delivery") && audit.contains(",Sent,"),
+        "{status}: {audit}"
+    );
+    // Reports keeps the previews, the composer and the owner-mode form, and links the schedules and the playlists.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Reports",
+        &[
+            "Preview and download",
+            "Compose a multi-dashboard report",
+            "Schedule a report in owner mode",
+            "/apps/dashboards/Schedules",
+            "/apps/dashboards/Playlists",
+        ],
+    );
+    // The alert screens of Dashboards, with no mount: every rule the viewer reads with its kind, its owner, whom it tells
+    // and its state (the engine's get#AlertState), the state of each series, the shipped rules among them, the shared
+    // items and New alert rule.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Alerts",
+        &[
+            "Gate memory alert",
+            "Operational · You",
+            "2 contact points",
+            "Gate business alert",
+            "Business · You",
+            "Its owner",
+            "High memory use",
+            "Operational · Shipped",
+            "Series states",
+            "instance gate-node",
+            "Firing",
+            "97.5",
+            "New alert rule",
+            "Shared contact points",
+            "Gate contact",
+            "/apps/dashboards/AlertRule?definitionId=gate-alert",
+            "/apps/dashboards/AlertShared?definitionId=gate-contact",
+            "/apps/dashboards/Alerts/pauseAlerts",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Alerts?view=templates",
+        &[
+            "High memory use",
+            "it runs only once copied",
+            "/apps/dashboards/Alerts/copyAlert",
+        ],
+    );
+    // An operational rule for its owner: the basis with its query typed, its contact points, the shared item it names,
+    // its silences and mute timings, and the state of its series.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule?definitionId=gate-alert",
+        &[
+            "Reading and condition",
+            "fires when share above 90",
+            "Evaluated every (seconds)",
+            "Routing labels (JSON)",
+            "Contact points",
+            "gate-ops",
+            "data-dialog=\"AddContactPoint\"",
+            "Gate contact",
+            "One-off silences",
+            "Recurring mute timings",
+            "instance gate-node",
+            "Firing",
+            "/apps/dashboards/AlertRule/storeAlert",
+            "/apps/dashboards/AlertRule/addContact",
+            "/apps/dashboards/Alerts",
+        ],
+    );
+    // A rule over business data tells an audience in place of contact points; its silences and mute timings stay.
+    let (status, business) = get(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule?definitionId=gate-business-alert",
+    );
+    assert!(
+        status == 200
+            && !business.contains("Error rendering")
+            && business.contains("Tells its owner alone, in the app.")
+            && business.contains("data-dialog=\"EditAudience\"")
+            && business.contains("Nobody has been told yet.")
+            && business.contains("One-off silences")
+            && !business.contains("AddContactPoint"),
+        "{status}: {business}"
+    );
+    // A new rule starts from nothing, with its ID and its query to type; one made here keeps the query and takes a
+    // contact point.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule",
+        &["New alert rule", "Rule ID", "Create alert"],
+    );
+    let store = "/apps/dashboards/AlertRule/storeAlert";
+    let (status, page) = post(
+        address,
+        &john,
+        store,
+        &[
+            ("ruleId", "gate-made-alert"),
+            ("title", "Gate made alert"),
+            (
+                "queryJson",
+                r#"{"datasetId":"otel_metrics","from":"now-5m","thru":"now","aggregations":[]}"#,
+            ),
+            ("conditionType", "above"),
+            ("threshold", "5"),
+            ("intervalSeconds", "120"),
+            ("paused", "Y"),
+            ("labelsJson", "{}"),
+        ],
+    );
+    ran(store, status, &page);
+    let add = "/apps/dashboards/AlertRule/addContact";
+    let (status, page) = post(
+        address,
+        &john,
+        add,
+        &[
+            ("definitionId", "gate-made-alert"),
+            ("contactId", "gate-made-contact"),
+            ("contactType", "notification"),
+            ("topic", "ReportAlert"),
+            ("contactUserId", "EX_JOHN_DOE"),
+            ("matchersJson", "{}"),
+        ],
+    );
+    ran(add, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule?definitionId=gate-made-alert",
+        &["Gate made alert", "fires when above 5", "gate-made-contact"],
+    );
+    // Playlists, the wall display, sharing, Analysis and Drill, with no mount. A playlist made on Playlists is listed
+    // with its player and its full screen page, and its owner shares it with a group of their own.
+    let create = "/apps/dashboards/Playlists/createPlaylist";
+    let (status, page) = post(
+        address,
+        &john,
+        create,
+        &[
+            ("playlistId", "gate-playlist"),
+            ("playlistTitle", "Gate playlist"),
+            ("playlistDashboardIds", "monitor-overview"),
+            ("playlistSeconds", "15"),
+        ],
+    );
+    ran(create, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Playlists",
+        &[
+            "Gate playlist",
+            "New playlist",
+            "Share a playlist",
+            "Play full screen",
+            "/apps/dashboards/Playlist?definitionId=gate-playlist",
+            "/apps/dashboards/WallDisplay?definitionId=gate-playlist",
+        ],
+    );
+    let share = "/apps/dashboards/Playlists/sharePlaylist";
+    let (status, page) = post(
+        address,
+        &john,
+        share,
+        &[("shareDefinitionId", "gate-playlist"), ("userGroupId", "ADMIN")],
+    );
+    ran(share, status, &page);
+    assert_page(address, &john, "/apps/dashboards/Playlists", &["Shared with "]);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Playlist?definitionId=gate-playlist",
+        &[
+            "Gate playlist",
+            "All playlists",
+            "/apps/dashboards/Dashboard?definitionId=monitor-overview",
+        ],
+    );
+    // The wall display is a bare page of its own, and its data is a dashboard of the stored playlist over Tools' range,
+    // whatever range the request names; an index outside the playlist answers the one fixed sentence.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/WallDisplay?definitionId=gate-playlist",
+        &[
+            "data-moqui-island=\"wall-display\"",
+            "/js/WebrootPublic.qvt.js",
+            "<title>Gate playlist</title>",
+        ],
+    );
+    let (status, data) = get(
+        address,
+        &john,
+        "/apps/dashboards/WallDisplay/data?definitionId=gate-playlist&index=0&from=now-30y",
+    );
+    assert!(status == 200 && data.contains("monitor-overview"), "{status}: {data}");
+    let from = data
+        .split("\"from\" : \"")
+        .nth(1)
+        .and_then(|rest| rest.get(..4))
+        .and_then(|year| year.parse::<i32>().ok());
+    assert!(
+        from.is_some_and(|year| year >= 2026),
+        "the wall display reads its own range: {data}"
+    );
+    let (status, data) = get(
+        address,
+        &john,
+        "/apps/dashboards/WallDisplay/data?definitionId=gate-playlist&index=7",
+    );
+    assert!(status != 200 && !data.contains("monitor-overview"), "{status}: {data}");
+    // A dashboard of the viewer's own has Share, with their own groups; shared, it says with whom.
+    let save = "/apps/dashboards/Definition/save";
+    let (status, page) = post(
+        address,
+        &john,
+        save,
+        &[
+            ("definitionId", "gate-board"),
+            ("definitionType", "dashboard"),
+            ("definitionTitle", "Gate board"),
+            ("definitionVersion", "0"),
+            (
+                "definitionJson",
+                r#"{"panels":{"counts":{"title":"Gate counts","visualization":"table","queries":[{"datasetId":"otel_metrics","aggregations":[]}]}}}"#,
+            ),
+        ],
+    );
+    ran(save, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Dashboard?definitionId=gate-board",
+        &["Gate board", "Share", "Save sharing", "the one you choose"],
+    );
+    let share = "/apps/dashboards/Dashboard/share";
+    let (status, page) = post(
+        address,
+        &john,
+        share,
+        &[("definitionId", "gate-board"), ("userGroupId", "ADMIN")],
+    );
+    ran(share, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Dashboard?definitionId=gate-board",
+        &["It is shared with "],
+    );
+    // Analysis: the choices run as the viewer, and saved as a library panel on that dashboard.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Analysis?datasetId=otel_metrics&run=Run",
+        &["Source", "Result", "Computed from ", "Save analysis"],
+    );
+    let save = "/apps/dashboards/Analysis/saveAnalysis";
+    let (status, page) = post(
+        address,
+        &john,
+        save,
+        &[
+            ("datasetId", "otel_metrics"),
+            ("title", "Gate analysis"),
+            ("dashboardId", "gate-board"),
+        ],
+    );
+    ran(save, status, &page);
+    assert_page(address, &john, "/apps/dashboards/Panels", &["Gate analysis"]);
+    // Drill: a panel of that dashboard, its breakdown and its records, back to the dashboard and on to Analysis.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Drill?definitionId=gate-board&panelId=counts",
+        &[
+            "Gate counts",
+            "The whole panel",
+            "Breakdown",
+            "Source records",
+            "/apps/dashboards/Dashboard?definitionId=gate-board",
+            "/apps/dashboards/Analysis?datasetId=otel_metrics",
+        ],
+    );
 }
 
 /// The text `SystemScreenRenderTests`, `ToolsScreenRenderTests`, and `ToolsRestApiTests` require.
@@ -395,12 +947,160 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         "/System/Cache/CacheElements?orderByField=key&cacheName=l10n.message&pageSize=1000",
         &["::en_US", "Cache entries", "l10n.message"],
     );
-    assert_page(address, &john, "/System/Localization/Messages", &["Add", "Añadir"]);
+    // The instance administrator's stored rows of Settings › Localization (`rows=Y`), messages and labels.
     assert_page(
         address,
         &john,
-        "/System/Localization/EntityFields?entityName=moqui.basic.Enumeration&pkValue=GEOT_STATE",
-        &["moqui.basic.Enumeration", "GEOT_STATE"],
+        "/System/Settings/Localization?rows=Y&original=Add&original_op=equals",
+        &["Add", "Añadir", "Instance administrator", "New message row"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Settings/Localization?rows=Y&kind=labels&entityName=moqui.basic.Enumeration&pkValue=GEOT_STATE",
+        &["moqui.basic.Enumeration", "GEOT_STATE", "New label row"],
+    );
+    // The conf is System's own: its link is shown to a user who opens System by their own grant.
+    assert_page(
+        address,
+        &john,
+        "/System/Settings/InstanceSettings",
+        &["Instance preferences", "Open the conf"],
+    );
+    // The Data area: Tools' own data screens are linked for a user who opens Tools by their own grant; an import
+    // target started in a wizard is only named where no mount gives the wizard; a seeded import shows its rows with
+    // the retry and no wizard link; the export wizard reviews the framework's own target.
+    assert_page(
+        address,
+        &john,
+        "/System/Data/Imports?fromDate=2026-01-01&thruDate=2026-02-01",
+        &[
+            "Entity data of the instance itself, in Tools",
+            "/apps/tools/Data/Load",
+            "/apps/tools/Data/Snapshots",
+            "Message translations",
+            "The import wizard, in an app that has it",
+            "gate-translations.csv",
+        ],
+    );
+    // and not for one who opens System but not Tools (the import above is not theirs: they see the targets)
+    let system_only = basic("gate.system", "moqui");
+    let imports = "/System/Data/Imports?fromDate=2026-01-01&thruDate=2026-02-01";
+    let (status, page) = get(address, &system_only, imports);
+    assert_eq!(status, 200, "{}", failure(imports, status, &page));
+    assert!(
+        page.contains("Import targets")
+            && page.contains("Message translations")
+            && !page.contains("Error rendering")
+            && !page.contains("Entity data of the instance itself, in Tools")
+            && !page.contains("/apps/tools/Data/Load"),
+        "{}",
+        failure(imports, status, &page)
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/ImportDetail?targetId=messageTranslations&operationKey=GATE_IMPORT",
+        &[
+            "gate-translations.csv",
+            "Partly applied",
+            "original: Gate original",
+            "Gate row reason",
+            "Retry failed rows",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/DataExport?targetId=messageTranslationsExport&option1=es&review=true",
+        &[
+            "3. Review and export",
+            "Locale (empty for every locale): es",
+            "in one export)",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/Exports",
+        &["Export targets", "Message translations", "/apps/tools/Data/Export"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/Backups",
+        &["Not included in an archive", "Archives"],
+    );
+    // The registries (plans/archive/Admin-Screens-Down.md A6): Health lists the framework's own checks, each fix place a
+    // System screen; the support summary and its redacted JSON; the settings index links the System screens of the
+    // framework's entries; and the home's attention list is the checks that are not ready.
+    // A row is "Provider: Check" where the titles differ; the header has the sign-in failures of the last day, linked
+    // to the visits; report mail with no mail server is fixed at the mail relays, not at the email templates.
+    let health_path = "/System/Operations/Health";
+    let (status, health) = get(address, &john, health_path);
+    assert_eq!(status, 200, "{}", failure(health_path, status, &health));
+    for text in [
+        "Support summary",
+        "Administrator factors",
+        "Database backup: Off-site mirror",
+        "Backups are not mirrored off the server",
+        "/Integrations/ConnectionDetail?adapterKey=remote",
+        "Check again",
+        "Sign-in failures, last 24 hours",
+        "href=\"/System/Visit\"",
+        "Report emails have no mail server to send through",
+        "/Protocols/MailRelays",
+    ] {
+        assert!(
+            health.contains(text),
+            "{health_path} missing [{text}]: {}",
+            failure(health_path, status, &health)
+        );
+    }
+    assert!(
+        !health.contains("Error rendering") && !health.contains("moqui.basic.email.EmailTemplate"),
+        "{}",
+        failure(health_path, status, &health)
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/Health?providerKey=admin.jobRuns",
+        &["Job runs", "Check again"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/SupportSummary",
+        &["Effective settings", "Download JSON", "Off-site mirror", "Prepared "],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/SupportSummary/summaryJson",
+        &[
+            "moqui.admin.supportSummary",
+            "\"redacted\": true",
+            "\"preparedBy\": null",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Settings/SettingsHome",
+        &[
+            "Instance settings",
+            "/Settings/InstanceSettings",
+            "Mail relays",
+            "/Protocols/MailRelays",
+            "Notification topics",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Home",
+        &["Needs attention", "Backups are not mirrored off the server"],
     );
     assert_page(
         address,
@@ -417,31 +1117,21 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
     assert_page(
         address,
         &john,
-        "/System/Security/UserGroup/UserGroupList",
+        "/System/Access/Groups",
         &["Administrators (full access)"],
     );
+    // the group's page with the instance administrator's part: its authorizations and its members by account
     assert_page(
         address,
         &john,
-        "/System/Security/UserGroup/UserGroupDetail?userGroupId=ADMIN",
-        &["System App (via root screen)"],
+        "/System/Access/GroupDetail?userGroupId=ADMIN",
+        &["System App (via root screen)", "john.doe - John Doe"],
     );
+    assert_page(address, &john, "/System/Access/ArtifactGroups", &["All Screens"]);
     assert_page(
         address,
         &john,
-        "/System/Security/UserGroup/GroupUsers?userGroupId=ADMIN",
-        &["john.doe - John Doe"],
-    );
-    assert_page(
-        address,
-        &john,
-        "/System/Security/ArtifactGroup/ArtifactGroupList",
-        &["All Screens"],
-    );
-    assert_page(
-        address,
-        &john,
-        "/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
+        "/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
         &["component://tools/screen/System.xml", "Administrators (full access)"],
     );
 
@@ -464,9 +1154,45 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         &["Screen Test Example"],
     );
     // The Groovy rows look for the seed phrase "Test Name A" in the browser download. This runtime has no such
-    // row; the record just created is the one the export has to carry. Browser output calls `edw.writer`, and
-    // `makeDataWriter` has `text()` instead, so that call fails. Single-file output uses `edw.file`, which exists.
-    // The transition runs actions, so the parameters go in the body.
+    // row; the record just created is the one the export has to carry. The transition runs actions, so the
+    // parameters go in the body. Browser output is the form's default: the writer's text sent as a download, and
+    // more than one entity as CSV a zip. The form's empty filter, and Java's `[:]`, are no filter.
+    let path = "/Tools/Data/Export/EntityExport";
+    for (file_type, filter) in [("XML", ""), ("JSON", "[:]"), ("CSV", "{testId: 'TEST_SCR'}")] {
+        let (status, page) = post(
+            address,
+            &john,
+            path,
+            &[
+                ("entityNames", "moqui.test.TestEntity"),
+                ("dependentLevels", "0"),
+                ("filterMap", filter),
+                ("fileType", file_type),
+                ("output", "browser"),
+            ],
+        );
+        ran(path, status, &page);
+        assert!(
+            page.contains("Screen Test Example"),
+            "{path} {file_type} to the browser has no record: {page}"
+        );
+    }
+    let (status, page) = post(
+        address,
+        &john,
+        path,
+        &[
+            ("entityNames", "moqui.test.TestEntity,moqui.basic.Enumeration"),
+            ("fileType", "CSV"),
+            ("output", "browser"),
+        ],
+    );
+    ran(path, status, &page);
+    assert!(
+        page.starts_with("PK"),
+        "{path} of two entities as CSV is not a zip: {}",
+        page.chars().take(200).collect::<String>()
+    );
     for file_type in ["JSON", "XML"] {
         let export_path = std::env::temp_dir().join(format!(
             "moqui-export-{}-{}.{}",
@@ -475,7 +1201,6 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
             file_type.to_ascii_lowercase()
         ));
         let _ = std::fs::remove_file(&export_path);
-        let path = "/Tools/Data/Export/EntityExport";
         let (status, page) = post(
             address,
             &john,
@@ -593,7 +1318,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         page.contains("moqui.basic.StatusType"),
         "Monitor Artifacts query missing the entity create: {page}"
     );
-    assert_page(address, &john, "/apps/monitor/Artifacts", &["Artifact statistics"]);
+    assert_page(address, &john, "/apps/system/Monitor/Artifacts", &["Artifact statistics"]);
     let (status, page) = rest_get(address, &john, "/rest/s1/moqui/basic/geos/USA");
     assert_eq!(status, 200, "{}", failure("geos/USA", status, &page));
     for text in ["United States", "Country"] {
@@ -614,7 +1339,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
 }
 
 /// Users for the SQL runners: one in ADMIN without ADMIN_ADV (the Tools app but not `SQL_RUNNER_WEB`), one in no
-/// group. Both passwords are moqui.
+/// group; and one who opens System but not Tools. Their passwords are moqui.
 const SQL_DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="GATE_TOOLS_ONLY" username="gate.tools" userFullName="Gate Tools"
         currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA"/>
@@ -622,6 +1347,14 @@ const SQL_DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="GATE_PLAIN" username="gate.plain" userFullName="Gate Plain"
         currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA"/>
     <moqui.basic.Enumeration enumId="GATE_SQL" description="untouched"/>
+    <!-- one who opens System by their own grant and reads the imports, but not Tools: the Data area's Tools links -->
+    <moqui.security.UserAccount userId="GATE_SYSTEM_ONLY" username="gate.system" userFullName="Gate System"
+        currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA"/>
+    <moqui.security.UserGroup userGroupId="GATE_SYSTEM_ONLY" description="Gate System only"/>
+    <moqui.security.UserGroupMember userGroupId="GATE_SYSTEM_ONLY" userId="GATE_SYSTEM_ONLY" fromDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="GATE_SYSTEM_ONLY" userPermissionId="ADMIN_TRANSFER_VIEW" fromDate="0"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="GATE_SYSTEM_ONLY" userGroupId="GATE_SYSTEM_ONLY" artifactGroupId="SYSTEM_APP"
+        authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>"#;
 
 fn encode(text: &str) -> String {

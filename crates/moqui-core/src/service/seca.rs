@@ -309,22 +309,30 @@ fn pattern_matches(rule: &SecaRule, plain: &str) -> bool {
         .is_some_and(|pattern| pattern.is_full_match(plain))
 }
 
+/// What a load's check of its rules reads at most once: the known service names, for a pattern, and the registered
+/// names without `#`, for a name given without one (not a copy of every definition for each rule, HL-015).
+#[derive(Default)]
+pub(super) struct KnownServices {
+    names: Option<Vec<String>>,
+    plain: Option<std::collections::HashSet<String>>,
+}
+
 impl SecaRule {
     /// Java's load check: a named service that is defined, or a pattern that matches a known service. `known` is
-    /// filled with the known service names when a pattern first needs them, so a load reads the service files once.
+    /// filled as the rules first need it, so a load reads the service files once.
     pub(super) fn service_defined(
         &self,
         facade: Option<&crate::entity::EntityFacade>,
-        known: &mut Option<Vec<String>>,
+        known: &mut KnownServices,
     ) -> bool {
         if !self.name_is_pattern {
             return super::call::is_service_defined(&self.service_name, facade)
-                || super::define::registered()
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|def| def.name.replace('#', "") == self.service_plain);
+                || known
+                    .plain
+                    .get_or_insert_with(super::define::registered_plain_names)
+                    .contains(&self.service_plain);
         }
-        self.service_count(known) > 0
+        self.service_count(&mut known.names) > 0
     }
 
     /// How many services the rule runs for, as Java's `getSecaRuleCount` counts it: one for a named service, and for a

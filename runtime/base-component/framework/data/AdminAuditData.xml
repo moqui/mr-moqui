@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Change evidence for delegated administration (org.moqui.admin.AuditServices; mr-boss plan/impl-admin.md P17,
+    design-admin §12 AuditChanges): the services' grants and the registered projections of the framework's own records.
+    A change of anything not registered here (or by an owner's own seed data) is never found through find#Changes. -->
+<entity-facade-xml type="seed">
+    <!-- find#Changes checks ADMIN_AUDIT_VIEW itself and reads the audit log with authorization off, only by the registered
+        projections; inheritable, so its reads of the registry, the accounts' and groups' names are made as it. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminAuditServices" description="Admin audit services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAuditServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="N"
+            artifactName="org.moqui.admin.AuditServices.find#Changes"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminAuditServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAuditServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- call#ChangeSource: not inheritable, so an owner's audit source is authorized as a direct call of it is and finds
+        within the caller's own scope (as DataTransferServices.call#TargetService) -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminAuditSource" description="Admin audit source call"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAuditSource" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="N"
+            artifactName="org.moqui.admin.AuditServices.call#ChangeSource"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminAuditSourceALL" userGroupId="ALL_USERS" artifactGroupId="AdminAuditSource"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- ===== The framework's own records: of the whole instance (no sourceService), read by a holder of ADMIN_AUDIT_VIEW.
+        A user's account, its memberships and its subscriptions belong to the organizations the user works for, which
+        the framework does not know: their projections are registered by the component that does (mr-mantle
+        data/PartyAuditData.xml), and without one they are not found here. ===== -->
+
+    <!-- access and grants (AccessServices; impl-admin P3, P9): the dates of a grant are shown; a group's allowed
+        addresses and a group default's value are markers, as the access review leaves them out -->
+    <moqui.server.AuditProjection auditProjectionId="GroupPermissionFrom" changedEntityName="moqui.security.UserGroupPermission"
+            changedFieldName="fromDate" category="access" description="Permission granted to a group" valueMode="show"
+            primaryKeyKind="group" primaryKeyTitle="Group" secondaryKeyTitle="Permission" linkKey="adminGroup" sequenceNum="100"/>
+    <moqui.server.AuditProjection auditProjectionId="GroupPermissionThru" changedEntityName="moqui.security.UserGroupPermission"
+            changedFieldName="thruDate" category="access" description="Permission of a group ended" valueMode="show"
+            primaryKeyKind="group" primaryKeyTitle="Group" secondaryKeyTitle="Permission" linkKey="adminGroup" sequenceNum="101"/>
+    <moqui.server.AuditProjection auditProjectionId="ArtifactAuthzType" changedEntityName="moqui.security.ArtifactAuthz"
+            changedFieldName="authzTypeEnumId" category="access" description="App gate of a group" valueMode="show"
+            primaryKeyTitle="Authorization" sequenceNum="102"/>
+    <moqui.server.AuditProjection auditProjectionId="ArtifactAuthzFilterSet" changedEntityName="moqui.security.ArtifactAuthzFilter"
+            changedFieldName="entityFilterSetId" category="access" description="Row rule bound to an app gate" valueMode="show"
+            primaryKeyTitle="Authorization" secondaryKeyTitle="Row rule" sequenceNum="103"/>
+    <moqui.server.AuditProjection auditProjectionId="GroupRequireFactor" changedEntityName="moqui.security.UserGroup"
+            changedFieldName="requireAuthcFactor" category="signIn" description="Group requires a sign-in factor" valueMode="show"
+            primaryKeyKind="group" primaryKeyTitle="Group" linkKey="adminGroup" sequenceNum="110"/>
+    <moqui.server.AuditProjection auditProjectionId="GroupIpAllowed" changedEntityName="moqui.security.UserGroup"
+            changedFieldName="ipAllowed" category="signIn" description="Group's allowed addresses" valueMode="marker"
+            primaryKeyKind="group" primaryKeyTitle="Group" linkKey="adminGroup" sequenceNum="111"/>
+    <moqui.server.AuditProjection auditProjectionId="GroupPreferenceValue" changedEntityName="moqui.security.UserGroupPreference"
+            changedFieldName="preferenceValue" category="access" description="Group default" valueMode="marker"
+            primaryKeyKind="group" primaryKeyTitle="Group" secondaryKeyTitle="Preference" linkKey="adminGroup" sequenceNum="112"/>
+
+    <!-- sign-in providers (ConfigurationServices; impl-admin P10): what a provider maps and whether it is on are shown;
+        every other field of a provider (its endpoints, its client secret's replacement) is named and never shown -->
+    <moqui.server.AuditProjection auditProjectionId="AuthFlowDisabled" changedEntityName="moqui.security.sso.AuthFlow"
+            changedFieldName="disabled" category="signIn" description="Identity provider disabled" valueMode="show"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="120"/>
+    <moqui.server.AuditProjection auditProjectionId="AuthFlowDefaultGroup" changedEntityName="moqui.security.sso.AuthFlow"
+            changedFieldName="defaultUserGroupId" category="signIn" description="Identity provider's default group" valueMode="show"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="121"/>
+    <moqui.server.AuditProjection auditProjectionId="AuthFlowOther" changedEntityName="moqui.security.sso.AuthFlow"
+            changedFieldName="*" category="signIn" description="Identity provider"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="122"/>
+    <moqui.server.AuditProjection auditProjectionId="AuthFlowRoleGroup" changedEntityName="moqui.security.sso.AuthFlowRoleMap"
+            changedFieldName="userGroupId" category="signIn" description="Identity provider's role mapped to a group" valueMode="show"
+            primaryKeyTitle="Provider" secondaryKeyTitle="Role" linkKey="adminIdentityProvider" sequenceNum="123"/>
+    <moqui.server.AuditProjection auditProjectionId="AuthFlowFieldMap" changedEntityName="moqui.security.sso.AuthFlowFieldMap"
+            changedFieldName="*" category="signIn" description="Identity provider's field mapping"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="124"/>
+    <moqui.server.AuditProjection auditProjectionId="OauthFlowOther" changedEntityName="moqui.security.sso.OauthFlow"
+            changedFieldName="*" category="signIn" description="OAuth provider"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="125"/>
+    <moqui.server.AuditProjection auditProjectionId="OidcFlowOther" changedEntityName="moqui.security.sso.OidcFlow"
+            changedFieldName="*" category="signIn" description="OpenID Connect provider"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="126"/>
+    <moqui.server.AuditProjection auditProjectionId="SamlFlowOther" changedEntityName="moqui.security.sso.SamlFlow"
+            changedFieldName="*" category="signIn" description="SAML provider"
+            primaryKeyTitle="Provider" linkKey="adminIdentityProvider" sequenceNum="127"/>
+
+    <!-- configuration (ConfigurationServices; impl-admin P8, P13): an instance preference is nonsecret by its
+        registration and a translation is what people see, so both are shown -->
+    <moqui.server.AuditProjection auditProjectionId="InstancePreferenceValue" changedEntityName="moqui.server.InstancePreference"
+            changedFieldName="preferenceValue" category="configuration" description="Instance setting" valueMode="show"
+            primaryKeyTitle="Setting" linkKey="adminInstanceSettings" sequenceNum="200"/>
+    <moqui.server.AuditProjection auditProjectionId="LocalizedMessageText" changedEntityName="moqui.basic.LocalizedMessage"
+            changedFieldName="localized" category="configuration" description="Message translation" valueMode="show"
+            primaryKeyTitle="Original" secondaryKeyTitle="Locale" linkKey="adminLocalization" sequenceNum="201"/>
+    <moqui.server.AuditProjection auditProjectionId="LocalizedFieldText" changedEntityName="moqui.basic.LocalizedEntityField"
+            changedFieldName="localized" category="configuration" description="Label translation" valueMode="show"
+            primaryKeyTitle="Field" secondaryKeyTitle="Record" linkKey="adminLocalization" sequenceNum="202"/>
+    <moqui.server.AuditProjection auditProjectionId="MessageTypeOther" changedEntityName="moqui.service.message.SystemMessageType"
+            changedFieldName="*" category="configuration" description="Message type"
+            primaryKeyTitle="Message type" linkKey="adminMessageType" sequenceNum="203"/>
+
+    <!-- connections and relays (ConfigurationServices; impl-admin P11): whether one is on is shown; every other field
+        (an address, a user name, a credential's replacement) is named and never shown. The password and key fields
+        are encrypted, so they would be markers whatever a row said. -->
+    <moqui.server.AuditProjection auditProjectionId="EmailServerDisabled" changedEntityName="moqui.basic.email.EmailServer"
+            changedFieldName="disabled" category="connection" description="Mail relay disabled" valueMode="show"
+            primaryKeyTitle="Relay" linkKey="adminMailRelay" sequenceNum="300"/>
+    <moqui.server.AuditProjection auditProjectionId="EmailServerOther" changedEntityName="moqui.basic.email.EmailServer"
+            changedFieldName="*" category="connection" description="Mail relay"
+            primaryKeyTitle="Relay" linkKey="adminMailRelay" sequenceNum="301"/>
+    <moqui.server.AuditProjection auditProjectionId="MessageRemoteDisabled" changedEntityName="moqui.service.message.SystemMessageRemote"
+            changedFieldName="disabled" category="connection" description="Connection disabled" valueMode="show"
+            primaryKeyTitle="Connection" linkKey="adminConnection" sequenceNum="310"/>
+    <moqui.server.AuditProjection auditProjectionId="MessageRemoteOther" changedEntityName="moqui.service.message.SystemMessageRemote"
+            changedFieldName="*" category="connection" description="Connection"
+            primaryKeyTitle="Connection" linkKey="adminConnection" sequenceNum="311"/>
+    <moqui.server.AuditProjection auditProjectionId="NetworkPrinterOther" changedEntityName="moqui.basic.print.NetworkPrinter"
+            changedFieldName="*" category="connection" description="Network printer"
+            primaryKeyTitle="Printer" sequenceNum="320"/>
+
+    <!-- operations (OperationServices; impl-admin P12 to P14): a message's state and its settlement are states, shown,
+        with the reason; a job's and a topic's changes are named, and a job's parameter values are never shown -->
+    <moqui.server.AuditProjection auditProjectionId="JobPaused" changedEntityName="moqui.service.job.ServiceJob"
+            changedFieldName="paused" category="operation" description="Job paused" valueMode="show"
+            primaryKeyTitle="Job" linkKey="adminJob" sequenceNum="400"/>
+    <moqui.server.AuditProjection auditProjectionId="JobRunRequest" changedEntityName="moqui.service.job.ServiceJob"
+            changedFieldName="runRequest" category="operation" description="Job run asked for" valueMode="show"
+            primaryKeyTitle="Job" linkKey="adminJob" sequenceNum="401"/>
+    <moqui.server.AuditProjection auditProjectionId="JobBackupRequest" changedEntityName="moqui.service.job.ServiceJob"
+            changedFieldName="backupRequest" category="backup" description="Backup asked for" valueMode="show"
+            primaryKeyTitle="Job" secondaryKeyTitle="Run" linkKey="adminBackups" sequenceNum="402"/>
+    <moqui.server.AuditProjection auditProjectionId="JobOther" changedEntityName="moqui.service.job.ServiceJob"
+            changedFieldName="*" category="operation" description="Job"
+            primaryKeyTitle="Job" linkKey="adminJob" sequenceNum="403"/>
+    <moqui.server.AuditProjection auditProjectionId="TopicOther" changedEntityName="moqui.security.user.NotificationTopic"
+            changedFieldName="*" category="operation" description="Notification topic"
+            primaryKeyTitle="Topic" linkKey="adminTopic" sequenceNum="410"/>
+    <moqui.server.AuditProjection auditProjectionId="SystemMessageStatus" changedEntityName="moqui.service.message.SystemMessage"
+            changedFieldName="statusId" category="operation" description="System message state" valueMode="show"
+            primaryKeyTitle="Message" linkKey="adminSystemMessage" sequenceNum="420"/>
+    <moqui.server.AuditProjection auditProjectionId="SystemMessageSettlement" changedEntityName="moqui.service.message.SystemMessage"
+            changedFieldName="outcomeSettlement" category="operation" description="System message outcome settled" valueMode="show"
+            primaryKeyTitle="Message" linkKey="adminSystemMessage" sequenceNum="421"/>
+    <!-- a mail message's own state rows are every send of every user's mail, so they are not registered: what a person
+        did from the queue is (its settlement, its close and its retry, each with the reason) -->
+    <moqui.server.AuditProjection auditProjectionId="EmailMessageSettlement" changedEntityName="moqui.basic.email.EmailMessage"
+            changedFieldName="sendSettlement" category="operation" description="Mail send settled" valueMode="show"
+            primaryKeyTitle="Message" sequenceNum="430"/>
+    <moqui.server.AuditProjection auditProjectionId="EmailMessageQueueClose" changedEntityName="moqui.basic.email.EmailMessage"
+            changedFieldName="queueClose" category="operation" description="Mail message closed from the queue" valueMode="show"
+            primaryKeyTitle="Message" sequenceNum="431"/>
+    <moqui.server.AuditProjection auditProjectionId="EmailMessageQueueRetry" changedEntityName="moqui.basic.email.EmailMessage"
+            changedFieldName="queueRetry" category="operation" description="Mail message sent again from the queue" valueMode="show"
+            primaryKeyTitle="Message" sequenceNum="432"/>
+
+    <!-- transfers (DataTransferServices; impl-admin P15, P16): an export's and an import's counts and field names, never
+        content -->
+    <moqui.server.AuditProjection auditProjectionId="TransferExport" changedEntityName="moqui.server.TransferBatch"
+            changedFieldName="export" category="transfer" description="Data exported" valueMode="show"
+            primaryKeyTitle="Export" secondaryKeyTitle="Target" linkKey="adminExports" sequenceNum="500"/>
+    <moqui.server.AuditProjection auditProjectionId="TransferImport" changedEntityName="moqui.server.TransferBatch"
+            changedFieldName="import" category="transfer" description="Import applied" valueMode="show"
+            primaryKeyTitle="Import" secondaryKeyTitle="Target" linkKey="adminImport" sequenceNum="501"/>
+</entity-facade-xml>

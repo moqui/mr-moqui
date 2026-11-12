@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Change evidence for delegated administration (mr-boss plan/design-admin.md §12 AuditChanges, §16 "Audit evidence",
+    §17.2; impl-admin P17; Audit.js): the audit log (moqui.entity.EntityAuditLog) as an audit reader may be shown it.
+    The audit log holds the old and new value of every audit-logged field of every entity of every organization, so
+    nothing of it is read by a name from a request: find#Changes answers only the registered projections
+    (moqui.server.AuditProjection: one field of one entity, each with whether its values may be shown), and a change
+    of anything else is never found, listed or counted here. A secret is never a value: a projection is a marker
+    (set, changed, cleared) unless its registration says show, and a field the entity encrypts or whose name reads as
+    a secret is a marker whatever the registration says. A record of the whole instance is read here by a holder of
+    ADMIN_AUDIT_VIEW; a record that belongs to an organization is its owner's to find (the registration's
+    sourceService, implementing find#OwnedChanges, called as the caller through call#ChangeSource, whose ALL_USERS
+    ALLOW is not inheritable): the owner answers only the ids of the audit rows within the caller's own scope, and the
+    rows are read and masked here. ALL_USERS may call find#Changes and call#ChangeSource (data/AdminAuditData.xml);
+    each checks ADMIN_AUDIT_VIEW itself. The whole audit log is the instance administrator's part of Tools' System ›
+    Audit, whose list is find#Changes. No dependency on Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="find" noun="OwnedChanges" type="interface">
+        <description>The contract of an owner's audit source (a projection's sourceService): the audit rows of the
+            given registered projections that are within the caller's own scope, newest first. projectionList is the
+            registered projections of this source the caller may read (auditProjectionId, changedEntityName,
+            changedFieldName; when the field is *, every field of the entity but exceptFieldNames, those registered on
+            their own and not among these); the owner reads only the entities it knows and checks ADMIN_AUDIT_VIEW itself. The
+            filters are the caller's (changedByUserId, recordKey matched to either key value, visitId, fromDate and
+            thruDate in milliseconds, actorOnly for the rows a signed-in user made), limit the rows to answer. It answers ids only (auditIdList, of
+            EntityAuditLog.auditHistorySeqId) and changeCount, how many match in the caller's scope: never a
+            value.</description>
+        <in-parameters>
+            <parameter name="projectionList" type="List" required="true"/>
+            <parameter name="changedByUserId"/>
+            <parameter name="recordKey"/>
+            <parameter name="visitId"/>
+            <parameter name="fromDate" type="Long"/>
+            <parameter name="thruDate" type="Long"/>
+            <parameter name="actorOnly" type="Boolean"/>
+            <parameter name="limit" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="auditIdList" type="List"/>
+            <parameter name="changeCount" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <service verb="find" noun="Changes" allow-remote="false">
+        <description>Changes the audit log recorded, newest first, of the registered projections the caller may read
+            (changeList, a page at a time): when (changedDate in milliseconds and changedDateText in the user's zone),
+            who (changedByUserId, actorName), what (the projection's category and description, the entity and field
+            it is of, the record by its key values with their names), the values before and after where the
+            registration shows them (else masked true with marker: set, changed, cleared or recorded), the reason
+            given, the session it was made in (correlation) and the owner's place for the record (linkKey, linkId).
+            Narrowed by category, auditProjectionId (a registered one, never an entity or a field), changedByUserId,
+            recordKey (a key value of the record, whole), correlation, fromDate and thruDate, and with actorOnly to
+            the changes a signed-in user made (a data load's own rows, which name no user, left out). A record that belongs to
+            an organization is found by its owner within the caller's scope. Reads at most maxDepth rows from the
+            newest: deeper is refused with notice (narrow the dates). forExport answers one page of exportRows rows,
+            truncated true when more match. A source that cannot be read is named in sourceProblems and the others
+            are answered. projectionList and categoryList are the options of a find. Needs
+            ADMIN_AUDIT_VIEW.</description>
+        <in-parameters>
+            <parameter name="category"/>
+            <parameter name="auditProjectionId"/>
+            <parameter name="changedByUserId"/>
+            <parameter name="recordKey"/>
+            <parameter name="correlation"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="actorOnly" type="Boolean"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="forExport" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="changeList" type="List"/>
+            <parameter name="changeListCount" type="Integer"/>
+            <parameter name="changeListPageIndex" type="Integer"/>
+            <parameter name="changeListPageSize" type="Integer"/>
+            <parameter name="changeListPageMaxIndex" type="Integer"/>
+            <parameter name="changeListPageRangeLow" type="Integer"/>
+            <parameter name="changeListPageRangeHigh" type="Integer"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="notice"/>
+            <parameter name="sourceProblems" type="List"/>
+            <parameter name="projectionList" type="List"/>
+            <parameter name="categoryList" type="List"/>
+            <parameter name="maxDepth" type="Integer"/>
+            <parameter name="exportRows" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Audit.js').execute('findChanges', context))</script></actions>
+    </service>
+
+    <service verb="call" noun="ChangeSource" allow-remote="false">
+        <description>The owner's audit source a registration names, for find#Changes: sourceService must be the
+            sourceService of a registered projection and carry the find#OwnedChanges contract; the projections given to
+            it are read from the registry here (those of the source the caller may read, narrowed to
+            auditProjectionIdList), never from the request. It is called under the caller's own authorization: this
+            service's ALL_USERS ALLOW (AdminAuditSource) is not inheritable, so the owner's service is authorized as a
+            direct call is and finds within the caller's scope. result is the owner's answer. Needs
+            ADMIN_AUDIT_VIEW.</description>
+        <in-parameters>
+            <parameter name="sourceService" required="true"/>
+            <parameter name="auditProjectionIdList" type="List"/>
+            <parameter name="changedByUserId"/>
+            <parameter name="recordKey"/>
+            <parameter name="visitId"/>
+            <parameter name="fromDate" type="Long"/>
+            <parameter name="thruDate" type="Long"/>
+            <parameter name="actorOnly" type="Boolean"/>
+            <parameter name="limit" type="Integer"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Audit.js').execute('callChangeSource', context))</script></actions>
+    </service>
+</services>

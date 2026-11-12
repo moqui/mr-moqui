@@ -28,6 +28,7 @@
 
 pub mod context;
 pub mod events;
+pub mod external;
 pub mod hub;
 pub mod lease;
 pub mod observe;
@@ -125,7 +126,7 @@ impl LocalRun {
     }
 }
 
-/// Who writes a run: this node, and the lease generation its claim got (plans/High-Level-Review.md HL-042). Every
+/// Who writes a run: this node, and the lease generation its claim got (plans/archive/High-Level-Review.md HL-042). Every
 /// write of the engine checks both against the run's row ([`held`]), so a step of an older holding, on this node or
 /// another, writes nothing once the run was claimed again. A holder with no generation (code that claimed nothing: a
 /// decision, a cancel, the writes after a step gave the lease up) is checked by the owner alone.

@@ -58,37 +58,65 @@ pub fn install() {
 #[derive(Clone)]
 struct ReqwestTransport {
     client: reqwest::Client,
+    /// No request goes to an internal address (`FlowConfig::deny_internal`).
+    deny_internal: bool,
 }
 
 impl ReqwestTransport {
-    /// A transport over the one SSO client, so connections and the TLS setup are reused across logins.
-    fn new() -> Result<Self, Error> {
-        static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
-        let client = CLIENT
+    /// A transport over one of the two SSO clients, so connections and the TLS setup are reused across logins. With
+    /// `deny_internal` (a flow whose `allowPrivateNetwork` is `N`) the client's resolver refuses a host with a
+    /// loopback, private or link-local address, as `moqui_lib::http::RestClient::deny_internal_addresses` does, and
+    /// [`send`](Self::send) refuses such an address written out. Neither client follows a redirect.
+    fn new(deny_internal: bool) -> Result<Self, Error> {
+        static OPEN: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+        static PUBLIC: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+        let slot = if deny_internal { &PUBLIC } else { &OPEN };
+        let client = slot
             .get_or_init(|| {
-                reqwest::Client::builder()
+                let mut builder = reqwest::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())
-                    .timeout(TIMEOUT)
-                    .build()
-                    .map_err(|err| err.to_string())
+                    .timeout(TIMEOUT);
+                if deny_internal {
+                    builder = builder.dns_resolver(Arc::new(moqui_lib::http::PublicOnly));
+                }
+                builder.build().map_err(|err| err.to_string())
             })
             .as_ref()
             .map_err(|err| Error::new(format!("could not build the SSO HTTP client: {err}")))?;
-        Ok(Self { client: client.clone() })
+        Ok(Self {
+            client: client.clone(),
+            deny_internal,
+        })
     }
 
     async fn send(&self, request: http::Request<Bytes>) -> Result<HttpResponse, String> {
         let (parts, body) = request.into_parts();
+        if self.deny_internal {
+            let url = reqwest::Url::parse(&parts.uri.to_string()).map_err(|err| err.to_string())?;
+            if moqui_lib::http::internal_literal(&url) {
+                return Err(format!(
+                    "{} is an internal address, which this provider may not use",
+                    url.host_str().unwrap_or_default()
+                ));
+            }
+        }
         let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes()).map_err(|err| err.to_string())?;
         let mut builder = self.client.request(method, parts.uri.to_string());
         for (name, value) in &parts.headers {
             builder = builder.header(name.as_str(), value.as_bytes());
         }
-        let mut response = builder
-            .body(body.to_vec())
-            .send()
-            .await
-            .map_err(|err| err.to_string())?;
+        let mut response = builder.body(body.to_vec()).send().await.map_err(|err| {
+            // the resolver's refusal of an internal address is the reason, under reqwest's own text
+            let mut source = std::error::Error::source(&err);
+            while let Some(cause) = source {
+                let text = cause.to_string();
+                if text.contains("is an internal address") {
+                    return text;
+                }
+                source = cause.source();
+            }
+            err.to_string()
+        })?;
         let status = http::StatusCode::from_u16(response.status().as_u16()).map_err(|err| err.to_string())?;
         let mut headers = http::HeaderMap::new();
         for (name, value) in response.headers() {
@@ -325,14 +353,25 @@ fn client_auth(secret: String) -> ClientSecret {
 
 impl Inner {
     async fn built(&self, flow: &FlowConfig, redirect_uri: &str) -> Result<Arc<Built>, Error> {
-        let key = format!("{flow:?}|{redirect_uri}");
+        // `Debug` leaves the secret out, so the key carries a hash of it: a replaced secret builds a new grant at once
+        // (else the old one would be sent until the grant's life ended).
+        let secret_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            match &flow.kind {
+                FlowKind::Oidc(config) => config.secret.hash(&mut hasher),
+                FlowKind::Oauth(config) => config.secret.hash(&mut hasher),
+            }
+            hasher.finish()
+        };
+        let key = format!("{flow:?}|{redirect_uri}|{secret_hash:x}");
         if let Some(found) = lock(&self.grants)
             .get(&flow.auth_flow_id)
             .filter(|built| built.key == key && built.at.elapsed() < GRANT_LIFE)
         {
             return Ok(Arc::clone(found));
         }
-        let transport = ReqwestTransport::new()?;
+        let transport = ReqwestTransport::new(flow.deny_internal)?;
         let built = match &flow.kind {
             FlowKind::Oidc(config) => {
                 let discovery = discovery_uri(config)?;
@@ -348,8 +387,19 @@ impl Inner {
                 if !response.status.is_success() {
                     return Err(Error::new(format!("{discovery} answered {}", response.status)));
                 }
-                let metadata: AuthorizationServerMetadata = serde_json::from_slice(&response.body)
-                    .map_err(|err| Error::new(format!("{discovery} is not a discovery document: {err}")))?;
+                // The reason is the kind of error and where, never the parser's text, which quotes a value of the
+                // body: a test of a provider (`check#Flow`) shows this message, and the URL is its administrator's.
+                let metadata: AuthorizationServerMetadata = serde_json::from_slice(&response.body).map_err(|err| {
+                    let what = match err.classify() {
+                        serde_json::error::Category::Data => "its JSON is not that of an OpenID provider",
+                        _ => "it is not JSON",
+                    };
+                    Error::new(format!(
+                        "{discovery} is not a discovery document: {what} (line {}, column {})",
+                        err.line(),
+                        err.column()
+                    ))
+                })?;
                 if !config.preferred_jws_algorithm.is_empty() && config.preferred_jws_algorithm == "ES512" {
                     return Err(Error::new(
                         "ES512 ID tokens are not supported; choose ES256, ES384, RS*, PS* or EdDSA",
@@ -506,7 +556,9 @@ impl Inner {
         };
         if let Some(user_info) = &built.user_info {
             let post = provider.as_ref().is_some_and(|p| p.user_info_post);
-            let info = self.user_info(user_info, &access_token, post).await?;
+            let info = self
+                .user_info(user_info, &access_token, post, flow.deny_internal)
+                .await?;
             for (name, value) in info {
                 attributes.entry(name).or_insert(value);
             }
@@ -525,8 +577,9 @@ impl Inner {
         url: &str,
         access_token: &str,
         post: bool,
+        deny_internal: bool,
     ) -> Result<serde_json::Map<String, Json>, Error> {
-        let transport = ReqwestTransport::new()?;
+        let transport = ReqwestTransport::new(deny_internal)?;
         let request = if post {
             http::Request::post(url)
         } else {
@@ -672,10 +725,29 @@ mod tests {
 
     use super::{profile, provider};
 
+    /// Admin P10 review: a flow that may not use the private network sends nothing to an internal address, written out
+    /// or by name, before any connection.
+    #[test]
+    fn a_flow_denied_the_private_network_sends_nothing_to_an_internal_address() {
+        let transport = super::ReqwestTransport::new(true).unwrap();
+        for url in [
+            "https://10.1.2.3/.well-known/openid-configuration",
+            "https://localhost:9/x",
+        ] {
+            let request = http::Request::get(url).body(bytes::Bytes::new()).unwrap();
+            let transport = transport.clone();
+            let err = crate::edge::block_on(async move { transport.send(request).await })
+                .unwrap()
+                .unwrap_err();
+            assert!(err.contains("internal address"), "{url}: {err}");
+        }
+    }
+
     fn username(kind: FlowKind, client_type: &str, claims: serde_json::Value) -> Option<String> {
         let flow = FlowConfig {
             auth_flow_id: "F".to_string(),
             kind,
+            deny_internal: false,
         };
         let serde_json::Value::Object(claims) = claims else {
             unreachable!()

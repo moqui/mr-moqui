@@ -235,6 +235,28 @@ fn a_bad_mac_is_an_unknown_session() {
     assert_ne!(guard.session_id(), id);
 }
 
+/// `session_cookie_key` has no old key to fall back on: a new key ends every session cookie and every value signed
+/// with a key derived from it (`derived_cookie_key`). A derived key differs by label and is never the session MAC.
+///
+/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+#[test]
+fn known_gap_a_new_session_cookie_key_ends_every_session_cookie() {
+    let _lock = cookie_tests_lock();
+    let _key = KeyGuard::install();
+    let id = "cd".repeat(SESSION_ID_BYTES);
+    let header = format_session_cookie(&id, false).unwrap();
+    let value = cookie_value(&header).to_string();
+    assert_eq!(verify_session_cookie(&value).unwrap().as_deref(), Some(id.as_str()));
+    let handle = derived_cookie_key("handle").unwrap();
+    assert_ne!(handle, derived_cookie_key("mcp").unwrap());
+    let (_, tag) = value.split_once('.').unwrap();
+    assert_ne!(URL_SAFE_NO_PAD.decode(tag).unwrap(), handle);
+
+    moqui_lib::env::set_property("session_cookie_key", STANDARD.encode([7_u8; 32]));
+    assert!(verify_session_cookie(&value).unwrap().is_none());
+    assert_ne!(derived_cookie_key("handle").unwrap(), handle);
+}
+
 /// A visit records the request that starts it, as Java's; a user ends another session of theirs by its visit (its
 /// row goes, its live copy is retired, so its cookie starts over signed out, and the Visit gets its thruDate), but
 /// not the current one and not another user's.
@@ -470,6 +492,43 @@ fn a_session_ended_on_another_server_is_dropped_here() {
     assert_eq!(user_after, None);
     flush_dirty(&factory).unwrap();
     assert!(load_session_optional(&facade, &id).is_none(), "not written back");
+}
+
+/// HL-018: another server ended a session this one holds live, and its `session-end` was lost in a cluster gap. The
+/// clear of every entity cache that peer sends after the gap retires it, in one query over the live sessions; one
+/// whose row is still there stays live.
+#[test]
+fn a_lost_session_end_is_recovered_at_a_peers_clear_of_every_cache() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let signed_in = |user: &'static str| {
+        let browser = Arc::clone(&factory);
+        std::thread::spawn(move || {
+            let ctx = browser.new_context();
+            let _entered = ctx.enter();
+            let guard = bind(&browser, None, None, false).unwrap();
+            set_user(user, user);
+            flush_dirty(&browser).unwrap();
+            guard.session_id()
+        })
+        .join()
+        .unwrap()
+    };
+    let ended = signed_in("ada");
+    let kept = signed_in("bob");
+    // the other server's end#UserVisit deleted the row; its session-end never came
+    delete_session_row(&facade, &ended).unwrap();
+    let message = crate::notify::TopicMessage {
+        origin_id: "another-server".to_string(),
+        message_id: crate::entity::uuid_v4().unwrap(),
+        body: serde_json::json!({ "clearAll": true }),
+    };
+    crate::cluster::apply_remote(&facade, crate::notify::ENTITY_CACHE_INVALIDATE, &message).unwrap();
+    let retired = |id: &str| lock_sessions(&factory).sessions.get(id).map(|live| live.retired);
+    assert_eq!(retired(&ended), Some(true));
+    assert_eq!(retired(&kept), Some(false));
+    assert!(!adopt_presented(&factory, &ended).unwrap());
 }
 
 /// A flush of a session whose row was deleted elsewhere (before this server heard of it) does not insert the row
@@ -1126,6 +1185,47 @@ fn a_session_that_fails_to_flush_does_not_stop_the_others() {
             "{id} is written by the next flush"
         );
     }
+}
+
+/// plans/archive/High-Level-Review.md HL-020: the scheduler's flush writes at most its bound of sessions, and the next one goes
+/// on after the last id it reached, round to the first ids, before writing any session again; a session that fails
+/// moves the cursor on too.
+#[test]
+fn a_bounded_session_flush_resumes_where_the_last_pass_stopped() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let dirty = |n: usize| -> String {
+        let guard = bind(&factory, None, None, false).unwrap();
+        save_parameter("n", &n.to_string());
+        guard.session_id()
+    };
+    let mut ids: Vec<String> = (0..5).map(dirty).collect();
+    ids.sort();
+    let written = |id: &String| read_row(&facade, id).unwrap().is_some();
+    let bound = FlushBound {
+        sessions: 2,
+        time: Duration::from_secs(60),
+    };
+    // The second session fails: the pass still stops at its bound, past it.
+    *lock(&FAILING_FLUSH) = vec![ids[1].clone()];
+    let first = flush_dirty_bounded(&factory, bound);
+    lock(&FAILING_FLUSH).clear();
+    assert!(first.is_err(), "the failure is reported");
+    let after_first: Vec<bool> = ids.iter().map(written).collect();
+    assert_eq!(after_first, [true, false, false, false, false]);
+    flush_dirty_bounded(&factory, bound).unwrap();
+    let after_second: Vec<bool> = ids.iter().map(written).collect();
+    assert_eq!(
+        after_second,
+        [true, false, true, true, false],
+        "it went on after the last id reached"
+    );
+    flush_dirty_bounded(&factory, bound).unwrap();
+    assert!(
+        ids.iter().all(written),
+        "round to the first ids: the one that failed is written now"
+    );
 }
 
 /// Holds the flushes of one session id at [`flush_hook`] until released.

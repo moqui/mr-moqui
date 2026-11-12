@@ -15,9 +15,14 @@
 //! WebSocket of a client spec (plans/archive/ClientTestHarness.md 5.4), over tungstenite as `moqui tui --server` has it. The
 //! session's cookies go in the handshake. A refused handshake is an answer, not an error: the security proofs check
 //! the refusals.
+//!
+//! In a load (plans/archive/LoadRunner.md L7) the handshake, a send given a `name`, and each receive are samples of kind `ws`
+//! ([`observe`]): a refused handshake, a receive that times out and a socket that closes are errors there unless the
+//! call's `expect` names their outcome (the status, `timeout`, `closed`).
 
+use std::borrow::Cow;
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -108,6 +113,94 @@ pub(crate) fn connect(
             socket: None,
         }),
         Err(err) => Err(format!("{ws_url}: {err}")),
+    }
+}
+
+/// Count one `ws` operation of a load user's scenario ([`super::load::observe_outcome`]).
+pub(crate) fn observe(
+    name: impl FnOnce() -> String,
+    outcome: Cow<'static, str>,
+    failure: Option<String>,
+    elapsed: Duration,
+    expect: &[String],
+) -> Result<(), String> {
+    super::load::observe_outcome(name, super::load::Kind::Ws, outcome, failure, elapsed, expect)
+}
+
+/// Count a handshake: its status is the outcome, and anything but 101 is an error unless `expect` lists it.
+pub(crate) fn observe_connect(
+    name: impl FnOnce() -> String,
+    connected: &Result<Connected, String>,
+    elapsed: Duration,
+    expect: &[String],
+) -> Result<(), String> {
+    match connected {
+        Ok(connected) => {
+            let failure = connected
+                .socket
+                .is_none()
+                .then(|| format!("HTTP {}: the handshake was refused", connected.status));
+            observe(name, Cow::Owned(connected.status.to_string()), failure, elapsed, expect)
+        }
+        Err(err) => observe(name, Cow::Borrowed("error"), Some(err.clone()), elapsed, &[]),
+    }
+}
+
+/// What a receive of a load user got.
+enum Received {
+    Frame(String),
+    Timeout,
+    Closed,
+}
+
+/// A receive of a load user, waiting at most `timeout` in short waits so that a stop now ends it
+/// ([`super::load::check_stopped`]), counted as a sample: `ok`, `timeout` or `closed`, `error` for a broken socket.
+pub(crate) fn receive_observed(
+    socket: &mut Socket,
+    timeout: Duration,
+    name: impl FnOnce() -> String,
+    expect: &[String],
+) -> Result<Option<String>, String> {
+    /// The longest one wait of a load user's receive: a stop now waits no longer than this.
+    const SLICE: Duration = Duration::from_millis(250);
+    super::load::check_stopped()?;
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let received = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match socket.receive(left.min(SLICE)) {
+            Ok(Some(frame)) => break Ok(Received::Frame(frame)),
+            Ok(None) if socket.closed => break Ok(Received::Closed),
+            Ok(None) if Instant::now() >= deadline => break Ok(Received::Timeout),
+            Ok(None) => super::load::check_stopped()?,
+            Err(err) => break Err(err),
+        }
+    };
+    let elapsed = started.elapsed();
+    match received {
+        Ok(Received::Frame(frame)) => {
+            observe(name, Cow::Borrowed("ok"), None, elapsed, expect)?;
+            Ok(Some(frame))
+        }
+        Ok(Received::Timeout) => {
+            let failure = format!("no frame within {:.1} s", timeout.as_secs_f64());
+            observe(name, Cow::Borrowed("timeout"), Some(failure), elapsed, expect)?;
+            Ok(None)
+        }
+        Ok(Received::Closed) => {
+            observe(
+                name,
+                Cow::Borrowed("closed"),
+                Some("the socket closed".to_string()),
+                elapsed,
+                expect,
+            )?;
+            Ok(None)
+        }
+        Err(err) => {
+            observe(name, Cow::Borrowed("error"), Some(err.clone()), elapsed, &[])?;
+            Err(err)
+        }
     }
 }
 

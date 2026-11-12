@@ -145,7 +145,7 @@ color, so a `text-<color>` class picks it, not `color=`, whose `bg-*` class woul
 | `m-form-paginate`, `m-form-go-page`, `m-form-column-config` | page buttons, jump to a page, the column picker |
 | `m-scope`, `m-static-form-list` | written by `ScreenQvtStatic.js` only: a scope over a form-single's map, and the form-list of a server-static screen (see Server-static screens) |
 | `m-text-line`, `m-text-area` | text input. `m-text-line` takes `autocomplete` (`off` by default; the `password` widget writes its `autocomplete` attribute, `new-password` unless it says `current-password`, so the browser does not fill the user's sign-in password into an app password or another user's new one). `m-text-area` with `editor-type` `html` is `QEditor`, `md` is a text area with a Marked preview, and `rich` and `rich-light` are `m-rich-text` (with `mention-url` and `mention-parameters` from `mention-transition`, and `record-url` and `record-parameters` from `record-transition`) |
-| `m-rich-text` | the Tiptap editor (see Rich text below): the `m-*` model contract (`v-model` or `model-value`, `name`, the change tint and field errors in an `m-form`, a hidden input), `light`, `placeholder`, `rows`, `enter` (`newline`, or `submit`: Enter submits the form and emits `submit`, Shift+Enter is a line break; Ctrl+Enter always submits), `mention-url`, `mention-parameters`, `record-url`, `record-parameters`, `plain` (`v-model:plain`, the plain-text toggle), `plain-toggle`, `autofocus`, `disable`, `readonly`; emits `mention` with the `{id, label}` picked |
+| `m-rich-text` | the Tiptap editor (see Rich text below): the `m-*` model contract (`v-model` or `model-value`, `name`, the change tint and field errors in an `m-form`, a hidden input), `light`, `placeholder`, `rows`, `enter` (`newline`, or `submit`: Enter submits the form and emits `submit`, Shift+Enter is a line break; Ctrl+Enter always submits), `mention-url`, `mention-parameters`, `record-url`, `record-parameters`, `plain` (`v-model:plain`, the plain-text toggle), `plain-toggle`, `autofocus`, `disable`, `readonly`, `ai-opt-out` (no Assist text actions; also inside any `[data-ai-opt-out]`, [Assist, AI opt-out](../ai/Assist.md#ai-opt-out)); emits `mention` with the `{id, label}` picked |
 | `m-coedit` | `m-rich-text` on a shared Yjs document (see Collaborative editing below): `doc-key` (required, `WikiPage:100023`), `placeholder`, `rows`, `light`, `readonly`, `user-name` (the page's `userFullName`), `user-color` (`#rrggbb`, else one of the user id); other attributes go to the editor. Emits `status`, `saved` and `fallback`; `html()` is the editor's HTML |
 | `m-scan-input` | the `scan-input` element (see Scan input below): `resolve-url` (the screen's `scanResolve`), `resolve-parameters`, `depends-on`, `allowed-types`, `scan-id-field`, `auto-submit`, `confirm`, `placeholder`; in an `m-form` it fills `name`, `name_type`, `name_scanText` and the scan id field; emits `update:modelValue` and `resolved` (`{match, parsed, scanId, scanText}`) |
 | `m-drop-down` | `options`, `options-url`, `options-parameters`, `depends-on`, `server-search`, `multiple`, `allow-empty`, `combo`, `submit-on-select`, `options-load-init` |
@@ -154,7 +154,7 @@ color, so a `text-<color>` class picks it, not `color=`, whose `bg-*` class woul
 | `m-check`, `m-radio`, `m-file`, `m-field`, `m-text-find`, `m-range-find` | the other widgets |
 | `m-editable` | click to edit, `QPopupEdit`, `url`, `url-parameters`, `parameter-name`, `widget-type` (`textarea`, `text-line`, `select`, `date`, `date-time`), `load-url`, `options` (a select's `{value, label}` list, from the `option`, `list-options` and `entity-options` of the element; else what `load-url` answers: a list, or a map of key to label with `selected`, `moqui.editableOptions`), `value` (a select's current key; by default the option whose label is the text), `placeholder` (an empty text with `display-if-empty` shows it, so there is something to click). A select shows the chosen option's label after a save; a date edits in `QDate` (and `QTime`) as `yyyy-MM-dd` (`yyyy-MM-dd HH:mm`) |
 | `m-link` | a screen link: `href`, `load-id`, `confirmation`; an external `href` (another scheme or host, `moqui.isExternalLink`) is a plain anchor the browser follows. A `data-confirm` attribute on any button or link is asked first |
-| `m-container-box`, `m-box-body`, `m-container-dialog`, `m-dialog` | boxes and dialogs. `m-container-dialog` (`container-dialog`) registers with the root by its `id` while mounted (`addContainer`, taken back with `removeContainer` when unmounted), so a form's `background-hide-id` (`submit-hide-id`) and `$root.hideContainer(id)` close it; its `reload` and `load` do nothing (the content is the page's). `tooltip` (the `container-dialog` attribute) is a `q-tooltip` on its button, the slot button of a list cell too |
+| `m-container-box`, `m-box-body`, `m-container-dialog`, `m-dialog` | boxes and dialogs. A draggable `m-dialog` (the default) moves by its header with any pointer, mouse, touch or pen (`moqui.pointer`, MoquiLib.js), kept inside the window; not from a button in the header, and not while it fills a phone's screen. `m-container-dialog` (`container-dialog`) registers with the root by its `id` while mounted (`addContainer`, taken back with `removeContainer` when unmounted), so a form's `background-hide-id` (`submit-hide-id`) and `$root.hideContainer(id)` close it; its `reload` and `load` do nothing (the content is the page's). `tooltip` (the `container-dialog` attribute) is a `q-tooltip` on its button, the slot button of a list cell too |
 | `m-dynamic-container`, `m-dynamic-dialog` | a screen loaded into a container, or a dialog, with `load`, `reload` and `hide`, in the screen's best client mode (Loading a screen); each provides `mScreen` (the loaded screen's `url`, `path` and `parameters`) to the screen; the container's `shellRefresh()` calls the screen's own `shellRefresh()` when it has one, else reloads; the dialog's button takes `button-text`, `button-class`, `color` and `button-icon` (default `open_in_new`), as `m-container-dialog` does |
 | `m-tree-top`, `m-tree-item` | tree: `items` is the node list or its URL (`<screen>/actions/<tree>`, posted `treeNodeId`, `treeNodeName`, `treeOpenPath`). A node's `children` is a list when it came inline (on `open-path`), `true` to load from the URL when the node is opened, `false` for a leaf |
 | `m-subscreens-tabs` (also `m-subscreens-menu`), `m-subscreens-active`, `m-subscreens-panel` | the subscreen menu and the place of the active subscreen |
@@ -164,7 +164,9 @@ color, so a `text-<color>` class picks it, not `color=`, whose `bg-*` class woul
 | `m-menu-nav-item`, `m-menu-subscreen-item`, `m-menu-item-content`, `m-menu-icon` | the navigation of the shell; `m-menu-icon` is a menu image of type icon (`name`, `size`) |
 | `m-screen-context` | the `context` element: while mounted it registers `recordEntity`, `recordId`, `title` and `selectionForm` with the root (`setScreenContext`), again when one changes, and takes them back when unmounted (see Shell data and providers) |
 | `m-status-bar` | the `status-bar` element (style-guide §3.3, §5.2): `bar` (what `org.moqui.ui.StatusServices.get#StatusBar` answers: `current`, `stages` with `state` done, current or todo and `color`, `transitions` with `isNext` and `isDanger`), else `status-id`, `status-type-id`, `status-flow-id`, `stages` and `allowed-status-ids` (lists or comma text) and `read-only`, which it asks of `bar-url` (`/statusBar`, the root screen's transition) and again when one changes, as a server-static screen does; `action` (the transition), `parameters`, `parameter-name` (`statusId`), `title`, `confirm` (true). A stage is a `q-chip dense square`: the current one filled in its color, a done one `m-tonal` with a check, one to come outlined; a transition is a button in an `m-form` of its own posting `action` with the new status: the next stage filled primary, the others tonal (negative for those that end badly), each asking "Label: title?" (`moqui.statusBarView`) |
-| `m-number-card` | the `number-card` element: a `q-card flat bordered` with the `title` as `text-overline`, the `value` (`text-h5`; `size` `sm` is `text-h6`, `lg` `text-h4`), the `delta` with an arrow, green or red by its sign against `delta-good` (`up`, the default, or `down`; no sign is muted: `moqui.numberCardDelta`), and the `icon`; with `href` the whole card is an `m-link` (`external`: a plain anchor). The `dashboard` element around cards is no component: a `div.m-dashboard` CSS grid, columns of at least its `min-width` (`--m-dashboard-min`, 200 px), each child in a `div.m-dashboard-item` (an empty one hidden, a `section-iterate`'s rows each a cell) |
+| `m-number-card` | the `number-card` element: a `q-card flat bordered` with the `title` as `text-overline`, the `value` (`text-h5`; `size` `sm` is `text-h6`, `lg` `text-h4`), the `delta` with an arrow, green or red by its sign against `delta-good` (`up`, the default, or `down`; no sign is muted: `moqui.numberCardDelta`), and the `icon`; with `href` the whole card is an `m-link` (`external`: a plain anchor). The `dashboard` element around cards is no component: a `div.m-dashboard` CSS grid, columns of at least its `min-width` (`--m-dashboard-min`, 200 px), each child in a `div.m-dashboard-item` (an empty one hidden, a `section-iterate`'s rows each a cell). `sparkline` (numbers with commas, or a list) draws the value's recent history under it with `moqui.sparklinePath` (MoquiLib.js) |
+| `m-nav-card` | the `nav-card` element, a navigation tile: a `q-card flat bordered` with the `icon` in a tonal `q-avatar` (36 px; `size` `lg` 48 px), the `title` as `text-subtitle1 text-weight-medium` and the `text` as `text-caption m-muted`. With `href` the title is the card's link, an `m-link` (`external`: a plain anchor), and the style sheet stretches it over the card (`m-nav-card-link`), so the whole card is one link without an anchor around the others; the default slot holds the element's child links, written as text links (`m-link-text`) in a row along the bottom that stays above the card's link and is left out when there are none. Laid out by `dashboard`, as number cards are. The gallery's `NavCards` screen shows it |
+| `m-page-refresh` | a screen of live readings puts one in its page (a `render-mode` text) to be read again every `seconds` through the shell's `reloadSubscreens`, while the page is in view, no dialog or menu is open and no field has the focus (`moqui.pageRefreshDue`). The System home does, when its address has `refresh` |
 | `m-chatter`, `m-record-files` | the `chatter` and `record-files` elements: `record-entity`, `record-id`, `default-tab`, `hide`, `id` (of the `m-dynamic-container` the panel loads into, for `submit-reload-id`). See Record panels below |
 | `m-avatar` | a `q-avatar`: `image` (a face image URL; initials when it does not load), else when `user-id` is set and `qvt.config.avatarUrl` (theme `STRT_AVATAR_URL`) contains `${userId}`, that URL with the id filled in (`moqui.avatar.imageUrl`; a 404 still leaves the initials), else the initials of `name` on a color of the name (`moqui.avatar`), else a person icon; `size` (32px), `color`, `text-color`, `square`, `rounded`, `tooltip` (the name); `presence` (`online`, `away`, `dnd`, `offline`) draws a dot, and `user-id` the dot of that user's presence from the chat store (asked for once mounted), nothing without either |
 | `m-record-card` | a compact card of a record: `record-entity`, `record-id`, and `card-url` (asked once per page for each record, GET with `recordEntity` and `recordId` and `card-parameters`) or `card` (the JSON itself); `dense`. See Record cards below |
@@ -199,6 +201,12 @@ since the menu data has only the subscreens of the path's screens. There is no r
 screens sit at the apps' own left edge, and each deeper screen is indented 12px more, with a guide line. The screen shown (or its
 active saved find) gets a bar and a stronger tint. With `QUASAR_LEFT_MINI` the docked drawer is a 56px rail of app icons with their
 titles as tooltips; the button at its foot switches between the two. Below the breakpoint the drawer is an overlay, never a rail.
+
+**Menu groups.** A long flat menu is grouped with `menu-group` on a `subscreens-item` (or a conf mount), by default the
+`default-menu-group` of the screen it mounts. The menu data has it as each item's `group`, and the drawer writes it as a small caption
+above the first row of each run of siblings that share one (`row.caption`); the terminal's drawer writes the same heading. A group
+does not order the items: their menu indexes do. System and Monitor (tools) are grouped this way, and a home's navigation catalog
+(`tools/template/HomeCatalog.js`) puts an entry with no group of its own in its menu item's.
 
 **Menus anchored to hidden elements.** A `q-menu` (or `q-popup-proxy`) whose target is an element with `visibility: hidden` does not open in
 Chrome: an anchor revealed on hover (a row's actions) is hidden with `opacity: 0` (and `pointer-events: none` until shown), not `visibility`.
@@ -247,6 +255,11 @@ once per page load:
   0), absent text as null. A quick-create kind with no `screen` opens the theme's `STRT_QUICK_CREATE` screen with `kind` added to its query;
   with neither it is left out. `parameter` children are added to a link's query. A provider whose screen the user may not view is left out,
   and one whose screen does not exist is logged and left out. `requiresRecord` kinds are offered only while `screenContext.record` is set.
+  A quick-create kind with a `condition-service` is offered only when that service, called as the app root that declares the kind (its
+  authorization and entity filters, a transaction of its own) with `kind`, answers `offer` true for the session's user
+  (`org.moqui.ui.ShellServices.offer#QuickCreate`); false, no answer, or a service that fails or is missing leaves out that kind alone,
+  and a failure is logged with the app, kind and service. It runs on each `getShellData`, and `getShellProviders` keeps its answer as
+  it keeps the rest (below).
   `action` of a key is a client action of the shell (`palette`, `quickCreate`) for a key with no `url`.
 - Another component adds to an app root's providers with a `screen-extend` of it: each child merges by its element and key (a
   quick-create by `kind`, a palette source by `group`, a key of a keymap by `keys`, a provider hook by `name`; the XSD's
@@ -391,7 +404,16 @@ the tab's content until the new one is there (`m-dynamic-container.reload`). Whi
 minutes (`/shellCounts`) and the open tab reloaded. **A tab's screen that refreshes itself**: when the component the tab loaded has a
 `shellRefresh()` method, the tray calls it instead of mounting the screen again (`m-dynamic-container.shellRefresh`), so what it shows stays (an
 open chat room, a half-typed text); a `.qvue` tray screen that listens to the chat store refreshes its lists there. A tab's screen loads in its
-best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the extension.
+best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the extension. **Undock** (`#m-tray-undock`, in
+the strip; not below 600 px nor on a handheld screen) makes the current tab a float of kind `tray` (400 by 560, its label
+and count badge) and takes it out of the strip; each tab floats on its own, and the root's `trayFloating` and
+`trayDockedTabs` say which. The tab's body is held in a teleport, so its screen is the same instance (a chat's draft stays)
+and its scroll is put back. Dock, or dragging the float to the right edge (the tray panel's place, outlined Dock before
+the drop), puts it back and opens the tray on it; Close puts it back in the strip and leaves the tray
+as it was. The header's Today, Chat and Notifications buttons show, raise or hide a floated tab's window in place of the
+tray; with every tab floated the tray has nothing to open. A floated tab reloads as a docked one (`shellCounts`, its
+topics, `reloadTrayTab`); Esc still closes the tray and never a float; its links still open in the page. Which tabs float
+is kept with the float places and comes back at a load; the tray's open state stays in `sessionStorage`.
 
 **Palette** (`m-shell-palette`, id `m-palette`): a `q-dialog` at the top, Ctrl+K or Cmd+K anywhere but in a rich-text editor (which keeps
 Ctrl+K). Groups (`moqui.shellPalette.groups`): Recent (the screens of this page before the current one) before any text; then Screens (the
@@ -407,6 +429,68 @@ types; while a dialog is open single keys wait. The shell's own: Mod+K the palet
 closes those), `?` the overlay of the keys on now, `c` the current app's first `+` kind. The apps' `keymap` providers: an empty or `global`
 scope everywhere, another while its app is the current one. The `KEYMAP` user preference (`config.preferences`) changes keys:
 `{"global": {"palette": "Mod+P", "g c": "g x"}}`, by scope, the binding's `action` or else its keys.
+
+## Floats
+
+Windows over the shell that are not dialogs: not modal, several at once, moved and resized by mouse, touch, pen and keys
+(`js/WebrootFloats.js`, plans/Terminal-Fancy.md §10). It loads before `WebrootVue.qvt.js` in `qapps.xml` and the desktop
+shell, so its components are precompiled; its tests are `test/client/WebrootFloats.spec.js`.
+
+- **The layer** (`m-float-layer`, in the root after `q-layout`, outside `#m-canvas`): fixed over the page, the header and the
+  docked drawers (z-index 2050), below the call's ring bar, an overlay drawer, dialogs, menus and notices. It draws the windows
+  the store lists and holds no content. At its bottom left a strip has the Arrange button (Tile, Cascade, Column at the
+  right, Minimize all, and a kind's Gather) and a chip for each minimized window. The Arrange items are `moqui.keymap` actions
+  `floatsTile`, `floatsCascade`, `floatsColumn` and `floatsMinimizeAll` with no keys; `KEYMAP` gives them some.
+- **A window** (`m-float`, `role="dialog"`, `aria-modal="false"`, labelled by its title): a title bar with the kind's icon or
+  status dot, the title, a count badge, then Minimize, Maximize, Dock and Close. The bar drags it (pointer capture, by
+  `moqui.pointer`); at an edge it snaps to that half, near a corner to that quarter, with an outline before the drop; dragged
+  to its kind's home it docks at the drop, with a dashed outline of the home labelled Dock before it (Assist and a tray tab:
+  the right edge, in place of the right half; a terminal: the Terminal screen's tab strip); a double click maximizes and
+  restores; with the bar focused the arrow keys move it and Shift with them resizes it. Eight grips resize it, down to the
+  kind's minimum. A press raises it; a click on the bar gives the content the keys. Esc is the content's, never the window's.
+  The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
+  shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
+- **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions, home(key, float)})`.
+  `home` answers where the content docks, measured when a drag starts: `{rect: {x, y, w, h}, edge}` with an edge of the
+  area (`left`, `right`, `top`, `bottom`: a drag to that edge, outside the corners, docks in place of its snap) or none (a
+  drag over the rect docks), or null for no home now. `actions`
+  (a list, or a function of the key) are buttons of the kind's own on the title bar before Minimize: `{id, icon, label,
+  run(key, float)}` (a terminal's Pop out and End session). `title`, `icon`,
+  `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, rect, restore})`
+  answers the window's id (`kind:key`), or false; `close(id)`, `dock(id)`, `hide(id)` (still a float, drawn nowhere),
+  `show(id)`, `focus(id)`, `minimize(id)`, `maximize(id)`, `toggle(kind, key)` (shows a hidden or minimized window,
+  raises one under another, hides the top one), `arrange(mode, kind)`; `state.floats` is reactive (id, kind, key, x, y,
+  w, h, z, minimized, maximized, hidden).
+- **Content comes to the window** (D17): the owner keeps its component where it is and moves its element into the body,
+  `<teleport :to="floats.target(kind, key) || 'body'" :disabled="!floats.target(kind, key)">`. `target` answers the body's
+  selector only once the body is mounted, so the teleport never names an element that is not there. Content that is an
+  element of its own (a terminal) takes `await floats.whenReady(kind, key)`, the body element or null. A moved element
+  loses its scroll position; the owner puts it back.
+- **Kept**: places, sizes, the order, minimized, maximized, hidden and which (kind, key) float, in `localStorage` under
+  `moqui.scopedKey("moqui.floats")`, per device (D13), with the last place of a docked one. At a load a kind asks
+  `wasFloated(kind, key)` and opens itself with `{restore: true}`.
+- **Small screens**: below 600 px, and on a `density="handheld"` screen, nothing floats: `open` answers false,
+  `canFloat()` is false (an owner hides its Undock button), and what floats docks, closed.
+- **Assist's reach** (§10.7): `floats.reach()` is the ids of the shown bodies of a kind with `inReach`, which the root adds
+  to `assistReach`. An element with `data-assist-self` is never in reach, wherever it is.
+- **The kinds of this version**: `assist` (the Assist drawer's body, [Assist](../ai/Assist.md#the-drawer)), `tray` (a
+  tab of the tray, above) and `terminal` (below).
+
+## The terminal store
+
+`js/WebrootTerminal.js`, loaded for a signed-in user when the server serves `/termws`, holds `moqui.terminal`
+([Terminal](Terminal.md)): the user's sessions as the server lists them (`state.sessions`, `state.order`, reactive), the
+options they may open, their settings, and per session, not reactive, its xterm.js instance, socket and element. A
+view (`m-terminal-view`: a pane of the Terminal screen, or a floating window's body) moves the session's element into
+itself when mounted and out when unmounted without disposing it, so one terminal moves between places and nothing
+reconnects; past 12 live terminals the one shown longest ago is let go and replays when shown again. `open(kind,
+{profileName, directory, resume})`, `close(id)`, `rename(id, title)`, `refresh()`, `float(id)`, `unfloat(id)`,
+`toggleQuick()`, `showInScreen(id)`, `jumpPrompt(key, back)`, `find(key, text, back)`, `paste(key, text)`. It registers
+the `terminal` float kind, the quick terminal's key (Ctrl+\`), the header's `m-terminal-button`, the terminal's
+command palette actions (`moqui.shellPalette.registerActions`, rows with `run()`), and a listener of the
+`TerminalAttention` topic; at a load it restores floating terminals only in a browser that has had one. Its spec is
+`test/client/WebrootTerminal.spec.js`.
 
 ## Preferences
 

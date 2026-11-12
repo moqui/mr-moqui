@@ -299,7 +299,7 @@
         const st = {};
         const saved = [];
         const reset = () => {
-            Object.assign(st, { formName: "", fieldForm: "", owner: "", inForm: false, inRow: false, inCard: false, inList: false, listName: "", multi: false, accordion: "", accIndex: 0, accActive: "", selectedForm: false });
+            Object.assign(st, { formName: "", fieldForm: "", owner: "", inForm: false, inRow: false, inCard: false, inList: false, listName: "", multi: false, accordion: "", accIndex: 0, accActive: "", selectedForm: false, textLinks: false });
             saved.length = 0;
         };
         reset();
@@ -1000,8 +1000,9 @@
                 const href = dynamic ? (noParam ? dynamicPath(n, "url") : urlOfPath(n, dynamicPath(n, "url"), null, null)) :
                     found ? (noParam ? sq(navPath) : urlOf(n, navPath, null, navParams)) : exp(at(n, "url"), n, "url", false);
                 const tag = toScreen ? "m-link" : "a";
-                // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons.
-                const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
+                // A screen link in a form-list cell is text (as is link-type anchor anywhere, and every link of a nav-card); the
+                // others are tonal buttons.
+                const textLink = st.textLinks || linkType === "anchor" || (st.inList && linkType !== "anchor-button");
                 const attrs = Object.assign({ ":href": href, ":disable": disable, ":aria-label": accessibleLabel, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: textLink ? cls("m-link-text", style) : null }, confirmAttr);
                 if (!toScreen) {
                     attrs[":href"] = "(" + disable + ")?undefined:(" + href + ")";
@@ -1233,11 +1234,11 @@
             const shown = first(n.parent, "visible-when");
             return { ":required": "$mq.holds(" + whenArgs(requireWhen) + ")" + (shown ? "&&$mq.holds(" + whenArgs(shown) + ")" : "") };
         };
-        const fieldBox = (when, containerStyle, big) => {
+        const fieldBox = (when, containerStyle, big, aiOff) => {
             let style = null;
             if (when) style = "$mq.shown(" + whenArgs(when) + ")";
             const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
-            const attrs = { class: box, ":style": style };
+            const attrs = Object.assign({ class: box, ":style": style }, aiOff ? { "data-ai-opt-out": "field", "data-ai-field": String(aiOff) } : {});
             if (containerStyle && isDynamic(containerStyle)) { delete attrs.class; attrs[":class"] = "'q-ma-sm '+" + exp(containerStyle, null, "container-style", false); }
             w("<div" + A(attrs) + ">");
         };
@@ -1382,6 +1383,9 @@
         };
 
         const cellStyle = (style, align) => cls("form-group", style || null, align === "right" ? "text-right" : align === "center" ? "text-center" : null);
+        // a list cell's attributes: its classes, and data-ai-opt-out="field" for an ai-opt-out field (ScreenQvt.js rowCellOpen)
+        const cellAttrs = (sub, field) => Object.assign({ class: cellStyle(at(sub, "container-style"), at(field, "align")) },
+            at(field, "ai-opt-out") === "true" ? { "data-ai-opt-out": "field", "data-ai-field": at(field, "name") || "field" } : {});
 
         // The widgets of the field in a cell: the branch that holds, as a chain of v-if templates.
         const cellBody = (field, emitSub) => {
@@ -1491,6 +1495,9 @@
                 n.children.forEach(renderNode);
                 w("</" + (at(n, "type") || "div") + ">\n");
             } else if (name === "section") {
+                // an ai-opt-out section: in its display:contents div (aiOffWrap below)
+                const off = at(n, "ai-opt-out") === "true";
+                if (off) w('<div class="m-ai-opt-out" data-ai-opt-out="section">');
                 const condition = sectionCondition(n);
                 if (condition === null) note("condition", n, "section " + at(n, "name") + " has an XML condition that cannot be a v-if");
                 if (condition) w(vIf(n, condition));
@@ -1499,7 +1506,10 @@
                     w("</template>");
                     if (first(n, "fail-widgets")) { w("<template v-else>"); nodesOf(n, "fail-widgets").forEach(renderNode); w("</template>"); }
                 }
+                if (off) w("</div>");
             } else if (name === "section-iterate") {
+                const off = at(n, "ai-opt-out") === "true";
+                if (off) w('<div class="m-ai-opt-out" data-ai-opt-out="section">');
                 const condition = sectionCondition(n);
                 if (at(n, "paginate") === "true") w(sectionPaginate(n));
                 w(sectionIterateOpen(n));
@@ -1510,6 +1520,7 @@
                     w("</template>");
                 }
                 w("</m-scope></template>");
+                if (off) w("</div>");
             } else if (name === "container-dialog") {
                 const wrapped = containerDialog(n);
                 n.children.forEach(renderNode);
@@ -1543,7 +1554,7 @@
             const box = (sub) => {
                 if (kids(sub, "ignored").length) return;
                 if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                fieldBox(first(sub, "visible-when"), at(sub, "container-style"), big);
+                fieldBox(first(sub, "visible-when"), at(sub, "container-style"), big, at(field, "ai-opt-out") === "true" ? at(field, "name") || "field" : "");
                 subWidgets(sub);
                 w("</div>");
             };
@@ -1787,7 +1798,7 @@
                 cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length) return;
                     if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 });
@@ -1832,7 +1843,7 @@
         const specialCell = (field, tag) => {
             const sub = first(field, tag);
             if (!sub || !sub.children.length || kids(sub, "hidden").length) return;
-            w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+            w("<div" + A(cellAttrs(sub, field)) + ">");
             subWidgets(sub);
             w("</div>");
         };
@@ -1849,7 +1860,7 @@
                 w('<div class="col">');
                 fields.forEach((field) => cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length || kids(sub, "hidden").length) return;
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 }));
@@ -1989,7 +2000,7 @@
                 fields.forEach((field) => cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length) return;
                     if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 }));
@@ -2010,7 +2021,7 @@
                 if (!field) { if (name) w('<span v-text="' + e("$mq.str(" + scopeRef(name + "_display") + " || " + scopeRef(name) + ")") + '"></span>'); return; }
                 cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length || kids(sub, "hidden").length) return;
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 });
@@ -2102,7 +2113,7 @@
                     cellBody(field, (sub) => {
                         if (kids(sub, "ignored").length) return;
                         if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                        w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                        w("<div" + A(cellAttrs(sub, field)) + ">");
                         subWidgets(sub);
                         w("</div>");
                     });
@@ -2239,14 +2250,7 @@
 
         // A number-card as ScreenQvt.js writes it, its attributes bound over the scope as a label's text is: the title localized,
         // the value, delta and icon expanded, the link a screen link (a plain anchor, external, to something other than a screen).
-        const numberCard = (n) => {
-            const out = {};
-            plainAttr(out, "id", at(n, "id"), n);
-            textAttr(out, "title", at(n, "title"), n, true);
-            plainAttr(out, "value", at(n, "value"), n);
-            plainAttr(out, "delta", at(n, "delta"), n);
-            if (at(n, "delta-good")) out["delta-good"] = at(n, "delta-good");
-            plainAttr(out, "icon", at(n, "icon"), n);
+        const cardLink = (out, n) => {
             if (at(n, "link") && isDynamic(at(n, "link"))) {
                 // known only in the browser: resolved against this screen there; m-link follows an external one as an anchor
                 out[":href"] = dynamicPath(n, "link");
@@ -2258,9 +2262,39 @@
                 out[":href"] = found ? urlOf(n, navPath, null, navParams) : exp(at(n, "link"), n, "link", false);
                 if (!(found && found.screenUrl)) out.external = true;
             }
+        };
+        const numberCard = (n) => {
+            const out = {};
+            plainAttr(out, "id", at(n, "id"), n);
+            textAttr(out, "title", at(n, "title"), n, true);
+            plainAttr(out, "value", at(n, "value"), n);
+            plainAttr(out, "delta", at(n, "delta"), n);
+            if (at(n, "delta-good")) out["delta-good"] = at(n, "delta-good");
+            plainAttr(out, "icon", at(n, "icon"), n);
+            cardLink(out, n);
             if (at(n, "size")) out.size = at(n, "size");
+            plainAttr(out, "sparkline", at(n, "sparkline"), n);
             plainAttr(out, "class", at(n, "style"), n);
             w(withCondition(n, "<m-number-card" + A(out) + "></m-number-card>\n"));
+        };
+        // A nav-card as ScreenQvt.js writes it, bound over the scope as a number-card: the title and the text localized, the link
+        // a screen link; its child links follow in the default slot, each a text link (st.textLinks), and a condition is a v-if
+        // around the card.
+        const navCardOpen = (n) => {
+            const out = {};
+            plainAttr(out, "id", at(n, "id"), n);
+            textAttr(out, "title", at(n, "title"), n, true);
+            textAttr(out, "text", at(n, "text"), n, true);
+            plainAttr(out, "icon", at(n, "icon"), n);
+            cardLink(out, n);
+            if (at(n, "size")) out.size = at(n, "size");
+            plainAttr(out, "class", at(n, "style"), n);
+            w((at(n, "condition") ? '<template v-if="' + e(X(at(n, "condition"), n, "condition")) + '">' : "") + "<m-nav-card" + A(out) + ">");
+            st.textLinks = true;
+        };
+        const navCardClose = (n) => {
+            st.textLinks = false;
+            w("</m-nav-card>" + (at(n, "condition") ? "</template>" : "") + "\n");
         };
         // status-bar as ScreenQvt.js writes it, the attributes bound over the scope; the browser asks the root screen's statusBar
         // transition for the flow of the status (m-status-bar barUrl), as the data is not in the template.
@@ -2325,7 +2359,7 @@
             containerDialog, dynamicDialog, dynamicContainer, tree, subscreensPanel, subscreensTabs, image, label: labelWidget,
             link: (n, inField) => link(n, inField), editable, formSingle, formList, rowOpen, colOpen, fieldGroup, fieldGroupClose, quasarColor,
             split, js: js_, widgetFns, imageTag, xmlCondition, sectionPaginate, sectionIterateOpen, buttonMenuOpen, buttonMenuItem, buttonMenuClose, screenContext,
-            numberCard, dashboardOpen, chatter, recordFiles, splitOpen, htmlView, markdownView, statusBar,
+            numberCard, navCardOpen, navCardClose, dashboardOpen, chatter, recordFiles, splitOpen, htmlView, markdownView, statusBar,
             codeView, reportWidget
         };
         Object.defineProperty(globalThis, "$mqQvtS", { value: h, configurable: true });
@@ -2358,10 +2392,14 @@
         const fail = child(node, "fail-widgets");
         const condition = conditionCode(node);
         const body = widgets ? widgets.source || "" : "";
-        if (!condition) return body;
-        return `{\nconst $cond = ${condition};\nif ($cond) sri.write($s.vIf(${wlit(node, false)}, $cond));\n${body}if ($cond) {\nsri.write("</template>");\n` +
-            (fail ? `sri.write("<template v-else>");\n${fail.source || ""}sri.write("</template>");\n` : "") + "}\n}\n";
+        if (!condition) return aiOffWrap(node, "section", body);
+        return aiOffWrap(node, "section", `{\nconst $cond = ${condition};\nif ($cond) sri.write($s.vIf(${wlit(node, false)}, $cond));\n${body}if ($cond) {\nsri.write("</template>");\n` +
+            (fail ? `sri.write("<template v-else>");\n${fail.source || ""}sri.write("</template>");\n` : "") + "}\n}\n");
     });
+
+    // ai-opt-out on a section or screen: its template in a display:contents div with data-ai-opt-out (ScreenQvt.js aiOffWrap)
+    const aiOffWrap = (node, kind, code) => (attr(node, "ai-opt-out") === "true" && code
+        ? `sri.write('<div class="m-ai-opt-out" data-ai-opt-out="${kind}">');\n${code}\nsri.write("</div>");\n` : code);
 
     const sectionIterateMacro = stmt((node) => {
         const widgets = child(node, "widgets");
@@ -2377,7 +2415,7 @@
             if (fail) code += `sri.write("</template><template v-else>");\n${fail.source || ""}`;
             code += `sri.write("</template>");\n}\n`;
         }
-        return "{\n" + code + `sri.write("</m-scope></template>");\n}\n`;
+        return aiOffWrap(node, "section", "{\n" + code + `sri.write("</m-scope></template>");\n}\n`);
     });
 
     const containerMacro = stmt((node, children) => `$s.containerOpen(${wlit(node, false)});\n${children}sri.write(${lit(`</${attr(node, "type") || "div"}>\n`)});\n`);
@@ -2479,12 +2517,14 @@
 
     const linkMacro = stmt((node) => `$s.link(${wlit(node, true)}, ${!!(node.parent && node.parent.name.endsWith("-field"))});\n`);
     const widget = (name, withChildren) => stmt((node) => call(name, node, withChildren));
+    // A nav-card: the card, then its child links in its default slot.
+    const navCardMacro = stmt((node, children) => `$s.navCardOpen(${wlit(node, false)});\n${children}$s.navCardClose(${wlit(node, false)});\n`);
     const noteMacro = (kind, what) => stmt((node) => `sri.staticNote(${lit(kind)}, ${lit(node.name)}, ${lit(what + " " + (attr(node, "name") || attr(node, "location")) + " was not resolved")});\n`);
 
     const macros = Object.assign({}, noops(S.allElements), noops(["condition", "actions"]), {
         // an element no macro names: the walker logs it and writes Java's placeholder, as the merged qvt does
         "@element": stmt((node) => S.unknownElementCode(MODE, node.name)),
-        "screen": stmt((node, children) => children),
+        "screen": stmt((node, children) => aiOffWrap(node, "screen", children)),
         "widgets": widgetsMacro,
         "fail-widgets": widgetsMacro,
         "dynamic-form": widgetsMacro,
@@ -2534,6 +2574,7 @@
         "report-embed": stmt(() => { throw new Error("report-embed renders data for the viewer, which a static template does not hold"); }),
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
+        "nav-card": navCardMacro,
         "status-bar": widget("statusBar", true),
         "chatter": widget("chatter", false),
         "record-files": widget("recordFiles", false),

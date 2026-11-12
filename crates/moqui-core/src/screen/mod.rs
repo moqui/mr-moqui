@@ -77,8 +77,8 @@ pub use definition::{
     SectionDef, SectionKind, Subscreens, SubscreensItem, TransitionDef, TreeDef, WebSettings, XmlFragment,
 };
 pub use gate::{
-    clear_transition_observer, held_write_hash, install_transition_observer, interactive_request, HeldWrite,
-    InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,
+    agent_render, clear_transition_observer, held_write_hash, install_transition_observer, interactive_request,
+    HeldWrite, InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,
 };
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
@@ -263,11 +263,46 @@ fn handle(
         stamp_http_log(&mut response);
         return Ok(response);
     }
+    // A registered shared device (user/device.rs): its request runs as its display account, only within its route
+    // group, and the web session never holds that identity. A device that is no more is refused here, whatever it asks.
+    let mut device = match user::device::begin_request(request) {
+        Ok(user::device::DeviceRequest::None) => None,
+        Ok(user::device::DeviceRequest::Active(device)) => Some(device),
+        Ok(user::device::DeviceRequest::Refused(refusal)) => {
+            // a browser's page (a wall display) gets a plain page it can show, an API client the JSON error
+            let mut response = if takes_html(request) {
+                device_page(403, refusal.page_text())
+            } else {
+                web::json_error(403, refusal.message())
+            };
+            if refusal.ends_cookie() {
+                response
+                    .headers
+                    .push(("Set-Cookie".to_string(), user::device::expired_cookie(request.https)));
+            }
+            stamp_http_log(&mut response);
+            // a refused request carries no session cookie: one made for it now is never seen again
+            if presented.as_deref() != Some(guard.session_id().as_str()) {
+                user::session::discard_bound_session();
+            }
+            return Ok(response);
+        }
+        Err(err) => {
+            let mut response = web::json_error_of(&err);
+            stamp_http_log(&mut response);
+            if presented.as_deref() != Some(guard.session_id().as_str()) {
+                user::session::discard_bound_session();
+            }
+            return Ok(response);
+        }
+    };
     // What the last response saved for this request sits under the request's own parameters.
     let saved = user::session::take_saved_parameters();
     let error_parameters = user::session::take_error_parameters();
     let merged;
-    let parameters = if saved.is_empty() {
+    // the parameter a device's registration fixed (a wall display's playlist) is the request's, whatever was sent
+    let fixed = device.as_ref().and_then(|device| device.scope().parameter.clone());
+    let parameters = if saved.is_empty() && fixed.is_none() {
         parameters
     } else {
         let mut all: BTreeMap<String, Value> = saved
@@ -275,6 +310,9 @@ fn handle(
             .map(|(name, value)| (name, Value::String(value)))
             .collect();
         all.extend(parameters.iter().map(|(name, value)| (name.clone(), value.clone())));
+        if let Some((name, value)) = fixed {
+            all.insert(name, Value::String(value));
+        }
         merged = all;
         &merged
     };
@@ -288,7 +326,11 @@ fn handle(
     web::set_request_info(request);
     web::set_request_locale(request.header("accept-language"));
     web::set_request(Arc::clone(request), body);
-    let (login_error, header_authenticated) = authenticate(request, parameters)?;
+    // a device's request reads no key, Basic credentials or login parameters: its credential is its only authority
+    let (login_error, header_authenticated) = match &device {
+        Some(_) => (None, false),
+        None => authenticate(request, parameters)?,
+    };
     // A session that did not come with the request was made for it, and its token was never sent to the client.
     let new_session = presented.as_deref() != Some(guard.session_id().as_str());
     let scripts = factory.webapp_scripts();
@@ -343,6 +385,7 @@ fn handle(
             tracing::error!("Error ending the session work of a request whose response was sent: {err}");
         }
         web::stream::finish();
+        drop(device);
         drop(guard);
         return outcome;
     }
@@ -363,6 +406,18 @@ fn handle(
         )?;
         response
     };
+    // a device's daily new secret goes on a response that reaches its browser with the header (this one, not streamed,
+    // not one a shared cache may keep), else it is not made: a browser that misses it is stopped as a copy (user/device.rs)
+    if let Some(device) = device.as_mut().filter(|_| !is_public(&response)) {
+        match device.rotate() {
+            Ok(Some(cookie)) => response.headers.push(("Set-Cookie".to_string(), cookie)),
+            Ok(None) => {}
+            Err(err) => tracing::error!(
+                "Shared device {}: its secret was not replaced: {err}",
+                device.scope().device_id
+            ),
+        }
+    }
     not_modified(request, &mut response);
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
@@ -372,6 +427,7 @@ fn handle(
             .push(("X-Moqui-Preferences".to_string(), web::preferences_header(&changed)));
     }
     stamp_http_log(&mut response);
+    drop(device);
     drop(guard);
     Ok(response)
 }
@@ -475,6 +531,10 @@ fn serve_servlet(
             )
         }
         Handler::Script(location) => {
+            // a script servlet is in no route group: a shared device's request never runs one
+            if let Some(scope) = user::device::current_scope() {
+                return Ok(web::json_error_of(&user::device::refused_route(&scope)));
+            }
             // a script's writer commits as a servlet's does: when its buffer fills, or at `flushBuffer`
             web::stream::arm(ScreenFacade::of(factory).conf().stream_threshold);
             match crate::script::invoke_web_handler(location, "servlet", found.servlet.data()) {
@@ -544,6 +604,10 @@ fn dispatch_request(
             .iter()
             .any(|route| route.screen_location == root)
         {
+            // a token route is in no route group: a shared device's request does not reach its token check
+            if let Some(scope) = user::device::current_scope() {
+                return Ok(web::json_error_of(&user::device::refused_route(&scope)));
+            }
             return token_route::dispatch(
                 factory,
                 request,
@@ -725,6 +789,25 @@ impl Drop for EndRequest {
     }
 }
 
+/// Whether the client takes an html page for its answer (a browser's navigation).
+fn takes_html(request: &WebRequest) -> bool {
+    request
+        .header("accept")
+        .is_some_and(|accept| accept.contains("text/html"))
+}
+
+/// The plain page of a shared device's browser ([`user::device::refusal_page`]), never cached.
+fn device_page(status: u16, text: &str) -> WebResponse {
+    let mut response = WebResponse::new(status, user::device::refusal_page(text).into_bytes());
+    response
+        .headers
+        .push(("Content-Type".to_string(), "text/html; charset=utf-8".to_string()));
+    response
+        .headers
+        .push(("Cache-Control".to_string(), "private, no-store".to_string()));
+    response
+}
+
 /// The html page for a failure, when the client takes html and the path is not an API path: the `error/*`
 /// screen with `errorCode`, `errorType`, `errorMessage`, `errorThrowable` and `showErrorDetail` in its context.
 /// None when the page cannot be made, and the caller sends the JSON error. `message` is the client's text of the error,
@@ -738,15 +821,23 @@ fn error_page(
     err: &Error,
     message: &str,
 ) -> Option<WebResponse> {
-    if !request
-        .header("accept")
-        .is_some_and(|accept| accept.contains("text/html"))
-    {
+    if !takes_html(request) {
         return None;
     }
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
     if ["rest", "rpc", "status", "error", "health", "metrics"].contains(&first) {
         return None;
+    }
+    // a shared device's page: the plain one, never the instance's error screen (which its route group refuses anyway)
+    // or the error's text
+    if user::device::current_scope().is_some() {
+        let _ = web::take_output();
+        let text = if err.kind() == crate::context::ErrorKind::Unauthorized {
+            user::device::OUTSIDE_PAGE_TEXT
+        } else {
+            user::device::FAILED_PAGE_TEXT
+        };
+        return Some(device_page(status, text));
     }
     // The webapp's `error-screen` of this error type, as `MoquiServlet.sendErrorResponse`; the shipped path otherwise.
     let (kind, shipped) = web::error_info::error_screen(status);

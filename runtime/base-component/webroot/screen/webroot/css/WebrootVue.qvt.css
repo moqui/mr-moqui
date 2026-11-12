@@ -119,7 +119,7 @@ a { color:var(--m-link); text-decoration:none; }
    already separates them by the tint step of the panel over the body). Put the light-mode content on a light gray ground and
    give the white panels a soft shadow, the standard app-frame elevation. */
 body:not(.body--dark) .q-page { background:var(--m-page-bg); }
-.m-container-box, .m-number-card, .m-card, .q-table__card { box-shadow:var(--m-card-shadow, 0 1px 2px rgba(0,0,0,.05), 0 1px 3px rgba(0,0,0,.08)) !important; } /* the panels are q-card--flat no-shadow, which is !important */
+.m-container-box, .m-number-card, .m-nav-card, .m-card, .q-table__card { box-shadow:var(--m-card-shadow, 0 1px 2px rgba(0,0,0,.05), 0 1px 3px rgba(0,0,0,.08)) !important; } /* the panels are q-card--flat no-shadow, which is !important */
 
 /* ====== breathing room: the sections keep a little more air between them ======
    The boxes and the dashboard are the page's sections; a touch more vertical room between them (the boxes' margin is
@@ -139,7 +139,8 @@ body:not(.body--dark) .q-page { background:var(--m-page-bg); }
    focus make them feel responsive, the way the consumer task apps do. The table rows' hover tint fades in on its own (below) and
    the buttons keep Quasar's ripple; these are the cards only. */
 .m-board-card, .q-btn.m-app-tile { transition: box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease; }
-.m-number-card-link:hover .m-number-card, .m-number-card-link:focus-visible .m-number-card { box-shadow:0 2px 6px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.08) !important; transform:translateY(-1px); }
+.m-number-card-link:hover .m-number-card, .m-number-card-link:focus-visible .m-number-card,
+.m-nav-card.m-nav-card-link:hover, .m-nav-card.m-nav-card-link:focus-within { box-shadow:0 2px 6px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.08) !important; transform:translateY(-1px); }
 .m-board-card:hover, .q-btn.m-app-tile:hover { box-shadow:0 2px 8px rgba(0,0,0,.14); transform:translateY(-1px); }
 .body--dark .m-board-card:hover, .body--dark .q-btn.m-app-tile:hover { box-shadow:0 2px 10px rgba(0,0,0,.55); }
 
@@ -186,6 +187,10 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-drawer > .q-item.m-drawer-screen.m-drawer-on-path { font-weight:500; }
 .m-drawer > .q-item.m-drawer-in-app { background:color-mix(in srgb, var(--q-primary) 6%, transparent); }
 .m-drawer > .q-item.m-drawer-app.m-drawer-in-app { color:var(--m-link); }
+/* a menu group's caption (menu-group), above the first of its run of items, indented as they are */
+.m-drawer > .m-drawer-group { padding-top:10px; padding-bottom:2px; padding-right:8px; font-size:11px; line-height:16px; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--m-text-muted); }
+.m-drawer > .m-drawer-group.m-drawer-in-app { background:color-mix(in srgb, var(--q-primary) 6%, transparent); }
 .m-drawer > .q-item.m-drawer-nested::before { content:""; position:absolute; top:0; bottom:0; left:var(--m-guide, 12px);
     border-left:1px solid rgba(0,0,0,.12); }
 .m-drawer > .q-item.m-drawer-current { color:var(--m-drawer-current-fg, var(--m-link)); font-weight:500;
@@ -223,6 +228,49 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-tray .q-tab { padding:0 10px; min-height:40px; }
 .m-tray-body { overflow-y:auto; min-height:0; }
 @media print { .m-tray-sticky { display:none!important; } }
+/* floats (WebrootFloats.js, plans/Terminal-Fancy.md §10): a fixed layer over the page, the header (2000) and the docked drawers,
+   below the call's ring bar (2100), an overlay drawer (3000), dialogs and menus (6000) and notices; it takes no pointer itself */
+.m-float-layer { position:fixed; inset:0; z-index:2050; pointer-events:none; }
+.m-float { position:absolute; pointer-events:auto; background:var(--m-panel-bg); color:var(--m-text); border:1px solid var(--m-border);
+    border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12); overflow:hidden; min-width:0; min-height:0; }
+.body--dark .m-float { box-shadow:0 8px 24px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4); }
+.m-float.m-float--max { border-radius:0; }
+/* hidden or minimized: still laid out, so what it holds keeps its scroll; not seen, not focusable, not read */
+.m-float.m-float--hidden { visibility:hidden; pointer-events:none; }
+.m-float-bar { flex:none; min-height:34px; padding:0 2px 0 8px; gap:2px; cursor:grab; user-select:none; touch-action:none;
+    background:color-mix(in srgb, var(--m-text) 4%, var(--m-panel-bg)); border-bottom:1px solid var(--m-divider); }
+.m-float--top .m-float-bar { background:color-mix(in srgb, var(--q-primary) 10%, var(--m-panel-bg)); }
+.m-float-bar:focus-visible { outline:2px solid var(--q-primary); outline-offset:-2px; }
+.m-float-bar .q-btn { cursor:pointer; }
+.m-float-title { font-size:.875rem; font-weight:500; padding-left:4px; }
+.m-float-icon { color:var(--m-text-muted); }
+.m-float-dot { width:10px; height:10px; border-radius:50%; flex:none; margin:0 4px; }
+/* the body: what its owner moves into it fills it, a tray tab's .col and Assist's .fit alike */
+.m-float-body { flex:1 1 0; min-height:0; display:flex; flex-direction:column; position:relative; overflow:hidden; }
+.m-float-body > * { min-height:0; }
+/* the grips: four edges and four corners, just inside the frame, larger for touch */
+.m-float-grip { position:absolute; z-index:2; touch-action:none; }
+.m-float-grip--n, .m-float-grip--s { left:10px; right:10px; height:6px; cursor:ns-resize; }
+.m-float-grip--e, .m-float-grip--w { top:10px; bottom:10px; width:6px; cursor:ew-resize; }
+.m-float-grip--n { top:0; } .m-float-grip--s { bottom:0; } .m-float-grip--e { right:0; } .m-float-grip--w { left:0; }
+.m-float-grip--ne, .m-float-grip--nw, .m-float-grip--se, .m-float-grip--sw { width:12px; height:12px; }
+.m-float-grip--ne { top:0; right:0; cursor:nesw-resize; } .m-float-grip--sw { bottom:0; left:0; cursor:nesw-resize; }
+.m-float-grip--nw { top:0; left:0; cursor:nwse-resize; } .m-float-grip--se { bottom:0; right:0; cursor:nwse-resize; }
+@media (pointer: coarse) { .m-float-grip--n, .m-float-grip--s { height:12px; } .m-float-grip--e, .m-float-grip--w { width:12px; }
+    .m-float-grip--ne, .m-float-grip--nw, .m-float-grip--se, .m-float-grip--sw { width:20px; height:20px; } }
+.m-float--max .m-float-grip { display:none; }
+/* the outline of where a drop snaps */
+.m-float-snap { position:absolute; border:2px solid var(--q-primary); border-radius:8px; background:color-mix(in srgb, var(--q-primary) 12%, transparent);
+    pointer-events:none; z-index:100000; }
+/* a drag at the window's home docks it at the drop (plans/Terminal-Fancy.md §15): a dashed outline of where it goes, labelled */
+.m-float-snap--home { border-style:dashed; display:flex; align-items:center; justify-content:center; }
+.m-float-snap-label { padding:2px 10px; border-radius:12px; background:var(--q-primary); color:#fff; font-size:13px; font-weight:500; }
+/* the strip at the bottom: Arrange and the minimized windows */
+.m-float-strip { position:absolute; left:8px; bottom:8px; max-width:calc(100% - 16px); gap:4px; overflow-x:auto; pointer-events:none; z-index:100001; }
+.m-float-strip > * { pointer-events:auto; }
+.m-float-strip-btn { background:var(--m-panel-bg); border:1px solid var(--m-border); }
+.m-float-chip.q-chip { margin:0; max-width:220px; background:var(--m-panel-bg); color:var(--m-text); border:1px solid var(--m-border); }
+@media print { .m-float-layer { display:none!important; } }
 /* the Appearance dialog (m-appearance-dialog): a scheme card is its light and dark swatches (the page, a panel with text, the primary)
    over its name, the chosen one outlined in the primary */
 .m-appearance-schemes { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }
@@ -299,6 +347,9 @@ form.q-form { width:100%; }
    related controls without stretching short inputs across the entire screen; phones keep one reading column. */
 .m-find-options { display:flex; flex-direction:column; gap:16px; }
 .q-dialog__inner--maximized .m-dialog-body { max-height:calc(100dvh - 48px) !important; }
+/* a draggable dialog's header takes a touch or pen drag as its own, not as a scroll; not while it fills a phone's screen */
+.m-dialog-drag { touch-action:none; }
+.q-dialog__inner--maximized .m-dialog-drag { touch-action:auto; }
 .m-find-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px 16px; max-height:calc(80dvh - 190px); overflow-y:auto; padding:2px; }
 .m-find-fields > .q-ma-sm { margin:0; min-width:0; }
 .m-find-sort { padding-top:12px; border-top:1px solid var(--m-divider); }
@@ -547,15 +598,35 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-number-card-wrap { display:block; height:100%; color:inherit; text-decoration:none; }
 .m-number-card { height:100%; }
 .m-number-card-body { min-width:0; }
+.m-resource-meter { min-width:72px; max-width:160px; }
+.m-number-card-spark { display:block; width:100%; height:22px; margin-top:4px; color:var(--m-link); opacity:.8; }
 .m-number-card-title { line-height:1.4; opacity:0.75; }
 .m-number-card-value { line-height:1.25; font-weight:500; overflow-wrap:anywhere; }
 .m-number-card-icon { opacity:0.6; margin-left:8px; }
 .m-number-card-link .m-number-card { transition:box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease; }
 .m-number-card-link:hover .m-number-card, .m-number-card-link:focus-visible .m-number-card { border-color:var(--q-primary); }
 .m-number-card-link:focus-visible { outline:none; }
+/* nav-card (plans/archive/Tools-Fancy.md B6): the icon in a tonal avatar (the link color over its own 12% tint, as m-tonal), the title
+   and one muted line. The title is the card's link and its ::after covers the card, so the whole card is one link; the child
+   links along the bottom sit above it. A links row whose links all wrote nothing takes no room. */
+.m-nav-card { position:relative; height:100%; }
+.m-nav-card-body { min-width:0; }
+.m-nav-card-avatar { color:var(--m-link); background:color-mix(in srgb, currentColor 12%, transparent); }
+.body--dark .m-nav-card-avatar { background:color-mix(in srgb, currentColor 18%, transparent); }
+.m-nav-card-title { display:block; color:inherit; text-decoration:none; line-height:1.4; overflow-wrap:anywhere; }
+.m-nav-card-text { line-height:1.35; }
+.m-nav-card-lg .m-nav-card-text { margin-top:2px; }
+.m-nav-card-link { transition:box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.m-nav-card-link a.m-nav-card-title::after { content:""; position:absolute; inset:0; border-radius:inherit; }
+.m-nav-card-link a.m-nav-card-title:focus-visible { outline:none; }
+.m-nav-card.m-nav-card-link:hover, .m-nav-card.m-nav-card-link:focus-within { border-color:var(--q-primary); }
+.m-nav-card-links { position:relative; z-index:1; gap:2px 16px; font-size:0.8125rem; }
+.m-nav-card-links:empty { display:none; }
 
 /* m-rich-text (js/README.md, Rich text): an outlined box like the Quasar fields, the toolbar over the Tiptap content; the light
    form for notes and chat is lower. The mention list is teleported to the body, above dialogs, and placed by Tiptap. */
+/* an ai-opt-out section or screen (design-people PE-21): a marker for Assist that adds no box of its own */
+.m-ai-opt-out { display:contents; }
 .m-rich-text { position:relative; width:100%; }
 .m-rich-text-label { margin:0 0 2px 2px; line-height:1.2; }
 .m-rich-text-box { position:relative; border:1px solid rgba(0,0,0,0.24); border-radius:4px; transition:border-color .2s, box-shadow .2s; }
@@ -981,7 +1052,7 @@ body.m-radius-round :is(.q-card, .q-menu, .q-table__card, .m-record-header, .m-b
 body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__control) { border-radius:8px; }
 
 /* Assist (js/WebrootAssist.js): the right drawer, its thread and cards, and the marks it leaves on the page while it follows */
-.m-assist .m-assist-body { position:relative; }
+.m-assist-body { position:relative; }
 .m-assist-resize { position:absolute; left:-3px; top:0; bottom:0; width:6px; cursor:col-resize; z-index:2; }
 .m-assist-resize:hover { background:color-mix(in srgb, var(--q-primary) 30%, transparent); }
 .m-assist-header { min-height:44px; }
@@ -1117,3 +1188,33 @@ button.m-report-native.m-report-cell-filter { min-height:0; margin:0; padding:0;
 .m-report-editor-group { margin: .6rem 0; padding: .5rem; border: 1px solid var(--q-secondary); border-radius: 4px; min-width: 0; }
 .m-report-editor-layout-item { border-left: 2px solid var(--q-primary); padding: .5rem; margin: .4rem 0; }
 .m-report-cell-filter { border: 0; padding: 0; color: inherit; background: transparent; cursor: pointer; text-align: inherit; text-decoration: underline dotted; }
+/* The browser terminal's workspace (apps/Terminal.qvue, js/WebrootTerminal.js; plans/Terminal-Fancy.md §9.3) */
+.m-terminal-strip { min-height:36px; border-bottom:1px solid var(--m-border, rgba(0,0,0,.12)); }
+.m-terminal-pane { flex:1 1 0; min-width:0; min-height:0; border:1px solid transparent; border-radius:4px; }
+.m-terminal-pane-focused { border-color:color-mix(in srgb, var(--q-primary) 55%, transparent); }
+.m-terminal-pane-header { min-height:26px; font-size:.82rem; }
+.m-terminal-split { flex:1 1 0; min-width:0; min-height:0; display:flex; }
+.m-terminal-divider { flex:0 0 6px; touch-action:none; }
+.m-terminal-divider-row { cursor:col-resize; }
+.m-terminal-divider-column { cursor:row-resize; }
+.m-terminal-divider:hover { background:color-mix(in srgb, var(--q-primary) 25%, transparent); }
+.m-terminal-list { width:280px; flex:0 0 280px; border-left:1px solid var(--m-border, rgba(0,0,0,.12)); }
+.m-terminal-muted { color:var(--m-text-muted); }
+.m-terminal-dot { display:inline-block; width:8px; height:8px; border-radius:50%; flex:0 0 8px; background:var(--m-text-muted); opacity:.55; }
+.m-terminal-dot-working { background:var(--q-info); opacity:1; }
+.m-terminal-dot-blocked { background:var(--q-warning); opacity:1; }
+.m-terminal-dot-done { background:var(--q-positive); opacity:1; }
+.m-terminal-dot-error { background:var(--q-negative); opacity:1; }
+.m-terminal-dot-ended { background:transparent; border:1px solid var(--m-text-muted); }
+/* the Terminal's pop-out window: one session, no shell chrome (Terminal-Fancy §10.4) */
+body.m-terminal-solo #top, body.m-terminal-solo #footer, body.m-terminal-solo .q-drawer, body.m-terminal-solo .m-float-layer,
+body.m-terminal-solo .m-terminal-pane-header { display:none !important; }
+body.m-terminal-solo .q-page-container { padding:0 !important; }
+.m-terminal-search { border-bottom:1px solid var(--m-border, rgba(0,0,0,.12)); }
+/* a terminal's text off the window's edge; the fit addon takes the padding off its size */
+.m-float-body .m-terminal-screen .xterm, .m-terminal-host .m-terminal-screen .xterm { padding:2px 4px; }
+.m-terminal-bell { outline:2px solid color-mix(in srgb, var(--q-warning) 70%, transparent); outline-offset:-2px; }
+/* the phone's key bar of the terminal (Terminal-Fancy §12) */
+.m-terminal-keys { overflow-x:auto; gap:2px; padding:2px 0; border-top:1px solid var(--m-border, rgba(0,0,0,.12)); }
+.m-terminal-key { min-width:36px; font-family:ui-monospace, monospace; }
+.m-terminal-key-on { background:color-mix(in srgb, var(--q-primary) 22%, transparent); }

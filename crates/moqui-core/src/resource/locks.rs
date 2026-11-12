@@ -20,7 +20,7 @@
 //! under it is locked by another user, as it would change that file. The owner may write without the token (clients
 //! lose it); a delete or move that is done drops the locks of what it took away.
 //!
-//! Locks are `moqui.resource.ResourceLock` rows, so every member of a cluster holds them (plans/High-Level-Review.md
+//! Locks are `moqui.resource.ResourceLock` rows, so every member of a cluster holds them (plans/archive/High-Level-Review.md
 //! HL-036), each until its expiry (at most an hour, which WebDAV's LOCK sets). A row's key is a hash of its location,
 //! so a write's check is one query by primary key of its location and the folders above it; a delete or move of a
 //! folder also looks for the locks under it by path. Expired rows hold nothing and are removed as locks are taken.

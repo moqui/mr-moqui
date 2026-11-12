@@ -85,6 +85,40 @@ fn a_download_is_handed_to_the_callers_policy_once_and_reports_success_or_failur
         .contains("Could not save the file: test destination is read only"));
 }
 
+/// A name that a closed dialog's field and a list's find field share is not guessed: the find is not opened, and the
+/// answer says the dialog is to be opened first. A button named with the `…` it is drawn with opens its dialog.
+#[test]
+fn a_name_a_dialog_field_shares_with_a_find_field_opens_neither() {
+    let shared = DIALOG_FIND_JSON.replace(r#""title": "Description""#, r#""title": "Owner""#);
+    let mut agent = Agent::open(FakeLink::from_json(&[shared.as_str()]).unwrap(), "/groups", 100, 30);
+    let set = agent.set_field("Owner", "ann");
+    assert!(!set.ok, "{}", set.text);
+    assert!(set.text.contains("overlay none"), "the find stays closed: {}", set.text);
+    assert!(set.text.contains("open it first with do \"New Group\""), "{}", set.text);
+    // a find's pattern is a find's: it opens the find, whatever a dialog shares the name
+    let mut finding = Agent::open(FakeLink::from_json(&[shared.as_str()]).unwrap(), "/groups", 100, 30);
+    let pattern = finding.set_field("Owner", "ann%");
+    assert!(pattern.ok && pattern.text.contains("overlay find"), "{}", pattern.text);
+    let opened = agent.run("do New Group…");
+    assert!(opened.ok, "{}", opened.text);
+    assert!(agent.set_field("Owner", "ann").ok);
+    assert_eq!(agent.session().buffer("NewGroup.description"), "ann");
+}
+
+/// The text of a list row (its id) names the row: `do` moves to it and opens it, as `find` and Enter do.
+#[test]
+fn a_rows_text_opens_the_row() {
+    let mut agent = Agent::open(gallery_link(), GALLERY_LIST_PATH, 100, 40);
+    let opened = agent.run("do ENUM_00");
+    assert!(opened.ok, "{}", opened.text);
+    assert_eq!(agent.session().path(), GALLERY_DETAIL_PATH);
+    let mut agent = Agent::open(gallery_link(), GALLERY_LIST_PATH, 100, 40);
+    let none = agent.run("do NOT_A_ROW_ANYWHERE");
+    assert!(none.text.contains("no element named"), "{}", none.text);
+    assert_eq!(agent.session().path(), GALLERY_LIST_PATH);
+    assert!(none.text.contains("\noverlay none\n"), "the search is not left open: {}", none.text);
+}
+
 #[test]
 fn elements_are_found_by_label_id_and_number() {
     let mut agent = Agent::open(gallery_link(), GALLERY_LIST_PATH, 100, 40);
@@ -160,6 +194,7 @@ fn a_palette_search_is_settled_before_the_answer() {
             url: "/Gallery".to_string(),
             children: Vec::new(),
             disabled: false,
+            group: String::new(),
         }],
         ..ShellInfo::default()
     });
@@ -420,6 +455,11 @@ fn a_name_that_finds_no_element_answers_the_nearest() {
     );
     let set = agent.run("set Descripton Thing");
     assert!(set.text.contains("did you mean: Description (text)"), "{}", set.text);
+    // a button as the screen draws it names the button
+    for drawn in ["do < Save >", "do [Save]"] {
+        let pressed = agent.run(drawn);
+        assert!(!pressed.text.contains("no element named"), "{drawn}: {}", pressed.text);
+    }
 }
 
 /// A dialog with a form, and a list with find fields (one a text find that begins).
@@ -471,14 +511,6 @@ fn a_field_out_of_reach_says_how_to_reach_it_and_a_find_filters_with_its_operato
         "{}",
         typed.text
     );
-    let find_field = agent.set_field("Group Name", "adm");
-    assert!(
-        find_field
-            .text
-            .contains("Group Name is a find field of the list Groups; do Find to open its find"),
-        "{}",
-        find_field.text
-    );
     assert!(agent.run("elements").text.contains("[find: do Find]"));
 
     assert!(agent.run("do New Group").ok);
@@ -487,7 +519,8 @@ fn a_field_out_of_reach_says_how_to_reach_it_and_a_find_filters_with_its_operato
     assert_eq!(agent.session().buffer("NewGroup.description"), "Agent eval hand-off");
     assert!(agent.run("key Esc").ok);
 
-    let opened = agent.run("do Find");
+    // a find field set while its find is closed opens the find; a value written as data takes it (`ann%` begins)
+    let opened = agent.set_field("Owner", "ann%");
     assert!(opened.ok, "{}", opened.text);
     assert!(opened.text.contains("overlay find"), "{}", opened.text);
     assert!(agent.set_field("Group Name", "adm").ok);
@@ -509,10 +542,8 @@ fn a_field_out_of_reach_says_how_to_reach_it_and_a_find_filters_with_its_operato
         Some("begins"),
         "the field's own operator"
     );
-    assert!(
-        !parameters.contains_key("owner_op") && !parameters.contains_key("owner_ic"),
-        "{parameters:?}"
-    );
+    assert_eq!(parameters.get("owner").map(String::as_str), Some("ann"), "{parameters:?}");
+    assert_eq!(parameters.get("owner_op").map(String::as_str), Some("begins"), "{parameters:?}");
 }
 
 /// The review's Cancel event form: a scope radio, a Notify check whose label is only its option, and the submit.

@@ -12,11 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-// The browser terminal's palette changes preserve its session and keep its text readable.
+// The browser terminal's store: palette changes preserve a session and keep its text readable, and a session's
+// terminal moves between views with its screen.
 spec({server: false})
 
 browser.runInPage({
-    scripts: ["/js/MoquiLib.js", "/libs/xterm/xterm.js", "/libs/xterm/addon-fit.js"],
+    scripts: ["/js/MoquiLib.js", "/libs/xterm/xterm.js", "/libs/xterm/addon-fit.js", "/libs/xterm/addon-search.js", "/libs/xterm/addon-web-links.js", "/libs/xterm/addon-unicode11.js", "/js/WebrootFloats.js", "/js/WebrootTerminal.js", "/libs/vue/compiler-dom.cjs.js"],
     styles: ["/libs/xterm/xterm.css"],
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootTerminal.page.js"
 })

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- SettingsHome (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §7, §14.2): the settings
+    index, each owner's settings landing by group (org.moqui.admin.ReadinessServices.find#Settings over the owners'
+    moqui.server.SettingsEntry registrations), shown only when its screen opens to the viewer's own groups and its view
+    permission holds; the owners resolve scope and make every change, and an entry grants nothing. An entry is linked by
+    the mount's route for its key (template/AdminMount.js): one whose place this mount does not have is not listed, so
+    System lists the framework's own and an app those of its apps too. Readiness opens Health narrowed to the entry's
+    provider, where Health opens to the viewer. SettingsFind searches by text, app and group. The presentation is
+    template/AdminReadiness.js. It has no transition and no part that is the instance administrator's alone. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Settings index" default-menu-index="3" menu-image="sym_o_list_alt" menu-image-type="icon">
+    <parameter name="text"/>
+    <parameter name="ownerApp"/>
+    <parameter name="settingsGroupEnumId"/>
+    <actions>
+        <set field="findValues" from="{text:text, ownerApp:ownerApp, settingsGroupEnumId:settingsGroupEnumId}"/>
+        <set field="index" from="ec.resource.script('component://tools/template/AdminReadiness.js').settingsIndex(findValues)"/>
+        <set field="failure" from="index.failure"/>
+        <set field="appOptions" from="index.appOptions"/>
+        <set field="groupOptions" from="index.groupOptions"/>
+        <set field="filtered" from="!!(text || ownerApp || settingsGroupEnumId)"/>
+        <script><![CDATA[
+            // Health is linked only where it opens to the viewer, as the framework decides its path
+            const healthUrl = (index.entries.find(entry => entry.readinessUrl) || {}).readinessUrl
+            const healthOpens = !!healthUrl && !sri.buildUrl(healthUrl).getDisableLink()
+            entries = index.entries.map(entry => healthOpens || !entry.readinessUrl ? entry
+                : Object.assign({}, entry, {readinessUrl: '', readinessParameters: {}}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <container style="row items-center q-col-gutter-sm q-mb-sm">
+            <container style="col">
+                <label text="Settings" type="h5"/>
+                <label text="Each app keeps its own settings; open the one you need." type="p" style="text-caption m-muted q-mb-none"/>
+            </container>
+        </container>
+        <form-single name="SettingsFind" transition="." map="findValues">
+            <field name="text"><default-field title="Find a setting"><text-line size="24"/></default-field></field>
+            <field name="ownerApp">
+                <default-field title="App">
+                    <drop-down allow-empty="true"><list-options list="appOptions" key="${key}" text="${text}"/></drop-down>
+                </default-field>
+            </field>
+            <field name="settingsGroupEnumId">
+                <default-field title="Group">
+                    <drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down>
+                </default-field>
+            </field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+            <field-layout>
+                <field-row-big>
+                    <field-ref name="text"/>
+                    <field-ref name="ownerApp"/>
+                    <field-ref name="settingsGroupEnumId"/>
+                    <field-ref name="submitButton"/>
+                </field-row-big>
+            </field-layout>
+        </form-single>
+        <label type="p" style="text-negative" condition="failure" text="${failure}"/>
+        <container-box>
+            <box-body-nopad>
+                <form-list name="SettingsIndex" list="entries" skip-form="true" paginate="false">
+                    <field name="title">
+                        <default-field title="Settings">
+                            <link url="${destinationHref}" url-type="plain" text="${title}" link-type="anchor" condition="destinationHref"/>
+                            <link url="${destinationUrl}" text="${title}" link-type="anchor" parameter-map="destinationParameters"
+                                    condition="destinationUrl"/>
+                        </default-field>
+                    </field>
+                    <field name="groupName"><default-field title="Group"><display/></default-field></field>
+                    <field name="ownerApp"><default-field title="App"><display/></default-field></field>
+                    <field name="description"><default-field title="What it covers"><display/></default-field></field>
+                    <field name="scopeName"><default-field title="Applies to"><display/></default-field></field>
+                    <field name="configuredBy"><default-field title="Configured by"><display/></default-field></field>
+                    <field name="readiness">
+                        <default-field title="Readiness">
+                            <link url="${readinessHref}" url-type="plain" text="Readiness" link-type="anchor" condition="readinessHref"/>
+                            <link url="${readinessUrl}" text="Readiness" link-type="anchor" parameter-map="readinessParameters"
+                                    condition="readinessUrl"/>
+                        </default-field>
+                    </field>
+                    <columns type="mobile">
+                        <column><field-ref name="title"/><field-ref name="ownerApp"/></column>
+                        <column><field-ref name="groupName"/><field-ref name="readiness"/></column>
+                    </columns>
+                </form-list>
+                <label type="p" style="q-pa-md m-muted" condition="!entries.length &amp;&amp; filtered" text="No setting matches."/>
+                <label type="p" style="q-pa-md m-muted" condition="!entries.length &amp;&amp; !filtered &amp;&amp; !failure"
+                        text="No settings are open to you. Each app's administrators configure its settings."/>
+            </box-body-nopad>
+        </container-box>
+    </widgets>
+</screen>

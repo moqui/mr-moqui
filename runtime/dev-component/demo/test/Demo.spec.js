@@ -37,7 +37,7 @@ const stubbed = [
 const viewOnlyAuthz = [
     "TOOLS_APP_ADMIN", "SYSTEM_APP_ADMIN", "MOQUI_API_ADMIN", "EntitySyncServicesADMIN", "SystemMessageServicesADMIN",
     "ResourceCommandServicesADMIN",
-    "GitRepositoriesADMIN", "MONITOR_APP_ADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN",
+    "GitRepositoriesADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN",
 ]
 // ended for ADMIN (data/DemoSecurityData.xml)
 const endedPermissions = [
@@ -88,7 +88,7 @@ feature("the Tools, Data, Database and Service menus leave the stubs out", {
         // the menus the browser shell reads
         const menu = (path) => String(ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
             .render("menuData/apps/tools/" + path, {}, null).output)
-        const tools = menu("dashboard")
+        const tools = menu("Home")
         const data = menu("Data")
         const database = menu("Database")
         const service = menu("Service")
@@ -134,7 +134,7 @@ const permittedRows = [
         { name: "component://tools/screen/Tools.xml", type: "AT_XML_SCREEN", action: "update", allowed: false },
         { name: "component://tools/screen/System.xml", type: "AT_XML_SCREEN", action: "view", allowed: true },
         { name: "component://tools/screen/System.xml", type: "AT_XML_SCREEN", action: "update", allowed: false },
-        { name: "component://tools/screen/Monitor.xml", type: "AT_XML_SCREEN", action: "update", allowed: false },
+        { name: "component://tools/screen/System/Monitor.xml", type: "AT_XML_SCREEN", action: "update", allowed: false },
         { name: "/moqui", type: "AT_REST_PATH", action: "update", allowed: false },
         { name: "org.moqui.impl.EntitySyncServices.put#EntitySyncData", type: "AT_SERVICE", action: "all", allowed: false },
         { name: "org.moqui.impl.SystemMessageServices.receive#IncomingSystemMessage", type: "AT_SERVICE", action: "all",

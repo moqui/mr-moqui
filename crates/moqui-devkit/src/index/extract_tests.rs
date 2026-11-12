@@ -351,6 +351,9 @@ fn resolve_together(files: &mut [FileIndex]) -> Resolver {
     for row in files.iter_mut().flat_map(|file| &mut file.refs) {
         resolver.resolve(row, &|_| false);
     }
+    for file in files.iter_mut() {
+        file.bindings = resolver.resolve_bindings(std::mem::take(&mut file.bindings));
+    }
     resolver
 }
 
@@ -411,7 +414,7 @@ fn screen_paths_walk_subscreens_items_and_directories() {
     resolve_together(&mut files);
     let [app_file, order_file, detail_file, tasks_file, edit_file, lone_file] = &files;
 
-    // a plain name with no transition of its own screen is a path: here the default subscreen App/Order.xml
+    // a plain name with no transition of its own screen is a path: here the directory subscreen App/Order.xml
     assert_eq!(
         targets(app_file, ToKind::ScreenPath),
         [("Order", Some("screen:component://c/screen/App/Order.xml"))]
@@ -424,8 +427,8 @@ fn screen_paths_walk_subscreens_items_and_directories() {
             Some("transition:component://c/screen/App/Order.xml#ship:any")
         )]
     );
-    // `..` goes up to the directory's screen; an item of it, the default subscreen of the item's directory, a
-    // transition of a default subscreen; expressions, schemes and `.` make no reference; the rest stay unresolved
+    // `..` goes up to the directory's screen; an item of it, the directory subscreen of the item's directory, a
+    // transition of a directory subscreen; expressions, schemes and `.` make no reference; the rest stay unresolved
     assert_eq!(
         targets(order_file, ToKind::ScreenPath),
         [
@@ -463,7 +466,7 @@ fn screen_paths_walk_subscreens_items_and_directories() {
         ]
     );
 
-    // a default subscreen: a subscreens-item reference from its directory's screen, read from its own file
+    // a directory subscreen: a subscreens-item reference from its directory's screen, read from its own file
     let edge = |file: &FileIndex| {
         file.refs
             .iter()
@@ -493,7 +496,7 @@ fn screen_paths_walk_subscreens_items_and_directories() {
 #[test]
 fn a_forms_fields_flow_into_its_transitions_service() {
     let location = "component://c/screen/Order.xml";
-    let file = read(
+    let mut files = [read(
         ArtifactKind::Screen,
         location,
         r#"<screen>
@@ -511,7 +514,13 @@ fn a_forms_fields_flow_into_its_transitions_service() {
         <form-list name="Lines" list="lines" transition="ship"><field name="orderItemSeqId"><default-field><display/></default-field></field></form-list>
     </widgets>
 </screen>"#,
-    );
+    )];
+    // each field binds by the path the form posts to, its transition's name, which the resolver walks
+    assert!(files[0].bindings.iter().all(|binding| binding
+        .to_id
+        .starts_with("parameter:screen-path:component://c/screen/Order.xml#")));
+    resolve_together(&mut files);
+    let file = &files[0];
     let flows: Vec<(&str, &str, &str, &str, Option<&str>)> = file
         .bindings
         .iter()
@@ -543,14 +552,8 @@ fn a_forms_fields_flow_into_its_transitions_service() {
                 "carrierPartyId",
                 Some("form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"),
             ),
-            (
-                "form:component://c/screen/Order.xml#ShipForm",
-                "parameter:service:a.OrderServices.ship#Order@in.submitButton",
-                "in",
-                "submitButton",
-                Some("form-field:component://c/screen/Order.xml#ShipForm@submitButton"),
-            ),
-            // a service-call with an in-map of its own takes no request parameters: NoteForm makes none
+            // a submit button is no field the user fills, and a service-call with an in-map of its own takes no request
+            // parameters: NoteForm makes none
             (
                 "form:component://c/screen/Order.xml#Lines",
                 "parameter:service:a.OrderServices.ship#Order@in.orderItemSeqId",
@@ -567,5 +570,381 @@ fn a_forms_fields_flow_into_its_transitions_service() {
         .any(|row| row.from == "form:component://c/screen/Order.xml#ShipForm"
             && row.to_kind == ToKind::Transition
             && row.to_name == "ship:any"));
-    assert!(ids(&file).contains(&"form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"));
+    assert!(ids(file).contains(&"form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"));
+}
+
+/// A screen item a conf mounts (`@conf`) or a `SubscreensItem` row mounts (`@row`), as [`super::super::rows`] makes it.
+fn mount(screen: &str, name: &str, location: &str, mark: &str) -> ArtifactRow {
+    ArtifactRow {
+        id: format!("subscreen:{screen}#{name}{mark}"),
+        kind: "subscreen".to_string(),
+        name: name.to_string(),
+        short_name: name.to_string(),
+        component: String::new(),
+        path: CONF_PATH.to_string(),
+        line: 0,
+        column: 0,
+        summary: location.to_string(),
+        parent: Some(format!("screen:{screen}")),
+        origin: String::new(),
+        marks: String::new(),
+    }
+}
+
+#[test]
+fn screen_paths_walk_as_moqui_walks_a_url() {
+    let webroot = "component://webroot/screen/webroot.xml";
+    let app = "component://c/screen/App.xml";
+    let mut files = [
+        read(
+            ArtifactKind::Screen,
+            webroot,
+            r#"<screen><subscreens><subscreens-item name="apps" location="component://c/screen/App.xml"/></subscreens></screen>"#,
+        ),
+        read(
+            ArtifactKind::Screen,
+            app,
+            r##"<screen>
+    <subscreens default-item="Order">
+        <conditional-default condition="ec.user.userId" item="Mounted"/>
+        <subscreens-item name="Wrap" location="component://c/screen/Wrap.xml" no-sub-path="true"/>
+        <subscreens-item name="ship" location="component://c/screen/Ship.xml"/>
+    </subscreens>
+    <transition name="ship"><default-response url="."/></transition>
+    <widgets>
+        <link url="Order/Detail/~orderId=1/save" text="Inline parameter"/>
+        <link url="Order/Detail/save/extra/path" text="Extra path"/>
+        <link url="Inner" text="Through a no-sub-path item"/>
+        <link url="Order/Detail.pdf" text="Render mode"/>
+        <link url="Order/Detail/save.json" text="Transition in a render mode"/>
+        <link url="ship" text="A subscreen before a transition"/>
+        <link url="#top" text="Fragment"/>
+        <link url="?x=1" text="Query"/>
+        <link url="//Detail" text="Sparse"/>
+        <link url="//Order/Nowhere" text="Sparse, not found"/>
+        <link url="/apps/Order/Detail" text="Absolute"/>
+        <link url="Mounted" text="A conf mount"/>
+        <link url="Extra" text="A screen-extend's item"/>
+        <link url="Docs/guide/intro" text="Past a screen with allow-extra-path"/>
+        <link url="Order/nothing/here" text="Past a screen without it"/>
+    </widgets>
+</screen>"##,
+        ),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/App/Order.xml",
+            r#"<screen/>"#,
+        ),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/App/Order/Detail.xml",
+            r#"<screen><transition name="save" method="post"><default-response url="."/></transition></screen>"#,
+        ),
+        read(ArtifactKind::Screen, "component://c/screen/Wrap.xml", r#"<screen/>"#),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/Wrap/Inner.xml",
+            r#"<screen/>"#,
+        ),
+        read(ArtifactKind::Screen, "component://c/screen/Ship.xml", r#"<screen/>"#),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/Elsewhere.xml",
+            r#"<screen/>"#,
+        ),
+        read(ArtifactKind::Screen, "component://c/screen/Extra.xml", r#"<screen/>"#),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/App/Docs.xml",
+            r#"<screen allow-extra-path="true"/>"#,
+        ),
+        read(
+            ArtifactKind::ScreenExtend,
+            "component://site/screen-extend/c/screen/App.xml",
+            r#"<screen-extend><subscreens-item name="Extra" location="component://c/screen/Extra.xml"/></screen-extend>"#,
+        ),
+        FileIndex {
+            artifacts: vec![mount(app, "Mounted", "component://c/screen/Elsewhere.xml", CONF_ITEM)],
+            ..FileIndex::default()
+        },
+    ];
+    resolve_together(&mut files);
+    let detail = "screen:component://c/screen/App/Order/Detail.xml";
+    let save = "transition:component://c/screen/App/Order/Detail.xml#save:post";
+    let paths: Vec<(&str, Option<&str>)> = targets(&files[1], ToKind::ScreenPath)
+        .into_iter()
+        .filter(|(_, target)| *target != Some("screen:component://c/screen/App/Order.xml"))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            // the default item and the conditional one: edges from the screen
+            ("Mounted", Some("screen:component://c/screen/Elsewhere.xml")),
+            ("Order/Detail/~orderId=1/save", Some(save)),
+            // a transition mid-path is the end: the rest is extra path
+            ("Order/Detail/save/extra/path", Some(save)),
+            ("Inner", Some("screen:component://c/screen/Wrap/Inner.xml")),
+            ("Order/Detail.pdf", Some(detail)),
+            ("Order/Detail/save.json", Some(save)),
+            // a subscreens item comes before a transition of its name, as Moqui walks it
+            ("ship", Some("screen:component://c/screen/Ship.xml")),
+            // `#top` and `?x=1` make none; a sparse path is searched for, and one not found stays, unresolved
+            ("//Detail", Some(detail)),
+            ("//Order/Nowhere", None),
+            ("/apps/Order/Detail", Some(detail)),
+            ("Mounted", Some("screen:component://c/screen/Elsewhere.xml")),
+            ("Extra", Some("screen:component://c/screen/Extra.xml")),
+            // nothing of the name under a screen with allow-extra-path: the path ends at it; without it, none
+            ("Docs/guide/intro", Some("screen:component://c/screen/App/Docs.xml")),
+            ("Order/nothing/here", None),
+        ]
+    );
+    let edges: Vec<(&str, &str, Option<&str>)> = files[1]
+        .refs
+        .iter()
+        .filter(|row| matches!(row.ref_type.as_str(), "default-item" | "conditional-default"))
+        .map(|row| (row.ref_type.as_str(), row.from.as_str(), row.to_id.as_deref()))
+        .collect();
+    assert_eq!(
+        edges,
+        [
+            (
+                "default-item",
+                "screen:component://c/screen/App.xml",
+                Some("screen:component://c/screen/App/Order.xml")
+            ),
+            (
+                "conditional-default",
+                "screen:component://c/screen/App.xml",
+                Some("screen:component://c/screen/Elsewhere.xml")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn mounts_override_items_and_directories_and_up_needs_one_parent() {
+    let app = "component://c/screen/App.xml";
+    let shared = "component://c/screen/Shared.xml";
+    let mut resolver = Resolver::default();
+    for (location, text) in [
+        (
+            app,
+            r#"<screen><subscreens><subscreens-item name="Order" location="component://c/screen/Other.xml"/>
+                <subscreens-item name="Shared" location="component://c/screen/Shared.xml"/></subscreens></screen>"#,
+        ),
+        (
+            "component://c/screen/Two.xml",
+            r#"<screen><subscreens><subscreens-item name="Shared" location="component://c/screen/Shared.xml"/></subscreens></screen>"#,
+        ),
+        ("component://c/screen/App/Order.xml", "<screen/>"),
+        ("component://c/screen/App/Common.xml", "<screen/>"),
+        ("component://c/screen/Two/Sib.xml", "<screen/>"),
+        ("component://c/screen/App/Sib.xml", "<screen/>"),
+        ("component://c/screen/Other.xml", "<screen/>"),
+        ("component://c/screen/Row.xml", "<screen/>"),
+        (shared, "<screen/>"),
+    ] {
+        for artifact in read(ArtifactKind::Screen, location, text).artifacts {
+            resolver.add(&artifact);
+        }
+    }
+    // an explicit item wins over the directory subscreen of its name, a conf mount over the item, a row over both
+    assert_eq!(
+        resolver.subscreen(app, "Order").as_deref(),
+        Some("component://c/screen/Other.xml")
+    );
+    let conf = mount(app, "Order", "component://c/screen/App/Order.xml", CONF_ITEM);
+    resolver.add(&conf);
+    assert_eq!(
+        resolver.subscreen(app, "Order").as_deref(),
+        Some("component://c/screen/App/Order.xml")
+    );
+    let row = mount(app, "Order", "component://c/screen/Row.xml", ROW_ITEM);
+    resolver.add(&row);
+    assert_eq!(
+        resolver.subscreen(app, "Order").as_deref(),
+        Some("component://c/screen/Row.xml")
+    );
+    resolver.remove(&row);
+    resolver.remove(&conf);
+    assert_eq!(
+        resolver.subscreen(app, "Order").as_deref(),
+        Some("component://c/screen/Other.xml")
+    );
+
+    // Shared is under App and Two: `..` resolves only where the walk succeeds from one of them, or both reach the same
+    assert_eq!(
+        resolver.screen_path(shared, "../Common").as_deref(),
+        Some("screen:component://c/screen/App/Common.xml")
+    );
+    assert_eq!(resolver.screen_path(shared, "../Sib"), None);
+    assert_eq!(
+        resolver.screen_path(shared, "../Shared").as_deref(),
+        Some("screen:component://c/screen/Shared.xml")
+    );
+
+    // a directory subscreen's parent must be the screen of its directory itself, not one of another component
+    let mut lone = RefRow {
+        from: "screen:component://c/screen/App.xml".to_string(),
+        to_kind: ToKind::Screen,
+        to_name: "component://d/screen/App/Order.xml".to_string(),
+        to_scope: "component://d/screen/App.xml".to_string(),
+        ref_type: "subscreens-item".to_string(),
+        line: 0,
+        column: 0,
+        to_id: None,
+        resolved: false,
+        operation: String::new(),
+        origin: ORIGIN_DIRECTORY.to_string(),
+        origin_hash: String::new(),
+    };
+    resolver.resolve(&mut lone, &|_| false);
+    assert!(!lone.resolved, "{lone:?}");
+}
+
+#[test]
+fn form_fields_flow_through_paths_actions_and_field_maps() {
+    let order = "component://c/screen/App/Order.xml";
+    let mut files = [
+        read(
+            ArtifactKind::Screen,
+            order,
+            r#"<screen>
+    <transition name="update">
+        <service-call name="a.OrderServices.update#Order" in-map="[orderId:orderId]"><field-map field-name="partyId" from="customerPartyId"/></service-call>
+        <actions><if condition="true"><service-call name="a.OrderServices.note#Order" in-map="context"/></if>
+            <service-call name="a.OrderServices.skip#Order"/></actions>
+        <default-response url="."/></transition>
+    <widgets>
+        <form-single name="Edit" transition="update">
+            <field name="customerPartyId"><default-field><drop-down/></default-field></field>
+            <field name="note"><default-field><text-area/></default-field></field>
+            <field name="orderId"><header-field><text-find/></header-field></field>
+        </form-single>
+        <form-list name="Find" list="orders" transition="../Tasks/save">
+            <field name="taskName"><header-field><text-find/></header-field><default-field><text-line/></default-field></field>
+            <field name="go"><default-field><submit/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>"#,
+        ),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/App/Tasks.xml",
+            r#"<screen><transition name="save"><service-call name="a.TaskServices.save#Task"/><default-response url="."/></transition></screen>"#,
+        ),
+        read(ArtifactKind::Screen, "component://c/screen/App.xml", "<screen/>"),
+    ];
+    resolve_together(&mut files);
+    let flows: Vec<(&str, &str)> = files[0]
+        .bindings
+        .iter()
+        .filter(|binding| binding.source_kind == "form-field")
+        .map(|binding| (binding.source_text.as_str(), binding.to_id.as_str()))
+        .collect();
+    assert_eq!(
+        flows,
+        [
+            // renamed by the call's field-map, though the call has an in-map of its own; the context in-map of a call in
+            // the actions takes every field; a field with only a header-field is none
+            (
+                "customerPartyId",
+                "parameter:service:a.OrderServices.update#Order@in.partyId"
+            ),
+            (
+                "customerPartyId",
+                "parameter:service:a.OrderServices.note#Order@in.customerPartyId"
+            ),
+            ("note", "parameter:service:a.OrderServices.note#Order@in.note"),
+            // a transition by its path, named by the resolver; a submit button is none
+            ("taskName", "parameter:service:a.TaskServices.save#Task@in.taskName"),
+        ]
+    );
+    let update = files[0]
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == "transition")
+        .unwrap();
+    assert_eq!(
+        update.summary,
+        "calls a.OrderServices.update#Order, own in-map, request to a.OrderServices.note#Order"
+    );
+    assert_eq!(
+        crate::index::resolve::request_services(&update.summary),
+        ["a.OrderServices.note#Order"]
+    );
+    // the path's binding keeps the id it was written with and its slot, and names it again while the path reaches no
+    // transition
+    let mut path_binding = files[0]
+        .bindings
+        .iter()
+        .find(|binding| binding.source_text == "taskName")
+        .unwrap()
+        .clone();
+    let written = "parameter:screen-path:component://c/screen/App/Order.xml#../Tasks/save@in.taskName";
+    assert_eq!(path_binding.to_path, Some(format!("{written}#0")));
+    let mut resolver = resolve_together(&mut files);
+    for artifact in &files[1].artifacts {
+        resolver.remove(artifact);
+    }
+    resolver.resolve_binding(&mut path_binding);
+    assert_eq!(path_binding.to_id, written);
+}
+
+#[test]
+fn expressions_name_no_service_and_rows_of_a_group_lose_to_rows_of_all() {
+    let file = read(
+        ArtifactKind::Screen,
+        "component://c/screen/A.xml",
+        r#"<screen><transition name="run"><service-call name="${svcName}"/><default-response url="."/></transition></screen>"#,
+    );
+    assert_eq!(file.artifacts[1].summary, "");
+    assert!(crate::index::resolve::request_services("calls ${svcName}, request to ${other}").is_empty());
+
+    let app = "component://c/screen/App.xml";
+    let mut resolver = Resolver::default();
+    for location in [app, "component://c/screen/All.xml", "component://c/screen/Group.xml"] {
+        resolver.add_parts(&format!("screen:{location}"), "screen", location, "");
+    }
+    let group = mount(app, "X", "component://c/screen/Group.xml", "@row:ADMIN");
+    resolver.add(&group);
+    assert_eq!(
+        resolver.subscreen(app, "X").as_deref(),
+        Some("component://c/screen/Group.xml")
+    );
+    resolver.add(&mount(app, "X", "component://c/screen/All.xml", ROW_ITEM));
+    assert_eq!(
+        resolver.subscreen(app, "X").as_deref(),
+        Some("component://c/screen/All.xml")
+    );
+}
+
+#[test]
+fn a_sparse_search_ends_in_a_cycle_of_items() {
+    // A mounts B and B mounts A: a name under neither is searched for once under each; `//` starts at the webroot
+    let mut resolver = Resolver::default();
+    for (location, other) in [
+        ("component://webroot/screen/webroot.xml", "component://c/screen/A.xml"),
+        ("component://c/screen/A.xml", "component://c/screen/B.xml"),
+        ("component://c/screen/B.xml", "component://c/screen/A.xml"),
+    ] {
+        let text =
+            format!(r#"<screen><subscreens><subscreens-item name="Next" location="{other}"/></subscreens></screen>"#);
+        for artifact in read(ArtifactKind::Screen, location, &text).artifacts {
+            resolver.add(&artifact);
+        }
+    }
+    let started = std::time::Instant::now();
+    assert_eq!(
+        resolver.screen_path("component://c/screen/A.xml", "//Nope/Nowhere/At/All"),
+        None
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(
+        resolver
+            .screen_path("component://c/screen/A.xml", "//Next/Next")
+            .as_deref(),
+        Some("screen:component://c/screen/B.xml")
+    );
 }

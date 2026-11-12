@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Playlists (docs/tools/Monitoring.md, "Playlists and the wall display"): the dashboard playlists the viewer reads (a
+    report definition of kind playlist), each with its dashboards, its seconds and the group it is shared with. A playlist
+    plays in the app (Playlist) or full screen on a page of its own (WallDisplay); it is ordered in the definition editor.
+    NewPlaylist: a playlist of dashboards the viewer reads, for one whose own grant opens the engine's save where there is
+    an editor (createPlaylist, which refuses where the mount gives none). SharePlaylist: its owner shares a playlist with a
+    group of their own, or one the mount offers (reportPolicy.shareGroups: an app's wall displays), or makes it private,
+    where the mount's policy lets the viewer share (sharePlaylist; template/ReportShare.js: the transition holds
+    features.share and the engine's save checks the owner and the group). What the screen shows is
+    template/ReportPlaylists.js, over ReportServices as the viewer.
+    Another app shows it in a screen of its own around these sections (BOSS Insights › Wall display, with its devices),
+    taking in the transitions it offers. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Playlists" default-menu-index="9"
+        menu-image="sym_o_slideshow" menu-image-type="icon">
+    <transition name="createPlaylist" method="post" authz-action="create">
+        <actions><set field="createdId" from="ec.resource.script('component://tools/template/ReportPlaylists.js').create({playlistId:playlistId,
+                playlistTitle:playlistTitle, playlistDashboardIds:playlistDashboardIds, playlistSeconds:playlistSeconds})"/></actions>
+        <default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('playlist')}" parameter-map="{definitionId:createdId}"/>
+        <error-response url="."/>
+    </transition>
+    <transition name="play"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('playlist')}"/></transition>
+    <!-- the editor the playlist is ordered in; where the mount gives none, this page -->
+    <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').state().links.definition || '.'}"/></transition>
+    <!-- the owner shares a playlist with a group offered here, or makes it private: refused without the mount's share
+        feature, and the engine's save checks the owner and the group -->
+    <transition name="sharePlaylist" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportShare.js').share({definitionId:shareDefinitionId,userGroupId:userGroupId},['playlist'])</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <actions>
+        <set field="playlistView" from="ec.resource.script('component://tools/template/ReportPlaylists.js').list()"/>
+        <!-- the page a playlist plays on full screen (the mount's, else Tools'), opened in a window of its own -->
+        <set field="wallDisplayLink" from="ec.resource.script('component://tools/template/ReportMount.js').state().links.wallDisplay"/>
+        <set field="wallDisplayPath" from="wallDisplayLink ? sri.buildUrl(wallDisplayLink).path : null"/>
+    </actions>
+    <widgets>
+        <section name="PlaylistsHeader"><widgets>
+            <container style="row items-center q-col-gutter-sm">
+                <container style="col"><label text="Playlists" type="h5"/></container>
+                <container style="col-auto">
+                    <section name="NewPlaylist" condition="playlistView.canCreate"><widgets>
+                        <container-dialog id="NewPlaylist" button-text="New playlist" type="primary">
+                            <label text="The dashboards play in the order chosen; order them later in the editor. Each is checked with the access of whoever plays it." type="p" style="m-muted"/>
+                            <form-single name="NewPlaylistForm" transition="createPlaylist">
+                                <field name="playlistId"><default-field title="ID"><text-line/></default-field></field>
+                                <field name="playlistTitle"><default-field title="Title"><text-line/></default-field></field>
+                                <field name="playlistDashboardIds"><default-field title="Dashboards">
+                                    <drop-down allow-multiple="true"><list-options list="playlistView.dashboardChoices" key="${id}" text="${title}"/></drop-down>
+                                </default-field></field>
+                                <field name="playlistSeconds"><default-field title="Seconds per dashboard"><text-line default-value="30"/></default-field></field>
+                                <field name="create"><default-field><submit text="Save playlist"/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                    </widgets></section>
+                </container>
+            </container>
+            <label text="${playlistView.failure}" type="p" style="text-warning" condition="playlistView.failure"/>
+        </widgets></section>
+        <section name="SharePlaylist" condition="playlistView.mayShare &amp;&amp; playlistView.ownOptions.length"><widgets>
+            <container-dialog id="SharePlaylist" button-text="Share a playlist">
+                <label type="p" style="m-muted" text="A playlist is shared with one group at a time: choosing another group takes it from the one it is shared with now. A group sees the playlist and the dashboards shared with it; each viewer still sees only the data they may read."/>
+                <form-single name="SharePlaylistForm" transition="sharePlaylist">
+                    <field name="shareDefinitionId"><default-field title="Playlist">
+                        <drop-down><list-options list="playlistView.ownOptions" key="${value}" text="${label}"/></drop-down>
+                    </default-field></field>
+                    <field name="userGroupId"><default-field title="Share with" tooltip="Leave it empty to keep the playlist private.">
+                        <drop-down allow-empty="true"><list-options list="playlistView.shareGroups" key="${value}" text="${label}"/></drop-down>
+                    </default-field></field>
+                    <field name="save"><default-field><submit text="Save sharing"/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </widgets></section>
+        <section name="PlaylistList" condition="playlistView.playlists.length"><widgets>
+            <form-list name="Playlists" list="playlistView.playlists" skip-form="true" paginate="false">
+                <field name="title"><default-field title="Playlist"><link url="play" text="${title}" link-type="anchor" parameter-map="{definitionId:id}"/></default-field></field>
+                <field name="count"><default-field title="Dashboards"><display/></default-field></field>
+                <field name="seconds"><default-field title="Seconds each"><display/></default-field></field>
+                <field name="sharedText"><default-field title="Sharing"><display/></default-field></field>
+                <field name="edit"><conditional-field condition="playlistView.canEdit" title=""><link url="edit" text="Edit" link-type="anchor" parameter-map="{definitionId:id}"/></conditional-field>
+                    <default-field title=""><display text=""/></default-field></field>
+                <field name="fullScreen"><conditional-field condition="wallDisplayPath" title=""><link url="${wallDisplayPath}" url-type="plain" target-window="_blank" text="Play full screen" parameter-map="{definitionId:id}"/></conditional-field>
+                    <default-field title=""><display text=""/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="title"/><field-ref name="sharedText"/></column>
+                    <column><field-ref name="count"/><field-ref name="edit"/><field-ref name="fullScreen"/></column>
+                </columns>
+            </form-list>
+        </widgets><fail-widgets>
+            <label text="No playlist is yours or shared with you yet." type="p"/>
+        </fail-widgets></section>
+    </widgets>
+</screen>

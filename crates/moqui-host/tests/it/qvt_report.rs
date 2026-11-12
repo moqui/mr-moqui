@@ -47,7 +47,7 @@ fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
     // The Gate 3 fixture: ArtifactGroupDetail has a form-single, form-lists with display-entity, entity-options and a section-iterate in a field,
     // dialogs, links with parameter maps, and actions that are only finds. Every expression it writes is in the browser host, and its always-actions
     // and pre-actions have no side effect, so the report is clean and the fixture can be marked server-static for qvt.
-    let fixture = find("tools/screen/System/Security/ArtifactGroup/ArtifactGroupDetail.xml");
+    let fixture = find("tools/screen/System/Access/ArtifactGroupDetail.xml");
     // The lint command is the static half. Clean means the full check ran.
     assert!(!fixture.is_clean(), "{}", fixture.render());
     assert!(
@@ -102,7 +102,7 @@ fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
     assert!(text.lines().last().unwrap_or("").contains("screens:"), "{text}");
     // Nothing is marked because a report is clean: the fixture screen file does not name server-static (the gate marks it with a screen-extend in its own runtime).
     let source = std::fs::read_to_string(
-        repo().join("runtime/base-component/tools/screen/System/Security/ArtifactGroup/ArtifactGroupDetail.xml"),
+        repo().join("runtime/base-component/tools/screen/System/Access/ArtifactGroupDetail.xml"),
     )
     .unwrap();
     assert!(!source.contains("server-static"));

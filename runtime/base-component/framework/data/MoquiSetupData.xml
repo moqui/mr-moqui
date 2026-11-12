@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ServiceJobError" inboxEnumId="NinUpdates" description="Service Job Error"
             typeString="danger" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="Job Error ${serviceCallRun.jobName || ''} [${serviceCallRun.jobRunId || ''}] ${serviceCallRun.errors || 'N/A'}"
-            linkTemplate="/qapps/System/ServiceJob/JobRuns/JobRunDetail?jobRunId=${serviceCallRun.jobRunId}"/>
+            linkTemplate="/qapps/system/Operations/JobRunDetail?jobRunId=${serviceCallRun.jobRunId}"/>
 
     <!-- ========== Framework Scheduled ServiceJob Data ========== -->
     <!-- Handy cron strings: [0 0 2 * * ?] every night at 2:00 am, [0 0/15 * * * ?] every 15 minutes, [0 0/2 * * * ?] every 2 minutes -->
@@ -215,4 +215,15 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DashboardRemote" fromDate="0"/>
 
     <!-- Handy cron strings: [0 0 2 * * ?] every night at 2:00 am, [0 0/15 * * * ?] every 15 minutes, [0 0/2 * * * ?] every 2 minutes -->
+
+    <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10; org.moqui.admin.IdentityServices.notify#NewDeviceSignIn):
+        a private topic, sent to the account alone, kept in its notification list and mailed with its own template. No link
+        here: the framework has no account screen of its own, and an app sets linkTemplate to where its users sign a session
+        out. -->
+    <moqui.basic.email.EmailTemplate emailTemplateId="ACCOUNT_SIGN_IN" description="New-device sign-in notice" emailServerId="SYSTEM"
+            emailTypeEnumId="EMT_NOTIFICATION" bodyScreenLocation="classpath://screen/AccountSignInEmail.xml" webappName="webroot"
+            fromAddress="" fromName="" ccAddresses="" bccAddresses="" subject="${title}" sendPartial="Y"/>
+    <moqui.security.user.NotificationTopic topic="AccountSignIn" inboxEnumId="NinNotifications" description="Sign-in from a new device"
+            titleTemplate="New sign-in to your account from ${clientSummary}" typeString="warning" showAlert="Y" persistOnSend="Y"
+            receiveNotifications="Y" isPrivate="Y" emailNotifications="Y" emailTemplateId="ACCOUNT_SIGN_IN"/>
 </entity-facade-xml>

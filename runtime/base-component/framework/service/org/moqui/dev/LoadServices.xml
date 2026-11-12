@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <!-- Load runs in a server (plans/LoadRunner.md §7, §10), in crates/moqui-host/src/load_runner under the host's
+    <!-- Load runs in a server (plans/archive/LoadRunner.md §7, §10), in crates/moqui-host/src/load_runner under the host's
         test-client feature; a build without it reports the feature missing. No entity: a running load is in the memory
         of the process that runs it, and a finished run is its runtime/tmp/test-load/<runId>/result.json. A runId is
         <yyyyMMdd-HHmmss>-<pid>, with -<n> when two start in the same second, and names nothing but that directory. Each
@@ -65,7 +65,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="update" noun="LoadRunUsers" type="rust" location="moqui_host::load_runner::update_load_run_users"
             allow-remote="false" transaction="ignore">
-        <description>Change a running scenario's target from now on, in place of the rest of its stages (plans/LoadRunner.md
+        <description>Change a running scenario's target from now on, in place of the rest of its stages (plans/archive/LoadRunner.md
             L6): users, a closed scenario's users at once (those above it finish their iteration and wait; more start
             for a higher one) or a rate scenario's most at once; or rate, a rate scenario's iterations started per
             second. Give one of them. Refused past load_runner_max_users for the run in all, a rate for a closed
@@ -110,7 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="LoadRunResult" type="rust" location="moqui_host::load_runner::get_load_run_result"
             allow-remote="false" transaction="ignore">
-        <description>A finished run's whole result (plans/LoadRunner.md §5), as its result.json has it.</description>
+        <description>A finished run's whole result (plans/archive/LoadRunner.md §5), as its result.json has it.</description>
         <in-parameters><parameter name="runId" required="true"/></in-parameters>
         <out-parameters><parameter name="result" type="Map"/></out-parameters>
     </service>

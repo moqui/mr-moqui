@@ -1,7 +1,10 @@
 # Service calls: errors and transactions
 
 What a script calling services needs to know about errors, and the pattern for a call that may fail without failing
-the caller.
+the caller. What a service's own JavaScript sees and returns is in
+[JS-Service-Scripts](../dev/JS-Service-Scripts.md); the services the framework ships are in
+[JS-Framework-Services](../dev/JS-Framework-Services.md); the call builders are in
+[JS-Core-API](../dev/JS-Core-API.md#ecservice).
 
 ## An error marks the transaction
 

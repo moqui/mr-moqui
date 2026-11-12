@@ -65,7 +65,7 @@ test("report widgets render with Vue runtime and escape document values", () => 
 test("data links reject executable and protocol-relative URLs", () => {
     assert.equal(report.safeLink("javascript:alert(1)"), "");
     assert.equal(report.safeLink("//foreign.example/path"), "");
-    assert.equal(report.safeLink("/apps/monitor/Traces"), "/apps/monitor/Traces");
+    assert.equal(report.safeLink("/apps/system/Monitor/Traces"), "/apps/system/Monitor/Traces");
 });
 test("field overrides, thresholds and links preserve typed values", () => {
     const fields = report.configuredFields({ fields: [{ name: "latency", type: "number", values: [2] }] }, {
@@ -218,7 +218,7 @@ test("session replay preserves the JSON transition mount in the Material shell",
     const target=document.createElement('div');document.body.appendChild(target);
     const previous={request:moqui.request,loadScript:moqui.loadScript,loadStylesheet:moqui.loadStylesheet,
         appRoot:report.appRoot,rrweb:window.rrweb};
-    const url='/apps/monitor/ReplayDetail/events?replayId=ui-review-replay-0001';
+    const url='/apps/system/Monitor/ReplayDetail/events?replayId=ui-review-replay-0001';
     const events=[{type:4,timestamp:1000,data:{}},{type:2,timestamp:2000,data:{}}];
     let requested,received,destroyed=false;
     report.appRoot=()=>'/qapps';
@@ -320,6 +320,46 @@ test("playlist controls render authorized frames and reject stale or changed sel
         last.resolve(answer('Second',44));await settled();
         assert.equal(target.textContent,'');
     } finally {if(!unmounted)app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;window.fetch=previousFetch;}
+});
+test("a kiosk playlist of one refreshes its dashboard each turn, retries a failure and reloads the page when refused or changed, not in a loop", async () => {
+    const target=document.createElement('div');document.body.appendChild(target);
+    const previousRequest=moqui.request,previousInterval=window.setInterval,previousReload=report.reloadPage,pending=[];let rotate,reloads=0;
+    moqui.request=(url,options)=>new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}));
+    window.setInterval=(callback,ms)=>{if(ms===3600000)rotate=callback;return previousInterval(callback,ms);};
+    report.reloadPage=()=>{reloads++;};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-playlist'],{kiosk:true,seconds:3600,
+        source:'/apps/Insights/WallDisplay/data?definitionId=wall&from=now-30d&thru=now',
+        items:[{index:1,title:'Floor',url:'?definitionId=floor&from=now-30d&thru=now'}]});
+    const answer=value=>({json:{dashboard:{definitionId:'floor',panels:{total:{title:'Orders',visualization:'table'}}},
+        frames:{total:[{fields:[{name:'count',type:'number',values:[value]}]}]}}});
+    const settled=async()=>{await Promise.resolve();await Vue.nextTick();};
+    try {
+        const playlist=app.mount(target);await Vue.nextTick();
+        assert.equal(target.querySelector('a[href*="definitionId=floor"]'),null,'a kiosk offers no link out');
+        pending[0].resolve(answer(5));await settled();
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('5'),true);
+        assert.equal(target.querySelector('.m-report-embed button[aria-label^="Inspect"], .m-report-embed button[aria-label^="Export"], .m-report-embed button[aria-label^="Panel menu"]'),null,'a kiosk panel has no export, inspect or menu');
+        assert.equal(target.querySelector('.m-report-embed a'),null,'nor a link to open the dashboard');
+        rotate();await Vue.nextTick();
+        assert.equal(pending.length,2,'the only dashboard is loaded again at the turn');
+        assert.equal(new URL(pending[1].url,location.href).searchParams.get('index'),'1');
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('5'),true,'the shown frames stay until the new ones come');
+        pending[1].resolve(answer(7));await settled();
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('7'),true);
+        rotate();await Vue.nextTick();pending[2].reject({status:0});await settled();
+        assert.equal(playlist.paused,false,'a failure is tried again at the next turn');
+        assert.equal(target.querySelector('[role="alert"]').textContent,'Could not load this dashboard. It is tried again at the next turn.');
+        assert.equal(reloads,0);
+        rotate();await Vue.nextTick();pending[3].reject({status:403});await settled();
+        assert.equal(reloads,1,'a refused request loads the page again, which the server answers with its refusal');
+        report.reloadPage=()=>{reloads++;return false;};
+        rotate();await Vue.nextTick();pending[4].reject({status:403});await settled();
+        assert.equal(reloads,2);
+        assert.equal(playlist.paused,false,'a reload put off (once a minute) leaves the turns going');
+        rotate();await Vue.nextTick();pending[5].resolve({json:{dashboard:{definitionId:'moved',panels:{}},frames:{}}});await settled();
+        assert.equal(reloads,3,'a changed playlist loads the page again');
+        assert.equal(playlist.paused,false,'and is not paused waiting for someone to press Reload');
+    } finally {app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;report.reloadPage=previousReload;}
 });
 test("structural pills retain typed values, negation, disable, labels and user-scoped pins", async () => {
     const target=document.createElement('div');document.body.appendChild(target);
@@ -532,8 +572,8 @@ test('bucket clicks use exact server predicates for normal Missing and Other row
     assert.deepEqual(clicks[0].query,filters[1]);assert.equal(clicks[0].negated,false);assert.deepEqual(clicks[1].query,filters[2]);assert.equal(clicks[1].negated,true);assert.equal(report.bucketPill(frame,{},0,0,false).query.field.value,'(Missing)');
     const url=new URL(report.filterUrl(clicks[0],{dashboardId:'sales',filters:[],range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}},'https://example.test/apps/dashboards/Dashboard?definitionId=sales&cursor=old'));
     assert.equal(url.searchParams.has('cursor'),false);assert.equal(JSON.parse(url.searchParams.get('filtersJson'))[0].datasetId,'orders');assert.equal(url.searchParams.get('from'),'2026-01-01T00:00:00Z');
-    const monitor=new URL(report.filterUrl(clicks[0],{dashboardId:'monitor-services',filters:[]},'https://example.test/qapps/monitor/Services?serviceName=fixture'));
-    assert.equal(monitor.pathname,'/qapps/monitor/Services');assert.equal(monitor.searchParams.get('serviceName'),'fixture');
+    const monitor=new URL(report.filterUrl(clicks[0],{dashboardId:'monitor-services',filters:[]},'https://example.test/qapps/system/Monitor/Services?serviceName=fixture'));
+    assert.equal(monitor.pathname,'/qapps/system/Monitor/Services');assert.equal(monitor.searchParams.get('serviceName'),'fixture');
     assert.deepEqual(JSON.parse(monitor.searchParams.get('filtersJson'))[0].query,filters[1]);
 });
 test('sorting table rows retains the original bucket predicate when clicking values',async()=>{
@@ -571,22 +611,22 @@ test('stat and gauge cards resolve integer metrics per numeric bucket series wit
     const target=document.createElement('div');document.body.appendChild(target);const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame:{fields:Array.from({length:51},(_,at)=>({name:'metric'+at,type:'integer',values:[at]}))},panel:{visualization:'stat'}});app.mount(target);await Vue.nextTick();assert.equal(target.querySelectorAll('.m-report-stat-series').length,50);assert.equal(target.textContent.includes('Showing 50 of 51 series.'),true);app.unmount();target.remove();
 });
 test('page links open in the current shell and panel requests use the rendering screen transitions',async()=>{
-    assert.equal(report.appPath('/apps/dashboards/Definition?definitionId=x','https://moqui.test/qapps/monitor/dashboard'),'/qapps/dashboards/Definition?definitionId=x');
-    assert.equal(report.appPath('/apps/monitor/TraceDetail?traceId=t','https://moqui.test/apps/monitor/Logs'),'/apps/monitor/TraceDetail?traceId=t');
+    assert.equal(report.appPath('/apps/dashboards/Definition?definitionId=x','https://moqui.test/qapps/system/Monitor/Overview'),'/qapps/dashboards/Definition?definitionId=x');
+    assert.equal(report.appPath('/apps/system/Monitor/TraceDetail?traceId=t','https://moqui.test/apps/system/Monitor/Logs'),'/apps/system/Monitor/TraceDetail?traceId=t');
     assert.equal(report.appPath('/apps','https://moqui.test/qapps'),'/qapps');
-    assert.equal(report.appPath('/rest/s1/moqui/reports','https://moqui.test/qapps/monitor'),'/rest/s1/moqui/reports');
-    assert.equal(report.appPath('/applications/x','https://moqui.test/qapps/monitor'),'/applications/x');
-    assert.equal(new URL(report.allPanelsUrl('https://moqui.test/qapps/monitor/dashboard?definitionId=d&panelId=p&var-service=a')).search,'?definitionId=d&var-service=a');
+    assert.equal(report.appPath('/rest/s1/moqui/reports','https://moqui.test/qapps/system/Monitor'),'/rest/s1/moqui/reports');
+    assert.equal(report.appPath('/applications/x','https://moqui.test/qapps/system/Monitor'),'/applications/x');
+    assert.equal(new URL(report.allPanelsUrl('https://moqui.test/qapps/system/Monitor/Overview?definitionId=d&panelId=p&var-service=a')).search,'?definitionId=d&var-service=a');
     const target=document.createElement('div');document.body.appendChild(target);
     const previousFetch=window.fetch;const requests=[];
     window.fetch=async url=>{requests.push(String(url));return {ok:true,json:async()=>({dashboard:{panels:{jobs:{inspection:[]}}}})};};
-    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'monitor-overview',panelId:'jobs',screenUrl:'/apps/monitor/dashboard',panel:{title:'Job runs by outcome',visualization:'table'},
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'monitor-overview',panelId:'jobs',screenUrl:'/apps/system/Monitor/Overview',panel:{title:'Job runs by outcome',visualization:'table'},
         frame:{fields:[{name:'outcome',type:'string',values:['success']}]},range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}});
     try {
         const panel=app.mount(target);await Vue.nextTick();
         for(const label of ['Export Job runs by outcome as CSV','Export Job runs by outcome as XLSX','Inspect Job runs by outcome'])assert.notEqual(target.querySelector('button[aria-label="'+label+'"]'),null,label);
         await panel.inspect();
-        assert.equal(new URL(requests[0],window.location.href).pathname,'/apps/monitor/dashboard/inspectPanel');
+        assert.equal(new URL(requests[0],window.location.href).pathname,'/apps/system/Monitor/Overview/inspectPanel');
         assert.equal(new URL(requests[0],window.location.href).searchParams.get('panelId'),'jobs');
     } finally {app.unmount();target.remove();window.fetch=previousFetch;}
 });
@@ -969,19 +1009,25 @@ test('a dashboard mounted under another app links its screens, offers no screen 
     const target=document.createElement('div');document.body.appendChild(target);
     const navigate=report.navigate,request=moqui.request,visited=[],posts=[];
     report.navigate=href=>visited.push(href);moqui.request=async(url,options)=>{posts.push({url,options});return {ok:true,json:{panelId:'orders-copy'}};};
-    const appLinks={definition:'/apps/Insights/DashboardEditor',panel:'/apps/Insights/PanelDetail',explore:'/apps/Insights/ReportBuilder/Explore',dashboard:'/apps/Insights/Dashboard',alertRule:null};
+    const appLinks={definition:'/apps/Insights/DashboardEditor',panel:'/apps/Insights/PanelDetail',explore:'/apps/Insights/ReportBuilder/Explore',dashboard:'/apps/Insights/Dashboard',alertRule:null,drill:'/apps/Insights/Drill'};
     const panel={title:'Orders',visualization:'timeSeries',queries:[{datasetId:'orders',aggregations:[{id:'time',type:'date_histogram',role:'x-axis'},{id:'n',type:'sum',role:'metric'}]}]};
     const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'store',panelId:'orders',panel,appLinks,editable:true,range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'},
         frame:{fields:[{name:'time',type:'time',values:[1000]},{name:'n',type:'number',values:[2]}]}});
     try {
         app.mount(target);await Vue.nextTick();
         const toggle=target.querySelector('button[aria-label="Panel menu for Orders"]');toggle.click();await Vue.nextTick();
-        assert.deepEqual(Array.from(target.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['View','Edit','Share','Explore','Inspect','Duplicate','Remove']);
+        assert.deepEqual(Array.from(target.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['View','Edit','Share','Explore','Inspect','Drill','Duplicate','Remove']);
         reportButton(target,'Edit').click();assert.equal(visited[0],report.appPath('/apps/Insights/DashboardEditor?definitionId=store&panelId=orders'));
         toggle.click();await Vue.nextTick();reportButton(target,'Explore').click();
         assert.equal(new URL(visited[1],location.href).pathname,report.appPath('/apps/Insights/ReportBuilder/Explore'));
         toggle.click();await Vue.nextTick();reportButton(target,'Duplicate').click();await new Promise(resolve=>setTimeout(resolve,0));
         assert.equal(posts[0].url,'/apps/Insights/Dashboard/duplicatePanel');
+        // Drill opens the app's drill screen with the panel and the range; the server reads the saved panel again, so no query goes
+        toggle.click();await Vue.nextTick();reportButton(target,'Drill').click();
+        const drill=new URL(visited[visited.length-1],location.href);
+        assert.equal(drill.pathname,report.appPath('/apps/Insights/Drill'));
+        assert.equal(drill.searchParams.get('definitionId')+' '+drill.searchParams.get('panelId')+' '+drill.searchParams.get('from'),'store orders 2026-01-01T00:00:00Z');
+        assert.equal(drill.searchParams.has('datasetId') || drill.searchParams.has('query'),false);
     } finally {app.unmount();target.remove();report.navigate=navigate;moqui.request=request;}
     // A panel over a dataset the viewer may not read: not available, never "no data".
     const denied=document.createElement('div');document.body.appendChild(denied);

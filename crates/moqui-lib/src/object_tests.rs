@@ -142,6 +142,14 @@ fn timestamp_text_is_read_in_the_zone_given() {
         &chicago
     )
     .unwrap());
+    // equals takes numbers by value: a decimal's scale does not matter, nor whether one side is a whole number
+    let decimal = |text: &str| Value::Decimal(text.parse().unwrap());
+    assert!(compare(&decimal("10.0"), "equals", &decimal("10.00"), "BigDecimal").unwrap());
+    assert!(compare(&decimal("10.0"), "equals", &Value::string("10.00"), "BigDecimal").unwrap());
+    assert!(!compare(&decimal("10.0"), "not-equals", &decimal("10.00"), "BigDecimal").unwrap());
+    assert!(!compare(&decimal("10.0"), "equals", &decimal("10.01"), "BigDecimal").unwrap());
+    assert!(compare_equals(&decimal("10.00"), &Value::I32(10)) && compare_equals(&Value::I64(10), &decimal("10")));
+    assert!(!compare_equals(&Value::string("10"), &Value::string("10.0")));
     // Unregistered, the text zone is UTC.
     if TEXT_TIME_ZONE.get().is_none() {
         assert_eq!(text_time_zone(), TimeZone::UTC);
@@ -273,4 +281,18 @@ fn offsets_are_hhmm_or_hh_colon_mm() {
     ] {
         assert_eq!(parse_offset(text), None, "{text}");
     }
+}
+
+#[test]
+fn compare_equals_takes_numbers_by_value() {
+    // a decimal's scale does not matter, nor whether one side is a whole number
+    let decimal = |text: &str| Value::Decimal(text.parse().unwrap());
+    assert!(compare(&decimal("10.0"), "equals", &decimal("10.00"), "BigDecimal").unwrap());
+    assert!(compare(&decimal("10.0"), "equals", &Value::string("10.00"), "BigDecimal").unwrap());
+    assert!(!compare(&decimal("10.0"), "not-equals", &decimal("10.00"), "BigDecimal").unwrap());
+    assert!(!compare(&decimal("10.0"), "equals", &decimal("10.01"), "BigDecimal").unwrap());
+    assert!(compare_equals(&decimal("10.00"), &Value::I32(10)) && compare_equals(&Value::I64(10), &decimal("10")));
+    // text stays text, and Java's equals stays as it was for a value's own equality
+    assert!(!compare_equals(&Value::string("10"), &Value::string("10.0")));
+    assert!(!java_equals(&decimal("10.0"), &decimal("10.00")));
 }

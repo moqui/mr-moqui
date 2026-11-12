@@ -73,7 +73,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | --- | --- |
 | `./moq run` | Start the server on the dev conf. |
 | `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
-| `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([Client-Testing](Client-Testing.md)). |
+| `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([JS-Test-Client](JS-Test-Client.md)). |
 | `./moq test-apps` | The regression suite of every app component, before a commit ([The two suites](../Build-Test.md#the-two-suites)). |
 | `./moq accept <component> [--spec S]` | The acceptance suite (`acceptance/`), only when asked or when you add or change an acceptance test. |
 | `target/release/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
@@ -96,7 +96,7 @@ Each component is its own git repository. Commit in each repository that a chang
 - **Products notes:** `runtime/component/mr-boss/docs/ProductsSharedScreens.md` (shared mounts and the shared
   context) and `ProductsImplementation.md`.
 - **Framework guides in `docs/`:** [Services](../logic/Services.md) (errors, transactions, probe calls), [Testing](../Build-Test.md#component-specs),
-  [Client-Testing](Client-Testing.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
+  [JS-Test-Client](JS-Test-Client.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
   deliberate differences listed in [Parity-Diffs](../../plans/Parity-Diffs.md)), [Native-Components](Native-Components.md),
   [Web-Scripts](../interfaces/Web-Scripts.md).
 - **Schemas:** `runtime/base-component/framework/xsd/xml-screen-3.xsd`, `xml-form-3.xsd`, `service-definition-3.xsd`,
@@ -131,7 +131,8 @@ Each component is its own git repository. Commit in each repository that a chang
   group can reach.
 - **Restricted values stay on the server.** A service leaves out of its answer what the user may not read (costs,
   supplier prices, margins); nothing is fetched and then hidden by the screen. Declare a service's out-parameters:
-  declared ones are the only ones returned (none declared returns everything, internal helpers included).
+  an XML-action or script service returns only the declared ones, read by name
+  ([JS-Service-Scripts](JS-Service-Scripts.md#results)).
 - **Compare reason codes, not message text.** A policy that refuses returns a code (`denied(reason, message)` in
   `mantle/product/PricePolicy.js`), and callers test the code. Matching on an error's wording breaks when the wording
   changes. A new policy module starts with codes, as Accounting's `AccountingPolicy.js` does through
@@ -143,6 +144,11 @@ Each component is its own git repository. Commit in each repository that a chang
   specs.
 
 ## 4. Services and scripts
+
+References: [JS-Service-Scripts](JS-Service-Scripts.md) (what a service body sees and returns),
+[JS-XML-Actions](JS-XML-Actions.md) (actions and expressions as JavaScript), [JS-Core-API](JS-Core-API.md) (`ec.*`),
+[JS-Globals](JS-Globals.md) (decimals, dates, the helper objects) and
+[JS-Framework-Services](JS-Framework-Services.md) (the services the framework ships).
 
 ### Definitions
 
@@ -253,6 +259,42 @@ to Rust:
 - Check concurrency: pass `lastUpdatedStamp` or the service's `expectedRevision` back on update so a stale write is
   refused.
 
+### Readiness, refresh and settings registrations
+
+A component shows in System › Operations › Health, the System home's attention list, the support summary and the
+settings index (and in an app that shows those screens, such as IronStone Admin) by seed rows of three framework
+entities, read by `org.moqui.admin.ReadinessServices`
+([JS-Framework-Services](JS-Framework-Services.md#administration-orgmoquiadmin); the rules a hand-made request meets
+are in [Attack-Surface](../security/Attack-Surface.md)). The fields are described in
+`runtime/base-component/framework/entity/ServerEntities.xml`; the framework's own rows are in
+`framework/data/AdminConfigurationData.xml`.
+
+- **A readiness provider** (`moqui.server.ReadinessProvider`): a key, an owner, a title, a group, the permission a
+  reader needs and a service. The service takes `providerKey` and the scope parameters the row names
+  (`scopeParameters`, such as `organizationPartyId`), changes nothing, and returns `checks`: each `{checkKey, title,
+  state (ready, warning, failed or unavailable), reasonCode, message}` and, where it applies, `subject` (whom or what
+  it is for, in words), `scope` (the scope parameters that narrow a request to it), `watermark` and `coverage` (a data
+  source's freshness, with the row's `expectedFrequencyMinutes` and `maxLagMinutes`). It checks the caller's permission
+  and scope itself and refuses with a reason code (`PERMISSION_DENIED`, `RECORD_UNAVAILABLE`), which leaves the
+  provider out for that caller; any other failure shows it as not checked. A row whose registration names a scope is
+  an organization's or a store's check: Health shows it, the System home does not.
+- **A place is a key, never a path.** A row's `fixRoute` and `fixId`, a check's own `fixRoute`, `fixId` and
+  `fixParameters`, and a settings entry's `destinationRoute` name a route the application showing them resolves
+  ([Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)):
+  the framework's keys are in `tools/template/AdminMount.js`, an app's own are in its mount (mr-boss `Admin.js`
+  `mountRoutes`). A key with no route where it is shown is no link.
+- **A refresh operation** (`moqui.server.RefreshOperation`): a key, the permission that runs it, the provider whose
+  source it refreshes and a service, called with `refreshKey`, `operationKey`, `reason` and the scope parameters the
+  row names.
+- **A settings entry** (`moqui.server.SettingsEntry`): a key, a title, a group, `destinationRoute` and
+  `screenLocation`, the screen whose authorization decides who is shown the entry (the caller's own grants, counted
+  down the component's screen directory), with an optional `viewPermission` and the `providerKey` of what it
+  configures. An app that shows a framework settings screen under its own root seeds the entry again, under the same
+  key, with its own `screenLocation`.
+- **The registration adds no right.** A registered service is called as the user, and the registry's own grant is not
+  inheritable: outside an app's screens a caller needs a grant of the service itself, which the component's setup
+  data gives to the groups that should read it.
+
 ### Values
 
 - **No hard-coded defaults** for currency (`'USD'`), units (`'OTH_ea'`), languages (`'es'`) or purposes. Take them
@@ -269,6 +311,9 @@ to Rust:
   history stays readable.
 
 ## 5. Screens
+
+References: [JS-Screen-Scripts](JS-Screen-Scripts.md) (actions, transitions and widget expressions) and
+[JS-Templates-Macros](JS-Templates-Macros.md) (render modes and `sri`).
 
 ### Structure
 
@@ -310,6 +355,51 @@ to Rust:
 - **Links:** `target-window="_blank"`, not `target`. Other screens of the app through `sharedLinks`, not literal
   paths.
 
+### A framework screen under an app's root
+
+An app shows a framework screen (System's administration screens, the Dashboards screens) under its own root instead
+of copying it, as IronStone Admin and Insights do. The two contracts are
+[Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)
+and [Mounting the report screens](../tools/Monitoring.md#mounting-the-report-screens); the record of the two moves,
+with the findings behind these rules, is [plans/archive/Admin-Screens-Down.md](../../plans/archive/Admin-Screens-Down.md).
+
+- **Three ways**, chosen by what the app's authorization rows name, what the framework screen has and what the app
+  adds:
+  - **By location:** a `subscreens-item` of the app's area names the framework file, and the app has no file. Only when
+    no grant of the app names the screen or a transition of it, the screen has no transition that is the instance
+    administrator's alone, and the app adds nothing.
+  - **A thin wrapper** at the app's own location: `include-screen share-scope="true"` and one `transition-include` for
+    each transition the app offers. A transition that is not taken in does not exist on the app's route. This is the
+    way when a grant of the app names the screen or its transitions, and when the framework screen has transitions
+    the app must not offer.
+  - **A screen of the app's own**, with its own `actions` and transitions, around the framework screen's named
+    sections and forms (`section-include`, `form extends`). This is the way when the app adds something inside the
+    screen: an organization as a filter or a scope, a column, a box, a check before an action.
+- **A grant names the app's own screen, never a framework location.** A grant on a framework location opens it under
+  the framework's own app too, past that app's check. An app's inheritable always-allow on its area skips every check
+  below it (transition, service, entity), so a transition the app must not offer is kept off its route, not refused
+  on it.
+- **Mount context is data, never authority.** The app's root sets the map (`adminMount`; `reportLinks` and
+  `reportPolicy`) in its `always-actions`, so that transitions read it too, and the framework's own roots set it to
+  null, so a request parameter never supplies one. It says where links go and which values of the app's policy apply.
+  What a value allows is enforced by the transition, which reads the map and never a parameter, or by the service it
+  calls; a list of what is offered gives no right. A service's context is its own: a module function an app calls
+  from a service sees no mount, so the service passes it what it needs (a range, fixed variables).
+- **What the engine does** that an author of such a screen meets:
+  - A form nested in a field of an extended form is the other screen's and is not found: override that field with a
+    form of the app's own. A field of an extended form-list is replaced whole by a field of the same name, and
+    `section-include` reaches a section nested in another.
+  - Two paginated lists on one page share `pageIndex`. Show the second in place of the first, by a parameter, not
+    beside it.
+  - A link carries every parameter its target declares that is in the linking screen's context (a page index, a range
+    of dates, a find value), and a screen mounted by location declares all of its parameters on the app's route. An
+    empty value in the link's own parameters leaves one out: a list that links another screen's record sends its own
+    find values empty, as a link that leaves a mode does. A menu entry or tab carries them too, but one for a screen
+    other than the one shown leaves out the list's page, page size and sort (`pageIndex`, `pageSize`, `pageNoLimit`,
+    `orderByField`).
+  - A screen path that names the app's root (`//Admin/...`) does not resolve where a spec renders with the app's root
+    file as the root. A mount's routes are relative to a screen of an area, which holds under any root.
+
 ### The archetypes
 
 Follow the style guide's archetype for each screen, as the Projects app does. In particular:
@@ -324,7 +414,8 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - **Ends and deletes** use `btn-type="danger"` and a `confirmation` that names the record. Activate, publish and generate
   confirm too.
 - **Landing** screens use `number-card`s in a `dashboard`, each linking to a filtered list, shortcut buttons with one
-  primary, and an empty state that offers the first steps (Create, Import).
+  primary, and an empty state that offers the first steps (Create, Import). The screens an app home features are
+  `nav-card`s in a `dashboard`: an icon, a title, one line of text and up to three child `link`s.
 - **Tabs** use `subscreens-panel type="tab"` (or `subscreens-menu type="tab"` with `subscreens-active` inside a tab)
   with an explicit `menu-index` on each item, in the design's order.
 - **Do not wrap one button in a box.** A box whose body is a single dialog button belongs in the header's actions or
@@ -507,5 +598,5 @@ write one for a business rule you add or change (its result and its refusals) an
     in `actions` (report options, a record's link parameters);
   - Prettier with the repository's config shows no change.
 - The design and implementation records updated: what was built, the commits, the findings, and what is left for later.
-  Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Testing](Testing.md) for
+  Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Build-Test](../Build-Test.md) for
   the Chromium setting, and to a report file of the reader's choosing.

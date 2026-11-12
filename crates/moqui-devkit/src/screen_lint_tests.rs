@@ -36,6 +36,26 @@ fn unnamed_containers_are_listed_as_anchors_a_screen_extend_cannot_use() {
 }
 
 #[test]
+fn a_comment_left_open_before_the_next_is_a_failure() {
+    let text =
+        "<!--\nlicense\n<!-- note -->\n<screen><widgets><!-- see --screens --><label text=\"x\"/></widgets></screen>";
+    let file = super::lint_screen_text(std::path::Path::new("Comments.xml"), text)
+        .unwrap()
+        .unwrap();
+    assert_eq!(file.malformed_comments, [3, 4]);
+    let report = ScreenLintReport {
+        files: vec![file],
+        ..ScreenLintReport::default()
+    };
+    let failures = report.failures();
+    assert_eq!(failures.len(), 2, "{failures:?}");
+    assert!(
+        failures[0].starts_with("Comments.xml:3 a comment holds `--`"),
+        "{failures:?}"
+    );
+}
+
+#[test]
 fn context_plus_is_its_own_idiom() {
     assert!(names("context + [a: 1]").contains(&"context-plus"));
     assert!(names("context+[a:b]").contains(&"context-plus"));

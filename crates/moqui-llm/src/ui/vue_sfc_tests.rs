@@ -29,7 +29,7 @@ const GOOD: &str = r#"<template>
   <div class="q-pa-sm">
     <q-table :rows="rows" :columns="columns" row-key="_id" dense flat></q-table>
     <m-text-line dense outlined label="Description" v-model="description"></m-text-line>
-    <template v-if="rows.length"><a href="/apps/system/Security/UserGroup/UserGroupList">All groups</a></template>
+    <template v-if="rows.length"><a href="/apps/system/Access/Groups">All groups</a></template>
     <q-btn label="Save" color="primary" @click="save"></q-btn>
   </div>
 </template>
@@ -41,7 +41,7 @@ module.exports = {
   mounted: function () {
     var vm = this;
     // a row's location is a field, not the frame's
-    this.$bridge.get('/apps/system/Security/UserGroup/UserGroupList', { pageSize: '20' })
+    this.$bridge.get('/apps/system/Access/Groups', { pageSize: '20' })
       .then(function (r) { vm.rows = (r.rows || []).filter(function (row) { return row.location !== 'window'; }); });
   },
   methods: { save: function () { this.$bridge.submit('save', { description: this.description }); } }
@@ -53,12 +53,12 @@ module.exports = {
 </style>
 
 <actions>
-[{"name": "save", "label": "Save the group", "path": "/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup",
+[{"name": "save", "label": "Save the group", "path": "/apps/system/Access/GroupDetail/updateUserGroup",
   "fields": ["description"], "parameters": {"userGroupId": "ADMIN"}}]
 </actions>
 
 <reads>
-["/apps/system/Security/UserGroup/UserGroupList"]
+["/apps/system/Access/Groups"]
 </reads>
 "#;
 
@@ -96,7 +96,7 @@ fn a_component_checks_and_is_kept_with_its_blocks_and_actions() {
     .unwrap();
     assert_eq!(prepared.statements, ["template", "script", "style", "actions", "reads"]);
     assert_eq!(prepared.mutations, ["save"]);
-    assert_eq!(prepared.reads, ["/apps/system/Security/UserGroup/UserGroupList"]);
+    assert_eq!(prepared.reads, ["/apps/system/Access/Groups"]);
     // the nested <template v-if> is the template's own
     let blocks = blocks(&prepared.program).unwrap();
     assert!(blocks
@@ -316,7 +316,7 @@ fn actions_are_checked_and_an_action_makes_its_request_from_the_values() {
     let state = json!({"description": "New", "other": "not sent"});
     let (method, path, body) = action_request(GOOD, "save", &state).unwrap().unwrap();
     assert_eq!(method, "POST");
-    assert_eq!(path, "/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup");
+    assert_eq!(path, "/apps/system/Access/GroupDetail/updateUserGroup");
     assert_eq!(body, json!({"userGroupId": "ADMIN", "description": "New"}));
     let (_, _, body) = action_request(GOOD, "save", &json!({})).unwrap().unwrap();
     assert_eq!(body, json!({"userGroupId": "ADMIN", "description": null}));
@@ -326,7 +326,7 @@ fn actions_are_checked_and_an_action_makes_its_request_from_the_values() {
 #[test]
 fn the_reads_block_is_checked_and_decides_what_the_proxy_answers() {
     let with_reads = |reads: &str| problems_of(&format!("<template><div></div></template><reads>{reads}</reads>"));
-    assert!(with_reads("[\"/apps/system/Security/UserGroup/UserGroupList\"]").is_empty());
+    assert!(with_reads("[\"/apps/system/Access/Groups\"]").is_empty());
     assert!(with_reads("[{\"path\": \"/qapps/system/Visit/VisitList\"}]").is_empty());
     for (reads, why) in [
         ("{\"path\": \"/apps/x/y\"}", "not a JSON list"),
@@ -343,14 +343,11 @@ fn the_reads_block_is_checked_and_decides_what_the_proxy_answers() {
         assert!(problems[0].message.contains(why), "{reads}: {}", problems[0].message);
     }
     // the prepared canvas carries the declared reads, and the proxy answers only those (the /qapps twin as /apps)
-    let declared = parse_reads("[\"/apps/system/Security/UserGroup/UserGroupList\"]").unwrap();
+    let declared = parse_reads("[\"/apps/system/Access/Groups\"]").unwrap();
+    assert!(read_declared(&declared, "/apps/system/Access/Groups"));
     assert!(read_declared(
         &declared,
-        "/apps/system/Security/UserGroup/UserGroupList"
-    ));
-    assert!(read_declared(
-        &declared,
-        "/qapps/system/Security/UserGroup/UserGroupList?userGroupId=ADMIN"
+        "/qapps/system/Access/Groups?userGroupId=ADMIN"
     ));
     assert!(!read_declared(
         &declared,

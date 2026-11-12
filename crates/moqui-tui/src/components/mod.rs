@@ -27,7 +27,7 @@
 mod board;
 mod calendar;
 mod chart;
-mod report;
+pub(crate) mod report;
 mod report_editor;
 mod timeline;
 mod tree;

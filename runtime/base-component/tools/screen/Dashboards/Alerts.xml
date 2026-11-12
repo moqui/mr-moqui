@@ -1,153 +1,303 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6">
-    <transition name="rule"><default-response url="//apps/dashboards/AlertRule"/></transition>
-    <transition name="shared"><default-response url="//apps/dashboards/AlertShared"/></transition>
-    <transition name="delete" method="post" authz-action="delete">
-        <actions><service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/></actions>
-        <default-response url="."/><error-response url="."/>
+<!-- Alerts (docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/archive/Admin-Screens-Down.md, Track I;
+    Tools' list merged with BOSS Insights'): the alert rules the viewer reads. AlertFind chooses the view and the state.
+    All: every rule they read, each with its kind (an operational rule tells contact points, a business rule an audience
+    of people who read what its owner reads), its owner, its condition, whom it tells and the most severe state of its
+    series; Mine: the rules they own; Received: the rules that told them, with their own delivery, whatever they may
+    set; Templates: the shipped rules, each copied to the viewer, over a dataset they read. Pause, activate and delete
+    confirm the rule and whom it tells; the bulk pause answers each rule's result. No data and Error say the health is
+    not known, never Normal. Below, where rules have contact points: the state of each series, and the shared contact
+    points, silences and mute timings (AlertShared). Every read and write is through template/ReportAlerts.js, which reads
+    no entity: a state is the engine's get#AlertState.
+    Another app shows the screen under its own root, included in a screen of its own with the transitions it takes in
+    (BOSS Insights › Business alerts takes copyAlert, pauseAlerts and deleteAlert; evaluate and deleteShared are not on
+    its route). Its policy (template/ReportMount.js) is what the transitions here read, never a request: a rule is set
+    only where features.alert says so, and where the mount tells every rule to an audience (alertAudience) the views
+    are Mine, Received and Templates, only business rules are listed, a copy has the mount's fixed parts and the series
+    states and shared items are not shown. The links to a rule and to a shared item are the mount's (alertRule,
+    alertShared). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6"
+        menu-image="sym_o_notifications_active" menu-image-type="icon">
+    <parameter name="view"/>
+    <parameter name="state"/>
+
+    <transition name="copyAlert" method="post">
+        <actions><set field="copiedId" from="ec.resource.script('component://tools/template/ReportAlerts.js').copy({definitionId:sourceDefinitionId, title:title})"/></actions>
+        <default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alertRule')}" parameter-map="{definitionId:copiedId}"/>
+        <error-response url="."/>
     </transition>
-    <transition name="evaluate" method="post" authz-action="update">
-        <actions>
-            <service-call name="org.moqui.report.ReportServices.evaluate#Alerts" in-map="{definitionId:definitionId}" out-map="evaluation"/>
-            <script><![CDATA[
-                if (evaluation && !ec.message.hasError()) {
-                    // The service's evaluated count includes interval/claim skips; it is not a count of new results.
-                    if (Number(evaluation.failed || 0) > 0) {
-                        ec.message.addMessage('Evaluation request reported '+evaluation.failed+' failed rule(s). Review the instance state and server logs.', 'warning')
-                    } else if (Number(evaluation.evaluated || 0) === 0) {
-                        ec.message.addMessage('No active alert rule was processed. If the rule is paused, resume it before evaluating.', 'info')
-                    } else {
-                        ec.message.addMessage('Evaluation requested. Rules within their evaluation interval or already being evaluated are skipped. Check the Evaluated time and state below.', 'info')
-                    }
-                    for (const notice of evaluation.notices || []) {
-                        if (notice && notice.message) ec.message.addMessage(String(notice.message), 'warning')
-                    }
-                }
-            ]]></script>
-        </actions>
+    <transition name="pauseAlerts" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').pause({definitionIds:definitionIds, paused:paused})</script></actions>
         <default-response url="."/>
+        <error-response url="."/>
     </transition>
-    <actions><script><![CDATA[
-        rules=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'alert'}).call().definitions || []
-        const shared=type=>ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:type}).call().definitions || []
-        sharedContacts=shared('contactPoint').map(item=>Object.assign({},item,{detail:[(item.body || {}).type,(item.body || {}).topic || (item.body || {}).toAddresses || (item.body || {}).urlProperty || (item.body || {}).url].filter(Boolean).join(': ')}))
-        sharedSilences=shared('silence').map(item=>Object.assign({},item,{detail:((item.body || {}).from || '')+' to '+((item.body || {}).thru || '')}))
-        sharedMutes=shared('muteTiming').map(item=>Object.assign({},item,{detail:((item.body || {}).start || '00:00')+' to '+((item.body || {}).end || '24:00')}))
-        alertInstances=rules.length?ec.entity.find('moqui.report.AlertInstance').condition('definitionId','in',rules.map(rule=>rule.id)).orderBy('-lastEvaluated').list():[]
-    ]]></script></actions>
+    <transition name="deleteAlert" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').remove({definitionId:definitionId})</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- Tools' own, for rules with contact points: an evaluation now (the administrator's), and a shared item deleted -->
+    <transition name="evaluate" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').evaluate({definitionId:definitionId})</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteShared" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').removeShared({definitionId:definitionId})</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="found" from="ec.resource.script('component://tools/template/ReportAlerts.js').list({view:view, state:state})"/>
+        <set field="view" from="found.view"/>
+        <set field="alertList" from="found.alerts"/>
+        <set field="received" from="found.received"/>
+        <set field="templates" from="found.templates"/>
+        <set field="instanceList" from="found.instances"/>
+        <set field="sharedContacts" from="found.shared.contacts"/>
+        <set field="sharedSilences" from="found.shared.silences"/>
+        <set field="sharedMutes" from="found.shared.mutes"/>
+        <set field="findValues" from="{view:view, state:state}"/>
+        <!-- a rule's link names the rule alone: what the request carries of another (a notification's) is left out -->
+        <set field="newRule" from="{definitionId:'', dashboardId:'', panelId:'', queryIndex:''}"/>
+    </actions>
     <widgets>
-        <label text="Dashboard alerts" type="h4"/>
-        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
-            <text type="tui" template="false">[]</text></render-mode>
-        <container-box>
-            <box-header title="Alert rules"/>
-            <box-toolbar><link url="rule" text="New alert rule" btn-type="primary" parameter-map="{definitionId:'',dashboardId:'',panelId:''}"/></box-toolbar>
-            <box-body>
-                <section name="AvailableAlertRules" condition="rules.length"><widgets>
-                    <form-list name="AlertRules" list="rules" skip-form="true">
-                        <field name="title"><default-field><link url="rule" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
-                        <field name="paused"><default-field title="Status"><display text="${body.paused ? 'Paused' : 'Active'}"/></default-field></field>
-                        <field name="evaluate"><default-field><link url="evaluate" text="Evaluate now" link-type="hidden-form-link" confirmation="Request an evaluation of this alert rule? Paused rules and evaluation intervals still apply. A state change notifies its contact points."><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this alert rule, its state and its versions?"><parameter name="definitionId" from="id"/></link></default-field></field>
+        <container style="row items-center q-col-gutter-sm q-mb-sm">
+            <container style="col"><label text="${found.operational ? 'Alerts' : 'Business alerts'}" type="h5"/></container>
+            <container style="col-auto row q-gutter-sm">
+                <link id="NewRule" url="${found.ruleUrl}" text="New alert rule" btn-type="primary" parameter-map="newRule"
+                        condition="found.operational &amp;&amp; found.settable &amp;&amp; !!found.ruleUrl"/>
+            </container>
+        </container>
+        <label type="p" style="m-muted" condition="found.operational"
+                text="A rule evaluates a query and tracks the state of each of its series. An operational rule tells its contact points; a rule over business data tells an audience of people who read what its owner reads. No data and Error mean the health is not known, never Normal."/>
+        <label type="p" style="m-muted" condition="!found.operational &amp;&amp; found.settable"
+                text="An alert is evaluated as its owner. Other people are told only when they may read exactly what the owner reads, each in a notification of their own. To watch a panel, open its menu on a dashboard and choose New alert rule; or copy a template."/>
+        <label type="p" style="text-negative" text="${found.failure}" condition="found.failure"/>
+
+        <form-single name="AlertFind" transition="." map="findValues">
+            <field name="view"><default-field title="Show">
+                <drop-down><list-options list="found.viewOptions" key="${value}" text="${label}"/></drop-down>
+            </default-field></field>
+            <field name="state"><default-field title="State">
+                <drop-down allow-empty="true"><list-options list="found.stateOptions" key="${value}" text="${label}"/></drop-down>
+            </default-field></field>
+            <field name="apply"><default-field><submit text="Find"/></default-field></field>
+            <field-layout><field-row><field-ref name="view"/><field-ref name="state"/><field-ref name="apply"/></field-row></field-layout>
+        </form-single>
+
+        <section name="OwnAlerts" condition="view == 'all' || view == 'mine'"><widgets>
+            <label type="p" style="m-muted" condition="!alertList.length"
+                    text="${found.operational ? 'No alert rule yet. Create one to evaluate a query and track its state, or copy a template.' : 'You have no alert yet. Copy a template, or start one from a panel\'s menu on a dashboard.'}"/>
+            <form-list name="AlertRules" list="alertList" paginate="false" condition="alertList.length">
+                <row-selection id-field="definitionId" parameter="definitionIds" list-mode="true">
+                    <action>
+                        <dialog button-text="Pause" title="Pause the selected alerts"/>
+                        <form-single name="PauseSelected" transition="pauseAlerts">
+                            <field name="paused"><default-field><hidden default-value="true"/></default-field></field>
+                            <field name="note"><default-field title=""><label text="The selected alerts are not evaluated and tell nobody until activated again. Each one's result is shown."/></default-field></field>
+                            <field name="submitButton"><default-field title="Pause"><submit/></default-field></field>
+                        </form-single>
+                    </action>
+                </row-selection>
+                <field name="title"><default-field title="Alert">
+                    <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
+                            parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                    <label text="${title}" condition="!found.ruleUrl"/>
+                </default-field></field>
+                <field name="kindText"><default-field title="Kind"><display text="${kindText}${view == 'all' ? ' · ' + ownerText : ''}"/></default-field></field>
+                <field name="conditionText"><default-field title="Fires when"><display/></default-field></field>
+                <field name="audienceText"><default-field title="Tells"><display/></default-field></field>
+                <field name="stateText"><default-field title="State">
+                    <render-mode>
+                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                            WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                        <text type="html">${stateText}</text>
+                    </render-mode>
+                </default-field></field>
+                <field name="lastText"><default-field title="Evaluated"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="pauseAlerts" link-type="hidden-form" text="Pause" condition="changeable &amp;&amp; !paused"
+                            confirmation="Pause ${title}? It is not evaluated and tells nobody until activated again."
+                            parameter-map="{definitionIds:definitionId, paused:'true'}"/>
+                    <link url="pauseAlerts" link-type="hidden-form" text="Activate" condition="changeable &amp;&amp; paused"
+                            confirmation="Activate ${title}? Its reading is run as you first, and whom it tells (${audienceText}) is checked."
+                            parameter-map="{definitionIds:definitionId, paused:'false'}"/>
+                    <link url="evaluate" link-type="hidden-form" text="Evaluate now" condition="found.canEvaluate &amp;&amp; !template &amp;&amp; !paused"
+                            confirmation="Request an evaluation of ${title} now? Its evaluation interval still applies, and a state change notifies whom it tells."
+                            parameter-map="{definitionId:definitionId}"/>
+                    <link url="deleteAlert" link-type="hidden-form" text="Delete" condition="changeable"
+                            confirmation="Delete ${title} with its state, its delivery history and its versions? ${audienceText} is no longer told."
+                            parameter-map="{definitionId:definitionId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="title"/><field-ref name="conditionText"/></column>
+                    <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                </columns>
+            </form-list>
+        </widgets></section>
+
+        <section name="ReceivedAlerts" condition="view == 'received'"><widgets>
+            <label type="p" style="m-muted" condition="!received.length" text="No alert has told you anything yet."/>
+            <form-list name="ReceivedList" list="received" skip-form="true" paginate="false" condition="received.length">
+                <field name="title"><default-field title="Alert">
+                    <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="readable &amp;&amp; !!found.ruleUrl"
+                            parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                    <label text="${title}" condition="!readable || !found.ruleUrl"/>
+                </default-field></field>
+                <field name="toldText"><default-field title="You were told"><display text="${toldText} · ${channelText}"/></default-field></field>
+                <field name="attemptText"><default-field title="When"><display/></default-field></field>
+                <field name="stateText"><default-field title="Your delivery">
+                    <render-mode>
+                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                            WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                        <text type="html">${stateText}</text>
+                    </render-mode>
+                </default-field></field>
+                <field name="ruleStateText"><default-field title="Now">
+                    <render-mode>
+                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${ruleStateColor}">${
+                            WebUtilities.encodeHtml(ruleStateText)}</q-chip>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: ruleStateText})}]]></text>
+                        <text type="html">${ruleStateText}</text>
+                    </render-mode>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="title"/><field-ref name="toldText"/></column>
+                    <column><field-ref name="ruleStateText"/><field-ref name="attemptText"/></column>
+                </columns>
+            </form-list>
+        </widgets></section>
+
+        <section name="AlertTemplates" condition="view == 'templates'"><widgets>
+            <label type="p" style="m-muted" text="A shipped alert is a template: it runs only once copied. Your copy is yours alone; one over business data stays inactive until you set its threshold and whom it tells and activate it."/>
+            <label type="p" style="m-muted" condition="!templates.length" text="No shipped alert is yours to read."/>
+            <form-list name="TemplateList" list="templates" skip-form="true" paginate="false" condition="templates.length">
+                <field name="title"><default-field title="Template">
+                    <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
+                            parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                    <label text="${title}" condition="!found.ruleUrl"/>
+                </default-field></field>
+                <field name="description"><default-field title="What it watches"><display/></default-field></field>
+                <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                <field name="conditionText"><default-field title="Fires when"><display/></default-field></field>
+                <field name="copy"><default-field title="">
+                    <link url="copyAlert" link-type="hidden-form" text="Copy" condition="available"
+                            confirmation="Copy ${title}? The copy is yours alone."
+                            parameter-map="{sourceDefinitionId:definitionId}"/>
+                    <label text="${availableText}" style="m-muted" condition="!available"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="title"/><field-ref name="conditionText"/></column>
+                    <column><field-ref name="copy"/></column>
+                </columns>
+            </form-list>
+        </widgets></section>
+
+        <section name="SeriesStates" condition="found.operational &amp;&amp; instanceList.length"><widgets>
+            <container-box>
+                <box-header title="Series states"/>
+                <box-body>
+                    <label type="p" style="m-muted" text="The latest state of each series of the rules above, as you may read it."/>
+                </box-body>
+                <box-body-nopad>
+                    <form-list name="AlertInstances" list="instanceList" skip-form="true" paginate="false">
+                        <field name="title"><default-field title="Rule">
+                            <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
+                                    parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                            <label text="${title}" condition="!found.ruleUrl"/>
+                        </default-field></field>
+                        <field name="seriesText"><default-field title="Series"><display style="m-wrap-anywhere"/></default-field></field>
+                        <field name="stateText"><default-field title="State">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                                    WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html">${stateText}</text>
+                            </render-mode>
+                        </default-field></field>
+                        <field name="valueText"><default-field title="Value"><display/></default-field></field>
+                        <field name="sinceText"><default-field title="Since"><display/></default-field></field>
+                        <field name="evaluatedText"><default-field title="Evaluated"><display/></default-field></field>
                         <columns type="mobile">
-                            <column><field-ref name="title"/><field-ref name="ownerId"/><field-ref name="paused"/></column>
-                            <column><field-ref name="evaluate"/><field-ref name="delete"/></column>
+                            <column><field-ref name="title"/><field-ref name="seriesText"/></column>
+                            <column><field-ref name="stateText"/><field-ref name="sinceText"/></column>
                         </columns>
                     </form-list>
-                </widgets><fail-widgets>
-                    <label text="No alert rules yet. Create a rule to evaluate a query and track its state." type="p"/>
-                </fail-widgets></section>
-            </box-body>
-        </container-box>
-        <container-box>
-            <box-header title="Alert instances"/>
-            <box-body>
-                <label text="The latest state of each evaluated rule and series. No data and Error mean health is unknown, never Normal." type="p"/>
-                <section name="AvailableAlertInstances" condition="alertInstances.length"><widgets>
-                    <form-list name="AlertInstances" list="alertInstances" skip-form="true">
-                        <field name="definitionId"><default-field title="Rule"><link url="rule" text="${definitionId}" link-type="anchor"><parameter name="definitionId"/></link></default-field></field>
-                        <field name="state"><default-field><display text="${state === 'NoData' ? 'No data (unknown)' : state === 'Error' ? 'Error (unknown)' : state}" style="${state === 'Firing' ? 'text-negative' : state === 'NoData' || state === 'Error' ? 'text-warning' : ''}"/></default-field></field>
-                        <field name="stateSince"><default-field title="State since"><display/></default-field></field>
-                        <field name="lastEvaluated"><default-field title="Last evaluated"><display/></default-field></field>
-                        <field name="labelsJson"><default-field title="Series labels"><display style="m-wrap-anywhere"/></default-field></field>
-                        <columns type="mobile">
-                            <column><field-ref name="definitionId"/><field-ref name="labelsJson"/></column>
-                            <column><field-ref name="state"/><field-ref name="stateSince"/><field-ref name="lastEvaluated"/></column>
-                        </columns>
-                    </form-list>
-                </widgets><fail-widgets>
-                    <label text="${rules.length ? 'No alert instances yet. Evaluate an active rule to see its state.' : 'No alert instances yet. Create an alert rule to begin.'}" type="p"/>
-                </fail-widgets></section>
-            </box-body>
-        </container-box>
-        <label text="Shared notification settings" type="h5"/>
-        <label text="Reuse contact points across rules. Silences and mute timings suppress notifications without changing evaluation history." type="p"/>
-        <container-box>
-            <box-header title="Shared contact points"/>
-            <box-toolbar><link url="shared" text="New contact point" parameter-map="{definitionId:'',sharedType:'contactPoint'}"/></box-toolbar>
-            <box-body>
-                <section name="AvailableSharedContactPoints" condition="sharedContacts.length"><widgets>
-                    <form-list name="SharedContactPoints" list="sharedContacts" skip-form="true" paginate="false">
-                        <field name="title"><default-field><link url="shared" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <field name="id"><default-field title="ID"><display/></default-field></field>
-                        <field name="detail"><default-field title="Delivery"><display style="m-wrap-anywhere"/></default-field></field>
-                        <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
-                        <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <columns type="mobile">
-                            <column><field-ref name="title"/><field-ref name="id"/><field-ref name="detail"/></column>
-                            <column><field-ref name="ownerId"/><field-ref name="delete"/></column>
-                        </columns>
-                    </form-list>
-                </widgets><fail-widgets>
-                    <label text="No shared contact points. Add a reusable notification, email or webhook destination." type="p"/>
-                </fail-widgets></section>
-            </box-body>
-        </container-box>
-        <container-box>
-            <box-header title="Shared silences"/>
-            <box-toolbar><link url="shared" text="New silence" parameter-map="{definitionId:'',sharedType:'silence'}"/></box-toolbar>
-            <box-body>
-                <section name="AvailableSharedSilences" condition="sharedSilences.length"><widgets>
-                    <form-list name="SharedSilences" list="sharedSilences" skip-form="true" paginate="false">
-                        <field name="title"><default-field><link url="shared" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <field name="id"><default-field title="ID"><display/></default-field></field>
-                        <field name="detail"><default-field title="Window"><display style="m-wrap-anywhere"/></default-field></field>
-                        <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
-                        <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <columns type="mobile">
-                            <column><field-ref name="title"/><field-ref name="id"/><field-ref name="detail"/></column>
-                            <column><field-ref name="ownerId"/><field-ref name="delete"/></column>
-                        </columns>
-                    </form-list>
-                </widgets><fail-widgets>
-                    <label text="No shared silences. Add one to suppress notifications for a selected time window." type="p"/>
-                </fail-widgets></section>
-            </box-body>
-        </container-box>
-        <container-box>
-            <box-header title="Shared mute timings"/>
-            <box-toolbar><link url="shared" text="New mute timing" parameter-map="{definitionId:'',sharedType:'muteTiming'}"/></box-toolbar>
-            <box-body>
-                <section name="AvailableSharedMuteTimings" condition="sharedMutes.length"><widgets>
-                    <form-list name="SharedMuteTimings" list="sharedMutes" skip-form="true" paginate="false">
-                        <field name="title"><default-field><link url="shared" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <field name="id"><default-field title="ID"><display/></default-field></field>
-                        <field name="detail"><default-field title="Daily window"><display style="m-wrap-anywhere"/></default-field></field>
-                        <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
-                        <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <columns type="mobile">
-                            <column><field-ref name="title"/><field-ref name="id"/><field-ref name="detail"/></column>
-                            <column><field-ref name="ownerId"/><field-ref name="delete"/></column>
-                        </columns>
-                    </form-list>
-                </widgets><fail-widgets>
-                    <label text="No shared mute timings. Add one for recurring quiet periods." type="p"/>
-                </fail-widgets></section>
-            </box-body>
-        </container-box>
-        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
-            <text type="tui" template="false">[]</text></render-mode>
+                </box-body-nopad>
+            </container-box>
+        </widgets></section>
+
+        <section name="SharedSettings" condition="!!found.sharedUrl"><widgets>
+            <label text="Shared notification settings" type="h6"/>
+            <label text="Reuse contact points across rules. Silences and mute timings suppress notifications without changing evaluation history." type="p" style="m-muted"/>
+            <container-box>
+                <box-header title="Shared contact points"/>
+                <box-toolbar><link id="NewContactPoint" url="${found.sharedUrl}" text="New contact point" parameter-map="{definitionId:'',sharedType:'contactPoint'}" condition="found.settable"/></box-toolbar>
+                <box-body>
+                    <section name="AvailableSharedContactPoints" condition="sharedContacts.length"><widgets>
+                        <form-list name="SharedContactPoints" list="sharedContacts" skip-form="true" paginate="false">
+                            <field name="title"><default-field><link id="OpenShared" url="${found.sharedUrl}" text="${title}" link-type="anchor" parameter-map="{definitionId:id, sharedType:''}"/></default-field></field>
+                            <field name="id"><default-field title="ID"><display/></default-field></field>
+                            <field name="detail"><default-field title="Delivery"><display style="m-wrap-anywhere"/></default-field></field>
+                            <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+                            <field name="delete"><default-field title=""><link url="deleteShared" text="Delete" link-type="hidden-form-link" condition="deletable &amp;&amp; found.settable" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="title"/><field-ref name="id"/><field-ref name="detail"/></column>
+                                <column><field-ref name="ownerId"/><field-ref name="delete"/></column>
+                            </columns>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No shared contact points. Add a reusable notification, email or webhook destination." type="p"/>
+                    </fail-widgets></section>
+                </box-body>
+            </container-box>
+            <container-box>
+                <box-header title="Shared silences"/>
+                <box-toolbar><link id="NewSilence" url="${found.sharedUrl}" text="New silence" parameter-map="{definitionId:'',sharedType:'silence'}" condition="found.settable"/></box-toolbar>
+                <box-body>
+                    <section name="AvailableSharedSilences" condition="sharedSilences.length"><widgets>
+                        <form-list name="SharedSilences" list="sharedSilences" skip-form="true" paginate="false">
+                            <field name="title"><default-field><link id="OpenShared" url="${found.sharedUrl}" text="${title}" link-type="anchor" parameter-map="{definitionId:id, sharedType:''}"/></default-field></field>
+                            <field name="id"><default-field title="ID"><display/></default-field></field>
+                            <field name="detail"><default-field title="Window"><display style="m-wrap-anywhere"/></default-field></field>
+                            <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+                            <field name="delete"><default-field title=""><link url="deleteShared" text="Delete" link-type="hidden-form-link" condition="deletable &amp;&amp; found.settable" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="title"/><field-ref name="id"/><field-ref name="detail"/></column>
+                                <column><field-ref name="ownerId"/><field-ref name="delete"/></column>
+                            </columns>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No shared silences. Add one to suppress notifications for a selected time window." type="p"/>
+                    </fail-widgets></section>
+                </box-body>
+            </container-box>
+            <container-box>
+                <box-header title="Shared mute timings"/>
+                <box-toolbar><link id="NewMuteTiming" url="${found.sharedUrl}" text="New mute timing" parameter-map="{definitionId:'',sharedType:'muteTiming'}" condition="found.settable"/></box-toolbar>
+                <box-body>
+                    <section name="AvailableSharedMuteTimings" condition="sharedMutes.length"><widgets>
+                        <form-list name="SharedMuteTimings" list="sharedMutes" skip-form="true" paginate="false">
+                            <field name="title"><default-field><link id="OpenShared" url="${found.sharedUrl}" text="${title}" link-type="anchor" parameter-map="{definitionId:id, sharedType:''}"/></default-field></field>
+                            <field name="id"><default-field title="ID"><display/></default-field></field>
+                            <field name="detail"><default-field title="Daily window"><display style="m-wrap-anywhere"/></default-field></field>
+                            <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+                            <field name="delete"><default-field title=""><link url="deleteShared" text="Delete" link-type="hidden-form-link" condition="deletable &amp;&amp; found.settable" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="title"/><field-ref name="id"/><field-ref name="detail"/></column>
+                                <column><field-ref name="ownerId"/><field-ref name="delete"/></column>
+                            </columns>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No shared mute timings. Add one for recurring quiet periods." type="p"/>
+                    </fail-widgets></section>
+                </box-body>
+            </container-box>
+        </widgets></section>
     </widgets>
 </screen>

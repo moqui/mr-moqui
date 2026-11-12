@@ -30,6 +30,11 @@ mod load_cmd;
 mod offline;
 mod raw;
 mod serve;
+#[cfg(feature = "ssh")]
+mod ssh;
+#[cfg(not(feature = "ssh"))]
+#[path = "ssh_off.rs"]
+mod ssh;
 mod video;
 mod ws;
 
@@ -54,7 +59,7 @@ use crate::test_cmd::{
     acceptance_only, component_name, component_specs, discover, discover_suite, report, run_order, select_across,
     select_specs, skipped_spec, suite_tree, TestComponent,
 };
-use http::{Ask, Server, Session};
+use http::{Ask, Server, Session, SshTarget};
 
 const PRELUDE: &str = include_str!("prelude.js");
 
@@ -73,6 +78,9 @@ pub struct ClientArgs {
     /// Component names, `test/client` directories or `.spec.js` files.
     pub targets: Vec<String>,
     pub server: Option<String>,
+    /// `--ssh host:port` (or a port, on the server's host): where `ssh.connect` goes by default; else
+    /// `MOQUI_TEST_SSH`.
+    pub ssh: Option<String>,
     pub specs: Vec<String>,
     pub feature: Option<String>,
     /// `--acceptance`: run the acceptance client specs (`acceptance/client/`) in place of `test/client/`; with
@@ -128,6 +136,7 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
         };
         match arg.as_str() {
             "--server" => parsed.server = Some(value("--server")?),
+            "--ssh" => parsed.ssh = Some(value("--ssh")?),
             "--spec" => parsed.specs.extend(
                 value("--spec")?
                     .split(',')
@@ -175,9 +184,9 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
             "--offline runs specs with server: false and does not start a server: leave out --serve",
         ));
     }
-    if parsed.serve && (parsed.server.is_some() || parsed.wait.is_some()) {
+    if parsed.serve && (parsed.server.is_some() || parsed.wait.is_some() || parsed.ssh.is_some()) {
         return Err(Error::new(
-            "--serve starts the servers the suites declare: leave out --server and --wait",
+            "--serve starts the servers the suites declare: leave out --server, --ssh and --wait",
         ));
     }
     Ok(parsed)
@@ -219,7 +228,9 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
                     .filter(|text| !text.trim().is_empty())
             })
             .unwrap_or_else(|| DEFAULT_SERVER.to_string());
-        Some(Server::parse(&server_text, args.allow_http)?)
+        let server = Server::parse(&server_text, args.allow_http)?;
+        let ssh = ssh_target(args.ssh.as_deref(), &server)?;
+        Some(server.with_ssh(ssh))
     };
     let components = select(&runtime, args)?;
     // a cycle in the dependsOn of the run is an error before any server starts
@@ -294,6 +305,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         next_id: AtomicU64::new(1),
         sessions: Mutex::new(HashMap::new()),
         sockets: Mutex::new(HashMap::new()),
+        ssh: ssh::Ssh::new(),
         bodies: Mutex::new(VecDeque::new()),
         current: Mutex::new((String::new(), String::new())),
         output: Mutex::new(Vec::new()),
@@ -661,12 +673,26 @@ fn default_out_dir(runtime: &Path) -> PathBuf {
     }
 }
 
+/// The SSH listener of `--ssh`, else of `MOQUI_TEST_SSH`, on `server`'s host when it names only a port.
+pub(crate) fn ssh_target(given: Option<&str>, server: &Server) -> Result<Option<SshTarget>, Error> {
+    let text = given.map(str::to_string).or_else(|| {
+        std::env::var("MOQUI_TEST_SSH")
+            .ok()
+            .filter(|text| !text.trim().is_empty())
+    });
+    text.map(|text| SshTarget::parse(&text, &server.host).map_err(Error::new))
+        .transpose()
+}
+
+/// The `MOQUI_TEST_` variables that are options, not params.
+pub(crate) const NOT_PARAMS: [&str; 2] = ["SERVER", "SSH"];
+
 /// The `MOQUI_TEST_<NAME>` variables (`MOQUI_TEST_LOAD_PASSWORD` is `params.loadPassword`), then `--param`.
 fn params(args: &ClientArgs) -> BTreeMap<String, String> {
     let mut out: BTreeMap<String, String> = std::env::vars()
         .filter_map(|(name, value)| {
             let rest = name.strip_prefix("MOQUI_TEST_")?;
-            (!rest.is_empty() && rest != "SERVER").then(|| (camel_case(rest), value))
+            (!rest.is_empty() && !NOT_PARAMS.contains(&rest)).then(|| (camel_case(rest), value))
         })
         .collect();
     for (name, value) in &args.params {
@@ -692,11 +718,13 @@ fn camel_case(name: &str) -> String {
     out
 }
 
-/// What a load run in a server (`crate::load_runner`, plans/LoadRunner.md §7) adds to the client host: the check of
+/// What a load run in a server (`crate::load_runner`, plans/archive/LoadRunner.md §7) adds to the client host: the check of
 /// every URL its users reach, each redirect's included (§10 Targets), and `service.call` in process (§6).
 pub(crate) trait InServer: Send + Sync {
     /// Whether the run may send a request to `url`; the error says why not.
     fn allow(&self, url: &str) -> Result<(), String>;
+    /// Whether the run may connect over SSH to `host:port` (plans/archive/LoadRunner.md L7); the error says why not.
+    fn allow_ssh(&self, host: &str, port: u16) -> Result<(), String>;
     /// `service.call(name, parameters, opts)` on the user's thread, whose ExecutionContext the run entered.
     fn service_call(&self, args: &Value) -> Result<Value, String>;
     /// The thread's `config` calls, the first before any of its scripts: the run binds what it must to the thread, and
@@ -725,6 +753,8 @@ pub(crate) struct ClientHost {
     next_id: AtomicU64,
     sessions: Mutex<HashMap<u64, Arc<Mutex<Session>>>>,
     sockets: Mutex<HashMap<u64, Arc<Mutex<ws::Socket>>>>,
+    /// `ssh`'s connections and shells.
+    ssh: ssh::Ssh,
     bodies: Mutex<VecDeque<(u64, Arc<Vec<u8>>)>>,
     /// The component and spec running, which name a load's JSON.
     current: Mutex<(String, String)>,
@@ -749,7 +779,7 @@ const IN_SERVER_MAX_WAIT: Duration = Duration::from_secs(30);
 
 /// The host functions a script's thread of a load run in a server may call: the client host's calls and the pure
 /// helpers. Not `System`, `SftpClient`, `ResourceReference`, the `ec` facades, or the spec host's `setProperty`,
-/// `parallel` and the like: in the server those would be the server's own (plans/LoadRunner.md §10).
+/// `parallel` and the like: in the server those would be the server's own (plans/archive/LoadRunner.md §10).
 fn in_server_host_call(path: &str) -> bool {
     const PURE: [&str; 5] = [
         "global.",
@@ -806,6 +836,29 @@ fn observe(
             },
         ),
     }
+}
+
+/// A sample's `name` from the call's arguments, else `default`.
+fn sample_name(args: &Value, default: impl FnOnce() -> String) -> String {
+    field(args, "name").as_str().map_or_else(default, str::to_string)
+}
+
+/// A call's `expect`: the outcome labels a load does not count as errors (a number is its text: a status, an exit
+/// status).
+fn labels(args: &Value) -> Vec<String> {
+    field(args, "expect")
+        .as_array()
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(|label| match label {
+                    Value::String(text) => Some(text.clone()),
+                    Value::Number(number) => Some(number.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn field<'a>(args: &'a Value, name: &str) -> &'a Value {
@@ -926,18 +979,21 @@ fn merge_limits(script: &Value, run: &Value) -> Value {
 }
 
 impl ClientHost {
-    /// The host of a load run in a server (plans/LoadRunner.md §7): its users' sessions go to `server`, every URL
+    /// The host of a load run in a server (plans/archive/LoadRunner.md §7): its users' sessions go to `server`, every URL
     /// through `in_server`'s check, `files` stays in `component_dir` (the script's component), and `service.call`
     /// runs in process. No browser.
     pub(crate) fn for_server_run(
         server: &str,
+        ssh: Option<(String, u16)>,
         params: BTreeMap<String, String>,
         insecure: bool,
         component_dir: PathBuf,
         in_server: Arc<dyn InServer>,
     ) -> Result<Arc<ClientHost>, String> {
         // the target rule is in_server's, which also knows when plain http is allowed
-        let server = Server::parse(server, true).map_err(|err| err.to_string())?;
+        let server = Server::parse(server, true)
+            .map_err(|err| err.to_string())?
+            .with_ssh(ssh.map(|(host, port)| SshTarget { host, port }));
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .danger_accept_invalid_certs(insecure)
@@ -957,6 +1013,7 @@ impl ClientHost {
             next_id: AtomicU64::new(1),
             sessions: Mutex::new(HashMap::new()),
             sockets: Mutex::new(HashMap::new()),
+            ssh: ssh::Ssh::new(),
             bodies: Mutex::new(VecDeque::new()),
             current: Mutex::new((String::new(), String::new())),
             output: Mutex::new(Vec::new()),
@@ -1149,7 +1206,7 @@ impl ClientHost {
         out
     }
 
-    /// `load(opts)` (5.6; plans/LoadRunner.md section 9): the users of its functions, or of a load script's scenarios,
+    /// `load(opts)` (5.6; plans/archive/LoadRunner.md section 9): the users of its functions, or of a load script's scenarios,
     /// until the duration ends or each has run its iterations; the result, its table for the case's output, and its
     /// JSON in `<out>/load`.
     fn run_load(&self, args: &Value) -> Result<Value, String> {
@@ -1283,27 +1340,52 @@ impl ClientHost {
     fn connect(&self, args: &Value) -> Result<Value, String> {
         let session = self.session(args)?;
         let origin = field(args, "origin").as_str().map(str::to_string);
+        let path = text_field(args, "path");
         // the socket connects to the server, its request names the path: both are checked
         self.allow(&self.server.url)?;
-        self.allow(&self.server.join(&text_field(args, "path")))?;
+        self.allow(&self.server.join(&path))?;
+        load::before_request()?;
+        let started = Instant::now();
         let connected = {
             let held = lock(&session);
             ws::connect(
                 &self.server,
                 &held,
-                &text_field(args, "path"),
+                &path,
                 &pairs(field(args, "headers")),
                 origin.as_deref(),
                 self.insecure,
                 self.capped(self.seconds(args, "timeout", self.timeout)),
-            )?
+            )
         };
+        let name = || sample_name(args, || format!("ws {}", path.split('?').next().unwrap_or("")));
+        ws::observe_connect(name, &connected, started.elapsed(), &labels(args))?;
+        let connected = connected?;
         let id = connected.socket.is_some().then(|| self.id());
         let json = connected.to_json(id);
         if let (Some(id), Some(socket)) = (id, connected.socket) {
             lock(&self.sockets).insert(id, Arc::new(Mutex::new(socket)));
         }
         Ok(json)
+    }
+
+    /// An `ssh.*` call (`ssh.rs`), with this host's server, timeouts and, in a server run, its target rule.
+    fn ssh_call(&self, name: &str, args: &Value) -> Result<Value, String> {
+        let allow = |host: &str, port: u16| match &self.in_server {
+            Some(in_server) => in_server.allow_ssh(host, port),
+            None => Ok(()),
+        };
+        let cap = |wait: Duration| self.capped(wait);
+        let id = || self.id();
+        let env = ssh::Env {
+            server: &self.server,
+            insecure: self.insecure,
+            timeout: self.timeout,
+            cap: &cap,
+            allow: &allow,
+            id: &id,
+        };
+        self.ssh.call(name, args, &env)
     }
 
     /// Save a kept body into the output directory under `name`, a plain file name.
@@ -1529,6 +1611,8 @@ impl ClientHost {
                     load::end()
                 };
                 ended.extend(field(args, "session").as_u64());
+                // a user's SSH connections and shells are tracked as its sessions are
+                self.ssh.close(&ended);
                 let mut sessions = lock(&self.sessions);
                 for id in ended {
                     sessions.remove(&id);
@@ -1542,13 +1626,33 @@ impl ClientHost {
             }
             "ws.send" => {
                 let socket = self.socket(args)?;
-                lock(&socket).send(&text_field(args, "text"))?;
+                let text = text_field(args, "text");
+                // a send is a sample only when named: most are a subscribe before the receives that are timed
+                if let Some(name) = field(args, "name").as_str() {
+                    load::before_request()?;
+                    let started = Instant::now();
+                    let sent = lock(&socket).send(&text);
+                    let (outcome, failure) = match &sent {
+                        Ok(()) => ("ok", None),
+                        Err(err) => ("error", Some(err.clone())),
+                    };
+                    ws::observe(|| name.to_string(), outcome.into(), failure, started.elapsed(), &[])?;
+                    sent?;
+                } else {
+                    lock(&socket).send(&text)?;
+                }
                 Ok(Value::Null)
             }
             "ws.receive" => {
                 let timeout = self.capped(self.seconds(args, "timeout", self.timeout));
                 let socket = self.socket(args)?;
-                let frame = lock(&socket).receive(timeout)?;
+                let mut held = lock(&socket);
+                let frame = if load::is_user() {
+                    let name = || sample_name(args, || "ws receive".to_string());
+                    ws::receive_observed(&mut held, timeout, name, &labels(args))?
+                } else {
+                    held.receive(timeout)?
+                };
                 Ok(json!(frame))
             }
             "ws.close" => {
@@ -1557,6 +1661,10 @@ impl ClientHost {
                     lock(&socket).close();
                 }
                 Ok(Value::Null)
+            }
+            name if name.starts_with("ssh.") => {
+                self.require_online("ssh")?;
+                self.ssh_call(name, args)
             }
             "files.list" => self.list(args),
             "files.read" => {
@@ -1633,6 +1741,7 @@ impl SpecHost for ClientHost {
         for socket in sockets {
             lock(&socket).close();
         }
+        self.ssh.close_all();
         lock(&self.sessions).clear();
         lock(&self.bodies).clear();
     }
@@ -1641,6 +1750,24 @@ impl SpecHost for ClientHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ssh_target_is_a_host_and_port_or_a_port_on_the_servers_host() {
+        let server = Server::parse("http://erp.local:8080", true).unwrap();
+        let target = |text: &str| ssh_target(Some(text), &server).map_err(|err| err.to_string());
+        let parsed = |host: &str, port: u16| {
+            Ok(Some(SshTarget {
+                host: host.to_string(),
+                port,
+            }))
+        };
+        assert_eq!(target("2222"), parsed("erp.local", 2222));
+        assert_eq!(target("127.0.0.1:2200"), parsed("127.0.0.1", 2200));
+        assert_eq!(target("[::1]:22"), parsed("::1", 22));
+        assert!(target("host:none").unwrap_err().contains("give host:port or a port"));
+        assert!(target("0").is_err());
+        assert_eq!(server.with_ssh(None).to_json()["ssh"], Value::Null);
+    }
 
     #[test]
     fn process_specs_run_only_by_name() {
@@ -1736,7 +1863,12 @@ mod tests {
             (&["--timeout", "0"][..], "--timeout is more than 0"),
             (&["--server"][..], "--server needs a value"),
             (&["--bogus"][..], "unknown option --bogus"),
-            (&["--serve", "--wait", "5"][..], "leave out --server and --wait"),
+            (&["--serve", "--wait", "5"][..], "leave out --server, --ssh and --wait"),
+            (
+                &["--serve", "--ssh", "2222"][..],
+                "leave out --server, --ssh and --wait",
+            ),
+            (&["--ssh"][..], "--ssh needs a value"),
             (&["--offline", "--serve"][..], "leave out --serve"),
             (&["--chromium"][..], "--chromium needs a value"),
         ] {

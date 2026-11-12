@@ -316,6 +316,21 @@ pub fn current_origin() -> Option<RenderOrigin> {
     ORIGIN.with(|stack| stack.borrow().last().map(|frame| frame.origin.clone()))
 }
 
+impl RenderOrigin {
+    /// An agent's render: its own screen session, its `data` and canvas reads ([`RenderOrigin::Agent`]), or
+    /// `agent-apps` over SSH.
+    pub fn is_agent(&self) -> bool {
+        matches!(self, RenderOrigin::Agent { .. } | RenderOrigin::AgentApps)
+    }
+}
+
+/// Whether the render running on this thread is an agent's, or runs inside one (a service an agent's render calls that
+/// renders a screen of its own): what it writes reaches a model, so the `ai-opt-out` fields, sections and screens
+/// leave their text out (`sri.isAgentRender()`, design-people PE-21).
+pub fn agent_render() -> bool {
+    ORIGIN.with(|stack| stack.borrow().iter().any(|frame| frame.origin.is_agent()))
+}
+
 /// How a person is deciding through the render running on this thread, when one is (plans/LLM-A2A-Assist.md 4.8):
 /// the terminal client ([`RenderOrigin::Terminal`]), or a browser request authenticated by its session cookie whose
 /// transition presented a valid session token, the session's user having come by the login form (a session a header

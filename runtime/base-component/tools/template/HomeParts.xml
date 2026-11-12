@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The navigation of an app home (plans/archive/Tools-Fancy.md B7): the featured screens as nav-cards and the rest as groups of
+    icon links, both from the home's navigation catalog, so a screen the menu does not show for this user has no tile
+    and a screen another component mounts is never missing.
+
+    A home sets `navCatalog` in its actions, a list of entries {path, group, featured, text, links, title, icon,
+    parameters, hidden} (or {url, title, ...} for a link outside the menus); template/HomeCatalog.js describes them and holds
+    the rule. `navOptions` is optional: {otherTitle} names the last group, of the app's menu items no entry names
+    (default "More"). The home then includes one or both sections:
+
+        <section-include name="NavFeatured" location="component://tools/template/HomeParts.xml"/>      md cards
+        <section-include name="NavFeaturedLarge" location="component://tools/template/HomeParts.xml"/> lg cards
+        <section-include name="NavGroups" location="component://tools/template/HomeParts.xml"/>
+
+    Each renders nothing when it has nothing the user may open. The sections' actions run after the screen's, so a
+    component adds or changes entries with a screen-extend of the home, as AppList.xml's suites:
+
+        <screen-extend><actions-extend when="append"><script><![CDATA[
+            navCatalog.push({path: 'MyScreen', group: 'Integration'})
+        ]]></script></actions-extend></screen-extend>
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <widgets>
+        <!-- the featured screens, size md: an icon, a title and one line, with up to three secondary links -->
+        <section name="NavFeatured"><actions>
+            <set field="homeNav" from="homeNav || ec.resource.script('component://tools/template/HomeCatalog.js').forScreen(sri, ec, navCatalog || [], navOptions || {})"/>
+        </actions><widgets>
+            <section name="NavFeaturedCards" condition="homeNav?.featured?.length"><widgets>
+                <dashboard id="NavFeaturedCards" min-width="240">
+                    <section-iterate name="NavFeaturedEach" list="homeNav.featured" entry="navCard"><widgets>
+                        <nav-card title="${navCard.title}" text="${navCard.text}" icon="${navCard.icon}" link="${navCard.link}">
+                            <link url="${navCard.links[0].link}" text="${navCard.links[0].title}" condition="navCard.links?.length &gt; 0"/>
+                            <link url="${navCard.links[1].link}" text="${navCard.links[1].title}" condition="navCard.links?.length &gt; 1"/>
+                            <link url="${navCard.links[2].link}" text="${navCard.links[2].title}" condition="navCard.links?.length &gt; 2"/>
+                        </nav-card>
+                    </widgets></section-iterate>
+                </dashboard>
+            </widgets></section>
+        </widgets></section>
+
+        <!-- the same in size lg, for a home with a few main tools -->
+        <section name="NavFeaturedLarge"><actions>
+            <set field="homeNav" from="homeNav || ec.resource.script('component://tools/template/HomeCatalog.js').forScreen(sri, ec, navCatalog || [], navOptions || {})"/>
+        </actions><widgets>
+            <section name="NavFeaturedLargeCards" condition="homeNav?.featured?.length"><widgets>
+                <dashboard id="NavFeaturedLargeCards" min-width="300">
+                    <section-iterate name="NavFeaturedLargeEach" list="homeNav.featured" entry="navCard"><widgets>
+                        <nav-card title="${navCard.title}" text="${navCard.text}" icon="${navCard.icon}" link="${navCard.link}" size="lg">
+                            <link url="${navCard.links[0].link}" text="${navCard.links[0].title}" condition="navCard.links?.length &gt; 0"/>
+                            <link url="${navCard.links[1].link}" text="${navCard.links[1].title}" condition="navCard.links?.length &gt; 1"/>
+                            <link url="${navCard.links[2].link}" text="${navCard.links[2].title}" condition="navCard.links?.length &gt; 2"/>
+                        </nav-card>
+                    </widgets></section-iterate>
+                </dashboard>
+            </widgets></section>
+        </widgets></section>
+
+        <!-- everything not featured: a box of icon links per group, as many boxes in a row as fit -->
+        <section name="NavGroups"><actions>
+            <set field="homeNav" from="homeNav || ec.resource.script('component://tools/template/HomeCatalog.js').forScreen(sri, ec, navCatalog || [], navOptions || {})"/>
+        </actions><widgets>
+            <section name="NavGroupBoxes" condition="homeNav?.groups?.length"><widgets>
+                <dashboard id="NavGroupBoxes" min-width="200">
+                    <section-iterate name="NavGroupEach" list="homeNav.groups" entry="navGroup"><widgets>
+                        <container-box><box-header title="${navGroup.title}"/><box-body>
+                            <section-iterate name="NavGroupItems" list="navGroup.items" entry="navItem"><widgets>
+                                <container>
+                                    <link url="${navItem.link}" text="${navItem.title}" icon="${navItem.icon}" link-type="anchor" tooltip="${navItem.text}"/>
+                                </container>
+                            </widgets></section-iterate>
+                        </box-body></container-box>
+                    </widgets></section-iterate>
+                </dashboard>
+            </widgets></section>
+        </widgets></section>
+    </widgets>
+</screen>

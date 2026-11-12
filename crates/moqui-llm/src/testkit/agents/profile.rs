@@ -38,6 +38,9 @@ pub const REPLAY_MODEL: &str = "agent-eval-replay";
 const ENDPOINT: &str = "moqui.llm.LlmEndpoint";
 const MODEL: &str = "moqui.llm.LlmModel";
 const BINDING: &str = "moqui.llm.LlmFeatureBinding";
+const QUOTA: &str = "moqui.llm.LlmQuota";
+/// The quota row a live run puts in for its users (`ALL_USERS`), with no limit, and takes out after.
+const EVAL_QUOTA: &str = "AGENT_EVAL_NO_LIMIT";
 
 /// The `LlmModel` fields a recording's model settings may set on the replay model.
 const SETTINGS: [&str; 14] = [
@@ -152,6 +155,27 @@ impl Rows {
                     ("reasoningLevel", reasoning),
                 ],
                 false,
+            )
+        })
+    }
+
+    /// No daily token or cost quota for the run's users: an `LlmQuota` row of `ALL_USERS` with no limit, which the
+    /// quota takes over the conf's daily limits (the most generous group row wins, and no limit is the largest). Every
+    /// task runs as a user of the test database, so without it a live run of many tasks stops at the conf's
+    /// `user-daily-tokens` part way through, with each later task failed at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be read or written.
+    pub fn lift_quota(&mut self, factory: &ExecutionContextFactory) -> Result<(), Error> {
+        let facade = facade(factory)?;
+        quietly(|| {
+            self.save(&facade, QUOTA, "quotaId", EVAL_QUOTA)?;
+            put(
+                &facade,
+                QUOTA,
+                &[("quotaId", EVAL_QUOTA), ("userGroupId", "ALL_USERS"), ("period", "day")],
+                true,
             )
         })
     }

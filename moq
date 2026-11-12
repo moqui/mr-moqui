@@ -1122,7 +1122,7 @@ EOF
 help_git_pull() {
     cat <<'EOF'
 Runs git pull (with any arguments given, like --rebase) in each repo, then lists the commits
-the pull brought in.
+the pull brought in. That list runs without a pager.
 EOF
 }
 
@@ -2208,7 +2208,8 @@ stage_desktop_runtime() {
     local stage=$1 name
     need_tool rsync
     run_cmd mkdir -p "$stage" || die "could not create $(rel "$stage")"
-    for name in base-component component ecomponent conf; do
+    # dev-component: the Dev AIDE and the example, which load only on a dev instance (the tray's Developer tools)
+    for name in base-component component ecomponent dev-component conf; do
         if [ -d "$RUNTIME_DIR/$name" ]; then
             run_cmd rsync -a --delete --exclude .git --exclude target --exclude '.DS_Store' \
                 "$RUNTIME_DIR/$name/" "$stage/$name/" || die "could not stage runtime/$name"
@@ -2286,7 +2287,7 @@ task_test_load() {
                 comparing=''
                 ;;
             --compare) args+=("$arg"); comparing=1 ;;
-            --script | --server | --param | --users | --ramp-up | --duration | --iterations | --rate | --scenario | \
+            --script | --server | --ssh | --param | --users | --ramp-up | --duration | --iterations | --rate | --scenario | \
                 --label | --log-level | --timeout)
                 args+=("$arg")
                 if [ ${#OPT_REST[@]} -gt 0 ]; then
@@ -3871,7 +3872,7 @@ task_git_pull() {
         after=$(git -C "$repo" rev-parse -q HEAD 2>/dev/null)
         if [ -n "$before" ] && [ "$before" != "$after" ]; then
             info "New commits:"
-            git -C "$repo" log --no-decorate --format='  %h %<(16,trunc)%an %s' "$before..$after"
+            git --no-pager -C "$repo" log --no-decorate --format='  %h %<(16,trunc)%an %s' "$before..$after"
         fi
     done
     if [ -n "$failed" ]; then
@@ -4984,7 +4985,7 @@ complete_task() {
             ;;
         test-client)
             case $prev in
-                --server | --spec | --feature | --param | --wait | --timeout | --log-level) return ;;
+                --server | --ssh | --spec | --feature | --param | --wait | --timeout | --log-level) return ;;
                 --junit | --out | --chromium) echo @files; return ;;
             esac
             local out
@@ -4995,14 +4996,14 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --server --serve --spec --feature --acceptance --param --junit --out --wait \
+                    filter_prefix "$cur" --server --ssh --serve --spec --feature --acceptance --param --junit --out --wait \
                         --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
                     ;;
             esac
             ;;
         test-load)
             case $prev in
-                --server | --script | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
+                --server | --ssh | --script | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
                     --log-level) return ;;
                 --out | --compare) echo @files; return ;;
             esac
@@ -5014,7 +5015,7 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --script --server --param --users --ramp-up --duration --iterations --scenario \
+                    filter_prefix "$cur" --script --server --ssh --param --users --ramp-up --duration --iterations --scenario \
                         --label --out --compare --insecure --allow-http --log-level
                     ;;
             esac

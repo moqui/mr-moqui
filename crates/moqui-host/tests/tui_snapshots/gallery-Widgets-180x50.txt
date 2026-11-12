@@ -19,8 +19,8 @@
      Message             │ │ drop-down dynamic-option… : [           ▾]                                date-time type=date . . . : [2026-10-18________]                           │
      Views               │ │ date-time type=time . . . : [09:30_____________]                          date-time type=date-time  : [2026-10-18 09:30__]                           │
      Handheld            │ │ date-period . . . . . . . : [___________] – [___________]                 date-find type=date . . . : [___________] – [___________]                  │
- ▾ Home                  │ │ range-find  . . . . . . . : [________] – [________]                       text-find . . . . . . . . : [____________________]                         │
-                         │ │ check (single)  . . . . . : [x] Active                                    check with options  . . . : [x] Email  [ ] SMS  [ ] Push                   │
+     Nav cards           │ │ range-find  . . . . . . . : [________] – [________]                       text-find . . . . . . . . : [____________________]                         │
+ ▾ Home                  │ │ check (single)  . . . . . : [x] Active                                    check with options  . . . : [x] Email  [ ] SMS  [ ] Push                   │
                          │ │ radio . . . . . . . . . . : (•) Task  ( ) Call  ( ) Event                 file  . . . . . . . . . . : [ choose… ]  upload in the browser             │
                          │ │ display (label-wrapper) . : A read-only value with a label                display-entity Enumerati… : Screen Theme Type                              │
                          │ │ password  . . . . . . . . : [______________________________]                                                                                         │

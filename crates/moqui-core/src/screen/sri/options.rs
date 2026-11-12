@@ -32,7 +32,7 @@ use crate::{l10n, script};
 /// Returns an error when an `entity-find` or `list-options` expression fails.
 pub fn get_field_options(state: &RenderState, widget: &NodeLit) -> Result<Vec<(String, String)>, Error> {
     let field_name = widget.field().map_or("", |field| field.attr("name"));
-    // A key given again keeps the place it was first given and takes the last label (plans/High-Level-Review.md
+    // A key given again keeps the place it was first given and takes the last label (plans/archive/High-Level-Review.md
     // HL-005): what `IndexMap::insert` does, without a scan of the options so far.
     let mut options: IndexMap<String, String> = IndexMap::default();
     let mut put = |key: String, text: String| {

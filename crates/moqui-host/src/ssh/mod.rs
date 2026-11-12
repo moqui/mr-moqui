@@ -23,7 +23,6 @@ pub mod cluster;
 mod git;
 pub mod server;
 mod sftp_fs;
-mod shell;
 
 use std::path::Path;
 use std::sync::Arc;

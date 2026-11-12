@@ -101,7 +101,8 @@ Only the files whose text changed are written, so the repository's diff is the d
 
 ## Templates
 
-The templates are trusted fancy templates (`<#if>`, `<#list>`, `<#assign>` and `${}`, in JavaScript) in
+The templates are trusted fancy templates ([JS-Fancy-Templates](JS-Fancy-Templates.md): `<#if>`, `<#list>`,
+`<#assign>` and `${}`, in JavaScript) in
 `component://framework/template/autodoc/`:
 
 | Template | Doc |

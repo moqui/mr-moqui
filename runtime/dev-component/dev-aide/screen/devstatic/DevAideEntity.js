@@ -715,7 +715,7 @@
         <tbody><tr v-for="row in table.rows" :key="row.path.join('.')">
           <td v-for="column in table.columns" :key="column"><input class="m-dev-cell" :value="row.values[column] || ''" :readonly="!ctx.canWrite"
               @change="setRecord(tab, row, column, $event.target.value)"></td>
-          <td><q-btn dense flat round size="xs" icon="delete" :disable="!ctx.canWrite" @click="removeRecord(tab, row)"></q-btn></td>
+          <td><q-btn dense flat round size="xs" icon="delete" aria-label="Remove row" :disable="!ctx.canWrite" @click="removeRecord(tab, row)"><q-tooltip>Remove row</q-tooltip></q-btn></td>
         </tr></tbody></table></div>
     </div>
     <div v-if="!seedTables.length" class="m-muted">No records yet.</div>
@@ -803,12 +803,12 @@
               <td><input class="m-dev-cell" :value="descriptionOf(field)" :readonly="!canEdit || isView" @change="setDescription(field, $event.target.value)" style="width: 14rem"></td>
               <td class="text-caption"><a v-if="originOf[field.name]" class="cursor-pointer" @click="openOrigin(originOf[field.name])">
                 <q-icon :name="originOf[field.name].site ? 'sym_o_extension' : 'sym_o_lock'" size="14px"></q-icon> {{originOf[field.name].component}}</a></td>
-              <td><q-btn v-if="!isView" dense flat round size="xs" icon="add" :disable="!canEdit" @click="startAdd(field.name)"><q-tooltip>Add a field after this one</q-tooltip></q-btn>
-                <q-btn v-if="!isView" dense flat round size="xs" icon="delete" :disable="!canEdit || !ownField(field)" @click="removeField(field)"><q-tooltip>{{ownField(field) ? 'Remove' : 'Defined upstream: an extension cannot remove it'}}</q-tooltip></q-btn></td>
+              <td><q-btn v-if="!isView" dense flat round size="xs" icon="add" :aria-label="'Add a field after ' + field.name" :disable="!canEdit" @click="startAdd(field.name)"><q-tooltip>Add a field after this one</q-tooltip></q-btn>
+                <q-btn v-if="!isView" dense flat round size="xs" icon="delete" :aria-label="'Remove ' + field.name" :disable="!canEdit || !ownField(field)" @click="removeField(field)"><q-tooltip>{{ownField(field) ? 'Remove' : 'Defined upstream: an extension cannot remove it'}}</q-tooltip></q-btn></td>
             </tr>
           </tbody></table></div>
         <div v-if="showOnForm" class="q-mt-sm q-pa-sm m-dev-note" id="DevShowOnForm">
-          <div class="row items-center"><span class="text-weight-medium">Show {{showOnForm.fieldName}} on a form</span><q-space></q-space><q-btn dense flat round size="sm" icon="close" @click="showOnForm = null"></q-btn></div>
+          <div class="row items-center"><span class="text-weight-medium">Show {{showOnForm.fieldName}} on a form</span><q-space></q-space><q-btn dense flat round size="sm" icon="close" aria-label="Close" @click="showOnForm = null"></q-btn></div>
           <div class="text-caption m-muted">A form that lists its fields needs the field added; a form with auto-fields-entity shows it already.</div>
           <q-list dense><q-item v-for="ref in showOnForm.screens" :key="ref.other.id" clickable @click="openScreen(ref)">
             <q-item-section><q-item-label>{{ref.other.shortName}}</q-item-label><q-item-label caption>{{ref.other.component}} · {{ref.refType}}</q-item-label></q-item-section></q-item>
@@ -857,7 +857,7 @@
             </template>
             <input v-else-if="node.name === 'order-by'" class="m-dev-cell" placeholder="field (-field descending)" :value="pure.attr(node, 'field-name') || ''" @change="setConditionAttr(node, 'field-name', $event.target.value)">
             <span v-else class="m-muted">edit in Text</span>
-            <q-btn dense flat round size="xs" icon="delete" :disable="!canEdit" @click="removeCondition(node)"></q-btn>
+            <q-btn dense flat round size="xs" icon="delete" aria-label="Remove condition" :disable="!canEdit" @click="removeCondition(node)"><q-tooltip>Remove condition</q-tooltip></q-btn>
           </div>
           <q-btn dense flat no-caps size="sm" icon="add" label="Condition" :disable="!canEdit" @click="addCondition" id="DevAddCondition"></q-btn>
           <q-btn dense flat no-caps size="sm" icon="add" label="Order by" :disable="!canEdit" @click="addOrderBy"></q-btn>
@@ -870,8 +870,8 @@
           <q-item v-for="rel in relationships" :key="rel.title + rel.relatedEntityName">
             <q-item-section><q-item-label>{{rel.type}} {{rel.title ? rel.title + ' ' : ''}}{{rel.relatedEntityName}}</q-item-label>
               <q-item-label caption>{{Object.keys(rel.keyMap || {}).map(k => k + ' = ' + rel.keyMap[k]).join(', ')}}</q-item-label></q-item-section>
-            <q-item-section side><q-btn dense flat round size="xs" icon="sym_o_open_in_new" @click="ctx.openArtifactId('entity:' + rel.relatedEntityName, 'entity')"></q-btn></q-item-section>
-            <q-item-section side><q-btn dense flat round size="xs" icon="delete" :disable="!canEdit" @click="removeRelationship(rel)"></q-btn></q-item-section>
+            <q-item-section side><q-btn dense flat round size="xs" icon="sym_o_open_in_new" :aria-label="'Open ' + rel.relatedEntityName" @click="ctx.openArtifactId('entity:' + rel.relatedEntityName, 'entity')"><q-tooltip>Open {{rel.relatedEntityName}}</q-tooltip></q-btn></q-item-section>
+            <q-item-section side><q-btn dense flat round size="xs" icon="delete" :aria-label="'Remove relationship to ' + rel.relatedEntityName" :disable="!canEdit" @click="removeRelationship(rel)"><q-tooltip>Remove relationship</q-tooltip></q-btn></q-item-section>
           </q-item>
         </q-list>
         <q-btn dense flat no-caps icon="add" label="Add relationship" :disable="!canEdit || !target" @click="startRelationship" class="q-mt-xs"></q-btn>
@@ -929,7 +929,7 @@
           <div class="m-dev-grid-wrap"><table class="m-dev-grid"><thead><tr><th v-for="column in table.columns" :key="column">{{column}}</th><th></th></tr></thead>
             <tbody><tr v-for="row in table.rows" :key="row.path.join('.')">
               <td v-for="column in table.columns" :key="column"><input class="m-dev-cell" :value="row.values[column] || ''" @change="setRecord(seed, row, column, $event.target.value)"></td>
-              <td><q-btn dense flat round size="xs" icon="delete" @click="removeRecord(seed, row)"></q-btn></td></tr></tbody></table></div>
+              <td><q-btn dense flat round size="xs" icon="delete" aria-label="Remove row" @click="removeRecord(seed, row)"><q-tooltip>Remove row</q-tooltip></q-btn></td></tr></tbody></table></div>
         </div>
       </div>
     </template>

@@ -67,6 +67,20 @@ the source spec and runs the source again.
   `dbresource://moqui/database/upload/<userId>/<uploadId>/<name>`, at most 100 MB, and `clean#GridUploads` (daily)
   removes them after seven days.
 
+**Filters.** Each column's header has a filter. Plain text is "contains", case ignored, for a text column. Text
+that begins with an operator filters by it, which is how a number or date column is filtered:
+
+| Typed | Rows where the column |
+| --- | --- |
+| `=X`, `!=X` | is, or is not, X |
+| `>X`, `>=X`, `<X`, `<=X` | compares so with X |
+| `^X` | begins with X |
+| `in:A,B,C` | is one of the list |
+| `empty`, `!empty` | has no value (or an empty text), or has one |
+
+**A record.** An entity's row has Record, which opens that record's form (Data › Record) with its related records'
+links; a view's or a data document's has Related, which opens its main entity in Data › Browse.
+
 **Pages and counts.**
 
 - No source is counted on each load. While pages come back full, the last page is the current one plus one.
@@ -154,6 +168,14 @@ all actions on the Tools app. The services check both whatever calls them.
 - **The audit:** every statement writes a `DatabaseAudit` row (`DbaSql`), reads and failures included, in a
   transaction of its own. So does a refused attempt with changes. See [The audit](#the-audit).
 - **The read fence:** an agent's read tool still refuses non-queries (`fence::check_sql`).
+
+## Export and snapshots
+
+- **Export** (`Data/Export.xml`) writes entity data as XML, JSON or CSV to the browser (a download), a file or a
+  directory on the server. More than one entity as CSV to the browser is a zip with a file for each. Filter is a
+  JavaScript object of field values the records must have, such as `{statusId: 'X'}`.
+- **Snapshots** (`Data/Snapshots.xml`) exports and imports whole snapshots as zips in `runtime/db/snapshot`. Upload
+  Snapshot puts a zip there, replacing one of the same name; Download and Delete act on one.
 
 ## Schema
 
@@ -344,8 +366,8 @@ Load into… call.
     conf value.
 - **Connections** (`Database/Connections.xml`): the external databases (`find#`, `store#`, `delete#`,
   `test#DatabaseConnection`); see [External databases](#external-databases).
-  - It is not in the menu. Overview and the Tools dashboard link to it ("External databases") only when the server
-    offers external databases to the user.
+  - It is not in the menu. Overview links to it ("External databases") only when the server offers external
+    databases to the user.
   - Saving replaces a connection whole, under the password-clearing rule.
 - **Speed Test:** Java's entity speed test, as it was.
 
@@ -384,7 +406,7 @@ cancel, table maintenance or entity sources.
   - `CREATE EXTENSION IF NOT EXISTS` runs after start, and a role that may not create it gets a warning;
   - it is ignored on MySQL, whose digests are in `performance_schema`.
 - **The embedded cluster's sizes** on the `transactional` datasource:
-  - `shared-buffers` (empty keeps the code's 16MB);
+  - `shared-buffers` (empty keeps the code's 128MB, Postgres's own default; `conf/MoquiLoadTestConf.xml` sets 256MB);
   - `work-mem`, `maintenance-work-mem` and `effective-cache-size` (empty keeps Postgres's defaults).
   - Each is a size such as `64MB`, and applies when this process starts the cluster. Database › Settings shows the
     conf value beside the running one.

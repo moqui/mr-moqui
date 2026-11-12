@@ -36,4 +36,4 @@ None.
 
 | Name | Full name | How |
 |---|---|---|
-| [Orders](Shop/Orders.autodoc-shop.md) | `component://autodoc-shop/screen/Shop/Orders.xml` | subscreens-item |
+| [Orders](Shop/Orders.autodoc-shop.md) | `component://autodoc-shop/screen/Shop/Orders.xml` | default-item, subscreens-item |

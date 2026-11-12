@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     not applied because each claims an item the server holds (get#ReplicaConflicts), and Check again
     (recheck#ReplicaConflicts) to apply those the server no longer holds. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Edge Clients" default-menu-index="18" menu-image="sym_o_lan" menu-image-type="icon">
+        default-menu-title="Edge Clients" default-menu-index="14" default-menu-group="Integration" menu-image="sym_o_lan" menu-image-type="icon">
 
     <transition name="makePairingCode">
         <service-call name="org.moqui.edge.EdgeServices.create#PairingCode" in-map="{validMinutes:validMinutes}" out-map="codeOut"/>

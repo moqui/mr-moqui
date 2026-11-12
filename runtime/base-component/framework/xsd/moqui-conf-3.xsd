@@ -24,6 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="cache-list"/>
                 <xs:element minOccurs="0" ref="telemetry"/>
                 <xs:element minOccurs="0" ref="report"/>
+                <xs:element minOccurs="0" ref="resource-watch"/>
                 <xs:element minOccurs="0" ref="server-stats"/>
                 <xs:element minOccurs="0" ref="webapp-list"/>
                 <xs:element minOccurs="0" ref="artifact-execution-facade"/>
@@ -373,6 +374,30 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="alert-workers" type="xs:string">
             <xs:annotation><xs:documentation>Threads that evaluate alert rules in one pass, default 4, at most 32. The
                 calling thread also takes rules.</xs:documentation></xs:annotation></xs:attribute>
+    </xs:complexType></xs:element>
+    <xs:element name="resource-watch"><xs:complexType>
+        <xs:annotation><xs:documentation>When a reading of the machine or of the server process is a warning or
+            critical: the levels of the status map's Resources (ec.factory.getStatusMap), which the System home and
+            its attention list show. Values are percentages; a reading at or past a value has that level. An empty
+            value turns that level off; an attribute left out, or one that is not a number, keeps its default. Read
+            on each use, so a conf reload applies a change.</xs:documentation></xs:annotation>
+        <xs:attribute name="disk-warning" type="xs:string"><xs:annotation><xs:documentation>A filesystem's share of its space used, in percent, from which it is a warning. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="disk-critical" type="xs:string"><xs:annotation><xs:documentation>A filesystem's share used from which it is critical. Default 90.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="disk-free-critical" type="xs:string"><xs:annotation><xs:documentation>Bytes: a filesystem larger than this with less than this left to write is critical whatever its share. Default 1073741824 (1 GiB).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="inodes-warning" type="xs:string"><xs:annotation><xs:documentation>A filesystem's share of its file entries (inodes) used. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="inodes-critical" type="xs:string"><xs:annotation><xs:documentation>Default 90.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-warning" type="xs:string"><xs:annotation><xs:documentation>The server process's memory as a share of the memory it may use: the container's limit (the cgroup's memory.max) when one is set, else the machine's memory. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-critical" type="xs:string"><xs:annotation><xs:documentation>Default 90.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-available-warning" type="xs:string"><xs:annotation><xs:documentation>The machine's available memory as a share of its total: a warning at or below this. Default 10.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-available-critical" type="xs:string"><xs:annotation><xs:documentation>Critical at or below this. Default 5.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="cpu-load-warning" type="xs:string"><xs:annotation><xs:documentation>The 5-minute load average as a share of the processors. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="cpu-load-critical" type="xs:string"><xs:annotation><xs:documentation>Default 100.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="open-files-warning" type="xs:string"><xs:annotation><xs:documentation>The process's open files as a share of its soft limit. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="open-files-critical" type="xs:string"><xs:annotation><xs:documentation>Default 95.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="swap-warning" type="xs:string"><xs:annotation><xs:documentation>Swap in use as a share of the swap. Default 50.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="swap-critical" type="xs:string"><xs:annotation><xs:documentation>Default empty: swap is never critical.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="certificate-days-warning" type="xs:string"><xs:annotation><xs:documentation>The days until a certificate the HTTPS listener serves expires: a warning at or below this. Default 30.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="certificate-days-critical" type="xs:string"><xs:annotation><xs:documentation>Critical at or below this many days. Default 7.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="server-stats">
         <xs:complexType>
@@ -1074,6 +1099,9 @@ along with this software (see the LICENSE.md file). If not, see
                             <xs:attribute name="location" type="xs:string"/>
                             <xs:attribute name="menu-title" type="xs:string"/>
                             <xs:attribute name="menu-index" type="xs:positiveInteger"/>
+                            <xs:attribute name="menu-group" type="xs:string"><xs:annotation><xs:documentation>The group the
+                                item is in, in the menu of the screen it is mounted in, as the menu-group of a screen's
+                                subscreens-item.</xs:documentation></xs:annotation></xs:attribute>
                             <xs:attribute name="menu-include" type="xs:string" default="true">
                                 <xs:annotation><xs:documentation>true, false, or an expression evaluated per request</xs:documentation></xs:annotation></xs:attribute>
                             <xs:attribute name="no-sub-path" type="boolean" default="false"/>
@@ -1625,10 +1653,48 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="terminal">
-        <xs:annotation><xs:documentation>The terminal client's sessions, over SSH and in the browser together.</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8):
+            the apps for every user, and on a dev instance the moqui> command line and programs on the server's operating
+            system (host sessions) for a user with the permission.</xs:documentation></xs:annotation>
         <xs:complexType>
-            <xs:attribute name="max-sessions" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>The most sessions at once.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="max-sessions-per-user" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most sessions of one user; a session in its login dialog counts toward max-sessions only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" ref="host-profile"/>
+            </xs:sequence>
+            <xs:attribute name="max-sessions" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>The most apps and command sessions at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-sessions-per-user" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most apps and command sessions of one user; a session in its login dialog counts toward max-sessions only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="detach-seconds" type="non-neg-int-expandable" default="120"><xs:annotation><xs:documentation>A kept apps session with no window this long ends.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-kb" type="non-neg-int-expandable" default="2048"><xs:annotation><xs:documentation>The output a command or host session keeps for a window that comes back.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="command-line" type="xs:string" default="dev"><xs:annotation><xs:documentation>The moqui> command line in the browser: dev (on a dev instance), false (off), or empty (on for any purpose).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-sessions" type="xs:string" default="dev"><xs:annotation><xs:documentation>Programs on the server's operating system: dev (on a dev instance), false (off), or empty (on for any purpose).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="remote" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Command and host sessions from anywhere but the server's own machine, over a secure request with a recent sign-in.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="remote-reauth-minutes" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>How recent the sign-in of a remote command or host session must be.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-max-sessions" type="non-neg-int-expandable" default="32"><xs:annotation><xs:documentation>The most host sessions at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-max-sessions-per-user" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>The most host sessions of one user.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-detach-hours" type="non-neg-int-expandable" default="72"><xs:annotation><xs:documentation>A command or host session with no window this long ends.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-directory" type="xs:string"><xs:annotation><xs:documentation>Where a host session starts when its profile names no directory; else the directory above the runtime.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="host-profile">
+        <xs:annotation><xs:documentation>A program a host session runs: never a shell string, an argv. One whose command is not on the
+            PATH is not offered. With no command, the server user's shell, as a login shell.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="env">
+                    <xs:complexType>
+                        <xs:attribute name="name" type="xs:string" use="required"/>
+                        <xs:attribute name="value" type="xs:string"/>
+                    </xs:complexType>
+                </xs:element>
+            </xs:sequence>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="title" type="xs:string"/>
+            <xs:attribute name="command" type="xs:string"/>
+            <xs:attribute name="args" type="xs:string"><xs:annotation><xs:documentation>The arguments, separated by spaces; a JSON array of strings for one with spaces in it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="resume-args" type="xs:string"><xs:annotation><xs:documentation>The arguments in place of args when a session the server ended is started again (an agent's --resume).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="directory" type="xs:string"/>
+            <xs:attribute name="login" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Start the command as a login shell.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="integration" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Start bash or zsh with the shell integration script (prompt marks, the directory).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="agent" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>A coding agent: quiet output reads as done.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

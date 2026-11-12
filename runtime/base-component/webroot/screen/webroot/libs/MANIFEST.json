@@ -113,7 +113,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "b0dafa4abf785ff582bdefad94fe1cba7a8fdec71ccfca204e4d4ea10a6750da"
+    "sha256": "77289f911062ff12df7dafdd42eb3faf03fdad4c8404e03b6b55dc588548d523"
   },
   "libraries": [
     {
@@ -264,6 +264,57 @@
           "from": "lib/addon-fit.js",
           "size": 1521,
           "sha256": "ba3ea256ce0620a0992a197d6c9baea64823fc93d8da07a9e366ca9943c18527"
+        }
+      ]
+    },
+    {
+      "id": "xterm-addon-search",
+      "name": "@xterm/addon-search",
+      "version": "0.16.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@xterm/addon-search/-/addon-search-0.16.0.tgz",
+      "npm": "@xterm/addon-search@0.16.0",
+      "tarballIntegrity": "sha512-9OeuBFu0/uZJPu+9AHKY6g/w0Czyb/Ut0A5t79I4ULoU4IfU5BEpPFVGQxP4zTTMdfZEYkVIRYbHBX1xWwjeSA==",
+      "files": [
+        {
+          "path": "xterm/addon-search.js",
+          "from": "lib/addon-search.js",
+          "size": 78826,
+          "sha256": "7bc1b8c7b3549411f6f6f779524c4ded6ca621fd80d64b40a70ae7c78aefbf55"
+        }
+      ]
+    },
+    {
+      "id": "xterm-addon-web-links",
+      "name": "@xterm/addon-web-links",
+      "version": "0.12.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@xterm/addon-web-links/-/addon-web-links-0.12.0.tgz",
+      "npm": "@xterm/addon-web-links@0.12.0",
+      "tarballIntegrity": "sha512-4Smom3RPyVp7ZMYOYDoC/9eGJJJqYhnPLGGqJ6wOBfB8VxPViJNSKdgRYb8NpaM6YSelEKbA2SStD7lGyqaobw==",
+      "files": [
+        {
+          "path": "xterm/addon-web-links.js",
+          "from": "lib/addon-web-links.js",
+          "size": 3100,
+          "sha256": "b74864125ef3889753b94e61eb4dabb99b2a27f920f0c9a7bd53cbe6d10f032a"
+        }
+      ]
+    },
+    {
+      "id": "xterm-addon-unicode11",
+      "name": "@xterm/addon-unicode11",
+      "version": "0.9.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@xterm/addon-unicode11/-/addon-unicode11-0.9.0.tgz",
+      "npm": "@xterm/addon-unicode11@0.9.0",
+      "tarballIntegrity": "sha512-FxDnYcyuXhNl+XSqGZL/t0U9eiNb/q3EWT5rYkQT/zuig8Gz/VagnQANKHdDWFM2lTMk9ly0EFQxxxtZUoRetw==",
+      "files": [
+        {
+          "path": "xterm/addon-unicode11.js",
+          "from": "lib/addon-unicode11.js",
+          "size": 52489,
+          "sha256": "72353b5178e1a7382716df1cfedf8ab070eea655d38995bb9f4f284fe56e2f2b"
         }
       ]
     },

@@ -365,7 +365,7 @@ pub(crate) fn is_empty_value(value: &Value) -> bool {
         },
         Value::Object(object) => {
             if let Some(list) = object.downcast::<crate::script::host::entities::ScriptList>() {
-                list.cells().is_empty()
+                list.len() == 0
             } else if let Some(list) = object.downcast::<crate::entity::EntityList>() {
                 list.is_empty()
             } else if let Some(cell) = object.downcast::<crate::script::runtime::EntityCell>() {

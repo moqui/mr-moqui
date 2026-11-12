@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<screen require-authentication="false" default-menu-title="Start" default-menu-index="2">
+<screen require-authentication="false" default-menu-title="Start" default-menu-index="2" default-menu-group="Start group">
     <always-actions><script>trace.push('Home.always')</script></always-actions>
     <pre-actions><script>trace.push('Home.pre')</script></pre-actions>
     <actions><script>trace.push('Home.actions'); ec.web.sendJsonResponse(trace)</script></actions>

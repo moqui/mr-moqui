@@ -28,8 +28,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('${tableName}: ${rowCount} rows', '', {tableName: out.tableName,
                 rowCount: ec.l10n.format(Number(out.rowCount || 0), '#,##0')}), 'info')
         ]]></script></actions>
-        <default-response url="."><parameter name="db"/><parameter name="tableFilter"/></default-response>
-        <error-response url="."><parameter name="db"/><parameter name="tableFilter"/></error-response>
+        <default-response url="."><parameter name="db"/><parameter name="tableFilter"/><parameter name="rowFilter"/></default-response>
+        <error-response url="."><parameter name="db"/><parameter name="tableFilter"/><parameter name="rowFilter"/></error-response>
     </transition>
     <transition name="planMaintenance" method="post" authz-action="all">
         <actions><script><![CDATA[
@@ -66,6 +66,9 @@ along with this software (see the LICENSE.md file). If not, see
                 lastVacuum: time(table.last_vacuum || table.last_autovacuum), lastAnalyze: time(table.last_analyze || table.last_autoanalyze),
                 updated: time(table.update_time)}))
                 .filter((table) => !filter || (table.tableName + ' ' + table.entityName).toLowerCase().includes(filter))
+                // by the catalog's estimate: a table with no estimate is in neither
+                .filter((table) => context.rowFilter == 'empty' ? table.estimatedRows === 0
+                    : context.rowFilter == 'rows' ? table.estimatedRows > 0 : true)
             isMysql = ((found && found.tables) || []).some((table) => table.engine != null || table.free_bytes != null)
             maintenanceOptions = isMysql ? [{key: 'analyze', text: 'Analyze (ANALYZE TABLE)'}, {key: 'optimize', text: 'Optimize (OPTIMIZE TABLE)'}]
                 : [{key: 'vacuumAnalyze', text: 'Vacuum and analyze'}, {key: 'analyze', text: 'Analyze'}, {key: 'reindex', text: 'Reindex online'},
@@ -81,8 +84,11 @@ along with this software (see the LICENSE.md file). If not, see
             <form-single name="FilterForm" transition=".">
                 <field name="db"><default-field><hidden/></default-field></field>
                 <field name="tableFilter"><default-field title="Table or entity"><text-line size="30"/></default-field></field>
+                <field name="rowFilter"><default-field title="Rows" tooltip="By the database's estimate, which is zero for a table never analyzed">
+                    <drop-down allow-empty="true"><option key="rows" text="With rows"/><option key="empty" text="Empty"/></drop-down>
+                </default-field></field>
                 <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
-                <field-layout><field-row-big><field-ref name="tableFilter"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                <field-layout><field-row-big><field-ref name="tableFilter"/><field-ref name="rowFilter"/><field-ref name="submitButton"/></field-row-big></field-layout>
             </form-single>
             <form-list name="TableList" list="tableList" skip-form="true">
                 <row-selection id-field="tableName" parameter="tableNames" list-mode="true" condition="canMaintain">
@@ -114,7 +120,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="lastAnalyze" hide="isMysql"><header-field title="Analyzed"/><default-field><display/></default-field></field>
                 <field name="updated" hide="!isMysql"><header-field title="Updated"/><default-field><display/></default-field></field>
                 <field name="count"><default-field title="">
-                    <link url="countRows" text="Count" link-type="anchor" parameter-map="{db: db, tableName: tableName, tableFilter: tableFilter}"/>
+                    <link url="countRows" text="Count" link-type="anchor" parameter-map="{db: db, tableName: tableName, tableFilter: tableFilter, rowFilter: rowFilter}"/>
                 </default-field></field>
                 <columns type="mobile">
                     <column><field-ref name="tableName"/><field-ref name="entityName"/></column>

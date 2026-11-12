@@ -589,6 +589,20 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="archivedDate" type="date-time"/>
         <field name="sendError" type="text-long"><description>Why the last send failed; the message waits in the Outbox
             for a retry</description></field>
+        <field name="sendOutcome" type="text-short"><description>What the last failed send left (send#EmailTemplate's and
+            send#EmailMessage's deliveryOutcome): retryable (nothing was sent), permanent (refused for good) or uncertain
+            (it may have gone: reconciled by its owner, never sent again on its own); empty for a message that was sent
+            or never tried. A send that begins of a message known not sent marks it uncertain until its result is kept. Admin's mail queue reads it (org.moqui.admin.OperationServices.find#MailOutcomes).</description></field>
+        <!-- The settlement of an uncertain send, kept apart from the message's status and sendOutcome, which only the
+            transport's own result sets (org.moqui.admin.OperationServices.reconcile#MailOutcome): what a person concluded,
+            who, when and why. It marks nothing as sent and no reader of statusId takes it for a delivery; it holds for
+            the send it was made for: send#EmailMessage clears it when a send of the message begins, before the transport
+            is contacted, whoever the caller is (the audit log keeps it). -->
+        <field name="sendSettlement" type="text-short" enable-audit-log="true"><description>What a person reported of a send
+            that is uncertain: delivered or notDelivered. Empty for a message nobody settled.</description></field>
+        <field name="sendSettledByUserId" type="id"/>
+        <field name="sendSettledDate" type="date-time"/>
+        <field name="sendSettledReason" type="text-medium"/>
         <field name="sendClaimDate" type="date-time"><description>When a mail client send claimed the message (ES_READY
             without a sendError, being sent); cleared with its result. A claim left long past this without one is a send
             that stopped, and send#DueDrafts gives it a sendError so it shows in the Outbox.</description></field>
@@ -726,6 +740,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="oauthSignInDate" type="date-time"><description>When the user last signed in with the provider</description></field>
         <field name="edgePriorSmtpHost" type="text-medium"><description>The smtpHost the Edge Node wizard's Apply replaced
             with edge: (none: when there was none), put back when the node unpairs (plans/Edge-Node.md §5.7)</description></field>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: nothing is sent through the
+            server (the SMTP transport refuses it); test#EmailServer still tries it. Set by an administrator, or by
+            org.moqui.admin.ConfigurationServices.store#Connection when the host, port or sign-in of a relay changed, until
+            a test of it passes (mr-boss plan/design-admin.md §8.1)</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N: SMTP connects to no
+            loopback, private or link-local address for this server (looked up once and connected to at the address
+            found). store#Connection saves N for a relay a delegated administrator started or repointed on a production
+            instance and never changes it back: an instance administrator allows a relay on the instance's own
+            network. Empty or Y: as before.</description></field>
         <relationship type="one" title="EmailAuthType" related="moqui.basic.Enumeration" short-alias="authType">
             <key-map field-name="authTypeEnumId"/></relationship>
         <relationship type="one" title="EmailOAuthProvider" related="moqui.basic.Enumeration" short-alias="oauthProvider">
@@ -1012,6 +1035,12 @@ along with this software (see the LICENSE.md file). If not, see
             on a server without CONDSTORE</description></field>
         <field name="remoteRemovedDate" type="date-time"><description>When the folder was no longer on the server: its
             local messages are kept, and it is synced again if it comes back</description></field>
+        <field name="storeFailUid" type="number-integer"><description>The lowest new UID whose message could not be
+            stored here, which the next sync starts from; empty when none failed</description></field>
+        <field name="storeFailCount" type="number-integer"><description>In how many syncs the store of storeFailUid
+            failed: at five it is skipped (logged and in the account's lastSyncError) and the sync moves past it; reset
+            when the folder's UIDVALIDITY changes</description></field>
+        <field name="storeFailError" type="text-long"><description>Why the store of storeFailUid failed last</description></field>
         <field name="sequenceNum" type="number-integer"/>
         <relationship type="one" related="moqui.basic.email.EmailAccount" short-alias="account"/>
         <relationship type="one" title="Parent" related="moqui.basic.email.EmailFolder" short-alias="parent">
@@ -1293,6 +1322,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="printerName" type="text-medium"><description>Leave empty to use default printer on print server</description></field>
         <field name="description" type="text-medium"/>
         <field name="location" type="text-medium"/>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no job is sent to the
+            printer but the test print of org.moqui.admin.ConfigurationServices.test#Connection. Set by an administrator,
+            or by store#Connection when the server or printer name changed, until a test print passes</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N: the print
+            client sends nothing to a loopback, private or link-local address for this printer. store#Connection saves N
+            for a printer a delegated administrator started or repointed on a production instance and never changes it
+            back: an instance administrator allows a printer on the instance's own network, where most are. Empty or Y:
+            as before.</description></field>
     </entity>
     <entity entity-name="PrintJob" package="moqui.basic.print" use="nontransactional" short-alias="printJobs" cache="never">
         <field name="printJobId" type="id" is-pk="true"/>

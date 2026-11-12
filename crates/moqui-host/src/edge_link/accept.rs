@@ -303,7 +303,7 @@ const MAX_PAIR_SOURCES: usize = 10_000;
 
 /// Pair calls by source (an IPv6 /64 is one, an IPv4-mapped address its IPv4 one): when its window began, and how
 /// many since. Bounded at [`MAX_PAIR_SOURCES`]; the sources whose window ended are swept at most once a window, not
-/// on every call (plans/High-Level-Review.md HL-032).
+/// on every call (plans/archive/High-Level-Review.md HL-032).
 #[derive(Default)]
 pub(super) struct PairAttempts {
     by_source: HashMap<IpAddr, (Instant, u32)>,

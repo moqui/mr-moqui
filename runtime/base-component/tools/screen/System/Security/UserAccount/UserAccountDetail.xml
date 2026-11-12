@@ -45,15 +45,13 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="visitList"><default-response url="../../../Visit/VisitList"/></transition>
     <transition name="visitDetail"><default-response url="../../../Visit/VisitDetail"/></transition>
 
-    <transition name="userGroupDetail"><default-response url="../../UserGroup/UserGroupDetail"/></transition>
+    <transition name="userGroupDetail"><default-response url="../../../Access/GroupDetail"/></transition>
     <transition name="createUserGroupMember"><service-call name="create#moqui.security.UserGroupMember"/>
         <default-response url="."/></transition>
     <transition name="updateUserGroupMember"><service-call name="update#moqui.security.UserGroupMember"/>
         <default-response url="."/></transition>
 
     <transition name="createUserAuthcFactorTotp"><service-call name="org.moqui.impl.UserServices.create#UserAuthcFactorTotp"/>
-        <default-response url="."/></transition>
-    <transition name="verifyUserAuthcFactorTotp"><service-call name="org.moqui.impl.UserServices.verify#UserAuthcFactorTotp"/>
         <default-response url="."/></transition>
     <transition name="createUserAuthcFactorSingleUse">
         <service-call name="org.moqui.impl.UserServices.create#SingleUseAuthcCodes" />
@@ -119,6 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
         <container-row>
             <row-col lg="5">
                 <link url="visitList" text="Visits" parameter-map="{userId:userId}"/>
+                <link url="//apps/system/Monitor/Traces" text="Requests by this user" icon="sym_o_timeline" parameter-map="{userId:userId}"/>
                 <container-dialog id="UpdatePassword" button-text="Change Password">
                     <form-single name="UpdatePasswordForm" transition="updatePassword">
                         <field name="userId"><default-field><hidden/></default-field></field>

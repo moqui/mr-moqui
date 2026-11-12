@@ -112,7 +112,11 @@ pub(super) fn subscreen_entry(
     let screen_path = format!("{parent_path}/{}", moqui_lib::string::url_encode_if_needed(&item.name));
     let mut names = parent_names.to_vec();
     names.push(item.name.clone());
-    let url = urls::resolve_names_at(state, names, 0, true)?;
+    let mut url = urls::resolve_names_at(state, names, 0, true)?;
+    // The page and sort of the list being shown are not a sibling's (a link or the current URL keeps them).
+    if item.name != next_item {
+        url.drop_list_state();
+    }
     let Some(sui) = url.info.as_ref() else {
         return Ok(None);
     };
@@ -142,6 +146,10 @@ pub(super) fn subscreen_entry(
     entry.insert("pathWithParams".into(), text(&path_with_params(&url)));
     entry.insert("image".into(), image);
     entry.insert("imageType".into(), image_type);
+    // the caption its run of menu items is drawn under (menu-group), when it has one
+    if !item.menu_group.is_empty() {
+        entry.insert("group".into(), text(&l10n::localize(&item.menu_group)?));
+    }
     if in_menu {
         entry.insert("menuInclude".into(), Value::Bool(true));
     }

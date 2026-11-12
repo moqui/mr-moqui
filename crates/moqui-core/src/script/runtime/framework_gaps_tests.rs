@@ -1450,7 +1450,7 @@ fn resource_digests_archives_and_line_windows() {
     clear_context_stack();
 }
 
-/// plans/High-Level-Review.md HL-033: a bulk delete reads its rows a chunk at a time and still runs each row's delete
+/// plans/archive/High-Level-Review.md HL-033: a bulk delete reads its rows a chunk at a time and still runs each row's delete
 /// rule; a script's `purge` commits each chunk, and a chunk whose rule fails is rolled back and passed over.
 #[test]
 fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
@@ -1493,7 +1493,15 @@ fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
             .filter(|sql| sql.starts_with("SELECT") && sql.contains("\"test_entity\""))
             .count()
     };
+    let test_deletes = || {
+        tape.lock()
+            .unwrap()
+            .iter()
+            .filter(|sql| sql.starts_with("DELETE") && sql.contains("\"test_entity\""))
+            .count()
+    };
     let before = test_reads();
+    let deletes_before = test_deletes();
     let deleted = facade
         .find("moqui.test.TestEntity")
         .unwrap()
@@ -1503,6 +1511,8 @@ fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
         .unwrap();
     assert_eq!(deleted, 5);
     assert_eq!(test_reads() - before, 3, "2 + 2 + 1 rows");
+    // With a rule on the delete each row goes on its own, not a chunk in one statement.
+    assert_eq!(test_deletes() - deletes_before, 5);
     holds(r#"ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "like", "GONE-D%").count() === 5"#);
 
     // P2 and P3 are one chunk: P3's rule fails, so P2 stays too, and the purge goes on to P4.

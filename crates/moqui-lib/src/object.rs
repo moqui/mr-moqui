@@ -244,7 +244,7 @@ pub fn compare_like(value: &Value, pattern: &Value) -> bool {
 }
 
 /// Operators from `ObjectUtilities.compare`. Ordered compares error when the values
-/// cannot be ordered. `equals` uses Java `equals`: decimal scale matters.
+/// cannot be ordered. `equals` and `not-equals` compare numbers by value ([`compare_equals`]), so 10.0 equals 10.00.
 pub fn compare(field: &Value, operator: &str, to_field: &Value, java_type: &str) -> Result<bool, Error> {
     compare_in(field, operator, to_field, java_type, &TimeZone::UTC)
 }
@@ -274,10 +274,28 @@ pub fn compare_in(
         "not-empty" => !is_empty(&field),
         "matches" => regex_full_match(&to_plain_string(&field), &to_plain_string(&to_field))?,
         "not-matches" => !regex_full_match(&to_plain_string(&field), &to_plain_string(&to_field))?,
-        "not-equals" => !java_equals(&field, &to_field),
-        _ => java_equals(&field, &to_field),
+        "not-equals" => !compare_equals(&field, &to_field),
+        _ => compare_equals(&field, &to_field),
     };
     Ok(result)
+}
+
+/// Equality as `compare` and the list filters over it mean it: two numbers are equal when their values are, whatever
+/// a decimal's scale (10.0 and 10.00) and whether one is a whole number and the other a decimal, as Java's `compareTo`
+/// on a `BigDecimal` says and a business rule expects. Anything else is [`java_equals`].
+pub fn compare_equals(left: &Value, right: &Value) -> bool {
+    fn decimal(value: &Value) -> Option<Decimal> {
+        match value {
+            Value::Decimal(number) => Some(*number),
+            Value::I32(number) => Some(Decimal::from(*number)),
+            Value::I64(number) => Some(Decimal::from(*number)),
+            _ => None,
+        }
+    }
+    match (decimal(left), decimal(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => java_equals(left, right),
+    }
 }
 
 /// Null on the left sorts after a value. Null on the right is an error, as `compareTo` would be.

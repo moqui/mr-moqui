@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A scenario's schedule (plans/LoadRunner.md section 5, "An arrival rate", and L6): when its users may start an
+//! A scenario's schedule (plans/archive/LoadRunner.md section 5, "An arrival rate", and L6): when its users may start an
 //! iteration. Times are seconds from the load's start, passed in as `now`, so the schedule keeps no clock of its own and
 //! a test drives it with made-up times.
 //!

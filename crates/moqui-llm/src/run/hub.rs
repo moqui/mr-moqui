@@ -24,9 +24,12 @@
 //! ring and the last sequence it sent; a stored event past the next one brings the missing ones from the database
 //! first, so a stream has no gap whatever the ring missed.
 //!
-//! Delivery is proportional to the streams interested in a run (plans/High-Level-Review.md HL-021): an event wakes
+//! Delivery is proportional to the streams interested in a run (plans/archive/High-Level-Review.md HL-021): an event wakes
 //! only its own run's waiters, each run having its own signal, which they wait on outside the hub's lock, and a waiter
-//! reads only the ring's suffix past its cursor, found by arithmetic since the ring's indices have no holes.
+//! reads only the ring's suffix past its cursor, found by arithmetic since the ring's indices have no holes. A ring
+//! holds each event once behind an [`Arc`], so a read under the lock copies pointers, not payloads, however many
+//! streams follow the run; [`HubStats`] has the time the hub's lock was held, and the opt-in measurement
+//! `hub_work_per_event_by_watchers` (run/tests.rs) what a watcher costs.
 //!
 //! The replay before a follow, the keep-alive, the stop checks and the settled check around it are
 //! [`super::stream`]'s, shared by every reader of a run's events.
@@ -65,20 +68,21 @@ pub struct HubEvent {
 struct Ring {
     next: u64,
     /// In index order with no holes (the oldest go first), so the events after a cursor are found by arithmetic.
-    events: VecDeque<HubEvent>,
+    /// Shared with the readers, so a read copies a pointer per event, not its payload.
+    events: VecDeque<Arc<HubEvent>>,
     /// The highest stored sequence put in.
     last_seq: i64,
     /// The stored sequences the ring holds.
     seqs: std::collections::BTreeSet<i64>,
     touched: Option<Instant>,
-    /// The wakeup of this run's waiters only (plans/High-Level-Review.md HL-021).
+    /// The wakeup of this run's waiters only (plans/archive/High-Level-Review.md HL-021).
     signal: Arc<Signal>,
 }
 
 impl Ring {
     /// The events after `cursor` (all of them with `None`): the suffix past it, found from the first event's index,
-    /// so only the events a waiter has not read are looked at and cloned.
-    fn after(&self, cursor: Option<u64>) -> Vec<HubEvent> {
+    /// so only the events a waiter has not read are looked at, each shared, not copied.
+    fn after(&self, cursor: Option<u64>) -> Vec<Arc<HubEvent>> {
         let Some(first) = self.events.front().map(|event| event.index) else {
             return Vec::new();
         };
@@ -135,6 +139,9 @@ pub struct HubStats {
     pub wakeups: u64,
     /// Ring events looked at by the waiters.
     pub inspected: u64,
+    /// Times the hub's lock was taken, and how long it was held in all (from taken to let go, without the wait for it).
+    pub locks: u64,
+    pub lock_held: Duration,
 }
 
 /// The hub of one node.
@@ -143,6 +150,8 @@ pub struct RunHub {
     state: Mutex<State>,
     wakeups: AtomicU64,
     inspected: AtomicU64,
+    locks: AtomicU64,
+    lock_nanos: AtomicU64,
 }
 
 impl RunHub {
@@ -155,7 +164,22 @@ impl RunHub {
         HubStats {
             wakeups: self.wakeups.load(Ordering::Relaxed),
             inspected: self.inspected.load(Ordering::Relaxed),
+            locks: self.locks.load(Ordering::Relaxed),
+            lock_held: Duration::from_nanos(self.lock_nanos.load(Ordering::Relaxed)),
         }
+    }
+
+    /// `work` under the hub's lock, timed for [`HubStats::lock_held`].
+    fn locked<R>(&self, work: impl FnOnce(&mut State) -> R) -> R {
+        let mut state = lock(&self.state);
+        let taken = Instant::now();
+        let result = work(&mut state);
+        let held = taken.elapsed();
+        drop(state);
+        self.locks.fetch_add(1, Ordering::Relaxed);
+        self.lock_nanos
+            .fetch_add(u64::try_from(held.as_nanos()).unwrap_or(u64::MAX), Ordering::Relaxed);
+        result
     }
 
     fn ring<'a>(state: &'a mut State, run_id: &str) -> &'a mut Ring {
@@ -183,12 +207,12 @@ impl RunHub {
             ring.last_seq = ring.last_seq.max(seq);
             ring.seqs.insert(seq);
         }
-        ring.events.push_back(HubEvent {
+        ring.events.push_back(Arc::new(HubEvent {
             index,
             seq,
             event_type: event_type.to_string(),
             payload,
-        });
+        }));
         while ring.events.len() > RING {
             if let Some(Some(seq)) = ring.events.pop_front().map(|event| event.seq) {
                 ring.seqs.remove(&seq);
@@ -198,59 +222,57 @@ impl RunHub {
 
     /// A live-only event; only the run's own waiters wake.
     pub fn push_live(&self, run_id: &str, event_type: &str, payload: Json) {
-        let (signal, next) = {
-            let mut state = lock(&self.state);
-            let ring = Self::ring(&mut state, run_id);
+        let (signal, next) = self.locked(|state| {
+            let ring = Self::ring(state, run_id);
             Self::push(ring, None, event_type, payload);
             (Arc::clone(&ring.signal), ring.next)
-        };
+        });
         signal.publish(next);
     }
 
     /// Stored events after their commit; one the ring already holds is left out, and one older than the ring's newest
     /// still goes in (a follower that sent past it leaves it out). Only the run's own waiters wake.
     pub fn push_stored(&self, run_id: &str, events: Vec<(i64, String, Json)>) {
-        let (signal, next) = {
-            let mut state = lock(&self.state);
-            let ring = Self::ring(&mut state, run_id);
+        let (signal, next) = self.locked(|state| {
+            let ring = Self::ring(state, run_id);
             for (seq, event_type, payload) in events {
                 if !ring.seqs.contains(&seq) {
                     Self::push(ring, Some(seq), &event_type, payload);
                 }
             }
             (Arc::clone(&ring.signal), ring.next)
-        };
+        });
         signal.publish(next);
     }
 
     /// The highest stored sequence in the run's ring.
     pub fn last_seq(&self, run_id: &str) -> i64 {
-        lock(&self.state).rings.get(run_id).map_or(0, |ring| ring.last_seq)
+        self.locked(|state| state.rings.get(run_id).map_or(0, |ring| ring.last_seq))
     }
 
     /// Where a stream that has sent the stored events through `seq` goes on from: after that event when the ring still
     /// has it, else from the ring's start (the stream leaves out the stored events it sent, and a client places text
     /// by its offset).
     pub fn cursor_after_seq(&self, run_id: &str, seq: i64) -> Option<u64> {
-        let state = lock(&self.state);
-        let ring = state.rings.get(run_id)?;
-        ring.events
-            .iter()
-            .find(|event| event.seq == Some(seq))
-            .map(|event| event.index)
+        self.locked(|state| {
+            let ring = state.rings.get(run_id)?;
+            ring.events
+                .iter()
+                .find(|event| event.seq == Some(seq))
+                .map(|event| event.index)
+        })
     }
 
     /// The events after `cursor` (all the ring has with `None`), waiting up to `timeout` for one. The wait is on the
     /// run's own signal, outside the hub's lock, so an event of another run wakes nothing here, and a wakeup reads
     /// only the ring's unread suffix.
-    pub fn wait(&self, run_id: &str, cursor: Option<u64>, timeout: Duration) -> Vec<HubEvent> {
+    pub fn wait(&self, run_id: &str, cursor: Option<u64>, timeout: Duration) -> Vec<Arc<HubEvent>> {
         let deadline = Instant::now() + timeout;
         loop {
-            let (found, signal, seen) = {
-                let mut state = lock(&self.state);
-                let ring = Self::ring(&mut state, run_id);
+            let (found, signal, seen) = self.locked(|state| {
+                let ring = Self::ring(state, run_id);
                 (ring.after(cursor), Arc::clone(&ring.signal), ring.next)
-            };
+            });
             self.inspected
                 .fetch_add(u64::try_from(found.len()).unwrap_or(u64::MAX), Ordering::Relaxed);
             let now = Instant::now();
@@ -268,8 +290,7 @@ impl RunHub {
     /// A watch changes nothing in the ring itself, so one stream's place never hides events from another. The tail
     /// starts with the first watch.
     pub fn watch(self: &Arc<Self>, factory: &Arc<ExecutionContextFactory>, run_id: &str, from_seq: i64) -> Watch {
-        let (id, start_tail) = {
-            let mut state = lock(&self.state);
+        let (id, start_tail) = self.locked(|state| {
             let id = state.next_watch;
             state.next_watch += 1;
             state
@@ -277,9 +298,9 @@ impl RunHub {
                 .entry(run_id.to_string())
                 .or_default()
                 .push((id, from_seq));
-            Self::ring(&mut state, run_id);
+            Self::ring(state, run_id);
             (id, !std::mem::replace(&mut state.tail_started, true))
-        };
+        });
         if start_tail {
             start_remote_tail(Arc::downgrade(self), factory);
         }
@@ -292,16 +313,17 @@ impl RunHub {
 
     /// Each watched run and the sequence the tail reads after.
     pub(crate) fn watched(&self) -> Vec<(String, i64)> {
-        let state = lock(&self.state);
-        state
-            .watchers
-            .iter()
-            .map(|(run_id, watches)| {
-                let lowest = watches.iter().map(|(_, from)| *from).min().unwrap_or(0);
-                let newest = state.rings.get(run_id).map_or(0, |ring| ring.last_seq);
-                (run_id.clone(), newest.max(lowest))
-            })
-            .collect()
+        self.locked(|state| {
+            state
+                .watchers
+                .iter()
+                .map(|(run_id, watches)| {
+                    let lowest = watches.iter().map(|(_, from)| *from).min().unwrap_or(0);
+                    let newest = state.rings.get(run_id).map_or(0, |ring| ring.last_seq);
+                    (run_id.clone(), newest.max(lowest))
+                })
+                .collect()
+        })
     }
 }
 
@@ -314,13 +336,14 @@ pub struct Watch {
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        let mut state = lock(&self.hub.state);
-        if let Some(watches) = state.watchers.get_mut(&self.run_id) {
-            watches.retain(|(id, _)| *id != self.id);
-            if watches.is_empty() {
-                state.watchers.remove(&self.run_id);
+        self.hub.locked(|state| {
+            if let Some(watches) = state.watchers.get_mut(&self.run_id) {
+                watches.retain(|(id, _)| *id != self.id);
+                if watches.is_empty() {
+                    state.watchers.remove(&self.run_id);
+                }
             }
-        }
+        });
     }
 }
 
@@ -358,7 +381,7 @@ impl Follower {
         hub: &RunHub,
         facade: &moqui_core::entity::EntityFacade,
         timeout: Duration,
-    ) -> Result<Vec<HubEvent>, moqui_lib::error::Error> {
+    ) -> Result<Vec<Arc<HubEvent>>, moqui_lib::error::Error> {
         let mut out = Vec::new();
         for event in hub.wait(&self.run_id, self.cursor, timeout) {
             self.cursor = Some(event.index);
@@ -373,12 +396,12 @@ impl Follower {
                 let missing = super::events::stored_after(facade, &self.run_id, self.last, seq - self.last - 1)?;
                 for stored in missing.into_iter().filter(|stored| stored.seq < seq) {
                     self.last = stored.seq;
-                    out.push(HubEvent {
+                    out.push(Arc::new(HubEvent {
                         index: event.index,
                         seq: Some(stored.seq),
                         event_type: stored.event_type,
                         payload: stored.payload,
-                    });
+                    }));
                 }
             }
             self.last = seq;

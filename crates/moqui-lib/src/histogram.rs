@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A log-linear histogram of durations in microseconds (plans/LoadRunner.md section 5, decision D4): counters by
+//! A log-linear histogram of durations in microseconds (plans/archive/LoadRunner.md section 5, decision D4): counters by
 //! power of two with 64 linear steps in each, from 1 µs to an hour, so a percentile is within 1/64 (about 1.6%) of
 //! the value it stands for, in about 14 KB. Histograms merge by adding, also across processes through
 //! [`Histogram::to_json`] and [`Histogram::from_json`].

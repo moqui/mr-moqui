@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Two to four finished runs side by side (compare#LoadRuns, plans/LoadRunner.md §8, Report): the runs as columns,
+<!-- Two to four finished runs side by side (compare#LoadRuns, plans/archive/LoadRunner.md §8, Report): the runs as columns,
     the summary rows, then each name's count, p50, p95, p99 and errors, each with its change in percent
     against the first run. runIds is the runs' ids, comma separated, so a comparison is a link to keep. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

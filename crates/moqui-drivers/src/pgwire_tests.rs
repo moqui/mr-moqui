@@ -435,7 +435,7 @@ fn tls_endpoint(port: u16) -> Endpoint {
 }
 
 /// A server that accepts TCP and then stalls, in the startup or in the TLS request: the connection and a cancel each
-/// end within their own time (plans/High-Level-Review.md HL-019).
+/// end within their own time (plans/archive/High-Level-Review.md HL-019).
 #[test]
 fn a_server_that_stalls_after_accepting_bounds_connect_and_cancel() {
     let (port, _held) = stalled_server();

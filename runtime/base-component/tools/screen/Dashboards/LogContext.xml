@@ -3,7 +3,7 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Log context" default-menu-include="false">
     <parameter name="datasetId" required="true"/><parameter name="documentId" required="true"/><parameter name="documentType" required="true"/>
     <parameter name="filtersJson"/><parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
-    <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="trace"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
     <actions><script><![CDATA[
         from = from || 'now-7d';thru = thru || 'now'
         const base = {datasetId,from,thru,queryString:queryString || '',filters:JSON.parse(filtersJson || '[]')}

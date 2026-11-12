@@ -20,7 +20,7 @@
 //! request can be left unanswered ([`Wire::queue`]): its reply is read, and its failure kept, by the next call that
 //! waits. The encoding and the parsing of messages, and SCRAM, are `postgres-protocol`'s.
 //!
-//! Network waits are bounded (plans/High-Level-Review.md HL-019): a connection, its TLS handshake and its startup
+//! Network waits are bounded (plans/archive/High-Level-Review.md HL-019): a connection, its TLS handshake and its startup
 //! finish within [`CONNECT_TIMEOUT`], a cancel within [`CANCEL_TIMEOUT`], a read in a transaction within the time the
 //! manager sets ([`Wire::set_read_timeout`]), and a TCP connection has keepalive on, so a host that stops answering
 //! without a reset is noticed.

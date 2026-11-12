@@ -1,8 +1,8 @@
 // Load runs in the server (framework/service/org/moqui/dev/LoadServices.xml, crates/moqui-host/src/load_runner;
-// plans/LoadRunner.md §7, §10, L3): a holder of LOAD_RUNNER starts the shipped ServiceCall.load.js, whose calls run in
+// plans/archive/LoadRunner.md §7, §10, L3): a holder of LOAD_RUNNER starts the shipped ServiceCall.load.js, whose calls run in
 // process as that user with authorization required (D10); the refusals of the permission, of a file that is not a
 // load script, of a target the run may not reach and of a second run at once; a stop; errors counted per call.
-// The screens with their own templates (plans/LoadRunner.md §8, L4) render once in each mode: Run for a finished run
+// The screens with their own templates (plans/archive/LoadRunner.md §8, L4) render once in each mode: Run for a finished run
 // and NewRun for ServiceCall, in qvue (the server-static .qvue, with the JSON it asks for) and in tui.
 // Run: ./moq test tools --spec LoadRunner
 const S = "org.moqui.dev.LoadServices."
@@ -157,6 +157,20 @@ feature("a load script reaches neither ec nor the server's own functions, and ma
     },
 })
 
+feature("an ssh connect of a run reaches only what the target rule allows", {
+    expect() {
+        // the rule is the run's from its start: a production instance's, which reaches loopback but not another host
+        const started = withProperty("instance_purpose", "production", () =>
+            start({ scriptLocation: REACH, parameters: { mode: "ssh" } }))
+        started.error == ""
+        runIds.push(started.runId)
+        ended(started.runId).summary.errors == 1
+        const seen = firstError(started.runId)
+        seen.includes("far threw ssh to example.org:22 is not this server's SSH, loopback, or an ssh://host:port entry")
+        seen.includes("near threw x@127.0.0.1:1: could not connect")
+    },
+})
+
 feature("a user without LOAD_RUNNER is refused", {
     expect() {
         ec.user.internalLoginUser("spec.lr.other")
@@ -275,7 +289,7 @@ feature("a finished run's page and ServiceCall's run form render in qvue and in 
     },
 })
 
-// ========== L5: import and compare (plans/LoadRunner.md §7, L5) ==========
+// ========== L5: import and compare (plans/archive/LoadRunner.md §7, L5) ==========
 // a result as moqui test-load writes it (runtime/tmp/test-load/<runId>/result.json), made up
 const madeUp = (requests, p95, label) => ({
     users: 2, iterations: 4, requests, errors: 0, errorRate: 0, rps: requests / 2, duration: 2,
@@ -328,14 +342,16 @@ feature("a run on this server keeps the server's samples and notes that its gene
         const done = result(started.runId)
         // a run of milliseconds: one sample, at its end, with no CPU share over so short a span
         done.server.samples.length >= 1
-        done.server.samples[0].memoryMb > 0
+        // the process's memory is read where the platform reports it (/proc, Linux); elsewhere the sample says so
+        const memory = ec.factory.getStatusMap().Process.MemoryUsed
+        memory == null ? done.server.samples[0].memoryMb == null : done.server.samples[0].memoryMb.toNumber() > 0
         done.server.samples[0].cpu == null
         done.generator.where == "in-target"
         done.generator.note.includes("server")
     },
 })
 
-// ========== The run's binding of its threads (plans/LoadRunner.md §10) ==========
+// ========== The run's binding of its threads (plans/archive/LoadRunner.md §10) ==========
 // what a script reaches calling the host directly, around the prelude: example's dev-only ScriptReach.load.js
 const reached = (mode) => {
     const started = start({ scriptLocation: REACH, parameters: { mode } })

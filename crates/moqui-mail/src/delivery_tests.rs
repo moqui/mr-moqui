@@ -25,7 +25,8 @@ use super::delivery::{
     RecipientMap, Recipients, Report,
 };
 use super::sync_tests::{
-    alice, by_message_id, field, folder_id, install, map, now, ok, one, out_text, rows, setup, stamp, text, update,
+    alice, by_message_id, field, folder_id, install, map, now, ok, one, out_text, rows, setup, setup_inline, stamp,
+    text, update,
 };
 use moqui_core::context::ExecutionContext;
 use moqui_core::entity::EntityFacade;
@@ -506,6 +507,73 @@ fn a_rule_that_fails_with_the_store_leaves_the_message_stored() {
     assert_eq!(messages.len(), 1, "stored once");
 }
 
+/// A rule's forward is claimed in the frame that stores the message and runs its rules, and sent once that commits:
+/// when the frame fails after the rules ran, the message is stored alone and the rules run again, and the forward goes
+/// once (plans/archive/High-Level-Review.md HL-028). The send registered for the commit runs with no user, as the listener's
+/// delivery has none.
+#[test]
+fn a_forward_whose_storing_frame_fails_after_the_rules_is_sent_once() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup_inline();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let sales = account(
+        "EakHosted",
+        "sales@example.com",
+        &[
+            ("smtpHost", text("127.0.0.1")),
+            ("smtpPort", text("2525")),
+            ("smtpStartTls", text("N")),
+        ],
+    );
+    ok(
+        "create#EmailRule",
+        &[
+            ("ruleName", text("Keep plans")),
+            ("emailAccountId", text(&sales)),
+            (
+                "conditionList",
+                Value::List(vec![map(&[
+                    ("field", "subject"),
+                    ("operator", "contains"),
+                    ("value", "Plan"),
+                ])]),
+            ),
+            (
+                "actionList",
+                Value::List(vec![map(&[("action", "forwardTo"), ("value", "keep@example.org")])]),
+            ),
+        ],
+    );
+    moqui_core::user::logout().unwrap();
+    let sink = super::SinkGuard::install();
+    super::delivery::FAIL_AFTER_RULES.with(|fail| fail.set(true));
+    let report = receive(
+        &facade,
+        &plain("<plan@example.org>", "Plan", "sales@example.com", ""),
+        "dan@example.org",
+        &[to(&sales, &["sales@example.com"])],
+    )
+    .unwrap();
+    assert!(
+        !super::delivery::FAIL_AFTER_RULES.with(std::cell::Cell::get),
+        "the frame with the rules failed"
+    );
+    let (id, _) = stored(&report, &sales);
+    assert!(sink.sent().is_empty(), "nothing is sent before a commit");
+    ctx.factory().run_pending();
+    let sent = sink.sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].to, ["keep@example.org"]);
+    assert_eq!(sent[0].subject, "Fwd: Plan");
+    let forwards = rows(&facade, MESSAGE, &[("parentEmailMessageId", id.as_str())]);
+    assert_eq!(forwards.len(), 1, "the first frame's forward went with it");
+    assert_eq!(field(&forwards[0], "statusId"), "ES_SENT");
+    ctx.factory().run_pending();
+    assert_eq!(sink.sent().len(), 1, "sent once");
+}
+
 #[test]
 fn the_gateways_spam_verdict_files_in_junk() {
     let _lock = moqui_core::user::session::cookie_property_lock();
@@ -562,7 +630,7 @@ fn the_gateways_spam_verdict_files_in_junk() {
 #[test]
 fn a_failed_store_is_that_accounts_error_and_later_steps_are_failure_tolerant() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     install();
     alice(&facade);
@@ -628,6 +696,7 @@ fn a_failed_store_is_that_accounts_error_and_later_steps_are_failure_tolerant() 
         "Question"
     );
     assert_eq!(eca_lines(), [format!("eca {support} Question")], "the other rule ran");
+    ctx.factory().run_pending();
     let sent = sink.sent();
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].to, ["dan@example.org"]);

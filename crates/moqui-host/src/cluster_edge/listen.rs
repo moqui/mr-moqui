@@ -21,7 +21,7 @@
 //! host cannot hold every slot before its handshake (one more is closed, and its sender tries again). The addresses of
 //! the `ClusterMember` rows ([`Members`], read every [`MEMBERS_EVERY`]) have [`MAX_CONNECTIONS`] slots of their own
 //! besides, with no share, so connections from elsewhere cannot keep a member's posts out
-//! (plans/High-Level-Review.md HL-032). Mutual TLS still decides who is served. The TLS handshake in
+//! (plans/archive/High-Level-Review.md HL-032). Mutual TLS still decides who is served. The TLS handshake in
 //! [`super::CLIENT_IO`], before which the peer is not known; then, from a peer that holds the cluster certificate, a
 //! request head within [`super::CONNECTION_IDLE`] of the last exchange on HTTP/1.1, and on HTTP/2 a connection with no
 //! request for that long is closed (GOAWAY). HTTP/2 PINGs find a peer that went away.

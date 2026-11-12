@@ -87,6 +87,13 @@ pub(crate) fn comparison(field: &str, operator: &str, value: Value) -> Result<Co
                 _ => return Err(moqui_lib::error::Error::new("between needs a low and a high value")),
             }
         }
+        "not-between" => {
+            let mut bounds = list_values(value).into_iter();
+            match (bounds.next(), bounds.next()) {
+                (Some(low), Some(high)) => Condition::not_between(field, low, high),
+                _ => return Err(moqui_lib::error::Error::new("not-between needs a low and a high value")),
+            }
+        }
         "is-null" => Condition::is_null(field),
         "is-not-null" => Condition::is_not_null(field),
         other => {
@@ -149,6 +156,22 @@ pub(crate) static CONDITION_FACTORY: HostClass = HostClass {
         ),
         method!(
             "ec.entity.conditionFactory",
+            "makeConditionToField",
+            [Text, Text, Text],
+            None,
+            leaf,
+            make_condition_to_field
+        ),
+        method!(
+            "ec.entity.conditionFactory",
+            "getTrueCondition",
+            [],
+            None,
+            leaf,
+            true_condition
+        ),
+        method!(
+            "ec.entity.conditionFactory",
             "makeConditionWhere",
             [OptValue],
             None,
@@ -174,19 +197,203 @@ pub(crate) static CONDITION_FACTORY: HostClass = HostClass {
     ],
     getters: &[],
     hidden: &[],
-    shim_js: None,
-    shim_members: &[],
+    shim_js: Some(FACTORY_JS),
+    shim_members: &["comparisonOperatorFromEnumId"],
 };
+
+/// Java's `comparisonOperatorFromEnumId`: the operator name of a `ComparisonOperator` enumeration id, null for
+/// another id. Operators are names here, so the result is what `makeCondition` takes.
+const FACTORY_JS: &str = r#"(function (proto) {
+    const operators = { ENTCO_LESS: "less", ENTCO_GREATER: "greater", ENTCO_LESS_EQ: "less-equals",
+        ENTCO_GTR_EQ: "greater-equals", ENTCO_EQUALS: "equals", ENTCO_NOT_EQUALS: "not-equals", ENTCO_IN: "in",
+        ENTCO_NOT_IN: "not-in", ENTCO_BETWEEN: "between", ENTCO_NOT_BETWEEN: "not-between", ENTCO_LIKE: "like",
+        ENTCO_NOT_LIKE: "not-like", ENTCO_IS_NULL: "is-null", ENTCO_IS_NOT_NULL: "is-not-null" };
+    Object.defineProperty(proto, "comparisonOperatorFromEnumId", { writable: true, configurable: true,
+        value: function comparisonOperatorFromEnumId(enumId) { return operators[String(enumId)] ?? null; } });
+})"#;
 
 /// A condition node a script passes to `EntityFind.condition`.
 pub(crate) static CONDITION: HostClass = HostClass {
     name: "host:EntityCondition",
-    methods: &[method!("EntityCondition", "ignoreCase", [], None, leaf, ignore_case)],
+    methods: &[
+        method!("EntityCondition", "ignoreCase", [], None, leaf, ignore_case),
+        method!("EntityCondition", "mapMatches", [Value], None, leaf, map_matches),
+        method!("EntityCondition", "mapMatchesAny", [Value], None, leaf, map_matches_any),
+        method!(
+            "EntityCondition",
+            "mapKeysNotContained",
+            [Value],
+            None,
+            leaf,
+            map_keys_not_contained
+        ),
+        method!("EntityCondition", "populateMap", [OptValue], None, leaf, populate_map),
+        method!("EntityCondition", "toString", [], None, leaf, condition_text),
+    ],
     getters: &[],
     hidden: &[],
     shim_js: None,
     shim_members: &[],
 };
+
+/// The fields of a map or entity value argument.
+fn fields_of(value: Option<&Value>) -> crate::entity::FieldMap {
+    match value {
+        Some(Value::Map(entries)) => entries
+            .iter()
+            .map(|(name, value)| (std::sync::Arc::from(name.as_str()), value.clone()))
+            .collect(),
+        Some(other) => crate::script::value_map(other)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, value)| (std::sync::Arc::from(name.as_str()), value))
+            .collect(),
+        None => crate::entity::FieldMap::new(),
+    }
+}
+
+/// Java's `mapMatches`: whether a map (or entity value) of fields meets the condition.
+fn map_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let condition = call.this::<Condition>()?;
+    Ok(crate::entity::cache::condition_matches(&condition, &fields_of(call.value(0))).into())
+}
+
+/// The comparisons of a condition, flattened: each part of an and, an or and a not.
+fn leaves(condition: &Condition, into: &mut Vec<Condition>) {
+    match condition {
+        Condition::And(parts) | Condition::Or(parts) => {
+            for part in parts {
+                leaves(part, into);
+            }
+        }
+        Condition::Not(inner) => leaves(inner, into),
+        other => into.push(other.clone()),
+    }
+}
+
+/// Java's `mapMatchesAny`: whether the map meets any one comparison of the condition.
+fn map_matches_any(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let condition = call.this::<Condition>()?;
+    let fields = fields_of(call.value(0));
+    let mut parts = Vec::new();
+    leaves(&condition, &mut parts);
+    Ok(parts
+        .iter()
+        .any(|part| crate::entity::cache::condition_matches(part, &fields))
+        .into())
+}
+
+/// Java's `mapKeysNotContained`: whether the condition names none of the map's keys.
+fn map_keys_not_contained(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let condition = call.this::<Condition>()?;
+    let fields = fields_of(call.value(0));
+    Ok((!condition.any_field(&mut |field| fields.contains_key(field.name.as_str()))).into())
+}
+
+/// Java's `populateMap`: the fields the condition requires to equal a value, put in the map given (or a new one),
+/// which is returned. Only equalities joined by and say what a field must be.
+fn populate_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    fn equalities(condition: &Condition, into: &mut moqui_lib::object::ValueMap) {
+        match condition {
+            Condition::Equals(field, value) => {
+                into.insert(field.name.clone(), value.clone());
+            }
+            Condition::And(parts) => {
+                for part in parts {
+                    equalities(part, into);
+                }
+            }
+            _ => {}
+        }
+    }
+    let condition = call.this::<Condition>()?;
+    let mut map = match call.value(0) {
+        Some(Value::Map(entries)) => entries.clone(),
+        _ => moqui_lib::object::ValueMap::default(),
+    };
+    equalities(&condition, &mut map);
+    Ok(Ret::Value(Value::Map(map)))
+}
+
+/// The condition as text, for a log line: its structure with field names and values, not the SQL a dialect writes.
+fn condition_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    fn text(condition: &Condition) -> String {
+        let value = moqui_lib::object::to_plain_string;
+        match condition {
+            Condition::Equals(field, expected) => format!("{} = {}", field.name, value(expected)),
+            Condition::NotEquals(field, expected) => format!("{} <> {}", field.name, value(expected)),
+            Condition::Less(field, expected) => format!("{} < {}", field.name, value(expected)),
+            Condition::Greater(field, expected) => format!("{} > {}", field.name, value(expected)),
+            Condition::LessEqual(field, expected) => format!("{} <= {}", field.name, value(expected)),
+            Condition::GreaterEqual(field, expected) => format!("{} >= {}", field.name, value(expected)),
+            Condition::In(field, items) | Condition::NotIn(field, items) => {
+                let items: Vec<String> = items.iter().map(value).collect();
+                let not = if matches!(condition, Condition::NotIn(..)) {
+                    "NOT "
+                } else {
+                    ""
+                };
+                format!("{} {not}IN ({})", field.name, items.join(", "))
+            }
+            Condition::Between(field, low, high) => {
+                format!("{} BETWEEN {} AND {}", field.name, value(low), value(high))
+            }
+            Condition::NotBetween(field, low, high) => {
+                format!("{} NOT BETWEEN {} AND {}", field.name, value(low), value(high))
+            }
+            Condition::Like(field, pattern) => format!("{} LIKE {}", field.name, value(pattern)),
+            Condition::NotLike(field, pattern) => format!("{} NOT LIKE {}", field.name, value(pattern)),
+            Condition::Matches(field, words) => format!("{} MATCHES {}", field.name, value(words)),
+            Condition::IsNull(field) => format!("{} IS NULL", field.name),
+            Condition::IsNotNull(field) => format!("{} IS NOT NULL", field.name),
+            Condition::And(parts) | Condition::Or(parts) => {
+                let joiner = if matches!(condition, Condition::Or(_)) {
+                    " OR "
+                } else {
+                    " AND "
+                };
+                let parts: Vec<String> = parts.iter().map(text).collect();
+                format!("({})", parts.join(joiner))
+            }
+            Condition::Not(inner) => format!("NOT ({})", text(inner)),
+            Condition::CompareFields(left, _, right) => format!("{} ~ {}", left.name, right.name),
+            Condition::IgnoreCase(inner) => format!("IGNORE CASE ({})", text(inner)),
+            Condition::Where(sql) => sql.clone(),
+            Condition::Bound(field, _) => format!("{} ~ ?", field.name),
+        }
+    }
+    let condition = call.this::<Condition>()?;
+    Ok(text(&condition).into())
+}
+
+/// Java's `makeConditionToField(field, operator, toField)`: one field against another.
+fn make_condition_to_field(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let op = compare_op(&call.text_or_empty(1)).map_err(HostError::Lib)?;
+    Ok(condition_ret(Some(Condition::compare_fields(
+        call.text_or_empty(0).as_str(),
+        op,
+        call.text_or_empty(2).as_str(),
+    ))))
+}
+
+/// Java's `getTrueCondition()`: a condition every row meets.
+fn true_condition(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(condition_ret(Some(Condition::where_sql("1 = 1"))))
+}
+
+/// The entries of a map as comparisons with `operator`, joined by `join_operator`.
+fn map_condition(
+    entries: moqui_lib::object::ValueMap,
+    operator: &str,
+    join_operator: &str,
+) -> Result<Option<Condition>, HostError> {
+    let operator = if operator.is_empty() { "equals" } else { operator };
+    let mut parts = Vec::new();
+    for (key, value) in entries {
+        parts.push(comparison(&key, operator, value).map_err(HostError::Lib)?);
+    }
+    Ok(join(parts, join_operator))
+}
 
 /// A condition as a script value, or null.
 pub(crate) fn condition_ret(condition: Option<Condition>) -> Ret {
@@ -243,13 +450,30 @@ fn is_true(call: &Call<'_>, index: usize) -> bool {
     matches!(call.value(index), Some(Value::Bool(true)))
 }
 
-/// `makeCondition(field, operator, value, orNull)`, `makeCondition(listOfConditions, "and"|"or")`, or
-/// `makeCondition(map)` as an AND of equalities.
+/// Java's forms: `makeCondition(field, operator, value, orNull)`, `makeCondition(condition, "and"|"or", condition)`,
+/// `makeCondition(listOfConditions, "and"|"or", mapOperator, mapJoinOperator)` (a map in the list is its entries
+/// compared and joined by the last two, equals and and by default), and
+/// `makeCondition(map, operator, joinOperator)`, an AND of equalities by default.
 fn make_condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let first = call.value_or_null(0);
+    if let Some(left) = condition_in(&first) {
+        let parts = match call.value(2).and_then(condition_in) {
+            Some(right) => vec![left, right],
+            None => vec![left],
+        };
+        return Ok(condition_ret(join(parts, &text_or_blank(call, 1))));
+    }
     match &first {
         Value::List(items) => {
-            let parts = items.iter().filter_map(condition_in).collect();
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                if let Some(condition) = condition_in(item) {
+                    parts.push(condition);
+                } else if let Value::Map(entries) = item {
+                    let of_map = map_condition(entries.clone(), &text_or_blank(call, 2), &text_or_blank(call, 3))?;
+                    parts.extend(of_map);
+                }
+            }
             Ok(condition_ret(join(parts, &text_or_blank(call, 1))))
         }
         Value::String(field) => {
@@ -266,13 +490,13 @@ fn make_condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
             Ok(condition_ret(Some(condition)))
         }
         Value::Map(_) | Value::Object(_) => {
-            // a map's entries, an entity value's fields; another object (a condition) has none
+            // a map's entries, an entity value's fields
             let entries = crate::script::value_map(&first).unwrap_or_default();
-            let mut parts = Vec::new();
-            for (key, value) in entries {
-                parts.push(comparison(&key, "equals", value).map_err(HostError::Lib)?);
-            }
-            Ok(condition_ret(join(parts, "and")))
+            Ok(condition_ret(map_condition(
+                entries,
+                &text_or_blank(call, 1),
+                &text_or_blank(call, 2),
+            )?))
         }
         _ => Err(HostError::message("makeCondition needs a field, a list, or a map")),
     }

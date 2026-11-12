@@ -742,3 +742,89 @@ fn a_menu_include_expression_shows_or_hides_the_item_per_request() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The page and sort of the list being shown stay on its own menu entry and leave a sibling's, though both declare
+/// `pageIndex`: a sibling keeps the record id it declares. The menu data and the html menu (`sri.getMenuItems`) the
+/// same.
+#[test]
+fn a_sibling_menu_entry_leaves_out_the_page_of_the_list_shown() {
+    let dir = std::env::temp_dir().join(format!("moqui-menu-list-state-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/App")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text.replace("{dir}", &base)).unwrap();
+    write("Root.xml", ROOT);
+    write(
+        "Root/App.xml",
+        r#"<screen require-authentication="false" default-menu-title="The App">
+            <subscreens default-item="List">
+                <subscreens-item name="List" menu-title="List" location="{dir}/Root/App/List.xml"/>
+                <subscreens-item name="Other" menu-title="Other" location="{dir}/Root/App/Other.xml"/>
+            </subscreens>
+            <widgets><render-mode><text type="html"><![CDATA[<#list sri.getMenuItems() as item>[${item.name}|${item.url}]</#list>]]></text></render-mode><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    for name in ["List", "Other"] {
+        write(
+            &format!("Root/App/{name}.xml"),
+            r#"<screen require-authentication="false"><parameter name="recordId"/><parameter name="pageIndex"/><parameter name="orderByField"/><widgets/></screen>"#,
+        );
+    }
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    world.user("plain", None);
+    let query = [("pageIndex", "2"), ("orderByField", "name"), ("recordId", "R1")];
+
+    let mut get = request("GET", "/menuData/App/List");
+    get.set_header("authorization", basic("plain"));
+    for (name, value) in query {
+        get.query.push((name.to_string(), value.to_string()));
+    }
+    let response = serve_at(&world.factory, get, &root);
+    let menu: serde_json::Value = serde_json::from_str(&response.body_text()).unwrap_or_default();
+    assert_eq!(response.status, 200, "{menu}");
+    let entry = |name: &str| -> String {
+        menu[0]["subscreens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .and_then(|item| item["pathWithParams"].as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let list = entry("List");
+    assert!(
+        list.contains("pageIndex=2") && list.contains("orderByField=name"),
+        "{list}"
+    );
+    let other = entry("Other");
+    assert!(other.contains("recordId=R1"), "{other}");
+    assert!(
+        !other.contains("pageIndex") && !other.contains("orderByField"),
+        "{other}"
+    );
+
+    let mut get = request("GET", "/App/List");
+    for (name, value) in query {
+        get.query.push((name.to_string(), value.to_string()));
+    }
+    let response = serve_at(&world.factory, get, &root);
+    let body = response.body_text();
+    assert_eq!(response.status, 200, "{body}");
+    let item = |name: &str| -> String {
+        body.split('[')
+            .find_map(|part| part.strip_prefix(&format!("{name}|")))
+            .and_then(|rest| rest.split(']').next())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let list = item("List");
+    assert!(list.contains("pageIndex=2"), "{list} in {body}");
+    let other = item("Other");
+    assert!(
+        other.contains("recordId=R1") && !other.contains("pageIndex"),
+        "{other} in {body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

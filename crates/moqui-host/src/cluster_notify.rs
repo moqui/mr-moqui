@@ -357,10 +357,11 @@ fn apply(factory: &Arc<ExecutionContextFactory>, posts: &Mutex<Vec<String>>, pay
     }
 }
 
-/// Clear every entity list cache, for an invalidation that may have been missed.
+/// Clear every entity list cache, for an invalidation that may have been missed, and retire the live sessions ended
+/// meanwhile ([`moqui_core::cluster::recover_missed`]).
 fn clear_entity_caches(factory: &ExecutionContextFactory) {
     if let Some(facade) = factory.entity() {
-        if let Err(err) = moqui_core::entity::cache::clear_all_list_caches(&facade) {
+        if let Err(err) = moqui_core::cluster::recover_missed(Some(factory), &facade) {
             tracing::warn!("could not clear the entity caches after a missed cluster invalidation: {err}");
         }
     }

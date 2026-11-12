@@ -3,8 +3,8 @@
 //! delivery ([`schedule`]), the monitoring sources' keys ([`monitor`]) and Monitor › Settings ([`settings`]).
 //!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
-//! entry below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…` and
-//! `moqui_core::monitor::…` as the service files name them, and the load of the components' shipped definitions after
+//! entry below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…`,
+//! `moqui_core::report_delivery::…` and `moqui_core::monitor::…` as the service files name them, and the load of the components' shipped definitions after
 //! boot. moqui-host and moqui-browser link it in every build.
 
 moqui_core::extension::submit! {
@@ -17,6 +17,8 @@ moqui_core::extension::submit! {
             incident::register(registry)?;
             recovery::register(registry)?;
             settings::register(registry)?;
+            delivery::register(registry)?;
+            alert_delivery::register(registry)?;
             schedule::register(registry)
         },
         after_boot: |factory| {
@@ -35,10 +37,14 @@ moqui_core::extension::submit! {
 }
 
 pub mod alert;
+pub mod alert_delivery;
+mod alias;
 pub mod annotations;
 pub mod browser;
 pub mod business;
 pub mod definitions;
+pub mod delivery;
+pub mod drill;
 pub mod frame;
 pub mod git_sync;
 pub mod graph;
@@ -50,6 +56,7 @@ pub mod recovery;
 pub mod regression;
 pub mod repeat;
 pub mod schedule;
+pub mod semantics;
 pub mod settings;
 use moqui_core::search::time;
 
@@ -235,11 +242,7 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
             telemetry: false,
         });
     }
-    let target = if let Some(index) = body["indexName"].as_str() {
-        Target::Index(index.into())
-    } else {
-        Target::Documents(vec![text(body, "documentType", id).into()])
-    };
+    let target = alias::target(id, body);
     let facade = search::current()?;
     let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
         .map_err(fail)?;
@@ -261,6 +264,8 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
             {
                 return Err(fail("a telemetry dataset alias requires a server-owned row filter"));
             }
+            // and its index's own grant, the reader's or its owner's (alias.rs)
+            alias::check_telemetry(ec, id, &definition, &document)?;
             allowed.push(document);
             continue;
         }
@@ -499,6 +504,8 @@ fn documents_of(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Res
     if dataset.service.is_some() {
         return Err(fail("a service dataset returns frames; run it as a report query"));
     }
+    // a dataset may give its readers aggregates and keep its records to a narrower grant
+    semantics::check_rows(ec, dataset)?;
     let facade = search::current()?;
     metadata(ec, || {
         for id in facade.target_documents(&dataset.target)? {
@@ -739,7 +746,7 @@ pub fn execute_query(ec: &ExecutionContext, options: &Json) -> Result<Json, Erro
 }
 
 /// The typed frames of a child query's result, taken out of it rather than copied
-/// (plans/High-Level-Review.md HL-016): the composing parent reads only the result's notices, inspection and
+/// (plans/archive/High-Level-Review.md HL-016): the composing parent reads only the result's notices, inspection and
 /// requests after.
 fn take_frames(result: &mut Json) -> Result<Vec<frame::Frame>, Error> {
     match result.get_mut("frames").map(Json::take) {
@@ -769,7 +776,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         query["from"] = range["from"].clone();
         query["thru"] = range["thru"].clone();
         let dataset = dataset(ec, text(options, "datasetId", "otel_spans"))?;
-        let documents = documents_of(ec, &query, &dataset)?;
+        let mut documents = documents_of(ec, &query, &dataset)?;
         let rows = documents["hits"]
             .as_array()
             .into_iter()
@@ -788,6 +795,11 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
                 row
             })
             .collect::<Vec<_>>();
+        // a page of a business dataset's records is a sample when more match: labelled, and never totalled
+        if semantics::business_body(ec, &dataset)?.is_some() {
+            let total = documents["total"].as_u64().unwrap_or(0);
+            semantics::check_bounded(options, rows.len(), total, &mut documents["notices"])?;
+        }
         let mut frame = frame::Frame::from_rows(&rows);
         configure_frame(ec, &dataset, options, &mut frame)?;
         let (frames, inspection) = apply_transformations(vec![frame], options)?;
@@ -932,6 +944,14 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     }
     if aggregation_count(&aggs) > 64 {
         return Err(fail("report exceeds 64 aggregation nodes"));
+    }
+    // the semantic guards of a business dataset (semantics.rs): what its fields declare decides which aggregations mean something
+    let business = semantics::business_body(ec, &dataset)?;
+    if let Some(body) = &business {
+        semantics::check_aggregations(body, &normalized, &aggs)?;
+    }
+    if semantics::returns_records(&aggs) {
+        semantics::check_rows(ec, &dataset)?;
     }
     aggs.insert(
         "__report_population".into(),
@@ -1079,6 +1099,9 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         }
     }
     configure_frame(ec, &dataset, options, &mut frame)?;
+    if business.is_some() {
+        semantics::check_units(options, &aggs, &frame)?;
+    }
     let (frames, inspection) = apply_transformations(vec![frame], options)?;
     Ok(
         json!({"frames":frames,"inspection":inspection,"request":if options["inspect"]==true{Some(&normalized)}else{None},"notices":notices,"sourceCount":population,"range":range}),
@@ -2495,7 +2518,7 @@ pub fn dashboard_frames_filtered(
     }
     let mut annotations = Vec::new();
     let mut annotation_notices = Vec::new();
-    let mut marker_query = json!({"datasetId":"monitor_annotations","from":from,"thru":thru,"pageSize":200,"query":{"bool":{"any":[{"field":{"name":"dashboard","op":"exists","negate":true}},{"field":{"name":"dashboard","op":"eq","value":definition["id"]}}]}}});
+    let mut marker_query = json!({"datasetId":"monitor_annotations","from":from,"thru":thru,"pageSize":200,"query":{"bool":{"none":[{"field":{"name":"source","op":"eq","value":annotations::BUSINESS}}],"any":[{"field":{"name":"dashboard","op":"exists","negate":true}},{"field":{"name":"dashboard","op":"eq","value":definition["id"]}}]}}});
     let mut scope_filters = Vec::new();
     for (variable, alternate, scope, field) in [
         ("service", "serviceName", "service", "service.name"),
@@ -2557,10 +2580,16 @@ pub fn dashboard_frames_filtered(
         }
     }
     let mut results = serde_json::Map::new();
+    let mut queried_datasets = std::collections::BTreeSet::new();
     for (id, panel) in &panels {
         // A panel that cannot be read or queried gets an error notice; the others still render.
         let panel = match dashboard_panel(ec, panel) {
-            Ok(panel) => panel,
+            Ok(panel) => {
+                for query in panel["queries"].as_array().into_iter().flatten() {
+                    query_datasets(query, &mut queried_datasets);
+                }
+                panel
+            }
             Err(error) => {
                 tracing::error!(panel=%id,%error,"dashboard panel could not be read, continuing");
                 results.insert(id.clone(),json!({"title":id,"frames":[],"notices":[{"level":"error","complete":false,"message":error.message()}]}));
@@ -2634,6 +2663,21 @@ pub fn dashboard_frames_filtered(
         rendered["requests"] = json!(requests);
         results.insert(id.clone(), rendered);
     }
+    // A dashboard over business data also shows its domains' events (a price list published, a period closed): the
+    // registered business annotation sources, each read as the viewer through its own dataset and row filter.
+    if queried_datasets.iter().any(|dataset| {
+        matches!(definitions::read_optional(ec, dataset), Ok(Some(definition)) if business::is_business(&definition["body"]))
+    }) {
+        let markers = annotations::business_markers(ec, &from, &thru);
+        if !markers.is_empty() {
+            for panel in results.values_mut() {
+                if let Some(list) = panel["annotations"].as_array_mut() {
+                    list.extend(markers.iter().cloned());
+                }
+            }
+            annotations.extend(markers);
+        }
+    }
     annotation_notices.extend(variable_notices);
     localize_layout(&mut layout, 0);
     let mut title = definition["title"].clone();
@@ -2701,6 +2745,16 @@ fn variable_options(ec: &ExecutionContext, variable: &Json, from: &str, thru: &s
         .and_then(|field| field["values"].as_array())
         .cloned()
         .unwrap_or_default())
+}
+
+/// The dataset ids a query, or the queries it composes, names.
+fn query_datasets(query: &Json, out: &mut std::collections::BTreeSet<String>) {
+    if let Some(dataset) = query["datasetId"].as_str() {
+        out.insert(dataset.to_owned());
+    }
+    for child in query["queries"].as_array().into_iter().flatten() {
+        query_datasets(child, out);
+    }
 }
 
 /// A dashboard panel, or the body of the library panel it references.
@@ -2799,6 +2853,7 @@ pub fn register(registry: &mut moqui_core::native::NativeRegistry) -> Result<(),
         ("find_definition_uses", find_definition_uses),
         ("get_definition_diff", get_definition_diff),
         ("audit_export", audit_export_service),
+        ("get_drill", drill::get_drill),
         ("store_git_sync", git_sync::store_sync),
         ("list_git_syncs", git_sync::list_syncs),
         ("push_git_sync", git_sync::push_sync),
@@ -3074,6 +3129,8 @@ mod tests {
         crate::recovery::register(&mut registry).unwrap();
         crate::settings::register(&mut registry).unwrap();
         crate::schedule::register(&mut registry).unwrap();
+        crate::delivery::register(&mut registry).unwrap();
+        crate::alert_delivery::register(&mut registry).unwrap();
         let registered = registry.service_locations();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui");
         let mut named = Vec::new();
@@ -3087,6 +3144,8 @@ mod tests {
                         [
                             "moqui_core::report::",
                             "moqui_core::report_schedule::",
+                            "moqui_core::report_delivery::",
+                            "moqui_core::report_alert::",
                             "moqui_core::monitor::",
                         ]
                         .iter()

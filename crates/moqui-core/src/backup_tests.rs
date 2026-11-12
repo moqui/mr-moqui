@@ -27,6 +27,7 @@ fn counts(daily: u32, weekly: u32, monthly: u32, yearly: Option<u32>) -> BackupR
         monthly,
         yearly,
         full_every: 7,
+        chain_incrementals: false,
         fast_checkpoint: false,
         timeout: Duration::from_secs(60),
     }

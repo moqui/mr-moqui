@@ -363,6 +363,36 @@ impl GitProvider {
                 .eq("ecaStatus", Value::string("pending"))
                 .update_all([("ecaStatus".to_string(), Value::string("running"))])?
         };
+        // Claimed, the update is this run's: one that fails after is failed, not left running until the pending job
+        // takes it for cut short (STALE_RUNNING_MILLIS).
+        let outcome = self.run_update(&entity, update_id, claimed > 0);
+        if claimed > 0 {
+            if let Err(err) = &outcome {
+                let _rows = rows_guard();
+                let marked = entity.find(GIT_UPDATE).and_then(|find| {
+                    find.eq("updateId", Value::string(update_id))
+                        .eq("ecaStatus", Value::string("running"))
+                        .update_all([
+                            ("ecaStatus".to_string(), Value::string("failed")),
+                            ("ecaError".to_string(), Value::string(err.message())),
+                        ])
+                });
+                if let Err(mark) = marked {
+                    tracing::error!(update = update_id, "a failed git update was not marked failed: {mark}");
+                }
+            }
+        }
+        outcome
+    }
+
+    /// [`Self::process_update`] after the claim: the events of an update this run `claimed`, or the status of one it
+    /// did not.
+    fn run_update(
+        &self,
+        entity: &moqui_core::entity::EntityFacade,
+        update_id: &str,
+        claimed: bool,
+    ) -> Result<String, Error> {
         let (update, refs) = {
             let _rows = rows_guard();
             let update = entity
@@ -377,7 +407,7 @@ impl GitProvider {
                 .list()?;
             (update, refs)
         };
-        if claimed == 0 {
+        if !claimed {
             return Ok(text(update.get("ecaStatus")).unwrap_or_default());
         }
         // the events run as the user who made the change; a caller's own user (a screen's Run again, a test) is put back
@@ -386,7 +416,7 @@ impl GitProvider {
         let mut caller: Option<Option<String>> = None;
         if let Some(user_id) = &user_id {
             if moqui_core::user::current_user_id().ok().flatten().as_deref() != Some(user_id.as_str()) {
-                if let Some(username) = username_of(&entity, user_id) {
+                if let Some(username) = username_of(entity, user_id) {
                     caller = Some(moqui_core::user::current_username().ok().flatten());
                     if let Err(err) = moqui_core::user::internal_login_user(&username) {
                         tracing::warn!(update = update_id, "git update events run without their user: {err}");

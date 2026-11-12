@@ -21,7 +21,7 @@
 //! - `moqui-host.d.ts`: decimals, timestamps, entity values, lists and finds, the server `ec` and `sri`, the static helpers,
 //!   the unwrapped projection, the browser `ec`, and the server-static qvt package types. Fixed text plus the page,
 //!   header and credential names from the Rust constants.
-//! - `moqui-globals.d.ts`: `ec`, `context`, `result`, `sri` and the helpers as names a server script sees.
+//! - `moqui-globals.d.ts`: `ec`, `context`, `sri` and the helpers as names a server script sees.
 //! - `entities.d.ts`, `services.d.ts`, `screens.d.ts`: from the definitions.
 //! - `shape.ts`: the package keys as values, for client code.
 //!

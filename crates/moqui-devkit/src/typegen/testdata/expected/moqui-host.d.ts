@@ -26,6 +26,9 @@ interface Decimal {
     scale(): number;
     /** Java's `divide(other, scale, roundingMode)`: the quotient rounded to `scale` places. The mode is a `RoundingMode` name or an old `ROUND_*` number. */
     divide(other: Decimal | number | string, scale: number, roundingMode?: string | number | null): Decimal;
+    divideScaled(other: Decimal | number | string, scale: number, roundingMode?: string | number | null): Decimal;
+    /** The plain text of the number, which `JSON.stringify` writes. */
+    toJSON(): string;
     /** Java's `setScale`. Without a mode a value that needs rounding is an error. */
     setScale(scale: number, roundingMode?: string | number | null): Decimal;
     /** A JavaScript number, with float rounding. */
@@ -35,7 +38,7 @@ interface Decimal {
     valueOf(): never;
 }
 
-/** A timestamp: ISO-8601 text, branded so a plain string is not taken for one. */
+/** A timestamp: text of epoch milliseconds on the server, branded so a plain string is not taken for one (docs/dev/JS-Globals.md). */
 type Timestamp = string & { readonly __moquiTimestamp: never };
 
 /** A value that converts to a decimal parameter: the host value, or text and numbers the validation converts. */
@@ -46,9 +49,42 @@ type TimestampInput = Timestamp | string | number;
 /** A plain map with no proven keys. */
 type MoquiMap = Record<string, unknown>;
 
-/** The context stack as a map. A name no map holds reads as null on the server. */
+/**
+ * The context stack as a map, Java's `ContextStack`; `ec.context` is the same object. A name no map holds reads as
+ * null on the server. A name in the context wins over a method of the same name (`context.size` reads the name `size`
+ * when one is set), so read such a name with `context.get("size")`.
+ */
 interface MoquiContext {
     [name: string]: unknown;
+    get(name: string): unknown;
+    getByString(name: string): unknown;
+    /** Sets the name in the top map; returns the value it had. */
+    put(name: string, value: unknown): unknown;
+    putAll(map: MoquiMap | null): void;
+    /** Removes the name from the top map; returns the value it had. */
+    remove(name: string): unknown;
+    containsKey(name: string): boolean;
+    containsValue(value: unknown): boolean;
+    keySet(): string[];
+    values(): unknown[];
+    entrySet(): { key: string; value: unknown; getKey(): string; getValue(): unknown }[];
+    size(): number;
+    isEmpty(): boolean;
+    getCombinedMap(): MoquiMap;
+    /** A new top map, empty or with the entries given. Returns the stack. */
+    push(map?: MoquiMap | null): MoquiContext;
+    /** Removes the top map and returns its entries. The last map cannot be popped. */
+    pop(): MoquiMap;
+    /** Sets the whole stack aside for an empty one, until `popContext()`. */
+    pushContext(): MoquiContext;
+    popContext(): MoquiContext;
+    getRootMap(): MoquiMap;
+    addRootMap(map: MoquiMap): void;
+    /** Empties the top map. */
+    clear(): void;
+    /** One map for the execution context, shared by every service call in it. Values are copied in and out. */
+    getSharedMap(): Record<string, unknown>;
+    toString(): string;
 }
 
 // ---- entities ----
@@ -108,10 +144,47 @@ type MoquiFieldProperties<N extends string> = {
 };
 interface EntityValueMethods<N extends string = string> {
     get<K extends MoquiFieldName<N>>(field: K): MoquiFields<N>[K] | null;
-    set<K extends MoquiFieldName<N>>(field: K, value: MoquiFieldInput<MoquiFields<N>[K]>): void;
-    setFields(fields: MoquiMap, setIfEmpty?: boolean, namePrefix?: string | null, pks?: boolean | null): void;
-    setSequencedIdPrimary(): void;
-    setSequencedIdSecondary(): void;
+    /** The setters and writes return the value, so they chain: `makeValue(name).setAll(fields).setSequencedIdPrimary().create()`. */
+    set<K extends MoquiFieldName<N>>(field: K, value: MoquiFieldInput<MoquiFields<N>[K]>): this;
+    setFields(fields: MoquiMap, setIfEmpty?: boolean, namePrefix?: string | null, pks?: boolean | null): this;
+    /** `setFields(fields, true, null, null)`. */
+    setAll(fields: MoquiMap | null): this;
+    setString(field: string, value: string | null): this;
+    setBytes(field: string, value: unknown): this;
+    setSequencedIdPrimary(): this;
+    setSequencedIdSecondary(): this;
+    /** Whether the value holds the field, null or not. */
+    isFieldSet(field: string): boolean;
+    /** Whether the entity has a field of the name. */
+    isField(field: string): boolean;
+    /** Whether the field changed since the value was read or last written, so an update writes it. */
+    isFieldModified(field: string): boolean;
+    isModified(): boolean;
+    /** What the field held when the value was read or last written. */
+    getOriginalDbValue(field: string): unknown;
+    /** Whether every primary key field has a value. */
+    containsPrimaryKey(): boolean;
+    /** The primary key values joined by `::`. */
+    getPrimaryKeysString(): string;
+    /** Whether each entry of the map equals the value's field. */
+    mapMatches(fields: MoquiMap): boolean;
+    /** By entity name, then the primary key fields, then the others: negative, zero or positive. */
+    compareTo(other: EntityValue): number;
+    isMutable(): boolean;
+    getNoCheckSimple(field: string): unknown;
+    /** The field converted, null for none. */
+    getString(field: string): string | null;
+    getBoolean(field: string): boolean | null;
+    getLong(field: string): number | null;
+    getDouble(field: string): number | null;
+    getBigDecimal(field: string): Decimal | null;
+    getTimestamp(field: string): Timestamp | null;
+    getDate(field: string): unknown;
+    getTime(field: string): unknown;
+    getBytes(field: string): unknown;
+    /** The value with the related records of a master definition (`default` when omitted), as plain objects. */
+    getMasterValueMap(master?: string | null): MoquiMap;
+    findRelatedCount(relationship: keyof MoquiRel<N> & string, byAndFields?: MoquiMap | null, useCache?: boolean | null): number;
     /** Reads the row of the primary key again and replaces the fields. False, and unchanged, when there is no row. */
     refresh(): boolean;
     /** Each field as an entry: `{key, value, getKey(), getValue()}`. */
@@ -126,10 +199,16 @@ interface EntityValueMethods<N extends string = string> {
     getPlainValueMap(dependentLevels: number): MoquiMap;
     getEntityName(): string;
     resolveEntityName(): string;
-    create(): void;
-    createOrUpdate(): void;
-    update(): void;
-    delete(): void;
+    create(): this;
+    createOrUpdate(): this;
+    /** `createOrUpdate()`. */
+    store(): this;
+    /** A copy that shares nothing with this value. */
+    cloneValue(): EntityValue<N>;
+    /** The same entity with the same field values. */
+    equals(other: unknown): boolean;
+    update(): this;
+    delete(): this;
     deleteRelated(relationship: keyof MoquiRel<N> & string): void;
     /** Deletes the rows of the named `many` relationships (names or short aliases), then this value. False, with nothing deleted, when rows of another entity still reference it. */
     deleteWithRelated(relationships?: string[] | Set<string> | null): boolean;
@@ -153,19 +232,60 @@ interface EntityValueMethods<N extends string = string> {
     ): EntityValue<MoquiRelated<N, R>> | null;
 }
 
-/** An entity list host object: index, length, iterable, `map` and `filter`. */
+/**
+ * An entity list host object: index, length, iterable, the Array methods and Java's `EntityList` and `List` methods.
+ * As in Java, the methods that filter or order (`filterByAnd`, `filterByDate`, `filterByCondition`, `filterByLimit`,
+ * `orderByFields`, `removeByAnd`, `sort`, `reverse`) change the list and return it. The Array methods that give a new
+ * array (`map`, `filter`, `slice`, `toSorted`) give an array of the rows and leave the list as it was.
+ */
 interface EntityList<N extends string = string> extends Iterable<EntityValue<N>> {
     readonly [index: number]: EntityValue<N>;
     readonly length: number;
-    readonly pageIndex: number;
-    readonly pageSize: number;
-    /** The rest of the Array prototype runs on an array copy of the rows, so `sort` and `reverse` return the reordered copy and leave the list. */
+    isEmpty(): boolean;
+    first(): EntityValue<N> | null;
+    getFirst(): EntityValue<N> | null;
+    last(): EntityValue<N> | null;
+    /** `filterByAnd(fields)` or `filterByAnd(name, value, name, value...)`: the list keeps the rows that match. */
+    filterByAnd(fields: MoquiMap): this;
+    filterByAnd(...namesAndValues: unknown[]): this;
+    /** The list drops the rows that match. */
+    removeByAnd(fields: MoquiMap): this;
+    /** A new list of the rows that match. */
+    findByAnd(fields: MoquiMap): EntityList<N>;
+    findByAnd(...namesAndValues: unknown[]): EntityList<N>;
+    /** The list keeps the rows the condition matches, or with `include` false those it does not. */
+    filterByCondition(condition: EntityCondition, include?: boolean): this;
+    /** `["name", "-other"]`: by each field in turn, `-` for descending. */
+    orderByFields(fields: string[] | string | null): this;
+    indexMatching(fields: MoquiMap): number;
+    move(fromIndex: number, toIndex: number): this;
+    add(value: EntityValue<N>): boolean;
+    add(index: number, value: EntityValue<N>): boolean;
+    addAll(values: Iterable<EntityValue<N>>): boolean;
+    addIfMissing(value: EntityValue<N>): this;
+    addAllIfMissing(values: Iterable<EntityValue<N>>): this;
+    /** By index: the row removed, or null. By value: whether one was removed. */
+    remove(index: number): EntityValue<N> | null;
+    remove(value: EntityValue<N>): boolean;
+    set(index: number, value: EntityValue<N>): EntityValue<N> | null;
+    clear(): void;
+    push(...values: EntityValue<N>[]): number;
+    pop(): EntityValue<N> | undefined;
+    shift(): EntityValue<N> | undefined;
+    unshift(...values: EntityValue<N>[]): number;
+    splice(start: number, deleteCount?: number, ...values: EntityValue<N>[]): EntityValue<N>[];
+    reverse(): this;
+    /** A new list of copies of the rows. */
+    cloneList(): EntityList<N>;
+    getValueMapList(): MoquiMap[];
+    getPlainValueList(dependentLevels?: number): MoquiMap[];
+    getMasterValueList(master?: string | null): MoquiMap[];
     find(callback: (value: EntityValue<N>, index: number) => unknown): EntityValue<N> | undefined;
     findIndex(callback: (value: EntityValue<N>, index: number) => unknown): number;
     some(callback: (value: EntityValue<N>, index: number) => unknown): boolean;
     every(callback: (value: EntityValue<N>, index: number) => unknown): boolean;
     reduce<T>(callback: (accumulator: T, value: EntityValue<N>, index: number) => T, initial: T): T;
-    sort(compare?: (left: EntityValue<N>, right: EntityValue<N>) => number): EntityValue<N>[];
+    sort(compare?: (left: EntityValue<N>, right: EntityValue<N>) => number): this;
     includes(value: EntityValue<N>): boolean;
     indexOf(value: EntityValue<N>): number;
     slice(start?: number, end?: number): EntityValue<N>[];
@@ -180,8 +300,10 @@ interface EntityList<N extends string = string> extends Iterable<EntityValue<N>>
         thruField?: string | null,
         moment?: TimestampInput | null,
         ignoreIfEmpty?: boolean,
-    ): EntityList<N>;
-    filterByLimit(offset: number, limit: number): EntityList<N>;
+    ): this;
+    /** The rows from `offset`, `limit` of them; or Java's form, by the `pageIndex` and `pageSize` of the context or of the map named in it. */
+    filterByLimit(offset: number, limit: number): this;
+    filterByLimit(inputFieldsMapName: string | null, alwaysPaginate: boolean): this;
     map<T>(callback: (value: EntityValue<N>, index: number) => T): T[];
     filter(callback: (value: EntityValue<N>, index: number) => boolean): EntityValue<N>[];
 }
@@ -227,9 +349,18 @@ interface EntityCondition {
     readonly __moquiCondition: never;
     /** Compare text without regard to case. */
     ignoreCase(): EntityCondition;
+    /** Whether a map or entity value of fields meets the condition. A SQL fragment cannot be checked. */
+    mapMatches(fields: MoquiMap | EntityValue): boolean;
+    /** Whether it meets any one comparison of the condition. */
+    mapMatchesAny(fields: MoquiMap | EntityValue): boolean;
+    /** Whether the condition names none of the map's keys. */
+    mapKeysNotContained(fields: MoquiMap): boolean;
+    /** The fields the condition requires to equal a value, put in the map given (or a new one). */
+    populateMap(map?: MoquiMap | null): MoquiMap;
+    toString(): string;
 }
 
-/** A find builder. Each chain method returns the builder; a builder runs once. */
+/** A find builder. Each chain method returns the builder; a run (`list()`, `one()`, `count()`) can be repeated. */
 interface EntityFind<N extends string = string> {
     condition(field: MoquiFieldName<N>, value: unknown): EntityFind<N>;
     /** The operator is a name of Java's factory: `equals`, `not-equals`, `less-than`, `greater`, `<=`, `like`, `in`, `between`, `is-null` and the rest. An unknown one is an error. */
@@ -258,9 +389,23 @@ interface EntityFind<N extends string = string> {
     /** Set the fields on each row found and update the ones that change. How many were updated. */
     updateAll(fieldsToSet: MoquiMap): number;
     limit(limit: number | null): EntityFind<N>;
-    selectField(field: string): EntityFind<N>;
-    /** Comma separated fields; `-` descending, `^` case-insensitive. */
-    orderBy(fields: string): EntityFind<N>;
+    /** Comma separated fields, or a list of them. */
+    selectField(field: string | string[]): EntityFind<N>;
+    selectFields(fields: string[] | string): EntityFind<N>;
+    getSelectFields(): string[];
+    getEntityName(): string;
+    /** Comma separated fields, or a list of them; `-` descending, `^` case-insensitive. */
+    orderBy(fields: string | string[]): EntityFind<N>;
+    /** One field against another. */
+    conditionToField(field: string, operator: string, toField: string): EntityFind<N>;
+    /** `searchFormMap` over the context, or over the map named in it. */
+    searchFormInputs(inputFieldsMapName: string | null, defaultOrderBy?: string | null, alwaysPaginate?: boolean): EntityFind<N>;
+    searchFormInputs(inputFieldsMapName: string | null, defaultParameters: MoquiMap, defaultOrderBy?: string | null, alwaysPaginate?: boolean): EntityFind<N>;
+    /** Each row with the related records of a master definition, as plain objects. */
+    listMaster(master?: string | null): MoquiMap[];
+    /** JDBC hints with no counterpart here; accepted so a chain that names them runs. */
+    fetchSize(size: number | null): EntityFind<N>;
+    maxRows(rows: number | null): EntityFind<N>;
     copy(): EntityFind<N>;
     one(): EntityValue<N> | null;
     /** A plain master graph retaining nested identities; `default` when omitted. */
@@ -370,10 +515,19 @@ interface ServiceCallOptions<Self> {
     softValidate(flag?: boolean): Self;
     /** Java sends the call to another server of the cluster; here it is the same call. */
     distribute(flag?: boolean): Self;
+    /** The call runs though the caller has error messages. */
+    ignorePreviousError(flag?: boolean): Self;
+    noRememberParameters(): Self;
+    getServiceName(): string;
+    /** The parameters set so far. */
+    getCurrentParameters(): MoquiMap;
 }
 
 interface ServiceCallSync extends ServiceCallOptions<ServiceCallSync> {
     name<S extends MoquiServiceName & string>(name: S): ServiceCallSyncNamed<S>;
+    /** Java's `name(verb, noun)` and `name(path, verb, noun)`; not typed by service. */
+    name(verb: string, noun: string): ServiceCallSyncNamed<string>;
+    name(path: string, verb: string, noun: string): ServiceCallSyncNamed<string>;
 }
 
 interface ServiceCallSyncNamed<S extends string> extends ServiceCallOptions<ServiceCallSyncNamed<S>> {
@@ -416,13 +570,28 @@ interface MoquiEntityFacade {
     tempResetSequencedIdPrimary(seqName: string): void;
     /** The time zone of the database timestamps: UTC. Accepted and ignored as the fourth argument of `ec.l10n.format`. */
     readonly databaseTimeZone: string;
+    /** By the primary key values in the entity's key order; null with fewer values than key fields. */
+    fastFindOne<N extends (keyof MoquiEntityMap & string) | (string & {})>(entityName: N, useCache: boolean | null, disableAuthz: boolean | null, ...pkValues: unknown[]): EntityValue<N> | null;
+    /** Each value created, in order. */
+    createBulk(values: Iterable<EntityValue>): void;
+    getEntityGroupName(entityName: string): string | null;
+    getConditionFactory(): MoquiEntityFacade["conditionFactory"];
     readonly conditionFactory: {
+        /** A condition joined to another: `makeCondition(left, "or", right)`. */
+        makeCondition(left: EntityCondition, joinOperator: string, right: EntityCondition | null): EntityCondition;
+        makeConditionToField(field: string, operator: string, toField: string): EntityCondition;
+        /** A condition every row meets. */
+        getTrueCondition(): EntityCondition;
+        /** The operator name of a `ComparisonOperator` enumeration id (`ENTCO_LESS` is `less`), or null. */
+        comparisonOperatorFromEnumId(enumId: string): string | null;
         /** The fourth argument is Java's `orNull` (or the field is null); the fifth makes the comparison ignore case. `condition.ignoreCase()` does the same. */
         makeCondition(field: string, operator: string, value: unknown, orNull?: boolean, ignoreCase?: boolean): EntityCondition;
         /** A SQL fragment used as written, as in a view entity's aliases; null for empty text. */
         makeConditionWhere(sql: string): EntityCondition | null;
-        makeCondition(conditions: EntityCondition[], joinOperator?: string): EntityCondition;
-        makeCondition(fields: MoquiMap): EntityCondition;
+        /** A map in the list is its entries compared with `mapOperator` (equals) and joined by `mapJoinOperator` (and). */
+        makeCondition(conditions: (EntityCondition | MoquiMap)[], joinOperator?: string, mapOperator?: string, mapJoinOperator?: string): EntityCondition;
+        /** The entries compared with `operator` (equals) and joined by `joinOperator` (and). */
+        makeCondition(fields: MoquiMap, operator?: string, joinOperator?: string): EntityCondition;
         makeConditionDate(
             fromField: string | null,
             thruField: string | null,
@@ -515,7 +684,15 @@ interface MoquiResourceFacade {
     expandNoL10n(text: string, location?: string | null, map?: MoquiMap | null): string;
     expression(expression: string, location?: string | null, map?: MoquiMap | null): unknown;
     condition(expression: string, location?: string | null, map?: MoquiMap | null): boolean;
-    script(location: string): void;
+    /**
+     * The value of the script file (what it returns, or its last expression). With `method`, the function of that
+     * name on the value is called and its result given. With `additionalContext`, its entries are in a context frame
+     * of their own while the script runs.
+     */
+    script(location: string, method?: string | null, additionalContext?: MoquiMap | null): unknown;
+    getContentType(filename: string): string | null;
+    getLocationStream(location: string): unknown;
+    getUriReference(uri: string): unknown;
     template(location: string, data?: MoquiMap | null): string;
     /** PDF bytes of an `html-print` (old name `xsl-fo`) document. `xslt` must be null and `out` is ignored. Throws when PDF is not available. */
     xslFoTransform(document: string, xslt?: null, out?: unknown, contentType?: string | null): Uint8Array;
@@ -590,9 +767,16 @@ interface MoquiL10nFacade {
     localize(text: string): string;
     format(value: unknown, pattern?: string | null): string;
     roundCurrency(amount: unknown, uomId?: string | null, precise?: boolean, roundingMode?: string | number | null): Decimal | null;
-    formatCurrency(amount: unknown, uomId?: string | null, fractionDigits?: number | null): string;
+    formatCurrency(amount: unknown, uomId?: string | null, fractionDigits?: number | null, locale?: string | null, hideSymbol?: boolean): string;
     formatCurrencyNoSymbol(amount: unknown, uomId?: string | null, fractionDigits?: number | null): string;
-    parseTimestamp(text: string, format?: string | null): Timestamp | null;
+    /** Text that names no offset is read in `timeZone`, else the user's. The locale is not used. */
+    parseTimestamp(text: string, format?: string | null, locale?: string | null, timeZone?: string | null): Timestamp | null;
+    parseDateTime(text: string, format?: string | null): Timestamp | null;
+    parseDate(text: string, format?: string | null): unknown;
+    parseTime(text: string, format?: string | null): unknown;
+    parseNumber(text: string, format?: string | null): Decimal | null;
+    formatNumber(value: unknown, pattern?: string | null): string;
+    formatValue(value: unknown, pattern?: string | null): string;
 }
 
 interface MoquiMessageFacade {
@@ -606,17 +790,87 @@ interface MoquiMessageFacade {
     clearErrors(): void;
     pushErrors(): void;
     popErrors(): void;
+    /** Clear the errors, the messages and the public messages. */
+    clearAll(): void;
+    addValidationError(form: string | null, field: string | null, serviceName: string | null, message: string): void;
+    /** The error texts, a validation error's message among them; empty when there are none. */
     readonly errors: string[];
+    getErrors(): string[];
+    readonly messages: string[];
+    getMessages(): string[];
+    /** Each message and a newline. */
+    readonly messagesString: string;
+    getMessagesString(): string;
+    readonly messageInfos: MoquiMessageInfo[];
+    getMessageInfos(): MoquiMessageInfo[];
+    /** The messages added with `addPublic`, which a public site or portal may show. */
+    readonly publicMessages: string[];
+    getPublicMessages(): string[];
+    readonly publicMessageInfos: MoquiMessageInfo[];
+    getPublicMessageInfos(): MoquiMessageInfo[];
+    readonly validationErrors: MoquiValidationError[];
+    getValidationErrors(): MoquiValidationError[];
+}
+
+/** A message with its type: `info`, `success`, `warning` or `danger`. */
+interface MoquiMessageInfo {
+    message: string;
+    typeString: string;
+}
+
+/** An error for one field of a form or service. `stringPretty` is Java's `toStringPretty()`. */
+interface MoquiValidationError {
+    form: string;
+    field: string;
+    serviceName: string;
+    message: string;
+    formPretty: string;
+    fieldPretty: string;
+    serviceNamePretty: string;
+    stringPretty: string;
 }
 
 interface MoquiLoggerFacade {
+    /** The level is a name or one of the level numbers below. */
     log(level: string | number, message: string, thrown?: unknown): void;
-    warn(message: string): void;
+    trace(message: string, thrown?: unknown): void;
+    debug(message: string, thrown?: unknown): void;
+    info(message: string, thrown?: unknown): void;
+    warn(message: string, thrown?: unknown): void;
+    error(message: string, thrown?: unknown): void;
+    /** Whether a message at the level would be written. */
+    logEnabled(level: string | number): boolean;
+    readonly OFF_INT: 0;
+    readonly FATAL_INT: 100;
+    readonly ERROR_INT: 200;
+    readonly WARN_INT: 300;
+    readonly INFO_INT: 400;
+    readonly DEBUG_INT: 500;
+    readonly TRACE_INT: 600;
+    readonly ALL_INT: 2147483647;
 }
 
 interface MoquiUserFacade {
     readonly userId: string | null;
+    getUserId(): string | null;
     readonly username: string | null;
+    getUsername(): string | null;
+    /** The currency of the signed-in user's account, or null. */
+    readonly currencyUomId: string | null;
+    getCurrencyUomId(): string | null;
+    setCurrencyUomId(uomId: string | null): void;
+    readonly visitorId: string | null;
+    getVisitorId(): string | null;
+    /** The user of the visit, which a later login in the same visit does not change. */
+    getVisitUserId(): string | null;
+    /** Whether the login key logged its user in; a key that does not adds an error message. */
+    loginUserKey(loginKey: string): boolean;
+    /** With nobody logged in the session becomes anonymous; whether this call did that. */
+    loginAnonymousIfNoUser(): boolean;
+    /** Such as "This Month (2026-11-01 to 2026-11-30)". */
+    getPeriodDescription(period: string, poffset?: string | number | null, pdate?: string | null): string;
+    /** The effective time as a Date. */
+    getNowCalendar(): Date;
     readonly locale: string;
     getLocale(): string;
     readonly timeZone: string;
@@ -663,6 +917,16 @@ interface MoquiPageMessage {
 }
 
 interface MoquiWebFacade {
+    /** The request's URL, path after the servlet path, its parts, body text and session; null (or empty) outside a request. */
+    readonly requestUrl: string | null;
+    readonly pathInfo: string | null;
+    readonly pathInfoList: string[];
+    readonly requestBodyText: string | null;
+    readonly requestAttributes: MoquiMap;
+    /** The validation errors of one field, of the submit that led here and of this request. */
+    getFieldValidationErrors(fieldName: string): MoquiValidationError[];
+    /** The bytes as the response. With no content type PDF, PNG, GIF and JPEG are told from the first bytes. */
+    sendBytesResponse(bytes: Uint8Array | string | null, contentType?: string | null, inline?: boolean, filename?: string | null): void;
     readonly parameters: MoquiMap;
     readonly requestParameters: MoquiMap;
     readonly multiPartParameters: MoquiMap;
@@ -823,6 +1087,8 @@ interface MoquiScreenTest {
     baseScreenPath(path: string): MoquiScreenTest;
     renderMode(mode: string): MoquiScreenTest;
     baseLinkUrl(url: string): MoquiScreenTest;
+    /** Every render as an agent's screen session renders it (an agent's origin, fenced, writes held): what reaches a model. */
+    agent(): MoquiScreenTest;
     /** Render as the current user; `requestMethod` is GET when not given. */
     render(screenPath: string, parameters?: MoquiMap | null, requestMethod?: string | null): MoquiScreenTestRender;
     renderAll(screenPaths: string[], parameters?: MoquiMap | null, requestMethod?: string | null): void;
@@ -861,12 +1127,144 @@ interface MoquiScreenFacade {
     testRender(options: MoquiScreenRenderOptions & { method?: string; baseScreenPath?: string }): { output: string | null; errorMessages: string[]; renderTime: number; status: number | null };
 }
 
-interface MoquiEcContext {
-    get(name: string): unknown;
-    /** One map for the execution context, shared by every service call in it. Values are copied in and out. */
-    readonly sharedMap: Record<string, unknown>;
-    getSharedMap(): Record<string, unknown>;
+/** `ec.transaction`: the transaction of the default entity group, as Java's `TransactionFacade`. */
+interface MoquiTransactionFacade {
+    isTransactionInPlace(): boolean;
+    isTransactionCacheActive(): boolean;
+    /** Whether this call began a transaction: false when one is in place, which it joins. Timeout in seconds. */
+    begin(timeout?: number | null): boolean;
+    /** Commits when `began` is true or not given; nothing when it is false. */
+    commit(began?: boolean): void;
+    /** Rolls back when `began`, else marks the transaction in place rollback-only. */
+    rollback(began: boolean, message?: string | null, error?: unknown): void;
+    /** Rolls back the transaction in place. */
+    rollback(message?: string | null, error?: unknown): void;
+    setRollbackOnly(message?: string | null, error?: unknown): void;
+    /** Whether a transaction was suspended. */
+    suspend(): boolean;
+    resume(): void;
+    /** 0 active, 1 marked rollback-only, 6 no transaction. */
+    getStatus(): number;
+    readonly status: number;
+    getStatusString(): string;
+    readonly statusString: string;
+    /** `body()` in the transaction in place, or in one of its own: committed when it returns, rolled back when it throws. */
+    runUseOrBegin<T>(timeout: number | null, rollbackMessage: string | null, body: () => T): T;
+    /** `body()` in a new transaction, the one in place suspended until it ends. */
+    runRequireNew<T>(timeout: number | null, rollbackMessage: string | null, body: () => T): T;
+    /** The same as `ec.entity.startTxCacheDb(readOnly)` and `ec.entity.stopTxCache()`. */
+    initTransactionCache(readOnly?: boolean): void;
+    flushAndDisableTransactionCache(): void;
 }
+
+interface MoquiServiceCallSpecial {
+    name(name: string): MoquiServiceCallSpecial;
+    name(verb: string, noun: string): MoquiServiceCallSpecial;
+    name(path: string, verb: string, noun: string): MoquiServiceCallSpecial;
+    parameters(map: MoquiMap): MoquiServiceCallSpecial;
+    parameter(name: string, value: unknown): MoquiServiceCallSpecial;
+    registerOnCommit(): void;
+    registerOnRollback(): void;
+}
+
+/** `ec.service.rest()`, as Java's `RestClient`. */
+interface MoquiRestClient {
+    method(method: string): MoquiRestClient;
+    getMethod(): string;
+    uri(uri: string): MoquiRestClient;
+    /** A builder: `uri().protocol("https").host(h).port(443).path(p).parameter(n, v).fragment(f).build()` gives the client. */
+    uri(): MoquiRestUriBuilder;
+    getUri(): string | null;
+    getUriString(): string | null;
+    addHeader(name: string, value: string): MoquiRestClient;
+    addHeaders(headers: Record<string, string>): MoquiRestClient;
+    /** The Authorization header of HTTP basic authentication. */
+    basicAuth(username: string, password: string): MoquiRestClient;
+    contentType(contentType: string): MoquiRestClient;
+    acceptContentType(contentType: string): MoquiRestClient;
+    /** Named on the Content-Type of a text body; the text is sent as UTF-8. */
+    encoding(characterEncoding: string): MoquiRestClient;
+    text(body: string | null): MoquiRestClient;
+    jsonObject(body: unknown): MoquiRestClient;
+    addBodyParameter(name: string, value: unknown): MoquiRestClient;
+    addBodyParameters(parameters: MoquiMap): MoquiRestClient;
+    timeout(seconds: number): MoquiRestClient;
+    bodyBytes(bytes: Uint8Array | null): MoquiRestClient;
+    multipart(parts: unknown): MoquiRestClient;
+    streamFrom(): MoquiRestClient;
+    followRedirects(follow?: boolean): MoquiRestClient;
+    denyInternal(): MoquiRestClient;
+    call(): MoquiRestResponse;
+    /** As `call()`, with the headers only as given and the body left on the server until it is read or forwarded. */
+    send(): MoquiRestResponse;
+    /** The call is made now, on this thread; the future holds its response. */
+    callFuture(): { get(): MoquiRestResponse; isDone(): boolean };
+}
+
+interface MoquiRestUriBuilder {
+    protocol(protocol: string): MoquiRestUriBuilder;
+    host(host: string): MoquiRestUriBuilder;
+    port(port: number): MoquiRestUriBuilder;
+    path(path: string): MoquiRestUriBuilder;
+    parameter(name: string, value: unknown): MoquiRestUriBuilder;
+    parameters(parameters: MoquiMap): MoquiRestUriBuilder;
+    fragment(fragment: string | null): MoquiRestUriBuilder;
+    build(): MoquiRestClient;
+}
+
+interface MoquiRestResponse {
+    readonly statusCode: number;
+    getStatusCode(): number;
+    getReasonPhrase(): string | null;
+    /** Throws for a status outside 200 to 299; else the response. */
+    checkError(): MoquiRestResponse;
+    text(): string | null;
+    getBodyText(): string | null;
+    bytes(): Uint8Array | null;
+    jsonObject(): unknown;
+    /** The body parsed as XML. */
+    xmlNode(): unknown;
+    headerFirst(name: string): string | null;
+    headerList(name: string): string[];
+    /** The headers by lower case name, each with the list of its values. */
+    headers(): Record<string, string[]>;
+    getHeaders(): Record<string, string[]>;
+    getContentType(): string | null;
+    getUri(): string | null;
+}
+
+/** A named framework cache, from `ec.cache.getCache(name)`. Keys are text. */
+interface MoquiCache {
+    get(key: string): unknown;
+    put(key: string, value: unknown): void;
+    /** Whether the key was there. */
+    remove(key: string): boolean;
+    containsKey(key: string): boolean;
+    clear(): void;
+    getAndPut(key: string, value: unknown): unknown;
+    getAndRemove(key: string): unknown;
+    /** Whether the value was put. */
+    putIfAbsent(key: string, value: unknown): boolean;
+    /** Puts only when the key is there; whether it was. */
+    replace(key: string, value: unknown): boolean;
+    getAll(keys: string[]): MoquiMap;
+    putAll(entries: MoquiMap): void;
+    /** Those keys, or every entry with no argument. */
+    removeAll(keys?: string[] | null): void;
+    keySet(): string[];
+    getName(): string;
+    size(): number;
+}
+
+/** A frame of the artifact stack. */
+interface MoquiArtifactFrame {
+    name: string;
+    typeEnumId: string;
+    actionEnumId: string;
+}
+
+/** `ec.context`: the context stack, the same object as the name `context`. */
+type MoquiEcContext = MoquiContext;
 
 interface MoquiNotificationMessage {
     topic(topic: string): MoquiNotificationMessage;
@@ -934,6 +1332,12 @@ interface MoquiServerEc {
         };
         sync(): ServiceCallSync;
         async(): ServiceCallAsync;
+        /** A service run when the transaction in place commits or rolls back. */
+        special(): MoquiServiceCallSpecial;
+        /** A `ServiceJob` by name: `ec.service.job(name).parameters({..}).run()` gives its job run id. */
+        job(jobName: string): { parameters(map: MoquiMap): unknown; parameter(name: string, value: unknown): unknown; localOnly(flag?: boolean): unknown; run(): string };
+        /** An HTTP client: `ec.service.rest().method("POST").uri(url).jsonObject(body).call()`. */
+        rest(): MoquiRestClient;
         /** Epoch millis of the next time a Quartz cron expression (seconds first) is due after the moment, or null when never. */
         nextCronExecution(cron: string, after?: TimestampInput | null): number | null;
         /** English text; the locale and short format are not used. */
@@ -950,6 +1354,18 @@ interface MoquiServerEc {
     readonly context: MoquiEcContext;
     readonly factory: {
         readonly moquiVersion: string;
+        getMoquiVersion(): string;
+        /** Each component's location by its name, in load order. */
+        getComponentBaseLocations(): Record<string, string>;
+        isDestroyed(): boolean;
+        /** The same objects as `ec.entity`, `ec.service` and the rest. */
+        readonly entity: MoquiEntityFacade;
+        readonly service: MoquiServerEc["service"];
+        readonly l10n: MoquiL10nFacade;
+        readonly resource: MoquiResourceFacade;
+        readonly cache: MoquiServerEc["cache"];
+        readonly screen: MoquiScreenFacade;
+        readonly logger: MoquiLoggerFacade;
         /** Whether this binary has a build feature, as `moqui version` lists them (`git`, `imap`, `smtp`; `mail` is both of those). */
         hasFeature(name: string): boolean;
         /** Wait up to `retryLimit` (default 50) times 100 ms for async service work to finish; whether the pool is empty. */
@@ -961,13 +1377,24 @@ interface MoquiServerEc {
         getToolFactory<K extends keyof MoquiToolMap>(name: K): MoquiToolFactory<MoquiToolMap[K]> | null;
         getToolFactory(name: string): MoquiToolFactory | null;
     };
-    readonly cache: { getCache(name: string): { get(key: string): unknown; put(key: string, value: unknown): void; remove(key: string): boolean; containsKey(key: string): boolean; clear(): void } };
+    readonly cache: {
+        getCache(name: string): MoquiCache;
+        getLocalCache(name: string): MoquiCache;
+        getDistributedCache(name: string): MoquiCache;
+        cacheExists(name: string): boolean;
+        getCacheNames(): string[];
+        readonly cacheNames: string[];
+        clearAllCaches(): void;
+        clearCachesByPrefix(prefix: string): void;
+    };
     /**
      * The tools calls (phase 11): cache admin, the entity and service model, screen statistics, the server status,
      * the SQL runner, the data writer and loader. They are outside the Server host methods list and typed loosely.
      */
     readonly artifactExecution: {
         isPermitted(name: string, artifactType?: string, action?: string): boolean;
+        /** The same question of the user's own authorization records: nothing is inherited from the frames on the stack. */
+        isPermittedOwn(name: string, artifactType?: string, action?: string): boolean;
         /** Entity ECA rules do not run for this execution context's writes. Returns whether they were already disabled. */
         disableEntityEca(): boolean;
         enableEntityEca(): void;
@@ -987,7 +1414,39 @@ interface MoquiServerEc {
         /** No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled. */
         disableTarpit(): boolean;
         enableTarpit(): void;
+        /** The frames of the artifact stack, top first. No history is kept: what ran is in the telemetry traces. */
+        getStack(): MoquiArtifactFrame[];
+        readonly stack: MoquiArtifactFrame[];
+        getStackArray(): MoquiArtifactFrame[];
+        peek(): MoquiArtifactFrame | null;
+        /** A frame checked as any is; throws when the user is not authorized. The caller pops it. */
+        push(name: string, typeEnumId?: string | null, actionEnumId?: string | null, requiresAuthz?: boolean): void;
+        pop(): void;
+        /** What runs under the top frame is authorized for an anonymous user, for every action or for view. */
+        setAnonymousAuthorizedAll(): void;
+        setAnonymousAuthorizedView(): void;
     };
+    /** The root map of the context stack. */
+    readonly contextRoot: MoquiMap;
+    getContextRoot(): MoquiMap;
+    /** Each member by its Java getter: `ec.getUser()` is `ec.user`. */
+    getContext(): MoquiEcContext;
+    getEntity(): MoquiEntityFacade;
+    getResource(): MoquiResourceFacade;
+    getL10n(): MoquiL10nFacade;
+    getMessage(): MoquiMessageFacade;
+    getLogger(): MoquiLoggerFacade;
+    getUser(): MoquiUserFacade;
+    getWeb(): MoquiWebFacade;
+    getScreen(): MoquiScreenFacade;
+    getService(): MoquiServerEc["service"];
+    getFactory(): MoquiServerEc["factory"];
+    getCache(): MoquiServerEc["cache"];
+    getArtifactExecution(): MoquiServerEc["artifactExecution"];
+    /** The signed-in user's notification messages, of one topic or all, as plain objects. */
+    getNotificationMessages(topic?: string | null): MoquiMap[];
+    readonly transaction: MoquiTransactionFacade;
+    getTransaction(): MoquiTransactionFacade;
     /** A notification builder: `ec.makeNotificationMessage().topic("T").message({..}).userIds([..]).send()`. */
     makeNotificationMessage(): MoquiNotificationMessage;
     readonly search: { [method: string]: (...args: unknown[]) => unknown };
@@ -995,7 +1454,11 @@ interface MoquiServerEc {
     readonly llm: MoquiLlmFacade;
 }
 
-/** `ec.llm`: one completion from a configured model (`model`, else the binding of `feature`, else a model of `tier`). */
+/**
+ * `ec.llm`: one completion from a configured model (`model`, else the binding of `feature`, else a model of `tier`).
+ * A model call is refused while a transaction is open unless its options give `allowInTransaction` (true or `"Y"`),
+ * which suspends the transaction for the call and cuts the call to the time it has left.
+ */
 interface MoquiLlmFacade {
     /** With `schema` (a JSON schema) the reply is parsed and checked into `json`; a call that ends without an answer throws. */
     complete(options: {
@@ -1003,18 +1466,29 @@ interface MoquiLlmFacade {
         model?: string; feature?: string; tier?: "fast" | "balanced" | "thorough";
         schema?: MoquiMap | string; schemaName?: string;
         reasoning?: "none" | "low" | "medium" | "high" | "max"; maxOutput?: number; timeoutSeconds?: number;
+        allowInTransaction?: boolean | "Y";
     }): {
         text: string; json: unknown; modelId: string; finish: string; inputTokens: number;
         cachedInputTokens: number; outputTokens: number; cost: number | null; callIds: string[];
     };
     isEnabled(): boolean;
+    /** The summary of `text` (the `summarize` AI task). */
+    summarize(text: string, options?: { maxWords?: number; allowInTransaction?: boolean | "Y" }): string;
+    /** The label of `text` among `labels` (the `classify` AI task). */
+    classify(text: string, labels: string[], options?: { allowInTransaction?: boolean | "Y" }): string;
+    /** The values of `fields` (name to description) found in `text` (the `extract` AI task). */
+    extract(
+        text: string, fields: { [name: string]: string }, options?: { allowInTransaction?: boolean | "Y" },
+    ): MoquiMap;
+    /** Starts a background agent run of `agentId` with `text` as the current user (needs AgentUse and AgentAdmin); its run id. */
+    startRun(agentId: string, text: string): string;
 }
 
 // ---- server ec and sri during a screen render ----
 
 /** `ec` while a server screen render is on the stack: the form-list keys of `ec.context` are set. */
 interface MoquiRenderEc extends MoquiServerEc {
-    readonly context: MoquiEcContext & { readonly formListFindId: string | null; readonly orderByField: string | null };
+    readonly context: MoquiEcContext;
 }
 
 /** An element as generated screen code writes it. */
@@ -1082,6 +1556,8 @@ interface MoquiScreenRenderer {
     readonly activeInCurrentMenu: boolean;
     write(text: string): void;
     getRenderMode(): string;
+    /** The render is an agent's (an Assist screen session, the data tool, agent-apps) or runs inside one: an `ai-opt-out` field, section or screen writes its placeholder. */
+    isAgentRender(): boolean;
     doBoundaryComments(): boolean;
     encodeHtml(text: unknown): string;
     getActiveScreenDef(): MoquiScreenDefInfo;
@@ -1141,15 +1617,71 @@ interface MoquiScreenRenderer {
 // ---- statics the generated script calls ----
 
 /**
- * Bound once per runtime and returned by the bare-name proxy when the context has no such key. This port binds no
- * method on `ObjectUtilities` yet. `ScheduledJobRunner.getCronDescription` is not added (Server host methods, slice 2).
+ * Java's helper classes, bound once per runtime, frozen, and read by their bare names when the context has no such
+ * key (docs/dev/JS-Globals.md).
  */
-interface MoquiObjectUtilities {}
+interface MoquiObjectUtilities {
+    /** Null, empty text, an empty list, set or map. */
+    isEmpty(value: unknown): boolean;
+    compare(field: unknown, operator: string, value?: unknown, toField?: unknown, format?: string | null, type?: string | null): boolean;
+    basicConvert(value: unknown, type: string): unknown;
+    /** SQL LIKE: `%` any run and `_` any one character. */
+    compareLike(value: unknown, pattern: string): boolean;
+    countChars(text: string, digits: boolean, letters: boolean, other: boolean): number;
+    toPlainString(value: unknown): string | null;
+    addNumbers(left: number | Decimal | null, right: number | Decimal | null): number | Decimal | null;
+}
+
+/** An XML element, as Java's `MNode`: from `MNode.parseText`, `MNode.parse`, `MNode.make` or a host call. */
+interface MoquiNode {
+    name: string;
+    attributes: Record<string, string>;
+    text?: string | null;
+    childNodes: MoquiNode[];
+    getName(): string;
+    getText(): string | null;
+    setText(text: string | null): MoquiNode;
+    attribute(name: string): string | null;
+    getAttributes(): Record<string, string>;
+    setAttribute(name: string, value: string | null): MoquiNode;
+    children(name?: string | null): MoquiNode[];
+    first(name?: string | null): MoquiNode | null;
+    hasChild(name: string): boolean;
+    /** `append(name, attributes)` makes the child and gives it; `append(node)` adds a node. */
+    append(nameOrNode: string | MoquiNode, attributes?: Record<string, string> | null): MoquiNode;
+    /** The children of that name, or the one at an index; whether any went. */
+    remove(nameOrIndex: string | number): boolean;
+    deepCopy(): MoquiNode;
+    depthFirst(matches: (node: MoquiNode) => boolean): MoquiNode[];
+    breadthFirst(matches: (node: MoquiNode) => boolean): MoquiNode[];
+    descendants(name: string): MoquiNode[];
+    descendants(names: string[] | Set<string>): Record<string, MoquiNode[]>;
+    toString(): string;
+}
 
 interface MoquiCollectionUtilities {
     /** Sets `{list}Count`, `{list}PageIndex`, `{list}PageSize`, `{list}PageMaxIndex`, `{list}PageRangeLow`, `{list}PageRangeHigh` on `context`. */
     paginateParameters(count: number, listName: string, context: MoquiMap): MoquiMap;
     getMapArrayListValues(list: MoquiMap[], field: string, skipNull: boolean): unknown[];
+    /** The list ordered in place by the fields, `-` for descending; the list. */
+    orderMapList<T extends MoquiMap[] | EntityList>(list: T, fields: string[]): T;
+    paginateList(listName: string, pageListName: string | null, context: MoquiMap): void;
+    /** The list keeps the maps that match every value, or with `exclude` drops them. */
+    filterMapList(list: MoquiMap[] | EntityList, values: MoquiMap, exclude?: boolean): void;
+    filterMapListByDate(list: MoquiMap[] | EntityList, fromField: string, thruField: string, moment?: TimestampInput | null, ignoreIfEmpty?: boolean): void;
+    addToBigDecimalInMap(key: string, value: DecimalInput | null, map: MoquiMap): void;
+    addToListInMap(key: string, value: unknown, map: MoquiMap): void;
+    addToSetInMap(key: string, value: unknown, map: MoquiMap): void;
+    addToMapInMap(keyOuter: string, keyInner: string, value: unknown, map: MoquiMap): void;
+    addToBigDecimalInMapInMap(keyOuter: string, keyInner: string, value: DecimalInput | null, map: MoquiMap): void;
+    /** The null entries removed, in nested maps and lists too; the map itself. */
+    removeNullsFromMap<T extends MoquiMap>(map: T): T;
+    /** The overrides put into base, nested maps merged and lists joined. */
+    mergeNestedMap(base: MoquiMap, overrides: MoquiMap, overrideEmpty?: boolean): void;
+    toHashMap(map: MoquiMap | null): MoquiMap;
+    mapMatchesFields(map: MoquiMap | null, fields: MoquiMap): boolean;
+    findFieldNestedMap(key: string, map: unknown): unknown;
+    flattenNestedMap(map: MoquiMap): MoquiMap;
 }
 
 interface MoquiStringUtilities {
@@ -1160,6 +1692,30 @@ interface MoquiStringUtilities {
     base64Encode(value: string | Uint8Array | ArrayBuffer | null): string;
     /** The bytes of standard base64 text; white space is skipped and the padding may be left out. Throws on other text. */
     base64Decode(text: string): Uint8Array;
+    camelCaseToPretty(text: string): string;
+    prettyToCamelCase(text: string, firstUpper?: boolean): string;
+    /** The whole number with zeros before it up to the length. */
+    paddedNumber(number: number, desiredLength: number): string;
+    /** Cut or padded to the length: `paddedString(input, length, rightPad)` or `paddedString(input, length, padChar, rightPad)`. */
+    paddedString(input: string | null, desiredLength: number, padCharOrRightPad?: string | boolean, rightPad?: boolean): string;
+    removeNonAlphaNumeric(text: string | null): string | null;
+    replaceNonAlphaNumeric(text: string | null, replacement: string): string | null;
+    isAlphaNumeric(text: string, also?: string | null): boolean;
+    findFirstNumber(text: string | null): string | null;
+    getRandomString(length: number): string;
+    pathStringToList(path: string, skipSegments?: number): string[];
+    decodeFromXml(text: string | null): string | null;
+    escapeElasticQueryString(query: string): string;
+    toStringCleanBom(text: string): string;
+    elasticQueryAutoWildcard(query: string, allFieldPrefix?: boolean): string;
+    cleanHtml(text: string | null): string;
+    urlEncodeIfNeeded(text: string | null): string;
+    encodeAsciiFilename(filename: string | null): string;
+    /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */
+    masker(mask: string | null, placeholder?: string | null): { valueToString(value: unknown): string } | null;
+    getYearList(...args: unknown[]): unknown[];
+    numberToWords(number: number, useAnd?: boolean): string;
+    numberToWordsWithDecimal(number: unknown): string;
 }
 
 interface MoquiWebUtilities {
@@ -1170,6 +1726,11 @@ interface MoquiWebUtilities {
     isSafeSinglePathSegment(segment: string): boolean;
     isSameOriginRedirect(url: string, host?: string | null): boolean;
     lastPathSegment(path: string): string;
+    isRestrictedGenericEntity(entityName: string): boolean;
+    /** The response text of a POST of the body, or of a GET with none. */
+    simpleHttpStringRequest(location: string, requestBody?: string | null, contentType?: string | null): string | null;
+    /** The response text of a POST of the parameters as a form. */
+    simpleHttpMapRequest(location: string, parameters: MoquiMap): string | null;
 }
 
 // ---- the unwrapped projection ----

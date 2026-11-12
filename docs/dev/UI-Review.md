@@ -2,7 +2,7 @@
 
 Review applications through the work people do in them. A successful render is a prerequisite; the review also asks
 whether the next action is discoverable, the information is understandable, the result is clear, and the screen is
-comfortable to use. The first framework review is recorded in [UI-Refinement](../../plans/UI-Refinement.md).
+comfortable to use. The first framework review is recorded in [UI-Refinement](../../plans/archive/UI-Refinement.md).
 
 ## Prepare an isolated review
 
@@ -20,7 +20,7 @@ incremental debug binary for iteration and retain the existing release binary un
 `moqui test framework --spec ClientFixtures --db fresh --serve 127.0.0.1:8090` supplies demo data and limited-access
 fixture users in a scratch runtime; select the bootstrap runtime with `MOQUI_RUNTIME`. The fixture runner also
 reads the runtime's component configuration: naming one component selects its specs, not the only component to load.
-See [Client Testing](Client-Testing.md#--serve) for server lifecycle and fixtures.
+See [JS-Test-Client](JS-Test-Client.md#--serve) for server lifecycle and fixtures.
 
 A repeatable bootstrap, run from the repository root with the existing release binary:
 
@@ -62,6 +62,31 @@ Use a unique hostname as well as a separate port for independent browser reviewe
 server lifecycle and shared files. Use separate disposable repositories and a local remote for Dev AIDE writing and
 Git activities. Capture mail locally; use fake media and local participants for communication flows.
 
+### Application reviews
+
+- **Instances:** use the release binary and embedded Postgres, and treat every database as disposable. The
+  coordinating agent decides which review agents share an instance and which get their own, and when (major data
+  staging or a conflicting setup), and starts further instances as needed on free non-default ports, each with its
+  own hostnames. Record each instance's paths, components, loaded data, ports and hostnames.
+- **Components:** the framework-only bootstrap leaves `component/` empty. An application review links Mantle and each
+  application component individually into the review runtime's `component/`, never the parent directory. A linked
+  component is source: uploads, issued files and exports must land in the disposable runtime.
+- **Prerequisites:** check these before the first batch and record which apply. Embedded Postgres can need host
+  (unsandboxed) shared memory, with every runner at one process-visibility level. A delegated agent may have no
+  browser tools, so check before assigning it live work. An isolated runtime may need webroot assets materialized
+  before the terminal works. An automated tool-approval review can block a posting or a send.
+- **Mutation extent:** postings, runs, captured sends and temporary grant, setting and policy changes are allowed in
+  the disposable database unless the user limits them. The coordinator sequences them across agents, then restores
+  temporary grants, preferences and settings and stops the review listeners.
+- **Dates:** use the real clock in the review machine's current zone and record both; do not move the clock, set a
+  separate reviewer zone or test DST. Demo data is often dated relative to load time or fixed in the past; check that
+  a due date, period, window or "last month" still exercises its condition, and recreate date-relative rows when it
+  does not. Work that needs a closed month or period uses back-dated transactions in periods that ended before now.
+- **Scheduled jobs:** record whether the runtime runs the jobs an activity depends on (notices, invitations,
+  auto-close). A prepared inbound message is not a delivered one.
+- **Identities:** name a prepared user for each grant combination an activity needs instead of using ADMIN or a
+  broad administrator; record the prepared users in the first batch.
+
 ## Define activities and coverage
 
 Write the activity before executing it:
@@ -80,9 +105,23 @@ Map every user-facing screen to an activity or an explicit inspection. Keep supp
 separate from observed browser activity coverage. Do not call a workflow verified because its source or landing page
 was inspected. Record external dependencies that prevent successful execution.
 
+Keep a coverage ledger with these statuses: **pending** (not reviewed); **inspected** (source, render or visual
+inspection only); **exercised** (steps executed with an explicit pass, fail or partial outcome; use `exercised /
+partial` and name the open continuations); **blocked** (a missing prerequisite); **deferred** (deliberately postponed,
+with reason and follow-up). Exercised does not by itself mean passed, and blocked or deferred coverage remains
+unresolved.
+
+- A tab hidden from the menu proves nothing about access. Probe the routes, transitions, inherited children and
+  exports of a shared mount directly, and pair each probe with the owning app's positive.
+- Declare the records each wave consumes. Never use one demo record in two concurrent walks, and order a consuming
+  activity after any other activity that needs the record in its earlier state.
+- Exercise each side of a handoff between apps once, in the review that owns that side. When the other side's review
+  runs in a separate runtime, prepare its side as setup without reviewing it.
+
 Use 1920×1080 as the primary desktop design target, in the default light and dark themes. Check selected constrained
-layouts at 1280px and 390px, keyboard-only operation and 200% zoom. Apply these checks where the layout or interaction
-can differ; avoid multiplying every screen by every environment combination.
+layouts at 1280px and 390px and keyboard-only operation; browser zoom is not checked. Apply these checks where the
+layout or interaction can differ; avoid multiplying every screen by every environment combination. Measure the
+actual viewport instead of assuming a tool honored the requested size.
 
 ## Judge the result
 
@@ -98,14 +137,39 @@ can differ; avoid multiplying every screen by every environment combination.
   Measure foregrounds against the actual composited backgrounds, including tinted chips and buttons. Inspect visually
   as well: a passing number does not establish comfortable typography.
 - **Input and adaptation:** accessible names explain icon actions; tab order follows reading order; Enter and Escape
-  behave as expected; phone and zoom layouts preserve task content and controls.
+  behave as expected; phone layouts preserve task content and controls.
 - **Terminal:** inspect fresh launches and live light/dark changes, including open dialogs, section titles, focus,
   selection and shortcut help. Web CSS and terminal color roles require separate checks.
+- **Permissions:** pair each refusal with an otherwise-valid success by a holder of the grant, and name the grant the
+  refused fixture lacks. A validation error is not evidence that permission was enforced, and ADMIN cannot stand in
+  for a narrow role. Distinguish no permission, missing basis, no data and failed loading.
+- **Restricted values:** a value the reader may not see is absent or marked unavailable, never shown as zero, in the
+  screen and in exported or printed bytes.
+- **Repeated operations:** a retry or a repeated confirmation with the same operation key returns the first result
+  rather than repeating the operation. A batch names each item that failed, and its successful items stay complete.
+- **Delivery:** queued, a job record or an HTTP 200 is not delivery. A missing device, provider or runtime leaves that
+  branch unverified.
 
 The contrast thresholds follow W3C's [text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
 and [non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html) guidance.
 
 ## Record, fix and verify
+
+A review runs as two separate passes by default:
+
+1. **Review pass.** Execute every planned activity and record each outcome, its evidence and every finding. Correct
+   nothing and change no source, design or implementation record. When a defect stops a step, record it and continue
+   from a disposable workaround named in the finding, or mark the step blocked. Concurrent review agents work under
+   one coordinating agent, which assigns activities, owns the runtimes, sequences fixture consumption and temporary
+   setting changes, and restores them. The pass ends when every activity has a ledger outcome, in every companion
+   review run alongside it.
+2. **Refinement pass.** Only after the review pass ends, triage the whole findings register at once, with the
+   companion reviews' registers: merge duplicates and shared causes, assign the owning layer and order by severity.
+   Then address findings in bounded batches: correct, rerun the affected activities, verify, and record the retest in
+   the finding. A deferred or accepted finding keeps its reason.
+
+Reviewing everything before fixing anything shows shared causes across screens and apps, so they are fixed once in
+their owning layer, and keeps a correction from changing what a later activity observes.
 
 Each finding records an ID, severity, actor/activity step, route, theme/viewport, reproduction, observed impact,
 evidence, owning layer, correction and retest result. Distinguish observed failures from static suspicions and design
@@ -132,15 +196,19 @@ Established client patterns to reuse rather than reinvent:
 
 Use existing tests when they already cover the behavior. Focused rule/bug regressions belong in `test/`; complete
 activities, responsive/access walks and sweeps belong in `acceptance/`. Follow the testing skill's rendering and
-budget limits. Run the relevant acceptance journeys when the review requests them, and the affected component's
-acceptance suite when adding or changing an acceptance test. Measured theme and geometry checks of shared components
+budget limits. Measured theme and geometry checks of shared components
 belong in an offline acceptance client suite (a `suite.js` with no server, such as webroot's `ThemeLayout`), which
-`./moq accept` runs with `--offline`.
+`./moq accept` runs with `--offline`. `moqui lint --screens [report-file]` lints every component's screens; its
+optional argument is an output report that it overwrites, not a screen to lint.
 
-During a review pass, rerun affected activities and localized regression/lint checks for each batch, then update
-the running notes and commit the batch. Run the applicable full application/framework suites once at the end of
-the planned pass. Record that boundary in the component plan; a multi-wave pass finishes after its last planned
-wave. This user-directed review cadence applies to future review iterations as well.
+Before each commit, in either pass, run only localized checks for what changed: the focused regression specs, lint,
+and the focused acceptance walks and fixture specs of the activities involved. An added or changed acceptance test
+always runs, then its component's acceptance suite. In the refinement pass, also rerun the affected activities for
+each batch, then update the running notes and commit the batch. At the end of the refinement pass, run the full
+regression suites once (`./moq test-apps`, and `./moq test-framework` when framework code changed), then the full
+acceptance run: `./moq accept` over the application components, or `./moq accept-all` when framework code changed.
+Record that boundary in the component plan; a multi-wave pass finishes after its last planned wave. This
+user-directed review cadence applies to future review iterations as well.
 
 Notes identify findings addressed, design decisions, test commands/results, evidence and remaining gaps. Keep a
 coverage ledger so later reviewers can continue without repeating completed checks or treating unverified paths
