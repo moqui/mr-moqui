@@ -103,8 +103,15 @@ fn type_paragraph(doc: &Doc, words: &str) -> Vec<u8> {
     doc.transact().encode_state_as_update_v1(&before)
 }
 
+/// The rooms and their events are the process's: the tests that read events take turns.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_elsewhere() {
+    let _serial = serial();
     let (context, facade) = setup();
     let _entered = context.enter();
     for id in ["alice", "bob"] {
@@ -247,6 +254,104 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
     assert_eq!(page_text("TEAM", ""), "Home.\n\nMore.\n");
     super::leave(&home_key);
     super::tick();
+}
+
+/// Another server's editor types `words` into its room, which it stores (a flush), and the update it relays here is
+/// lost on the way.
+fn another_server_types(facade: &EntityFacade, key: &str, words: &str) {
+    // a stamp of its own, as another server's write has
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut row = facade
+        .find(super::COLLAB_DOCUMENT)
+        .unwrap()
+        .eq("documentKey", Value::string(key))
+        .one()
+        .unwrap()
+        .unwrap();
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(&super::bytes_of(&row, "stateData")).unwrap())
+        .unwrap();
+    type_paragraph(&doc, words);
+    let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+    row.set("stateData", Value::Bytes(state));
+    row.update(facade).unwrap();
+}
+
+/// The updates the rooms gave `key`'s clients since the last call.
+fn updates_for(key: &str) -> Vec<Vec<u8>> {
+    super::take_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            super::Event::Update { document_key, update } if document_key == key => Some(update),
+            _ => None,
+        })
+        .collect()
+}
+
+/// HL-018: an update relayed from another server that has the document open is lost, and that server stored it. The
+/// next tick merges the stored state into the room here and gives its clients what they lack, once; a version saved
+/// here before any tick has another lost edit too.
+#[test]
+fn an_update_lost_between_servers_is_merged_from_the_stored_state_and_saved() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "carol");
+    login("carol");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("LOST")),
+            ("description", Value::string("Lost")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("LOST")),
+            ("pageName", Value::string("Plan")),
+            ("pageText", Value::string("# Plan\n\nStart.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    let joined = super::join(&key, "carol", &[]).unwrap();
+    let carol_doc = client(&joined);
+    super::tick();
+    assert!(updates_for(&key).is_empty(), "nothing stored elsewhere yet");
+
+    another_server_types(&facade, &key, "From the other server.");
+    super::tick();
+    let updates = updates_for(&key);
+    assert_eq!(updates.len(), 1, "the room's clients get what it lacked");
+    carol_doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&updates[0]).unwrap())
+        .unwrap();
+    assert!(super::markdown::render(&carol_doc).contains("From the other server."));
+    assert_eq!(super::snapshot(&key).unwrap(), super::markdown::render(&carol_doc));
+    super::tick();
+    assert!(updates_for(&key).is_empty(), "a row read once is not merged again");
+
+    // another lost edit, saved before a tick reads it: the version has both
+    another_server_types(&facade, &key, "Saved at once.");
+    assert!(super::save(&key, Some("Both lines")).unwrap().is_some());
+    let written = page_text("LOST", "Plan");
+    assert!(
+        written.contains("From the other server.") && written.contains("Saved at once."),
+        "{written}"
+    );
+    let updates = updates_for(&key);
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    carol_doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&updates[0]).unwrap())
+        .unwrap();
+    assert_eq!(super::markdown::render(&carol_doc), written);
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
 }
 
 /// The Rust services register at the `moqui_collab::` locations the service file names, and at no other.

@@ -472,6 +472,43 @@ fn a_session_ended_on_another_server_is_dropped_here() {
     assert!(load_session_optional(&facade, &id).is_none(), "not written back");
 }
 
+/// HL-018: another server ended a session this one holds live, and its `session-end` was lost in a cluster gap. The
+/// clear of every entity cache that peer sends after the gap retires it, in one query over the live sessions; one
+/// whose row is still there stays live.
+#[test]
+fn a_lost_session_end_is_recovered_at_a_peers_clear_of_every_cache() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let signed_in = |user: &'static str| {
+        let browser = Arc::clone(&factory);
+        std::thread::spawn(move || {
+            let ctx = browser.new_context();
+            let _entered = ctx.enter();
+            let guard = bind(&browser, None, None, false).unwrap();
+            set_user(user, user);
+            flush_dirty(&browser).unwrap();
+            guard.session_id()
+        })
+        .join()
+        .unwrap()
+    };
+    let ended = signed_in("ada");
+    let kept = signed_in("bob");
+    // the other server's end#UserVisit deleted the row; its session-end never came
+    delete_session_row(&facade, &ended).unwrap();
+    let message = crate::notify::TopicMessage {
+        origin_id: "another-server".to_string(),
+        message_id: crate::entity::uuid_v4().unwrap(),
+        body: serde_json::json!({ "clearAll": true }),
+    };
+    crate::cluster::apply_remote(&facade, crate::notify::ENTITY_CACHE_INVALIDATE, &message).unwrap();
+    let retired = |id: &str| lock_sessions(&factory).sessions.get(id).map(|live| live.retired);
+    assert_eq!(retired(&ended), Some(true));
+    assert_eq!(retired(&kept), Some(false));
+    assert!(!adopt_presented(&factory, &ended).unwrap());
+}
+
 /// A flush of a session whose row was deleted elsewhere (before this server heard of it) does not insert the row
 /// again: the session is retired. A session never written still gets its row.
 #[test]

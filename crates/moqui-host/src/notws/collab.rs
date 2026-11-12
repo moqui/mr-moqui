@@ -18,7 +18,8 @@
 //! `saved`, `error`). A join runs on a request worker (the access check and the load); an update is applied in memory
 //! at once, acknowledged, sent to the document's other editors on this server and published on the cluster topic
 //! `collab-update` for those on the others. A socket that closes leaves its documents. Every second the rooms are
-//! written, saved and closed as `moqui_collab::tick` decides, and a save is told to the editors.
+//! written, saved and closed as `moqui_collab::tick` decides, and a save is told to the editors; changes another server
+//! stored that a room lacked (its relayed update lost) go to the room's editors as an `update` from `server`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -294,6 +295,32 @@ fn deliver_remote(message: &TopicMessage) {
     }
 }
 
+/// What a tick of the rooms did, to their editors: a save to those on every server; the changes another server stored
+/// that a room here lacked (an update relayed to this server and lost, plans/High-Level-Review.md HL-018) to this
+/// server's editors only, as every server reads the rows itself.
+pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqui_collab::Event>) {
+    for event in events {
+        match event {
+            moqui_collab::Event::Saved {
+                document_key,
+                version_name,
+                user_id,
+                user_name,
+            } => {
+                let frame = json!({"topic": topic(&document_key), "type": "saved", "versionName": version_name,
+                    "userId": user_id, "name": user_name});
+                broadcast(&document_key, None, &frame);
+                publish_remote(factory, json!({"doc": document_key, "frame": frame}));
+            }
+            moqui_collab::Event::Update { document_key, update } => {
+                let frame = json!({"topic": topic(&document_key), "type": "update", "client": "server",
+                    "update": b64().encode(&update)});
+                broadcast(&document_key, None, &frame);
+            }
+        }
+    }
+}
+
 /// Subscribe to the other servers' frames, and start the tick that writes, saves and closes the rooms.
 pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     if REMOTE.get().is_none() {
@@ -325,20 +352,7 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
             })
             .await
             {
-                Ok(events) => {
-                    for event in events {
-                        let moqui_collab::Event::Saved {
-                            document_key,
-                            version_name,
-                            user_id,
-                            user_name,
-                        } = event;
-                        let frame = json!({"topic": topic(&document_key), "type": "saved", "versionName": version_name,
-                            "userId": user_id, "name": user_name});
-                        broadcast(&document_key, None, &frame);
-                        publish_remote(&factory, json!({"doc": document_key, "frame": frame}));
-                    }
-                }
+                Ok(events) => deliver_events(&factory, events),
                 Err(err) => tracing::warn!("co-editing: the rooms were not written: {}", err.message()),
             }
         }

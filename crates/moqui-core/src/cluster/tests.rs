@@ -1440,6 +1440,98 @@ fn a_peer_that_missed_invalidations_on_failed_posts_is_cleared_without_another_w
         .is_empty());
 }
 
+/// A message of `topic` with `body`, from this member.
+fn topic_message(body: serde_json::Value) -> TopicMessage {
+    TopicMessage {
+        origin_id: notify::origin_id().to_string(),
+        message_id: crate::entity::uuid_v4().unwrap(),
+        body,
+    }
+}
+
+/// Whether the peer was sent a clear of every entity cache.
+fn sent_clear_all(deliver: &Deliver) -> bool {
+    sync::lock(&deliver.bodies)
+        .iter()
+        .any(|body| body["clearAll"] == serde_json::json!(true))
+}
+
+/// HL-018: a failed post of another topic (a session end) marks the peer as well as one of an invalidation: once it
+/// answers it gets a clear of every entity cache (which retires the sessions whose end it missed), with no write.
+#[test]
+fn a_peer_that_missed_another_topic_on_failed_posts_is_sent_its_clear() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-gap-topic");
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let remote = Remote::new();
+    let deliver = deliver_to(&ctx, &facade, &remote, true);
+    deliver.fail.store(true, Ordering::SeqCst);
+    let ended = topic_message(serde_json::json!({ "sessionIds": ["S-LOST"] }));
+    super::publish(&facade, notify::SESSION_END, &ended).unwrap();
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert!(
+        super::lock(&super::ClusterState::of(ctx.factory()).peers)
+            .dirty
+            .contains_key(PEER),
+        "the lost session end marks the peer"
+    );
+    deliver.fail.store(false, Ordering::SeqCst);
+    end_backoff(&ctx);
+    super::heartbeat(ctx.factory());
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert!(sent_clear_all(&deliver));
+    assert!(super::lock(&super::ClusterState::of(ctx.factory()).peers)
+        .dirty
+        .is_empty());
+}
+
+/// HL-018: a message of another topic dropped from a full queue reaches no peer, so every peer is marked and gets a
+/// clear of every entity cache ahead of its next batch.
+#[test]
+fn a_message_dropped_from_a_full_queue_marks_every_peer() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-gap-drop");
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let remote = Remote::new();
+    let deliver = deliver_to(&ctx, &facade, &remote, true);
+    // the sender is held on the first, having read its peers, while the queue fills
+    deliver.hold.store(true, Ordering::SeqCst);
+    let state = super::ClusterState::of(ctx.factory());
+    super::publish(
+        &facade,
+        notify::NOTIFICATION_MESSAGE,
+        &topic_message(serde_json::json!({})),
+    )
+    .unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while super::lock(&state.peers).urls.is_empty() && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for n in 0..=super::OUTBOX_LIMIT {
+        super::publish(
+            &facade,
+            notify::NOTIFICATION_MESSAGE,
+            &topic_message(serde_json::json!({ "n": n })),
+        )
+        .unwrap();
+    }
+    assert!(state.dropped.load(Ordering::Relaxed) >= 1);
+    assert!(
+        super::lock(&state.peers).dirty.contains_key(PEER),
+        "a dropped message marks the peer"
+    );
+    deliver.hold.store(false, Ordering::SeqCst);
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(30)));
+    assert!(sent_clear_all(&deliver));
+    assert!(super::lock(&state.peers).dirty.is_empty());
+}
+
 /// HL-018: a write while the peer is in its backoff is not posted to it; the peer gets its clear when the backoff ends.
 #[test]
 fn a_write_during_a_peers_backoff_is_recovered_without_another_write() {

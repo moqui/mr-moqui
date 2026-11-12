@@ -884,6 +884,53 @@ pub(crate) fn drop_live(factory: &ExecutionContextFactory, id: &str) {
     retire_old(factory, id);
 }
 
+/// Retire the live sessions whose `HttpSession` rows are gone: ended on another server, whose `session-end` this one
+/// may have missed in a cluster delivery gap (plans/High-Level-Review.md HL-018). Run when a peer's clear of every
+/// entity cache says it may have lost messages ([`crate::cluster::recover_missed`]). Only a session that was written
+/// or read is looked at (a new one has no row yet), with one `IN` query per [`RETIRE_CHUNK`] ids. Out: how many were
+/// retired.
+///
+/// # Errors
+///
+/// When the rows cannot be read; the sessions of the chunks read before are retired.
+pub(crate) fn retire_gone(factory: &ExecutionContextFactory) -> Result<usize, Error> {
+    let Some(facade) = factory.entity() else {
+        return Ok(0);
+    };
+    let ids: Vec<String> = lock_sessions(factory)
+        .sessions
+        .iter()
+        .filter(|(_, live)| !live.retired && live.snapshot.is_some())
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut retired = 0;
+    for chunk in ids.chunks(RETIRE_CHUNK) {
+        let condition = Condition::is_in("sessionId", chunk.iter().map(Value::string).collect());
+        let statement = facade
+            .with_entity(HTTP_SESSION, |entity, dialect, _| {
+                sql_select(
+                    entity,
+                    dialect,
+                    &[FieldRef::new("sessionId")],
+                    Some(&condition),
+                    &[],
+                    LimitOffset::default(),
+                )
+            })
+            .map_err(Error::from)?;
+        let rows = with_session_sql(&facade, |conn| conn.query(&statement.sql, &statement.params))?;
+        let present: BTreeSet<String> = rows.iter().filter_map(|row| opt_text(row, "sessionId")).collect();
+        for id in chunk.iter().filter(|id| !present.contains(*id)) {
+            drop_live(factory, id);
+            retired += 1;
+        }
+    }
+    Ok(retired)
+}
+
+/// Session ids [`retire_gone`] reads in one query.
+const RETIRE_CHUNK: usize = 1000;
+
 /// The visit of this session, if it has one.
 fn visit_id_now() -> Option<String> {
     with_session(|session| session.visit_id.clone())

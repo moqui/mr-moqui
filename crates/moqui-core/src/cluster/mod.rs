@@ -24,6 +24,17 @@
 //! ([`Sender::post_batch`]: one gRPC call, or one POST after another), and several peers are posted to at once. The
 //! peer list is kept and read again on each heartbeat.
 //!
+//! The clear of every entity cache is the recovery of a gap in any topic, so a peer is marked for it whatever it missed:
+//! a failed or skipped batch of any topic, and every peer when a message of another topic is dropped from a full queue.
+//! A member that receives it ([`recover_missed`]) clears its entity caches and retires the live sessions whose rows are
+//! gone, which covers a lost `session-end`. The other topics need no more: a co-edited document's open rooms read the
+//! state other servers stored at their next tick (moqui-collab `tick`), so a lost `collab-update` is merged and sent to
+//! the room's clients within seconds; a notification whose topic persists it is stored before it is pushed, and a client
+//! reads its list on load, while one not persisted is a live hint that a closed socket misses on one server too; an RTC
+//! signal goes to one member ([`send_to`]) and a call that misses one is set up again by its client; a live setting is in
+//! memory only and expires within 24 hours, and an instance that missed one keeps its on-disk value; a component
+//! deploy's files are written from the shared repository at the next start of a member that missed it.
+//!
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
 
@@ -284,8 +295,9 @@ struct PeerCache {
     read_at: i64,
     /// Peers to skip until the time given, after every try of a post failed.
     down_until: HashMap<String, Instant>,
-    /// Peers that may have missed an entity cache invalidation (plans/High-Level-Review.md HL-018): a post that failed
-    /// every try, a batch skipped while the peer was down, or a return to the live set. Each gets a clear of every entity
+    /// Peers that may have missed a message (plans/High-Level-Review.md HL-018): a post that failed every try, a batch
+    /// skipped while the peer was down, a message dropped from a full queue, or a return to the live set. Each gets a
+    /// clear of every entity
     /// cache ahead of its next batch, and stays here until one is delivered; the heartbeat asks for that pass, so no
     /// write is needed. The value is the gap's number, so a gap found while a clear was on its way is not forgotten.
     dirty: HashMap<String, u64>,
@@ -485,7 +497,10 @@ pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) 
 /// one; with no usable key the entity's caches go whole. A key that does not apply is logged and the others still are.
 fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result<(), Error> {
     if is_clear_all(body) {
-        return crate::entity::cache::clear_all_list_caches(facade).map_err(Error::from);
+        let factory = linked_state(facade)
+            .and_then(|state| lock(&state.factory).upgrade())
+            .or_else(|| ExecutionContext::with_current(|ec| Arc::clone(ec.factory())));
+        return recover_missed(factory.as_deref(), facade);
     }
     let name = Some(entity_of(body))
         .filter(|name| !name.is_empty())
@@ -514,6 +529,27 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
         tracing::warn!("cluster invalidation of {name} failed: {err}");
         Error::from(err)
     })
+}
+
+/// What a member does when it may have missed cluster messages: a peer's clear of every entity cache (a gap in its
+/// sends) or a transport that lost its connection. Every entity list cache is cleared, and the live sessions whose rows
+/// are gone are retired, so a `session-end` lost in the gap does not leave an ended session served here
+/// (plans/High-Level-Review.md HL-018). The other topics need nothing: see the module documentation. The session step
+/// runs only with `factory`, and its failure is logged.
+///
+/// # Errors
+///
+/// When the entity caches cannot be cleared.
+pub fn recover_missed(factory: Option<&ExecutionContextFactory>, facade: &EntityFacade) -> Result<(), Error> {
+    let cleared = crate::entity::cache::clear_all_list_caches(facade).map_err(Error::from);
+    if let Some(factory) = factory {
+        match crate::user::session::retire_gone(factory) {
+            Ok(0) => {}
+            Ok(retired) => tracing::info!("cluster recovery: {retired} sessions ended on another server were retired"),
+            Err(err) => tracing::error!("cluster recovery: the live sessions could not be checked: {err}"),
+        }
+    }
+    cleared
 }
 
 /// Publish `message` on this process's bus, then queue it for the peers of the factory that started `facade`. A
@@ -972,9 +1008,15 @@ fn fan_out(state: &Arc<ClusterState>, topic: &'static str, message: &TopicMessag
     }
     let mut queue = lock(&state.queue);
     if queue.push(topic, message.clone(), LIMITS) == Queued::Dropped {
+        drop(queue);
         let dropped = state.dropped.fetch_add(1, Ordering::Relaxed) + 1;
         if dropped.is_power_of_two() {
             tracing::warn!("cluster fan-out queue is full; {dropped} messages dropped");
+        }
+        // Every peer misses it: each gets the recovery of a gap ahead of its next batch (HL-018).
+        let mut peers = lock(&state.peers);
+        for base_url in peers.urls.clone() {
+            peers.mark_dirty(&base_url);
         }
         return;
     }
@@ -1048,13 +1090,12 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
             }
         })
         .collect();
-    let invalidates = batch.iter().any(|(topic, _)| *topic == ENTITY_CACHE_INVALIDATE);
     let mut live: Vec<&str> = Vec::new();
     for base_url in &peers {
         if !peer_down(state, base_url) {
             live.push(base_url);
-        } else if invalidates {
-            // Skipped while down: it misses these invalidations.
+        } else if !payloads.is_empty() {
+            // Skipped while down: it misses these messages.
             lock(&state.peers).mark_dirty(base_url);
         }
     }
@@ -1088,10 +1129,9 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
                 peers.dirty.remove(base_url);
             }
         } else {
+            // Whatever the batch held, the peer may have missed some of it.
             mark_peer_down(state, base_url);
-            if invalidates || gap.is_some() {
-                lock(&state.peers).mark_dirty(base_url);
-            }
+            lock(&state.peers).mark_dirty(base_url);
         }
     };
     // Each peer gets the whole batch in order; with more than one they are posted to at once, so a slow or unreachable
