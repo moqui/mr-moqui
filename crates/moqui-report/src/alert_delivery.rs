@@ -887,8 +887,18 @@ fn get_alert_state(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         "denied-source" => "You may not read one of this alert's sources",
         reason => delivery::reason_text(reason),
     };
+    // whose rule it is, by name, for anyone who reads the rule (its definition already answers them the owner's id):
+    // the owner's account is the engine's to read, so a screen that shows a rule reads no account itself
+    // (plans/Admin-Screens-Down.md, Track I). A shipped rule has no owner.
+    let owner_name = if definition["readOnly"] == true {
+        Json::Null
+    } else {
+        let now = moqui_core::user::now_millis();
+        delivery::account(ec, &facade, jtext(&definition, "ownerId", ""), now)?
+            .map_or(Json::Null, |owner| json!(owner.name))
+    };
     Ok(delivery::out(json!({
-        "definitionId": id, "title": definition["title"], "own": own, "business": business,
+        "definitionId": id, "title": definition["title"], "own": own, "ownerName": owner_name, "business": business,
         "template": definition["readOnly"] == true, "paused": body["paused"] == true,
         "pausedReason": jtext(body, "pausedReason", ""),
         "deliveryMode": if business { jtext(&body["audience"], "deliveryMode", "personal") } else { "" },

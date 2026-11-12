@@ -99,6 +99,18 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
         versionNumber="1"/>
     <moqui.report.ReportRecipientDelivery deliveryId="GATE_DELIVERY" occurrenceId="GATE_OCCURRENCE" userId="EX_JOHN_DOE" channel="email"
         statusId="RptDlvSent" attemptCount="1" attemptDate="2026-01-02 03:04:06"/>
+    <!-- the alert screens of Dashboards: an operational rule of the viewer's with a contact point, a shared one and the
+        state of one series; a rule over the business dataset, which tells an audience; and the shared contact point -->
+    <moqui.report.Definition definitionId="gate-alert" definitionType="alert" title="Gate memory alert" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1"
+        bodyJson='{"query":{"datasetId":"otel_metrics","from":"now-5m","thru":"now","aggregations":[]},"field":"share","reduce":"last","condition":{"type":"above","threshold":90},"intervalSeconds":60,"paused":true,"contactPoints":[{"id":"gate-ops","type":"notification","topic":"ReportAlert","userId":"EX_JOHN_DOE"}],"contactPointRefs":["gate-contact"]}'/>
+    <moqui.report.AlertInstance definitionId="gate-alert" seriesId="gate-series" state="Firing" stateSince="2026-01-02 03:04:05"
+        lastEvaluated="2026-01-02 03:05:05" labelsJson='{"instance":"gate-node"}' lastValue="97.5"/>
+    <moqui.report.Definition definitionId="gate-business-alert" definitionType="alert" title="Gate business alert" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1"
+        bodyJson='{"query":{"datasetId":"gate-business","from":"now-1d","thru":"now","aggregations":[{"id":"rows","type":"count","role":"metric"}]},"field":"rows","reduce":"last","condition":{"type":"above","threshold":0},"intervalSeconds":3600,"paused":true,"audience":{"recipientUserIds":[],"recipientGroupIds":[],"channels":["notification"],"topic":"ReportAlert","deliveryMode":"personal"}}'/>
+    <moqui.report.Definition definitionId="gate-contact" definitionType="contactPoint" title="Gate contact" ownerId="EX_JOHN_DOE"
+        readOnly="N" versionNumber="1" bodyJson='{"type":"notification","topic":"ReportAlert","userId":"EX_JOHN_DOE"}'/>
 </entity-facade-xml>"#;
 
 /// Detail screens with the parameters of a record in [`DATA`] or the seed data.
@@ -600,6 +612,133 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
             "Schedule a report in owner mode",
             "/apps/dashboards/Schedules",
         ],
+    );
+    // The alert screens of Dashboards, with no mount: every rule the viewer reads with its kind, its owner, whom it tells
+    // and its state (the engine's get#AlertState), the state of each series, the shipped rules among them, the shared
+    // items and New alert rule.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Alerts",
+        &[
+            "Gate memory alert",
+            "Operational · You",
+            "2 contact points",
+            "Gate business alert",
+            "Business · You",
+            "Its owner",
+            "High memory use",
+            "Operational · Shipped",
+            "Series states",
+            "instance gate-node",
+            "Firing",
+            "97.5",
+            "New alert rule",
+            "Shared contact points",
+            "Gate contact",
+            "/apps/dashboards/AlertRule?definitionId=gate-alert",
+            "/apps/dashboards/AlertShared?definitionId=gate-contact",
+            "/apps/dashboards/Alerts/pauseAlerts",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Alerts?view=templates",
+        &[
+            "High memory use",
+            "it runs only once copied",
+            "/apps/dashboards/Alerts/copyAlert",
+        ],
+    );
+    // An operational rule for its owner: the basis with its query typed, its contact points, the shared item it names,
+    // its silences and mute timings, and the state of its series.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule?definitionId=gate-alert",
+        &[
+            "Reading and condition",
+            "fires when share above 90",
+            "Evaluated every (seconds)",
+            "Routing labels (JSON)",
+            "Contact points",
+            "gate-ops",
+            "data-dialog=\"AddContactPoint\"",
+            "Gate contact",
+            "One-off silences",
+            "Recurring mute timings",
+            "instance gate-node",
+            "Firing",
+            "/apps/dashboards/AlertRule/storeAlert",
+            "/apps/dashboards/AlertRule/addContact",
+            "/apps/dashboards/Alerts",
+        ],
+    );
+    // A rule over business data tells an audience in place of contact points; its silences and mute timings stay.
+    let (status, business) = get(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule?definitionId=gate-business-alert",
+    );
+    assert!(
+        status == 200
+            && !business.contains("Error rendering")
+            && business.contains("Tells its owner alone, in the app.")
+            && business.contains("data-dialog=\"EditAudience\"")
+            && business.contains("Nobody has been told yet.")
+            && business.contains("One-off silences")
+            && !business.contains("AddContactPoint"),
+        "{status}: {business}"
+    );
+    // A new rule starts from nothing, with its ID and its query to type; one made here keeps the query and takes a
+    // contact point.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule",
+        &["New alert rule", "Rule ID", "Create alert"],
+    );
+    let store = "/apps/dashboards/AlertRule/storeAlert";
+    let (status, page) = post(
+        address,
+        &john,
+        store,
+        &[
+            ("ruleId", "gate-made-alert"),
+            ("title", "Gate made alert"),
+            (
+                "queryJson",
+                r#"{"datasetId":"otel_metrics","from":"now-5m","thru":"now","aggregations":[]}"#,
+            ),
+            ("conditionType", "above"),
+            ("threshold", "5"),
+            ("intervalSeconds", "120"),
+            ("paused", "Y"),
+            ("labelsJson", "{}"),
+        ],
+    );
+    ran(store, status, &page);
+    let add = "/apps/dashboards/AlertRule/addContact";
+    let (status, page) = post(
+        address,
+        &john,
+        add,
+        &[
+            ("definitionId", "gate-made-alert"),
+            ("contactId", "gate-made-contact"),
+            ("contactType", "notification"),
+            ("topic", "ReportAlert"),
+            ("contactUserId", "EX_JOHN_DOE"),
+            ("matchersJson", "{}"),
+        ],
+    );
+    ran(add, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/AlertRule?definitionId=gate-made-alert",
+        &["Gate made alert", "fires when above 5", "gate-made-contact"],
     );
 }
 

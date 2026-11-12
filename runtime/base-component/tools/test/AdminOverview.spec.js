@@ -469,18 +469,9 @@ feature("a job run's trace and log windows surround the run, and an item links b
 
 feature("alert evaluation feedback distinguishes requests, skipped rules and reported failures", {
     expect() {
-        // A service 'evaluated' count also includes interval/claim skips; no extra Alerts render is needed.
-        const source = ec.resource.getLocationText("component://tools/screen/Dashboards/Alerts.xml")
-        const transition = /<transition name="evaluate"[\s\S]*?<\/transition>/.exec(source)[0]
-        const actions = /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(transition)[1]
-        const inspect = (evaluation, hasError = false) => {
-            const messages = []
-            runInContext(actions, {evaluation, ec: {message: {
-                hasError: () => hasError,
-                addMessage: (text, type) => messages.push({text, type})
-            }}})
-            return messages
-        }
+        // A service 'evaluated' count also includes interval/claim skips; no extra Alerts render is needed: the words are
+        // the alert screens' module's, which the evaluate transitions show.
+        const inspect = ec.resource.script("component://tools/template/ReportAlerts.js").evaluationMessages
         const processed = inspect({evaluated: 1, failed: 0, notices: []})
         assert.equal(processed.length, 1)
         assert.equal(processed[0].type, "info")
@@ -500,7 +491,6 @@ feature("alert evaluation feedback distinguishes requests, skipped rules and rep
         assert(failed[0].text.includes("server logs"))
         assert.equal(failed[1].text, "Fixture series limit")
         assert.equal(failed[1].type, "warning")
-        assert.equal(inspect({evaluated: 1, failed: 0}, true).length, 0)
         assert.equal(inspect(null).length, 0)
     }
 })
@@ -508,7 +498,8 @@ feature("alert evaluation feedback distinguishes requests, skipped rules and rep
 
 feature("alert numeric edit values round trip without grouping or display precision loss", {
     expect() {
-        // Execute the screens' actual field assignments and the formatter used by text-line, without another screen render.
+        // The values the forms show and the formatter used by text-line, without another screen render: AlertRule's are its
+        // module's (template/ReportAlerts.js basisValues), AlertShared's its own field assignments.
         const fields = [
             ["AlertRule", "threshold", "threshold", true, 0],
             ["AlertRule", "minimum", "min", true, 0],
@@ -520,17 +511,17 @@ feature("alert numeric edit values round trip without grouping or display precis
             ["AlertShared", "groupWaitSeconds", "groupWaitSeconds", false, 30],
             ["AlertShared", "repeatSeconds", "repeatSeconds", false, 14400]
         ]
-        const actions = {}
-        for (const screen of ["AlertRule", "AlertShared"]) {
-            const source = ec.resource.getLocationText("component://tools/screen/Dashboards/" + screen + ".xml")
-            actions[screen] = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/m.exec(source)[1]
-        }
+        const basisValues = ec.resource.script("component://tools/template/ReportAlerts.js").basisValues
+        const source = ec.resource.getLocationText("component://tools/screen/Dashboards/AlertShared.xml")
+        const sharedActions = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/m.exec(source)[1]
         for (const [screen, field, key, condition, fallback] of fields) {
-            const expression = new RegExp("(?:^|[;\\n])\\s*" + field + "=([^;\\n]+)").exec(actions[screen])[1]
+            const expression = screen === "AlertShared"
+                ? new RegExp("(?:^|[;\\n])\\s*" + field + "=([^;\\n]+)").exec(sharedActions)[1] : null
             for (const value of [1000000000, -12.12345678901234, 0.000000000000123, 0.1, 0, null]) {
                 const body = condition ? {condition: {[key]: value}} : {[key]: value}
                 const state = {body, actual: null}
-                runInContext("actual = " + expression, state)
+                if (expression) runInContext("actual = " + expression, state)
+                else state.actual = basisValues(body)[field]
                 const expected = value == null || (field === "intervalSeconds" && value === 0) ? fallback : value
                 assert.equal(typeof state.actual, "string", screen + "." + field)
                 assert.equal(state.actual, String(expected))

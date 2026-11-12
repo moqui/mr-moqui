@@ -69,22 +69,21 @@ function lagText(ms) {
 
 // ===== the scope field =====
 // A scope policy takes the field that carries a row's scope in one entry of rowFilterParameters, whose name is the
-// policy's own: its registration's (scopeParameter, in the engine's answers), else the one the mount's policy names for
-// a policy that registers none (datasetScopeParameter), else none is asked. The words of the form's field are the
-// mount's (datasetScopeLabel, datasetScopeHelp), Tools' own with no mount.
+// policy's own, from its registration (scopeParameter, in the engine's answers); a policy that registers none is asked
+// for no field. The words of the form's field are the mount's (datasetScopeLabel, datasetScopeHelp), Tools' own with no
+// mount.
 function scopeWords(policy) {
     return {label: policy.datasetScopeLabel, help: policy.datasetScopeHelp}
 }
-const parameterOf = (registered, policy) => text(registered) || text(policy.datasetScopeParameter)
 // The rowFilterParameters a form's scope field stands for under the policy chosen, or null when the field is empty. kept
 // is what the dataset already holds under the same policy, which a form with one field does not drop.
-function scopeParameters(scopePolicyId, scopeField, policy, kept) {
+function scopeParameters(scopePolicyId, scopeField, kept) {
     const field = text(scopeField).trim()
     if (!field) return null
     const chosen = Array.from(must("get#BusinessDatasetOptions", {}).policies || []).find(
         row => row.scopePolicyId === scopePolicyId
     )
-    const parameter = parameterOf(chosen?.scopeParameter, policy)
+    const parameter = text(chosen?.scopeParameter)
     if (!parameter)
         throw new Error(
             "The scope policy " + (chosen?.description || text(scopePolicyId)) + " takes no scope field: leave it empty"
@@ -93,7 +92,7 @@ function scopeParameters(scopePolicyId, scopeField, policy, kept) {
 }
 
 // ===== a dataset as the screens show it =====
-function present(row, policy) {
+function present(row) {
     const checks = Array.from(row.checks || []).map(check => ({
         check: check.check,
         name: checkNames[check.check] || check.check,
@@ -101,7 +100,7 @@ function present(row, policy) {
         passedText: check.passed === true ? "Passed" : "Not passed",
         message: check.message || ""
     }))
-    const scopeParameter = parameterOf(row.scopeParameter, policy)
+    const scopeParameter = text(row.scopeParameter)
     const scopeField = scopeParameter ? text(row.rowFilterParameters?.[scopeParameter]) : ""
     return {
         datasetId: row.datasetId,
@@ -148,7 +147,7 @@ function list(p) {
     const mount = mountLib.state()
     const policy = mount.policy
     const found = ask("find#BusinessDatasets", {})
-    const all = Array.from(found.out?.datasets || []).map(row => present(row, policy))
+    const all = Array.from(found.out?.datasets || []).map(row => present(row))
     const wanted = text(p.text).trim().toLowerCase()
     const datasets = all
         .filter(row => !p.status || row.status === p.status)
@@ -234,7 +233,7 @@ function detail(datasetId) {
     }
     const got = ask("get#BusinessDataset", {datasetId: datasetId || "_NA_"})
     if (got.failure || !got.out?.dataset) return Object.assign(none, {failure: got.failure})
-    const dataset = present(got.out.dataset, policy)
+    const dataset = present(got.out.dataset)
     if (!dataset.stewarded) return Object.assign(none, {failure: "Dataset " + dataset.title + " is not one you steward"})
     const options = ask("get#BusinessDatasetOptions", {}).out || {}
     const stamped = row => Object.assign({datasetId: dataset.datasetId, expectedVersion: dataset.version}, row)
@@ -282,14 +281,13 @@ function createRequest(p) {
         timeField: p.timeField || "_timestamp",
         scopePolicyId: p.scopePolicyId
     }
-    const parameters = scopeParameters(p.scopePolicyId, p.scopeField, policy)
+    const parameters = scopeParameters(p.scopePolicyId, p.scopeField)
     if (parameters) request.rowFilterParameters = parameters
     return request
 }
 // EditDataDocument's values as store#BusinessDataset's request. The scope field goes under the parameter of the policy
 // chosen (the dataset's own when the form names none), beside what the dataset already holds under that policy.
 function storeRequest(p) {
-    const policy = mountLib.state().policy
     const request = {
         datasetId: p.datasetId,
         title: p.title || null,
@@ -301,7 +299,7 @@ function storeRequest(p) {
         const current = must("get#BusinessDataset", {datasetId: p.datasetId}).dataset || {}
         const scopePolicyId = p.scopePolicyId || current.scopePolicyId
         const kept = scopePolicyId === current.scopePolicyId ? current.rowFilterParameters : null
-        request.rowFilterParameters = scopeParameters(scopePolicyId, p.scopeField, policy, kept)
+        request.rowFilterParameters = scopeParameters(scopePolicyId, p.scopeField, kept)
     }
     return request
 }
@@ -348,7 +346,7 @@ function view(p) {
     if (!p.datasetId) return out
     const got = ask("get#BusinessDataset", {datasetId: p.datasetId})
     if (got.failure || !got.out?.dataset) return Object.assign(out, {failure: got.failure})
-    const dataset = present(got.out.dataset, policy)
+    const dataset = present(got.out.dataset)
     if (!dataset.readable) return Object.assign(out, {failure: "Dataset " + dataset.title + " is not admitted"})
     const queried = ask(
         "query#Documents",
@@ -381,7 +379,7 @@ function csvCell(value) {
 // JSON, recorded through audit#Export. A refusal is the transition's error.
 function exportRows(p) {
     const policy = mountLib.state().policy
-    const dataset = present(must("get#BusinessDataset", {datasetId: p.datasetId}).dataset || {}, policy)
+    const dataset = present(must("get#BusinessDataset", {datasetId: p.datasetId}).dataset || {})
     if (!dataset.readable) throw new Error("Dataset " + dataset.title + " is not admitted")
     const format = p.format === "json" ? "json" : "csv"
     const limit = Math.min(exportCap, Math.max(1, Number(p.requestedRowLimit) || exportDefault))

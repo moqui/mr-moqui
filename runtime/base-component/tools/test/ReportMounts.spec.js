@@ -2,7 +2,8 @@
 // P2, INS-04): the test mount test/screen/ReportMount.xml takes in Tools' Dashboard and Definition with their transitions and sets
 // reportLinks. A mounted editor offers the datasets the author may read by each dataset's own artifact, without DASHBOARDS_APP or
 // REPORT_DATASETS_ADMIN, starts a new panel on one of them and saves and returns under the mount; a mounted dashboard sends the
-// mount's links to the browser and terminal (appLinks), leaves out the screens the mount does not offer and keeps its fixed
+// mount's links to the browser and terminal (appLinks), leaves out the screens the mount does not offer (and the alert rule
+// screen it names, where its policy does not let the viewer set an alert) and keeps its fixed
 // variables over a viewer's (in a panel inspect too); the mount's editor saves only its types and, where the mount shares in its own
 // screen, keeps a definition's group over a posted one; Tools' own Dashboards screens keep Tools' links, whatever a request sends.
 // The mount's policy (reportPolicy) beside its links: template/ReportMount.js answers both, every link key and every policy
@@ -244,7 +245,9 @@ feature("a mounted dashboard reads the mount's links, policy and fixed variable;
         // it gave, and the default of each field it left out (a feature it did not name is not offered)
         state.mounted == true
         state.links.definition == "../Editor"
-        state.links.alertRule == null
+        // the alert rule screen the mount names opens to anyone who reads a rule; a panel's New alert rule (appLinks below)
+        // is offered only where the policy lets the viewer set one, and this mount's does not
+        state.links.alertRule == "../Board"
         state.links.split == null
         state.links.drill == null
         JSON.stringify(state.policy.range) == '{"from":"now-90d","thru":"now"}'
@@ -317,7 +320,7 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
         own.links.drill == null
         JSON.stringify(own.policy) ==
             '{"features":{"alert":true,"share":true},"range":{"from":"now-7d","thru":"now"},"datasetIdPrefix":"",' +
-                '"datasetScopeParameter":null,"datasetScopeLabel":"Scope field",' +
+                '"datasetScopeLabel":"Scope field",' +
                 '"datasetScopeHelp":"The field that carries each row\'s scope; the policy\'s own when left empty",' +
                 '"recipientPermissionId":null,"reportEmailTemplateId":null,"alertAudience":null,' +
                 '"shareGroups":[],"recipientCap":null,"calendar":null}'

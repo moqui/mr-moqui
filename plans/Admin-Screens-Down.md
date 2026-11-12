@@ -55,10 +55,12 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
   parameters, plain}}` keyed by the registrations' `ownerRoute` and `linkKey` values, framework keys defaulting to
   relative paths; optional `hide` list.
 - `reportPolicy` (beside `reportLinks`; nulled in `T/screen/Dashboards.xml` and `T/screen/System/Monitor.xml`, set in
-  `B/screen/Insights.xml`): `features {alert, share}`, `range`, `datasetIdPrefix`, `datasetScopeParameter`,
+  `B/screen/Insights.xml`): `features {alert, share}`, `range`, `datasetIdPrefix`,
   `datasetScopeLabel`, `datasetScopeHelp` (I1), `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`, `recipientCap`, `calendar`, each
-  described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens). `reportLinks` has the keys
-  `alerts` and `alertShared` since I0; `wallDisplay` and a Tools default for `drill` come with their screens (I4).
+  described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens) (`datasetScopeParameter` left the
+  contract in I3: a scope policy registers its own). `reportLinks` has the keys `alerts` and `alertShared` since I0,
+  read by the alert screens since I3, when `alertRule` became where a rule opens for any reader and `features.alert`
+  what offers setting one; `wallDisplay` and a Tools default for `drill` come with their screens (I4).
 - `T/template/ReportMount.js`: `state()` gives `{mounted, links, policy}`, every key and field present, and
   `url(key, own)` is a transition's response. It is the one reader of both maps. `policyWith(fields)` is the root's
   policy with an area's fields, which the area sets as `reportPolicy` in its own `always-actions` (I2: the recipient
@@ -158,7 +160,7 @@ Tools gets the generic screens, each reading and writing only through `ReportSer
 |---|---|---|
 | Datasets, DatasetDetail, DatasetFields, DatasetView | merge: the business list and stewardship on top; today's telemetry and index list stays as "Other datasets" where there is no mount | W (grants name locations and transitions; the record's I1) |
 | Schedules, ScheduledReportDetail, ReportDelivery | new; `Reports.xml` keeps previews, the compose link, the playlists (until I4) and the owner-mode form, and links Schedules | D; the area adds the recipient cap (the record's I2) |
-| Alerts, AlertRule, AlertShared | one list (Mine, Received, Templates, Kind) and one editor: a shared basis form, then Contact points or Audience; links from `reportLinks`; state through `get#AlertState` | W taking in only the business transitions |
+| Alerts, AlertRule, AlertShared | one list (All where rules have contact points, Mine, Received, Templates; Kind) and one editor: a shared basis form, then Contact points or Audience; links from `reportLinks`; kind and state through `get#AlertState` | W for the list and the editor, taking in only the business transitions; AlertShared not shown (the record's I3) |
 | Drill, Analysis | new generic screens | S: scope, meaning, record links, cost filter; organization calendar |
 | Dashboard | `share` transition and dialog (owner only; own groups plus `reportPolicy.shareGroups`) | W |
 | Playlists, WallDisplay | new list, create and share screen; the hardened kiosk player | S (devices, display share); W |
@@ -177,7 +179,7 @@ ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
 | I0 Contract | `reportPolicy` nulled at `Dashboards.xml` and `System/Monitor.xml`; `ReportMount.js`, which every Dashboards screen reads the links through; Explore and Split guard; Monitoring.md | root sets `reportPolicy`; direct-mount Panels, Explore, Split | `ReportMounts`, `InsightsAccess` |
 | I1 Datasets | two operations; four screens; `ReportDatasets.js`; a scope policy registers its parameter; `create#BusinessDataset` asks the named dataset's update artifact | four wrappers; two rows; `DatasetServices` keeps readiness and refresh | `BusinessDatasets`; `InsightsDatasets` |
 | I2 Delivery | recipient and screen-schedule operations, `ownerName`; three screens; `ReportDelivery.js`; `policyWith`; `Reports.xml` trimmed | items re-pointed, the area adds the cap; three rows; `Delivery.js` keeps the digests and what the alerts use | `ReportAudience`, `ReportMounts`; `InsightsDelivery`, `InsightsSettings` |
-| I3 Alerts (after I2) | merged list and editor; `ReportAlerts.js` | two wrappers; `Alerts.js` deleted | `AdminOverview`; `InsightsAlerts` |
+| I3 Alerts (after I2) | merged list and editor; `ReportAlerts.js`; `ownerName` in `get#AlertState`; a panel's New alert rule by `features.alert`; `datasetScopeParameter` gone | two wrappers, the area adds the cap; `Alerts.js` and `AlertServices.xml` deleted; no row | `BusinessAlerts`, `AdminOverview`, `ReportMounts`; `InsightsAlerts`, `InsightsAccess` |
 | I4 Drill, Analysis, share, playlists, wall | five screens | wrappers; `DashboardServices` deleted | `InsightsRecords`, `InsightsDashboards`, `InsightsWallDisplay` |
 
 ## Order and tests
@@ -944,3 +946,149 @@ monitor_tui:: monitor_readers::` (the three screens in the terminal walk; 4 pass
 changed service files. Changed and not run: mr-boss's acceptance `InsightsDeliveryUsable` (a refusal read as the
 transition's error; Send now and the saved list's recipients through the route in place of the deleted services) and
 `InsightsReviewWalk` (the engine's `check#ReportAudience` in place of `check#Audience`).
+
+### I3 Alerts (Nov 11, 2026)
+
+Built: the alert screens of Dashboards, Tools' merged with Insights': `Alerts` is one list (All, every rule the viewer
+reads, where rules have contact points; Mine; Received, the rules that told them with their own delivery; Templates,
+the shipped rules, each copied over a dataset the viewer reads), each rule with its kind (an operational rule tells
+contact points, a business rule an audience), its owner by name, its condition, whom it tells and the most severe
+state of its series, with pause, activate (the rule's reading run as its owner first) and delete, one rule or several;
+below, with no mount, the state of each series, Evaluate now and the shared contact points, silences and mute timings.
+`AlertRule` is one editor: AlertBasis, the basis every rule has (name, query, measure and reduction, condition,
+timing), then whom it tells by its kind: an operational rule's contact points, or a business rule's AlertAudience (the
+owner alone, or people and groups beside each one's result of the engine's check, in the app and by account email, and
+the group it is shared with) and AlertDeliveryStatus; either kind's silences, mute timings and shared items where rules
+have them; and OwnAlertState, each series as the viewer may read it. `AlertShared` stays the shared item. Their
+presentation is the new `tools/template/ReportAlerts.js` (`list`, `detail`, `store`, `storeAudience`, `pause`, `test`,
+`copy`, `remove`, `recipientChoices`; Tools' own `evaluate`, `addContact`, `addSilence`, `addMute`, `removeItem`,
+`addRef`, `removeRef`, `removeShared`; and `requireSet`, `basisValues`, `evaluationMessages`), which calls only
+`ReportServices` as the viewer and shows a refusal by its words; it shares the engine call, the recipients and the
+delivery words with `ReportDelivery.js`, which exports them. A rule's kind, state and owner's name are
+`get#AlertState`'s: the direct read of `AlertInstance` in the old list is gone, and no screen reads an entity. The
+three screens link each other by the mount's `alerts`, `alertRule` and `alertShared`, as links and transition answers
+through `ReportMount.js`. In the engine (`crates/moqui-report/src/alert_delivery.rs`; the release binary rebuilt):
+`get#AlertState` answers `ownerName`. No operation is added: the framework's security data, mr-mantle and the BOSS
+artifact rows are unchanged. Dashboard offers a panel's New alert rule only where the policy's `features.alert` says
+so. `datasetScopeParameter` left the contract (`ReportMount.js`, `ReportDatasets.js`, Monitoring.md, Insights' policy,
+`ReportMounts`, `InsightsAccess`): mr-mantle's organization policy registers its parameter, and nothing else used the
+fallback. In mr-boss: `Alerts/Rules.xml` and `Alerts/AlertDetail.xml` include the Dashboards screens at their own
+locations and take in the ten transitions Insights offers (the table below); the Alerts area's `always-actions` add the
+recipient cap to the policy, as Scheduled reports does; `Alerts.js` and `AlertServices.xml` are deleted;
+`DeliveryServices` loses `find#RecipientChoices` and `Delivery.js` what only the alerts used (the recipient reads, the
+names, the delivery words and its exports), keeping the digests and the preview; `InsightsDeliveryTransitions.xml`
+keeps `previewFile` (ManagementDigest); `reportLinks.alertRule` is AlertDetail for every reader; the alert topic,
+template and link are written once, in `Insights.js` `reportPolicy` (F48 is closed: the dataset prefix, the two
+templates, the topic and the link each have one place).
+
+| Screen | With no mount | Under a mount that names `alertAudience` | Insights | Taken in | Left out | BOSS rows that name it |
+|---|---|---|---|---|---|---|
+| Alerts | All (the default), Mine, Received, Templates; every rule the viewer reads with its kind and owner; New alert rule; Evaluate now; the series' states; the shared contact points, silences and mute timings | Mine, Received and Templates for one who may set a rule, Received alone otherwise; business rules only, without the hidden components'; a copy has the mount's fixed parts and waits to be activated; no New (a rule starts from a panel's menu), no series box, no shared items | W (`Alerts/Rules`) | `copyAlert`, `pauseAlerts`, `deleteAlert` | `evaluate`, `deleteShared` | none |
+| AlertRule | the basis with the query typed or built, a rule ID, the evaluation state, series and routing labels and a version note; contact points for an operational rule, the audience for a business one; silences, mute timings and shared items; Evaluate now; the state; a new rule from nothing or from a panel's queries | the basis over a panel's saved query (measure of the query, range and interval from lists); the audience with the mount's topic, template, link and cap; the state and the deliveries; a new rule only from a panel, saved inactive; no contact point, silence, mute timing, shared item or evaluation | W (`Alerts/AlertDetail`) | `recipientChoices`, `storeAlert`, `storeAudience`, `pauseAlert`, `testAlert`, `copyAlert`, `deleteAlert` | `addContact`, `addSilence`, `addMute`, `removeItem`, `addRef`, `removeRef`, `evaluate` | none (the topic's `linkTemplate` and the policy's `detailLink` name its path) |
+| AlertShared | as before, its links the mount's and its writes held to `features.alert` | not shown | not mounted (`alertShared` null) | | all | none |
+
+No row of `BossSetupData.xml` names the two Insights files or a transition of theirs (the root's allow opens them), so
+by the rows alone they could be mounted by location. They are wrappers because Tools' screens have transitions
+Insights must not offer: a location mount would put the contact point, silence, mute timing, shared item and
+evaluation transitions on Insights' route. Under Insights' policy each of them refuses (`change` refuses under a mount
+of audiences, `evaluate#Alerts` is denied by `BOSS_INS_REPORT_TOOLS`), but the rule is that they are not there.
+
+Where what `Alerts.js` did is now:
+
+| Insights service | Now |
+|---|---|
+| `find#Alerts` | `ReportAlerts.list` over `list#Definitions`, `get#AlertState`, `find#AlertDeliveries`, `get#Dataset` and `find#ReportRecipients` (names) |
+| `get#Alert` | `ReportAlerts.detail`, with `check#ReportAudience`; the owner's name from `get#AlertState` |
+| `store#Alert` | `ReportAlerts.store` (the basis) and `storeAudience` over `save#Definition`; the fixed parts written by `fixedParts` |
+| `copy#Alert`, `pause#Alerts`, `test#Alert`, `delete#Alert` | `ReportAlerts.copy`, `pause`, `test` (`run#Query`) and `remove` |
+| `Delivery.js` `proposable`, `find#RecipientChoices` | `find#ReportRecipients` under the policy's permission (`ReportDelivery.js` `recipients`, `recipientChoices`) |
+| `Delivery.js` `userNames`, `groupNames` | `find#ReportRecipients`' `selectedUsers` and the caller's groups; the owner by `get#AlertState` |
+
+The policy values, and why a hand-made request does not get past them:
+
+| Value | Where it is enforced | Why it holds |
+|---|---|---|
+| `features.alert` | `ReportAlerts.requireSet`, first in every transition that sets a rule: `storeAlert`, `storeAudience`, `pauseAlert` and `pauseAlerts`, `testAlert`, `copyAlert`, `deleteAlert`, Tools' own (`evaluate`, the contact point, silence, mute timing and shared item transitions, `deleteShared`) and AlertShared's save, copy and delete | the transitions read the policy the root set in `always-actions` (the area's `policyWith` keeps the root's fields), never a parameter; a posted `reportPolicy` is overwritten before the transition runs. The engine alone would not hold it: Insights' dataset steward is granted `save#Definition` for datasets and panels and is no alert author, and the engine cannot tell. Under Insights these transitions are the only way to save an alert rule: the two editors take only dashboards, reports and panels (`reportDefinitionTypes`), the other Insights services that save write digests, shares, panels and flow maps, no REST resource or agent tool names the operation, and its users open no Tools route (held in `InsightsAlerts`: the steward's post refused and nothing saved, the author's same post saved; seen to fail with the steward let past) |
+| `alertAudience` (topic, template, link) | `fixedParts`, on every save under such a mount (`store`, `storeAudience`, `pause`, `copy`): the topic, the template where email is a channel and the link are written from the policy, and the rule's contact points dropped | no transition takes a topic, a template, a link, a query or a contact point from the request under such a mount: a new rule's query is the saved query of a panel the caller reads, a change keeps the rule's own, and a posted `topic`, `detailLink` or `queryJson` is no parameter that is read (held in `InsightsAlerts`). The engine checks that the topic and template exist and that the link is a plain server path, and refuses a contact point on a business rule |
+| `recipientPermissionId` | `storeAudience` asks `find#ReportRecipients` with it for the people and groups named and for the group the rule is shared with, and refuses the save when one is refused; `recipientChoices` proposes with it | as for a schedule (I2): the transition reads the policy, it is the only way to an audience under Insights, and the engine then checks each recipient's scope for an active rule and again before each notification |
+| `recipientCap` | `fixedParts` writes it into the audience at every save; `save#Definition` refuses a larger audience of an active rule (`RECIPIENT_CAP`) under the instance ceiling, and each notification checks the stored cap | the Alerts area sets it from `get#DeliveryPolicy` through `policyWith` in `always-actions`, for every transition under it; a posted `recipientCap` or `reportPolicy` is ignored (held in `InsightsAlerts`: an audience past the organization's cap refused whatever is posted, and the stored cap; seen to fail with the area's addition removed) |
+
+Findings:
+
+- F77. `alertRule` had two meanings: where a rule opens, and whether a panel offers New alert rule (Insights gave it
+  only to one who may set a rule). The merged list links a rule for every reader (Received), so the link is the screen
+  and the feature is the offer: Insights names AlertDetail for everyone, and Dashboard sends `appLinks.alertRule` only
+  where `features.alert` is true. The test mount now names an alert rule screen with the feature off, so
+  `ReportMounts`' existing dashboard render holds the rule (`links.alertRule` set, `appLinks.alertRule` null).
+- F78. What decides the editor's form is the mount's `alertAudience`, not the rule: a mount that names it tells every
+  rule to an audience, so a rule there watches a panel's saved query (Insights' rule: never a typed query), every
+  save makes it a business rule, and only business rules are listed or opened there. With no `alertAudience` the query
+  is typed or built as Tools' was, and the engine's answer for the saved rule (`business`) decides whether the page
+  shows contact points or the audience. "Only business rules" replaces Insights' own test (Tools' component, or a
+  dataset named `otel_`): Admin's failing job runs rule, shipped by mr-boss over the spans, is left out as before.
+- F79. `features.alert` is the one policy value that stands for a permission the engine cannot check: with it false
+  and the engine's save granted (the steward), only the transition refuses. Every other value narrows what a caller
+  who may already set a rule can put in it, and the engine checks the result.
+- F80. No operation was missing. `ownerName` is answered to anyone who reads the rule, with or without its state: the
+  rule's definition already answers them the owner's id. A shipped rule has none.
+- F81. The group a rule is shared with is accepted through `find#ReportRecipients` too (the caller's own groups, F50,
+  F65), so it needs the group delivery grant: Insights' form offered it only to a distributor, and its service took
+  an author's own group by hand. An author's audience save shares with no group, as the form did.
+- F82. Tools' save of a rule dropped its share group (the old transition sent none, and the engine stores what it is
+  given); the basis save keeps it now. Tools gains Pause and Activate as actions, beside the form's Evaluation field
+  where the query is typed; an activation by the action runs the reading first, in Tools too.
+- F83. With no mount the list opens on All, so Tools shows what it showed (every rule read, the shipped ones among
+  them), and the series' states are a box under the list from the same `get#AlertState` answers, one call a rule
+  listed. Templates' Copy is the engine's `copy#Definition` there; under a mount of audiences it is a read and a
+  save, since the copy takes the mount's fixed parts and Insights' distributor holds the save, not the copy.
+- F84. With no mount an audience's email channel is offered only when the rule already names a template: the engine
+  has no default alert template, and the audience form takes no template id.
+- F85. The recipient cap is the policy's at every save. `Alerts.js` kept the lower of the stored and the current cap
+  on a save that did not change the audience; the two are equal whenever the area supplies the cap.
+- F86. A single rule's refused pause or activation is the transition's error (F67); of several, each refusal is a
+  message and the others go on, as the schedules' bulk pause.
+- F87. The `INSIGHTS_ALERT_REQUIRED`, `ALERT_UNAVAILABLE` and other reason codes of the deleted services are gone
+  with them; nothing compared one but the specs. A member of Insights' root group alone is told "No alert has told
+  you anything yet." where the list said alerts are shown to Insights readers.
+- F88. The screen lint reads a name that ends in Set as a collection (F26's rule for Rows): the list's flag is
+  `settable`. A link whose `url` is an expression takes its id from that text, so these links have ids of their own.
+- F89. Under a spec's Insights root a transition's answer by the mount's links (`//Insights/...`) does not resolve
+  (F4), so `InsightsAlerts` posts under the server's root, where a copy opens AlertDetail and a delete the list. What
+  the screens show a user is checked with no render: the module called with the links and policy Insights' context
+  answers that user.
+- F90. `AdminOverview`'s two source-reading features follow the module: the evaluation words are
+  `evaluationMessages`, and AlertRule's number fields `basisValues`; AlertShared keeps its script in the screen, so
+  its two fields are read as before.
+- F91. `rustfmt` on the two host test files reformatted lines that are not this phase's (six places); they are put
+  back.
+- F92. No recorded agent replay names a screen, a transition or a service of this phase (not replayed).
+- F93. For I4: `features.share` and `shareGroups` are still read by no screen; Dashboard's sharing should hold the
+  feature in its transition as `requireSet` does, since Insights' author check is `share#Dashboard`'s today. The
+  engine's notification of a rule with no `detailLink` opens the list with `definitionId`, which the list does not
+  read (it never did): a link to AlertRule would open the rule. `ReportDelivery.js` and `ReportAlerts.js` each have their own
+  words for a recipient who is not accepted; `ReportDatasets.js` still has its own engine call.
+
+Tests: `cargo lint`, `./moq build`, then `./moq test tools --nobuild` (72 features, 3.4 s of 4 s in each of three
+runs; the one Alerts render, `AdminOverview`'s, takes 0.05 s with the kinds and states read through the engine, and
+no render is added; `ReportMounts`' three features hold the policy without `datasetScopeParameter` and the alert rule
+link beside the feature); `./moq test framework --nobuild --spec BusinessAlerts --spec ReportAudience --spec
+BusinessDatasets` (24 features, 2.3 to 2.5 s; `ownerName` is in BusinessAlerts' existing feature of the state: for a
+recipient, for a reader who gets no state, and none for a shipped rule); `./moq test mr-boss --nobuild --spec
+InsightsAlerts --spec InsightsDelivery --spec InsightsDatasets --spec InsightsAccess --spec InsightsHome --spec
+InsightsCatalog --spec InsightsSettings --spec InsightsDashboards` (39 features, 11.5 s; InsightsAlerts posts the
+screens' transitions through Insights' route: an author's rule over a panel saved, the same post refused to a reader
+and to the steward, a measure that is not the query's refused, a distributor's audience accepted and then refused for
+the Services reader, a group that is not theirs, a person who is no Insights reader and an audience past the
+organization's cap, the topic, link and cap of a save whatever is posted, nine Tools transitions not on the route for
+the distributor and for ADMIN and a rule with a typed query and a contact point taken on Tools' own; its one render is
+AlertDetail's, which shows none of Tools' parts; each of the feature, the cap and the recipients' acceptance was seen
+to fail with its enforcement removed); `cargo test -p moqui-report alert` (14); `cargo test -p moqui-host --test it
+tools_screens -- --ignored` (the three screens in html with no mount over a seeded operational rule with a series'
+state, a rule over the business dataset and a shared contact point; the templates; a new rule, and one made there
+with a typed query and a contact point; 27 to 32 s) and `cargo test -p moqui-host --test it -- monitor_tui::
+monitor_readers::` (the list and the editor in the terminal walk; 4 pass, 1 needs a server that is not there);
+`moqui lint --screens` with no parse failure and no flagged site in the changed screens (135 flagged sites in all,
+143 before the list's flag was renamed), `moqui lint` of the three changed service files. Changed and not run:
+mr-boss's acceptance `InsightsAlertsUsable` (a refusal read as the transition's error; the rule deleted through the
+route) and `InsightsReviewWalk` (the copy, the audience and the activation through the screens' transitions in place
+of the deleted services).

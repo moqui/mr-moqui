@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- AlertShared (docs/tools/Monitoring.md, "The Dashboards app"; plans/Admin-Screens-Down.md, Track I): a shared contact
+    point, silence or mute timing, which alert rules name by its ID: for rules that tell contact points, so Tools' own.
+    Its links to the alert list and to a rule that uses it go by the mount (template/ReportMount.js: alerts, alertRule),
+    and its save, copy and delete are refused under a mount whose policy does not let the viewer set an alert
+    (template/ReportAlerts.js requireSet); no app shows it yet (BOSS Insights' rules tell an audience, and its
+    alertShared link is null). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Shared alert item" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="sharedType"/>
-    <transition name="alerts"><default-response url="//apps/dashboards/Alerts"/></transition>
-    <transition name="rule"><default-response url="//apps/dashboards/AlertRule"/></transition>
+    <transition name="alerts"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alerts')}"/></transition>
+    <transition name="rule"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alertRule')}"/></transition>
     <transition name="save" method="post" authz-action="update">
         <actions><script><![CDATA[
+            ec.resource.script('component://tools/template/ReportAlerts.js').requireSet()
             if (!['contactPoint','silence','muteTiming'].includes(sharedType)) throw new Error('Unknown shared alert item type')
             const previous=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition:null
             if (previous && previous.type!==sharedType) throw new Error('This definition is not a shared alert item of that type')
@@ -34,11 +41,15 @@
         ]]></script></actions><default-response url="."><parameter name="definitionId"/><parameter name="sharedType"/></default-response>
     </transition>
     <transition name="delete" method="post" authz-action="delete">
-        <actions><service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/></actions>
-        <default-response url="//apps/dashboards/Alerts"/><error-response url="."/>
+        <actions>
+            <script>ec.resource.script('component://tools/template/ReportAlerts.js').requireSet()</script>
+            <service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/>
+        </actions>
+        <default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alerts')}"/><error-response url="."/>
     </transition>
     <transition name="copy" method="post" authz-action="create">
         <actions><script><![CDATA[
+            ec.resource.script('component://tools/template/ReportAlerts.js').requireSet()
             const saved=ec.service.sync().name('org.moqui.report.ReportServices.copy#Definition').parameters({definitionId,newDefinitionId:copyId,title:copyTitle || undefined}).call().definition
             definitionId=saved.id
         ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>

@@ -213,6 +213,8 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
         const outcome = userId => deliveries.find(delivery => delivery.userId === userId) || {}
         const equal = as("rda.equal", "get#AlertState", {definitionId: "rba-rule"})
         const other = as("rda.other", "get#AlertState", {definitionId: "rba-rule"})
+        // a shipped rule (Tools' memory rule): a template, with no owner and no state
+        const shipped = call(R + "get#AlertState", {definitionId: "system-memory-high"})
         const received = as("rda.equal", "find#AlertDeliveries", {received: true})
         const everyOwners = as("rda.equal", "find#AlertDeliveries", {administrative: true})
         const administrative = call(R + "find#AlertDeliveries", {administrative: true, definitionId: "rba-rule"})
@@ -233,6 +235,7 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
             equal: equal.out || {},
             north,
             otherState: other.out || {},
+            shipped,
             received: Array.from(received.out?.deliveries || [])
                 .map(delivery => delivery.userId + ":" + delivery.alertState)
                 .join(","),
@@ -254,6 +257,7 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
         equal,
         north,
         otherState,
+        shipped,
         received,
         everyOwners,
         administrative,
@@ -287,6 +291,11 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
         otherState.available == false
         otherState.reasonCode == "scope-differs"
         Array.from(otherState.instances).length == 0
+        // whose rule it is, by name, for anyone who reads the rule, whatever of its state they read; a shipped rule has
+        // no owner
+        equal.ownerName == "rda.next"
+        otherState.ownerName == "rda.next"
+        shipped.template == true && shipped.ownerName == null && Array.from(shipped.instances).length == 0
         received == "RDA_EQUAL:Firing"
         everyOwners.includes("ADMIN_TRANSFER_VIEW")
         // an administrator's list is counters by rule: no title, series, recipient or value

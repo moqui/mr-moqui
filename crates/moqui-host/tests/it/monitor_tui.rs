@@ -443,6 +443,24 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         run.contains("Schedule revision 1, report version 1") && run.contains("Your delivery") && run.contains("Sent"),
         "{run}"
     );
+    // The alert screens: the viewer's rule with its kind and whom it tells beside the shared contact point, and in the
+    // editor its reading, its state and the shared item it names.
+    let alerts = open(&link, "/apps/dashboards/Alerts").screen_text(220, 200);
+    assert!(
+        alerts.contains("TUI paused alert")
+            && alerts.contains("Operational")
+            && alerts.contains("1 contact point")
+            && alerts.contains("TUI shared contact"),
+        "{alerts}"
+    );
+    let rule = open(&link, "/apps/dashboards/AlertRule?definitionId=tui-alert").screen_text(220, 240);
+    assert!(
+        rule.contains("Reading and condition")
+            && rule.contains("Contact points")
+            && rule.contains("TUI shared contact")
+            && rule.contains("Paused"),
+        "{rule}"
+    );
     // The AI screen groups LLM calls by trace and names each by its agent frame.
     let ai = open(&link, "/apps/system/Monitor/AgentTraces?from=now-1h&thru=now").screen_text(220, 80);
     assert!(

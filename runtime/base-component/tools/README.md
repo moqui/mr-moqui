@@ -19,7 +19,11 @@ mount) read through `template/ReportDatasets.js`
 `ScheduledReportDetail`, `ReportDelivery`: the viewer's scheduled reports and the reports delivered to them, one
 schedule with its recipients and runs, one run with each recipient's outcome) read and write through
 `template/ReportDelivery.js` ([Report delivery](../../../docs/tools/Monitoring.md#report-delivery)); `Reports` keeps
-the previews, the composer, the playlists and the owner-mode schedule form.
+the previews, the composer, the playlists and the owner-mode schedule form. The alert screens (`Alerts`, `AlertRule`,
+`AlertShared`: the rules the viewer reads, receives and may copy; one rule with its reading and condition, then its
+contact points or its audience by its kind, its state and its deliveries; a shared contact point, silence or mute
+timing) read and write through `template/ReportAlerts.js`
+([Business alerts](../../../docs/tools/Monitoring.md#business-alerts)).
 
 ## Tools
 

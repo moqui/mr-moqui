@@ -830,7 +830,19 @@ function auditCsv(p) {
     }
 }
 
+// What the alert screens share with these (template/ReportAlerts.js): the engine call and its refusal, what a viewer's own
+// grant offers, a transition's refusal and its word, who may be proposed and named as a recipient under the mount's
+// policy (one place for a schedule's recipients and an alert rule's audience), and the words of a delivery.
 ;({
+    ask,
+    offered,
+    refuse,
+    done,
+    recipients,
+    namesOf,
+    groupOptions,
+    dateText,
+    deliveryStates,
     list,
     detail,
     delivery,

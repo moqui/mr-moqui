@@ -2,13 +2,13 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- The ReportMounts spec's app root (test only, never mounted): an app that mounts Tools' report screens under its own root, as BOSS
     Insights does (docs/tools/Monitoring.md, "Mounting the report screens"). Its reportLinks send the report links to its own
-    screens, leave out alert rules, share in the mount's own screen (so its editor keeps a definition's group), and fix the dashboard variable "region".
-    Its reportPolicy names a range, sharing (and not alerts), a recipient cap and a group to share with, and leaves the rest
-    to their defaults. -->
+    screens, share in the mount's own screen (so its editor keeps a definition's group), and fix the dashboard variable "region".
+    Its reportPolicy names a range, sharing (and not alerts: it names an alert rule screen, which a panel's New alert rule
+    then does not offer), a recipient cap and a group to share with, and leaves the rest to their defaults. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Report mount">
     <always-actions>
-        <set field="reportLinks" from="{dashboards:'../Board', dashboard:'../Board', definition:'../Editor', panel:'../Editor', explore:'../Board', alertRule:null, share:'../Board'}"/>
+        <set field="reportLinks" from="{dashboards:'../Board', dashboard:'../Board', definition:'../Editor', panel:'../Editor', explore:'../Board', alertRule:'../Board', share:'../Board'}"/>
         <set field="reportPolicy" from="{range:{from:'now-90d'}, features:{share:true}, recipientCap:25, shareGroups:[{value:'REPORT_MOUNTS_WALL', label:'Wall'}, {label:'no id'}]}"/>
         <set field="reportFixedVariables" from="{region:'EU'}"/>
     </always-actions>

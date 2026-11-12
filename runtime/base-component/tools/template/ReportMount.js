@@ -20,6 +20,7 @@
 
 // Tools' own screen for each link key. share has none (Tools shares in the definition editor's group field), nor has
 // drill (Tools has no drill screen yet); a key with no screen here is offered only under a mount that names one.
+// alertRule is where a rule opens for anyone who reads it; setting one there is the policy's features.alert.
 const toolsLinks = {
     dashboards: "//apps/dashboards/Home",
     dashboard: "//apps/dashboards/Dashboard",
@@ -40,20 +41,22 @@ const toolsLinks = {
 // The policy with no mount: what Tools' own screens do. Under a mount a field the app leaves out has the same default,
 // but for the features, which a mount offers only when it says so (a mount that forgets the map offers neither).
 //
-//     features.alert         whether the viewer may set an alert rule here (new, copy, change)
+//     features.alert         whether the viewer may set an alert rule here (new, copy, change, pause, delete): the alert
+//                            screens' transitions refuse without it (ReportAlerts.js), and a panel's New alert rule is
+//                            not offered
 //     features.share         whether the viewer may share a dashboard of their own here
 //     range                  {from, thru}: the range a screen opens on when the request names none
 //     datasetIdPrefix        what the id of a dataset created here starts with
-//     datasetScopeParameter  the rowFilterParameters entry a dataset form's scope field is sent in under a scope policy
-//                            whose registration names none (a policy's own scopeParameter comes first); null asks for
-//                            none under such a policy
-//     datasetScopeLabel      the dataset forms' label of the scope field (the field that carries a row's scope)
+//     datasetScopeLabel      the dataset forms' label of the scope field (the field that carries a row's scope; the
+//                            rowFilterParameters entry it is sent in is the scope policy's own, from its registration)
 //     datasetScopeHelp       its help
 //     recipientPermissionId  the permission a person holds to be proposed and accepted as a recipient of a report or an
 //                            alert (find#ReportRecipients); null proposes by the engine's own rule
 //     reportEmailTemplateId  the EmailTemplate a report schedule saved here is delivered with; null is the engine's
 //     alertAudience          {topic, emailTemplateId, detailLink}: the fixed parts of an alert rule told to an audience
-//                            of users and groups; null is an alert rule with contact points, as Tools' are
+//                            of users and groups. A mount that names it tells every rule set there to an audience, with
+//                            these written at each save and no contact point; null leaves a rule's kind to the engine
+//                            (contact points for an operational rule, as Tools' are)
 //     shareGroups            [{value, label}]: groups a definition may be shared with beside the viewer's own
 //     recipientCap           the most recipients a group delivery is saved and checked with; null is the engine's. Set
 //                            by the area that delivers (policyWith), not by the root
@@ -63,7 +66,6 @@ const toolsPolicy = () => ({
     features: {alert: true, share: true},
     range: {from: "now-7d", thru: "now"},
     datasetIdPrefix: "",
-    datasetScopeParameter: null,
     datasetScopeLabel: "Scope field",
     datasetScopeHelp: "The field that carries each row's scope; the policy's own when left empty",
     recipientPermissionId: null,
@@ -99,7 +101,6 @@ function policyOf(given, mounted) {
     policy.range = {from: text(range.from) || policy.range.from, thru: text(range.thru) || policy.range.thru}
     for (const name of [
         "datasetIdPrefix",
-        "datasetScopeParameter",
         "datasetScopeLabel",
         "datasetScopeHelp",
         "recipientPermissionId",

@@ -160,10 +160,13 @@
         dashboardDefinition.screenUrl = sri.buildUrl('.').path
         // The report screens where the app mounts them (its reportLinks), as server paths: the editor, the library panel editor,
         // Explore, alert rules and the Dashboard screen whose transitions duplicate and remove a panel. Without a map they are
-        // Tools' Dashboards screens; a link the map leaves out or sets to null is not offered.
+        // Tools' Dashboards screens; a link the map leaves out or sets to null is not offered. The alert rule screen is where
+        // a panel's New alert rule goes, so it is offered only where the mount's policy lets the viewer set a rule
+        // (features.alert; the screen itself opens to anyone who reads a rule).
         dashboardDefinition.appLinks = {}
         for (const key of ['definition','panel','explore','alertRule','dashboard'])
-            dashboardDefinition.appLinks[key] = mount.links[key] ? sri.buildUrl(mount.links[key]).path : null
+            dashboardDefinition.appLinks[key] = mount.links[key] && (key !== 'alertRule' || mount.policy.features.alert)
+                ? sri.buildUrl(mount.links[key]).path : null
         // a mount's drill screen (Tools mounts none): the panel menu's Drill, in the browser and the terminal
         if (mount.links.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mount.links.drill).path
         dashboardDefinition.panelId = panelId || null

@@ -452,10 +452,12 @@
             evaluated, the last value). A business rule's state is its owner's reading: instances are answered to its owner,
             and to a recipient of its audience whose scope fingerprint equals the owner's now; anyone else gets available
             false with a reason code (not-recipient, scope-differs, not-shared, ...) and no instance. A shipped rule is a
-            template and has no state.</description>
+            template and has no state. ownerName is the owner's name, for anyone who reads the rule (none for a shipped
+            rule, or when the owner's account is gone).</description>
         <in-parameters><parameter name="definitionId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="definitionId"/><parameter name="title"/><parameter name="own" type="Boolean"/>
+            <parameter name="ownerName"/>
             <parameter name="business" type="Boolean"/><parameter name="template" type="Boolean"/>
             <parameter name="paused" type="Boolean"/><parameter name="pausedReason"/><parameter name="deliveryMode"/>
             <parameter name="available" type="Boolean"/><parameter name="reasonCode"/><parameter name="reason"/>
