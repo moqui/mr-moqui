@@ -332,7 +332,7 @@ pub(super) fn http_server(factory: &Arc<ExecutionContextFactory>) -> String {
 
 /// Serve `git://` on a free port: the first pkt-line names the service and repository (and `version=2` in its extra
 /// parameters), then the conversation is stateful, as over SSH, as `username`.
-fn daemon(factory: &Arc<ExecutionContextFactory>, username: &str) -> String {
+pub(super) fn daemon(factory: &Arc<ExecutionContextFactory>, username: &str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let factory = Arc::clone(factory);

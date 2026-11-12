@@ -935,6 +935,113 @@ impl GitProvider {
         Ok((fetched, failed))
     }
 
+    /// Push a repository's refs to its push mirror over SSH: the `SystemMessageRemote` its `pushMirrorRemoteId` names
+    /// (`sendUrl` the SSH URL, `username` when the URL has none, `privateKey` and `publicKey` or `password`,
+    /// `sshHostKeyFingerprint` to pin the host key), the refs its `pushMirrorRefs` maps (every branch and tag when
+    /// empty), each forced to the local one; nothing is deleted. Records `lastPushMirrorDate` and
+    /// `lastPushMirrorError` on its row. What was done, or `None` when the repository has no push mirror.
+    pub fn push_mirror(&self, repository_id: &str) -> Result<Option<String>, Error> {
+        let row = {
+            let _rows = rows_guard();
+            self.entity()?
+                .find(GIT_REPOSITORY)?
+                .eq("repositoryId", Value::string(repository_id))
+                .one()?
+                .ok_or_else(|| Error::new(format!("git repository {repository_id} is not defined")))?
+        };
+        let Some(remote_id) = text(row.get("pushMirrorRemoteId")) else {
+            return Ok(None);
+        };
+        let outcome = self.push_mirror_to(repository_id, &remote_id, &text(row.get("pushMirrorRefs")).unwrap_or_default());
+        let error = outcome.as_ref().err().map(Error::message);
+        let _rows = rows_guard();
+        let recorded = self.entity().and_then(|entity| {
+            entity
+                .find(GIT_REPOSITORY)?
+                .eq("repositoryId", Value::string(repository_id))
+                .update_all([
+                    ("lastPushMirrorDate".to_string(), moqui_core::user::now_effective_value()),
+                    (
+                        "lastPushMirrorError".to_string(),
+                        error.map_or(Value::Null, Value::string),
+                    ),
+                ])
+                .map_err(Error::from)
+        });
+        if let Err(err) = recorded {
+            tracing::error!(repository = repository_id, "cannot record the push mirror outcome: {err}");
+        }
+        outcome.map(Some)
+    }
+
+    fn push_mirror_to(&self, repository_id: &str, remote_id: &str, ref_maps: &str) -> Result<String, Error> {
+        let maps = server::push::parse_ref_maps(ref_maps)?;
+        let remote = {
+            let _rows = rows_guard();
+            self.entity()?
+                .find("moqui.service.message.SystemMessageRemote")?
+                .eq("systemMessageRemoteId", Value::string(remote_id))
+                .one()?
+                .ok_or_else(|| Error::new(format!("no SystemMessageRemote with id {remote_id}")))?
+        };
+        let field = |name: &str| text(remote.get(name)).unwrap_or_default();
+        let url = server::push::parse_ssh_url(&field("sendUrl"))?;
+        let username = url
+            .user
+            .clone()
+            .or_else(|| text(remote.get("username")))
+            .unwrap_or_else(|| "git".into());
+        let mut client = moqui_core::sftp::SftpClient::new(&url.host, &username, None)?;
+        if field("privateKey").is_empty() {
+            client.password(&field("password"));
+        } else {
+            client.public_key_pkcs8(&field("privateKey"), Some(&field("publicKey")));
+        }
+        client.host_key_fingerprint(&field("sshHostKeyFingerprint"));
+        let repo = self.repo(repository_id)?;
+        let local = repo.store.list_refs("refs/")?;
+        let refs = server::push::mapped(&maps, &local);
+        if refs.is_empty() {
+            return Err(Error::new(format!(
+                "git repository {repository_id} has no refs that pushMirrorRefs ({ref_maps}) maps"
+            )));
+        }
+        let shown = format!("{}:{}", url.host, url.path);
+        let mut exec = client.exec(&server::push::receive_pack_command(&url.path))?;
+        let io = server::push::ExecIo(std::cell::RefCell::new(exec.as_mut()));
+        let mut output = std::io::BufWriter::with_capacity(64 * 1024, &io);
+        let pushed = server::push::push(repo.store.as_ref(), &refs, &mut &io, &mut output);
+        drop(output);
+        let pushed = pushed.map_err(|err| {
+            let stderr = io.0.borrow().stderr();
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                Error::new(format!("push to {shown}: {}", err.message()))
+            } else {
+                Error::new(format!("push to {shown}: {} ({stderr})", err.message()))
+            }
+        })?;
+        if !pushed.refused.is_empty() {
+            return Err(Error::new(format!(
+                "push to {shown} refused {}",
+                pushed
+                    .refused
+                    .iter()
+                    .map(|(name, reason)| format!("{name} ({reason})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let done = format!(
+            "pushed {} refs ({} objects) to {shown}; {} already current",
+            pushed.pushed.len(),
+            pushed.objects,
+            pushed.current
+        );
+        tracing::info!(repository = repository_id, "{done}");
+        Ok(done)
+    }
+
     /// Make a repository ready: create the bare repository of a `local` kind, fetch a `remote` one. A `db` repository
     /// needs nothing. What was done, for the message.
     pub fn init(&self, repository_id: &str) -> Result<String, Error> {

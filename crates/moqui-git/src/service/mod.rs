@@ -45,6 +45,7 @@ mod wiki_tests;
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, fetch_repository)?;
     rust_service!(map, fetch_all_repositories)?;
+    rust_service!(map, push_mirror)?;
     rust_service!(map, init_repository)?;
     rust_service!(map, export_repository)?;
     rust_service!(map, import_repository)?;
@@ -116,6 +117,23 @@ fn fetch_repository(
     };
     match provider.fetch(&id) {
         Ok(head) => Ok(out([("headCommitId", head.map_or(Value::Null, Value::string))])),
+        Err(err) => {
+            add_error(err.message());
+            Ok(BTreeMap::new())
+        }
+    }
+}
+
+/// `push#GitMirror`: push a repository to its push mirror. Out: `pushResult`, empty when it has none.
+fn push_mirror(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some((provider, id)) = provider_and_id(parameters, true) else {
+        return Ok(BTreeMap::new());
+    };
+    match provider.push_mirror(&id) {
+        Ok(done) => Ok(out([("pushResult", done.map_or(Value::Null, Value::string))])),
         Err(err) => {
             add_error(err.message());
             Ok(BTreeMap::new())
