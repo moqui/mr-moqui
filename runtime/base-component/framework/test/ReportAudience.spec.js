@@ -4,8 +4,10 @@
 // differs, each run checks every recipient again and skips one who changed (scope-differs), each recipient gets a message of
 // their own, one render serves a locale, the cap holds, a retry sends the failed recipient alone, and a disabled owner's
 // schedule pauses until a qualified owner takes it and passes the same check. A recipient reads their own report again, never
-// another's. The dataset, its scope groups (RDR_A, RDR_B by the ReportUserGroups policy) and the reading grants are
-// ReportDrill's. Run: ./moq test framework --spec ReportAudience
+// another's. What the delivery screens read and write beside the engine's own (ReportReads.js, ReportWrites.js): recipients
+// are proposed and accepted by the engine's rule or among a permission's holders, whatever a caller passes, and a screen
+// schedule is read and changed by its own user alone. The dataset, its scope groups (RDR_A, RDR_B by the ReportUserGroups
+// policy) and the reading grants are ReportDrill's. Run: ./moq test framework --spec ReportAudience
 const R = "org.moqui.report.ReportServices."
 const capture = ec.factory.getTool("MailCapture")
 // [userId, username, locale, scope group, may deliver to a group]. The ReportUserGroups policy scopes rows by the viewer's own
@@ -123,7 +125,10 @@ feature("an owner, recipients in and out of the owner's scope, a team and a dash
                     "retry#ReportRecipients",
                     "reconcile#ReportRecipient",
                     "find#OwnedSchedules",
-                    "transfer#DefinitionOwner"
+                    "transfer#DefinitionOwner",
+                    "find#ReportRecipients",
+                    "find#ScreenSchedules",
+                    "store#ScreenSchedule"
                 ].map(name => R + name)
             )
             grant("RDA_GROUP", ["org.moqui.report.delivery.group"])
@@ -308,6 +313,7 @@ feature(
                 attachments: Array.from(messages[0]?.attachmentNames || []).join(","),
                 occurrence,
                 other: deliveryOf(detail.out || {}, "RDA_OTHER"),
+                ownerName: detail.out?.occurrence?.ownerName,
                 detailKeys: Object.keys(detail.out?.occurrence || {})
                     .concat(Object.keys(deliveryOf(detail.out || {}, "RDA_EQUAL")))
                     .join(","),
@@ -332,6 +338,7 @@ feature(
             attachments,
             occurrence,
             other,
+            ownerName,
             detailKeys,
             received,
             equalDelivery,
@@ -358,6 +365,9 @@ feature(
             occurrence.deliveryMode == "group"
             other.statusId == "RptDlvSkipped"
             other.reasonCode == "scope-differs"
+            // whose run it was, by name, for its owner; a recipient is told neither the id nor the name
+            ownerName == "rda.owner"
+            recipientView.occurrence.ownerUserId == undefined && recipientView.occurrence.ownerName == undefined
             // evidence only: no frame, file or message body
             !/frame|content|html|file|body|scopeHash/i.test(detailKeys)
             received == equalDelivery
@@ -651,3 +661,179 @@ feature("a schedule over a business dataset made by create#Schedule is held to t
         occurrence.deliveryMode == ""
     }
 })
+
+feature(
+    "recipients are proposed and accepted by the engine's rule or among a permission's holders, and a screen schedule is its user's alone",
+    {
+        when() {
+            sys(() => {
+                const from = new Date(Date.now() - 60000)
+                // a permission the team holds (the disabled first owner among them), and an account that holds it and is
+                // not internal
+                make("moqui.security.UserPermission", {userPermissionId: "RDA_RECEIVE", description: "Report audience spec"})
+                make("moqui.security.UserGroup", {userGroupId: "RDA_EXTERNAL", description: "Report audience spec, external"})
+                for (const [userGroupId, userPermissionId] of [
+                    ["RDA_TEAM", "RDA_RECEIVE"],
+                    ["RDA_EXTERNAL", "RDA_RECEIVE"],
+                    ["RDA_EXTERNAL", "EXTERNAL_USER"]
+                ])
+                    make("moqui.security.UserGroupPermission", {userGroupId, userPermissionId, fromDate: from})
+                make("moqui.security.UserAccount", {
+                    userId: "RDA_GUEST",
+                    username: "rda.guest",
+                    userFullName: "rda.guest",
+                    emailAddress: address("rda.guest"),
+                    disabled: "N"
+                })
+                make("moqui.security.UserGroupMember", {userGroupId: "RDA_EXTERNAL", userId: "RDA_GUEST", fromDate: from})
+                // a screen schedule of the equal recipient's own, naming a group, and one of another user's
+                for (const [screenScheduledId, userId] of [
+                    ["RDA_SCREEN", "RDA_EQUAL"],
+                    ["RDA_SCREEN_OTHER", "RDA_OTHER"]
+                ])
+                    make("moqui.screen.ScreenScheduled", {
+                        screenScheduledId,
+                        screenPath: "/apps/rda/SpecList",
+                        userId,
+                        userGroupId: "RDA_TEAM",
+                        cronExpression: "0 0 6 ? * MON",
+                        renderMode: "csv",
+                        emailSubject: "Weekly list",
+                        paused: "Y"
+                    })
+            })
+            const named = ["RDA_EQUAL", "RDA_OTHER", "RDA_OWNER", "RDA_GUEST", "RDA_NOBODY"]
+            const idsOf = list =>
+                Array.from(list || [])
+                    .map(row => row.userId || row.userGroupId || row)
+                    .sort()
+                    .join(",")
+            const recipients = (username, parameters) => as(username, "find#ReportRecipients", parameters)
+            // the engine's rule: active internal accounts, found by name ignoring case, with the caller's own groups
+            const any = recipients("rda.next", {term: "RDA.", userIds: named, groupIds: ["RDA_TEAM", "ADMIN"]})
+            // an app's readers: only the holders of the permission named, whatever user is named
+            const holders = recipients("rda.next", {permissionId: "RDA_RECEIVE", term: "rda.", userIds: named})
+            const unheld = recipients("rda.next", {permissionId: "RDA_NOT_HELD", userIds: ["RDA_EQUAL", "RDA_NEXT"]})
+            // a caller who schedules but may not deliver to others, and one who is not granted the read
+            const noGrant = recipients("rda.other", {
+                term: "rda.",
+                userIds: ["RDA_EQUAL", "RDA_OTHER"],
+                groupIds: ["RDA_SENDERS"]
+            })
+            const noRead = recipients("rdr.reader", {term: "rda."})
+            // the cap holds for whoever is accepted: a team of four checked with a cap of two
+            const overCap = as("rda.next", "store#Schedule", schedule({recipientGroupIds: ["RDA_TEAM"], recipientCap: 2}))
+            const row = id => one("moqui.screen.ScreenScheduled", {screenScheduledId: id})
+            const reportScheduleId = String(one("moqui.screen.ScreenScheduled", {reportOwnerId: "RDA_NEXT"}).screenScheduledId)
+            const mine = as("rda.equal", "find#ScreenSchedules", {})
+            const others = as("rda.equal", "find#ScreenSchedules", {screenScheduledId: "RDA_SCREEN_OTHER"})
+            const change = {cronExpression: "0 0 7 ? * *", renderMode: "xlsx", paused: false, clearFields: ["emailSubject"]}
+            const store = (username, screenScheduledId, values) =>
+                as(username, "store#ScreenSchedule", Object.assign({screenScheduledId}, values || change)).error || ""
+            const refused = {
+                anothers: store("rda.equal", "RDA_SCREEN_OTHER"),
+                report: store("rda.next", reportScheduleId),
+                missing: store("rda.equal", "RDA_NOT_THERE"),
+                cron: store("rda.equal", "RDA_SCREEN", {cronExpression: "every monday"}),
+                format: store("rda.equal", "RDA_SCREEN", {renderMode: "exe"}),
+                subject: store("rda.equal", "RDA_SCREEN", {emailSubject: "List ${ec.user.userId}"}),
+                noChange: store("rdr.reader", "RDA_SCREEN")
+            }
+            const before = row("RDA_SCREEN")
+            const untouched = [before.cronExpression, before.renderMode, before.paused, before.emailSubject].join("|")
+            const stored = store("rda.equal", "RDA_SCREEN")
+            const after = row("RDA_SCREEN")
+            return {
+                any: any.out || {},
+                anyError: any.error || "",
+                anyUsers: idsOf(any.out?.users),
+                anySelected: idsOf(any.out?.selectedUsers),
+                anyGroups: idsOf(any.out?.groups),
+                holders: holders.out || {},
+                holderUsers: idsOf(holders.out?.users),
+                holderSelected: idsOf(holders.out?.selectedUsers),
+                unheld: unheld.out || {},
+                noGrant: noGrant.out || {},
+                noGrantSelected: idsOf(noGrant.out?.selectedUsers),
+                noRead: noRead.error || "",
+                overCap: overCap.error || "",
+                mine: Array.from(mine.out?.schedules || []),
+                others: Array.from(others.out?.schedules || []).length,
+                refused,
+                untouched,
+                stored,
+                after: [after.cronExpression, after.renderMode, after.paused, after.emailSubject || ""].join("|"),
+                kept: [after.screenPath, after.userId, after.userGroupId].join("|"),
+                otherRow: String(row("RDA_SCREEN_OTHER").cronExpression)
+            }
+        },
+        then({
+            any,
+            anyError,
+            anyUsers,
+            anySelected,
+            anyGroups,
+            holders,
+            holderUsers,
+            holderSelected,
+            unheld,
+            noGrant,
+            noGrantSelected,
+            noRead,
+            overCap,
+            mine,
+            others,
+            refused,
+            untouched,
+            stored,
+            after,
+            kept,
+            otherRow
+        }) {
+            anyError == ""
+            any.canDeliver == true
+            // the disabled owner and the external account are neither proposed nor accepted, nor an id that names nobody
+            anyUsers == "RDA_EQUAL,RDA_FRENCH,RDA_NEXT,RDA_OTHER"
+            anySelected == "RDA_EQUAL,RDA_OTHER"
+            Array.from(any.refusedUserIds).sort().join(",") == "RDA_GUEST,RDA_NOBODY,RDA_OWNER"
+            // an account is a name: no address, group or grant of anyone's
+            Object.keys(any.users[0]).sort().join(",") == "name,userId,username"
+            // the caller's own groups, and a group that is not theirs refused
+            anyGroups == "RDA_GROUP,RDA_SENDERS,RDA_TEAM,RDR_A,RDR_READER"
+            Array.from(any.refusedGroupIds).join(",") == "ADMIN"
+            // under a permission only its holders: the other scope's user is active and internal, and holds none
+            holderUsers == "RDA_EQUAL,RDA_FRENCH,RDA_NEXT"
+            holderSelected == "RDA_EQUAL"
+            Array.from(holders.refusedUserIds).sort().join(",") == "RDA_GUEST,RDA_NOBODY,RDA_OTHER,RDA_OWNER"
+            // a permission nobody holds accepts the caller alone
+            Array.from(unheld.users).length == 0
+            Array.from(unheld.refusedUserIds).join(",") == "RDA_EQUAL"
+            // without the group delivery grant: no account and no group, everyone else refused, oneself accepted
+            noGrant.canDeliver == false
+            Array.from(noGrant.users).length == 0 && Array.from(noGrant.groups).length == 0
+            noGrantSelected == "RDA_OTHER"
+            Array.from(noGrant.refusedUserIds).join(",") == "RDA_EQUAL"
+            Array.from(noGrant.refusedGroupIds).join(",") == "RDA_SENDERS"
+            noRead.includes("not authorized")
+            overCap.includes("RECIPIENT_CAP")
+            // the caller's own screen schedule, with why its group is not sent to; never another user's
+            mine.length == 1
+            mine[0].screenScheduledId == "RDA_SCREEN"
+            mine[0].paused == true && mine[0].userGroupId == "RDA_TEAM" && mine[0].groupAdmitted == false
+            others == 0
+            refused.anothers.includes("SCHEDULE_UNAVAILABLE")
+            refused.report.includes("SCHEDULE_UNAVAILABLE")
+            refused.missing.includes("SCHEDULE_UNAVAILABLE")
+            refused.cron.includes("VALUE_INVALID")
+            refused.format.includes("VALUE_INVALID")
+            refused.subject.includes("VALUE_INVALID")
+            refused.noChange.includes("not authorized")
+            untouched == "0 0 6 ? * MON|csv|Y|Weekly list"
+            // the same change by its own user: the timing, format, subject and pause, and nothing else of the row
+            stored == ""
+            after == "0 0 7 ? * *|xlsx|N|"
+            kept == "/apps/rda/SpecList|RDA_EQUAL|RDA_TEAM"
+            otherRow == "0 0 6 ? * MON"
+        }
+    }
+)

@@ -302,9 +302,9 @@
     </service>
     <service verb="get" noun="ReportOccurrence" type="rust" location="moqui_core::report_delivery::get_occurrence">
         <description>One occurrence: for its schedule's owner, or a holder of ADMIN_TRANSFER_VIEW, what ran (schedule and
-            revision, definition and version, counters) and each recipient's outcome (identity, state, safe reason, attempt
-            time, whether it may be retried); for a recipient who is neither, their own delivery only. No frame, file or
-            query diagnostic of anyone's.</description>
+            revision, definition and version, counters, and its owner by id and by name, ownerUserId and ownerName) and each
+            recipient's outcome (identity, state, safe reason, attempt time, whether it may be retried); for a recipient who
+            is neither, their own delivery only. No frame, file or query diagnostic of anyone's.</description>
         <in-parameters><parameter name="occurrenceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="occurrence" type="Map"/><parameter name="deliveries" type="List"/>
@@ -342,6 +342,64 @@
             <parameter name="deliveryId" required="true"/><parameter name="outcome" required="true"/><parameter name="reason" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <!-- What the delivery screens read and write beside the engine's own operations (ReportReads.js, ReportWrites.js;
+        plans/Admin-Screens-Down.md, Track I), so that a screen an app shows under its own root reads and writes no entity
+        itself. Each checks what its caller may read or change. -->
+    <service verb="find" noun="ReportRecipients" allow-remote="false">
+        <description>Who may be proposed and accepted as a recipient of a report schedule or an alert rule, for a caller who
+            may deliver to others (canDeliver: the artifact org.moqui.report.delivery.group, create, by the caller's own
+            grant, as check#ReportAudience and store#Schedule ask it): a page of the active internal accounts (users:
+            userId, username, name; found by term in the full name or the username, ignoring case; pageSize, 20 by
+            default, at most 100), the caller's own groups (groups: userGroupId, description; never ALL_USERS: a delivery
+            goes to a group its owner belongs to), and of the users and groups named (userIds, groupIds) which may be
+            recipients (selectedUsers, with their names) and which may not (refusedUserIds, refusedGroupIds). With
+            permissionId only the holders of that permission (members in date of a group that holds it in date) are
+            proposed and accepted: an app that keeps its reports to its own readers passes theirs. The caller is always
+            accepted. A caller who may not deliver to others is answered no account and no group, and every other user
+            and every group named is refused. Being accepted grants nothing: the engine checks each recipient's scope
+            when the schedule or the rule is saved and again before each message.</description>
+        <in-parameters>
+            <parameter name="permissionId"/><parameter name="term"/><parameter name="userIds" type="List"/>
+            <parameter name="groupIds" type="List"/><parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="canDeliver" type="Boolean"/>
+            <parameter name="users" type="List"/>
+            <parameter name="groups" type="List"/>
+            <parameter name="selectedUsers" type="List"/>
+            <parameter name="refusedUserIds" type="List"/>
+            <parameter name="refusedGroupIds" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findReportRecipients', context))</script></actions>
+    </service>
+    <service verb="find" noun="ScreenSchedules" allow-remote="false">
+        <description>The screen schedules the caller set up for themselves (a ScreenScheduled of a screen path with the
+            caller as its user and no report definition, as a saved find's scheduled delivery; a report schedule is
+            list#Schedules'), one of them with screenScheduledId (schedules: screenScheduledId, screenPath, formListFindId,
+            description, the saved find's; cronExpression, renderMode, noResultsAbort, paused, fromDate, thruDate,
+            emailSubject, userGroupId, and groupAdmitted: whether the group it names is sent to, which needs its screen
+            path registered as a ReportLegacyAdapter). Another user's schedule is not answered, whatever id is asked.</description>
+        <in-parameters><parameter name="screenScheduledId"/></in-parameters>
+        <out-parameters><parameter name="schedules" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportReads.js').execute('findScreenSchedules', context))</script></actions>
+    </service>
+    <service verb="store" noun="ScreenSchedule" allow-remote="false">
+        <description>Change a screen schedule the caller set up for themselves (find#ScreenSchedules): its timing
+            (cronExpression, a time pattern), format (renderMode: csv, xlsx, xsl-fo or html-print), skipping when empty
+            (noResultsAbort Y or N), active interval (fromDate, thruDate), subject (emailSubject: plain text of at most 255
+            characters; one that holds an expression is refused, since the subject is expanded when the schedule runs) and
+            pause (paused). Never its screen, saved find, user, group, template or location. A value not sent is kept, and
+            clearFields names which of emailSubject, fromDate and thruDate to empty. Another user's schedule, a report
+            schedule (store#Schedule's) and one that does not exist are refused alike (SCHEDULE_UNAVAILABLE); a value
+            that is not one of these is VALUE_INVALID.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId" required="true"/><parameter name="cronExpression"/><parameter name="renderMode"/>
+            <parameter name="noResultsAbort"/><parameter name="fromDate" type="Timestamp"/><parameter name="thruDate" type="Timestamp"/>
+            <parameter name="emailSubject"/><parameter name="paused" type="Boolean"/><parameter name="clearFields" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="screenScheduledId"/><parameter name="paused" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/report/ReportWrites.js').execute('storeScreenSchedule', context))</script></actions>
     </service>
     <service verb="find" noun="OwnedSchedules" type="rust" location="moqui_core::report_delivery::find_owned_schedules">
         <description>The report schedules userId owns, by name only (the owned-resource lookup of

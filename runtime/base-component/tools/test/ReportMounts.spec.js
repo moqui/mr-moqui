@@ -8,8 +8,10 @@
 // The mount's policy (reportPolicy) beside its links: template/ReportMount.js answers both, every link key and every policy
 // field with its default; a screen under the mount reads the policy the mount set (the dashboard's range), whatever a request
 // sends, and Tools' own screens read Tools', whatever a request sends; with no mount the links and the policy are Tools' own,
-// and a value that is not a map is a mount with nothing in it. And the rule that keeps it so, read from the screens' sources
-// at no render's cost: Tools' two roots null every name of the mount, and no screen reads the two maps but through the module.
+// and a value that is not a map is a mount with nothing in it. An area of the mounting app adds to its root's policy
+// through the module (policyWith: the recipient cap of the area that delivers), which with no mount makes none. And the rule
+// that keeps it so, read from the screens' sources at no render's cost: Tools' two roots null every name of the mount, and
+// no screen reads the two maps but through the module.
 // Run: ./moq test tools --spec ReportMounts
 const mount = "component://tools/test/screen/ReportMount.xml"
 const webroot = "component://webroot/screen/webroot.xml"
@@ -283,6 +285,13 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
         const empty = lib.state()
         const emptyUrl = lib.url("dashboard")
         ec.context.put("reportPolicy", null)
+        // an area's addition: nothing with no mount; under a mount the root's fields with the area's, which the area sets
+        const noArea = lib.policyWith({recipientCap: 5})
+        ec.context.put("reportPolicy", {range: {from: "now-90d"}, recipientCap: 25})
+        const area = lib.policyWith({recipientCap: 5})
+        ec.context.put("reportPolicy", area)
+        const under = lib.state().policy
+        ec.context.put("reportPolicy", null)
         const nulling = MOUNT_NAMES.map(name => name + "=null").join(";")
         const roots = ["/Dashboards.xml", "/System/Monitor.xml"].filter(
             file =>
@@ -297,9 +306,9 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
                     String(ec.resource.getLocationText(location) || "")
                 )
             )
-        return {own, empty, emptyUrl, roots, readers}
+        return {own, empty, emptyUrl, noArea, area, under, roots, readers}
     },
-    then({own, empty, emptyUrl, roots, readers}) {
+    then({own, empty, emptyUrl, noArea, area, under, roots, readers}) {
         own.mounted == false
         own.links.definition == "//apps/dashboards/Definition"
         own.links.alerts == "//apps/dashboards/Alerts"
@@ -318,6 +327,9 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
         empty.policy.range.from == "now-7d"
         // a transition's answer still has somewhere to go: Tools' screen, which opens to its own users only
         emptyUrl == "//apps/dashboards/Dashboard"
+        noArea == null
+        JSON.stringify(area) == '{"range":{"from":"now-90d"},"recipientCap":5}'
+        under.recipientCap == 5 && under.range.from == "now-90d"
         roots.join(", ") == ""
         readers.join(", ") == ""
     }

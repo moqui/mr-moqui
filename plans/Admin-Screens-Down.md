@@ -60,7 +60,9 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
   described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens). `reportLinks` has the keys
   `alerts` and `alertShared` since I0; `wallDisplay` and a Tools default for `drill` come with their screens (I4).
 - `T/template/ReportMount.js`: `state()` gives `{mounted, links, policy}`, every key and field present, and
-  `url(key, own)` is a transition's response. It is the one reader of both maps.
+  `url(key, own)` is a transition's response. It is the one reader of both maps. `policyWith(fields)` is the root's
+  policy with an area's fields, which the area sets as `reportPolicy` in its own `always-actions` (I2: the recipient
+  cap); with no mount it is null.
 - `T/template/AdminMount.js`: `state()` gives `{mounted, raw, routes}`, `raw()` is a transition's condition. `raw` is
   true when there is no mount and the user opens System by its own grant. Every raw transition carries the condition.
 - Capabilities are `ec.user.hasPermission('ADMIN_*')` and the services' own refusals. `AdminCalls.js` (`read`,
@@ -155,16 +157,17 @@ Tools gets the generic screens, each reading and writing only through `ReportSer
 | Dashboards screen | Change | Insights after |
 |---|---|---|
 | Datasets, DatasetDetail, DatasetFields, DatasetView | merge: the business list and stewardship on top; today's telemetry and index list stays as "Other datasets" where there is no mount | W (grants name locations and transitions; the record's I1) |
-| Schedules, ScheduledReportDetail, ReportDelivery | new; `Reports.xml` keeps previews, the compose link and the owner-mode form | D; the area adds the recipient cap |
+| Schedules, ScheduledReportDetail, ReportDelivery | new; `Reports.xml` keeps previews, the compose link, the playlists (until I4) and the owner-mode form, and links Schedules | D; the area adds the recipient cap (the record's I2) |
 | Alerts, AlertRule, AlertShared | one list (Mine, Received, Templates, Kind) and one editor: a shared basis form, then Contact points or Audience; links from `reportLinks`; state through `get#AlertState` | W taking in only the business transitions |
 | Drill, Analysis | new generic screens | S: scope, meaning, record links, cost filter; organization calendar |
 | Dashboard | `share` transition and dialog (owner only; own groups plus `reportPolicy.shareGroups`) | W |
 | Playlists, WallDisplay | new list, create and share screen; the hardened kiosk player | S (devices, display share); W |
 | Explore, Split, Panels | the "no readable dataset" guard moves into Explore and Split, the default range into Explore (and Dashboard); Panels carries its menu image | D (the record's I0) |
 
-New `ReportServices` operations (`F/service/org/moqui/report/ReportReads.js`): `get#BusinessDataset`,
-`get#BusinessDatasetOptions`, `find#ReportRecipients`, `find#ScreenSchedules`, `store#ScreenSchedule`; `ownerName` in
-the answers of `get#ReportOccurrence` and `get#AlertState`. Five artifact rows are added to existing BOSS groups.
+New `ReportServices` operations (`F/service/org/moqui/report/ReportReads.js`, and `ReportWrites.js` for the write):
+`get#BusinessDataset`, `get#BusinessDatasetOptions`, `find#ReportRecipients`, `find#ScreenSchedules`,
+`store#ScreenSchedule`; `ownerName` in the answers of `get#ReportOccurrence` (I2) and `get#AlertState` (I3: its own
+code, `alert_delivery.rs`). Five artifact rows are added to existing BOSS groups.
 
 Stays in BOSS: the Insights root, Home, the Reports catalog, Records, Flows, Settings, AddToDashboard, SavedReports,
 ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
@@ -173,7 +176,7 @@ ManagementDigest, and the wrappers Dashboards, DashboardEditor and PanelDetail.
 |---|---|---|---|
 | I0 Contract | `reportPolicy` nulled at `Dashboards.xml` and `System/Monitor.xml`; `ReportMount.js`, which every Dashboards screen reads the links through; Explore and Split guard; Monitoring.md | root sets `reportPolicy`; direct-mount Panels, Explore, Split | `ReportMounts`, `InsightsAccess` |
 | I1 Datasets | two operations; four screens; `ReportDatasets.js`; a scope policy registers its parameter; `create#BusinessDataset` asks the named dataset's update artifact | four wrappers; two rows; `DatasetServices` keeps readiness and refresh | `BusinessDatasets`; `InsightsDatasets` |
-| I2 Delivery | recipient and screen-schedule operations, `ownerName`; three screens; `Reports.xml` trimmed | items re-pointed; three rows | `ReportAudience`; `InsightsDelivery`, `InsightsSettings` |
+| I2 Delivery | recipient and screen-schedule operations, `ownerName`; three screens; `ReportDelivery.js`; `policyWith`; `Reports.xml` trimmed | items re-pointed, the area adds the cap; three rows; `Delivery.js` keeps the digests and what the alerts use | `ReportAudience`, `ReportMounts`; `InsightsDelivery`, `InsightsSettings` |
 | I3 Alerts (after I2) | merged list and editor; `ReportAlerts.js` | two wrappers; `Alerts.js` deleted | `AdminOverview`; `InsightsAlerts` |
 | I4 Drill, Analysis, share, playlists, wall | five screens | wrappers; `DashboardServices` deleted | `InsightsRecords`, `InsightsDashboards`, `InsightsWallDisplay` |
 
@@ -791,3 +794,153 @@ screens in the terminal walk; 4 pass, 1 needs a server that is not there); `moqu
 failure and no flagged site in the changed screens, `moqui lint` of the two changed service files. Changed and not
 run: mr-boss's acceptance `InsightsDatasetsUsable` and `InsightsReviewWalk` (the export through DatasetView's
 transition in place of the deleted service).
+
+### I2 Delivery (Nov 11, 2026)
+
+Built: the three delivery screens of Dashboards, Insights' with their BOSS references gone: `Schedules` (menu
+"Scheduled reports": Mine, the schedules that go to the viewer alone with the owner-mode ones and the screen schedules
+they set up for themselves; Shared administration, the group schedules they own; Received, the reports delivered to
+them; New schedule, for oneself or for people and groups; the bulk pause; with no mount a link to Reports),
+`ScheduledReportDetail` (the timing and output, the recipients beside each one's result of the engine's check, the
+viewer's own preview, the runs, Resume, Send now and Pause; a screen schedule has its timing alone, an owner-mode one is
+paused, resumed and sent and not changed) and `ReportDelivery` (one run: what ran and each recipient's outcome for its
+owner, with retry and reconcile, and for the administrator with its owner by name; a recipient's own delivery and
+their own report rendered again; the statuses as CSV). Their presentation is `tools/template/ReportDelivery.js`
+(`list`, `detail`, `delivery`, `recipientChoices`, `create`, `storeTiming`, `storeAudience`, `pause`, `send`,
+`previewPage`, `ownReportPage`, `retry`, `reconcile`, `auditCsv`), which calls only `ReportServices` as the viewer and
+shows a refusal by its words. Three operations: `find#ReportRecipients` and `find#ScreenSchedules` in `ReportReads.js`
+and `store#ScreenSchedule` in the new `ReportWrites.js` (below); they are covered by `DASHBOARDS_APP`'s
+`ReportServices.*` pattern, so the framework's security data gains no row, and are in Monitoring.md ("Report delivery")
+and `JS-Framework-Services.md`. In the engine (`crates/moqui-report/src/delivery.rs`; the release binary rebuilt):
+`get#ReportOccurrence` answers `ownerName` with the whole run, to its owner and to the administrator.
+`ReportMount.js` gains `policyWith(fields)`. `Reports.xml` keeps the previews, the composer's link, the playlists and
+the owner-mode form (`create#Schedule`, then Schedules), and loses the schedule list with `send` and `pause`. Schedules
+has menu index 8 and its icon; Annotations and Git sync move to 9 and 10. In mr-boss: the three screens under
+`Insights/ScheduledReports/` are deleted and the area's items name the Dashboards files; the area's `always-actions`
+add the recipient cap to the policy (`ContextServices.get#DeliveryPolicy`, then `policyWith`); `DeliveryServices` keeps
+`find#RecipientChoices`, `preview#Report` and the four digest services, and `Delivery.js` what they and `Alerts.js`
+use; `InsightsDeliveryTransitions.xml` keeps `recipientChoices` (AlertDetail) and `previewFile` (ManagementDigest);
+the three operations are rows of `BOSS_INS_REPORT_OWN`, beside `store#Schedule` and `list#Schedules`.
+
+| Screen | With no mount | Under a mount | Insights | Transitions | BOSS rows that name it |
+|---|---|---|---|---|---|
+| Schedules | every dashboard and report of dashboards the viewer reads; recipients by the engine's rule; the engine's template and cap; the link to Reports | without the hidden components' definitions; recipients among the holders of the mount's permission; the mount's template and the area's cap; no link to Reports | D | all on the route: `createSchedule`, `pauseSchedules`, `sendNow`, `recipientChoices`, `ownReportFile` | none |
+| ScheduledReportDetail | the same rules for a change of recipients | the same under the mount's policy | D | all: `storeSchedule`, `storeAudience`, `pauseSchedule`, `sendNow`, `recipientChoices`, `previewFile` | none |
+| ReportDelivery | the run for its owner, the administrator or a recipient | the same | D | all: `retryRecipients`, `reconcileRecipient`, `exportAudit`, `ownReportFile` | none |
+
+No row of `BossSetupData.xml` names the three files or a transition of theirs: `BOSS_INS_LEGACY`'s rows name the area
+file, as plain names that match nothing (P7), and the area is opened by the root's allow. Nothing is left out, since
+nothing of the three is Tools' own; Tools' owner-mode form is Reports', which Insights does not mount.
+
+Where what `Delivery.js` did is now:
+
+| Insights service | Now |
+|---|---|
+| `find#Schedules` | `ReportDelivery.list` over `list#Schedules`, `find#ReportOccurrences`, `find#ScreenSchedules` and `find#ReportRecipients` (names, the viewer's groups, `canDeliver`) |
+| `get#Schedule` | `ReportDelivery.detail`, with `check#ReportAudience` and `get#Definition` |
+| `store#Schedule` | `ReportDelivery.create`, `storeTiming` and `storeAudience` over `store#Schedule`; a screen schedule over the new `store#ScreenSchedule` |
+| `pause#Schedules`, `send#Schedule` | `ReportDelivery.pause` (`pause#Schedule`, or `store#ScreenSchedule` for a screen schedule) and `send` (`send#Report`) |
+| `check#Audience` | the engine's `check#ReportAudience`, asked by `detail` |
+| `find#RecipientChoices` | `find#ReportRecipients` for the schedule screens; the Insights service stays for AlertDetail until I3 |
+| `get#Delivery`, `export#DeliveryAudit` | `ReportDelivery.delivery` and `auditCsv` over `get#ReportOccurrence` (with `ownerName`) and `audit#Export` |
+| `retry#Recipients`, `reconcile#Recipient`, `get#OwnReport` | `ReportDelivery.retry`, `reconcile` and `ownReportPage` over the engine's three |
+| `preview#Report`, the four digest services | stay |
+
+The operations:
+
+| Operation | Answers or stores | Checks |
+|---|---|---|
+| `find#ReportRecipients` | `canDeliver`; a page of active internal accounts by name (`users`); the caller's own groups (`groups`); of the `userIds` and `groupIds` named, `selectedUsers`, `refusedUserIds`, `refusedGroupIds`. With `permissionId` only its holders | signed in; the group delivery artifact by the caller's own grant, without which no account and no group is answered and every other name is refused; the caller is always accepted |
+| `find#ScreenSchedules` | the caller's own screen schedules (the caller as `userId`, no report definition), with the saved find's description and `groupAdmitted` | signed in; only the caller's rows, whatever id is asked |
+| `store#ScreenSchedule` | the timing, format, skipping when empty, interval, subject and pause of one of them; nothing else of the row | the row found again by its user; another's, a report schedule and none refused alike (`SCHEDULE_UNAVAILABLE`); a time pattern, a known format and a plain subject (`VALUE_INVALID`) |
+| `get#ReportOccurrence` | `ownerName` in `occurrence` | as before: answered with the whole run, to its owner and to a holder of `ADMIN_TRANSFER_VIEW` |
+
+The policy values, and why a hand-made request does not get past them:
+
+| Value | Where it is enforced | Why it holds |
+|---|---|---|
+| `recipientPermissionId` | `ReportDelivery.create` and `storeAudience` ask `find#ReportRecipients` with it for the people and groups the request names and refuse the save when one is refused; `recipientChoices` proposes with it | the transitions read the policy the root set, never a parameter; under Insights they are the only way to `store#Schedule` with recipients: the operation is granted to the reading groups for these screens, no REST resource or agent tool names it, Insights' own `store#Schedule` service is deleted and its users open no Tools route. The engine then checks each recipient's scope, as before |
+| `reportEmailTemplateId` | `create`, `storeTiming` and `storeAudience` put it on every `store#Schedule` request | no transition takes a template from the request; a posted `emailTemplateId` is not a parameter of theirs (held in `InsightsDelivery`) |
+| `recipientCap` | the same three put it on every request; `store#Schedule` refuses a larger audience (`RECIPIENT_CAP`) and holds the cap under the instance ceiling, and a resume and each run check the stored cap | the area sets it from `get#DeliveryPolicy` through `policyWith` in `always-actions`, after the root, for every transition under it; a posted `recipientCap` or `reportPolicy` is ignored (held in `InsightsDelivery` and `InsightsSettings`, each seen to fail with the area's addition removed) |
+
+Findings:
+
+- F63. The three screens are mounted by location, as the plan had it. What Insights' services did beside the engine
+  was permissions, the cap, the template, the readers and words, and each has a place: the grants, the area, the
+  root's policy, `find#ReportRecipients`, and the screens' own sentences.
+- F64. The `INSIGHTS_SCHEDULE` and `INSIGHTS_DISTRIBUTE` checks of `Delivery.js` are not replaced. What a viewer is
+  offered is their own grant of each engine operation (`isPermittedOwn`, by the action the operation's verb asks), so
+  a reader of deliveries is not refused a list of schedules at every render: reading deliveries is
+  `BOSS_INS_REPORT_DELIVERY` (the five reading groups and the administrator), scheduling `BOSS_INS_REPORT_OWN` (the
+  five), delivering to others the engine's group delivery artifact (`BOSS_INS_GROUP_DELIVERY`, the distributor). The
+  setup data gives each permission and its grant to the same groups; a group given one without the other would now
+  follow the grant.
+- F65. F50 for the recipients: the engine takes any user and any group a caller with the group delivery artifact
+  names, and judges scope. "Only the app's readers" and "only a group you belong to" were Insights' rules; they are
+  `find#ReportRecipients`' now (the permission as its parameter, the caller's own groups always), held by the
+  transitions for Tools too. The engine's `store#Schedule` itself is unchanged: Reports' owner-mode form and a direct
+  call still name any group. A screen that saves an audience another way (I3's alert rule) must ask the operation
+  first, as `ReportDelivery.unaccepted` does.
+- F66. The operation is granted to every group that schedules, not to the distributor alone, as F58: the list asks it
+  at each render for the names and for `canDeliver`, and it answers an account or a group only to a caller who holds
+  the group delivery artifact. Insights' alert authors are in those groups already.
+- F67. A transition's refusal is its error (the engine's sentence without its code and with a capital), where the
+  Insights services answered `applied false` with a reason shown as a message. The specs and the acceptance scenario
+  read the errors. No reason code reaches a page; nothing compared one.
+- F68. An owner-mode schedule (made on Reports, or by `create#Schedule`) is listed under Mine as "Owner mode" and is
+  paused, resumed and sent on the new screens, not changed: `store#Schedule` on it would make it a business schedule
+  and drop its location and its group, which Insights' detail did when its form was saved. A change of one is still
+  made nowhere, as before.
+- F69. ReportDelivery shows the whole run to a holder of `ADMIN_TRANSFER_VIEW` who is not its owner, as
+  `get#ReportOccurrence` answers it (the counters, each recipient's outcome, no title, the owner by name), read only.
+  Insights' screen showed such a viewer the heading alone, though its service answered the same rows. Under Insights
+  this reaches a user who holds both an Insights reading group or the administrator's and that permission.
+- F70. The schedule list reads `reportHiddenComponents`, as the dashboard list does, and `createSchedule` takes only a
+  definition the list offers: under Insights one of Tools' dashboards is not scheduled, by hand either, where the
+  Insights service took any definition its caller read. A report definition is offered when it has dashboards (a
+  playlist and a flow map have none), named with its kind ("digest").
+- F71. Names for ids come from `find#ReportRecipients` (`selectedUsers`, the caller's groups): `list#Schedules` answers
+  ids. A recipient who is no longer accepted shows as "1 person" in the list and as "A person who may no longer
+  receive it here" among the recipients, with their name in the audience check beside it. The client sends a
+  server-search drop-down's term and no selected value, so ScheduledReportDetail passes the schedule's recipients as
+  `selected` in the options' `parameter-map`; not looked at in a browser.
+- F72. mr-boss's legacy mapping moved a saved find of the copied scheduled list to Insights' own list, whose file is
+  gone and which kept no saved finds; the entry is dropped, so such a find shows as not valid, as the other replaced
+  lists' do. The schedule path mapping stays.
+- F73. `get#DeliveryPolicy` is a service of Insights' own for the area's `always-actions`: the cap is the
+  organization's setting, read once for each request under the area (a keystroke of the recipient choice included),
+  where `Delivery.js` read it at each save and check.
+- F74. For I3: AlertDetail still takes `recipientChoices` from `InsightsDeliveryTransitions.xml`
+  (`find#RecipientChoices`), and `Alerts.js` uses `Delivery.js`'s `engine`, `attempt`, `proposable`, `userNames`,
+  `groupNames`, `dateText` and `deliveryStates`; `proposable` reads the permission from `Insights.js`
+  (`recipientPermissionId`, the one place). The Alerts area adds the cap as Scheduled reports does. `ownerName` for
+  `get#AlertState` is `alert_delivery.rs`'s to add. For I4: Reports keeps `createPlaylist` and `playlist`, which
+  Insights' Playlists takes in.
+- F75. `rustfmt` on the two host test files reformatted lines that are not this phase's (six places); they are put
+  back.
+- F76. No recorded agent replay names a screen, a transition or a service of this phase (not replayed).
+
+Tests: `cargo lint`, `./moq build`, then `./moq test tools --nobuild` (72 features; 3.3 s of 4 s in the last two runs
+and 3.4 before them; the first run after the build measured 4.2 s and the three after it 3.5 to 3.9, the spread in one
+DataViews feature, 1.4 to 1.7 s; `ReportMounts`' three features take 0.07 s: its third holds `policyWith` with and
+without a mount, no render added);
+`./moq test framework --nobuild --spec ReportAudience --spec BusinessDatasets` (20 features, 1.8 s; the new feature of
+ReportAudience, 0.24 s: who is proposed and accepted by the engine's rule and under a permission, a disabled, an
+external and an unknown account refused, a caller without the group delivery grant and one without the operation,
+the cap, and a screen schedule read and changed by its user alone, with another's, a report schedule, a bad time
+pattern, format and subject refused; `ownerName` is in the existing feature of the occurrence);
+`./moq test mr-boss --nobuild --spec InsightsDelivery --spec InsightsSettings --spec InsightsAccess --spec
+InsightsHome --spec InsightsCatalog --spec InsightsAlerts --spec InsightsDatasets --spec AppOrganizationFilters` (43
+features; InsightsDelivery
+posts the screens' transitions through Insights' route: a reader's own schedule and their refusal for others, a
+distributor's readers accepted, a non-reader, a group that is not theirs, the Services reader and an audience past
+the organization's cap refused, the template and the cap of a save whatever is posted, a Tools dashboard and Tools'
+owner-mode form refused or not on the route, each taken on Tools' own route; its one render is ScheduledReportDetail's);
+`cargo test -p moqui-report delivery` (8); `cargo test -p moqui-host --test it tools_screens -- --ignored` (the three
+screens in html with no mount over a seeded schedule, an owner-mode one, a screen schedule and a run; a schedule of a
+Tools dashboard made there; the status export; Reports as trimmed; 26 s) and `cargo test -p moqui-host --test it --
+monitor_tui:: monitor_readers::` (the three screens in the terminal walk; 4 pass, 1 needs a server that is not there);
+`moqui lint --screens` with no parse failure and no flagged site in the changed screens, `moqui lint` of the three
+changed service files. Changed and not run: mr-boss's acceptance `InsightsDeliveryUsable` (a refusal read as the
+transition's error; Send now and the saved list's recipients through the route in place of the deleted services) and
+`InsightsReviewWalk` (the engine's `check#ReportAudience` in place of `check#Audience`).

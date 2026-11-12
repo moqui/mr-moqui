@@ -1643,8 +1643,13 @@ fn get_occurrence(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         json["retryable"] = json!(owner && json["retryable"] == true);
         listed.push(json);
     }
+    // whose run it was, by name: the owner's account is the engine's to read, so a screen that shows the occurrence to
+    // its owner or to the administrator reads no account itself (plans/Admin-Screens-Down.md, Track I)
+    let mut occurrence = occurrence_json(&row, owner, ec);
+    occurrence["ownerName"] =
+        account(ec, &facade, field(&row, "ownerUserId"), now)?.map_or(Json::Null, |owner| json!(owner.name));
     Ok(out(json!({
-        "occurrence": occurrence_json(&row, owner, ec), "deliveries": listed, "ownDelivery": own, "administers": owner,
+        "occurrence": occurrence, "deliveries": listed, "ownDelivery": own, "administers": owner,
     })))
 }
 

@@ -1,14 +1,19 @@
 // The reads of org.moqui.report.ReportServices that the report screens need beside the engine's own (docs/tools/Monitoring.md,
-// "Business datasets" and "Mounting the report screens"; plans/Admin-Screens-Down.md, Track I): what a mountable report
-// screen shows that the engine's operations do not answer, so that no screen reads an entity itself. Each operation checks
-// what its caller may read: it asks the engine as the caller (the dataset's own artifact, org.moqui.report.dataset.<id>) and
-// reads with authorization off only what that answer opens. No dependency on Mantle or an app.
+// "Business datasets", "Report delivery" and "Mounting the report screens"; plans/Admin-Screens-Down.md, Track I): what a
+// mountable report screen shows that the engine's operations do not answer, so that no screen reads an entity itself. Each
+// operation checks what its caller may read: it asks the engine as the caller (the dataset's own artifact,
+// org.moqui.report.dataset.<id>) or the caller's own grant (the group delivery artifact), or answers the caller's own rows,
+// and reads with authorization off only what that opens. No dependency on Mantle or an app.
 //
 //     get#BusinessDataset         one business dataset the caller reads or stewards, and for its steward its document's
 //                                 fields and conditions and the definitions that use it
 //     get#BusinessDatasetOptions  what a dataset form may offer: the registered scope policies, each with its scope
 //                                 parameter, the operators and functions a steward may use, and for a caller who may
 //                                 create a dataset the documents of registered feeds
+//     find#ReportRecipients       who a caller that may deliver to others may propose as a recipient of a report or an
+//                                 alert, and which of the users and groups named may be one
+//     find#ScreenSchedules        the caller's own screen schedules (a ScreenScheduled of a screen path, no report
+//                                 definition), which store#ScreenSchedule (ReportWrites.js) changes
 const R = "org.moqui.report.ReportServices."
 const POLICY_TYPE = "ReportScopePolicy"
 // The dataset-save artifact (crates/moqui-report/src/definitions.rs), which create#BusinessDataset asks of its caller.
@@ -33,6 +38,17 @@ const OPERATORS = [
     "is-not-null"
 ]
 const FUNCTIONS = ["min", "max", "sum", "avg", "count", "count-distinct", "upper", "lower"]
+// The artifact a user needs to deliver to anyone but themselves (crates/moqui-report/src/delivery.rs GROUP_ARTIFACT, asked
+// with the create action), and the permission of an account that is not an internal user (moqui_core::user EXTERNAL_USER).
+const GROUP_DELIVERY = "org.moqui.report.delivery.group"
+const EXTERNAL_USER = "EXTERNAL_USER"
+const ACCOUNT = "moqui.security.UserAccount"
+const SCHEDULE = "moqui.screen.ScreenScheduled"
+// a page of recipient choices, the most ids one call answers for, and the most screen schedules listed
+const RECIPIENT_PAGE = 20
+const RECIPIENT_PAGE_MAX = 100
+const NAMED_MAX = 500
+const SCREEN_SCHEDULE_MAX = 200
 
 const text = value => (value == null ? "" : String(value))
 const plainName = value => /^[A-Za-z0-9_]{1,64}$/.test(text(value))
@@ -167,7 +183,187 @@ function getBusinessDatasetOptions() {
     }
 }
 
-const operations = {getBusinessDataset, getBusinessDatasetOptions}
+// ===== find#ReportRecipients =====
+const idList = value =>
+    Array.from(
+        new Set(
+            (value == null || value === "" ? [] : Array.from(typeof value === "string" ? value.split(",") : value))
+                .map(id => text(id).trim())
+                .filter(Boolean)
+        )
+    )
+// The users who hold a permission now: the members in date of the groups that hold it in date.
+function holderIds(userPermissionId) {
+    const groupIds = Array.from(
+        ec.entity
+            .find("moqui.security.UserGroupPermission")
+            .condition("userPermissionId", userPermissionId)
+            .conditionDate("fromDate", "thruDate", null)
+            .selectField("userGroupId")
+            .disableAuthz()
+            .list()
+    ).map(row => row.userGroupId)
+    if (!groupIds.length) return []
+    return Array.from(
+        new Set(
+            Array.from(
+                ec.entity
+                    .find("moqui.security.UserGroupMember")
+                    .condition("userGroupId", "in", groupIds)
+                    .conditionDate("fromDate", "thruDate", null)
+                    .selectField("userId")
+                    .disableAuthz()
+                    .list()
+            ).map(row => row.userId)
+        )
+    )
+}
+// The accounts that may be proposed: active (not disabled, not past their end date), internal, and with a permission
+// named its holders only; narrowed further by the find given. The engine's own rule for a recipient is the same but for
+// the permission (delivery.rs judge: inactive, external), so nobody it would refuse on sight is offered.
+function proposable(permissionId, narrow) {
+    const cf = ec.entity.conditionFactory
+    let find = ec.entity
+        .find(ACCOUNT)
+        .condition(cf.makeCondition("disabled", "not-equals", "Y", true))
+        .condition(cf.makeCondition("terminateDate", "greater", ec.user.nowTimestamp, true))
+        .selectField("userId,username,userFullName")
+        .disableAuthz()
+    const external = holderIds(EXTERNAL_USER)
+    if (external.length) find = find.condition("userId", "not-in", external)
+    if (permissionId) {
+        const holders = holderIds(permissionId)
+        // nobody holds it: nobody is proposed
+        find = find.condition("userId", "in", holders.length ? holders : ["_NA_"])
+    }
+    return narrow(find, cf)
+}
+const person = row => ({userId: row.userId, username: text(row.username), name: text(row.userFullName) || text(row.username)})
+// find#ReportRecipients: for a caller who may deliver to others (canDeliver: the group delivery artifact by the caller's
+// own grant, as the engine asks it), a page of the people who may be proposed (users: found by term in the name or the
+// username, ignoring case, in the query), the caller's own groups (groups: a delivery goes to a group its owner belongs
+// to, never ALL_USERS), and of the users and groups named which may be recipients (selectedUsers, with their names) and
+// which may not (refusedUserIds, refusedGroupIds). With permissionId only its holders are proposed or accepted. The caller
+// is always accepted (a delivery to oneself). A caller who may not deliver to others gets no account and no group, and
+// every other user and every group named refused. Being accepted here grants nothing: the engine checks each recipient's
+// scope when a schedule or a rule is saved and again before each message.
+function findReportRecipients(p) {
+    signedIn()
+    const viewer = text(ec.user.userId)
+    const userIds = idList(p.userIds).slice(0, NAMED_MAX)
+    const groupIds = idList(p.groupIds).slice(0, NAMED_MAX)
+    const canDeliver = ec.artifactExecution.isPermittedOwn(GROUP_DELIVERY, "AT_SERVICE", "create") === true
+    const own = userIds.includes(viewer) ? rows(ACCOUNT, {userId: viewer}).slice(0, 1).map(person) : []
+    if (!canDeliver)
+        return {
+            canDeliver,
+            users: [],
+            groups: [],
+            selectedUsers: own,
+            refusedUserIds: userIds.filter(userId => userId !== viewer),
+            refusedGroupIds: groupIds
+        }
+    const permissionId = text(p.permissionId).trim()
+    const term = text(p.term).trim()
+    const size = Math.min(RECIPIENT_PAGE_MAX, Math.max(1, Number(p.pageSize) || RECIPIENT_PAGE))
+    const users = Array.from(
+        proposable(permissionId, (find, cf) =>
+            term
+                ? find.condition(
+                      cf.makeCondition(
+                          [
+                              cf.makeCondition("userFullName", "like", "%" + term + "%").ignoreCase(),
+                              cf.makeCondition("username", "like", "%" + term + "%").ignoreCase()
+                          ],
+                          "or"
+                      )
+                  )
+                : find
+        )
+            .orderBy("userFullName,username")
+            .limit(size)
+            .list()
+    ).map(person)
+    const others = userIds.filter(userId => userId !== viewer)
+    const accepted = others.length
+        ? Array.from(proposable(permissionId, find => find.condition("userId", "in", others)).list()).map(person)
+        : []
+    const selectedUsers = own.concat(accepted)
+    const ownGroupIds = Array.from(ec.user.getUserGroupIdSet() || []).filter(groupId => groupId !== "ALL_USERS")
+    const groups = ownGroupIds.length
+        ? Array.from(ec.entity.find("moqui.security.UserGroup").condition("userGroupId", "in", ownGroupIds).disableAuthz().list())
+              .map(row => ({userGroupId: row.userGroupId, description: text(row.description) || row.userGroupId}))
+              .sort((a, b) => a.description.localeCompare(b.description))
+        : []
+    return {
+        canDeliver,
+        users,
+        groups,
+        selectedUsers,
+        refusedUserIds: userIds.filter(userId => !selectedUsers.some(user => user.userId === userId)),
+        refusedGroupIds: groupIds.filter(groupId => !ownGroupIds.includes(groupId))
+    }
+}
+
+// ===== find#ScreenSchedules =====
+// a timestamp is text of epoch milliseconds in a script (docs/dev/JS-Globals.md)
+const millis = value =>
+    value == null || value === "" ? null : /^-?\d+$/.test(String(value)) ? Number(value) : Date.parse(String(value))
+// find#ScreenSchedules: the screen schedules the caller set up for themselves (userId the caller, a screen path and no
+// report definition; a report schedule is list#Schedules'), one of them with screenScheduledId, each with its saved
+// find's description and whether the group it names is sent to (only through a registered ReportLegacyAdapter of its
+// screen path, org.moqui.impl.ScreenServices). Another user's schedule is not answered, whatever id is asked.
+function findScreenSchedules(p) {
+    signedIn()
+    let find = ec.entity
+        .find(SCHEDULE)
+        .condition("userId", ec.user.userId)
+        .condition("reportDefinitionId", "is-null", null)
+        .orderBy("screenPath,screenScheduledId")
+        .limit(SCREEN_SCHEDULE_MAX)
+        .disableAuthz()
+    if (text(p.screenScheduledId)) find = find.condition("screenScheduledId", text(p.screenScheduledId))
+    const schedules = Array.from(find.list())
+    const findIds = Array.from(new Set(schedules.map(row => row.formListFindId).filter(Boolean)))
+    const descriptions = {}
+    if (findIds.length)
+        for (const saved of ec.entity
+            .find("moqui.screen.form.FormListFind")
+            .condition("formListFindId", "in", findIds)
+            .disableAuthz()
+            .list())
+            descriptions[saved.formListFindId] = text(saved.description)
+    const grouped = Array.from(new Set(schedules.filter(row => row.userGroupId).map(row => text(row.screenPath))))
+    const admitted = grouped.length
+        ? Array.from(
+              ec.entity
+                  .find("moqui.basic.Enumeration")
+                  .condition("enumTypeId", "ReportLegacyAdapter")
+                  .condition("enumCode", "in", grouped)
+                  .disableAuthz()
+                  .list()
+          ).map(row => text(row.enumCode))
+        : []
+    return {
+        schedules: schedules.map(row => ({
+            screenScheduledId: row.screenScheduledId,
+            screenPath: text(row.screenPath),
+            formListFindId: row.formListFindId || null,
+            description: descriptions[row.formListFindId] || "",
+            cronExpression: text(row.cronExpression),
+            renderMode: text(row.renderMode) || "csv",
+            noResultsAbort: row.noResultsAbort === "Y",
+            paused: row.paused === "Y",
+            fromDate: millis(row.fromDate),
+            thruDate: millis(row.thruDate),
+            emailSubject: text(row.emailSubject),
+            userGroupId: row.userGroupId || null,
+            groupAdmitted: !!row.userGroupId && admitted.includes(text(row.screenPath))
+        }))
+    }
+}
+
+const operations = {getBusinessDataset, getBusinessDatasetOptions, findReportRecipients, findScreenSchedules}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown report read " + op)

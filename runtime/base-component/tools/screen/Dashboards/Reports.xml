@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Reports (docs/tools/Monitoring.md, "The Dashboards app"): Tools' own report desk. A dashboard or a report of several
+    is previewed and downloaded as the viewer reads it (preview), a multi-dashboard report is composed in the definition
+    editor, a playlist of dashboards is made and played, and a report is scheduled in owner mode (createSchedule,
+    create#Schedule: to one address line, a group or a server location, as its owner). The schedules themselves, an
+    owner-mode one among them, are listed, paused, resumed and sent on Schedules, with their runs and each recipient's
+    delivery (ScheduledReportDetail, ReportDelivery), where a schedule that is checked for each recipient is made. This
+    screen is not shown by another app but for createPlaylist, which an app's own playlist screen takes in. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Reports" default-menu-index="7"
         menu-image="sym_o_summarize" menu-image-type="icon">
     <transition name="createPlaylist" method="post" authz-action="create">
@@ -19,13 +26,9 @@
     <transition name="playlist"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('playlist')}"/></transition>
     <transition name="createSchedule" method="post" authz-action="create">
         <actions><service-call name="org.moqui.report.ReportServices.create#Schedule" in-map="{definitionId:definitionId,cronExpression:cronExpression,emailTemplateId:(delivery==='email' || delivery==='both')?(emailTemplateId || 'DASHBOARD_REPORT'):null,userId:(delivery==='email' || delivery==='both')?(userId || (userGroupId ? null : ec.user.userId)):null,userGroupId:(delivery==='email' || delivery==='both')?userGroupId:null,saveToLocation:delivery==='email'?null:saveToLocation,renderMode:renderMode}"/></actions>
-        <default-response url="."/>
-    </transition>
-    <transition name="send" method="post" authz-action="update">
-        <actions><service-call name="org.moqui.report.ReportServices.send#Report" in-map="{screenScheduledId:screenScheduledId}"/></actions><default-response url="."/>
-    </transition>
-    <transition name="pause" method="post" authz-action="update">
-        <actions><service-call name="org.moqui.report.ReportServices.pause#Schedule" in-map="{screenScheduledId:screenScheduledId,paused:String(paused) !== 'Y' &amp;&amp; String(paused) !== 'true'}"/></actions><default-response url="."/>
+        <!-- the new schedule is on the list of schedules, where it is paused, resumed and sent -->
+        <default-response url="../Schedules"/>
+        <error-response url="."/>
     </transition>
     <transition name="preview" method="get" read-only="true">
         <actions><script><![CDATA[
@@ -45,7 +48,6 @@
         reportDefinitions = all.filter(definition=>(definition.type === 'report' && (definition.body || {}).kind!=='playlist') || definition.type === 'dashboard')
         playlists=all.filter(definition=>definition.type==='report' && (definition.body || {}).kind==='playlist')
         dashboards=all.filter(definition=>definition.type==='dashboard')
-        schedules = ec.service.sync().name('org.moqui.report.ReportServices.list#Schedules').call().schedules || []
     ]]></script></actions>
     <widgets>
         <label text="Dashboard reports" type="h4"/>
@@ -124,8 +126,12 @@
             </row-col>
             <row-col xs="12" md="5">
                 <container-box>
-                    <box-header title="Schedule a report"/>
+                    <box-header title="Schedule a report in owner mode"/>
+                    <box-toolbar>
+                        <link url="../Schedules" text="Scheduled reports"/>
+                    </box-toolbar>
                     <box-body>
+                        <label text="An owner-mode schedule is rendered as you and delivered to one address line, a group or a server location as set here. A schedule made on Scheduled reports is checked for each recipient instead. Either is paused, resumed and sent there." type="p"/>
                         <form-single name="CreateReportSchedule" transition="createSchedule">
                             <field name="definitionId"><default-field title="Dashboard / report"><drop-down><list-options list="reportDefinitions" key="${id}" text="${title}"/></drop-down></default-field></field>
                             <field name="cronExpression"><default-field title="Cron schedule"><text-line default-value="0 0 7 * * ?"/></default-field></field>
@@ -156,28 +162,6 @@
                 </container-box>
             </row-col>
         </container-row>
-        <container-box>
-            <box-header title="Scheduled reports"/>
-            <box-body>
-                <section name="SavedReportSchedules" condition="schedules.length"><widgets>
-                    <form-list name="ReportSchedules" list="schedules" skip-form="true">
-                        <field name="screenScheduledId"><default-field title="Schedule"><display/></default-field></field>
-                        <field name="definitionId"><default-field title="Report"><display/></default-field></field>
-                        <field name="cronExpression"><default-field title="Cron schedule"><display/></default-field></field>
-                        <field name="renderMode"><default-field title="Format"><display/></default-field></field>
-                        <field name="paused"><default-field title="Status"><display text="${(String(paused) === 'Y' || String(paused) === 'true') ? 'Paused' : 'Active'}"/></default-field></field>
-                        <field name="send"><default-field title="Run report"><link url="send" text="Run now" link-type="hidden-form-link" confirmation="Run report ${definitionId} now using this schedule's saved delivery settings?" parameter-map="{screenScheduledId:screenScheduledId}"/></default-field></field>
-                        <field name="pause"><default-field title="Change status"><link url="pause" text="${(String(paused) === 'Y' || String(paused) === 'true') ? 'Resume' : 'Pause'}" link-type="hidden-form-link" parameter-map="{screenScheduledId:screenScheduledId,paused:paused}"/></default-field></field>
-                        <columns type="mobile">
-                            <column><field-ref name="screenScheduledId"/><field-ref name="definitionId"/><field-ref name="cronExpression"/><field-ref name="renderMode"/><field-ref name="paused"/></column>
-                            <column><field-ref name="send"/><field-ref name="pause"/></column>
-                        </columns>
-                    </form-list>
-                </widgets><fail-widgets>
-                    <label text="No report schedules yet. Choose a dashboard or report and its delivery settings above." type="p"/>
-                </fail-widgets></section>
-            </box-body>
-        </container-box>
         <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
             <text type="tui" template="false">[]</text></render-mode>
     </widgets>

@@ -182,6 +182,10 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
       <moqui.entity.document.DataDocumentField dataDocumentId="TuiBusinessDoc" fieldSeqId="02" fieldPath="enumTypeId"/>
       <moqui.entity.feed.DataFeed dataFeedId="TuiBusinessFeed" dataFeedTypeEnumId="DTFDTP_MAN_PULL" feedName="TUI business feed"/>
       <moqui.entity.feed.DataFeedDocument dataFeedId="TuiBusinessFeed" dataDocumentId="TuiBusinessDoc"/>
+      <moqui.screen.ScreenScheduled screenScheduledId="TUI_SCHEDULE" screenPath="/apps/dashboards/Reports" reportDefinitionId="tui-dashboard" reportOwnerId="EX_JOHN_DOE" userId="EX_JOHN_DOE" cronExpression="0 0 6 ? * MON" renderMode="csv" deliveryMode="personal" emailSubject="TUI weekly schedule" paused="Y" noResultsAbort="Y" versionNumber="1"/>
+      <moqui.screen.ScreenScheduledLock screenScheduledId="TUI_SCHEDULE"/>
+      <moqui.report.ReportOccurrence occurrenceId="TUI_OCCURRENCE" screenScheduledId="TUI_SCHEDULE" occurrenceKey="TUI_OCCURRENCE" occurrenceKind="manual" occurrenceDate="2026-10-30 12:00:00" ownerUserId="EX_JOHN_DOE" scheduleRevision="1" definitionId="tui-dashboard" definitionVersion="1" renderMode="csv" deliveryMode="personal" statusId="RptOccComplete" recipientCount="1" sentCount="1" skippedCount="0" failedCount="0" uncertainCount="0" renderCount="1" versionNumber="1"/>
+      <moqui.report.ReportRecipientDelivery deliveryId="TUI_DELIVERY" occurrenceId="TUI_OCCURRENCE" userId="EX_JOHN_DOE" channel="email" statusId="RptDlvSent" attemptCount="1" attemptDate="2026-10-30 12:00:01"/>
       <moqui.monitor.MonitorRegression regressionId="TUI_REGRESSION" serviceName="monitor-tui" metric="error_rate" baselineVersion="1.0" candidateVersion="2.0" baselineValue="0" candidateValue="0.4" magnitude="9" confidence="0.999" severity="critical" dataQuality="good" locality="unknown" statusId="Open" incidentId="TUI_INCIDENT"/>
     </entity-facade-xml>"#,
     );
@@ -330,6 +334,15 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "/apps/dashboards/AlertShared?definitionId=tui-contact",
         ),
         ("Dashboards/Reports", "/apps/dashboards/Reports"),
+        ("Dashboards/Schedules", "/apps/dashboards/Schedules"),
+        (
+            "Dashboards/ScheduledReportDetail",
+            "/apps/dashboards/ScheduledReportDetail?screenScheduledId=TUI_SCHEDULE",
+        ),
+        (
+            "Dashboards/ReportDelivery",
+            "/apps/dashboards/ReportDelivery?occurrenceId=TUI_OCCURRENCE",
+        ),
         (
             "Dashboards/Playlist",
             "/apps/dashboards/Playlist?definitionId=tui-playlist",
@@ -407,6 +420,28 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     assert!(
         detail.contains("Admission checks") && detail.contains("user groups on enumTypeId"),
         "{detail}"
+    );
+    // The delivery screens: the viewer's schedule on the list, its recipients and runs, and a run's outcomes.
+    let schedules = open(&link, "/apps/dashboards/Schedules").screen_text(220, 120);
+    assert!(
+        schedules.contains("TUI weekly schedule") && schedules.contains("New schedule") && schedules.contains("Paused"),
+        "{schedules}"
+    );
+    let schedule = open(
+        &link,
+        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=TUI_SCHEDULE",
+    )
+    .screen_text(220, 160);
+    assert!(
+        schedule.contains("TUI acceptance dashboard")
+            && schedule.contains("Sent to you alone.")
+            && schedule.contains("1 sent"),
+        "{schedule}"
+    );
+    let run = open(&link, "/apps/dashboards/ReportDelivery?occurrenceId=TUI_OCCURRENCE").screen_text(220, 120);
+    assert!(
+        run.contains("Schedule revision 1, report version 1") && run.contains("Your delivery") && run.contains("Sent"),
+        "{run}"
     );
     // The AI screen groups LLM calls by trace and names each by its agent frame.
     let ai = open(&link, "/apps/system/Monitor/AgentTraces?from=now-1h&thru=now").screen_text(220, 80);

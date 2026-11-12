@@ -11,9 +11,12 @@
 //                   with what Tools does itself). A field the map leaves out has its default.
 //
 // state() answers {mounted, links, policy} for a screen's actions, every key and every field present. url(key, own) is a
-// transition's response: the mount's link, else the screen's own default, else Tools'. This module is the one reader of
-// both maps; reportFixedVariables, reportHiddenComponents and reportDefinitionTypes are read by the screens they are for
-// (Dashboard, Home, Definition).
+// transition's response: the mount's link, else the screen's own default, else Tools'. policyWith(fields) is for an area
+// of the mounting app: the root's policy with what the area adds for the screens below it, which the area sets as
+// reportPolicy in its own always-actions (a field that costs a read the root does not make on every request: the
+// recipient cap, added by the area that delivers). This module is the one reader of both maps; reportFixedVariables,
+// reportHiddenComponents and reportDefinitionTypes are read by the screens they are for (Dashboard, Home and the schedule
+// list, Definition).
 
 // Tools' own screen for each link key. share has none (Tools shares in the definition editor's group field), nor has
 // drill (Tools has no drill screen yet); a key with no screen here is offered only under a mount that names one.
@@ -46,13 +49,14 @@ const toolsLinks = {
 //                            none under such a policy
 //     datasetScopeLabel      the dataset forms' label of the scope field (the field that carries a row's scope)
 //     datasetScopeHelp       its help
-//     recipientPermissionId  the permission a person holds to be proposed as a recipient of a report or an alert; null
-//                            proposes by the engine's own rule
-//     reportEmailTemplateId  the EmailTemplate of a delivered report; null is the engine's
+//     recipientPermissionId  the permission a person holds to be proposed and accepted as a recipient of a report or an
+//                            alert (find#ReportRecipients); null proposes by the engine's own rule
+//     reportEmailTemplateId  the EmailTemplate a report schedule saved here is delivered with; null is the engine's
 //     alertAudience          {topic, emailTemplateId, detailLink}: the fixed parts of an alert rule told to an audience
 //                            of users and groups; null is an alert rule with contact points, as Tools' are
 //     shareGroups            [{value, label}]: groups a definition may be shared with beside the viewer's own
-//     recipientCap           the most recipients a group delivery is saved and checked with; null is the engine's
+//     recipientCap           the most recipients a group delivery is saved and checked with; null is the engine's. Set
+//                            by the area that delivers (policyWith), not by the root
 //     calendar               {timeZone, weekOffset}: the zone calendar buckets are cut in and the offset of a week
 //                            bucket (the engine's time_zone and offset); null is the viewer's zone and the instance's week
 const toolsPolicy = () => ({
@@ -132,5 +136,14 @@ function state() {
 function url(key, own) {
     return text(mapIn(mapOf("reportLinks"))[key]) || own || toolsLinks[key] || "."
 }
+// The mount's policy with an area's own fields added, for the area's always-actions to set as reportPolicy: the screens
+// below the area then read the root's policy and the area's additions through state(), and the area reads no map
+// itself. With no mount it is null: an area adds to a mount and does not make one (Tools' roots null the map, and no
+// screen of Tools is an area). What is added is data as the rest is: the service a screen calls decides.
+function policyWith(fields) {
+    const policy = mapOf("reportPolicy")
+    if (!policy && !mapOf("reportLinks")) return null
+    return Object.assign({}, mapIn(policy), mapIn(fields))
+}
 
-;({state, url})
+;({state, url, policyWith})

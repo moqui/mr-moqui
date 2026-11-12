@@ -455,8 +455,23 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   variables, rendered by the server's Chromium to PDF (`orientation` portrait or landscape, `layout` grid or rows,
   `appendix` for table data, `paper` letter or a4), a PNG inline in the email with a link to the live dashboard, CSV
   or xlsx: one CSV, or one sheet, per table panel (a dashboard with no table panel exports each panel with data), and
-  a preview of several CSVs downloads as a zip. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
-  location needs `REPORT_SAVE_LOCATION`.
+  a preview of several CSVs downloads as a zip. An empty report is skipped. Saving to a server location needs
+  `REPORT_SAVE_LOCATION`. Dashboards › Reports previews and downloads a dashboard or report, opens the composer of a
+  multi-dashboard report, keeps the playlists, and schedules a report in owner mode (`create#Schedule`: to one address
+  line, a group or a server location, as its owner); the schedules themselves are on the delivery screens.
+- **The delivery screens** (Scheduled reports, `Schedules`, with the hidden `ScheduledReportDetail` and `ReportDelivery`)
+  are the viewer's side of [report delivery](#report-delivery). Schedules lists Mine (the schedules that go to the viewer
+  alone, the owner-mode ones and the screen schedules they set up for themselves), Shared administration (the group
+  schedules they own, for one who may deliver to others) and Received (the reports delivered to them, each with their
+  own report rendered again), and makes a schedule: a dashboard or report the viewer reads, a timing and a format, for
+  themselves or for people and groups, each checked by the engine. ScheduledReportDetail is one schedule for its owner:
+  its timing and output, its recipients beside each one's result of the engine's check, the viewer's own preview, its
+  runs, and Resume, Send now and Pause (an owner-mode schedule is paused, resumed and sent there, not changed).
+  ReportDelivery is one run: what ran and each recipient's outcome for its owner (who retries the failed and
+  reconciles the uncertain) and for the administrator (with its owner by name), a recipient's own delivery alone, and
+  the same statuses as CSV. What a viewer is offered follows their own grant of each operation, so nothing is asked that
+  would only be refused. Their presentation is `tools/template/ReportDelivery.js`, which reads no entity: every read and
+  write is a `ReportServices` operation called as the viewer.
 
 ### Mounting the report screens
 
@@ -484,24 +499,28 @@ An app shows the Dashboards screens under its own root (BOSS Insights does: impl
 | DatasetDetail | Included; `storeDataset`, `admitDataset`, `retireDataset` and `rebuildIndex` taken in (never `definition`, the dataset in Tools' definition editor) | Report builder › DatasetDetail, the steward's |
 | DatasetFields | Included; `storeFields` and `storeConditions` taken in | Report builder › DatasetFields, the steward's |
 | DatasetView | Included; `exportDocuments` taken in | Report builder › DatasetView, the author's and the steward's |
+| Schedules, ScheduledReportDetail, ReportDelivery | By location, the three under one parent whose `always-actions` add the recipient cap to the policy (`policyWith`, below) | Scheduled reports › Schedules (the default), ScheduledReportDetail and ReportDelivery, every Insights user's to open |
 
 The dataset screens link each other as siblings (`../DatasetDetail`, `../DatasetView`, `../DatasetFields`,
 `../Datasets`), so an app shows the four under one parent with these names; they open a dataset in Explore by the
-mount's `explore` link, as a link of their own and not a transition, so an app takes in nothing for it. The other
+mount's `explore` link, as a link of their own and not a transition, so an app takes in nothing for it. The delivery
+screens link each other as siblings too (`../Schedules`, `../ScheduledReportDetail`, `../ReportDelivery`); every
+transition of theirs is on the app's route, and each reads the mount's policy, never the request (below). The other
 Dashboards screens (Reports, Alerts, AlertRule, AlertShared, Annotations, Git sync, Log context) are not shown by an
-app yet: Alerts, AlertRule and AlertShared link each other in the Dashboards app, and Insights has screens of its own
-for scheduled reports and alerts (its Playlists takes in Reports' `createPlaylist` alone). The screens run under the
-app's authorization; using them needs no `DASHBOARDS_APP` or `REPORT_DATASETS_ADMIN`, only the ReportServices
-operations a capability uses and each dataset's own artifact.
+app yet: Alerts, AlertRule and AlertShared link each other in the Dashboards app, Insights has screens of its own for
+alerts, and Reports, Tools' own desk with the owner-mode schedule form, is linked from Schedules only where there is no
+mount (Insights' Playlists takes in Reports' `createPlaylist` alone). The screens run under the app's authorization;
+using them needs no `DASHBOARDS_APP` or `REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses
+and each dataset's own artifact.
 
 The app's root sets, in its `always-actions` so that the transitions read them too:
 
 | Context | What it does |
 |---|---|
 | `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the app's drill screen, which each panel's menu then offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`; Tools has none). Without a mount the screens keep Tools' own (`//apps/dashboards/...`; the list opens a dashboard in its sibling `Dashboard`); under a mount a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `split` or `logContext` hides Explore's Compare and Surrounding entries; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted. `alerts` (the alert list) and `alertShared` (a shared contact point, silence or mute timing) are keys of the contract that no screen reads yet |
-| `reportPolicy` | What the app's policy is for the report screens it shows (the table below). Data only: a screen shown under a mount still asks its service, and the service decides |
+| `reportPolicy` | What the app's policy is for the report screens it shows (the table below). Data only: a screen shown under a mount still asks its service, and the service decides. An area of the app adds to it for the screens below it by setting it again in its own `always-actions`, from `ReportMount.js`'s `policyWith(fields)` (the root's map with the area's fields): a field that costs a read the root should not make on every request, as the recipient cap of the area that delivers |
 | `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
-| `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
+| `reportHiddenComponents` | Components whose shipped definitions the dashboard list leaves out, and the schedule list does not offer or take for a new schedule (Insights: `tools`, the telemetry dashboards) |
 | `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
 
 `reportPolicy`'s fields, each with what Tools' own screens do, which is also what a mount gets for a field it leaves
@@ -515,18 +534,34 @@ out, but for the features: a mount offers one only when its map says so.
 | `datasetIdPrefix` | What the id of a dataset created here starts with, before the form's short name. The engine creates a dataset only under an id whose own update artifact the creator holds, so the prefix names what the app's stewards are granted and gives no right | none | Datasets (`createDataset`) |
 | `datasetScopeParameter` | The `rowFilterParameters` entry the dataset forms' scope field is sent in under a scope policy whose registration names none; a policy's own registered parameter comes first ([Business datasets](#business-datasets)) | none: nothing is asked under such a policy | Datasets, DatasetDetail (and the scope shown in the lists) |
 | `datasetScopeLabel`, `datasetScopeHelp` | The words of the dataset forms' scope field | "Scope field", "The field that carries each row's scope; the policy's own when left empty" | Datasets, DatasetDetail |
-| `recipientPermissionId` | The permission a person holds to be proposed as a recipient | the engine's own rule | no screen yet (report delivery, alerts) |
-| `reportEmailTemplateId` | The `EmailTemplate` of a delivered report | the engine's | no screen yet (report delivery) |
+| `recipientPermissionId` | The permission a person holds to be proposed and accepted as a recipient: the schedule screens ask `find#ReportRecipients` with it for the choices and again, in the transition, for the people a save names, and refuse the save when one is not among its holders | the engine's own rule (an active internal account) | Schedules (`createSchedule`, `recipientChoices`), ScheduledReportDetail (`storeAudience`, `recipientChoices`); alerts in their phase |
+| `reportEmailTemplateId` | The `EmailTemplate` every save of a report schedule here is sent with to `store#Schedule` | the engine's (`DASHBOARD_REPORT`, or the one the schedule has) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`) |
 | `alertAudience` | `{topic, emailTemplateId, detailLink}`: the fixed parts of an alert rule told to an audience of users and groups | contact points, as Tools' rules have | no screen yet (the alert screens) |
 | `shareGroups` | `[{value, label}]`: groups a definition may be shared with beside the viewer's own | none | no screen yet (Dashboard's sharing) |
-| `recipientCap` | The most recipients a group delivery is saved and checked with | the engine's | no screen yet (report delivery, alerts) |
+| `recipientCap` | The most recipients a group delivery is saved and checked with, sent with every save to `store#Schedule`, which refuses a larger audience and holds the cap under the instance ceiling. Added by the area that delivers (`policyWith`), not by the root | the engine's (50, under the ceiling) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`, and the audience shown); alerts in their phase |
 | `calendar` | `{timeZone, weekOffset}`: the zone calendar buckets are cut in and a week bucket's offset | the viewer's zone, the instance's week | no screen yet (analysis) |
 
 `tools/template/ReportMount.js` is the one reader of the two maps: `state()` gives `{mounted, links, policy}` in a
 screen's actions, every link key present (null when not offered) and every policy field with its default, and
-`url(key)` is a transition's response, the mount's screen or Tools' own. A screen never reads `reportLinks` or
-`reportPolicy` from the context itself. A value that is not a map is a mount with nothing in it: no link is offered and
-no feature.
+`url(key)` is a transition's response, the mount's screen or Tools' own. `policyWith(fields)` is the root's policy with
+an area's fields added, for the area to set as `reportPolicy`; with no mount it is null, so an area adds to a mount and
+never makes one. A screen never reads `reportLinks` or `reportPolicy` from the context itself. A value that is not a map
+is a mount with nothing in it: no link is offered and no feature.
+
+**The policy is not authority, and a request cannot stand in for it.** The roots set or null the maps in
+`always-actions`, which run before every transition too, so what a screen or a transition reads through the module is
+the mount's, whatever a request sends. Where a field says what a save may hold, the transition that saves reads it
+there and never takes it from its parameters, and that transition is the only way to the operation for the app's
+users: a service is reached from outside the server only through a screen's transition, a REST resource that names it
+(`tools/service/moqui.rest.xml` names the query, document and dataset reads and the annotation write, no schedule
+operation) or an agent tool row that opts it in (none does); an app's users hold no grant on Tools' own routes; and an
+app that adds a screen, a resource or a tool over one of these operations owes the same reading of its policy. So for the delivery screens: the recipients a schedule names are accepted by
+`find#ReportRecipients` under the mount's permission in `createSchedule` and `storeAudience`, before `store#Schedule`,
+which then checks each one's scope; the template and the recipient cap are put on the request by the same
+transitions and by `storeSchedule`, a posted `emailTemplateId` or `recipientCap` being no parameter of theirs; and a
+definition of a hidden component is refused by `createSchedule`. What does not depend on the mount is the engine's
+own, checked whatever calls it: the owner, the group delivery artifact for anyone but oneself, each recipient's scope
+fingerprint at the save, at a resume and before each message, and the cap under the instance ceiling.
 
 Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
 `screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`, and `drill` where the mount has one), and
@@ -554,7 +589,11 @@ links, the policy and its defaults under the mount, with no mount and with a for
 the screens' sources, that both Tools roots null the five names and that no screen reads the two maps but through the
 module. The dataset screens under a mount (the id prefix, the scope field's parameter and words, the transitions an app
 does not take in) are held by the app's own spec through its route (mr-boss `test/Insights/InsightsDatasets.spec.js`),
-and with no mount by the cargo tests that render them (`tools_screens.rs`, `monitor_tui.rs`).
+and with no mount by the cargo tests that render them (`tools_screens.rs`, `monitor_tui.rs`). The delivery screens are
+held the same way: under a mount by mr-boss `test/Insights/InsightsDelivery.spec.js` (the recipients kept to the
+permission's holders, the template and the cap of every save whatever is posted, a hidden component's dashboard and
+Tools' owner-mode form refused or absent on the app's route and taken on Tools' own), with no mount by the cargo tests,
+and the operations they read and write by `framework/test/ReportAudience.spec.js`.
 
 ### Business datasets
 
@@ -754,9 +793,32 @@ owner mode, to one address line.
   names a `userGroupId` is sent to the group only when its screen path is registered as a `ReportLegacyAdapter` enumeration
   (`enumCode` the path), then one message a member, and only to members the saved find is shared with; without a
   registration the group is not sent to and the user's own delivery continues.
+- **What the screens read and write** beside these (`framework/service/org/moqui/report/ReportReads.js` and
+  `ReportWrites.js`), so that the [delivery screens](#the-dashboards-app), which an app shows under its own root, touch no
+  entity:
+  - `find#ReportRecipients` answers who may be proposed and accepted as a recipient, to a caller who may deliver to
+    others (`canDeliver`: the group delivery artifact by the caller's own grant): a page of the active internal accounts
+    by name (`users`: `userId`, `username`, `name`; `term` searches the full name and the username, ignoring case), the
+    caller's own groups (`groups`, never `ALL_USERS`: a delivery goes to a group its owner belongs to) and, of the
+    `userIds` and `groupIds` named, which may be recipients (`selectedUsers`) and which may not (`refusedUserIds`,
+    `refusedGroupIds`). With `permissionId` only the holders of that permission are proposed and accepted, which is how
+    an app keeps its reports to its own readers (`reportPolicy.recipientPermissionId`). The caller is always accepted;
+    a caller who may not deliver to others is answered no account and no group and every other name refused. Being
+    accepted grants nothing: the engine checks each recipient's scope.
+  - `find#ScreenSchedules` answers the screen schedules the caller set up for themselves (the caller as `userId`, no
+    report definition), each with its saved find's description and whether the group it names is sent to
+    (`groupAdmitted`); `store#ScreenSchedule` changes such a schedule's timing, format, skipping when empty, active
+    interval, subject (plain text: one that holds an expression is refused, since the subject is expanded when the
+    schedule runs) and pause, and never its screen, find, user, group, template or location. Another user's schedule,
+    a report schedule and one that does not exist are refused alike (`SCHEDULE_UNAVAILABLE`).
+  - `get#ReportOccurrence` answers the run's owner by name too (`ownerName`), with the whole run: to its owner and to
+    the administrator.
+
+  They are granted with the other `ReportServices` operations (`DASHBOARDS_APP`'s pattern); an app grants the three
+  new ones to the groups that schedule (BOSS: `BOSS_INS_REPORT_OWN`).
 
 The code is `crates/moqui-report/src/delivery.rs` (and `schedule.rs` for the run); the regression spec is
-`framework/test/ReportAudience.spec.js`.
+`framework/test/ReportAudience.spec.js`, which also holds what the three screen operations answer and refuse.
 
 ### Business alerts
 

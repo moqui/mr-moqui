@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- ScheduledReportDetail (docs/tools/Monitoring.md, "Report delivery"; plans/Admin-Screens-Down.md, Track I; first BOSS
+    Insights'): one schedule, for its owner (another's or none is "not available"). EditScreenScheduled: the timing,
+    format, active interval, subject and skipping an empty report. ReportAudience: the people and groups it goes to
+    beside each recipient's result from the engine's check (may receive it, or the reason in words; never the other
+    person's grants); a save with a recipient whose access differs is refused with the reason, and the server sets the
+    mode: personal with no other recipient, a group otherwise. OwnPreview: the report's panels as the viewer reads them
+    now, and the file. ScheduleRuns: each run's safe counters, opening ReportDelivery. The primary action is Resume while
+    paused, else Send now. A screen schedule the viewer set up for themselves (a saved list's delivery) changes its
+    timing, format and subject here (store#ScreenSchedule); an owner-mode schedule (made on Reports) is paused, resumed
+    and sent here. Every read and write is through template/ReportDelivery.js, which reads no entity.
+    Another app shows the screen under its own root, by location (BOSS Insights › Scheduled reports): the people
+    proposed and accepted as recipients, the EmailTemplate of a save and its recipient cap are the mount's policy
+    (template/ReportMount.js), read by the transitions here and never from a request. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Scheduled report" default-menu-include="false">
+    <parameter name="screenScheduledId" required="true"/>
+
+    <transition name="recipientChoices" read-only="true">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/ReportDelivery.js').recipientChoices({term:term, selected:selected}))</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="previewFile" method="get" read-only="true">
+        <actions><script>ec.web.sendTextResponse(ec.resource.script('component://tools/template/ReportDelivery.js').previewPage({definitionId:definitionId, renderMode:renderMode}), 'text/html;charset=UTF-8')</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="storeSchedule" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportDelivery.js').storeTiming({screenScheduledId:screenScheduledId,
+            cronSelected:cronSelected, cronExpression:cronExpression, renderMode:renderMode, noResultsAbort:noResultsAbort, fromDate:fromDate,
+            thruDate:thruDate, emailSubject:emailSubject, expectedRevision:expectedRevision})</script></actions>
+        <default-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+        <error-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+    </transition>
+    <transition name="storeAudience" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportDelivery.js').storeAudience({screenScheduledId:screenScheduledId,
+            recipientUserIds:recipientUserIds, recipientGroupIds:recipientGroupIds, expectedRevision:expectedRevision})</script></actions>
+        <default-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+        <error-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+    </transition>
+    <transition name="pauseSchedule" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportDelivery.js').pause({screenScheduledIds:screenScheduledId, paused:paused})</script></actions>
+        <default-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+    </transition>
+    <transition name="sendNow" method="post">
+        <actions><script>ec.resource.script('component://tools/template/ReportDelivery.js').send({screenScheduledId:screenScheduledId})</script></actions>
+        <default-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+        <error-response url="." parameter-map="{screenScheduledId:screenScheduledId}"/>
+    </transition>
+
+    <actions>
+        <!-- another's schedule, or none, reads as not available, without failing the page -->
+        <set field="found" from="ec.resource.script('component://tools/template/ReportDelivery.js').detail(screenScheduledId)"/>
+        <set field="recordFound" from="found.found"/>
+        <set field="schedule" from="found.schedule"/>
+        <set field="options" from="found.options"/>
+        <set field="audience" from="found.audience"/>
+        <set field="recipients" from="found.recipients"/>
+        <set field="runs" from="found.runs"/>
+        <set field="previewSections" from="found.sections"/>
+        <set field="canDistribute" from="found.canDistribute"/>
+        <set field="cronOptions" from="(schedule.cronExpression &amp;&amp; !options.cronPresets.some(row =&gt; row.value === schedule.cronExpression)
+                ? [{value:schedule.cronExpression, label:'As now: ' + schedule.cronText}] : []).concat(options.cronPresets)"/>
+        <set field="editValues" from="Object.assign({}, schedule, {cronSelected:schedule.cronExpression})"/>
+        <set field="skipOptions" from="[{value:'Y', label:'Yes'}, {value:'N', label:'No'}]"/>
+        <set field="selectedRecipients" from="(schedule.recipientUserIds || []).join(',')"/>
+    </actions>
+    <widgets>
+        <section name="ScheduleUnavailable" condition="!recordFound"><widgets>
+            <label text="Schedule not available" type="h5"/>
+            <label type="p" text="This schedule does not exist or is not yours."/>
+            <link url="../Schedules" text="Back to scheduled reports" link-type="anchor"/>
+        </widgets></section>
+        <section name="ScheduleRecord" condition="recordFound"><widgets>
+            <container style="m-record-header">
+                <container style="row items-start q-col-gutter-x-md q-col-gutter-y-sm">
+                    <container style="col-12 col-md m-record-title">
+                        <label text="${schedule.title}" type="h5"/>
+                        <label type="p" style="text-caption m-muted q-mb-none"
+                                text="${schedule.definitionTitle} · ${schedule.cronText} · ${schedule.formatText} · ${schedule.modeText}, to ${schedule.audienceText}"/>
+                    </container>
+                    <container style="col-12 col-md-auto m-record-status">
+                        <render-mode>
+                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${schedule.stateColor}">${
+                                WebUtilities.encodeHtml(schedule.stateText)}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: schedule.stateText})}]]></text>
+                            <text type="html">${schedule.stateText}</text>
+                        </render-mode>
+                    </container>
+                </container>
+                <container style="row items-center q-col-gutter-x-md q-col-gutter-y-sm m-record-foot">
+                    <container style="col-12 col-md">
+                        <label type="p" style="q-mb-none" text="${schedule.lastText}"/>
+                        <label type="p" style="q-mb-none text-warning" text="${schedule.groupNote}" condition="schedule.groupNote"/>
+                    </container>
+                    <container style="col-12 col-md-auto row items-center q-gutter-y-xs m-record-actions">
+                        <link url="pauseSchedule" link-type="hidden-form" text="Resume" btn-type="primary" icon="sym_o_play_arrow" condition="schedule.paused"
+                                confirmation="Resume ${schedule.title}? Its recipients (${schedule.audienceText}) are checked again first."
+                                parameter-map="{screenScheduledId:screenScheduledId, paused:'false'}"/>
+                        <link url="sendNow" link-type="hidden-form" text="Send now" btn-type="primary" icon="sym_o_send"
+                                condition="!schedule.paused &amp;&amp; !schedule.screenSchedule"
+                                confirmation="Send ${schedule.title} now to ${schedule.audienceText}? This is a new run, not a repeat of an earlier one."
+                                parameter-map="{screenScheduledId:screenScheduledId}"/>
+                        <link url="pauseSchedule" link-type="hidden-form" text="Pause" icon="sym_o_pause" condition="!schedule.paused"
+                                confirmation="Pause ${schedule.title}? It sends nothing until resumed."
+                                parameter-map="{screenScheduledId:screenScheduledId, paused:'true'}"/>
+                        <link url="../Schedules" text="All schedules" link-type="anchor"/>
+                    </container>
+                </container>
+            </container>
+
+            <container style="row q-col-gutter-md">
+                <container style="col-12 col-md-6">
+                    <container-box>
+                        <box-header title="Timing and output"/>
+                        <box-body>
+                            <section name="OwnerModeTiming" condition="!schedule.editable"><widgets>
+                                <label type="p" text="${schedule.cronText} · ${schedule.formatText}"/>
+                                <label type="p" style="m-muted" text="This schedule delivers in owner mode, as it was set when it was made: to one address line or a server location, without the check of each recipient that a schedule made here has. It is paused, resumed and sent here; to change it, make it again."/>
+                            </widgets></section>
+                            <section name="ScheduleTiming" condition="schedule.editable"><widgets>
+                                <form-single name="EditScreenScheduled" transition="storeSchedule" map="editValues">
+                                    <field name="screenScheduledId"><default-field><hidden/></default-field></field>
+                                    <field name="expectedRevision"><default-field><hidden/></default-field></field>
+                                    <field name="cronSelected"><default-field title="When">
+                                        <drop-down><list-options list="cronOptions" key="${value}" text="${label}"/></drop-down>
+                                    </default-field></field>
+                                    <field name="renderMode"><default-field title="Format">
+                                        <drop-down><list-options list="options.formats" key="${value}" text="${label}"/></drop-down>
+                                    </default-field></field>
+                                    <field name="noResultsAbort"><default-field title="Skip when empty" tooltip="Send nothing when the report has no data">
+                                        <radio><list-options list="skipOptions" key="${value}" text="${label}"/></radio>
+                                    </default-field></field>
+                                    <field name="fromDate"><default-field title="From"><date-time/></default-field></field>
+                                    <field name="thruDate"><default-field title="Through"><date-time/></default-field></field>
+                                    <field name="emailSubject"><default-field title="Subject" tooltip="Leave it empty to use the report's name"><text-line size="50"/></default-field></field>
+                                    <field name="save"><default-field><submit text="Save"/></default-field></field>
+                                    <field-layout>
+                                        <field-row><field-ref name="cronSelected"/><field-ref name="renderMode"/></field-row>
+                                        <field-row><field-ref name="fromDate"/><field-ref name="thruDate"/></field-row>
+                                        <field-ref name="noResultsAbort"/>
+                                        <field-ref name="emailSubject"/>
+                                        <field-ref name="save"/>
+                                    </field-layout>
+                                </form-single>
+                            </widgets></section>
+                        </box-body>
+                    </container-box>
+                </container>
+                <container style="col-12 col-md-6">
+                    <section name="AudienceBox" condition="!schedule.screenSchedule"><widgets>
+                        <container-box>
+                            <box-header title="Recipients"/>
+                            <box-toolbar>
+                                <container-dialog id="EditAudience" button-text="Change recipients" condition="canDistribute">
+                                    <label type="p" style="m-muted" text="Each person, and every member of each group, is checked when you save: the report goes only to those who may read exactly what you read. Leave both empty to send it to you alone."/>
+                                    <form-single name="ReportAudience" transition="storeAudience" map="schedule">
+                                        <field name="screenScheduledId"><default-field><hidden/></default-field></field>
+                                        <field name="expectedRevision"><default-field><hidden/></default-field></field>
+                                        <field name="recipientUserIds"><default-field title="People" tooltip="Each is checked when you save">
+                                            <drop-down allow-multiple="true" allow-empty="true">
+                                                <dynamic-options transition="recipientChoices" server-search="true" min-length="0"
+                                                        parameter-map="{selected:selectedRecipients}"/>
+                                            </drop-down>
+                                        </default-field></field>
+                                        <field name="recipientGroupIds"><default-field title="Groups" tooltip="A group you belong to">
+                                            <drop-down allow-multiple="true" allow-empty="true"><list-options list="options.groups" key="${value}" text="${label}"/></drop-down>
+                                        </default-field></field>
+                                        <field name="save"><default-field><submit text="Save recipients"
+                                                confirmation="Save these recipients of ${schedule.title}? Deliveries not yet sent under the earlier recipients are cancelled."/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                            </box-toolbar>
+                            <box-body>
+                                <label type="p" text="${schedule.group ? 'Sent to each of these separately, one message each.' : schedule.editable ? 'Sent to you alone.' : 'Sent to ' + schedule.audienceText + ', in owner mode.'}"/>
+                                <label type="p" style="m-muted" text="${found.audienceNote}" condition="found.audienceNote"/>
+                            </box-body>
+                            <box-body-nopad>
+                                <form-list name="AudienceMembers" list="recipients" skip-form="true" paginate="false" condition="recipients.length">
+                                    <field name="name"><default-field title="Recipient"><display/></default-field></field>
+                                    <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                                </form-list>
+                                <form-list name="AudienceResults" list="audience" skip-form="true" paginate="false" condition="audience.length">
+                                    <field name="recipientName"><default-field title="Person"><display/></default-field></field>
+                                    <field name="viaText"><default-field title="How"><display/></default-field></field>
+                                    <field name="resultText"><default-field title="Result">
+                                        <render-mode>
+                                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${resultColor}">${
+                                                WebUtilities.encodeHtml(resultText)}</q-chip>]]></text>
+                                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: resultText})}]]></text>
+                                            <text type="html">${resultText}</text>
+                                        </render-mode>
+                                    </default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="recipientName"/></column>
+                                        <column><field-ref name="resultText"/></column>
+                                    </columns>
+                                </form-list>
+                            </box-body-nopad>
+                        </container-box>
+                    </widgets></section>
+                </container>
+            </container>
+
+            <section name="OwnPreviewBox" condition="!schedule.screenSchedule"><widgets>
+                <container-box>
+                    <box-header title="Your preview"/>
+                    <box-toolbar>
+                        <link url="previewFile" text="Download as ${schedule.formatText}" link-type="anchor" target-window="_blank"
+                                parameter-map="{definitionId:schedule.definitionId, renderMode:schedule.renderMode}"/>
+                    </box-toolbar>
+                    <box-body>
+                        <label type="p" style="m-muted" text="This is the report as you read it now. Every recipient is checked to read the same before each delivery."/>
+                        <label type="p" style="text-warning" text="You no longer read this report, so it cannot be delivered." condition="!previewSections.length"/>
+                        <section-iterate name="OwnPreviewSections" list="previewSections" entry="previewSection"><widgets>
+                            <label text="${previewSection.title}" type="h6" condition="previewSections.length &gt; 1"/>
+                            <section-iterate name="OwnPreview" list="previewSection.panels" entry="previewPanel"><widgets>
+                                <report-embed definition-id="${previewPanel.definitionId}" panel-id="${previewPanel.panelId}"
+                                        from="${previewPanel.from}" thru="${previewPanel.thru}"/>
+                            </widgets></section-iterate>
+                        </widgets></section-iterate>
+                    </box-body>
+                </container-box>
+                <container-box>
+                    <box-header title="Runs"/>
+                    <box-body>
+                        <label type="p" style="m-muted" text="Not yet run." condition="!runs.length"/>
+                    </box-body>
+                    <box-body-nopad>
+                        <form-list name="ScheduleRuns" list="runs" skip-form="true" paginate="false" condition="runs.length">
+                            <field name="dateText"><default-field title="Run">
+                                <link url="../ReportDelivery" text="${dateText}" link-type="anchor" parameter-map="{occurrenceId:occurrenceId}"/>
+                            </default-field></field>
+                            <field name="kindText"><default-field title="How"><display/></default-field></field>
+                            <field name="stateText"><default-field title="State">
+                                <render-mode>
+                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                                        WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
+                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                    <text type="html">${stateText}</text>
+                                </render-mode>
+                            </default-field></field>
+                            <field name="countsText"><default-field title="Recipients"><display text="${countsText}${reasonText ? ' · ' + reasonText : ''}"/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="dateText"/><field-ref name="countsText"/></column>
+                                <column><field-ref name="stateText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body-nopad>
+                </container-box>
+            </widgets></section>
+        </widgets></section>
+    </widgets>
+</screen>

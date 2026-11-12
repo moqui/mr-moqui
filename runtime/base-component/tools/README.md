@@ -15,7 +15,11 @@ Another app may show the Dashboards screens under its own root, as BOSS Insights
 ReportMounts and AdminMounts specs. The dataset screens of Dashboards (`Datasets`, `DatasetDetail`, `DatasetFields`,
 `DatasetView`: the business datasets' list and stewardship, with Tools' other datasets below the list where there is no
 mount) read through `template/ReportDatasets.js`
-([Business datasets](../../../docs/tools/Monitoring.md#business-datasets)).
+([Business datasets](../../../docs/tools/Monitoring.md#business-datasets)). The delivery screens (`Schedules`,
+`ScheduledReportDetail`, `ReportDelivery`: the viewer's scheduled reports and the reports delivered to them, one
+schedule with its recipients and runs, one run with each recipient's outcome) read and write through
+`template/ReportDelivery.js` ([Report delivery](../../../docs/tools/Monitoring.md#report-delivery)); `Reports` keeps
+the previews, the composer, the playlists and the owner-mode schedule form.
 
 ## Tools
 

@@ -80,6 +80,25 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.report.Definition definitionId="gate-business" definitionType="dataset" title="Gate business dataset" ownerId="EX_JOHN_DOE"
         readOnly="N" versionNumber="1"
         bodyJson='{"documentType":"GateDoc","timeField":"_timestamp","signal":"business","rowFilterService":"org.moqui.report.ReportServices.get#UserGroupRowFilter","rowFilterParameters":{"groupField":"enumTypeId"}}'/>
+    <!-- the delivery screens of Dashboards: a schedule that goes to its owner alone with one run and its delivery, a
+        schedule made in owner mode, and a screen schedule its user set up for themselves -->
+    <moqui.screen.ScreenScheduled screenScheduledId="GATE_SCHEDULE" screenPath="/apps/dashboards/Reports" reportDefinitionId="monitor-overview"
+        reportOwnerId="EX_JOHN_DOE" userId="EX_JOHN_DOE" cronExpression="0 0 6 ? * MON" renderMode="csv" deliveryMode="personal"
+        emailSubject="Gate weekly overview" paused="Y" noResultsAbort="Y" versionNumber="1"/>
+    <moqui.screen.ScreenScheduledLock screenScheduledId="GATE_SCHEDULE"/>
+    <moqui.screen.ScreenScheduled screenScheduledId="GATE_OWNER_MODE" screenPath="/apps/dashboards/Reports" reportDefinitionId="monitor-overview"
+        reportOwnerId="EX_JOHN_DOE" cronExpression="0 0 7 ? * *" renderMode="pdf" saveToLocation="dbresource://gate/reports"
+        emailSubject="Gate owner mode" paused="Y" noResultsAbort="Y"/>
+    <moqui.screen.ScreenScheduledLock screenScheduledId="GATE_OWNER_MODE"/>
+    <moqui.screen.ScreenScheduled screenScheduledId="GATE_SCREEN_SCHEDULE" screenPath="/apps/system/Operations/Jobs" userId="EX_JOHN_DOE"
+        cronExpression="0 0 8 ? * *" renderMode="csv" emailSubject="Gate saved list" paused="Y"/>
+    <moqui.report.ReportOccurrence occurrenceId="GATE_OCCURRENCE" screenScheduledId="GATE_SCHEDULE" occurrenceKey="GATE_OCCURRENCE"
+        occurrenceKind="manual" occurrenceDate="2026-01-02 03:04:05" completedDate="2026-01-02 03:04:06" ownerUserId="EX_JOHN_DOE"
+        scheduleRevision="1" definitionId="monitor-overview" definitionVersion="1" renderMode="csv" deliveryMode="personal"
+        statusId="RptOccComplete" recipientCount="1" sentCount="1" skippedCount="0" failedCount="0" uncertainCount="0" renderCount="1"
+        versionNumber="1"/>
+    <moqui.report.ReportRecipientDelivery deliveryId="GATE_DELIVERY" occurrenceId="GATE_OCCURRENCE" userId="EX_JOHN_DOE" channel="email"
+        statusId="RptDlvSent" attemptCount="1" attemptDate="2026-01-02 03:04:06"/>
 </entity-facade-xml>"#;
 
 /// Detail screens with the parameters of a record in [`DATA`] or the seed data.
@@ -473,6 +492,114 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         &john,
         "/apps/dashboards/DatasetView?datasetId=otel_logs",
         &["Dataset otel_logs is not available"],
+    );
+    // The delivery screens of Dashboards, with no mount: the viewer's schedules (the one checked for each recipient, the
+    // owner-mode one and the screen schedule of their own), New schedule with people and groups for one who may deliver
+    // to others, and Tools' link to Reports.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Schedules",
+        &[
+            "Gate weekly overview",
+            "Gate owner mode",
+            "Gate saved list",
+            "Jobs (saved list)",
+            "data-dialog=\"NewSchedule\"",
+            "People and groups",
+            "/apps/dashboards/Reports",
+            "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_SCHEDULE",
+            "/apps/dashboards/ReportDelivery?occurrenceId=GATE_OCCURRENCE",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Schedules?view=received",
+        &["Monitor overview", "Open my report"],
+    );
+    // One schedule: its timing, its recipients, the viewer's own preview and its runs; an owner-mode one is not changed
+    // here, and a screen schedule has its timing alone.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_SCHEDULE",
+        &[
+            "Timing and output",
+            "Sent to you alone.",
+            "Change recipients",
+            "Your preview",
+            "1 sent",
+            "/apps/dashboards/ScheduledReportDetail/storeSchedule",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_OWNER_MODE",
+        &["Owner mode", "This schedule delivers in owner mode"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ScheduledReportDetail?screenScheduledId=GATE_SCREEN_SCHEDULE",
+        &["Jobs (saved list)", "Timing and output"],
+    );
+    // A schedule made here: of one of Tools' own dashboards, which an app that hides Tools' definitions does not offer,
+    // for the viewer alone, with the engine's own template and recipient cap.
+    let create = "/apps/dashboards/Schedules/createSchedule";
+    let (status, page) = post(
+        address,
+        &john,
+        create,
+        &[
+            ("newDefinitionId", "monitor-services"),
+            ("cronSelected", "0 0 6 ? * MON-FRI"),
+            ("renderMode", "csv"),
+            ("emailSubject", "Gate made schedule"),
+            ("audienceKind", "personal"),
+        ],
+    );
+    ran(create, status, &page);
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Schedules?state=active",
+        &["Gate made schedule", "Weekdays"],
+    );
+    // A run: what ran, each recipient's outcome and the viewer's own delivery, with its status export.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/ReportDelivery?occurrenceId=GATE_OCCURRENCE",
+        &[
+            "Monitor overview",
+            "Schedule revision 1, report version 1",
+            "Your delivery",
+            "Open my report",
+            "/apps/dashboards/ReportDelivery/exportAudit",
+        ],
+    );
+    let (status, audit) = get(
+        address,
+        &john,
+        "/apps/dashboards/ReportDelivery/exportAudit?occurrenceId=GATE_OCCURRENCE",
+    );
+    assert!(
+        status == 200 && audit.starts_with("Report,Run,Kind,Delivery") && audit.contains(",Sent,"),
+        "{status}: {audit}"
+    );
+    // Reports keeps the previews, the composer, the playlists and the owner-mode form, and links the schedules.
+    assert_page(
+        address,
+        &john,
+        "/apps/dashboards/Reports",
+        &[
+            "Preview and download",
+            "Compose a multi-dashboard report",
+            "Schedule a report in owner mode",
+            "/apps/dashboards/Schedules",
+        ],
     );
 }
 
