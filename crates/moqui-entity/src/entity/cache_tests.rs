@@ -875,12 +875,14 @@ fn a_new_llm_or_agent_entity_is_in_the_sim_list_or_named_absent() {
         "moqui.agent.AgentTrigger",
         "moqui.agent.AgentTriggerEvent",
         "moqui.llm.LlmApiClient",
+        "moqui.llm.LlmCallSummary",
         "moqui.llm.LlmEndpoint",
         "moqui.llm.LlmFeatureBinding",
         "moqui.llm.LlmModel",
         "moqui.llm.LlmModelAlias",
         "moqui.llm.LlmModelCapability",
         "moqui.llm.LlmQuota",
+        "moqui.llm.LlmQuotaReservationSummary",
         "moqui.llm.LlmUsageSummary",
     ];
     let facade = testing::open();
@@ -980,14 +982,14 @@ fn a_cached_rows_key_matches_the_written_one_across_types_only_as_text() {
     assert!(!super::same_key(&Value::I64(7), &Value::I64(8)));
 }
 
-/// plans/High-Level-Review.md HL-002, opt-in: the cost of the current eviction (one sweep of every cached list per
-/// write, immediately and again at frame end) beside one sweep per entity that checks each cached row against a set of
-/// the changed keys. The writes match no cached list, the case where selective eviction scans everything and removes
-/// nothing. Run: `cargo test -p moqui-entity --lib eviction_sweep_cost -- --ignored --nocapture`.
+/// plans/High-Level-Review.md HL-002, opt-in: the cost of a single write's eviction (one sweep of every cached list per
+/// write) beside the one sweep per entity that a frame end and a bulk delete's chunk run ([`super::sweep`]), which
+/// checks each cached row against a set of the changed keys. The writes match no cached list, the case where selective
+/// eviction scans everything and removes nothing. Run:
+/// `cargo test -p moqui-entity --lib eviction_sweep_cost -- --ignored --nocapture`.
 #[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
 fn eviction_sweep_cost_per_write_and_per_entity() {
-    use std::collections::HashSet;
     use std::time::Instant;
 
     println!("lists rows/list writes | commit-no-cache(ms) commit-cached(ms) | per-write: inspected  lock(ms) | per-entity: inspected  lock(ms)");
@@ -1066,27 +1068,14 @@ fn eviction_sweep_cost_per_write_and_per_entity() {
                 .unwrap();
             per_write += started.elapsed();
         }
-        // One sweep: each cached row's key against the set, each list's condition against each write.
-        let keys: HashSet<String> = values
-            .iter()
-            .filter_map(|values| super::pk_of(values, &meta.pk_fields))
-            .collect();
-        let mut keyed_inspected = 0_usize;
+        // One sweep, as the frame end and a bulk delete's chunk run it: each cached row's key against the set, each
+        // list's condition against each write, within the sweep's work bound.
+        let swept: Vec<(&str, &crate::entity::FieldMap)> = values.iter().map(|values| ("update", values)).collect();
+        let keyed_inspected = lists * rows;
         let started = Instant::now();
-        let mut buffer = String::new();
-        lists_cache
-            .remove_where(|_, cached| {
-                keyed_inspected += cached.rows.len();
-                let held = cached.rows.iter().any(|row| {
-                    buffer.clear();
-                    super::write_pk(row.fields(), &meta.pk_fields, &mut buffer) && keys.contains(buffer.as_str())
-                });
-                held || values
-                    .iter()
-                    .any(|values| super::may_match(cached.condition.as_ref(), values))
-            })
-            .unwrap();
+        super::sweep(&facade, &meta, &swept).unwrap();
         let per_entity = started.elapsed();
+        assert_eq!(lists_cache.len(), lists, "matched in full, within the bound");
         let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
         println!(
             "{lists:>5} {rows:>9} {writes:>6} | {:>19.2} {:>17.2} | {:>20} {:>9.2} | {:>21} {:>9.2}",
@@ -1155,6 +1144,101 @@ fn a_frames_writes_of_one_entity_make_one_frame_end_sweep() {
     assert_eq!(cached(&facade, "C"), ["C1:created"]);
     assert!(cached(&facade, "D").is_empty());
     assert_eq!(cached(&facade, "K"), ["K1:stored"]);
+}
+
+/// plans/High-Level-Review.md HL-002, the cost rule of a sweep: within its work bound a bulk delete's sweep keeps a
+/// cached list that holds none of the deleted rows; where matching would spend more than the bound, the entity's lists
+/// go unjudged, that one too, for a bulk delete's chunk and for a frame's end. (`LocalizedMessage` does not refer to
+/// itself, so its bulk delete goes a chunk at a time; `Enumeration` does.)
+#[test]
+fn a_sweep_dearer_than_its_bound_clears_the_lists_and_one_within_it_keeps_them() {
+    const MESSAGE: &str = "moqui.basic.LocalizedMessage";
+    let facade = testing::open();
+    let put_message = |original: &str, locale: &str| {
+        let mut row = facade.make_value(MESSAGE).unwrap();
+        row.set("original", Value::string(original));
+        row.set("locale", Value::string(locale));
+        row.set("localized", Value::string("stored"));
+        row.create(&facade).unwrap();
+    };
+    for (original, locale) in [("D1", "dd"), ("D2", "dd"), ("K1", "kk"), ("K2", "kk")] {
+        put_message(original, locale);
+    }
+    let fill = |facade: &EntityFacade, entity: &str, field: &str, value: &str| {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq(field, Value::string(value))
+            .use_cache(true)
+            .list()
+            .unwrap()
+            .len()
+    };
+    let cached = |entity: &str, field: &str, value: &str| {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq(field, Value::string(value))
+            .use_cache(true)
+            .list_from_cache()
+            .unwrap()
+            .map(|rows| rows.len())
+    };
+    let delete_locale = |locale: &str| {
+        facade
+            .find(MESSAGE)
+            .unwrap()
+            .eq("locale", Value::string(locale))
+            .delete_all()
+            .unwrap()
+    };
+    assert_eq!(
+        (
+            fill(&facade, MESSAGE, "locale", "dd"),
+            fill(&facade, MESSAGE, "locale", "kk")
+        ),
+        (2, 2)
+    );
+    assert_eq!(delete_locale("dd"), 2);
+    assert_eq!(
+        (cached(MESSAGE, "locale", "dd"), cached(MESSAGE, "locale", "kk")),
+        (None, Some(2)),
+        "matched: the list of kk stays"
+    );
+
+    put_message("D3", "dd");
+    assert_eq!(fill(&facade, MESSAGE, "locale", "dd"), 1);
+    let bound = super::set_sweep_work_max(1);
+    assert_eq!(delete_locale("dd"), 1);
+    super::set_sweep_work_max(bound);
+    assert_eq!(
+        (cached(MESSAGE, "locale", "dd"), cached(MESSAGE, "locale", "kk")),
+        (None, None),
+        "past the bound: cleared unjudged"
+    );
+
+    // The frame end: an update of a row in no cached list, while another thread caches two lists.
+    for (id, kind) in [("U1", "U"), ("K1", "K")] {
+        put_enum(&facade, id, kind, "stored");
+    }
+    let tx = facade.transactions_for(ENUM).unwrap();
+    assert!(tx.begin(None).unwrap());
+    set_enum(&facade, "U1", "description", "changed").unwrap();
+    let reader = facade.clone();
+    std::thread::spawn(move || {
+        assert_eq!(fill(&reader, ENUM, "enumTypeId", "K"), 1);
+        assert_eq!(fill(&reader, ENUM, "enumTypeId", "U"), 1);
+    })
+    .join()
+    .unwrap();
+    let bound = super::set_sweep_work_max(1);
+    tx.commit().unwrap();
+    super::set_sweep_work_max(bound);
+    assert_eq!(
+        cached(ENUM, "enumTypeId", "K"),
+        None,
+        "the frame end's sweep past the bound"
+    );
 }
 
 #[test]

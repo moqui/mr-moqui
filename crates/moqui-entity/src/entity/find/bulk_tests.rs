@@ -257,3 +257,140 @@ fn a_self_referencing_delete_and_an_ordered_update_are_read_in_one_query() {
     assert_eq!(reads.len(), 1, "{reads:?}");
     assert!(reads[0].contains("ORDER BY \"test_id\" DESC"), "{reads:?}");
 }
+
+/// The statements of `table` on the tape since `from` that begin with `verb`.
+fn statements(tape: &Arc<Mutex<Vec<String>>>, from: usize, verb: &str, table: &str) -> Vec<String> {
+    let quoted = format!("\"{table}\"");
+    tape.lock().unwrap()[from..]
+        .iter()
+        .filter(|sql| sql.starts_with(verb) && sql.contains(&quoted))
+        .cloned()
+        .collect()
+}
+
+/// A chunk of rows read by key alone is deleted in one statement, by an IN list of its keys, not one statement a row.
+#[test]
+fn a_chunk_of_rows_read_by_key_is_deleted_in_one_statement() {
+    let (facade, tape) = seeded(10);
+    let from = tape.lock().unwrap().len();
+    assert_eq!(bulk(&facade).bulk_chunk(4).delete_all().unwrap(), 10);
+    let deletes = statements(&tape, from, "DELETE", "test_entity");
+    assert_eq!(deletes.len(), 3, "4 + 4 + 2 rows: {deletes:?}");
+    for sql in &deletes {
+        assert!(sql.contains(" IN ("), "{sql}");
+    }
+    assert_eq!(count(&facade, "bulk"), 0);
+    assert_eq!(count(&facade, "other"), 1);
+
+    // A purge's chunk too, each in its own transaction.
+    let (facade, tape) = seeded(5);
+    let from = tape.lock().unwrap().len();
+    let purged = bulk(&facade).bulk_chunk(3).purge(None).unwrap();
+    assert_eq!((purged.deleted, purged.failed_chunks), (5, 0));
+    assert_eq!(statements(&tape, from, "DELETE", "test_entity").len(), 2);
+    assert_eq!(count(&facade, "bulk"), 0);
+}
+
+const MESSAGE: &str = "moqui.basic.LocalizedMessage";
+
+fn message(facade: &EntityFacade, original: &str, locale: &str) {
+    let mut row = facade.make_value(MESSAGE).unwrap();
+    row.set("original", Value::string(original));
+    row.set("locale", Value::string(locale));
+    row.set("localized", Value::string(format!("{original} in {locale}")));
+    row.create(facade).unwrap();
+}
+
+/// The rows of the cached list of messages whose `field` is `value`; `None` when it is not cached.
+fn cached_messages(facade: &EntityFacade, field: &str, value: &str) -> Option<usize> {
+    facade
+        .find(MESSAGE)
+        .unwrap()
+        .eq(field, Value::string(value))
+        .use_cache(true)
+        .list_from_cache()
+        .unwrap()
+        .map(|rows| rows.len())
+}
+
+/// The rows of an entity with a composite key go in one statement that names each row's whole key, and the cached
+/// lists that held a deleted row are evicted, while one that held none stays.
+#[test]
+fn a_composite_key_chunk_is_one_statement_and_evicts_the_lists_holding_its_rows() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = crate::testing::open_with_tape(Arc::clone(&tape));
+    for original in ["M1", "M2", "M3"] {
+        message(&facade, original, "xx");
+        message(&facade, original, "yy");
+    }
+    let list = |field: &str, value: &str| {
+        facade
+            .find(MESSAGE)
+            .unwrap()
+            .eq(field, Value::string(value))
+            .use_cache(true)
+            .list()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(list("locale", "xx"), 3);
+    assert_eq!(list("locale", "yy"), 3);
+    assert_eq!(list("original", "M2"), 2);
+    assert_eq!(cached_messages(&facade, "original", "M2"), Some(2), "cached");
+
+    let from = tape.lock().unwrap().len();
+    let deleted = facade
+        .find(MESSAGE)
+        .unwrap()
+        .eq("locale", Value::string("xx"))
+        .delete_all()
+        .unwrap();
+    assert_eq!(deleted, 3);
+    let deletes = statements(&tape, from, "DELETE", "localized_message");
+    assert_eq!(deletes.len(), 1, "{deletes:?}");
+    assert_eq!(
+        deletes[0].matches(" OR ").count(),
+        2,
+        "one key for each row: {}",
+        deletes[0]
+    );
+    assert_eq!(cached_messages(&facade, "locale", "xx"), None, "held deleted rows");
+    assert_eq!(cached_messages(&facade, "original", "M2"), None, "held M2 in xx");
+    assert_eq!(cached_messages(&facade, "locale", "yy"), Some(3), "held none of them");
+    assert_eq!(list("original", "M2"), 1);
+}
+
+/// A statement binds at most 2000 values and names at most 1000 rows.
+#[test]
+fn a_delete_statement_stays_within_the_bind_limits() {
+    use crate::entity::value::delete_rows_per_statement;
+    assert_eq!(delete_rows_per_statement(1), 1000);
+    assert_eq!(delete_rows_per_statement(2), 1000);
+    assert_eq!(delete_rows_per_statement(3), 666);
+    assert_eq!(delete_rows_per_statement(4000), 1);
+}
+
+/// A chunk deleted in a transaction removes its rows at commit by their keys, also a row another transaction changed
+/// meanwhile: the tests' database replays the delete by the key columns of its IN list, as a database deletes the rows
+/// it names.
+#[test]
+fn a_chunk_deleted_in_a_transaction_goes_through_another_changed_a_row_meanwhile() {
+    let (facade, _tape) = seeded(3);
+    let tx = facade.transactions_for(TEST).unwrap();
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        assert_eq!(count(&facade, "bulk"), 3);
+        let other = facade.clone();
+        std::thread::spawn(move || {
+            let mut row = other.make_value(TEST).unwrap();
+            row.set("testId", Value::string("B01"));
+            row.set("testLong", Value::string("changed by another transaction"));
+            row.update(&other).unwrap();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(bulk(&facade).delete_all()?, 3);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count(&facade, "bulk"), 0);
+}

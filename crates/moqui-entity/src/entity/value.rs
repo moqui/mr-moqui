@@ -1169,6 +1169,99 @@ impl EntityFacade {
         self.finish_write(entity_name, "delete", plain, None, None, None)
     }
 
+    /// Delete the rows a bulk delete read by key in as few statements as the bind limits allow
+    /// (plans/High-Level-Review.md HL-033): `DELETE ... WHERE pk IN (...)`, or for a composite key an OR of each row's
+    /// key, at most [`DELETE_IN_ITEMS`] rows and [`DELETE_BINDS`] values to a statement. What [`Self::finish_write`] does
+    /// for each row is done once for the chunk where it is the same for every row: the authorization check and the
+    /// artifact hit, the entity-changed notice, the table check, and one sweep of the caches and one cluster
+    /// invalidation for all the keys ([`cache::on_delete_keys`]); the data feed and the lock tracking note each key.
+    /// The statement is not kept in the statement cache: its text varies with the number of rows. Out: the rows the
+    /// statements removed, which is fewer than `rows` when another transaction deleted one first, as a row's delete
+    /// counts 0 then. `None`, with nothing deleted, when a sim or a transaction cache would hold the deletes: the caller
+    /// deletes row by row. The caller makes sure no ECA rule runs and the data feed keeps no values for the deletes
+    /// (the rows hold only their keys), and that the entity does not refer to itself.
+    pub(crate) fn delete_keys(&self, entity_name: &str, rows: &[EntityValue]) -> Result<Option<u64>, Error> {
+        if rows.is_empty() {
+            return Ok(Some(0));
+        }
+        self.reject_view(entity_name, "delete")?;
+        self.with_entity(entity_name, |entity, _, _| {
+            if entity.create_only {
+                return Err(Error::new(format!(
+                    "Entity {} is create-only (immutable), cannot be deleted.",
+                    entity.full_name
+                )));
+            }
+            Ok(())
+        })?;
+        if !cache::writes_direct(self, entity_name, "delete")? {
+            return Ok(None);
+        }
+        // Declared first, so it drops last: the authorization cache is invalidated after the write.
+        let _note = WriteNote(self, entity_name);
+        let _artifact = EntityArtifact::push(self, entity_name, "delete", "delete")?;
+        let tx = self.transactions_for(entity_name)?;
+        let mut keys: Vec<Arc<FieldMap>> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let key = self.with_entity(entity_name, |entity, _, _| pk_values(entity, &row.fields))?;
+            keys.push(Arc::new(self.normalize_values(entity_name, key, true)?));
+        }
+        if tx.lock_track_enabled() {
+            for key in &keys {
+                let pk = key
+                    .iter()
+                    .map(|(name, value)| format!("{name}={}", moqui_lib::object::to_plain_string(value)))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                tx.note_entity_lock(entity_name, &pk);
+            }
+        }
+        self.check_table_runtime(entity_name);
+        let mut sealed: Vec<FieldMap> = Vec::with_capacity(keys.len());
+        for key in &keys {
+            sealed.push(
+                self.seal_values(entity_name, "delete", Cow::Borrowed(&**key), None)?
+                    .into_owned(),
+            );
+        }
+        let statements = self.with_group(entity_name, |entity, dialect, _, _| {
+            let pk = entity.pk_field_names();
+            let per_statement = delete_rows_per_statement(pk.len());
+            sealed
+                .chunks(per_statement)
+                .map(|part| {
+                    let condition = if let [name] = pk.as_slice() {
+                        let values = part
+                            .iter()
+                            .map(|key| key.get(*name).cloned().unwrap_or(Value::Null))
+                            .collect();
+                        Condition::is_in(*name, values)
+                    } else {
+                        let each = part
+                            .iter()
+                            .map(|key| pk_condition(entity, key))
+                            .collect::<Result<_, _>>()?;
+                        Condition::or(each)
+                    };
+                    delete(entity, dialect, Some(&condition))
+                })
+                .collect::<Result<Vec<_>, Error>>()
+        })?;
+        let mut affected = 0_u64;
+        for statement in &statements {
+            affected = affected.saturating_add(execute_tx(&tx, &statement.sql, &statement.params)?);
+        }
+        for key in &keys {
+            load_feed::note_touch(self, entity_name, "delete", Some(key), None);
+        }
+        // As Java's `EntityCache`, a cache clear or cluster publish that fails is logged; the deletes already ran.
+        if let Err(err) = cache::on_delete_keys(self, entity_name, &keys) {
+            tracing::error!(error = %err, "Could not clear or publish the cache for the deletes of {entity_name}");
+        }
+        after_statement(self, &tx, true);
+        Ok(Some(affected))
+    }
+
     /// Whether a write of `entity_name` may go without reading the row first and give what the find-then-write path
     /// would: `dialect` takes it, the update would not read the stored row ([`update_reads_row`], or a data feed that
     /// wants the old values), no transaction cache or simulation holds the write, and authorization needs no read to
@@ -1942,6 +2035,16 @@ impl Drop for EntityArtifact {
 }
 
 const STAMP: &str = "lastUpdatedStamp";
+
+/// Rows one statement of [`EntityFacade::delete_keys`] deletes at most: Oracle takes up to 1000 items in an IN list.
+const DELETE_IN_ITEMS: usize = 1000;
+/// Values one such statement binds at most, under SQL Server's 2100 parameters.
+const DELETE_BINDS: usize = 2000;
+
+/// The rows one statement of [`EntityFacade::delete_keys`] deletes for an entity with `pk_fields` primary key fields.
+pub(crate) fn delete_rows_per_statement(pk_fields: usize) -> usize {
+    (DELETE_BINDS / pk_fields.max(1)).clamp(1, DELETE_IN_ITEMS)
+}
 
 /// Which field defaults to fill, as the `pks` argument of Java's `checkSetFieldDefaults`.
 #[derive(Clone, Copy)]

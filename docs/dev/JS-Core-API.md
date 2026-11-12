@@ -545,7 +545,7 @@ the find as it was, so it can run again.
 | `iterator()` | The rows through a database cursor ([EntityListIterator](#entitylistiterator)) |
 | `count()` | How many rows match |
 | `updateAll(fieldsToSet)` | Sets the fields on each row found and updates the ones that change; how many were updated. Each row's ECA rules run |
-| `deleteAll()` | Deletes the rows; how many |
+| `deleteAll()` | Deletes the rows; how many. Each row's ECA rules run: with none (and no data feed keeping values), the rows are read a chunk at a time by primary key and each chunk deleted in one statement |
 | `purge(maxSeconds, chunkSize)` | Deletes the rows a chunk at a time by primary key, each chunk committed on its own; a failed chunk is logged and passed over, and no chunk begins after `maxSeconds`. How many rows the committed chunks deleted |
 | `getEntityName()` | The entity of the find |
 | `getSelectFields()` | The fields selected, empty for all |
