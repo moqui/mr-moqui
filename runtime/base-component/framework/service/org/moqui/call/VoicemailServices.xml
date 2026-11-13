@@ -142,7 +142,9 @@ along with this software (see the LICENSE.md file). If not, see
             greetingDurationMs, notifyEmail, attachAudio, attachTranscript, rings} (the defaults before they have a box),
             their numbers (myNumberList) and the access numbers (accessNumberList), ringSeconds (call_ring_seconds, used with no
             rings), ringSecondsEach, maxRings, maxSeconds (the longest message), transcribeOn and pinMinDigits (the fewest digits a
-            new PIN has).</description>
+            new PIN has). With ringGroupId, the box of that ring group (voice admins only) and maxSeconds and transcribeOn.</description>
+        <in-parameters><parameter name="ringGroupId"><description>A ring group's box in place of the user's own: for voice admins
+                (VoiceAdmin) only, another user gets notFound; made on first use</description></parameter></in-parameters>
         <out-parameters>
             <parameter name="box" type="Map"/>
             <parameter name="myNumberList" type="List"/>
@@ -161,8 +163,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="VoicemailSettings">
         <description>The current user's voicemail notices and rings: notifyEmail (empty: no email), attachAudio and
             attachTranscript (each off unless set, and only with an address), rings (1 to 10, empty for call_ring_seconds).
-            Turning an attachment on answers a warning: mail cannot be recalled.</description>
+            Turning an attachment on answers a warning: mail cannot be recalled. With ringGroupId, the ring group's box (voice
+            admins only; it has no rings of its own: the group rings by its seconds).</description>
         <in-parameters>
+            <parameter name="ringGroupId"><description>A ring group's box in place of the user's own: for voice admins
+                (VoiceAdmin) only, another user gets notFound; made on first use</description></parameter>
             <parameter name="notifyEmail"/>
             <parameter name="attachAudio"/>
             <parameter name="attachTranscript"/>
@@ -193,9 +198,12 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="store" noun="VoicemailGreeting">
         <description>The current user's greeting, recorded in the browser or uploaded: a WAV (16-bit PCM) or Ogg Opus file
             of at most 10 MB and a minute. It is converted to Ogg Opus (convert#GreetingAudio) in a build with phone calls,
-            else kept as uploaded. Audio that does not read: reasonCode badAudio.</description>
+            else kept as uploaded. Audio that does not read: reasonCode badAudio. With ringGroupId, the ring group's greeting
+            (voice admins only).</description>
         <in-parameters>
             <parameter name="file" type="FileItem" required="true"/>
+            <parameter name="ringGroupId"><description>A ring group's box in place of the user's own: for voice admins
+                (VoiceAdmin) only, another user gets notFound; made on first use</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="box" type="Map"/>
@@ -206,13 +214,18 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="delete" noun="VoicemailGreeting">
-        <description>Remove the current user's greeting: callers hear the default one.</description>
-        <out-parameters><parameter name="box" type="Map"/></out-parameters>
+        <description>Remove the current user's greeting, or with ringGroupId the ring group's (voice admins only): callers
+            hear the default one.</description>
+        <in-parameters><parameter name="ringGroupId"><description>A ring group's box in place of the user's own: for voice admins
+                (VoiceAdmin) only, another user gets notFound; made on first use</description></parameter></in-parameters>
+        <out-parameters><parameter name="box" type="Map"/><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voicemail.js').execute('deleteGreeting', context))</script></actions>
     </service>
 
     <service verb="get" noun="VoicemailGreeting">
-        <description>The current user's greeting for a transition to send: location and contentType; none: notFound.</description>
+        <description>The current user's greeting for a transition to send, or with ringGroupId the ring group's (voice admins
+            only): location and contentType; none: notFound.</description>
+        <in-parameters><parameter name="ringGroupId"/></in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="contentType"/>

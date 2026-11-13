@@ -40,7 +40,11 @@ With V3 the box is the last step of the call's handling plan ([SIP, Call handlin
 rule, a forward or a ring group's members ring first, and `begin#Voicemail` rings the plan's next step instead
 (`mode: ring`) until none is left. A ring group's fallback is the group's own box (`VoicemailBox.ringGroupId`, made the
 first time), which every member reads: its messages are in each member's Voicemail tab (with the group's name), count in
-their unheard total and Home card, and are told to each of them; one heard by a member is heard for all.
+their unheard total and Home card, and are told to each of them; one heard by a member is heard for all. A voice admin
+sets the group box's greeting and its email notice in System, Voice, Ring groups (Voicemail): the settings and
+greeting services take `ringGroupId` (`get#` and `update#VoicemailSettings`, `store#`, `delete#` and
+`get#VoicemailGreeting`), for `VoiceAdmin` only; anyone else gets "not found" for the same group. A group's box has no
+rings of its own: the group rings by its seconds.
 
 ## Leaving a message
 
@@ -186,8 +190,7 @@ engine's next start queues what the spool still holds.
   called (moqui-llm has none yet).
 - **The `external` room.** A voicemail is not yet an event in the number pair's `external` room: those rooms come with
   C1.
-- **Ring groups.** A group's box has no PIN or greeting of its own to set in the screens yet (the default greeting
-  plays), and no phone access.
+- **Ring groups.** A group's box has no PIN and no phone access.
 - **Forward and reply by email**, Zimbra's other voicemail actions, are not here; download and Call back are.
 - **Behind an edge node,** the fallback follows no call handling rules or schedules, and phone access waits for the
   local node.

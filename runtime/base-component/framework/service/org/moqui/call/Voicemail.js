@@ -296,6 +296,22 @@ function groupBox(ringGroupId) {
 }
 
 /**
+ * The box a settings operation is about: a ring group's (ringGroupId: for voice admins only; another user gets notFound
+ * for the same group), else the signed-in user's; made when create is true and there is none. {box} or
+ * {refusal}; box is null for a user with none yet.
+ */
+function settingsBox(p, create) {
+  const me = ec.user.userId
+  if (!me) return { refusal: refuse('notSignedIn', 'Sign in first') }
+  if (blank(p.ringGroupId)) return { box: boxOf(me, create) }
+  const ringGroupId = String(p.ringGroupId)
+  if (!ec.user.hasPermission('VoiceAdmin') || !one('moqui.call.RingGroup', { ringGroupId })) {
+    return { refusal: refuse('notFound', 'Ring group not found') }
+  }
+  return { box: create ? groupBox(ringGroupId) : find(BOX).condition('ringGroupId', ringGroupId).one() }
+}
+
+/**
  * The box a number's calls leave messages in when nothing here decided where the call went: the user's it rings (made
  * when they have none; not for a disabled user), or its ring group's fallback box, followed through other groups; null
  * for any other route (Voice.js fallbackOf gives the same).
@@ -858,9 +874,14 @@ function settingsView(box) {
   }
 }
 
-function settings() {
+function settings(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in first')
+  if (!blank(p.ringGroupId)) {
+    const target = settingsBox(p, false)
+    if (target.refusal) return target.refusal
+    return { box: settingsView(target.box), maxSeconds: maxSeconds(), transcribeOn: transcribeOn() }
+  }
   const box = boxOf(me, false)
   const numbers = rows(NUMBER, { routeTypeEnumId: 'PnrUser', routeId: me }).map((n) => n.phoneNumber)
   const access = rows(NUMBER, { routeTypeEnumId: 'PnrVoicemail' }).map((n) => n.phoneNumber)
@@ -869,18 +890,19 @@ function settings() {
 }
 
 function updateSettings(p) {
-  const me = ec.user.userId
-  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const target = settingsBox(p, true)
+  if (target.refusal) return target.refusal
   const email = String(p.notifyEmail || '').trim()
   if (email && !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email)) return refuse('badEmail', 'That is not an email address')
   let rings = blank(p.rings) ? null : Math.round(Number(p.rings))
   if (rings != null && (Number.isNaN(rings) || rings < 1 || rings > MAX_RINGS)) return refuse('badRings', 'Rings are 1 to ' + MAX_RINGS)
-  const box = boxOf(me, true)
+  const box = target.box
   const before = { audio: yes(box.attachAudio), transcript: yes(box.attachTranscript) }
   const attachAudio = yes(p.attachAudio) && !!email
   const attachTranscript = yes(p.attachTranscript) && !!email
-  box.setFields({ notifyEmail: email || null, attachAudio: attachAudio ? 'Y' : 'N', attachTranscript: attachTranscript ? 'Y' : 'N', rings },
-    true, null, null)
+  // a ring group's box rings by the group's own seconds: it has no rings of its own
+  box.setFields({ notifyEmail: email || null, attachAudio: attachAudio ? 'Y' : 'N', attachTranscript: attachTranscript ? 'Y' : 'N',
+    rings: box.ringGroupId ? null : rings }, true, null, null)
   box.update()
   const turnedOn = (attachAudio && !before.audio) || (attachTranscript && !before.transcript)
   return { box: settingsView(box),
@@ -935,15 +957,15 @@ function deleteLocation(location) {
  * caller and in the browser; in a build without it the upload is kept as it is.
  */
 function storeGreeting(p) {
-  const me = ec.user.userId
-  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const chosen = settingsBox(p, true)
+  if (chosen.refusal) return chosen.refusal
   const file = p.file
   if (!file) return refuse('noFile', 'No file uploaded')
   const size = Number(file.getSize() || 0)
   if (!size || size > MAX_GREETING_BYTES) return refuse('badAudio', 'A greeting is a WAV or Ogg Opus file of at most 10 MB')
   const kind = audioKind(String(file.getString('ISO-8859-1') || '').slice(0, 96))
   if (!kind) return refuse('badAudio', 'A greeting is a WAV or Ogg Opus file of at most 10 MB')
-  const box = boxOf(me, true)
+  const box = chosen.box
   const stamp = String(nowMs())
   const upload = `${ROOT}/greeting/${box.voicemailBoxId}/upload-${stamp}.${kind}`
   file.write(upload)
@@ -975,8 +997,10 @@ function storeGreeting(p) {
   return { box: settingsView(box), converted: !!converted }
 }
 
-function deleteGreeting() {
-  const box = boxOf(ec.user.userId, false)
+function deleteGreeting(p) {
+  const target = settingsBox(p, false)
+  if (target.refusal) return target.refusal
+  const box = target.box
   if (!box) return {}
   deleteLocation(box.greetingLocation)
   box.setFields({ greetingLocation: null, greetingContentType: null, greetingDurationMs: null }, true, null, null)
@@ -985,8 +1009,10 @@ function deleteGreeting() {
   return { box: settingsView(box) }
 }
 
-function greeting() {
-  const box = boxOf(ec.user.userId, false)
+function greeting(p) {
+  const target = settingsBox(p, false)
+  if (target.refusal) return target.refusal
+  const box = target.box
   if (!box || blank(box.greetingLocation)) return refuse('notFound', 'No greeting')
   return { location: box.greetingLocation, contentType: box.greetingContentType || 'audio/ogg' }
 }

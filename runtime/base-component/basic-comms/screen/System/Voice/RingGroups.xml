@@ -16,7 +16,10 @@ along with this software (see the LICENSE.md file). If not, see
     strategy (all at once, in order, round robin), each for its ring seconds; members in do not disturb or busy are skipped;
     with nobody answering, or outside its schedule, the fallback runs: the group's voicemail (its members share the box), another
     group, an outside number, or the end. org.moqui.call.CallHandlingServices find#, store#, delete#RingGroup and store#,
-    delete#RingGroupMember (the VoiceAdmin permission). -->
+    delete#RingGroupMember (the VoiceAdmin permission). Each group's Voicemail: its greeting (uploaded, played back, removed) and
+    the email a new message is told to, with its audio or transcript attached (VoicemailServices get# and
+    update#VoicemailSettings, store#, delete# and get#VoicemailGreeting with ringGroupId, for voice admins). Its members read its
+    messages in Calls, Voicemail; it has no PIN, as no phone reaches a group's box. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Ring groups" default-menu-index="8">
 
@@ -36,6 +39,37 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="storeMember">
         <service-call name="org.moqui.call.CallHandlingServices.store#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId, sequenceNum:sequenceNum || null}"/>
         <default-response url="."/>
+    </transition>
+    <transition name="storeVoicemail">
+        <service-call name="org.moqui.call.VoicemailServices.update#VoicemailSettings" in-map="{ringGroupId:ringGroupId,
+                notifyEmail:notifyEmail || '', attachAudio:attachAudio || 'N', attachTranscript:attachTranscript || 'N'}" out-map="vmOut"/>
+        <actions><if condition="!ec.message.hasError()"><script>ec.message.addMessage(vmOut?.warning || ec.l10n.localize('Voicemail saved'), vmOut?.warning ? 'warning' : 'success')</script></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="uploadGreeting">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.VoicemailServices.store#VoicemailGreeting').parameters({ringGroupId: ec.web.parameters.ringGroupId,
+                file: ec.web.multiPartParameters.greetingFile || null}).call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Greeting saved'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="removeGreeting">
+        <service-call name="org.moqui.call.VoicemailServices.delete#VoicemailGreeting" in-map="{ringGroupId:ringGroupId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Greeting removed: callers hear the default one</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <!-- a group's greeting, to play it back -->
+    <transition name="greeting" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.VoicemailServices.get#VoicemailGreeting').parameter('ringGroupId', ringGroupId || '')
+                .requireNewTransaction(true).call() || {}
+            const refused = ec.message.hasError() || !out.location
+            ec.message.clearErrors()
+            if (refused) ec.web.sendJsonResponse({})
+            else ec.web.sendResourceResponse(out.location, true)
+        ]]></script></actions>
+        <default-response type="none"/>
     </transition>
     <transition name="deleteMember">
         <service-call name="org.moqui.call.CallHandlingServices.delete#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId}"/>
@@ -65,6 +99,16 @@ along with this software (see the LICENSE.md file). If not, see
         for (const g of groups) for (const m of g.memberList) memberList.push({ringGroupId: g.ringGroupId, groupName: g.name, userId: m.userId,
             userName: m.userName, sequenceNum: m.sequenceNum})
         newGroup = {strategyEnumId: 'RgsSimultaneous', ringSeconds: 20, fallbackTypeEnumId: 'RgfVoicemail'}
+        // each group's voicemail box (made when it is first saved or rung)
+        for (const g of groupList) {
+            const vm = ec.service.sync().name('org.moqui.call.VoicemailServices.get#VoicemailSettings').parameter('ringGroupId', g.ringGroupId)
+                .requireNewTransaction(true).call() || {}
+            ec.message.clearErrors()
+            const box = vm.box || {}
+            Object.assign(g, {vmNotifyEmail: box.notifyEmail || '', vmAttachAudio: box.attachAudio ? 'Y' : 'N', vmAttachTranscript: box.attachTranscript ? 'Y' : 'N',
+                hasGreeting: box.hasGreeting === true,
+                voicemailText: (box.hasGreeting ? L('Its own greeting') : L('The default greeting')) + (box.notifyEmail ? ' · ' + L('told to') + ' ' + box.notifyEmail : '')})
+        }
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-mb-sm">
@@ -92,6 +136,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="fallbackText"><default-field title="Nobody answers"><display/></default-field></field>
                 <field name="scheduleName"><default-field title="Hours"><display/></default-field></field>
                 <field name="numbersText"><default-field title="Numbers"><display/></default-field></field>
+                <field name="voicemailText"><default-field title="Voicemail"><display/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
                     <container-dialog id="EditGroupDialog_${ringGroupId}" button-text="Edit" icon="sym_o_edit" width="640" title="${ec.l10n.localize('Edit')} ${name}">
                         <form-single name="EditGroup" transition="storeGroup">
@@ -113,6 +158,28 @@ along with this software (see the LICENSE.md file). If not, see
                             <field name="sequenceNum"><default-field title="Order" tooltip="Empty: last"><text-line size="5"/></default-field></field>
                             <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                         </form-single>
+                    </container-dialog>
+                    <container-dialog id="VoicemailDialog_${ringGroupId}" button-text="Voicemail" icon="sym_o_voicemail" width="560" title="The voicemail of ${name}">
+                        <label type="p" text="When nobody answers and the group's fallback is its voicemail, callers hear this greeting and leave a message its members read in Calls, Voicemail." style="m-muted"/>
+                        <form-single name="GroupVoicemail" transition="storeVoicemail">
+                            <field name="ringGroupId" from="ringGroupId"><default-field><hidden/></default-field></field>
+                            <field name="notifyEmail" from="vmNotifyEmail"><default-field title="Tell by email" tooltip="Empty: no email; the members see new messages in Calls"><text-line size="30"/></default-field></field>
+                            <field name="attachAudio" from="vmAttachAudio"><default-field title="Attach the audio (mail cannot be recalled)"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                            <field name="attachTranscript" from="vmAttachTranscript"><default-field title="Put the transcript in it (mail cannot be recalled)"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                        <label type="h6" text="Greeting"/>
+                        <label type="p" text="A WAV (16-bit PCM) or Ogg Opus file of at most a minute. Without one callers hear the default greeting." style="m-muted"/>
+                        <form-single name="GroupGreeting" transition="uploadGreeting">
+                            <field name="ringGroupId" from="ringGroupId"><default-field><hidden/></default-field></field>
+                            <field name="greetingFile"><default-field title="Audio"><file size="30"/></default-field></field>
+                            <field name="submitButton"><default-field title="Upload"><submit/></default-field></field>
+                        </form-single>
+                        <section name="GroupGreetingSet" condition="hasGreeting"><widgets>
+                            <link url="greeting" text="Play the greeting" icon="sym_o_play_arrow" target-window="_blank" parameter-map="{ringGroupId:ringGroupId}"/>
+                            <link url="removeGreeting" text="Remove the greeting" link-type="hidden-form-link" parameter-map="{ringGroupId:ringGroupId}"
+                                    confirmation="Remove the greeting of ${name}? Callers hear the default one."/>
+                        </widgets></section>
                     </container-dialog>
                     <link url="deleteGroup" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
                             confirmation="Remove the ring group ${name}?" parameter-map="{ringGroupId:ringGroupId}"/>

@@ -311,6 +311,44 @@ feature("the group's box is its members': a message one of them heard is heard f
     }
 })
 
+feature("a voice admin sets a group box's greeting and notices; a member gets not found for the same group; callers to the group hear its greeting", {
+    when() {
+        const vm = (userId, name, parameters) => as(userId, "org.moqui.call.VoicemailServices." + name, parameters)
+        const header = "RIFF$\u0000\u0000\u0000WAVEfmt \u0010\u0000\u0000\u0000\u0001\u0000\u0001\u0000\u0080»\u0000\u0000\u0000w\u0001\u0000\u0002\u0000\u0010\u0000data\u0000\u0000\u0000\u0000"
+        const notices = vm(ADMIN, "update#VoicemailSettings", {ringGroupId: groupId, notifyEmail: "sales@example.com", attachAudio: "Y", rings: "4"})
+        const greeting = vm(ADMIN, "store#VoicemailGreeting", {ringGroupId: groupId, file: uploadedFile("sales.wav", header, "audio/wav")})
+        const read = vm(ADMIN, "get#VoicemailSettings", {ringGroupId: groupId})
+        const played = vm(ADMIN, "get#VoicemailGreeting", {ringGroupId: groupId})
+        // a member, with the same parameters
+        const memberNotices = vm(M1, "update#VoicemailSettings", {ringGroupId: groupId, notifyEmail: "me@example.com"})
+        const memberGreeting = vm(M1, "delete#VoicemailGreeting", {ringGroupId: groupId})
+        const memberRead = vm(M1, "get#VoicemailSettings", {ringGroupId: groupId})
+        const own = vm(M1, "get#VoicemailSettings", {})
+        // the group's call that falls to its box hears the group's greeting
+        as(ADMIN, "store#RingGroup", {ringGroupId: groupId, strategyEnumId: "RgsInOrder"})
+        const box = sys(() => ec.entity.find("moqui.call.VoicemailBox").condition("ringGroupId", groupId).one())
+        const removed = vm(ADMIN, "delete#VoicemailGreeting", {ringGroupId: groupId})
+        return {notices, greeting, read, played, memberNotices, memberGreeting, memberRead, own, box, removed}
+    },
+    then({notices, greeting, read, played, memberNotices, memberGreeting, memberRead, own, box, removed}) {
+        notices.errors == ""
+        notices.box.notifyEmail == "sales@example.com"
+        notices.box.attachAudio == true
+        notices.box.rings == null
+        notices.warning != null
+        greeting.errors == ""
+        read.box.hasGreeting == true
+        read.box.notifyEmail == "sales@example.com"
+        played.location != null
+        memberNotices.reasonCode == "notFound"
+        memberGreeting.reasonCode == "notFound"
+        memberRead.reasonCode == "notFound"
+        own.box.notifyEmail != "sales@example.com"
+        box.greetingLocation == played.location
+        removed.box.hasGreeting == false
+    }
+})
+
 feature("a stale step's timer or voicemail control does nothing: only the step the plan is on moves it on", {
     when() {
         const call = receive()
