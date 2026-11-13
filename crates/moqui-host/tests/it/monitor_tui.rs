@@ -360,6 +360,8 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "Dashboards/Drill",
             "/apps/dashboards/Drill?definitionId=tui-dashboard&panelId=a-total&from=now-1h&thru=now",
         ),
+        // CalcGrid's terminal render is the list of the documents the viewer reads (plans/IronCalc-DB.md)
+        ("Dashboards/CalcGrid", "/apps/dashboards/CalcGrid"),
     ];
     // A new screen without an acceptance case is a failed gate, rather than silently missing coverage.
     let covered: BTreeSet<_> = cases.iter().map(|(name, _)| name.to_string()).collect();
