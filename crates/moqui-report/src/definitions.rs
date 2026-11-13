@@ -420,7 +420,17 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
     }
     if !matches!(
         kind,
-        "dashboard" | "panel" | "dataset" | "search" | "alert" | "report" | "contactPoint" | "silence" | "muteTiming"
+        "dashboard"
+            | "panel"
+            | "dataset"
+            | "search"
+            | "alert"
+            | "report"
+            | "contactPoint"
+            | "silence"
+            | "muteTiming"
+            // a CalcGrid document (plans/IronCalc-DB.md): its query definitions, charts and overlay, kept by moqui-calc
+            | "calcgrid"
     ) {
         return Err(fail(format!("unknown report definition type {kind}")));
     }

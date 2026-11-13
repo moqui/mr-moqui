@@ -1,0 +1,31 @@
+# CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md): a workbook on the IronCalc engine whose data sheets
+# are filled from the data grid's sources, with a saved overlay of formulas and charts, held in a room while it is open
+# and answered a viewport at a time. On moqui-core (its workbook module, the xlsx feature) and moqui-tools (the grid's
+# reader), reached only through moqui_core::extension; the host links it under its xlsx feature.
+
+[package]
+name = "moqui-calc"
+description = "CalcGrid: database-driven spreadsheets on the IronCalc engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true, features = ["xlsx"] }
+moqui-lib = { workspace = true }
+moqui-tools = { workspace = true }
+base64 = { workspace = true }
+indexmap = { workspace = true }
+jiff = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support", "xlsx"] }
+# A workbook file with only the parts a minimal writer makes, for the reader's fallback.
+zip = { workspace = true }
+
+[lints]
+workspace = true

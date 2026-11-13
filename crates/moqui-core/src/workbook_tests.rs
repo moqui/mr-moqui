@@ -108,3 +108,14 @@ fn columns_are_fitted_to_their_text_within_limits() {
     assert!(width(2) > 200.0 && width(2) < 260.0, "{}", width(2));
     assert!((width(3) - FIT_MAX).abs() < 0.5, "{}", width(3));
 }
+
+#[test]
+fn a_cell_is_parsed_with_dollar_signs_and_within_the_sheet() {
+    assert_eq!(parse_cell("B2"), Some((2, 2)));
+    assert_eq!(parse_cell("$aa$10"), Some((10, 27)));
+    assert_eq!(parse_cell("XFD1048576"), Some((1_048_576, 16_384)));
+    assert_eq!(parse_cell("XFE1"), None);
+    assert_eq!(parse_cell("A1048577"), None);
+    assert_eq!(parse_cell("12"), None);
+    assert_eq!(parse_cell("A1B"), None);
+}

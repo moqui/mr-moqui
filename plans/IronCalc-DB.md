@@ -1,6 +1,6 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); Phase 1 of 5 built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phase 1 is built (the engine is the xlsx writer, and `calculate#Spreadsheet`). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
+Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1 and 2 of 5 built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1 and 2 are built (the engine is the xlsx writer, `calculate#Spreadsheet`, and Calc mode in Tools › Data › Grid, read only). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
 
 ## The idea
 
@@ -250,11 +250,25 @@ Built 2026-11-13.
 
 ### Phase 2: the virtual sheet in the Tools grid, read and export
 
-- `moqui-calc`: the document (query definitions in the grid's source JSON, the overlay bytes, chart definitions) and its services: create, open, refresh, save, export.
-- Refresh fills the data sheets through the grid's reader (rows inserted between the stored form's two empty data rows, so ranges over the data stretch), evaluates on a blocking thread, measures the evaluation against its budget, and stores (the overlay only, shared strings rebuilt) or exports.
-- An XLSX the engine refuses is opened through calamine: values and formula text into a new model.
-- The sheet room: join with the access check, the workbook loaded and held, viewport requests answered with blocks, dropped when idle.
-- Calc mode in `Grid.xml` and `Grid.qvue`: the sheet component (its own Tabulator instance, placeholder rows and a block cache) drawing the blocks, sheet tabs, Chart.js charts, the document in the view list, export as XLSX. An uploaded XLSX opens as a workbook. No editing yet.
+Built 2026-11-13. Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
+
+- **`moqui-calc`** (`crates/moqui-calc`, on moqui-core and moqui-tools, linked under the host's `xlsx` feature):
+  - `fill.rs`, the engine work with no ExecutionContext: a data sheet filled with typed rows and declared as a table, rows inserted between the stored form's two empty data rows so ranges stretch, the stored form (rows deleted, the sheet emptied, the shared strings rebuilt, one evaluation), and the layout of the sheets.
+  - `room.rs`: the open workbooks, a viewport as the engine's block in JSON, the charts' ranges read, refresh, and the limits (eight rooms a user, twenty minutes idle, 20,000 cells a request).
+  - `service.rs`, `org.moqui.calc.CalcServices`: `open#CalcDocument`, `get#CalcCells`, `refresh#CalcDocument`, `save#CalcDocument`, `export#CalcDocument`, `close#CalcDocument`. The data sheets are read through the grid's reader (`grid::columns`, `grid::rows` a page of 1,000 at a time) as the caller, up to 100,000 rows.
+- **The document** is a report definition of type `calcgrid`: `dataSheets` (each a name and the grid's spec), `charts`, and `overlay`, the stored form in base64 **in the body**, not in a row beside it as decided: the definition's versions, copy, export and git sync then carry the workbook with no code of their own. At most 8 MB.
+- **A workbook file** opens with the engine's reader, and through calamine as values when the engine refuses it.
+- **Calc mode** in `Grid.xml` (the `calc*` transitions) and `Grid.qvue`, drawn by `moqui.calc.sheet` (`webroot/js/WebrootCalc.js`): its own Tabulator with placeholder rows and a block cache, sheet tabs, the charts with `m-chart`, Refresh, XLSX, Save document and Documents.
+- **Tests:** `cargo test -p moqui-calc` (the fill, the stored form with none of the data's texts, the rooms, the fallback reader), `tools/test/CalcGrid.spec.js` (the transitions: open, cells, export, save, reopen, delete, a file as a workbook), `webroot/test/client/WebrootCalc.spec.js` (the view's helpers) in the regression suite; `tools/acceptance/client/CalcGrid.spec.js`, the browser walk, in the acceptance suite.
+
+What differs from the plan, and what is left for later phases:
+
+- **The transport is HTTP transitions, not the notification WebSocket.** Reading needs no push, a request and its answer measured a few milliseconds in Phase 0, and the host is untouched. The WebSocket comes with editing (Phase 3), where other people's edits and presence are pushed.
+- **A room is one user's**, keyed by the user and a room id, not shared by the people of a scope: nothing is edited yet, so nothing is lost by it but memory when two people open the same document. Rooms by scope come with the profiles (2b) and editing (3).
+- **A room is on the server that opened it.** In a cluster a request that reaches another server gets `ROOM_GONE` and the view opens the document again there; the owner of a workbook is Phase 3's.
+- **Charts are shown, not authored:** a chart is in the document's body (`title`, `type`, `categories`, `series` of `name` and `values`, each a range) and is drawn from the values the server reads. The editor for them is Phase 3's.
+- **A data sheet is read a page at a time** through the grid's reader, not through a cursor: a large entity costs a query for each 1,000 rows. To measure on real data, and to read through the export's cursor if it is slow.
+- **Evaluation is not yet on a thread of its own:** it runs in the request that opens or refreshes, with the room locked.
 
 ### Phase 2b: CalcGrid in Dashboards
 
@@ -378,7 +392,7 @@ Settled 2026-11-13.
 | Summaries | A grouped view through the Entity Facade, not search aggregations |
 | Where `sales` lives | The artifact group and its entity list in mr-mantle, beside the filter sets; the grants to the BOSS sales groups in mr-boss; CalcGrid shown in BOSS under Insights by its mount |
 | Editing in CalcGrid | The profile's grant action: view opens documents shared with the user, with refresh and export; update also authors documents (overlay, sources from the profile, charts). Data sheets are read only for everyone |
-| The document's store | A report definition of type `calcgrid` (`moqui.report.Definition`), the overlay bytes in a row beside it: sharing with groups, versions, stars, git sync and schedules as dashboards have. The Tools grid lists the same documents |
+| The document's store | A report definition of type `calcgrid` (`moqui.report.Definition`), the overlay bytes in its body (in a row beside it as first decided; changed in Phase 2): sharing with groups, versions, stars, git sync and schedules as dashboards have. The Tools grid lists the same documents |
 | Release | Phases 0 to 3 (through editing, in both screens) are for v0.1.0, if the spike holds; charts and images in XLSX (Phase 4) and Phase 5 after |
 
 ## Open questions

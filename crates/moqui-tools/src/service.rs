@@ -48,7 +48,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
 pub(crate) const TOOLS_SCREEN: &str = "component://tools/screen/Tools.xml";
 
 /// Whether the current user may view the Tools app; when not, an error is added.
-pub(crate) fn may_view_tools() -> bool {
+pub fn may_view_tools() -> bool {
     match moqui_core::user::authorize_own("AT_XML_SCREEN", TOOLS_SCREEN, "view") {
         Ok(()) => true,
         Err(err) => {

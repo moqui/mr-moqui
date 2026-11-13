@@ -70,7 +70,7 @@ image = ["moqui-core/image"]
 web-push = ["moqui-core/web-push"]
 # The encrypted S3 mirror of the embedded database backup, in every package.
 backup-s3 = ["moqui-core/backup-s3"]
-xlsx = ["moqui-core/xlsx", "moqui-report/xlsx"]
+xlsx = ["moqui-core/xlsx", "moqui-report/xlsx", "dep:moqui-calc"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
 # Calls (crates/moqui-rtc, plans/archive/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
@@ -140,6 +140,8 @@ moqui-report = { workspace = true }
 moqui-collab = { workspace = true }
 # The Tools app's database services (crates/moqui-tools), in every build.
 moqui-tools = { workspace = true }
+# CalcGrid, database-driven spreadsheets on the IronCalc engine (crates/moqui-calc), under the xlsx feature.
+moqui-calc = { workspace = true, optional = true }
 # Calls: the SFU on str0m (crates/moqui-rtc), under the rtc feature.
 moqui-rtc = { workspace = true, optional = true }
 # The edge wizard's TURN check, a browser's allocation on the edge node's TURN (src/rtc/turn_probe.rs), under rtc: sans-IO,

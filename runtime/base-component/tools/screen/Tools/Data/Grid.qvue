@@ -22,7 +22,11 @@ along with this software (see the LICENSE.md file). If not, see
     begin with an operator (serverFilter). File opens an uploaded or placed CSV or spreadsheet (its sheet and header
     row), read only, and Load into… maps its columns to a target's fields (match#EtlFields), shows the first 200 rows
     converted (check#EtlSample), and saves the mapping, checks the whole file or loads it, over the JSON transitions of
-    Tools/Etl (Etl.xml). -->
+    Tools/Etl (Etl.xml).
+    Calc (plans/IronCalc-DB.md, Phase 2) is the grid's second mode: the source, with the columns shown and the sort and
+    filters set, as the read-only data sheet of a workbook on the server's spreadsheet engine, drawn by moqui.calc.sheet
+    (js/WebrootCalc.js) from the cells the calc transitions answer; a spreadsheet file opens as a workbook, with its
+    formulas; a document is saved, opened and deleted from Documents, refreshed from its sources and exported as XLSX. -->
 <template><div class="q-pa-sm">
     <div class="row items-center q-col-gutter-sm q-mb-sm">
         <div class="col-12 col-sm-5 col-md-4">
@@ -31,10 +35,13 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
         <div class="col-auto row items-center q-gutter-xs">
             <q-btn flat dense no-caps icon="upload_file" label="File" @click="fileOpen = true"><q-tooltip>Open a CSV or spreadsheet: upload one, or one at a location</q-tooltip></q-btn>
-            <q-btn v-if="source && source.type === 'file'" unelevated dense no-caps color="primary" icon="move_down" label="Load into…" @click="openLoad"></q-btn>
+            <q-btn v-if="source && source.type === 'file' && mode === 'records'" unelevated dense no-caps color="primary" icon="move_down" label="Load into…" @click="openLoad"></q-btn>
+            <q-btn-toggle dense no-caps unelevated toggle-color="primary" :model-value="mode" @update:model-value="setMode"
+                    :options="[{label: 'Records', value: 'records'}, {label: 'Calc', value: 'calc'}]">
+                <q-tooltip>Records edits the rows. Calc shows them as the data sheet of a workbook, with formulas and charts beside them</q-tooltip></q-btn-toggle>
         </div>
         <q-space></q-space>
-        <div class="col-auto row items-center q-gutter-xs">
+        <div v-show="mode === 'records'" class="col-auto row items-center q-gutter-xs">
             <q-btn flat dense no-caps icon="undo" label="Undo" :disable="!ready" @click="undo"></q-btn>
             <q-btn flat dense no-caps icon="redo" label="Redo" :disable="!ready" @click="redo"></q-btn>
             <q-btn v-if="editable" flat dense no-caps icon="add" label="Add row" @click="addRow"></q-btn>
@@ -73,11 +80,46 @@ along with this software (see the LICENSE.md file). If not, see
             <q-btn v-if="editable" unelevated no-caps color="primary" icon="save" :label="'Save' + (changeCount ? ' (' + changeCount + ')' : '')"
                     :disable="!changeCount || saving" :loading="saving" @click="save"></q-btn>
         </div>
+        <!-- Calc's own buttons, after the grid's: a walk finds the grid's Save first -->
+        <div v-show="mode === 'calc'" class="col-auto row items-center q-gutter-xs">
+            <div v-if="calc.room" class="text-caption" :class="mutedClass">{{calc.room.title}}<span v-if="calc.room.evaluateMs > 250"> · calculated in {{Math.round(calc.room.evaluateMs)}} ms</span></div>
+            <q-btn flat dense no-caps icon="refresh" label="Refresh" :disable="!calc.room || calc.busy" :loading="calc.busy" @click="calcRefresh"><q-tooltip>Read the data sheets again</q-tooltip></q-btn>
+            <q-btn flat dense no-caps icon="download" label="XLSX" :disable="!calc.room" @click="calcExport"></q-btn>
+            <q-btn-dropdown flat dense no-caps icon="folder_open" label="Documents" @show="calcLoadDocuments">
+                <q-list dense style="min-width:260px">
+                    <q-item v-for="doc in calc.documents" :key="doc.definitionId" clickable v-close-popup @click="calcOpenDocument(doc)">
+                        <q-item-section>{{doc.title}}</q-item-section>
+                        <q-item-section side v-if="doc.ownerId === calc.userId"><q-btn flat round dense size="sm" icon="delete" :aria-label="'Delete ' + doc.title" @click.stop="calcDeleteDocument(doc)"></q-btn></q-item-section>
+                    </q-item>
+                    <q-item v-if="!calc.documents.length"><q-item-section class="text-caption">No saved documents</q-item-section></q-item>
+                </q-list>
+            </q-btn-dropdown>
+            <q-btn unelevated dense no-caps color="primary" icon="save" label="Save document" :disable="!calc.room || calc.busy" @click="calc.title = calc.room.title; calc.saveOpen = true"></q-btn>
+        </div>
     </div>
-    <div v-if="readOnlyReason && source" class="text-caption q-mb-xs" :class="mutedClass">Read only: {{readOnlyReason}}</div>
-    <div v-if="countText" class="text-caption q-mb-xs" :class="mutedClass">{{countText}}</div>
-    <div v-if="!source" class="text-body2 q-pa-md" :class="mutedClass">Choose an entity to see its rows, or open a saved view.</div>
-    <div ref="grid" class="m-data-grid" :class="{'m-grid-filters-hidden': !filtersShown}"></div>
+    <div v-if="readOnlyReason && source && mode === 'records'" class="text-caption q-mb-xs" :class="mutedClass">Read only: {{readOnlyReason}}</div>
+    <div v-if="countText && mode === 'records'" class="text-caption q-mb-xs" :class="mutedClass">{{countText}}</div>
+    <div v-if="!source && mode === 'records'" class="text-body2 q-pa-md" :class="mutedClass">Choose an entity to see its rows, or open a saved view.</div>
+    <div v-show="mode === 'records'" ref="grid" class="m-data-grid" :class="{'m-grid-filters-hidden': !filtersShown}"></div>
+    <!-- Calc: the workbook's sheet, from the server -->
+    <div v-if="mode === 'calc'">
+        <div v-if="calc.room && calc.room.truncated && calc.room.truncated.length" class="text-caption q-mb-xs text-warning">
+            {{calc.room.truncated.join(', ')}}: only the first {{Number(calc.room.maxDataRows).toLocaleString()}} rows are in the sheet. Filter the source to see the rest.</div>
+        <component v-if="calc.room && calcSheet" :is="calcSheet" :room="calc.room" :cells-url="url('calcCells')" @gone="calcReopen"></component>
+        <div v-else-if="calc.busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
+        <div v-else class="text-body2 q-pa-md" :class="mutedClass">Choose an entity, open a file, or open a saved document from Documents.</div>
+    </div>
+    <q-dialog v-model="calc.saveOpen">
+        <q-card style="min-width:360px">
+            <q-card-section><div class="text-h6">Save the document</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <q-input dense outlined v-model="calc.title" label="Title" autofocus></q-input>
+                <div class="text-caption q-mt-sm" :class="mutedClass">The sources, the formulas and the charts are saved. No row of the data is: it is read again when the document is opened.</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Save" :disable="!calc.title" @click="calcSave"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
 
     <q-dialog v-model="viewOpen">
         <q-card style="min-width:340px">
@@ -121,6 +163,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <div v-if="file.rowCount != null" class="text-caption" :class="mutedClass">{{Number(file.rowCount).toLocaleString()}} rows; columns {{file.columns.join(', ')}}</div>
             </q-card-section>
             <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn v-if="isWorkbookFile" flat no-caps label="Open as a workbook" @click="openWorkbook"><q-tooltip>Every sheet, with its formulas, in Calc</q-tooltip></q-btn>
                 <q-btn unelevated no-caps color="primary" label="Open" :disable="!file.location || file.rowCount == null" @click="openFile"></q-btn></q-card-actions>
         </q-card>
     </q-dialog>
@@ -176,6 +219,8 @@ module.exports = {
             related: null, ready: false, saving: false, counting: false, countText: '', changeCount: 0, filtersShown: true, hiddenColumns: [],
             chosenEntity: null, entityOptions: [], userId: '', gridViews: [], viewOpen: false, viewDescription: '', viewShared: false, viewId: null,
             exportOpen: false, exportLocation: '', exportFormat: 'csv', pendingLayout: null,
+            // Calc: the mode, the sheet component once loaded, and the open document's room with what opened it
+            mode: 'records', calcSheet: null, calc: { room: null, opened: null, busy: false, documents: [], userId: '', saveOpen: false, title: '' },
             fileOpen: false, uploading: false, file: { location: '', sheet: null, headerRow: 1, format: 'auto', sheetNames: [], columns: [], rowCount: null },
             loadOpen: false, load: { targetTypeEnumId: 'EtltEntity', targetName: '', loadModeEnumId: 'EtllCreate', targetOptions: [], targetFields: [], columns: [],
                 sample: {}, rowErrors: [], sampleRows: null, sampleErrorRows: 0, busy: '' }
@@ -186,6 +231,7 @@ module.exports = {
         mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
         parameters() { return this.$root.currentParameters || {}; },
         editable() { return !!this.saveEntity && this.ready; },
+        isWorkbookFile() { return /\.(xlsx|xlsm|xlsb|xls|ods)$/i.test(String(this.file.location || '')); },
         keyFields() { return this.columnMeta.filter((column) => column.pk).map((column) => column.name); },
         // a column's name in the grid (a SQL result's label, enum_id) to the entity field it saves to (enumId)
         saveFields() { const map = {}; for (const column of this.columnMeta) map[column.name] = column.field || column.name; return map; }
@@ -245,6 +291,8 @@ module.exports = {
             return Object.keys(conditions).length ? { type: 'entity', entityName: String(name), conditions } : { type: 'entity', entityName: String(name) };
         },
         open(source, layout) {
+            // a workbook of another source is closed; in Calc the new source opens as one once its columns are known
+            this.calcClose();
             this.source = source;
             this.pendingLayout = layout || null;
             this.keyColumns = null; this.stampColumn = null; this.countText = '';
@@ -265,7 +313,99 @@ module.exports = {
                     this.stampColumn = out.stampColumn || null;
                     this.hiddenColumns = [];
                     this.build();
+                    if (this.mode === 'calc') this.calcOpenSource();
                 });
+        },
+        // ---- Calc: the source as the data sheet of a workbook on the server ----
+        setMode(mode) {
+            if (mode === this.mode) return;
+            if (mode === 'calc' && !this.mayLeave('Open Calc')) return;
+            this.mode = mode;
+            if (mode === 'records') { this.$nextTick(() => { if (this.grid) this.grid.redraw(true); }); return; }
+            const loaded = this.calcSheet ? Promise.resolve() : moqui.loadScript('/js/WebrootCalc.js', null, () => !!(moqui.calc && moqui.calc.sheet))
+                .then(() => { this.calcSheet = window.Vue && window.Vue.markRaw ? window.Vue.markRaw(moqui.calc.sheet) : moqui.calc.sheet; });
+            loaded.then(() => { if (!this.calc.room && this.source) this.calcOpenSource(); }, (err) => console.error('Calc could not load', err));
+        },
+        // what the server opens: a transition's parameters, kept to open the document again when its room is gone
+        calcOpenWith(params) {
+            this.calc.busy = true;
+            return this.call('calcOpen', params, 'POST').then((out) => {
+                this.calc.busy = false;
+                if (!out || !out.roomId) return null;
+                this.calc.room = out;
+                this.calc.opened = out.definitionId ? { definitionId: out.definitionId } : params;
+                return out;
+            });
+        },
+        calcOpenSource() {
+            if (!this.source) return Promise.resolve(null);
+            const visible = this.grid ? this.grid.getColumns().filter((column) => column.isVisible() && column.getField() && !String(column.getField()).startsWith('_'))
+                .map((column) => column.getField()) : [];
+            return this.calcOpenWith(this.sourceParams({ columnsJson: JSON.stringify(visible), sortJson: JSON.stringify(this.currentSort()),
+                filterJson: JSON.stringify(this.currentFilters()), title: this.sourceLabel }));
+        },
+        calcReopen() { if (this.calc.opened) this.calcOpenWith(this.calc.opened); },
+        calcClose() {
+            const room = this.calc.room;
+            this.calc.room = null; this.calc.opened = null;
+            if (room) moqui.request(this.url('calcClose'), { method: 'POST', params: { roomId: room.roomId } }).catch(() => { /* dropped when idle */ });
+        },
+        calcRefresh() {
+            if (!this.calc.room) return;
+            this.calc.busy = true;
+            this.call('calcRefresh', { roomId: this.calc.room.roomId }, 'POST').then((out) => {
+                this.calc.busy = false;
+                if (out && out.roomId) this.calc.room = out;
+            });
+        },
+        calcExport() {
+            if (!this.calc.room) return;
+            const link = document.createElement('a');
+            link.href = this.url('calcExport') + '?roomId=' + encodeURIComponent(this.calc.room.roomId);
+            link.download = (this.calc.room.title || 'Workbook') + '.xlsx';
+            document.body.appendChild(link); link.click(); link.remove();
+        },
+        calcSave() {
+            if (!this.calc.room) return;
+            this.calc.busy = true;
+            this.call('calcSave', { roomId: this.calc.room.roomId, title: this.calc.title }, 'POST').then((out) => {
+                this.calc.busy = false;
+                if (!out || !out.definitionId) return;
+                this.calc.saveOpen = false;
+                this.calc.room = Object.assign({}, this.calc.room, { definitionId: out.definitionId, version: out.version, title: out.title });
+                this.calc.opened = { definitionId: out.definitionId };
+                moqui.notifyMessages('Document saved');
+            });
+        },
+        calcLoadDocuments() {
+            moqui.request(this.url('calcDocuments')).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return; }
+                this.calc.documents = json.documents || []; this.calc.userId = json.userId || '';
+            }, (err) => moqui.handleAjaxError(err));
+        },
+        calcOpenDocument(doc) {
+            this.calcClose();
+            this.calcOpenWith({ definitionId: doc.definitionId });
+        },
+        calcDeleteDocument(doc) {
+            this.$q.dialog({ title: 'Delete the document', message: 'Delete ' + doc.title + '? Its formulas and charts are deleted; the data is not.', cancel: true, persistent: true })
+                .onOk(() => this.call('calcDelete', { definitionId: doc.definitionId }, 'POST').then((out) => {
+                    if (!out) return;
+                    if (this.calc.room && this.calc.room.definitionId === doc.definitionId) this.calcClose();
+                    this.calcLoadDocuments();
+                }));
+        },
+        // a spreadsheet file as a workbook: every sheet, with its formulas
+        openWorkbook() {
+            if (!this.mayLeave('Open the workbook')) return;
+            this.fileOpen = false;
+            const location = this.file.location;
+            this.setMode('calc');
+            this.calcClose();
+            const loaded = this.calcSheet ? Promise.resolve() : moqui.loadScript('/js/WebrootCalc.js', null, () => !!(moqui.calc && moqui.calc.sheet))
+                .then(() => { this.calcSheet = window.Vue && window.Vue.markRaw ? window.Vue.markRaw(moqui.calc.sheet) : moqui.calc.sheet; });
+            loaded.then(() => this.calcOpenWith({ workbookLocation: location }));
         },
         // ---- the grid ----
         tabulatorColumn(column) {
@@ -850,6 +990,7 @@ module.exports = {
     beforeUnmount() {
         window.removeEventListener('beforeunload', this.unloadGuard);
         if (this.grid) { try { this.grid.destroy(); } catch (_) { /* gone */ } }
+        this.calcClose();
     }
 };
 </script>

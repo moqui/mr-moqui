@@ -4628,6 +4628,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-calc"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "indexmap",
+ "jiff",
+ "moqui-core",
+ "moqui-lib",
+ "moqui-tools",
+ "serde_json",
+ "tracing",
+ "zip",
+]
+
+[[package]]
 name = "moqui-channels"
 version = "0.1.0"
 dependencies = [
@@ -4879,6 +4894,7 @@ dependencies = [
  "libc",
  "lsp-server",
  "lsp-types",
+ "moqui-calc",
  "moqui-channels",
  "moqui-collab",
  "moqui-core",

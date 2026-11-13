@@ -26,7 +26,6 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use ironcalc::base::cell::CellValue;
-use ironcalc::base::expressions::utils::column_to_number;
 use ironcalc::base::Model;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::format::ToPrimitive;
@@ -35,7 +34,7 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 use crate::context::ExecutionContext;
 use crate::entity::EntityFacade;
 use crate::service::util::param_text;
-use crate::workbook::{self, ironcalc};
+use crate::workbook::{self, ironcalc, Area};
 
 /// The most cells one range of `readCells` may hold.
 const MAX_RANGE_CELLS: i64 = 100_000;
@@ -46,70 +45,12 @@ pub(super) fn register(
     rust_service!(map, calculate_spreadsheet)
 }
 
-/// A cell or a range of one sheet, rows and columns from 1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Area {
-    sheet: u32,
-    row: i32,
-    column: i32,
-    last_row: i32,
-    last_column: i32,
-}
-
-impl Area {
-    fn is_cell(&self) -> bool {
-        self.row == self.last_row && self.column == self.last_column
-    }
-}
-
 fn fail(message: String) -> LibError {
     LibError::new(format!("Spreadsheet engine: {message}"))
 }
 
-/// `B2` as (row, column), `$` signs allowed.
-fn parse_cell(text: &str) -> Option<(i32, i32)> {
-    let plain: String = text.chars().filter(|ch| *ch != '$').collect();
-    let split = plain.find(|ch: char| ch.is_ascii_digit())?;
-    let (letters, digits) = plain.split_at(split);
-    if letters.is_empty() || !letters.chars().all(|ch| ch.is_ascii_alphabetic()) {
-        return None;
-    }
-    let column = column_to_number(&letters.to_ascii_uppercase()).ok()?;
-    let row: i32 = digits.parse().ok()?;
-    ((1..=1_048_576).contains(&row) && (1..=16_384).contains(&column)).then_some((row, column))
-}
-
-/// `B2`, `A1:C3`, `Inputs!B2` or `'My sheet'!A1:C3` in `model`; without a sheet, the first.
 fn parse_area(model: &Model<'_>, reference: &str) -> Result<Area, LibError> {
-    let bad = || LibError::new(format!("{reference} is not a cell or a range (B2, Inputs!B2, A1:C3)"));
-    let reference = reference.trim();
-    let (sheet, cells) = match reference.rsplit_once('!') {
-        Some((name, cells)) => {
-            let name = name.trim().trim_matches('\'').replace("''", "'");
-            let names = model.workbook.get_worksheet_names();
-            let index = names
-                .iter()
-                .position(|found| found.eq_ignore_ascii_case(&name))
-                .ok_or_else(|| {
-                    LibError::new(format!(
-                        "The spreadsheet has no sheet named {name}, it has {}",
-                        names.join(", ")
-                    ))
-                })?;
-            (u32::try_from(index).map_err(|_| bad())?, cells)
-        }
-        None => (0, reference),
-    };
-    let (first, last) = cells.split_once(':').unwrap_or((cells, cells));
-    let (row, column) = parse_cell(first.trim()).ok_or_else(bad)?;
-    let (last_row, last_column) = parse_cell(last.trim()).ok_or_else(bad)?;
-    Ok(Area {
-        sheet,
-        row: row.min(last_row),
-        column: column.min(last_column),
-        last_row: row.max(last_row),
-        last_column: column.max(last_column),
-    })
+    workbook::parse_area(model, reference).map_err(|err| LibError::new(err.message()))
 }
 
 /// Set one cell as the module doc says.

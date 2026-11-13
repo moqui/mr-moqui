@@ -113,6 +113,36 @@ CSV or XLSX.
   `dbresource://moqui/database/export/<userId>/`. With `DATABASE_ADMIN` it may also go to any `dbresource://`
   location or under `runtime://export/`; never to `component://` or `file:`.
 
+### Calc mode
+
+The grid has two modes over the same source. Records is the grid above. Calc shows the source as the data sheet of a
+workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../plans/IronCalc-DB.md)), over
+`org.moqui.calc.CalcServices` (`crates/moqui-calc`). Editing the workbook (formulas, formats, new sheets) is the plan's
+Phase 3; today Calc reads.
+
+- **The data sheet** is the source with the columns shown and the sort and filters set when Calc is opened: a header
+  row of the columns' names, then a row for each record, typed (numbers, dates and times by their formats, text as it
+  is), read through the grid's reader as the user, with its refusals. It takes at most 100,000 rows and says so when a
+  source has more. Encrypted and binary columns are left out.
+- **A spreadsheet file** opens as a workbook from the File dialog (Open as a workbook): every sheet, and for an xlsx
+  its formulas, styles and names, calculated by the engine. An xls, xlsb or ods, and an xlsx the engine does not
+  take, open as values.
+- **The view** (`js/WebrootCalc.js`) holds no data: the server answers the cells in view and a margin
+  (`get#CalcCells`, at most 20,000 cells a request), so a jump to a far row loads nothing between. Sheet tabs are
+  below the sheet, a data sheet marked; the document's charts are below those.
+- **A room** is the open workbook in the server's memory: one for each open document of a user, found only by that
+  user, at most eight a user, dropped after twenty minutes without a request. A request for a room that is gone is
+  answered `ROOM_GONE` and the screen opens the document again. A room is on the server that opened it.
+- **Refresh** reads the data sheets again and calculates. **XLSX** downloads the workbook as it is, data and
+  calculated values.
+- **A document** (Save document, Documents) is a report definition of type `calcgrid`: the data sheets' sources,
+  the charts, and the workbook without its data. No row of a data sheet is stored, no value calculated from one, and
+  none of the data's texts; opening reads the data again as the user who opens it. Its versions and sharing are the
+  definitions' ([Monitoring](Monitoring.md#the-dashboards-app)); it is at most 8 MB.
+- **Formulas over a data sheet** name its columns (`=SUM(Enumeration[sequenceNum])`): the sheet is a table named for
+  it. Every formula is calculated again on a refresh, so many sums over a large sheet are slow: the toolbar shows the
+  time when it is over a quarter of a second.
+
 **Saved views** (`moqui.database.GridView`).
 
 - **What one holds:** the source spec and the layout (columns, widths, order, frozen columns, filters, sort).

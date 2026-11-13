@@ -39,6 +39,9 @@ use moqui_mail as _;
 use moqui_report as _;
 // The Tools app's database services, in every build, the same way.
 use moqui_tools as _;
+// CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
+#[cfg(feature = "xlsx")]
+use moqui_calc as _;
 // The business messaging channels (the sms chat bridge adapter), the same way.
 #[cfg(feature = "channels")]
 use moqui_channels as _;

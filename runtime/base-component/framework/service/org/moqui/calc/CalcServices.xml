@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md): a workbook on the IronCalc engine whose data
+        sheets are filled from the data grid's sources, with a saved overlay of formulas and charts. The bodies are Rust
+        (crates/moqui-calc/src/service.rs). A document is open in a room of the caller's on this server, read a viewport
+        at a time; a call whose room is gone is refused with ROOM_GONE and the view opens the document again. Each needs
+        the Tools app, and a SQL source needs SQL, whatever calls it. A document is a report definition of type calcgrid
+        (org.moqui.report.ReportServices: list#Definitions, delete#Definition, its versions and sharing). -->
+
+    <service verb="open" noun="CalcDocument" type="rust" location="moqui_calc::service::open_calc_document" transaction="ignore">
+        <description>Open a document into a room: a saved one (definitionId), a new one over a data grid source (source,
+            with columns, sort and filter, as get#DataGridRows takes them), or a workbook file (workbookLocation: an xlsx
+            with its formulas and styles, or xls, xlsb, ods and other xlsx as values). Each data sheet is read as the
+            caller, up to maxDataRows rows, and the workbook is evaluated.</description>
+        <in-parameters>
+            <parameter name="definitionId"/>
+            <parameter name="source" type="Map"/>
+            <parameter name="columns" type="List"/>
+            <parameter name="sort" type="List"/>
+            <parameter name="filter" type="List"/>
+            <parameter name="title"/>
+            <parameter name="workbookLocation"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="roomId"/>
+            <parameter name="title"/>
+            <parameter name="definitionId"/>
+            <parameter name="version" type="Long"/>
+            <parameter name="sheets" type="List"><description>Each sheet: index, name, rows and columns (its used area),
+                widths (pixels, by column), frozenRows, frozenColumns, data (a read-only data sheet), dataRows, hidden.</description></parameter>
+            <parameter name="charts" type="List"><description>Each chart of the document (title, type, categories, series)
+                with labels and each series' data read from the ranges it names, or its error.</description></parameter>
+            <parameter name="evaluateMs" type="Double"/>
+            <parameter name="truncated" type="List"><description>The data sheets whose source had more than maxDataRows rows.</description></parameter>
+            <parameter name="maxDataRows" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="CalcCells" type="rust" location="moqui_calc::service::get_calc_cells" transaction="ignore">
+        <description>A rectangle of a sheet's cells, at most 20,000, as JSON text: row, column, width, height, styles (the
+            distinct styles, conditional formats and neighbours' borders applied), style_indices (one for each cell, by
+            row), texts (row, column, text as formatted, cell_type) of the cells that have one, and fills as runs.</description>
+        <in-parameters>
+            <parameter name="roomId" required="true"/>
+            <parameter name="sheet" type="Integer" default-value="0"/>
+            <parameter name="row" type="Integer" default-value="1"/>
+            <parameter name="column" type="Integer" default-value="1"/>
+            <parameter name="width" type="Integer" default-value="1"/>
+            <parameter name="height" type="Integer" default-value="1"/>
+        </in-parameters>
+        <out-parameters><parameter name="blockJson"/></out-parameters>
+    </service>
+    <service verb="refresh" noun="CalcDocument" type="rust" location="moqui_calc::service::refresh_calc_document" transaction="ignore">
+        <description>Read the room's data sheets again as the caller and evaluate; the overlay stays as it is.</description>
+        <in-parameters><parameter name="roomId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="roomId"/>
+            <parameter name="title"/>
+            <parameter name="definitionId"/>
+            <parameter name="version" type="Long"/>
+            <parameter name="sheets" type="List"/>
+            <parameter name="charts" type="List"/>
+            <parameter name="evaluateMs" type="Double"/>
+            <parameter name="truncated" type="List"/>
+            <parameter name="maxDataRows" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="save" noun="CalcDocument" type="rust" location="moqui_calc::service::save_calc_document">
+        <description>Save the room's document as a report definition of type calcgrid: its data sheets' sources, its
+            charts and its workbook without the data (no row of a data sheet, no value computed from one, none of the
+            data's texts). A room opened from a saved document saves that one, at the version it was read; any other
+            saves a new one under definitionId, or an id made from the title.</description>
+        <in-parameters>
+            <parameter name="roomId" required="true"/>
+            <parameter name="title"/>
+            <parameter name="definitionId"/>
+            <parameter name="userGroupId"><description>Share the document with this group, as save#Definition allows.</description></parameter>
+            <parameter name="note"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="definitionId"/>
+            <parameter name="version" type="Long"/>
+            <parameter name="title"/>
+        </out-parameters>
+    </service>
+    <service verb="export" noun="CalcDocument" type="rust" location="moqui_calc::service::export_calc_document" transaction="ignore">
+        <description>The workbook as it is in the room, with its data and calculated values, as an xlsx.</description>
+        <in-parameters><parameter name="roomId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="contentBytes" type="byte[]"/>
+            <parameter name="filename"/>
+        </out-parameters>
+    </service>
+    <service verb="close" noun="CalcDocument" type="rust" location="moqui_calc::service::close_calc_document" transaction="ignore">
+        <description>Drop the caller's room; a room not used for twenty minutes is dropped without it.</description>
+        <in-parameters><parameter name="roomId" required="true"/></in-parameters>
+    </service>
+</services>

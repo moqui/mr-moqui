@@ -22,6 +22,7 @@
 use std::collections::HashMap;
 
 pub use ironcalc;
+use ironcalc::base::expressions::utils::column_to_number;
 use ironcalc::base::types::{Alignment, Cell, Color, Fill, HorizontalAlignment, Style, VerticalAlignment};
 use ironcalc::base::Model;
 
@@ -270,6 +271,75 @@ pub fn open_xlsx(bytes: &[u8], name: &str) -> Result<Model<'static>, Error> {
     let workbook = ironcalc::import::load_from_xlsx_bytes(bytes, name, "en", "UTC")
         .map_err(|err| Error::new(format!("Error reading xlsx: {err}")))?;
     Model::from_workbook(workbook, "en").map_err(engine_error)
+}
+
+/// A cell or a range of one sheet, rows and columns from 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Area {
+    pub sheet: u32,
+    pub row: i32,
+    pub column: i32,
+    pub last_row: i32,
+    pub last_column: i32,
+}
+
+impl Area {
+    /// One cell, not a range.
+    #[must_use]
+    pub fn is_cell(&self) -> bool {
+        self.row == self.last_row && self.column == self.last_column
+    }
+}
+
+/// `B2` as (row, column), `$` signs allowed.
+#[must_use]
+pub fn parse_cell(text: &str) -> Option<(i32, i32)> {
+    let plain: String = text.chars().filter(|ch| *ch != '$').collect();
+    let split = plain.find(|ch: char| ch.is_ascii_digit())?;
+    let (letters, digits) = plain.split_at(split);
+    if letters.is_empty() || !letters.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        return None;
+    }
+    let column = column_to_number(&letters.to_ascii_uppercase()).ok()?;
+    let row: i32 = digits.parse().ok()?;
+    ((1..=1_048_576).contains(&row) && (1..=16_384).contains(&column)).then_some((row, column))
+}
+
+/// `B2`, `A1:C3`, `Inputs!B2` or `'My sheet'!A1:C3` in `model`; without a sheet, the first.
+///
+/// # Errors
+///
+/// Returns an error for a text that is neither, or a sheet the workbook does not have.
+pub fn parse_area(model: &Model<'_>, reference: &str) -> Result<Area, Error> {
+    let bad = || Error::new(format!("{reference} is not a cell or a range (B2, Inputs!B2, A1:C3)"));
+    let reference = reference.trim();
+    let (sheet, cells) = match reference.rsplit_once('!') {
+        Some((name, cells)) => {
+            let name = name.trim().trim_matches('\'').replace("''", "'");
+            let names = model.workbook.get_worksheet_names();
+            let index = names
+                .iter()
+                .position(|found| found.eq_ignore_ascii_case(&name))
+                .ok_or_else(|| {
+                    Error::new(format!(
+                        "The spreadsheet has no sheet named {name}, it has {}",
+                        names.join(", ")
+                    ))
+                })?;
+            (u32::try_from(index).map_err(|_| bad())?, cells)
+        }
+        None => (0, reference),
+    };
+    let (first, last) = cells.split_once(':').unwrap_or((cells, cells));
+    let (row, column) = parse_cell(first.trim()).ok_or_else(bad)?;
+    let (last_row, last_column) = parse_cell(last.trim()).ok_or_else(bad)?;
+    Ok(Area {
+        sheet,
+        row: row.min(last_row),
+        column: column.min(last_column),
+        last_row: row.max(last_row),
+        last_column: column.max(last_column),
+    })
 }
 
 fn engine_error(message: String) -> Error {

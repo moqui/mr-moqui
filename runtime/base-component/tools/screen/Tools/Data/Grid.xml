@@ -19,7 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     the data grid services of org.moqui.dev.DatabaseServices; a SQL source needs SQL_RUNNER_WEB. The terminal render is
     a paged list of the same rows, read only, whose rows open the record form (Record.xml) for an entity. An entity
     that opens, in the grid (gridColumns) or the terminal, is put first in the user's recent entities, the preference
-    tools.recent (template/ToolsRecent.js). -->
+    tools.recent (template/ToolsRecent.js). Calc mode shows the source as the data sheet of a workbook
+    (plans/IronCalc-DB.md), over the calc transitions and org.moqui.calc.CalcServices. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Grid" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
@@ -264,6 +265,111 @@ along with this software (see the LICENSE.md file). If not, see
             } catch (e) { related = null }
             ec.message.clearErrors()
             ec.web.sendJsonResponse({entityNames: names, userId: ec.user.userId, canSql: ec.user.hasPermission('SQL_RUNNER_WEB'), related})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- Calc mode (plans/IronCalc-DB.md, Phase 2): the source as the data sheet of a workbook on the spreadsheet engine,
+        open in a room of the user's on the server and read a viewport at a time, over org.moqui.calc.CalcServices. A
+        document is a report definition of type calcgrid. A room that is gone answers ROOM_GONE and the view opens the
+        document again. -->
+    <!-- open a saved document (definitionId), a new one over the grid's source, or a workbook file (workbookLocation) -->
+    <transition name="calcOpen" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.calc.CalcServices.open#CalcDocument').parameters({definitionId: context.definitionId || null,
+                    workbookLocation: context.workbookLocation || null, source, columns: parse('columnsJson', []), sort: parse('sortJson', []),
+                    filter: parse('filterJson', []), title: context.title || null}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a rectangle of a sheet's cells: the engine's block, sent as the JSON text the service gives -->
+    <transition name="calcCells" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.get#CalcCells').parameters({roomId: context.roomId, sheet: context.sheet,
+                row: context.row, column: context.column, width: context.width, height: context.height}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            if (errors || !out.blockJson) ec.web.sendJsonResponse({errors: errors || 'No cells'})
+            else ec.web.sendTextResponse(String(out.blockJson), 'application/json', null)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the data sheets read again, the workbook evaluated -->
+    <transition name="calcRefresh" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.refresh#CalcDocument').parameters({roomId: context.roomId}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the document saved: its sources, charts and workbook without the data -->
+    <transition name="calcSave" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.save#CalcDocument').parameters({roomId: context.roomId, title: context.title || null,
+                definitionId: context.definitionId || null, userGroupId: context.userGroupId || null}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the workbook as it is in the room, as an xlsx download -->
+    <transition name="calcExport" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.export#CalcDocument').parameters({roomId: context.roomId}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            if (errors || !out.contentBytes) ec.web.sendJsonError(404, errors || ec.l10n.localize('Export not found'))
+            else ec.web.sendBytesResponse(out.contentBytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', false,
+                String(out.filename || 'Workbook.xlsx').replace(/[\\/"\r\n]/g, '_'))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcClose" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.calc.CalcServices.close#CalcDocument').parameters({roomId: context.roomId}).call()
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the saved documents the user reads: each definition's id, title, owner and version, never its body -->
+    <transition name="calcDocuments" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType: 'calcgrid'}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, userId: ec.user.userId, documents: (out.definitions || []).map((definition) => ({definitionId: definition.id,
+                title: definition.title || definition.id, ownerId: definition.ownerId, userGroupId: definition.userGroupId || null, version: definition.version}))})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcDelete" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const found = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId: context.definitionId}).call() || {}
+            // only a CalcGrid document is deleted from here
+            if (!ec.message.hasError() && found.definition && found.definition.type == 'calcgrid')
+                ec.service.sync().name('org.moqui.report.ReportServices.delete#Definition').parameters({definitionId: context.definitionId}).call()
+            else if (!ec.message.hasError()) ec.message.addError(ec.l10n.localize('Not a CalcGrid document'))
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

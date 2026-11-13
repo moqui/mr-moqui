@@ -59,7 +59,7 @@ fn none() -> Out {
 
 /// SQL needs `SQL_RUNNER_WEB` and authorization for all actions on the Tools app (§14.1), as the SQL screen checks:
 /// asked here whatever calls the service.
-pub(crate) fn may_run_sql() -> bool {
+pub fn may_run_sql() -> bool {
     if !moqui_core::user::has_permission("SQL_RUNNER_WEB").unwrap_or(false) {
         add_error("SQL needs the SQL_RUNNER_WEB permission");
         return false;

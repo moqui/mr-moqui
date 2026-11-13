@@ -22,10 +22,11 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 [Crate-Split](../../plans/archive/Crate-Split.md). Dependencies point one way:
 
 ```
-moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features), moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit
+moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui, moqui-calc (optional features), moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit
               moqui-host → moqui-drivers → moqui-core
               moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
 moqui-llm → moqui-devkit
+moqui-calc → moqui-tools
 moqui-llm, moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit → moqui-core
 moqui-browser → moqui-core (default-features = false), moqui-report, moqui-dav
 moqui-client → moqui-lib
@@ -43,6 +44,7 @@ moqui-client → moqui-lib
 | `moqui-report` | Reports, dashboards and their alerts and annotations, scheduled report delivery and the monitoring sources' ingest keys. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-collab` | Co-edited documents (a Yjs document per record, on yrs) and `org.moqui.resource.CollabServices`. A framework crate, as `moqui-git`, linked in every host build and left out of the browser. |
 | `moqui-tools` | The Tools app's server side ([Database](../tools/Database.md)): `org.moqui.dev.DatabaseServices` and `EtlServices`, with database capabilities and catalog queries per dialect, schema comparison plans and jobs, SQL runs, the data grid and its file source, ETL mappings and runs, external databases and settings. A framework crate, as `moqui-collab`. |
+| `moqui-calc` | CalcGrid, database-driven spreadsheets ([IronCalc-DB](../../plans/IronCalc-DB.md)): workbooks on the IronCalc engine whose data sheets are filled through the data grid's reader, their rooms, and `org.moqui.calc.CalcServices`. A framework crate, as `moqui-collab`, on `moqui-tools` too; the host links it under its `xlsx` feature. |
 | `moqui-dav` | The DAV server (WebDAV over the drives, CalDAV and CardDAV), the `VCard` and `ICalendar` tools and the elFinder connector. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-devkit` | The development kit: reload and the file watcher (its `watch` feature), `moqui check`, the artifact index, the Groovy converter, typegen (`moqui types`) and the spec runner (`moqui test`). A framework crate, linked in every host build; what core itself needs (`is_dev_instance`, restart, the observed calls) stays in `moqui_core::devtools`. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |

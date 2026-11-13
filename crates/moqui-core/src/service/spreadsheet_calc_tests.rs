@@ -156,14 +156,3 @@ fn a_bad_reference_an_unknown_sheet_a_range_to_set_and_a_file_that_is_not_xlsx_a
     let err = calculate(b"not a workbook", &BTreeMap::new(), false).expect_err("not xlsx");
     assert!(err.message().contains("Error reading xlsx"), "{}", err.message());
 }
-
-#[test]
-fn a_cell_is_parsed_with_dollar_signs_and_within_the_sheet() {
-    assert_eq!(parse_cell("B2"), Some((2, 2)));
-    assert_eq!(parse_cell("$aa$10"), Some((10, 27)));
-    assert_eq!(parse_cell("XFD1048576"), Some((1_048_576, 16_384)));
-    assert_eq!(parse_cell("XFE1"), None);
-    assert_eq!(parse_cell("A1048577"), None);
-    assert_eq!(parse_cell("12"), None);
-    assert_eq!(parse_cell("A1B"), None);
-}

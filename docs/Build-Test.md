@@ -159,7 +159,7 @@ build, with no features of its own.
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.git.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | yes | yes |
-| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.resource.SpreadsheetServices` and the xlsx format of a scheduled report: calamine reads, and the IronCalc engine (`moqui_core::workbook`, a pinned git revision) writes and calculates | | yes | yes |
+| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.resource.SpreadsheetServices` and the xlsx format of a scheduled report: calamine reads, and the IronCalc engine (`moqui_core::workbook`, a pinned git revision) writes and calculates; the host's `xlsx` also links `moqui-calc` (CalcGrid, `org.moqui.calc.CalcServices`) | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes |
 
