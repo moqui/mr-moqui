@@ -1,6 +1,6 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1 and 2 of 5 built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1 and 2 are built (the engine is the xlsx writer, `calculate#Spreadsheet`, and Calc mode in Tools › Data › Grid, read only). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
+Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1, 2 and most of 2b built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1, 2 and most of 2b are built (the engine is the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, both read only, and a range of a document as a report dataset for dashboard panels and scheduled reports). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
 
 ## The idea
 
@@ -272,11 +272,35 @@ What differs from the plan, and what is left for later phases:
 
 ### Phase 2b: CalcGrid in Dashboards
 
-- Access profiles in the engine: the profile artifact, the offered entities, the room keyed by scope, `check#CalcProfile`, each call checked as its caller.
-- The `CALC_GRID` group and the `admin` profile (tools); the `sales` profile (mr-mantle) and its grants (mr-boss), with the regression specs of each: a sales user of one organization reads its orders and none of another's, in the sheet, a summary, a chart and an export; an entity outside the profile is refused; a user with no organization reads nothing.
-- `Dashboards/CalcGrid.xml`: the list, a document read only, the source picker from the profile, sharing as a dashboard is shared, and the screen under a mount; the BOSS Insights mount.
-- The `calcgrid` dashboard panel, and scheduled export through the existing report schedule, run as its owner.
-- Guide: a CalcGrid section in [Monitoring](../docs/tools/Monitoring.md) and the Calc mode in [Database](../docs/tools/Database.md); the profiles in [Attack-Surface](../docs/security/Attack-Surface.md).
+Built 2026-11-13; what is left is listed at its end. Guide: [CalcGrid and access profiles](../docs/tools/Database.md#calcgrid-and-access-profiles).
+
+- **Access profiles in the engine** (`moqui-calc` `profile.rs`): each `CalcServices` call takes `profileId`. Without it the call is the Tools app's (Phase 2). With it the caller must hold the profile; the source is an entity or view the profile offers (a view with every member offered), read with the profile artifact entered, so the finds get the entity filters of the profile's grant; under a grant with a filter set an offered entity that no filter applies to is refused; authorization is required whatever the caller disabled; and a room is read only under the profile it was opened under. `get#CalcProfiles` and `find#CalcEntities` are new.
+- **The data:** `CALC_GRID` (the screen and the services) and `CALC_GRID_AUTHOR` (`org.moqui.calc.document`) in tools, `ADMIN`'s; `CALC_PROFILE_SALES` in mr-mantle (`data/CalcGridProfileData.xml`), with no grant; in mr-boss the grant of the profile to `BOSS_SALES_ADMIN` with `MANTLE_USER_ORG`, `MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and of `CALC_GRID_AUTHOR`.
+- **`Dashboards/CalcGrid.xml`**, `CalcGrid.qvue` and `template/CalcGrid.js`: the documents the viewer reads, one opened as a sheet, the profile chosen (or the mount's, `reportPolicy.calcProfile`), a new document over an entity the profile offers, save with a group of the author's own, delete, refresh, XLSX, and a terminal render of the list. BOSS shows it under Insights by location.
+- **Tests:** `mr-mantle/test/order/CalcGridSales.spec.js`, `tools/test/CalcGrid.spec.js` (a feature for the Dashboards screen), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` in the regression suites; a second walk in `tools/acceptance/client/CalcGrid.spec.js`.
+
+What differs from the plan:
+
+- **`admin` is not a profile.** It is the Tools app's own access, offered in the Dashboards app to a holder of `TOOLS_APP`. A profile's grant is an always-allow, which passes every deny below it: one over every entity would have opened to `ADMIN` what denies keep to `ADMIN_ADV`.
+- **Offered entities are named artifacts**, `org.moqui.calc.entity.<entityName>`, not `AT_ENTITY` members: an entity member is a real grant, and a view needs its plain members offered (an order's header), which would then be readable, unfiltered, wherever an entity is checked on its own.
+- **An entity nobody scoped is refused**, not read whole and reported: the engine asks whether a filter of the grant applies to it. So there is no `check#CalcProfile`; the refusal is logged with the profile and the entity.
+- **Authoring is its own group** (`CALC_GRID_AUTHOR`), not the action of the grant: the framework checks a service call for all actions, so a view grant of the services opens none of them.
+- **A room is still one user's**, so every reader of a shared document has their own, filled as themselves: the scope cannot leak between readers. Rooms shared by scope come with editing.
+- **In BOSS a Sales administrator reaches CalcGrid as an Insights user**: no grant names the framework's screen, and Insights' root grant opens the route.
+
+Added after the profile question was settled (2026-11-13: what an application grants a person is what they see in the Dashboards app too, the first profile they hold by default, with a way to switch):
+
+- **The current access.** The profile a person chooses in CalcGrid is kept as theirs (the user preference `calc.profile`, `set#CalcProfile`). A call that names no profile and is not a screen's reads under it while they hold it, else the Tools app's own access when they have it, else the first profile they hold.
+- **The dashboard panel is a dataset, not a panel type.** The shipped dataset `calcgrid` (`tools/report/calcgrid.json`) has the service `get#CalcFrame` as its source: a range of a saved document as a table (the first row the columns' names), read as the viewer under the profile the query's parameters name or their current access. The report engine's table, chart and stat panels draw it, and with them playlists, the wall display, report previews and scheduled reports; a scheduled report runs as its owner, so under its owner's access. The viewer's room for the document is read again, its data anew when over a minute old.
+- **Tests:** a feature each in `tools/test/CalcGrid.spec.js` (the dataset through `run#Query`, the choice kept) and `mr-mantle/test/order/CalcGridSales.spec.js` (each reader's own rows with no profile named, a profile not held).
+
+Left of 2b:
+
+- **A sheet or a chart of a document as a panel** (the grid with its styles, a chart as its author drew it): the dataset gives a range's values to the report engine's own panels.
+- **A way to add a range to a dashboard from CalcGrid**, and the panel editor's fields for the dataset's parameters: today the query is written in the definition.
+- **A scheduled export of the whole workbook** as XLSX: a scheduled report over the dataset exports its ranges.
+- **In BOSS, the dataset for Insights users:** `org.moqui.report.dataset.calcgrid` is not granted to a BOSS group, and Insights reads admitted business datasets under its mount.
+- **A file as an upload into the overlay** under a profile, and the guide's screenshots.
 
 ### Phase 3: editing
 
@@ -387,11 +411,11 @@ Settled 2026-11-13.
 | Where the viewer and editor are | In the existing Tools › Data › Grid screen, as a Calc mode beside Records; no separate Tools screen |
 | The limited version | CalcGrid in the Dashboards app, the same component, for relational data beside the search-based report tools |
 | How it is limited | By authorization data: access profiles (an artifact group, its grants, their entity filter sets), never by the document |
-| First profiles | `admin`, as the Tools app; `sales`, the rows of the user's associated organizations |
+| First profiles | `sales`, the rows of the user's associated organizations; the administrator's is the Tools app's own access, not a profile (Phase 2b) |
 | Sources in CalcGrid | Entities and views through the Entity Facade; no SQL; business datasets (search) not a source at first |
 | Summaries | A grouped view through the Entity Facade, not search aggregations |
 | Where `sales` lives | The artifact group and its entity list in mr-mantle, beside the filter sets; the grants to the BOSS sales groups in mr-boss; CalcGrid shown in BOSS under Insights by its mount |
-| Editing in CalcGrid | The profile's grant action: view opens documents shared with the user, with refresh and export; update also authors documents (overlay, sources from the profile, charts). Data sheets are read only for everyone |
+| Editing in CalcGrid | A holder of a profile opens documents shared with the user, with refresh and export; a holder of `CALC_GRID_AUTHOR` also authors documents (overlay, sources from the profile, charts). Data sheets are read only for everyone. (By the profile's grant action as first decided; a group of its own since Phase 2b, as a service call is checked for all actions) |
 | The document's store | A report definition of type `calcgrid` (`moqui.report.Definition`), the overlay bytes in its body (in a row beside it as first decided; changed in Phase 2): sharing with groups, versions, stars, git sync and schedules as dashboards have. The Tools grid lists the same documents |
 | Release | Phases 0 to 3 (through editing, in both screens) are for v0.1.0, if the spike holds; charts and images in XLSX (Phase 4) and Phase 5 after |
 

@@ -18,6 +18,7 @@ moqui-tools = { workspace = true }
 base64 = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
+regex = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 

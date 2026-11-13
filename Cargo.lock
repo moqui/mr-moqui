@@ -4637,6 +4637,7 @@ dependencies = [
  "moqui-core",
  "moqui-lib",
  "moqui-tools",
+ "regex",
  "serde_json",
  "tracing",
  "zip",

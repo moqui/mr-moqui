@@ -17,6 +17,7 @@
 //! formulas and charts on top. The engine and the workbook are in the server; a view gets the cells on its screen.
 //!
 //! - [`fill`]: the engine work, with no `ExecutionContext`: a data sheet filled with rows, the stored form.
+//! - [`profile`]: the access profiles, which say what a person who is not an administrator may read.
 //! - [`room`]: the open documents, each a workbook in memory, read a viewport at a time and dropped when idle.
 //! - [`service`]: `org.moqui.calc.CalcServices`, which open, read, refresh, save, export and close a document.
 //!
@@ -25,6 +26,7 @@
 //! built in.
 
 pub mod fill;
+pub mod profile;
 pub mod room;
 pub mod service;
 

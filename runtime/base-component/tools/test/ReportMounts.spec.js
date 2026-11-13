@@ -331,7 +331,7 @@ feature("with no mount the links and the policy are Tools' own; Tools' roots nul
                 '"datasetScopeLabel":"Scope field",' +
                 '"datasetScopeHelp":"The field that carries each row\'s scope; the policy\'s own when left empty",' +
                 '"recipientPermissionId":null,"reportEmailTemplateId":null,"alertAudience":null,' +
-                '"shareGroups":[],"recipientCap":null,"calendar":null}'
+                '"shareGroups":[],"recipientCap":null,"calendar":null,"calcProfile":null}'
         empty.mounted == true
         Object.values(empty.links).every(link => link == null)
         JSON.stringify(empty.policy.features) == '{"alert":false,"share":false}'

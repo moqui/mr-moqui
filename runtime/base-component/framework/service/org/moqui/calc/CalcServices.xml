@@ -6,7 +6,10 @@
         sheets are filled from the data grid's sources, with a saved overlay of formulas and charts. The bodies are Rust
         (crates/moqui-calc/src/service.rs). A document is open in a room of the caller's on this server, read a viewport
         at a time; a call whose room is gone is refused with ROOM_GONE and the view opens the document again. Each needs
-        the Tools app, and a SQL source needs SQL, whatever calls it. A document is a report definition of type calcgrid
+        the Tools app, and a SQL source needs SQL, whatever calls it; or, with profileId, the access profile named, which
+        the caller must hold: only the entities and views the profile offers are read, with the entity filters of the
+        profile's grant, no SQL and no file, and a room is read only under the profile it was opened under
+        (crates/moqui-calc/src/profile.rs). A document is a report definition of type calcgrid
         (org.moqui.report.ReportServices: list#Definitions, delete#Definition, its versions and sharing). -->
 
     <service verb="open" noun="CalcDocument" type="rust" location="moqui_calc::service::open_calc_document" transaction="ignore">
@@ -15,6 +18,7 @@
             with its formulas and styles, or xls, xlsb, ods and other xlsx as values). Each data sheet is read as the
             caller, up to maxDataRows rows, and the workbook is evaluated.</description>
         <in-parameters>
+            <parameter name="profileId"><description>The access profile to read under; without it the Tools app's own access.</description></parameter>
             <parameter name="definitionId"/>
             <parameter name="source" type="Map"/>
             <parameter name="columns" type="List"/>
@@ -43,6 +47,7 @@
             row), texts (row, column, text as formatted, cell_type) of the cells that have one, and fills as runs.</description>
         <in-parameters>
             <parameter name="roomId" required="true"/>
+            <parameter name="profileId"/>
             <parameter name="sheet" type="Integer" default-value="0"/>
             <parameter name="row" type="Integer" default-value="1"/>
             <parameter name="column" type="Integer" default-value="1"/>
@@ -53,7 +58,7 @@
     </service>
     <service verb="refresh" noun="CalcDocument" type="rust" location="moqui_calc::service::refresh_calc_document" transaction="ignore">
         <description>Read the room's data sheets again as the caller and evaluate; the overlay stays as it is.</description>
-        <in-parameters><parameter name="roomId" required="true"/></in-parameters>
+        <in-parameters><parameter name="roomId" required="true"/><parameter name="profileId"/></in-parameters>
         <out-parameters>
             <parameter name="roomId"/>
             <parameter name="title"/>
@@ -73,6 +78,7 @@
             saves a new one under definitionId, or an id made from the title.</description>
         <in-parameters>
             <parameter name="roomId" required="true"/>
+            <parameter name="profileId"><description>Under a profile only an author saves (update on org.moqui.calc.document).</description></parameter>
             <parameter name="title"/>
             <parameter name="definitionId"/>
             <parameter name="userGroupId"><description>Share the document with this group, as save#Definition allows.</description></parameter>
@@ -86,7 +92,7 @@
     </service>
     <service verb="export" noun="CalcDocument" type="rust" location="moqui_calc::service::export_calc_document" transaction="ignore">
         <description>The workbook as it is in the room, with its data and calculated values, as an xlsx.</description>
-        <in-parameters><parameter name="roomId" required="true"/></in-parameters>
+        <in-parameters><parameter name="roomId" required="true"/><parameter name="profileId"/></in-parameters>
         <out-parameters>
             <parameter name="contentBytes" type="byte[]"/>
             <parameter name="filename"/>
@@ -95,5 +101,44 @@
     <service verb="close" noun="CalcDocument" type="rust" location="moqui_calc::service::close_calc_document" transaction="ignore">
         <description>Drop the caller's room; a room not used for twenty minutes is dropped without it.</description>
         <in-parameters><parameter name="roomId" required="true"/></in-parameters>
+    </service>
+    <service verb="get" noun="CalcProfiles" type="rust" location="moqui_calc::service::get_calc_profiles" transaction="ignore">
+        <description>How the caller may use CalcGrid: tools (the Tools app's own access: every source of the data grid, no
+            filter), the access profiles they hold (profileId, description), and canAuthor (they make and save documents).
+            A profile is an artifact group with the artifact org.moqui.calc.profile.[profileId] (inheritAuthz Y) and an
+            artifact org.moqui.calc.entity.[entityName] (or a pattern) for each entity and view it offers, granted
+            AUTHZT_ALWAYS for view, with the entity filter sets of the grant as its row scope.</description>
+        <out-parameters>
+            <parameter name="tools" type="Boolean"/>
+            <parameter name="profiles" type="List"/>
+            <parameter name="canAuthor" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="CalcEntities" type="rust" location="moqui_calc::service::find_calc_entities" transaction="ignore">
+        <description>The entities and views a new document may be over whose name holds term, fifty at most: the ones the
+            profile offers (a view only with every member entity offered), or with no profile every entity.</description>
+        <in-parameters><parameter name="profileId"/><parameter name="term"/></in-parameters>
+        <out-parameters><parameter name="entityNames" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="CalcFrame" type="rust" location="moqui_calc::service::get_calc_frame" transaction="ignore">
+        <description>A range of a saved document as a table for the report engine: the source of the shipped dataset
+            calcgrid (its serviceName), so a dashboard panel, a report and a scheduled report show a CalcGrid range with
+            the query parameters definitionId and range. The first row of the range names the columns; each row below is
+            a record, at most 10,000. The document's data is read as the caller under profileId, or with none under their
+            current access: the one they chose in CalcGrid (set#CalcProfile) while they hold it, else the Tools app's own
+            when they have it, else the first profile they hold. A room the caller has for the document is read again,
+            its data read anew when over a minute old.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/>
+            <parameter name="range" required="true"><description>As in a formula: Summary!A1:D20.</description></parameter>
+            <parameter name="profileId"/>
+        </in-parameters>
+        <out-parameters><parameter name="frame" type="Map"><description>fields, each a name, a type (number or string) and its values.</description></parameter></out-parameters>
+    </service>
+    <service verb="set" noun="CalcProfile" type="rust" location="moqui_calc::service::set_calc_profile">
+        <description>Keep the access the caller chose as their current one (the user preference calc.profile): a profile
+            they hold, or tools for the Tools app's own access. A dashboard panel and a scheduled report over a CalcGrid
+            document read under it when they name no profile.</description>
+        <in-parameters><parameter name="profileId" required="true"/></in-parameters>
     </service>
 </services>

@@ -404,6 +404,9 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
 
     Both read at most the newest 10000 spans of the range, as the viewer, with the query string, filters and
     variables applied. Monitor ships a Service map dashboard, and Trace detail shows the trace's flame graph.
+- **CalcGrid** (Dashboards › CalcGrid) is spreadsheets over the relational database, beside these tools over the
+  search indexes: a document's data sheets are filled from entities and views as the person who opens it, under an
+  access profile whose grant carries entity filters ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)).
 - **Git sync** (Dashboards › Git sync, `REPORT_GIT_SYNC_ADMIN`) keeps a definition folder (`body.folder`) in a
   directory of a git repository, `git://<repositoryId>/<path>/<id>.json`, one file per definition in the shipped
   format.
@@ -572,6 +575,7 @@ out, but for the features: a mount offers one only when its map says so.
 | `shareGroups` | `[{value, label}]`: groups a definition is offered to be shared with beside the viewer's own, by the app's words for them (its wall displays). Being here gives no right: such a group is offered, and taken by `save#Definition`, only for a viewer whose own grant holds its share artifact ([Sharing](#sharing)) | none | Dashboard (`share`), Playlists (`sharePlaylist`) |
 | `recipientCap` | The most recipients a group delivery is saved and checked with, sent with every save to `store#Schedule`, which refuses a larger audience and holds the cap under the instance ceiling; and written into the audience of an alert rule at every save, which `save#Definition` checks the same way. Added by the area that delivers (`policyWith`), not by the root | the engine's (50, under the ceiling) | Schedules (`createSchedule`), ScheduledReportDetail (`storeSchedule`, `storeAudience`, and the audience shown), Alerts and AlertRule (every save of a rule told to an audience, and the audience shown) |
 | `calendar` | `{timeZone, weekOffset}`: the zone a time grain's buckets are cut in and a week bucket's offset (the engine's `time_zone` and `offset`), in the query Analysis builds, runs and saves. The root's is that of the scope it knows; a screen of the app's own with a scope choice of its own passes its own (Insights' Analysis: the chosen organization's) | the viewer's zone, the instance's week | Analysis (the result and `saveAnalysis`) |
+| `calcProfile` | The access profile CalcGrid reads under here ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)). Naming one gives no right: the engine checks that the viewer holds it | none: the viewer chooses among the profiles they hold, and with no mount the Tools app's own access | CalcGrid |
 
 `tools/template/ReportMount.js` is the one reader of the two maps: `state()` gives `{mounted, links, policy}` in a
 screen's actions, every link key present (null when not offered) and every policy field with its default, and

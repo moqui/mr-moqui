@@ -8,6 +8,26 @@
         <artifacts artifactName="org.moqui.report.ReportServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <authz artifactAuthzId="DASHBOARDS_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
+    <!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md; docs/tools/Database.md, CalcGrid and access profiles).
+        CALC_GRID is the Dashboards screen and its services: who holds it opens the documents shared with them, refreshes and
+        exports them. CALC_GRID_AUTHOR is org.moqui.calc.document, on which update is authoring: making a document over a
+        source and saving it. ADMIN's here; an app grants CALC_GRID (for all actions: a service call is checked for all) and
+        where it wants CALC_GRID_AUTHOR to the groups it opens CalcGrid to, each with an access profile of its own data: an
+        artifact group with org.moqui.calc.profile.[profileId] (inheritAuthz Y) and an org.moqui.calc.entity.[entityName] for
+        each entity offered, granted AUTHZT_ALWAYS for view, with the entity filter sets of its row scope on that grant
+        (mr-mantle's CalcGridProfileData.xml). The Tools app's own access needs no profile: every source of the data grid, no
+        filter. -->
+    <artifactGroups artifactGroupId="CALC_GRID" description="CalcGrid: spreadsheets over the database">
+        <artifacts artifactName="component://tools/screen/Dashboards/CalcGrid.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+        <artifacts artifactName="org\.moqui\.calc\.CalcServices\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
+        <!-- the shipped dataset calcgrid (tools/report/calcgrid.json): a range of a document on a dashboard panel or a report -->
+        <artifacts artifactName="org.moqui.report.dataset.calcgrid" artifactTypeEnumId="AT_SERVICE"/>
+        <authz artifactAuthzId="CALC_GRID_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+    <artifactGroups artifactGroupId="CALC_GRID_AUTHOR" description="CalcGrid: make and save documents">
+        <artifacts artifactName="org.moqui.calc.document" artifactTypeEnumId="AT_SERVICE"/>
+        <authz artifactAuthzId="CALC_GRID_AUTHOR_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
     <artifactGroups artifactGroupId="REPORT_DATASETS_ADMIN" description="Dataset administration and unrestricted dataset access">
         <artifacts artifactName="org.moqui.report.dataset.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <authz artifactAuthzId="REPORT_DATASETS_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>

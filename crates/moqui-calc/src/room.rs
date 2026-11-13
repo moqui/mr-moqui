@@ -56,6 +56,8 @@ pub struct DataSheet {
 pub struct Room {
     pub id: String,
     pub user_id: String,
+    /// The access profile the room was opened under and is read under; none is the Tools app's own access.
+    pub profile_id: Option<String>,
     /// The saved document this is, when it is one, and the version it was read or saved at.
     pub definition_id: Option<String>,
     pub version: Option<i64>,
@@ -70,11 +72,14 @@ pub struct Room {
     pub evaluate_ms: f64,
     model: UserModel<'static>,
     last_used: Instant,
+    /// When the data sheets were last read.
+    filled_at: Instant,
 }
 
 /// What a room is opened with.
 pub struct Opening {
     pub user_id: String,
+    pub profile_id: Option<String>,
     pub definition_id: Option<String>,
     pub version: Option<i64>,
     pub title: String,
@@ -105,6 +110,7 @@ impl Room {
         Ok(Self {
             id,
             user_id: opening.user_id,
+            profile_id: opening.profile_id,
             definition_id: opening.definition_id,
             version: opening.version,
             title: opening.title,
@@ -115,6 +121,7 @@ impl Room {
             evaluate_ms: started.elapsed().as_secs_f64() * 1000.0,
             model: UserModel::from_model(model),
             last_used: Instant::now(),
+            filled_at: Instant::now(),
         })
     }
 
@@ -156,7 +163,48 @@ impl Room {
         self.model = UserModel::from_model(model);
         self.data_rows = data_rows;
         self.truncated = truncated;
+        self.filled_at = Instant::now();
         Ok(())
+    }
+
+    /// How long ago the data sheets were read.
+    #[must_use]
+    pub fn data_age(&self) -> Duration {
+        self.filled_at.elapsed()
+    }
+
+    /// A range as a table for a report: its first row the columns' names, each row below a record. Every value is as
+    /// the cell holds it (a number, a text, a boolean, or null), at most `max_rows` rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a text that is not a range of the workbook.
+    pub fn frame(&self, reference: &str, max_rows: usize) -> Result<Json, Error> {
+        use moqui_core::workbook::ironcalc::base::cell::CellValue;
+        let model = self.model();
+        let area = parse_area(model, reference)?;
+        let value = |row: i32, column: i32| match model.get_cell_value_by_index(area.sheet, row, column) {
+            Ok(CellValue::Number(number)) => json!(number),
+            Ok(CellValue::String(text)) => Json::String(text),
+            Ok(CellValue::Boolean(flag)) => Json::Bool(flag),
+            _ => Json::Null,
+        };
+        let last_row = area
+            .last_row
+            .min(area.row.saturating_add(i32::try_from(max_rows).unwrap_or(i32::MAX)));
+        let mut fields = Vec::new();
+        for column in area.column..=area.last_column {
+            let name = model
+                .get_formatted_cell_value(area.sheet, area.row, column)
+                .ok()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| format!("Column {}", column - area.column + 1));
+            let values: Vec<Json> = ((area.row + 1)..=last_row).map(|row| value(row, column)).collect();
+            let number =
+                values.iter().any(Json::is_number) && values.iter().all(|value| value.is_number() || value.is_null());
+            fields.push(json!({"name": name, "type": if number { "number" } else { "string" }, "values": values}));
+        }
+        Ok(json!({ "fields": fields }))
     }
 
     /// The sheets as a view lays them out ([`fill::layout`]).
@@ -309,6 +357,25 @@ impl Rooms {
         let room = rooms.get(&(user_id.to_string(), id.to_string())).cloned()?;
         lock(&room).last_used = Instant::now();
         Some(room)
+    }
+
+    /// A room of `user_id` that is the saved document `definition_id` opened under `profile_id`, marked used now: one a
+    /// report reads again in place of opening the document for each panel.
+    #[must_use]
+    pub fn find_document(&self, user_id: &str, definition_id: &str, profile_id: Option<&str>) -> Option<SharedRoom> {
+        let mut rooms = lock(&self.rooms);
+        Self::sweep(&mut rooms);
+        let found = rooms
+            .iter()
+            .filter(|((user, _), _)| user == user_id)
+            .map(|(_, room)| room)
+            .find(|room| {
+                let room = lock(room);
+                room.definition_id.as_deref() == Some(definition_id) && room.profile_id.as_deref() == profile_id
+            })
+            .cloned()?;
+        lock(&found).last_used = Instant::now();
+        Some(found)
     }
 
     /// Drop the room `id` of `user_id`.

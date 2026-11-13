@@ -78,3 +78,55 @@ feature("an entity's rows open in Calc as a data sheet, and the document is save
         page.close()
     },
 })
+
+// CalcGrid in the Dashboards app (Phase 2b): an author starts a document over an entity, saves it, finds it in the list
+// when the page is opened again, and deletes it.
+feature("in Dashboards an author starts a document over an entity, saves it, opens it from the list and deletes it", {
+    expect() {
+        const page = gridPage()
+        page.goto("/qapps/dashboards/CalcGrid").status == 200
+        page.waitFor(() => Array.from(document.querySelectorAll("button")).some((b) => b.textContent.includes("New")))
+        page.evaluate(() => {
+            const label = (b) => Array.from(b.querySelectorAll(".block")).map((part) => part.textContent).join("").trim()
+            window.walkButton = (text) => Array.from(document.querySelectorAll("button")).find((b) => label(b).startsWith(text))
+            window.walkTexts = () => Array.from(document.querySelectorAll(".m-calc-grid .tabulator-row")).map((row) => Array.from(row.querySelectorAll(".tabulator-cell")).map((cell) => cell.textContent))
+            window.walkBase = location.pathname.replace("/qapps/", "/apps/")
+            return true
+        })
+        // the entities offered answer a term, and a document over one opens as a sheet
+        const offered = page.evaluate(() => fetch(window.walkBase + "/calcEntities?term=basic.Enumeration", { credentials: "same-origin" }).then((response) => response.json()))
+        offered.entityNames.includes("moqui.basic.Enumeration")
+        page.evaluate(() => { window.walkButton("New").click(); return true })
+        page.waitFor(() => !!document.querySelector(".q-dialog input"))
+        page.evaluate(() => {
+            const input = document.querySelector(".q-dialog .q-select input")
+            input.focus(); input.value = "basic.Enumeration"; input.dispatchEvent(new Event("input", { bubbles: true }))
+            return true
+        })
+        page.waitFor(() => Array.from(document.querySelectorAll(".q-menu .q-item")).some((item) => item.textContent.trim() == "moqui.basic.Enumeration"))
+        page.evaluate(() => { Array.from(document.querySelectorAll(".q-menu .q-item")).find((item) => item.textContent.trim() == "moqui.basic.Enumeration").click(); return true })
+        page.evaluate(() => {
+            const title = Array.from(document.querySelectorAll(".q-dialog input")).find((input) => !input.closest(".q-select"))
+            title.value = "Walk enumerations"; title.dispatchEvent(new Event("input", { bubbles: true }))
+            return true
+        })
+        page.waitFor(() => { const b = Array.from(document.querySelectorAll(".q-dialog button")).find((b) => b.textContent.includes("Open")); return !!b && !b.disabled })
+        page.evaluate(() => { Array.from(document.querySelectorAll(".q-dialog button")).find((b) => b.textContent.includes("Open")).click(); return true })
+        page.waitFor(() => { const rows = window.walkTexts(); return rows.length > 2 && rows[0].includes("enumId") })
+        // save, then the page again: the document is in the list and opens from it
+        page.evaluate(() => { window.walkButton("Save document").click(); return true })
+        page.waitFor(() => Array.from(document.querySelectorAll(".q-dialog .text-h6")).some((title) => title.textContent.includes("Save the document")))
+        page.evaluate(() => { Array.from(document.querySelectorAll(".q-dialog button")).find((b) => b.textContent.includes("Save")).click(); return true })
+        page.waitFor(() => !document.querySelector(".q-dialog") && !!window.walkButton("Delete"))
+        const saved = page.evaluate(() => fetch(window.walkBase + "/calcDocuments", { credentials: "same-origin" }).then((response) => response.json()))
+        const definitionId = (saved.documents.find((doc) => doc.title == "Walk enumerations") || {}).definitionId
+        !!definitionId
+        page.goto("/qapps/dashboards/CalcGrid?definitionId=" + encodeURIComponent(definitionId)).status == 200
+        page.waitFor(() => { const rows = Array.from(document.querySelectorAll(".m-calc-grid .tabulator-row")); return rows.length > 2 && rows[0].textContent.includes("enumId") })
+        const listed = page.evaluate(() => fetch(location.pathname.replace("/qapps/", "/apps/") + "/calcDocuments", { credentials: "same-origin" }).then((response) => response.json()))
+        listed.documents.filter((doc) => doc.definitionId == definitionId && doc.title == "Walk enumerations").length == 1
+        const deleted = page.evaluate((id) => moqui.request(location.pathname.replace("/qapps/", "/apps/") + "/calcDelete", { method: "POST", params: { definitionId: id } }).then((result) => result.json || {}), definitionId)
+        !deleted.errors
+        page.close()
+    },
+})

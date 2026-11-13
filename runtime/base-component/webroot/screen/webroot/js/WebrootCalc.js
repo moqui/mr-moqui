@@ -5,7 +5,8 @@
  * show one (component://tools/screen/Tools/Data/Grid.qvue) and tested in the page by test/client/WebrootCalc.spec.js.
  * The workbook and the spreadsheet engine are in the server; this draws the cells on screen.
  *   - moqui.calc.sheet: a Vue component. Props: room (what open#CalcDocument answered: roomId, sheets, charts, ...) and
- *     cellsUrl (the transition that answers a rectangle of cells: roomId, sheet, row, column, width, height). It emits
+ *     cellsUrl (the transition that answers a rectangle of cells: roomId, sheet, row, column, width, height, and what
+ *     params adds: an access profile). It emits
  *     gone when the server no longer has the room, and sheet (the index) when another sheet is chosen.
  *     A sheet is a Tabulator table (libs/tabulator) with a placeholder row for each sheet row and no data: a formatter
  *     draws each cell from the blocks the server sent, and a scroll asks for the rows in view and a margin, so a jump
@@ -130,7 +131,9 @@
 
     calc.sheet = {
         name: "CalcSheet",
-        props: { room: { type: Object, required: true }, cellsUrl: { type: String, required: true }, height: { type: String, default: "62vh" } },
+        props: { room: { type: Object, required: true }, cellsUrl: { type: String, required: true }, height: { type: String, default: "62vh" },
+            // what each request for cells carries beside the room and the rectangle (an access profile)
+            params: { type: Object, default: () => ({}) } },
         emits: ["gone", "sheet"],
         template: '<div class="m-calc-sheet">'
             + '<div ref="grid" class="m-data-grid m-calc-grid"></div>'
@@ -225,7 +228,7 @@
                 const rows = this.rows();
                 const need = calc.neededRange(rows, view[0], view[1], this.rowCount, calc.MARGIN);
                 if (!need) return Promise.resolve();
-                return moqui.request(this.cellsUrl, { params: { roomId: this.room.roomId, sheet: sheetIndex, row: need.row, column: 1, width: this.columnCount, height: need.height } }).then((result) => {
+                return moqui.request(this.cellsUrl, { params: Object.assign({}, this.params, { roomId: this.room.roomId, sheet: sheetIndex, row: need.row, column: 1, width: this.columnCount, height: need.height }) }).then((result) => {
                     const block = result.json || {};
                     if (block.errors) {
                         if (String(block.errors).includes("ROOM_GONE")) this.$emit("gone"); else moqui.notifyMessages(null, block.errors);

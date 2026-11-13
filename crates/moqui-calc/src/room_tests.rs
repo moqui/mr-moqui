@@ -35,6 +35,7 @@ fn rows(count: usize) -> SheetRows {
 fn opening(user: &str, count: usize) -> Opening {
     Opening {
         user_id: user.to_string(),
+        profile_id: None,
         definition_id: None,
         version: None,
         title: "Orders".to_string(),

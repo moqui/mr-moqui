@@ -1,6 +1,9 @@
 // Calc mode of the data grid (screen/Tools/Data/Grid.xml, plans/IronCalc-DB.md Phase 2), over org.moqui.calc.CalcServices:
 // an entity's rows as the data sheet of a workbook in a room of the user's, read a rectangle at a time; the document saved
 // as a report definition with no row of the data in it, opened again and deleted; another user finds no such room.
+// And CalcGrid in the Dashboards app (screen/Dashboards/CalcGrid.xml, template/CalcGrid.js, Phase 2b): how the viewer may use it,
+// a new document over an entity, and a profile the viewer does not hold. The access profiles' own rules (the entities
+// offered, the rows of the viewer's organizations) are held where a profile is, by mr-mantle's CalcGridSales spec.
 // The engine's work (the fill, the stored form, the rooms) is tested in crates/moqui-calc.
 // Run: ./moq test tools --spec CalcGrid
 const tools = () => ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml")
@@ -12,6 +15,12 @@ const call = (transition, parameters, method) => {
     return {status: result.status, text, json: json || {}}
 }
 const source = {type: "entity", entityName: "moqui.basic.Enumeration", conditions: {enumTypeId: "ArtifactType"}}
+const dashboardsCall = (transition, parameters, method) => {
+    const result = ec.screen.makeTest().rootScreen("component://tools/screen/Dashboards.xml").render("CalcGrid/" + transition, parameters, method || null)
+    let json = {}
+    try { json = JSON.parse(String(result.output || "")) } catch (e) { json = {} }
+    return {status: result.status, json}
+}
 
 const OUTSIDER = "spec.calcgrid.outsider"
 const OUTSIDER_ID = "SPEC_CALCGRID_OUTSIDER"
@@ -148,5 +157,93 @@ feature("a spreadsheet file opens as a workbook, every sheet with its cells, fro
         cellTexts.includes("AT_ENTITY")
         String(elsewhere.json.errors).includes("Not available")
         !elsewhere.json.roomId
+    },
+})
+
+feature("CalcGrid in Dashboards: an administrator has the Tools app's own access and authors, and a profile not held is refused", {
+    when() {
+        const dashboards = (transition, parameters, method) => {
+            const result = ec.screen.makeTest().rootScreen("component://tools/screen/Dashboards.xml").render("CalcGrid/" + transition, parameters, method || null)
+            const text = String(result.output || "")
+            let json = {}
+            try { json = JSON.parse(text) } catch (e) { json = {} }
+            return {status: result.status, text, json}
+        }
+        const access = dashboards("calcAccess", {})
+        const entities = dashboards("calcEntities", {term: "basic.Enumeration"})
+        const entityNames = Array.from(entities.json.entityNames || [])
+        const opened = dashboards("calcOpen", {entityName: "moqui.basic.Enumeration", conditionsJson: JSON.stringify({enumTypeId: "ArtifactType"}), title: "Artifact types"}, "post")
+        const cells = dashboards("calcCells", {roomId: opened.json.roomId, sheet: 0, row: 1, column: 1, width: 3, height: 3})
+        const cellTexts = Array.from(cells.json.texts || []).map(text => text.text)
+        // the room was opened with no profile: it is not read under one
+        const underProfile = dashboards("calcCells", {roomId: opened.json.roomId, profileId: "nosuch", sheet: 0, row: 1, column: 1, width: 3, height: 3})
+        const notHeld = dashboards("calcOpen", {profileId: "nosuch", entityName: "moqui.basic.Enumeration"}, "post")
+        dashboards("calcClose", {roomId: opened.json.roomId}, "post")
+        const tui = ec.screen.makeTest().rootScreen("component://tools/screen/Dashboards.xml").renderMode("tui").render("CalcGrid", {}, null)
+        ec.message.clearErrors()
+        return {access, entityNames, opened, cellTexts, underProfile, notHeld, tui: String(tui.output), tuiStatus: tui.status}
+    },
+    then({access, entityNames, opened, cellTexts, underProfile, notHeld, tui, tuiStatus}) {
+        access.status == 200
+        access.json.tools === true
+        access.json.canAuthor === true
+        access.json.canShare === true
+        access.json.fixedProfile == null
+        entityNames.includes("moqui.basic.Enumeration")
+        !opened.json.errors
+        opened.json.title == "Artifact types"
+        opened.json.sheets[0].data === true
+        cellTexts.includes("enumId")
+        cellTexts.includes("AT_ENTITY")
+        String(underProfile.json.errors).includes("Not available")
+        String(notHeld.json.errors).includes("Not available")
+        !notHeld.json.roomId
+        tuiStatus == 200
+        tui.includes('"CalcGridDocuments"')
+        !tui.includes("Error rendering")
+    },
+})
+
+feature("a range of a saved document is a report dataset: a panel query answers its columns and rows as the viewer reads them", {
+    when() {
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "description", "enumTypeId"]),
+            sortJson: JSON.stringify([{field: "enumId", dir: "asc"}])}, "post")
+        const saved = call("calcSave", {roomId: opened.json.roomId, title: "Frame types", definitionId: "spec-calcgrid-frame"}, "post")
+        call("calcClose", {roomId: opened.json.roomId}, "post")
+        const run = (parameters) => {
+            const out = ec.service.sync().name("org.moqui.report.ReportServices.run#Query").parameters({query: {datasetId: "calcgrid", parameters}}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {frame: Array.from(out.frames || [])[0] || {fields: []}, errors}
+        }
+        const answered = run({definitionId: "spec-calcgrid-frame", range: "Enumeration!A1:C3"})
+        const fields = Array.from(answered.frame.fields || [])
+        const again = run({definitionId: "spec-calcgrid-frame", range: "Enumeration!A1:A2"})
+        const badRange = run({definitionId: "spec-calcgrid-frame", range: "Nowhere!A1:B2"})
+        const missing = run({definitionId: "spec-calcgrid-none", range: "A1:B2"})
+        // the access chosen is kept only when it is one the user has
+        const chosen = dashboardsCall("calcProfile", {profileId: ""}, "post")
+        const refusedChoice = dashboardsCall("calcProfile", {profileId: "nosuch"}, "post")
+        const kept = ec.user.getPreference("calc.profile")
+        call("calcDelete", {definitionId: "spec-calcgrid-frame"}, "post")
+        ec.user.setPreference("calc.profile", "")
+        return {saved, answered, names: fields.map(field => field.name), types: fields.map(field => field.type),
+            first: fields.map(field => Array.from(field.values || [])[0]), rows: fields.length ? Array.from(fields[0].values || []).length : 0,
+            againNames: Array.from(again.frame.fields || []).map(field => field.name), badRange, missing, chosen, refusedChoice, kept}
+    },
+    then({saved, answered, names, types, first, rows, againNames, badRange, missing, chosen, refusedChoice, kept}) {
+        !saved.json.errors
+        answered.errors == ""
+        names.join(",") == "enumId,description,enumTypeId"
+        types.join(",") == "string,string,string"
+        first[0] == "AT_ENTITY"
+        first[2] == "ArtifactType"
+        rows == 2
+        againNames.join(",") == "enumId"
+        badRange.errors.includes("no sheet named Nowhere")
+        !!missing.errors
+        !chosen.json.errors
+        String(refusedChoice.json.errors).includes("Not available")
+        kept == "tools"
     },
 })

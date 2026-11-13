@@ -21,8 +21,11 @@
 //! and sheets of the author, with no row of data ([`crate::fill::stored_form`]).
 //!
 //! The data sheets are read through the data grid's reader ([`moqui_tools::grid`]) as the caller, with its refusals
-//! (restricted entities, password fields). These services are the Tools app's: every one needs the Tools app, and a
-//! SQL source needs SQL, whatever calls it. A refusal is a message error and no out-parameters.
+//! (restricted entities, password fields). A call is made one of two ways ([`Access`]). With no `profileId` it is the
+//! Tools app's: it needs the Tools app, and a SQL source needs SQL, whatever calls it. With a `profileId` it is under
+//! that access profile ([`crate::profile`]), which the caller must hold: only entities and views the profile offers
+//! are read, with the entity filters of the profile's grant, and no SQL or file. A room is read only the way it was
+//! opened. A refusal is a message error and no out-parameters.
 
 use std::collections::BTreeMap;
 
@@ -41,6 +44,7 @@ use moqui_tools::grid::{self, Source};
 use serde_json::{json, Value as Json};
 
 use crate::fill::{self, CellData, SheetRows};
+use crate::profile::{self, Profile};
 use crate::room::{DataSheet, Opening, Room, Rooms};
 
 /// The most data rows one data sheet takes; a source with more is cut and the sheet is marked.
@@ -61,6 +65,10 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, save_calc_document)?;
     rust_service!(map, export_calc_document)?;
     rust_service!(map, close_calc_document)?;
+    rust_service!(map, get_calc_profiles)?;
+    rust_service!(map, find_calc_entities)?;
+    rust_service!(map, get_calc_frame)?;
+    rust_service!(map, set_calc_profile)?;
     Ok(())
 }
 
@@ -131,27 +139,113 @@ fn cell_data(value: &Value, zone: &jiff::tz::TimeZone) -> CellData {
     }
 }
 
-/// Whether the caller may read `source` here: the Tools app, and SQL for a query. An error is added when not.
-fn may_read(source: &Source) -> bool {
-    if source.is_sql() {
-        moqui_tools::sql_service::may_run_sql()
-    } else {
-        moqui_tools::service::may_view_tools()
+/// How a call reaches the data: the Tools app's own access, or an access profile the caller holds.
+pub(crate) enum Access {
+    Tools,
+    Profile(Profile),
+}
+
+impl Access {
+    /// The access of a call, from its `profileId`. None, with an error added, when the caller has neither the Tools
+    /// app (no `profileId`) nor the profile named.
+    fn of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Option<Self> {
+        let id = text(parameters, "profileId");
+        if id.is_empty() {
+            return moqui_tools::service::may_view_tools().then_some(Self::Tools);
+        }
+        match Profile::held(facade, &id) {
+            Ok(profile) => Some(Self::Profile(profile)),
+            Err(err) => {
+                add_error(err.message());
+                None
+            }
+        }
+    }
+
+    fn profile_id(&self) -> Option<String> {
+        match self {
+            Self::Tools => None,
+            Self::Profile(profile) => Some(profile.id.clone()),
+        }
+    }
+
+    /// The access of a call that names no profile and is not a screen's: a dashboard panel, a scheduled report. It is
+    /// the caller's current one ([`PROFILE_PREFERENCE`], which the CalcGrid screen sets when a profile is chosen)
+    /// while they still hold it, else the Tools app's own access when they have it, else the first profile they hold.
+    /// None, with nothing added, when they have none.
+    fn current(facade: &EntityFacade) -> Option<Self> {
+        let tools = || {
+            let _required = ExecutionContext::with_current(ExecutionContext::require_authz);
+            moqui_core::user::permitted_own("AT_XML_SCREEN", "component://tools/screen/Tools.xml", "view")
+                .unwrap_or(false)
+        };
+        let chosen = moqui_core::user::get_preference(PROFILE_PREFERENCE)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if chosen == TOOLS_ACCESS {
+            if tools() {
+                return Some(Self::Tools);
+            }
+        } else if !chosen.is_empty() {
+            if let Ok(profile) = Profile::held(facade, &chosen) {
+                return Some(Self::Profile(profile));
+            }
+        }
+        if tools() {
+            return Some(Self::Tools);
+        }
+        let first = Profile::held_ids(facade).ok()?.into_iter().next()?;
+        Profile::held(facade, &first).ok().map(Self::Profile)
     }
 }
 
+/// The user preference that keeps the access a person chose in CalcGrid: a profile's id, or [`TOOLS_ACCESS`].
+pub const PROFILE_PREFERENCE: &str = "calc.profile";
+/// The value of [`PROFILE_PREFERENCE`] for the Tools app's own access.
+pub const TOOLS_ACCESS: &str = "tools";
+/// How old a room's data may be for a report to read it without reading the sources again.
+const FRAME_DATA_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+/// The most rows of a range a report takes (the report engine's own limit for a service's rows).
+const MAX_FRAME_ROWS: usize = 10_000;
+
 /// The rows of a data sheet, read through the data grid's reader as the caller, a page at a time, up to
-/// [`MAX_DATA_ROWS`].
-fn read_sheet(facade: &EntityFacade, sheet: &DataSheet) -> Result<SheetRows, String> {
+/// [`MAX_DATA_ROWS`]. Under a profile the source is an entity or view the profile offers, read with the profile
+/// entered, so its finds get the entity filters of the profile's grant.
+fn read_sheet(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Result<SheetRows, String> {
     let spec = from_json(&sheet.spec);
     let part = |key: &str| match &spec {
         Value::Map(map) => map.get(key).cloned(),
         _ => None,
     };
     let source = Source::parse(part("source").as_ref(), facade).map_err(|refusal| refusal.0)?;
-    if !may_read(&source) {
-        return Err(format!("The source of {} is not available", sheet.name));
-    }
+    let _entered = match access {
+        Access::Tools => {
+            let allowed = if source.is_sql() {
+                moqui_tools::sql_service::may_run_sql()
+            } else {
+                moqui_tools::service::may_view_tools()
+            };
+            if !allowed {
+                return Err(format!("The source of {} is not available", sheet.name));
+            }
+            None
+        }
+        Access::Profile(profile) => {
+            let not_available = || format!("{}: Not available", sheet.name);
+            let Source::Entity { entity_name, .. } = &source else {
+                return Err(not_available());
+            };
+            let full = moqui_core::entity::info::entity_full_name(facade, entity_name).ok_or_else(not_available)?;
+            if !profile.offers(facade, &full) {
+                tracing::info!(profile = %profile.id, entity = %full, "Refused an entity a CalcGrid profile does not offer");
+                return Err(not_available());
+            }
+            let entered = profile.enter().map_err(|_| not_available())?;
+            profile.check_scoped(facade, &full).map_err(|_| not_available())?;
+            Some(entered)
+        }
+    };
     let requested: Vec<String> = match part("columns") {
         Some(Value::List(names)) => names
             .iter()
@@ -208,8 +302,32 @@ fn read_sheet(facade: &EntityFacade, sheet: &DataSheet) -> Result<SheetRows, Str
     })
 }
 
-fn read_sheets(facade: &EntityFacade, sheets: &[DataSheet]) -> Result<Vec<SheetRows>, String> {
-    sheets.iter().map(|sheet| read_sheet(facade, sheet)).collect()
+/// The rows of each data sheet. With `lenient` (a saved document, whose reader may hold less than its author) a sheet
+/// that does not read is given as one cell saying so, and the others are read; otherwise the first refusal is the
+/// answer.
+fn read_sheets(
+    facade: &EntityFacade,
+    sheets: &[DataSheet],
+    access: &Access,
+    lenient: bool,
+) -> Result<Vec<SheetRows>, String> {
+    let mut all = Vec::with_capacity(sheets.len());
+    for sheet in sheets {
+        match read_sheet(facade, sheet, access) {
+            Ok(rows) => all.push(rows),
+            Err(message) if lenient => {
+                tracing::info!(sheet = %sheet.name, reason = %message, "A CalcGrid data sheet is not available to its reader");
+                all.push(SheetRows {
+                    name: sheet.name.clone(),
+                    columns: vec!["Not available".to_string()],
+                    rows: Vec::new(),
+                    truncated: false,
+                });
+            }
+            Err(message) => return Err(message),
+        }
+    }
+    Ok(all)
 }
 
 /// A name a sheet takes, from a source's: no `[]:*?/\`, at most 31 characters.
@@ -280,11 +398,13 @@ fn data_sheets(body: &Json) -> Vec<DataSheet> {
         .collect()
 }
 
-/// The room of the call's `roomId`, the caller's own.
-fn room_of(parameters: &BTreeMap<String, Value>) -> Option<crate::room::SharedRoom> {
+/// The room of the call's `roomId`: the caller's own, opened the way the call is made (the same profile, or none).
+fn room_of(parameters: &BTreeMap<String, Value>, access: &Access) -> Option<crate::room::SharedRoom> {
     let user_id = moqui_core::user::current_user_id().ok().flatten()?;
     let rooms = ExecutionContext::with_current(|ec| Rooms::of(ec.factory()))?;
-    let room = rooms.get(&user_id, &text(parameters, "roomId"));
+    let room = rooms
+        .get(&user_id, &text(parameters, "roomId"))
+        .filter(|room| moqui_lib::sync::lock(room).profile_id == access.profile_id());
     if room.is_none() {
         // the view opens the document again on this error
         add_error("ROOM_GONE: this document is no longer open on the server; open it again");
@@ -364,9 +484,14 @@ fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::iron
 /// `open#CalcDocument`: a saved document (`definitionId`), a new one over a data grid source (`source`, with its
 /// `columns`, `sort` and `filter`), or a workbook file (`workbookLocation`), opened into a room of the caller's.
 fn open_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
-    if !moqui_tools::service::may_view_tools() {
+    let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
-    }
+    };
+    open_document_with(parameters, facade, access)
+}
+
+/// [`open_calc_document`] under an access already decided.
+fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacade, access: Access) -> Out {
     let Some(user_id) = moqui_core::user::current_user_id().ok().flatten() else {
         return refused("Not signed in");
     };
@@ -391,6 +516,9 @@ fn open_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         let charts = body["charts"].as_array().cloned().unwrap_or_default();
         let title = definition["title"].as_str().unwrap_or(&definition_id).to_string();
         (base, data_sheets(body), charts, title, definition["version"].as_i64())
+    } else if matches!(access, Access::Profile(_)) && (!workbook_location.is_empty() || !profile::may_author()) {
+        // under a profile a new document is over an entity the profile offers, and is its author's to make
+        return refused("Not available");
     } else if !workbook_location.is_empty() {
         // from the places a file source may be read (the user's uploads, the import places), one vague refusal otherwise
         let bytes = match moqui_tools::etl::access::read_bytes(&workbook_location) {
@@ -434,7 +562,7 @@ fn open_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         Ok(base) => base,
         Err(err) => return refused(err.message()),
     };
-    let rows = match read_sheets(facade, &sheets) {
+    let rows = match read_sheets(facade, &sheets, &access, !definition_id.is_empty()) {
         Ok(rows) => rows,
         Err(message) => return refused(message),
     };
@@ -443,6 +571,7 @@ fn open_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     };
     let opening = Opening {
         user_id,
+        profile_id: access.profile_id(),
         definition_id: Some(definition_id).filter(|id| !id.is_empty()),
         version,
         title,
@@ -458,11 +587,11 @@ fn open_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
 }
 
 /// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`).
-fn get_calc_cells(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    if !moqui_tools::service::may_view_tools() {
+fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
-    }
-    let Some(room) = room_of(parameters) else {
+    };
+    let Some(room) = room_of(parameters, &access) else {
         return Ok(BTreeMap::new());
     };
     let room = moqui_lib::sync::lock(&room);
@@ -485,15 +614,15 @@ fn get_calc_cells(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
 
 /// `refresh#CalcDocument`: the data sheets read again as the caller, the workbook evaluated.
 fn refresh_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
-    if !moqui_tools::service::may_view_tools() {
+    let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
-    }
-    let Some(room) = room_of(parameters) else {
+    };
+    let Some(room) = room_of(parameters, &access) else {
         return Ok(BTreeMap::new());
     };
     let sheets = moqui_lib::sync::lock(&room).data_sheets.clone();
     // read with the room unlocked: a viewport of it is still answered meanwhile
-    let rows = match read_sheets(facade, &sheets) {
+    let rows = match read_sheets(facade, &sheets, &access, true) {
         Ok(rows) => rows,
         Err(message) => return refused(message),
     };
@@ -506,11 +635,14 @@ fn refresh_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFa
 
 /// `save#CalcDocument`: the room's document saved as a report definition of type `calcgrid`: a new one under
 /// `definitionId` (or an id made from the title), or the one the room was opened from, at the version it was read.
-fn save_calc_document(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    if !moqui_tools::service::may_view_tools() {
+fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
+    };
+    if matches!(access, Access::Profile(_)) && !profile::may_author() {
+        return refused("Not available");
     }
-    let Some(room) = room_of(parameters) else {
+    let Some(room) = room_of(parameters, &access) else {
         return Ok(BTreeMap::new());
     };
     let mut room = moqui_lib::sync::lock(&room);
@@ -585,11 +717,11 @@ fn save_calc_document(parameters: &BTreeMap<String, Value>, _facade: &EntityFaca
 }
 
 /// `export#CalcDocument`: the workbook as it is in the room, data and calculated values, as an `.xlsx`.
-fn export_calc_document(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    if !moqui_tools::service::may_view_tools() {
+fn export_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
-    }
-    let Some(room) = room_of(parameters) else {
+    };
+    let Some(room) = room_of(parameters, &access) else {
         return Ok(BTreeMap::new());
     };
     let room = moqui_lib::sync::lock(&room);
@@ -621,6 +753,140 @@ fn close_calc_document(parameters: &BTreeMap<String, Value>, _facade: &EntityFac
     if let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) {
         rooms.close(&user_id, &text(parameters, "roomId"));
     }
+    Ok(BTreeMap::new())
+}
+
+/// `get#CalcProfiles`: how the caller may use CalcGrid: `tools` (the Tools app's own access: every source of the data
+/// grid, no filter), the access `profiles` they hold (`profileId`, `description`), and `canAuthor`.
+fn get_calc_profiles(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let tools = {
+        let _required = ExecutionContext::with_current(ExecutionContext::require_authz);
+        moqui_core::user::permitted_own("AT_XML_SCREEN", "component://tools/screen/Tools.xml", "view").unwrap_or(false)
+    };
+    let mut profiles = Vec::new();
+    for id in Profile::held_ids(facade).map_err(|err| LibError::new(err.message()))? {
+        if let Ok(held) = Profile::held(facade, &id) {
+            profiles.push(from_json(
+                &json!({"profileId": held.id, "description": held.description}),
+            ));
+        }
+    }
+    let mut out = BTreeMap::new();
+    out.insert("tools".to_string(), Value::Bool(tools));
+    out.insert("profiles".to_string(), Value::List(profiles));
+    out.insert("canAuthor".to_string(), Value::Bool(tools || profile::may_author()));
+    Ok(out)
+}
+
+/// `find#CalcEntities`: the entities and views a new document may be over, whose name holds `term`, fifty at most:
+/// the ones the profile offers, or with no profile every entity of the model.
+fn find_calc_entities(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let term = text(parameters, "term");
+    let names = match &access {
+        Access::Profile(held) => held.offered_entities(facade, &term, 50),
+        Access::Tools => {
+            let term = term.to_lowercase();
+            moqui_core::entity::info::all_entity_names(facade, "")
+                .into_iter()
+                .filter(|name| !term.is_empty() && name.to_lowercase().contains(&term))
+                .take(50)
+                .collect()
+        }
+    };
+    let mut out = BTreeMap::new();
+    out.insert(
+        "entityNames".to_string(),
+        Value::List(names.into_iter().map(Value::String).collect()),
+    );
+    Ok(out)
+}
+
+/// `get#CalcFrame`: a range of a saved document as a table for the report engine (a dataset with this service as its
+/// `serviceName`): the first row of `range` names the columns, each row below is a record. The document is opened as
+/// the caller under `profileId`, or with none under their current access ([`Access::current`]), its data read as
+/// they may read it; a room the caller already has for the document is read again, its data read anew when it is
+/// over a minute old.
+fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let access = if text(parameters, "profileId").is_empty() {
+        match Access::current(facade) {
+            Some(access) => access,
+            None => return refused("Not available"),
+        }
+    } else {
+        match Access::of(parameters, facade) {
+            Some(access) => access,
+            None => return Ok(BTreeMap::new()),
+        }
+    };
+    let definition_id = text(parameters, "definitionId");
+    let range = text(parameters, "range");
+    if definition_id.is_empty() || range.is_empty() {
+        return refused("A CalcGrid frame needs a definitionId and a range");
+    }
+    let Some(user_id) = moqui_core::user::current_user_id().ok().flatten() else {
+        return refused("Not signed in");
+    };
+    let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) else {
+        return refused("no execution context is entered");
+    };
+    let profile_id = access.profile_id();
+    let room = match rooms.find_document(&user_id, &definition_id, profile_id.as_deref()) {
+        Some(room) => {
+            let (stale, sheets) = {
+                let room = moqui_lib::sync::lock(&room);
+                (room.data_age() > FRAME_DATA_AGE, room.data_sheets.clone())
+            };
+            if stale {
+                let rows = match read_sheets(facade, &sheets, &access, true) {
+                    Ok(rows) => rows,
+                    Err(message) => return refused(message),
+                };
+                if let Err(err) = moqui_lib::sync::lock(&room).refresh(rows) {
+                    return refused(err.message());
+                }
+            }
+            room
+        }
+        None => {
+            let mut open = BTreeMap::new();
+            open.insert("definitionId".to_string(), Value::string(&definition_id));
+            if let Some(profile) = &profile_id {
+                open.insert("profileId".to_string(), Value::string(profile));
+            }
+            // opened as any other room, with its checks; an empty answer is a refusal whose error is added
+            let opened = open_document_with(&open, facade, access)?;
+            let Some(room) = opened
+                .get("roomId")
+                .and_then(Value::as_str)
+                .and_then(|id| rooms.get(&user_id, id))
+            else {
+                return Ok(BTreeMap::new());
+            };
+            room
+        }
+    };
+    let room = moqui_lib::sync::lock(&room);
+    match room.frame(&range, MAX_FRAME_ROWS) {
+        Ok(frame) => {
+            let mut out = BTreeMap::new();
+            out.insert("frame".to_string(), from_json(&frame));
+            Ok(out)
+        }
+        Err(err) => refused(err.message()),
+    }
+}
+
+/// `set#CalcProfile`: keep the access the caller chose, a profile they hold or `tools`, as their current one: what a
+/// dashboard panel and a scheduled report over a CalcGrid document read under when they name none.
+fn set_calc_profile(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let chosen = text(parameters, "profileId");
+    if chosen != TOOLS_ACCESS && Profile::held(facade, &chosen).is_err() {
+        return refused("Not available");
+    }
+    moqui_core::user::set_preference(PROFILE_PREFERENCE, Some(&chosen)).map_err(|err| LibError::new(err.message()))?;
     Ok(BTreeMap::new())
 }
 

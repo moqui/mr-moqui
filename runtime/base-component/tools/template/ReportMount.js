@@ -71,6 +71,10 @@ const toolsLinks = {
 //     calendar               {timeZone, weekOffset}: the zone calendar buckets are cut in and the offset of a week
 //                            bucket (the engine's time_zone and offset) in the queries Analysis builds; null is the
 //                            viewer's zone and the instance's week
+//     calcProfile            the access profile CalcGrid reads under here (docs/tools/Database.md, CalcGrid and access
+//                            profiles); null lets the viewer choose among the ones they hold, and with no mount the
+//                            Tools app's own access too. Naming one gives no right: the engine checks that the viewer
+//                            holds it
 const toolsPolicy = () => ({
     features: {alert: true, share: true},
     range: {from: "now-7d", thru: "now"},
@@ -82,7 +86,8 @@ const toolsPolicy = () => ({
     alertAudience: null,
     shareGroups: [],
     recipientCap: null,
-    calendar: null
+    calendar: null,
+    calcProfile: null
 })
 
 // A mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a map with
@@ -131,6 +136,7 @@ function policyOf(given, mounted) {
     if (Number.isInteger(cap) && cap > 0) policy.recipientCap = cap
     if (from.calendar !== null && typeof from.calendar === "object")
         policy.calendar = {timeZone: text(from.calendar.timeZone), weekOffset: text(from.calendar.weekOffset)}
+    policy.calcProfile = text(from.calcProfile)
     return policy
 }
 

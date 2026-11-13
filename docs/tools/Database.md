@@ -143,6 +143,71 @@ Phase 3; today Calc reads.
   it. Every formula is calculated again on a refresh, so many sums over a large sheet are slow: the toolbar shows the
   time when it is over a quarter of a second.
 
+### CalcGrid and access profiles
+
+Dashboards › CalcGrid (`Dashboards/CalcGrid.xml`, `CalcGrid.qvue`, `template/CalcGrid.js`) is the same workbook for
+people who are not administrators: a list of the documents the viewer reads, one opened as a sheet, refreshed and
+exported, and for an author a new document over an entity or view, saved, shared with a group of their own and
+deleted. Its sources are entities and views only: no SQL, no file. Another app shows the screen under its own root
+([Mounting the report screens](Monitoring.md#mounting-the-report-screens)); BOSS shows it under Insights.
+
+What a person reads there is set in the authorization data, not in a document. A call is made one of two ways:
+
+- **The Tools app's own access** (no profile): every source of the data grid, no filter, for a holder of `TOOLS_APP`.
+  It is offered in the Dashboards app, not under another app's root.
+- **An access profile** the caller holds (`crates/moqui-calc/src/profile.rs`), which is an artifact group:
+
+| Part | What it is |
+|---|---|
+| Profile artifact | `org.moqui.calc.profile.<profileId>`, a service-type member with `inheritAuthz` Y. CalcGrid enters it before it reads a source, so every find below is authorized by the profile's grant and gets that grant's entity filters, whatever other grants the user holds |
+| Offered entities | A service-type member `org.moqui.calc.entity.<entityName>` (or a pattern) for each entity and view. An offer is CalcGrid's own name, as a report dataset's artifact is: it grants nothing on the entity anywhere else. A view is read only with every member entity offered too |
+| Grant | An `ArtifactAuthz` of the group for a user group, `AUTHZT_ALWAYS` for view |
+| Row scope | `ArtifactAuthzFilter` rows on that grant, naming `EntityFilterSet`s. The Entity Facade applies them on each find, through a view's aliases too; a filter that cannot be applied fails closed |
+
+- **Refused, not read whole.** Under a grant that has a filter set, an offered entity that no filter of the sets
+  applies to is refused ("Not available"). So the plain members a view needs (an order's header has no organization;
+  its part has) are offered without being readable on their own.
+- **Checked on every call**, in the engine: opening, each viewport, a refresh, an export and a save each run as the
+  caller under the profile named, authorization on whatever the caller disabled, and a room is read only under the
+  profile it was opened under. Naming a profile gives no right.
+- **A profile's filters read the user's scope** as the applications set it: Mantle's are the organizations the user
+  works in (`setup#UserOrganizationInfo`, which an app's root screen calls; the Dashboards screen calls it where
+  Mantle is there). With no organization the filters match nothing.
+- **Who may do what:** `CALC_GRID` is the screen and its services; `CALC_GRID_AUTHOR` (update on
+  `org.moqui.calc.document`) is making and saving documents. A holder of a profile without it opens the documents
+  shared with them, refreshes and exports. A document is its owner's to save and delete.
+- **A shared document shows each reader their own rows.** It stores its sources and its workbook without data; each
+  person who opens it gets the rows their profile and scope give, in a room of their own. A reader whose profile does
+  not offer a sheet's source gets that sheet as "Not available" and the rest of the document.
+- **An exported XLSX** holds the rows its exporter could read, and is a file from then on.
+- **A mount** names the profile with `reportPolicy.calcProfile`, or leaves the choice to the viewer among the ones
+  they hold.
+- **The current access.** The profile a person chooses in CalcGrid (the Data select) is kept as theirs (the user
+  preference `calc.profile`, `set#CalcProfile`; `tools` for the Tools app's own access). What an application grants a
+  person is so what they see in the Dashboards app too, and they switch between the profiles they hold there.
+- **On a dashboard and in a report.** The shipped dataset `calcgrid` (`tools/report/calcgrid.json`, a dataset whose
+  source is the service `get#CalcFrame`) answers a range of a saved document as a table: a panel query names
+  `datasetId: "calcgrid"` and the parameters `definitionId` and `range` (as in a formula, `Summary!A1:D20`; the first
+  row names the columns), and the table, chart and stat panels draw it, in playlists, the wall display, report
+  previews and scheduled reports as any panel. A panel is read as its viewer, under the profile its parameters name
+  (`profileId`) or, with none, the viewer's current access: the one they chose while they hold it, else the Tools
+  app's own when they have it, else the first profile they hold. A scheduled report runs as its owner, so under its
+  owner's. A viewer who holds none gets "Not available". The document's room is kept for the viewer and read again,
+  its data read anew when over a minute old. A reader of the dataset holds `org.moqui.report.dataset.calcgrid`
+  (a member of `CALC_GRID`).
+
+The profile that ships is Mantle's **`sales`** (`mr-mantle/data/CalcGridProfileData.xml`, group `CALC_PROFILE_SALES`):
+orders by their part (`OrderPart`, `OrderHeaderAndPart`, `OrderHeaderAndPartSummary`, `OrderItemAndPartSummary`),
+returns, invoices (`Invoice`, `InvoiceSummary`), payments, parties (`Party`, `PartyDetail`), products, categories and
+stores. It ships with no grant. BOSS grants it to its Sales administrators with `MANTLE_USER_ORG`,
+`MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and `CALC_GRID_AUTHOR` with it. Another profile is data in the
+application that owns its entities: the group, its offers, and a grant with its filter sets.
+
+Specs: `mr-mantle/test/order/CalcGridSales.spec.js` (the profile's rules: own organization only, an entity not
+offered, one no filter applies to, no organization, an author and a viewer, a shared document), `tools/test/CalcGrid.spec.js`
+(the Dashboards screen), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` (the BOSS grant and mount), and
+`crates/moqui-core/src/user/filter_tests.rs` (a profile frame gives its filters to the finds below).
+
 **Saved views** (`moqui.database.GridView`).
 
 - **What one holds:** the source spec and the layout (columns, widths, order, frozen columns, filters, sort).

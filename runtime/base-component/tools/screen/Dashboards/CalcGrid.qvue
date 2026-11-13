@@ -1,0 +1,195 @@
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- CalcGrid (docs/tools/Database.md, CalcGrid and access profiles), served by CalcGrid.xml in the qvue render mode: the
+    documents the viewer reads, one opened as a sheet drawn from the server's cells (moqui.calc.sheet, js/WebrootCalc.js),
+    refreshed and exported; for an author a new document over an entity the profile offers, saved, shared with a group of
+    their own and deleted. Every request goes to the screen's calc transitions through moqui.request, each with the access
+    profile chosen (the server takes the mount's where a mount names one). -->
+<template><div class="q-pa-sm">
+    <div class="row items-center q-col-gutter-sm q-mb-sm">
+        <div class="col-12 col-sm-4 col-md-3">
+            <q-select dense outlined v-model="documentId" :options="documentOptions" emit-value map-options label="Document" @update:model-value="openDocument"
+                    :hint="room && room.definitionId ? '' : (room ? 'Not saved' : '')"></q-select>
+        </div>
+        <div v-if="accessOptions.length > 1" class="col-12 col-sm-3 col-md-2">
+            <q-select dense outlined v-model="profileId" :options="accessOptions" emit-value map-options label="Data" @update:model-value="profileChanged">
+                <q-tooltip>What you may read here. Each choice is an access profile: the entities it offers and the rows of them you may see. Your dashboard panels over a document read under the one chosen</q-tooltip></q-select>
+        </div>
+        <q-space></q-space>
+        <div class="col-auto row items-center q-gutter-xs">
+            <div v-if="room && room.evaluateMs > 250" class="text-caption" :class="mutedClass">calculated in {{Math.round(room.evaluateMs)}} ms</div>
+            <q-btn v-if="access.canAuthor" flat dense no-caps icon="add" label="New" @click="newOpen = true"></q-btn>
+            <q-btn flat dense no-caps icon="refresh" label="Refresh" :disable="!room || busy" :loading="busy" @click="refresh"><q-tooltip>Read the data sheets again</q-tooltip></q-btn>
+            <q-btn flat dense no-caps icon="download" label="XLSX" :disable="!room" @click="exportXlsx"></q-btn>
+            <q-btn v-if="room && room.definitionId && ownsRoom" flat dense no-caps icon="delete" label="Delete" @click="deleteDocument"></q-btn>
+            <q-btn v-if="access.canAuthor && room && (!room.definitionId || ownsRoom)" unelevated dense no-caps color="primary" icon="save" label="Save document"
+                    :disable="busy" @click="openSave"></q-btn>
+        </div>
+    </div>
+    <div v-if="room && room.truncated && room.truncated.length" class="text-caption q-mb-xs text-warning">
+        {{room.truncated.join(', ')}}: only the first {{Number(room.maxDataRows).toLocaleString()}} rows are in the sheet.</div>
+    <component v-if="room && calcSheet" :is="calcSheet" :room="room" :cells-url="url('calcCells')" :params="requestParams" @gone="reopen"></component>
+    <div v-else-if="busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
+    <div v-else-if="loaded && !accessOptions.length" class="text-body2 q-pa-md" :class="mutedClass">CalcGrid is not set up for you: no access profile is granted to a group of yours.</div>
+    <div v-else-if="loaded" class="text-body2 q-pa-md" :class="mutedClass">
+        {{documents.length ? 'Choose a document.' : 'No document is shared with you yet.'}}<span v-if="access.canAuthor"> New starts one over your data.</span></div>
+
+    <q-dialog v-model="newOpen">
+        <q-card style="min-width:420px;max-width:90vw">
+            <q-card-section><div class="text-h6">New document</div></q-card-section>
+            <q-card-section class="q-pt-none q-gutter-sm">
+                <q-select dense outlined use-input fill-input hide-selected input-debounce="250" v-model="newEntity" :options="entityOptions" label="Data"
+                        hint="An entity or a view; type part of its name" @filter="filterEntities"></q-select>
+                <q-input dense outlined v-model="newTitle" label="Title"></q-input>
+                <div class="text-caption" :class="mutedClass">Its rows fill the document's data sheet, read again each time the document is opened, as the person who opens it.</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Open" :disable="!newEntity" @click="openNew"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+    <q-dialog v-model="saveOpen">
+        <q-card style="min-width:380px">
+            <q-card-section><div class="text-h6">Save the document</div></q-card-section>
+            <q-card-section class="q-pt-none q-gutter-sm">
+                <q-input dense outlined v-model="saveTitle" label="Title" autofocus></q-input>
+                <q-select v-if="access.canShare && shareGroups.length" dense outlined clearable v-model="saveGroup" :options="shareGroups" emit-value map-options label="Share with"
+                        hint="A group of yours reads the document; each reader sees the rows they may read"></q-select>
+                <div class="text-caption" :class="mutedClass">The sources, the formulas and the charts are saved. No row of the data is.</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Save" :disable="!saveTitle" @click="save"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+
+<script>
+module.exports = {
+    data() {
+        return {
+            loaded: false, busy: false, calcSheet: null,
+            access: { tools: false, profiles: [], canAuthor: false, canShare: false, fixedProfile: null, userId: '' },
+            // the access a call is made under: a profile's id, or '' for the Tools app's own
+            profileId: '', documents: [], documentId: null, room: null, opened: null,
+            newOpen: false, newEntity: null, newTitle: '', entityOptions: [],
+            saveOpen: false, saveTitle: '', saveGroup: null, shareGroups: []
+        };
+    },
+    computed: {
+        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        parameters() { return this.$root.currentParameters || {}; },
+        accessOptions() {
+            const options = (this.access.profiles || []).map((profile) => ({ value: profile.profileId, label: profile.description || profile.profileId }));
+            if (this.access.tools) options.unshift({ value: '', label: 'All data (Tools)' });
+            return options;
+        },
+        documentOptions() { return this.documents.map((doc) => ({ value: doc.definitionId, label: doc.title })); },
+        requestParams() { return this.profileId ? { profileId: this.profileId } : {}; },
+        ownsRoom() {
+            const doc = this.room && this.documents.find((found) => found.definitionId === this.room.definitionId);
+            return !!doc && doc.ownerId === this.access.userId;
+        }
+    },
+    methods: {
+        url(name) { return this.screenPath + '/' + name; },
+        // a transition's answer, with the profile chosen; its errors shown, null then
+        call(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: Object.assign({}, this.requestParams, params || {}) }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; });
+        },
+        loadDocuments() { return this.call('calcDocuments').then((out) => { this.documents = (out && out.documents) || []; }); },
+        openWith(params) {
+            this.busy = true;
+            return this.call('calcOpen', params, 'POST').then((out) => {
+                this.busy = false;
+                if (!out || !out.roomId) return null;
+                this.room = out;
+                this.opened = out.definitionId ? { definitionId: out.definitionId } : params;
+                this.documentId = out.definitionId || null;
+                return out;
+            });
+        },
+        closeRoom() {
+            const room = this.room;
+            this.room = null; this.opened = null;
+            if (room) moqui.request(this.url('calcClose'), { method: 'POST', params: { roomId: room.roomId } }).catch(() => { /* dropped when idle */ });
+        },
+        openDocument(definitionId) { if (!definitionId) return; this.closeRoom(); this.openWith({ definitionId }); },
+        reopen() { if (this.opened) this.openWith(this.opened); },
+        // another profile reads other rows: the open document is read again under it, and the choice is kept as the
+        // viewer's current access, which their dashboard panels over a document read under
+        profileChanged() {
+            moqui.request(this.url('calcProfile'), { method: 'POST', params: { profileId: this.profileId } }).catch(() => { /* the choice still holds here */ });
+            const opened = this.opened; this.closeRoom(); if (opened) this.openWith(opened);
+        },
+        filterEntities(term, update) {
+            if (!term || term.length < 2) { update(() => { this.entityOptions = []; }); return; }
+            this.call('calcEntities', { term }).then((out) => update(() => { this.entityOptions = (out && out.entityNames) || []; }));
+        },
+        openNew() {
+            const entityName = String(this.newEntity || '');
+            if (!entityName) return;
+            this.newOpen = false;
+            this.closeRoom();
+            this.openWith({ entityName, title: this.newTitle || entityName.split('.').pop() });
+        },
+        refresh() {
+            if (!this.room) return;
+            this.busy = true;
+            this.call('calcRefresh', { roomId: this.room.roomId }, 'POST').then((out) => { this.busy = false; if (out && out.roomId) this.room = out; });
+        },
+        exportXlsx() {
+            if (!this.room) return;
+            const link = document.createElement('a');
+            link.href = this.url('calcExport') + '?roomId=' + encodeURIComponent(this.room.roomId) + (this.profileId ? '&profileId=' + encodeURIComponent(this.profileId) : '');
+            link.download = (this.room.title || 'Workbook') + '.xlsx';
+            document.body.appendChild(link); link.click(); link.remove();
+        },
+        openSave() {
+            this.saveTitle = this.room.title || '';
+            const doc = this.documents.find((found) => found.definitionId === this.room.definitionId);
+            this.saveGroup = doc ? doc.userGroupId : null;
+            this.saveOpen = true;
+            if (this.access.canShare && !this.shareGroups.length) this.call('calcShareGroups').then((out) => { this.shareGroups = (out && out.groups) || []; });
+        },
+        save() {
+            this.busy = true;
+            this.call('calcSave', { roomId: this.room.roomId, title: this.saveTitle, userGroupId: this.saveGroup || '' }, 'POST').then((out) => {
+                this.busy = false;
+                if (!out || !out.definitionId) return;
+                this.saveOpen = false;
+                this.room = Object.assign({}, this.room, { definitionId: out.definitionId, version: out.version, title: out.title });
+                this.opened = { definitionId: out.definitionId };
+                this.loadDocuments().then(() => { this.documentId = out.definitionId; });
+                moqui.notifyMessages('Document saved');
+            });
+        },
+        deleteDocument() {
+            const room = this.room;
+            this.$q.dialog({ title: 'Delete the document', message: 'Delete ' + room.title + '? Its formulas and charts are deleted; the data is not.', cancel: true, persistent: true })
+                .onOk(() => this.call('calcDelete', { definitionId: room.definitionId }, 'POST').then((out) => {
+                    if (!out) return;
+                    this.closeRoom(); this.documentId = null;
+                    this.loadDocuments();
+                }));
+        }
+    },
+    mounted() {
+        const sheet = moqui.loadScript('/js/WebrootCalc.js', null, () => !!(moqui.calc && moqui.calc.sheet))
+            .then(() => { this.calcSheet = window.Vue && window.Vue.markRaw ? window.Vue.markRaw(moqui.calc.sheet) : moqui.calc.sheet; });
+        const access = moqui.request(this.url('calcAccess')).then((result) => {
+            this.access = Object.assign(this.access, result.json || {});
+            // the access chosen before while it is still offered, else the Tools app's own, else the first profile held
+            this.profileId = this.access.current || '';
+        }, (err) => moqui.handleAjaxError(err));
+        Promise.all([sheet, access]).then(() => this.loadDocuments()).then(() => {
+            this.loaded = true;
+            const wanted = this.parameters.definitionId;
+            if (wanted) this.openDocument(String(wanted));
+        });
+    },
+    beforeUnmount() { this.closeRoom(); }
+};
+</script>

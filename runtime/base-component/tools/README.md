@@ -15,7 +15,10 @@ Another app may show the Dashboards screens under its own root, as BOSS Insights
 ReportMounts and AdminMounts specs. The dataset screens of Dashboards (`Datasets`, `DatasetDetail`, `DatasetFields`,
 `DatasetView`: the business datasets' list and stewardship, with Tools' other datasets below the list where there is no
 mount) read through `template/ReportDatasets.js`
-([Business datasets](../../../docs/tools/Monitoring.md#business-datasets)). The delivery screens (`Schedules`,
+([Business datasets](../../../docs/tools/Monitoring.md#business-datasets)). `CalcGrid` (spreadsheets over the relational database for people who are not administrators: the documents the
+viewer reads, one opened as a sheet under an access profile whose grant carries entity filters) reads and writes
+through `template/CalcGrid.js`, over `org.moqui.calc.CalcServices`
+([CalcGrid and access profiles](../../../docs/tools/Database.md#calcgrid-and-access-profiles)). The delivery screens (`Schedules`,
 `ScheduledReportDetail`, `ReportDelivery`: the viewer's scheduled reports and the reports delivered to them, one
 schedule with its recipients and runs, one run with each recipient's outcome) read and write through
 `template/ReportDelivery.js` ([Report delivery](../../../docs/tools/Monitoring.md#report-delivery)); `Reports` keeps

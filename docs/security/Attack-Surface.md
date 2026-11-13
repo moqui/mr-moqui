@@ -139,6 +139,9 @@ From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring
 | Group | Artifacts |
 | --- | --- |
 | `DASHBOARDS_APP` | `component://tools/screen/Dashboards.xml` and `/moqui/reports` (`inheritAuthz` Y), `org.moqui.report.ReportServices.*` |
+| `CALC_GRID` | `component://tools/screen/Dashboards/CalcGrid.xml` and `org.moqui.calc.CalcServices.*` (both `inheritAuthz` Y): CalcGrid, [spreadsheets over the database](../tools/Database.md#calcgrid-and-access-profiles). `ADMIN`'s; an app grants it, or shows the screen under a root of its own. Holding it reads nothing: each call is made under the Tools app's own access or an access profile the caller holds |
+| `CALC_GRID_AUTHOR` | `org.moqui.calc.document`: update is making a CalcGrid document over a source and saving it. `ADMIN`'s; an app grants it to its authors |
+| an access profile (`CALC_PROFILE_SALES` in mr-mantle) | `org.moqui.calc.profile.<profileId>` (`inheritAuthz` Y) and an `org.moqui.calc.entity.<entityName>` for each entity and view offered; an offer is CalcGrid's own name and grants nothing on the entity elsewhere. No grant ships: an app grants it `AUTHZT_ALWAYS` for view and puts the row scope on that grant as `ArtifactAuthzFilter` rows. CalcGrid enters the profile before it reads, so its finds get that grant's entity filters whatever else the user holds; it reads only an offered entity (a view with every member offered), and under a grant with a filter set only one a filter applies to |
 | `REPORT_DATASETS_ADMIN` | every `org.moqui.report.dataset.*`: unrestricted dataset access |
 | `REPORT_CONTACT_ADMIN` | `org.moqui.report.contact.webhook`: alert webhooks |
 | `REPORT_ALERT_EVALUATION` | `org.moqui.report.alert.evaluateAll`: the alert job evaluating every owner's rules |

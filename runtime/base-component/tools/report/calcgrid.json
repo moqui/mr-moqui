@@ -1,0 +1,10 @@
+{
+  "id": "calcgrid",
+  "type": "dataset",
+  "title": "CalcGrid range",
+  "body": {
+    "folder": "CalcGrid",
+    "description": "A range of a CalcGrid document as a table: set the query parameters definitionId (the document) and range (as in a formula, Summary!A1:D20; its first row names the columns). Read as the viewer under their current CalcGrid access.",
+    "serviceName": "org.moqui.calc.CalcServices.get#CalcFrame"
+  }
+}

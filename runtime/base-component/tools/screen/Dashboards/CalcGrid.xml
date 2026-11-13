@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- CalcGrid (docs/tools/Database.md, CalcGrid and access profiles; plans/IronCalc-DB.md Phase 2b): spreadsheets over the
+    relational database for people who are not administrators, beside the report tools here that read the search indexes.
+    A document is a workbook on the server's spreadsheet engine: data sheets filled from entities and views, and the sheets
+    of formulas and the charts its author put beside them. The screen lists the documents the viewer reads, opens one (its
+    data read as the viewer), refreshes and exports it, and for an author makes one over an entity, saves it, shares it
+    with a group of their own and deletes it. CalcGrid.qvue draws it (the sheet is moqui.calc.sheet, js/WebrootCalc.js);
+    what the transitions answer is template/CalcGrid.js, over org.moqui.calc.CalcServices as the viewer.
+
+    What a viewer may read is not the document's: it is the access profile the call is made under, an artifact group whose
+    grant carries entity filter sets (crates/moqui-calc/src/profile.rs). The viewer chooses among the profiles they hold,
+    and a holder of the Tools app may use its own access (every source, no filter). Another app shows this screen under
+    its own root: its reportPolicy.calcProfile names the profile, and its root sets what the profile's filters read (an
+    organization scope); with no mount the always-actions below ask Mantle's, where Mantle is there. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="CalcGrid" default-menu-index="12" menu-image="sym_o_grid_on" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <always-actions><script><![CDATA[
+        // the organizations the viewer works in, for a profile whose filters read them, where no root set them
+        if (ec.user.userId && ec.user.context.filterOrgIds == null && ec.service.getServiceDefinition('mantle.party.PartyServices.setup#UserOrganizationInfo') != null) {
+            ec.service.sync().name('mantle.party.PartyServices.setup#UserOrganizationInfo').call()
+            ec.message.clearErrors()
+        }
+    ]]></script></always-actions>
+
+    <!-- how the viewer may use CalcGrid here: profiles, authoring, sharing -->
+    <transition name="calcAccess" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').access())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the access the viewer chose is kept as their current one, for the panels and reports that name none -->
+    <transition name="calcProfile" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').choose())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcEntities" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').entities())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcDocuments" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').documents())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcShareGroups" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').shareGroups())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- open a saved document (definitionId) or a new one over an entity (entityName), into a room of the viewer's -->
+    <transition name="calcOpen" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').open())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a rectangle of a sheet's cells: the engine's block, sent as the JSON text the service gives -->
+    <transition name="calcCells" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.resource.script('component://tools/template/CalcGrid.js').cells()
+            if (out.errors || !out.blockJson) ec.web.sendJsonResponse({errors: out.errors || 'No cells'})
+            else ec.web.sendTextResponse(String(out.blockJson), 'application/json', null)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcRefresh" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').refresh())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcSave" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').save())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcExport" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.resource.script('component://tools/template/CalcGrid.js').exported()
+            if (out.errors || !out.contentBytes) ec.web.sendJsonError(404, out.errors || ec.l10n.localize('Export not found'))
+            else ec.web.sendBytesResponse(out.contentBytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', false,
+                String(out.filename || 'Workbook.xlsx').replace(/[\\/"\r\n]/g, '_'))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcClose" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').close())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcDelete" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').remove())</script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Dashboards/CalcGrid.qvue" template="false"/>
+            <!-- the terminal: the documents the viewer reads; a sheet is drawn in a browser -->
+            <text type="tui"><![CDATA[${JSON.stringify((() => {
+                const found = ec.resource.script('component://tools/template/CalcGrid.js').documents()
+                if (found.errors) return [{t: 'text', id: 'CalcGridError', style: 'error', text: found.errors}]
+                return [{t: 'text', id: 'CalcGridTitle', style: 'h5', text: 'CalcGrid'},
+                    {t: 'text', id: 'CalcGridNote', text: 'A document opens as a sheet in a browser. The documents you read:'},
+                    {t: 'formList', id: 'CalcGridDocuments', name: 'CalcGridDocuments', columns: [{title: 'Document'}, {title: 'Owner'}],
+                        rows: found.documents.map((doc, index) => ({id: String(index), cells: [doc.title, doc.ownerId || '']}))}]
+            })())}]]></text>
+        </render-mode>
+    </widgets>
+</screen>
