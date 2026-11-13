@@ -508,6 +508,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             .map(|limits| phones::registrar_config(factory, limits, &settings.domain, dedicated, Arc::clone(&paired))),
         trunk_ping: None,
         tls_handshake: None,
+        resolver: None,
     };
     let ua = match runtime.block_on(Ua::start(config, events_tx)) {
         Ok(ua) => ua,

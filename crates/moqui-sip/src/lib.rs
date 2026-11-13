@@ -33,6 +33,7 @@
 //! - [`registrar`] (V4): the bindings of desk and soft phones, sans-IO; the user agent's side of the registrar
 //!   (digest against stored verifiers, the flows, forking a call to a device's bindings, a device's own calls) is
 //!   `ua_phones.rs`.
+//! - [`resolve`]: where a trunk's requests go: its host's SRV records (RFC 3263, RFC 2782), else its addresses.
 //! - [`stun`]: the STUN Binding answer to a UDP phone's keepalive on the SIP socket (RFC 5626).
 
 pub mod dial;
@@ -43,6 +44,7 @@ pub use moqui_lib::source_guard as guard;
 pub mod media;
 pub mod race;
 pub mod registrar;
+pub mod resolve;
 pub mod rtp;
 pub mod sdp;
 pub mod srtp;

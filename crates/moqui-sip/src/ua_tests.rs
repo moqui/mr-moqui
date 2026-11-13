@@ -28,6 +28,7 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::digest::{Algorithm, Authorization, NonceBook, Verdict};
 use crate::media::{PhoneMedia, Received};
+use crate::resolve::tests::Fixed;
 use crate::sdp::{self, Direction, LocalMedia};
 use crate::srtp::MasterKey;
 
@@ -187,6 +188,11 @@ struct Harness {
 
 impl Harness {
     async fn start() -> Harness {
+        Harness::resolving(None).await
+    }
+
+    /// A UA whose trunk hosts are looked up in `resolver`.
+    async fn resolving(resolver: Option<Arc<dyn Resolver>>) -> Harness {
         let (tx, events) = mpsc::unbounded_channel();
         let ua = Ua::start(
             UaConfig {
@@ -197,6 +203,7 @@ impl Harness {
                     window: Duration::from_secs(60),
                     block: Duration::from_secs(600),
                 },
+                resolver,
                 ..Default::default()
             },
             tx,
@@ -1230,4 +1237,221 @@ async fn a_tls_handshake_is_counted_from_accept_and_has_a_deadline() {
     );
     assert!(started.elapsed() < Duration::from_secs(1));
     ua.shutdown();
+}
+
+/// A trunk set up by its host's name with no port, so its targets come from the host's SRV records.
+fn named_trunk(id: &str, host: &str, transport: Transport, register: bool) -> TrunkConfig {
+    TrunkConfig {
+        id: id.to_string(),
+        host: host.to_string(),
+        port: None,
+        transport,
+        credentials: Credentials {
+            username: "acct".to_string(),
+            password: "pw-of-acct".to_string(),
+            realm: Some(TRUNK_REALM.to_string()),
+            algorithms: vec![Algorithm::Sha256],
+            ..Default::default()
+        },
+        domain: None,
+        register,
+        inbound: Vec::new(),
+        inbound_digest: false,
+        srtp: false,
+    }
+}
+
+/// Two fake trunks as the SRV targets of `trunk.test` over UDP, the first by priority first.
+async fn two_targets() -> (FakeTrunk, FakeTrunk, Arc<dyn Resolver>) {
+    let first = FakeTrunk::on("127.0.0.1").await;
+    let second = FakeTrunk::on("127.0.0.1").await;
+    let fixed = Fixed::default()
+        .srv(
+            "_sip._udp.trunk.test",
+            &[
+                (20, 0, second.addr.port(), "b.trunk.test"),
+                (10, 0, first.addr.port(), "a.trunk.test"),
+            ],
+        )
+        .host("a.trunk.test", &["127.0.0.1"])
+        .host("b.trunk.test", &["127.0.0.1"]);
+    (first, second, Arc::new(fixed))
+}
+
+#[tokio::test]
+async fn a_registration_goes_to_the_next_srv_target_when_one_answers_503() {
+    let (first, second, resolver) = two_targets().await;
+    let mut h = Harness::resolving(Some(resolver)).await;
+    h.ua.set_trunks(vec![named_trunk("T1", "trunk.test", Transport::Udp, true)])
+        .await;
+    let (register, from) = first.request(Method::Register).await;
+    // the Request-URI names the trunk's host, not the target
+    assert_eq!(register.uri.to_string(), "sip:trunk.test");
+    first.reply(&register, from, 503, "", "", "").await;
+    let (register, from) = second.request(Method::Register).await;
+    let contact = header_values(&register.headers, "Contact")[0].clone();
+    second
+        .reply(
+            &register,
+            from,
+            200,
+            "",
+            &format!("Contact: {contact};expires=60\r\n"),
+            "",
+        )
+        .await;
+    match h.event().await {
+        UaEvent::TrunkStatus { trunk, state } => assert_eq!((trunk.as_str(), state), ("T1", TrunkState::Registered)),
+        other => panic!("{other:?}"),
+    }
+    h.ua.shutdown();
+}
+
+#[tokio::test]
+async fn a_call_goes_to_the_next_srv_target_when_one_answers_503() {
+    let (first, second, resolver) = two_targets().await;
+    let mut h = Harness::resolving(Some(resolver)).await;
+    h.ua.set_trunks(vec![named_trunk("T1", "trunk.test", Transport::Udp, false)])
+        .await;
+    let local = LocalMedia::new("127.0.0.1".parse().unwrap(), 4000, None);
+    h.ua.dial(DialRequest {
+        leg: "L1".to_string(),
+        trunk: "T1".to_string(),
+        to: "+15551230000".to_string(),
+        from: "+15559870000".to_string(),
+        from_name: None,
+        offer: sdp::offer(&local),
+        ring_timeout: Duration::from_secs(30),
+        headers: Vec::new(),
+    })
+    .unwrap();
+    let (invite, from) = first.request(Method::Invite).await;
+    first.reply(&invite, from, 503, "a1", "", "").await;
+    let (invite, from) = second.request(Method::Invite).await;
+    assert!(
+        invite.uri.to_string().starts_with("sip:+15551230000@trunk.test"),
+        "{}",
+        invite.uri
+    );
+    second.reply(&invite, from, 486, "b1", "", "").await;
+    assert!(matches!(h.main_event().await, UaEvent::Ended { leg, reason: EndReason::Busy } if leg == "L1"));
+    h.ua.shutdown();
+}
+
+#[tokio::test]
+async fn calls_in_are_taken_from_every_srv_target_of_a_trunk() {
+    if !loopback_sources(&["127.0.0.2", "127.0.0.3"]).await {
+        return;
+    }
+    let first = FakeTrunk::on("127.0.0.2").await;
+    let second = FakeTrunk::on("127.0.0.3").await;
+    let fixed = Fixed::default()
+        .srv(
+            "_sip._udp.trunk.test",
+            &[
+                (10, 0, first.addr.port(), "a.trunk.test"),
+                (20, 0, second.addr.port(), "b.trunk.test"),
+            ],
+        )
+        .host("a.trunk.test", &["127.0.0.2"])
+        .host("b.trunk.test", &["127.0.0.3"]);
+    let mut h = Harness::resolving(Some(Arc::new(fixed))).await;
+    h.ua.set_trunks(vec![named_trunk("T1", "trunk.test", Transport::Udp, false)])
+        .await;
+    for ip in ["127.0.0.2", "127.0.0.3"] {
+        let trunk = h.ua.inner.trunk_by_address(ip.parse().unwrap()).map(|t| t.id);
+        assert_eq!(trunk.as_deref(), Some("T1"), "{ip}");
+    }
+    assert!(h.ua.inner.trunk_by_address("127.0.0.4".parse().unwrap()).is_none());
+    // a call from the backup target is the trunk's
+    let local = LocalMedia::new("127.0.0.1".parse().unwrap(), 4000, None);
+    second
+        .invite(h.addr, "in-srv", "+15551230000", "+15557770000", &sdp::offer(&local))
+        .await;
+    match h.main_event().await {
+        UaEvent::Incoming(call) => {
+            assert_eq!(call.trunk_id, "T1");
+            call.reply.send(Decision::Reject(486)).unwrap();
+        }
+        other => panic!("{other:?}"),
+    }
+    h.ua.shutdown();
+}
+
+#[tokio::test]
+async fn tls_to_an_srv_target_names_the_trunk_s_host_and_a_target_that_refuses_gives_way() {
+    // the far end's certificate names the trunk's host only: not the SRV target, not its address
+    let issued = rcgen::generate_simple_self_signed(vec!["trunk.test".to_string()]).unwrap();
+    let cert = pem("CERTIFICATE", issued.cert.der());
+    let key = pem("PRIVATE KEY", &issued.signing_key.serialize_der());
+    let (far_tx, _far_events) = mpsc::unbounded_channel();
+    let far = Ua::start(
+        UaConfig {
+            tls: Some(("127.0.0.1:0".parse().unwrap(), cert.clone(), key)),
+            realm: "far.test".to_string(),
+            ..Default::default()
+        },
+        far_tx,
+    )
+    .await
+    .unwrap();
+    let far_tls = far.bound().tls.unwrap();
+    // the near end is the far end's trunk by address, so its OPTIONS are answered
+    let mut near_trunk = named_trunk("NEAR", "127.0.0.1", Transport::Tls, false);
+    near_trunk.port = Some(1);
+    far.set_trunks(vec![near_trunk]).await;
+    // a port that refuses connections, first by priority
+    let refused = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let records = [
+        (10, 0, refused, "down.trunk.test"),
+        (20, 0, far_tls.port(), "edge.trunk.test"),
+    ];
+    let fixed = Fixed::default()
+        .srv("_sips._tcp.trunk.test", &records)
+        .srv("_sips._tcp.other.test", &records)
+        .host("down.trunk.test", &["127.0.0.1"])
+        .host("edge.trunk.test", &["127.0.0.1"]);
+    let (near_tx, mut near_events) = mpsc::unbounded_channel();
+    let near = Ua::start(
+        UaConfig {
+            tcp: Some("127.0.0.1:0".parse().unwrap()),
+            ca_pem: Some(cert),
+            realm: "near.test".to_string(),
+            trunk_ping: Some(Duration::from_millis(600)),
+            resolver: Some(Arc::new(fixed)),
+            ..Default::default()
+        },
+        near_tx,
+    )
+    .await
+    .unwrap();
+    // OTHER reaches the same target, but its handshake names other.test, which the certificate does not
+    near.set_trunks(vec![
+        named_trunk("T1", "trunk.test", Transport::Tls, false),
+        named_trunk("OTHER", "other.test", Transport::Tls, false),
+    ])
+    .await;
+    let mut states = HashMap::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while states.len() < 2 {
+        match tokio::time::timeout_at(deadline, near_events.recv()).await {
+            Ok(Some(UaEvent::TrunkStatus { trunk, state })) => {
+                states.entry(trunk).or_insert(state);
+            }
+            Ok(Some(_)) => continue,
+            _ => panic!("trunk states {states:?}"),
+        }
+    }
+    assert_eq!(states["T1"], TrunkState::Reachable);
+    assert!(
+        matches!(&states["OTHER"], TrunkState::Failed(_)),
+        "{:?}",
+        states["OTHER"]
+    );
+    near.shutdown();
+    far.shutdown();
 }

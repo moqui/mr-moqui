@@ -763,7 +763,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 `sip_rtp_ports` on `sip_rtp_host`. An exposed SIP listener is scanned within hours, so its rules are release gates
 ([SIP](../interfaces/SIP.md) "Fraud controls"):
 
-- **Who is answered.** An INVITE from a trunk's host or listed signaling addresses is a trunk's call; any other
+- **Who is answered.** An INVITE from a trunk's host (each address of its SRV targets, for a trunk set up by name
+  with no port, looked up again at each registration and ping) or listed signaling addresses is a trunk's call; any other
   INVITE or REGISTER is challenged with SIP Digest (SHA-256 and MD5, nonces that expire after 5 minutes and carry
   random bytes and a MAC under a per-process key, nonce counts that must go up). Only a PBX trunk's credentials
   (profile "PBX on a private network") answer it: a provider trunk's are the provider account's password, so a digest
@@ -833,7 +834,9 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved
   and when a call uses it; a menu loop ends after 20 menus, and a queue's fallback chain after 10.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
-  allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default).
+  allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default),
+  for the trunk's host as set up, never an SRV target's name, so a changed SRV record cannot point a trunk at a server
+  that does not hold the provider's certificate.
 - **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;
   a packet that fails its tag or replay window is dropped. RTP goes back where the leg's authenticated packets come
   from. Plain RTP is taken only from the SDP's address and, once the first packet latched, only from that source;

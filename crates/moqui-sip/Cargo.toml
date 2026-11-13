@@ -18,6 +18,8 @@ publish.workspace = true
 async-trait = "0.1"
 base64 = { workspace = true }
 getrandom = { workspace = true }
+# The SRV records of trunk hosts (resolve.rs, RFC 3263); the workspace's resolver, as moqui-mail's.
+hickory-resolver = { workspace = true }
 hmac = { workspace = true }
 md-5 = { workspace = true }
 moqui-lib = { workspace = true }

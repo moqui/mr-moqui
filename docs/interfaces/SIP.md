@@ -90,6 +90,23 @@ A trunk is set up with these:
 - whether it takes emergency calls;
 - a provider profile.
 
+**Host and port.** A trunk with a port, or whose host is an address, goes to that host and port. One with a name and no
+port is looked up by its SRV records (RFC 3263): `_sips._tcp.<host>` for TLS, `_sip._tcp.<host>` for TCP,
+`_sip._udp.<host>` for UDP.
+
+- The targets are tried by priority, the lowest first, then by weight, the highest first. Each target's addresses are
+  tried in turn, at the record's port.
+- With no SRV records, or when the lookup fails, the host's own addresses are used, at 5060 (5061 for TLS).
+- Records whose target is `.` say the provider offers no SIP there: the trunk has no address.
+- A registration goes to the next target when one takes no connection (5 seconds for TCP and TLS), has no answer in
+  32 seconds, or answers 503. A call goes to the next target the same way, before anything rang. An OPTIONS ping
+  passes a target only when it takes no connection.
+- The registration and the pings look the host up again each time, so the addresses follow its DNS.
+- The Request-URI, From and To still name the host (or the From domain). TLS names the host too, for SNI and for the
+  certificate check, never an SRV target: a provider's certificate must name the host it is set up with.
+- A trunk whose host does not resolve is logged with its id and still loaded; its registration or pings fail, and the
+  other trunks go on.
+
 **Transports and media.**
 
 - TLS with SRTP (SDES keys in the SDP, RFC 4568) is the default.
@@ -118,8 +135,8 @@ last error, and the admins hear of it as of a failed registration. The status is
 
 **Incoming calls** are taken:
 
-- from a trunk's host addresses and the signaling addresses listed on it (a registering trunk's calls come from its
-  host too), or
+- from a trunk's host addresses (every SRV target's, [Host and port](#trunks)) and the signaling addresses listed on
+  it (a registering trunk's calls come from its host too), or
 - for a trunk with the profile "PBX on a private network" only, from another address with a digest answer for that
   trunk's username: a PBX that authenticates its calls.
 
@@ -659,8 +676,9 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   - Video in an offer is refused with port 0 (D-V3: SIP legs are audio only).
 - **RTCP.** No RTCP is sent, and the RTCP that comes is dropped; SRTCP is not supported. Call quality from RTCP
   reports comes later.
-- **SRV for trunks.** A trunk's host is resolved by its address records; a provider that needs SRV lookups for its
-  trunk host takes its address in the host field.
+- **Trunk DNS.** NAPTR records are not looked up, so a trunk's transport is the one set on it. SRV weights are an
+  order, not a random share. Over UDP a dead first target costs each registration its 32-second wait before the next
+  is tried. Not checked against a real provider's SRV records.
 - **IPv6** is not tested.
 - **Behind an edge node.** Not checked with a real trunk or phone through a deployed edge node; the fallback's forward
   is checked by unit tests only, not end to end.
@@ -679,6 +697,9 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   - a flood from one source held to its rate while another source calls in;
   - inbound ranges wider than a /8 or a /32 ignored;
   - a call over TLS with SRTP;
+  - trunk hosts by SRV (`resolve_tests.rs` on fixed records): the order, the fallback to the host's addresses, an
+    explicit port or an address with no lookup; a registration and a call that fail over on 503; calls in taken from
+    every target; TLS to an SRV target naming the trunk's host, past a target that refuses connections;
   - two phone legs mixed;
   - the registrar against in-memory phones (`ua_phones_tests.rs`): a SHA-256 registration and MD5 refused for a
     standard phone, a replayed REGISTER refused, several bindings, unregistering one or all, expiry, rotation and

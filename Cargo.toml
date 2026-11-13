@@ -202,7 +202,7 @@ mail-parser = { version = "1", default-features = false }
 # full_encoding.
 mail-auth = { version = "0.15", default-features = false, features = ["aws-lc-rs", "arc"] }
 # The DNS resolver mail-auth queries through, configured here (moqui-mail `dns`: MX, TXT, A and AAAA, for the MTA and
-# E10's DNS checks). Its defaults are system-config and the Tokio runtime.
+# E10's DNS checks), and moqui-sip's SRV lookups of trunk hosts. Its defaults are system-config and the Tokio runtime.
 hickory-resolver = "0.26"
 # Direct so IMAP and POP3 can build a ClientConfig on aws-lc. ring stays off.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }

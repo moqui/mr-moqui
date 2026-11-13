@@ -36,6 +36,9 @@
 //! - **Outbound.** CANCEL while ringing, forked answers (the first wins, the others are ACKed and ended with BYE) and
 //!   a 2xx that crosses a CANCEL (ACK and BYE) are rsipstack's dialog layer; [`crate::race`] decides the outcome the
 //!   host is told, and the ring timeout.
+//! - **Trunk hosts.** A trunk's host is looked up by SRV when it has no port ([`crate::resolve`]); registration, pings
+//!   and calls go to its targets in order and fail over to the next, and calls in are taken from each. TLS names the
+//!   trunk's host, never an SRV target.
 //! - **Phones (V4).** With [`UaConfig::registrar`], desk and soft phones register here, ring over the flows they
 //!   opened, and place calls signed with their credentials (`ua_phones.rs`).
 //!
@@ -71,6 +74,7 @@ use crate::digest::{self, Algorithm, Authorization, Challenge, Credentials, Nonc
 use crate::guard::{Admit, Failure, GuardPolicy, RequestGate, RequestLimits, SourceGuard};
 use crate::race::{self, Race};
 use crate::registrar::{Binding, Registrar};
+use crate::resolve::{self, Resolver, SystemResolver};
 
 #[path = "ua_phones.rs"]
 mod phones;
@@ -105,6 +109,8 @@ const EARLY_TTL: Duration = Duration::from_secs(30);
 /// The widest `inbound` ranges taken: an IPv4 /8, an IPv6 /32.
 const MIN_V4_PREFIX: u32 = 8;
 const MIN_V6_PREFIX: u32 = 32;
+/// How long a TCP or TLS connection to one of a trunk's targets may take before the next is tried.
+const CONNECT_WAIT: Duration = Duration::from_secs(5);
 
 /// A signaling transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +138,7 @@ impl Transport {
         }
     }
 
-    fn default_port(self) -> u16 {
+    pub(crate) fn default_port(self) -> u16 {
         if self == Transport::Tls {
             5061
         } else {
@@ -154,6 +160,7 @@ impl Transport {
 pub struct TrunkConfig {
     pub id: String,
     pub host: String,
+    /// `None`: the ports of the host's SRV records, else the transport's default ([`crate::resolve`]).
     pub port: Option<u16>,
     pub transport: Transport,
     pub credentials: Credentials,
@@ -226,6 +233,8 @@ pub struct UaConfig {
     pub trunk_ping: Option<Duration>,
     /// How long a TLS client has to finish its handshake ([`TLS_HANDSHAKE`] when `None`).
     pub tls_handshake: Option<Duration>,
+    /// The DNS lookups of trunk hosts ([`SystemResolver`] when `None`; fixed records in a test).
+    pub resolver: Option<Arc<dyn Resolver>>,
 }
 
 /// The addresses the listeners bound.
@@ -383,8 +392,9 @@ struct Leg {
 
 struct TrunkEntry {
     config: TrunkConfig,
-    /// The addresses its host resolved to.
-    addresses: Vec<IpAddr>,
+    /// Where its host resolved to, in the order they are tried ([`resolve::targets`]): its calls go there, and calls
+    /// in are taken from each of their addresses.
+    targets: Vec<SocketAddr>,
     stop: CancellationToken,
 }
 
@@ -408,6 +418,11 @@ struct Inner {
     phones: Option<Phones>,
     /// How often a trunk that does not register is pinged.
     trunk_ping: Duration,
+    resolver: Arc<dyn Resolver>,
+    /// The CA certificates for TLS to trunks.
+    ca_pem: Option<Vec<u8>>,
+    /// The TLS connections opened to trunks, by address and the host name their handshake named.
+    tls_flows: Mutex<HashMap<(SocketAddr, String), SipConnection>>,
 }
 
 /// The running user agent. Dropping it does not stop it: call [`Ua::shutdown`].
@@ -717,6 +732,9 @@ impl Ua {
             stop: stop.clone(),
             phones,
             trunk_ping: config.trunk_ping.filter(|d| !d.is_zero()).unwrap_or(TRUNK_PING),
+            resolver: config.resolver.unwrap_or_else(|| Arc::new(SystemResolver::default())),
+            ca_pem: config.ca_pem,
+            tls_flows: Mutex::new(HashMap::new()),
         });
         phones::sweep(&inner);
         {
@@ -740,12 +758,13 @@ impl Ua {
         self.inner.bound
     }
 
-    /// Replaces the trunks: their registrations start over, a trunk left out stops (and unregisters).
+    /// Replaces the trunks: their registrations start over, a trunk left out stops (and unregisters). A trunk whose
+    /// host does not resolve is logged and kept: its registration or pings say it failed, and the others load.
     pub async fn set_trunks(&self, trunks: Vec<TrunkConfig>) {
         let mut entries = HashMap::new();
         for trunk in trunks {
-            let addresses = resolve(&trunk.host, trunk.port()).await;
-            if addresses.is_empty() {
+            let targets = resolve::targets(&*self.inner.resolver, &trunk.host, trunk.port, trunk.transport).await;
+            if targets.is_empty() {
                 tracing::warn!("SIP trunk {} ({}) did not resolve", trunk.id, trunk.host);
             }
             let stop = self.inner.stop.child_token();
@@ -765,7 +784,7 @@ impl Ua {
                 trunk.id.clone(),
                 TrunkEntry {
                     config: trunk,
-                    addresses,
+                    targets,
                     stop,
                 },
             );
@@ -809,7 +828,7 @@ impl Ua {
     pub fn dial(&self, request: DialRequest) -> Result<(), String> {
         let trunk = lock(&self.inner.trunks)
             .get(&request.trunk)
-            .map(|t| (t.config.clone(), t.addresses.clone()))
+            .map(|t| (t.config.clone(), t.targets.clone()))
             .ok_or_else(|| format!("no trunk {}", request.trunk))?;
         let (give_up, gave_up) = oneshot::channel();
         lock(&self.inner.legs).insert(
@@ -991,16 +1010,6 @@ async fn free_port(addr: SocketAddr) -> Result<SocketAddr, String> {
     probe.local_addr().map_err(|e| e.to_string())
 }
 
-async fn resolve(host: &str, port: u16) -> Vec<IpAddr> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return vec![ip];
-    }
-    match tokio::net::lookup_host((host, port)).await {
-        Ok(addrs) => addrs.map(|a| a.ip()).collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
 impl Inner {
     fn emit(&self, event: UaEvent) {
         let _ = self.events.send(event);
@@ -1051,15 +1060,75 @@ impl Inner {
         }
     }
 
-    fn target(&self, trunk: &TrunkConfig, addresses: &[IpAddr]) -> Result<SipAddr, String> {
-        let ip = addresses
-            .first()
-            .copied()
-            .ok_or_else(|| format!("trunk {} has no address", trunk.id))?;
-        Ok(SipAddr {
+    /// A trunk's targets, looked up again (its registration and pings do, so they follow its DNS). They replace the
+    /// ones kept for its calls and the calls it sends in, while the trunk kept is still this host.
+    async fn targets(&self, trunk: &TrunkConfig) -> Vec<SocketAddr> {
+        let targets = resolve::targets(&*self.resolver, &trunk.host, trunk.port, trunk.transport).await;
+        if !targets.is_empty() {
+            if let Some(entry) = lock(&self.trunks).get_mut(&trunk.id) {
+                let kept = &entry.config;
+                if kept.host == trunk.host && kept.port == trunk.port && kept.transport == trunk.transport {
+                    entry.targets.clone_from(&targets);
+                }
+            }
+        }
+        targets
+    }
+
+    /// The connection to `addr`, one of a trunk's targets. UDP goes out of the listener. A TCP or TLS connection is
+    /// opened (or the open one used) within [`CONNECT_WAIT`], so a target that does not take it gives way to the next.
+    /// TLS names the trunk's host, for SNI and the certificate check, never an SRV target or the address.
+    async fn connect(&self, trunk: &TrunkConfig, addr: SocketAddr) -> Result<(SipConnection, SipAddr), String> {
+        let target = SipAddr {
             r#type: Some(trunk.transport.sip()),
-            addr: SocketAddr::new(ip, trunk.port()).into(),
-        })
+            addr: addr.into(),
+        };
+        let open = |c: &SipConnection| c.cancel_token().is_some_and(|t| !t.is_cancelled());
+        if trunk.transport == Transport::Tls {
+            let key = (addr, resolve::bare(&trunk.host));
+            if !lock(&self.tls_flows).get(&key).is_some_and(open) {
+                let config = TlsConfig {
+                    ca_certs: self.ca_pem.clone(),
+                    sni_hostname: Some(key.1.clone()),
+                    ..Default::default()
+                };
+                let connecting = TlsConnection::connect(&target, Some(&config), None, Some(self.stop.child_token()));
+                let connection = tokio::time::timeout(CONNECT_WAIT, connecting)
+                    .await
+                    .map_err(|_| format!("{addr}: no TLS connection in time"))?
+                    .map_err(|e| format!("{addr}: {e}"))?;
+                let connection = SipConnection::Tls(connection);
+                // the transport layer keeps it by its address: the requests to this target go over it
+                self.endpoint.transport_layer.add_connection(connection.clone());
+                let mut flows = lock(&self.tls_flows);
+                flows.retain(|_, c| open(c));
+                flows.insert(key, connection);
+            }
+        }
+        let (connection, _) = tokio::time::timeout(CONNECT_WAIT, self.endpoint.transport_layer.lookup(&target, None))
+            .await
+            .map_err(|_| format!("{addr}: no connection in time"))?
+            .map_err(|e| format!("{addr}: {e}"))?;
+        Ok((connection, target))
+    }
+
+    /// The first of `rest` that connects; the ones that do not are logged and passed.
+    async fn connect_next(
+        &self,
+        trunk: &TrunkConfig,
+        rest: &mut std::slice::Iter<'_, SocketAddr>,
+    ) -> Result<(SipConnection, SipAddr), String> {
+        let mut last = format!("trunk {} has no address", trunk.id);
+        for &addr in rest.by_ref() {
+            match self.connect(trunk, addr).await {
+                Ok(found) => return Ok(found),
+                Err(err) => {
+                    tracing::warn!("SIP trunk {}: {err}", trunk.id);
+                    last = err;
+                }
+            }
+        }
+        Err(last)
     }
 
     // ---------- registration ----------
@@ -1168,15 +1237,10 @@ impl Inner {
     }
 
     /// One OPTIONS to a trunk: any final answer (a 405 or a challenge too) is the server answering.
+    /// A target that does not take a connection gives way to the next; one that takes it is pinged.
     async fn ping_once(&self, trunk: &TrunkConfig, call_id: &str, seq: &mut u32) -> Result<(), String> {
-        let addresses = resolve(&trunk.host, trunk.port()).await;
-        let target = self.target(trunk, &addresses)?;
-        let (connection, _) = self
-            .endpoint
-            .transport_layer
-            .lookup(&target, None)
-            .await
-            .map_err(sip_err)?;
+        let targets = self.targets(trunk).await;
+        let (connection, target) = self.connect_next(trunk, &mut targets.iter()).await?;
         let domain = trunk.domain();
         let user = if trunk.credentials.username.is_empty() {
             "moqui"
@@ -1213,7 +1277,8 @@ impl Inner {
         self.send_request(request, &target).await.map(|_| ())
     }
 
-    /// One REGISTER (answering one challenge); the expiry the registrar granted.
+    /// One REGISTER (answering one challenge); the expiry the registrar granted. The trunk's targets are tried in
+    /// order: the next one when a target takes no connection, gives no answer in time or answers 503 (RFC 3263 §4.3).
     async fn register_once(
         &self,
         trunk: &TrunkConfig,
@@ -1221,14 +1286,31 @@ impl Inner {
         seq: &mut u32,
         expires: u32,
     ) -> Result<u32, String> {
-        let addresses = resolve(&trunk.host, trunk.port()).await;
-        let target = self.target(trunk, &addresses)?;
-        let (connection, _) = self
-            .endpoint
-            .transport_layer
-            .lookup(&target, None)
-            .await
-            .map_err(sip_err)?;
+        let targets = self.targets(trunk).await;
+        let mut last = format!("trunk {} has no address", trunk.id);
+        for &addr in &targets {
+            match self.register_at(trunk, addr, call_id, seq, expires).await {
+                Ok(granted) => return Ok(granted),
+                Err(Miss::Unreachable(err)) => {
+                    tracing::warn!("SIP trunk {}: {addr}: {err}", trunk.id);
+                    last = err;
+                }
+                Err(Miss::Refused(err)) => return Err(err),
+            }
+        }
+        Err(last)
+    }
+
+    /// One REGISTER to one of a trunk's targets.
+    async fn register_at(
+        &self,
+        trunk: &TrunkConfig,
+        addr: SocketAddr,
+        call_id: &str,
+        seq: &mut u32,
+        expires: u32,
+    ) -> Result<u32, Miss> {
+        let (connection, target) = self.connect(trunk, addr).await.map_err(Miss::Unreachable)?;
         let domain = trunk.domain();
         let user = &trunk.credentials.username;
         let request_uri = format!("sip:{domain}");
@@ -1271,7 +1353,7 @@ impl Inner {
                     Header::Authorization(value.clone().into())
                 });
             }
-            let resp = self.send_request(request, &target).await?;
+            let resp = self.send_request(request, &target).await.map_err(Miss::Unreachable)?;
             let code = u16::from(resp.status_code.clone());
             match code {
                 200..=299 => return Ok(granted_expires(&resp).unwrap_or(expires)),
@@ -1279,10 +1361,18 @@ impl Inner {
                     let value = answer_challenge(&resp, &trunk.credentials, "REGISTER", &request_uri)?;
                     authorization = Some((code == 407, value));
                 }
-                _ => return Err(format!("the registrar answered {code} {}", resp.status_code)),
+                _ => {
+                    let why = format!("the registrar answered {code} {}", resp.status_code);
+                    // a 503 is this target's: another of the trunk's may take the registration
+                    return Err(if code == 503 {
+                        Miss::Unreachable(why)
+                    } else {
+                        Miss::Refused(why)
+                    });
+                }
             }
         }
-        Err("the registrar refused the credentials".to_string())
+        Err(Miss::Refused("the registrar refused the credentials".to_string()))
     }
 
     /// Sends a request outside a dialog and waits for its final answer.
@@ -1314,11 +1404,11 @@ impl Inner {
         self: Arc<Self>,
         request: DialRequest,
         trunk: TrunkConfig,
-        addresses: Vec<IpAddr>,
+        targets: Vec<SocketAddr>,
         mut gave_up: oneshot::Receiver<()>,
     ) {
         let leg = request.leg.clone();
-        let reason = match self.place(&request, &trunk, &addresses, &mut gave_up).await {
+        let reason = match self.place(&request, &trunk, &targets, &mut gave_up).await {
             Ok(None) => return,
             Ok(Some(reason)) => reason,
             Err(err) => {
@@ -1331,15 +1421,18 @@ impl Inner {
     }
 
     /// Sends the INVITE (and once more with credentials) and follows it to its outcome: `None` once answered (the
-    /// dialog's watcher reports its end), else how it ended.
+    /// dialog's watcher reports its end), else how it ended. The trunk's targets are tried in order (RFC 3263 §4.3): the
+    /// next one when a target takes no connection, or before anything rang and before the race has an outcome, when
+    /// the INVITE could not be sent, had no answer at all, or was answered 503.
     async fn place(
         self: &Arc<Self>,
         request: &DialRequest,
         trunk: &TrunkConfig,
-        addresses: &[IpAddr],
+        targets: &[SocketAddr],
         gave_up: &mut oneshot::Receiver<()>,
     ) -> Result<Option<EndReason>, String> {
-        let target = self.target(trunk, addresses)?;
+        let mut rest = targets.iter();
+        let (_, mut target) = self.connect_next(trunk, &mut rest).await?;
         let domain = trunk.domain();
         // the Request-URI names the trunk's host and port: a CANCEL goes where it points
         let callee = Uri::try_from(trunk.uri(&request.to).as_str()).map_err(sip_err)?;
@@ -1353,7 +1446,10 @@ impl Inner {
         // a display name or header value goes into the INVITE as it is: one with a line break or a quote could add
         // headers of its own (a P-Asserted-Identity the provider trusts), so they are cleaned first
         let display_name = request.from_name.as_deref().map(display_name).filter(|n| !n.is_empty());
-        for _attempt in 0..2 {
+        // one INVITE, and once more with credentials, for each target
+        let mut attempts = 0;
+        while attempts < 2 {
+            attempts += 1;
             let mut headers: Vec<Header> = request
                 .headers
                 .iter()
@@ -1401,6 +1497,28 @@ impl Inner {
                     }
                 }
             };
+            let unreachable = race.outcome().is_none()
+                && !*lock(&ringing)
+                && match &result {
+                    Ok(Ok((_, None))) | Ok(Err(_)) => true,
+                    Ok(Ok((_, Some(resp)))) => u16::from(resp.status_code.clone()) == 503,
+                    Err(_) => false,
+                };
+            if unreachable && !rest.as_slice().is_empty() {
+                watcher.abort();
+                let why = match &result {
+                    Ok(Ok((_, Some(resp)))) => format!("answered {}", resp.status_code),
+                    Ok(Err(err)) => err.to_string(),
+                    _ => "no answer".to_string(),
+                };
+                tracing::warn!("SIP leg {} to trunk {}: {}: {why}", request.leg, trunk.id, target.addr);
+                if let Ok((_, next)) = self.connect_next(trunk, &mut rest).await {
+                    target = next;
+                    authorization = None;
+                    attempts = 0;
+                    continue;
+                }
+            }
             let (_, response) = match result {
                 Ok(Ok(done)) => done,
                 Ok(Err(err)) => {
@@ -1647,7 +1765,7 @@ impl Inner {
     fn trunk_by_address(&self, ip: IpAddr) -> Option<TrunkConfig> {
         lock(&self.trunks)
             .values()
-            .find(|t| t.addresses.contains(&ip) || t.config.inbound.iter().any(|e| matches_address(ip, e)))
+            .find(|t| t.targets.iter().any(|a| a.ip() == ip) || t.config.inbound.iter().any(|e| matches_address(ip, e)))
             .map(|t| t.config.clone())
     }
 
@@ -1865,6 +1983,20 @@ fn header_safe(name: &str, value: &str) -> bool {
         tracing::warn!("SIP: the header {name:?} is not sent, it is not a plain header");
     }
     ok
+}
+
+/// Why a request to one of a trunk's targets failed.
+enum Miss {
+    /// No connection, no answer in time, or a 503: the next target is tried (RFC 3263 §4.3).
+    Unreachable(String),
+    /// The trunk's own answer, which another of its targets would give too.
+    Refused(String),
+}
+
+impl From<String> for Miss {
+    fn from(err: String) -> Miss {
+        Miss::Refused(err)
+    }
 }
 
 fn gave_up_reason(race: &Race) -> EndReason {
