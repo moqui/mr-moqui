@@ -4,8 +4,8 @@ The runtime's component directories become one directory, `runtime/components/`,
 components: `base` (the framework's, now `runtime/base-component`), `dev` (dev-only, now `runtime/dev-component`),
 `test` (new: test-only add-ons) and `addon` (the add-on components of `addons.xml`, now `runtime/component`). With it,
 a component's acceptance suite moves from `<component>/acceptance/` to `<component>/test/acceptance/`, so everything
-that is test sits under `test/`. The idea is aabiabdallah's. Plan, Nov 12, 2026; nothing built. It waits for the active
-work on master to land, since it moves 1,332 tracked files.
+that is test sits under `test/`. The idea is aabiabdallah's. Plan, Nov 12, 2026; references reviewed against
+ce6b26ed on Nov 13, 2026, which added the built-in framework files (§3.8); being built.
 
 ## 1. Decisions
 
@@ -14,7 +14,8 @@ work on master to land, since it moves 1,332 tracked files.
 2. **The sets are explicit.** `runtime/components/components.xml` lists them, and only what it lists loads, as a Java
    `components.xml` does (§3.2). No directory loads because it happens to be there.
 3. **Dropped.** The `ecomponent`, `deployed-component` and `mantle` component directories go from the conf, `moq`, the
-   desktop runtime and the tests. A git deploy from System > Components clones into `components/addon` (§3.3).
+   desktop runtime and the tests. A git deploy from System > Components clones into `components/addon`, and its
+   database and bare storages write their files there too (§3.3).
 4. **The archive layout matches.** `components/` sits beside the `moqui` binary in an archive, a container image and
    `/opt/moqui`, and `components/base/framework` is the canonical place of the framework component, both in a clone
    (`runtime/components/base/framework`) and in an archive (`components/base/framework`).
@@ -39,32 +40,35 @@ work on master to land, since it moves 1,332 tracked files.
 
 ## 2. What the research found
 
-Counted on master at 8a57630b, with `git grep -E 'base-component|dev-component|runtime/component'`: 306 files and
-1,145 lines in mr-moqui. `component://` is already resolved by name through the component list (`resource.rs`,
-`ResourceFacade::new`'s name-to-location map), and none of its 187 uses in production Rust depend on the layout. The
-work is where code rebuilds the layout by hand.
+Recounted on master at ce6b26ed (first counted at 8a57630b), with
+`git grep -E 'base-component|dev-component|runtime/component'`: 317 files and 1,198 lines in mr-moqui.
+`component://` is already resolved by name through the component list (`resource.rs`, `ResourceFacade::new`'s
+name-to-location map), and none of its uses in production Rust depend on the layout. The work is where code rebuilds
+the layout by hand.
 
 | Area | Files / lines | What it is |
 | --- | --- | --- |
-| Markdown outside `plans/archive` | 58 / 278 | Docs, plans, READMEs, AGENTS.md: prose |
-| `plans/archive` | 31 / 145 | History, left alone (§1.5) |
-| Rust tests | ~45 / 334 | Fixtures that build the three directories or name `runtime/base-component/framework` (`moqui-host/tests/it/devaide.rs` alone 44) |
-| Rust production code | ~30 / ~70 | §3.1 |
-| Client specs | ~35 / 61 | `/files/runtime/base-component/...` and `/files/runtime/dev-component/...` URLs (§3.5) |
-| `moq` | 74 lines | Every component task, suite selection, archive, crate linking, `git` over the repos |
+| Markdown outside `plans/archive` | 59 / 301 | Docs, plans, READMEs, AGENTS.md: prose |
+| `plans/archive` | 34 / 158 | History, left alone (§1.5) |
+| Rust tests | 121 / 359 | Fixtures that build the three directories or name `runtime/base-component/framework` (`moqui-host/tests/it/devaide.rs` 46, `tests/gate3_browser.rs` 25) |
+| Rust production code | ~40 / ~90 | §3.1, §3.8 |
+| Client specs | 31 / 62 | `/files/runtime/base-component/...` and `/files/runtime/dev-component/...` URLs (§3.5) |
+| `moq` | 77 lines | Every component task, suite selection, archive, crate linking, `git` over the repos |
 | `scripts/moq-test.sh` | 59 lines | Its fixture trees |
-| Build and packaging | ~25 lines | `Cargo.toml` members, paths and `exclude`; `.gitignore`, `.ignore`; `podman/`; `systemd/moqui.service` |
+| Build and packaging | ~30 lines | `Cargo.toml` members, paths and `exclude`; `moqui-embedded/build.rs`; `.gitignore`, `.ignore`; `podman/`; `systemd/moqui.service` |
 | Conf | 2 files | `MoquiDefaultConf.xml`'s `component-list`; `MoquiDemoConf.xml`'s `location="dev-component/demo"` |
+| Relative Markdown links | ~280 links | A link that leaves its set directory (`../../../docs/...` from a component) needs one more `../` after the move: base 62 in 6 files, dev 5 in 3, mr-boss 178 in 26, mr-home 15, mr-mantle 9, mr-pass 7; and 17 mr-moqui files link into the trees |
 
 In the component repositories (their own git repos), the code is clean: mr-boss has 5 client specs fetching
 `/files/runtime/component/mr-boss/...` and one error message, mr-l10n two localized strings quoting
 `runtime/dev-component`; the rest of their hits (mr-boss 36 plan files, mr-marble 4, mr-pass 3, mr-mantle and mr-home
 1 each) are docs.
 
-The `acceptance/` move (§3.7): `acceptance/` directories in basic-comms (5 files), framework (3), tools (5), webroot
-(3), example (3) and the template (1), mr-boss (206), mr-pass (27), mr-marble (9) and mr-mantle (3); text naming
-`acceptance/` in 34 files and 110 lines of mr-moqui outside `plans/archive`, 340 lines in mr-boss, 49 in mr-pass, 8 in
-mr-marble and 3 in mr-mantle.
+The `acceptance/` move (§3.7): `acceptance/` directories in basic-comms (5 files), framework (3), tools (6), webroot
+(3), example (3) and the template (1), the `moqui-host` test fixture `crates/moqui-host/tests/fixtures/test-component`
+(1), mr-boss (247), mr-pass (27), mr-marble (9) and mr-mantle (3); text naming `acceptance/` in 39 files and 119 lines
+of mr-moqui outside `plans/archive` and this plan, 393 lines in mr-boss, 49 in mr-pass, 8 in mr-marble and 5 in
+mr-mantle.
 
 ## 3. Design
 
@@ -72,26 +76,41 @@ mr-marble and 3 in mr-mantle.
 
 The cleanup this move should leave behind, done first and on its own (P1), so the move itself is mechanical:
 
-- **The component containers.** The list `["base-component", "component", "dev-component"]` is spelled out in about
-  ten places: `moqui-host` `test_cmd/mod.rs` (295, 326), `test_cmd/agents.rs` (296), `test_cmd/skills.rs` (32),
-  `devtools_remote.rs` (380), `qvt_report.rs` (71); `moqui-devkit` `project/cache.rs` (391); `moqui-lib`
-  `xml_edit/tokenize.rs` (417); `moqui-core` `script/walker.rs` (117); dev-aide `repos.rs` (216). Each asks one
-  function instead: the loaded component list where there is a factory, else a `moqui-core::context::layout` helper
-  that names a runtime's component containers (and which are dev or test) from the conf without a boot, as
-  `component::discover` already does.
+Line numbers are at ce6b26ed. "Test" marks a site inside a `#[cfg(test)]` module, which uses the clone-relative
+constants rather than the runtime helpers.
+
+- **The component containers.** The list `["base-component", "component", "dev-component"]` is spelled out in
+  `moqui-host` `test_cmd/mod.rs` (295, 326), `test_cmd/agents.rs` (296), `test_cmd/skills.rs` (32),
+  `devtools_remote.rs` (380), `qvt_report.rs` (71–72); `moqui-devkit` `project/cache.rs` (391); dev-aide `repos.rs`
+  (216, and `get_component` 282), `repo.rs` (`clone_repository` 960), `workspace.rs` (1238, 1313–1326); and in tests
+  `moqui-lib` `xml_edit/tokenize.rs` (417) and `moqui-core` `script/walker.rs` (117). `test_cmd/mod.rs` (789) and
+  `agents.rs` (92) test `starts_with(runtime.join("dev-component"))` to boot on the dev purpose; `test_cmd/fixture.rs`
+  (179–191) links the three into a scratch runtime; `locate.rs` (128–135, `component_root`) falls back to
+  `<runtime>/component/<name>`. Each asks one function instead: the loaded component list where there is a factory,
+  else a `moqui-core::context::layout` helper that names a runtime's component sets (and which are dev or test) without
+  a boot.
 - **The framework component.** `runtime/base-component/framework` or `<runtime>/base-component/framework` is joined in
-  `factory.rs` (261), `locate.rs` (67, 161), `resource.rs` (1244), `moqui-entity/testing.rs` (243),
-  `devkit/project/mod.rs` (81, 167, 228), `devtools_cmd.rs` (344, 371) and `desktop/client/conf.rs` (48). One
+  `factory.rs` (261, `default_framework_dir`, which `embedded_files.rs` 32 and `lib.rs` 2651 call), `locate.rs` (67),
+  `moqui-entity/testing.rs` (243), `devkit/project/mod.rs` (81, 167, 228), `devtools_cmd.rs` (344, 371) and
+  `desktop/client/conf.rs` (48); in tests `locate.rs` (161) and `resource.rs` (1244). One
   `layout::framework_dir(runtime)` and one `layout::REPO_FRAMEWORK` (the clone-relative path, for the
   `CARGO_MANIFEST_DIR` joins) replace them.
 - **The runtime marker.** "A directory with `base-component/` is a runtime" is the test in `moqui-host/src/lib.rs`
-  (864), `devkit/project/mod.rs` (228), `test_client/mod.rs` (669) and `test_client/load_cmd.rs` (537). It becomes
-  `layout::is_runtime(dir)`: `components/base/framework/component.xml` is there.
-- **The webroot.** `../../runtime/base-component/webroot/screen/webroot` in `screen/pdf.rs`, `screen/statics.rs`,
-  `desktop/client/mod.rs`, `llm/ui/openui.rs` and `test_client/offline.rs`: one `layout::REPO_WEBROOT`.
+  (901 `runtime_dir_in`, the lookup from the working directory; 915 `find_runtime_dir`, the desktop's search beside the
+  executable), `test_client/mod.rs` (669) and `test_client/load_cmd.rs` (537). It becomes `layout::is_runtime(dir)`:
+  `components/base` is a directory. It stays a directory test, as now, so a runtime whose framework is missing is
+  still found and the built-in files refill it (§3.8); `components/base` rather than `components/` because a bare
+  `components/` is common in other kinds of project. `devkit/project/mod.rs` (228) keeps its stricter test, the
+  framework's `component.xml`.
+- **The webroot.** `../../runtime/base-component/webroot/screen/webroot` in `desktop/client/mod.rs` (129) and
+  `test_client/offline.rs` (47), and in tests `screen/pdf.rs` (223), `screen/statics.rs` (269), `llm/ui/openui.rs`
+  (514) and `web/misconfig.rs` (123): one `layout::REPO_WEBROOT`.
 - **What stays literal.** `include_str!` paths (16, in `screen/generate.rs`, `screen/statics.rs`,
-  `script/actions.rs`), `moqui-browser/build.rs` and `Cargo.toml` cannot call a function; they change by replacement
-  in P4. A test that walks the tree (§5) catches one that was missed.
+  `script/actions.rs`), `moqui-browser/build.rs` (58), `moqui-embedded/build.rs` (34) and `Cargo.toml` cannot call a
+  function; they change by replacement in P4. A test that walks the tree (§5) catches one that was missed.
+- **`moq`.** The set directories are shell variables at the top of `moq` (`BASE_SET`, `ADDON_SET`, `DEV_SET`,
+  `TEST_SET`), so P4 changes them in one place; its tasks (component tasks, suite selection, `component_crate_dirs`
+  at 1438 and 1732, `stage_desktop_runtime`, the archive) use them.
 
 ### 3.2 The conf and the loader
 
@@ -120,11 +139,14 @@ and `runtime/components/components.xml` (tracked in mr-moqui) lists the sets, in
 </components>
 ```
 
-The loader (`moqui-core/src/context/component.rs`, `add_component_dir`) already does all of this: it reads a
-`components.xml` in a component directory, loads exactly what it lists, nests `component-dir` elements, and passes a
-directory's `purpose` down to what it finds. The only addition is a WARN for a child directory of `components/` that
-the manifest does not list ("not in components/components.xml, not loaded"), so a set or a component dropped in the
-wrong place is noticed rather than silently missing. A site that wants a set of its own lists it: in the tracked
+The loader (`moqui-core/src/context/component.rs`, `add_component_dir`, 244–349) already does all of this: it reads a
+`components.xml` in a component directory (271–289), loads exactly what it lists and does not scan the directory,
+nests `component-dir` elements, and passes a directory's `purpose` down to what it finds (a `component-dir`'s own
+`purpose` replaces the outer one). The framework's same-directory check runs only in the scan branch, which is where
+`base` is read. The additions: a WARN for a child directory of `components/` that the manifest does not list ("not in
+components/components.xml, not loaded"), so a set or a component dropped in the wrong place is noticed rather than
+silently missing; and a WARN, not the INFO of a `component-dir` that is not there, for a set the manifest lists that is
+missing. A site that wants a set of its own lists it: in the tracked
 `components.xml` for the framework's sets, or with a `component-dir` of its own (`components/my-set`) in its runtime
 conf's `component-list`.
 
@@ -140,8 +162,12 @@ still may not depend on one in `dev` or `test` (the existing rule).
   `components/dev`; a new `--test` (and a "Test only" check) into `components/test`. What a component depends on still
   goes into `addon`, as now.
 - `component-create`'s template is `components/dev/template`.
-- A git deploy (`moqui-devkit/src/deploy/git.rs`, `clone_directory`) defaults to `components/addon`, and its "one
-  named" choice is any set `components.xml` lists; the old `deployed-component` default goes.
+- A git deploy (`moqui-devkit/src/deploy/git.rs`, `clone_directory` 980–992) clones into `components/addon` by default
+  (now `component`, 984), and its "one named" choice is any set `components.xml` lists. The database and bare storages
+  write a component's files to `DEPLOYED_DIR` (45; `deployed-component`, used at 224, 617 and 714); that goes, and they
+  write to `components/addon` too, so every add-on is in one place whatever its storage. The docs and fixtures that name
+  `deployed-component` follow: `docs/tools/Component-Deploy.md`, `docs/security/Attack-Surface.md`, `ServerEntities.xml`
+  (115), `tools/test/ConfReload.spec.js` (77), `moqui-host/tests/it/component_deploy.rs`.
 - The boot WARN (§1.10): a non-empty `runtime/component`, `base-component` or `dev-component` is reported once with
   where its components go; nothing is moved.
 
@@ -149,7 +175,8 @@ still may not depend on one in `dev` or `test` (the existing rule).
 
 `./moq archive`'s runtime is the binary, `MoquiConf.xml` and `components/` beside it; `README.txt` and the help say so.
 `stage_desktop_runtime` stages `components` and `conf` (the list `base-component component ecomponent dev-component
-conf` goes), `moqui-desktop/src/runtime_dir.rs` links `components` (and its tests drop `ecomponent`), `podman/build.sh`
+conf` goes), `moqui-desktop/src/runtime_dir.rs` links `components` (`READ_ONLY`, 24–30, becomes `components`, `conf`,
+`MoquiConf.xml`, in step with `stage_desktop_runtime`; its tests drop `ecomponent`), `podman/build.sh`
 and the `Containerfile` copy `components/`, and `systemd/moqui.service` and `podman/README.md` name it.
 
 ### 3.5 `/files/component/<name>/...`
@@ -201,21 +228,60 @@ specs at its top, and the special subdirectories `client`, `acceptance`, `agent`
   holds no specs now but is another command's), so the regression suite does not pick up acceptance specs;
   `reserved_subdirs("test/acceptance")` is `client`, `agent`; `suite_tree` returns `test/acceptance` and
   `test/acceptance/client`; the acceptance checks on a spec's display path (`mod.rs` 401, `report.rs` 98, which test
-  its second segment) test for the `test/acceptance` prefix; the client trees (597) follow.
-- **`moqui test-client`** (`test_client/mod.rs` 526–573): the client and process directories, and the
-  acceptance-or-regression choice, on the new paths.
+  its second segment) test for the `test/acceptance` prefix; the client trees (597) follow. `reserved_subdirs` is at
+  352–358, `suite_tree` 362–369, the duplicate-spec message 386; `report.rs` 125 and 152 are messages that say
+  "move ... to acceptance/", and 406–411 its fixtures.
+- **`moqui test-client`** (`test_client/mod.rs` 515–583): the client and process directories, and the
+  acceptance-or-regression choice, on the new paths; `test_client/serve.rs` (16, 25, 151–154, 423–426) follows
+  `suite_tree`. Help in `usage.rs` (358, 373–376, 479–481); CLI tests `crates/moqui/tests/cli/test.rs` (119) and
+  `template.rs` (75).
 - **`moq`**: `spec_components`, `served_components` and `offline_components` with `acceptance` and `acceptance/client`
-  (2550–2560), and `accept`, `accept-all` and their help.
+  (the calls at 2551, 2556 and 2561 in `accept_suites`; `has_spec_file` 2519–2533; `spec_component_dirs` 4877–4894),
+  `template_part_files` (4313), and `accept`, `accept-all` and their help (140–141, 795–816).
 - **A stale `acceptance/`**: `moqui test` and `moq accept` refuse a component that still has a top-level
   `acceptance/` with an error naming `test/acceptance/`, so its specs are not silently skipped.
 - **Docs**: [docs/Build-Test.md](../docs/Build-Test.md), AGENTS.md, the testing skill, the template's files and
-  README, and every doc and plan outside `plans/archive` that names an `acceptance/` path (34 files in mr-moqui).
-- **Components**: `git mv` of `acceptance/` in basic-comms, framework, tools, webroot, example and the template; then
-  one commit in each of mr-boss (206 files, 340 lines of text that name the path), mr-pass (27, 49), mr-marble (9, 8)
-  and mr-mantle (3, 3), with each repository's specs that say `acceptance/` (`dependsOn`, `suite.js`, fixtures) and its
+  README, and every doc and plan outside `plans/archive` that names an `acceptance/` path (39 files in mr-moqui).
+- **Built-in files**: `moqui-embedded`'s `COMPONENT_SKIP` (`build.rs` 30, `lib.rs` 40) drops `acceptance`, since
+  `test` then covers it (§3.8).
+- **Components**: `git mv` of `acceptance/` in basic-comms, framework, tools, webroot, example, the template and the
+  `moqui-host` test fixture `tests/fixtures/test-component`; then one commit in each of mr-boss (247 files, 393 lines of
+  text that name the path), mr-pass (27, 49), mr-marble (9, 8) and mr-mantle (3, 5), with each repository's specs that say `acceptance/` (`dependsOn`, `suite.js`, fixtures) and its
   docs. A component's `test/budget` is for the regression suite and does not change.
 
-This is independent of the components move and can land first (P2).
+This is independent of the components move and can land first (P2; the component repositories in P6).
+
+### 3.8 Built-in framework files
+
+The binary carries the framework and tools components whole and a webroot stub (`crates/moqui-embedded`, built in
+513e2e35 and ce6b26ed), compares the runtime's copies with them at startup, and writes them as a skeleton runtime when
+there is none ([Run-Deploy](../docs/Run-Deploy.md), "Built-in framework files"). What ties it to the layout:
+
+- **`build.rs`** (34) packs from `../../runtime/base-component`: a literal, replaced in P4 by
+  `../../runtime/components/base`. `webroot-files.txt` (its comment at 7) is relative to the webroot component and
+  keeps its paths.
+- **The skeleton.** `write_skeleton` (`lib.rs` 190–207) writes `base-component/{framework,tools,webroot}` and the
+  Skeleton set, whose paths are relative to `base-component` (`lib.rs` 60; its one file is
+  `skeleton/webroot/screen/webroot/qapps.xml`). With the new conf it must also write `components/components.xml`: the
+  conf's one `component-dir` is `components`, whose children are sets, not components, so without the manifest the
+  scan finds no component there and tools and webroot do not load. The Skeleton set becomes relative to the runtime
+  directory (`components/base/webroot/screen/webroot/qapps.xml`), and `build.rs` packs the tracked
+  `runtime/components/components.xml` into it, so there is one copy. `write_skeleton` writes into
+  `layout::framework_dir(runtime)`'s parent, and writes the manifest whenever it is missing, not only with the webroot.
+- **What does not change.** `compare` and `unified_diff` report paths per component (`framework/conf/...`), so
+  `moqui embedded list|diff` and their output stay as they are; `embedded_files.rs` (155–165) finds tools and webroot as
+  siblings of the framework, which `components/base` keeps; `COMPILED_IN` (`lib.rs` 44–49) is framework-relative, while
+  the matching `include_str!` paths move in P4 (§3.1). `ensure_runtime` (`embedded_files.rs` 31–52) compares against
+  `default_framework_dir`, which delegates to the layout helper.
+- **The runtime lookup** (`moqui-host/src/lib.rs` 898–916) and the desktop's `find_existing` (`runtime_dir.rs` 84–94)
+  use `layout::is_runtime` (§3.1).
+- **Tests**: `moqui-embedded/src/tests.rs` (38, 92–95, 168–172; 79–80 after P2), `moqui-host/src/embedded_files_tests.rs`
+  (28–30), `lib_tests.rs` (27–34), and the skeleton acceptance test `crates/moqui/tests/cli/skeleton.rs` (183–186, which
+  also asserts `runtime/components/components.xml`; ignored by default, run once in P4 since it changes:
+  `cargo test -p moqui --test cli -- --ignored skeleton`).
+- **Docs**: `runtime/README.md` (4–28), `docs/Run-Deploy.md` (185–187, 197, 209–210 with the manifest, 222, 756–760),
+  `docs/Build-Test.md` (241–252), `usage.rs` (69–74), `moq`'s `help_archive` (1207, 1210) and `archive_readme` (4512,
+  4543), `crates/moqui-desktop/README.md` (81, 221–224).
 
 ## 4. Phases
 
@@ -224,16 +290,16 @@ Each phase is one commit (or one per repository) with its focused tests, and `./
 | Phase | What | Tests |
 | --- | --- | --- |
 | P1 | §3.1 helpers and their callers, on the old layout; `/files/component/<name>/` and every client spec on it | the touched crates' tests; `offline.rs` tests for the new form (found, outside the component, `..`, an unknown name); the client specs of webroot, basic-comms, tools, dev-aide and mr-boss |
-| P2 | `test/acceptance/` (§3.7): the runners, `moq`, the stale-directory error, the framework's components and docs; then mr-boss, mr-pass, mr-marble and mr-mantle | `test_cmd` and `test_client` tests (a regression run leaves `test/acceptance` out, an acceptance run finds it, a top-level `acceptance/` is refused); `scripts/moq-test.sh`'s accept cases; each component's moved acceptance specs, run once as the user asks (they are acceptance tests that changed) |
+| P2 | `test/acceptance/` (§3.7): the runners, `moq`, the stale-directory error, the framework's components, the test fixture, `moqui-embedded`'s skip list, and docs | `test_cmd` and `test_client` tests (a regression run leaves `test/acceptance` out, an acceptance run finds it, a top-level `acceptance/` is refused); `scripts/moq-test.sh`'s accept cases; the discovered acceptance specs the same before and after; the moved framework-side acceptance specs, run once (they are acceptance tests that changed) |
 | P3 | The WARN for an unlisted child of `components/` (§3.2) and the boot WARN (§3.3) | `context::component` tests: the listed sets and their purposes, an unlisted child warned and not loaded |
-| P4 | The move: `git mv` of the base and dev trees; `components.xml`; `MoquiDefaultConf.xml` and `MoquiDemoConf.xml`; `Cargo.toml` members, paths and `exclude` (`runtime/components/addon`, `test`, `dev`); `include_str!` and `build.rs` paths; `.gitignore` and `.ignore` (track `components/components.xml`, `base/`, the framework's four in `dev/`, the READMEs of `addon/` and `test/`; ignore the rest of `addon/`, `test/` and `dev/`); `moq` and `scripts/moq-test.sh`; Rust test fixtures; podman, systemd, desktop; READMEs, docs, AGENTS.md (the `test-framework` scope), the testing and building skills, plans outside `plans/archive`; dropping `ecomponent`, `deployed-component` and `mantle` | `./moq test-framework`; `./moq test-apps` with the components moved by hand into `components/addon` |
+| P4 | The move: `git mv` of the base and dev trees; `components.xml`; `MoquiDefaultConf.xml` and `MoquiDemoConf.xml`; `Cargo.toml` members, paths and `exclude` (`runtime/components/addon`, `test`, `dev`); `include_str!` and `build.rs` paths; `.gitignore` and `.ignore` (track `components/components.xml`, `base/`, the framework's four in `dev/`, the READMEs of `addon/` and `test/`; ignore the rest of `addon/`, `test/` and `dev/`); `moq` and `scripts/moq-test.sh`; Rust test fixtures; podman, systemd, desktop; the built-in files (§3.8); READMEs, docs, AGENTS.md (the `test-framework` scope), the testing and building skills, plans outside `plans/archive`; one more `../` in each relative link that leaves a moved set (§2); dropping `ecomponent`, `deployed-component` and `mantle` | `./moq test-framework`; `./moq test-apps` with the components moved by hand into `components/addon`; the skeleton acceptance test; no relative link broken that resolved before |
 | P5 | `./moq archive` and `component-zip` without tests and the dev set, `--with-tests`, `--with-dev`; `component-get --test` and the Dev AIDE's Test only (§3.3, §3.6) | `scripts/moq-test.sh` cases: a default archive has no component `test/`, no `components/test/` and no `components/dev/`; `--with-tests` and `--with-dev` each put theirs back |
-| P6 | The component repositories' remaining prose: mr-boss's plans, mr-l10n's two strings, the docs of mr-marble, mr-pass, mr-mantle and mr-home | each component's regression specs that changed |
+| P6 | The component repositories: `test/acceptance/` (§3.7) in mr-boss, mr-pass, mr-marble and mr-mantle; their relative links (§2); mr-boss's plans, mr-l10n's two strings, the docs of mr-marble, mr-pass, mr-mantle and mr-home | each component's regression specs that changed; the discovered acceptance specs the same before and after; moved acceptance specs run as the user asks |
 
 ## 5. Keeping it clean
 
 A framework test (in `moqui-core`, beside the XML corpus test) fails on any `base-component`, `dev-component`,
-`runtime/component/` or `ecomponent` in a tracked file outside `plans/archive/`, with a short allow list (this plan,
+`runtime/component/`, `ecomponent` or `deployed-component` in a tracked file outside `plans/archive/`, with a short allow list (this plan,
 the boot WARN's own strings), so a stale path or a new hand-built one shows up at once rather than at the next move.
 The stale-`acceptance/` error (§3.7) does the same for the suite's old place.
 
@@ -241,3 +307,5 @@ The stale-`acceptance/` error (§3.7) does the same for the suite's old place.
 
 Nothing now. Settled Nov 12, 2026: the sets are only what `components.xml` lists (§1.2); load scripts leave the archive
 with the tests (§3.6); `acceptance/` moves under `test/` (§3.7); the dev set leaves the archive by default (§1.9).
+Settled Nov 13, 2026: the database and bare deploy storages write to `components/addon` (§3.3); the runtime marker is
+the `components/base` directory (§3.1); the skeleton writes `components/components.xml` (§3.8).
