@@ -117,8 +117,7 @@ CSV or XLSX.
 
 The grid has two modes over the same source. Records is the grid above. Calc shows the source as the data sheet of a
 workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../plans/IronCalc-DB.md)), over
-`org.moqui.calc.CalcServices` (`crates/moqui-calc`). Editing the workbook (formulas, formats, new sheets) is the plan's
-Phase 3; today Calc reads.
+`org.moqui.calc.CalcServices` (`crates/moqui-calc`). The data sheet is read only; the workbook beside it is edited.
 
 - **The data sheet** is the source with the columns shown and the sort and filters set when Calc is opened: a header
   row of the columns' names, then a row for each record, typed (numbers, dates and times by their formats, text as it
@@ -133,6 +132,19 @@ Phase 3; today Calc reads.
 - **A room** is the open workbook in the server's memory: one for each open document of a user, found only by that
   user, at most eight a user, dropped after twenty minutes without a request. A request for a room that is gone is
   answered `ROOM_GONE` and the screen opens the document again. A room is on the server that opened it.
+- **Editing.** Sheets are added beside the data sheet (the + by the tabs; a right click renames or deletes one), and
+  their cells are edited: a double click opens a cell, the formula bar shows what was typed into the cell selected and
+  takes its new content on Enter, Delete clears the selection, and rows of cells are pasted from the clipboard. The
+  bar completes function names and the data sheets' table names (`Enumeration[`). The toolbar has undo and redo
+  (Ctrl+Z, Ctrl+Y), bold, italic, underline, text and fill colour, alignment, number formats, rows and columns
+  (insert, delete, freeze, fill down), and Chart, which adds a chart of the cells selected (labels and one or more
+  series, as ranges) below the sheet. Each edit goes to the server (`edit#CalcDocument`, a list of edits applied in
+  order and calculated once), which answers the cells again; nothing is saved until Save document. A data sheet's
+  cells, rows, columns and name are not edited; its column widths and frozen panes are. A refresh keeps the edits and
+  ends the undo history.
+- **One person edits a document at a time.** A room is its user's: two people who open the same document each have
+  their own copy, and the second to save is refused ("changed since it was read") and opens it again. Editing
+  together in one room is not built.
 - **Refresh** reads the data sheets again and calculates. **XLSX** downloads the workbook as it is, data and
   calculated values.
 - **A document** (Save document, Documents) is a report definition of type `calcgrid`: the data sheets' sources,
@@ -174,8 +186,11 @@ What a person reads there is set in the authorization data, not in a document. A
   works in (`setup#UserOrganizationInfo`, which an app's root screen calls; the Dashboards screen calls it where
   Mantle is there). With no organization the filters match nothing.
 - **Who may do what:** `CALC_GRID` is the screen and its services; `CALC_GRID_AUTHOR` (update on
-  `org.moqui.calc.document`) is making and saving documents. A holder of a profile without it opens the documents
-  shared with them, refreshes and exports. A document is its owner's to save and delete.
+  `org.moqui.calc.document`) is making, editing and saving documents. A holder of a profile without it opens the
+  documents shared with them, refreshes and exports. A document is its owner's to edit, save and delete; the sheet's
+  toolbar and editors are shown to its owner and for a document not saved yet.
+- **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's
+  own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below).
 - **A shared document shows each reader their own rows.** It stores its sources and its workbook without data; each
   person who opens it gets the rows their profile and scope give, in a room of their own. A reader whose profile does
   not offer a sheet's source gets that sheet as "Not available" and the rest of the document.

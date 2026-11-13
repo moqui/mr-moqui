@@ -39,6 +39,8 @@
             <parameter name="evaluateMs" type="Double"/>
             <parameter name="truncated" type="List"><description>The data sheets whose source had more than maxDataRows rows.</description></parameter>
             <parameter name="maxDataRows" type="Long"/>
+            <parameter name="canUndo" type="Boolean"/>
+            <parameter name="canRedo" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="get" noun="CalcCells" type="rust" location="moqui_calc::service::get_calc_cells" transaction="ignore">
@@ -69,6 +71,8 @@
             <parameter name="evaluateMs" type="Double"/>
             <parameter name="truncated" type="List"/>
             <parameter name="maxDataRows" type="Long"/>
+            <parameter name="canUndo" type="Boolean"/>
+            <parameter name="canRedo" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="save" noun="CalcDocument" type="rust" location="moqui_calc::service::save_calc_document">
@@ -119,6 +123,49 @@
             profile offers (a view only with every member entity offered), or with no profile every entity.</description>
         <in-parameters><parameter name="profileId"/><parameter name="term"/></in-parameters>
         <out-parameters><parameter name="entityNames" type="List"/></out-parameters>
+    </service>
+    <service verb="edit" noun="CalcDocument" type="rust" location="moqui_calc::service::edit_calc_document" transaction="ignore">
+        <description>Apply edits to the room's workbook in order and evaluate once. Each of ops is a map with op: input
+            (sheet, row, column, value: a cell set as a person typing would, so =A1*2 is a formula; empty clears it), paste
+            (sheet, row, column, rows: rows of texts from a top-left cell), clear and style (sheet, row, column, width, height;
+            style with path and value: font.b, font.i, font.u, font.strike, font.color, fill.color, num_fmt,
+            alignment.horizontal, alignment.wrap_text), fill (a source rectangle and toRow or toColumn: autofill), width
+            (sheet, column, columnEnd, width) and height (sheet, row, rowEnd, height) in pixels, freeze (sheet, rows, columns),
+            insertRows and deleteRows (sheet, row, count), insertColumns and deleteColumns (sheet, column, count), addSheet,
+            renameSheet (sheet, name), deleteSheet (sheet), charts (the document's charts, replaced: each a title, a type of
+            bar, column, line, area or pie, categories and series of name and values, ranges), undo and redo. A data
+            sheet's cells, rows, columns and name are not edited; its widths, heights and frozen panes are. The first edit
+            refused is the call's error, the edits before it stay, and the room's state is answered either way. Under a
+            profile only an author edits. Nothing is saved: save#CalcDocument saves.</description>
+        <in-parameters>
+            <parameter name="roomId" required="true"/>
+            <parameter name="profileId"/>
+            <parameter name="ops" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="roomId"/>
+            <parameter name="title"/>
+            <parameter name="definitionId"/>
+            <parameter name="version" type="Long"/>
+            <parameter name="sheets" type="List"/>
+            <parameter name="charts" type="List"/>
+            <parameter name="evaluateMs" type="Double"/>
+            <parameter name="truncated" type="List"/>
+            <parameter name="maxDataRows" type="Long"/>
+            <parameter name="canUndo" type="Boolean"/>
+            <parameter name="canRedo" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="CalcCellContent" type="rust" location="moqui_calc::service::get_calc_cell_content" transaction="ignore">
+        <description>What was typed into a cell (a formula with its =, a number or a text as entered), for the formula bar and a cell's editor.</description>
+        <in-parameters>
+            <parameter name="roomId" required="true"/>
+            <parameter name="profileId"/>
+            <parameter name="sheet" type="Integer" default-value="0"/>
+            <parameter name="row" type="Integer" default-value="1"/>
+            <parameter name="column" type="Integer" default-value="1"/>
+        </in-parameters>
+        <out-parameters><parameter name="content"/></out-parameters>
     </service>
     <service verb="get" noun="CalcFrame" type="rust" location="moqui_calc::service::get_calc_frame" transaction="ignore">
         <description>A range of a saved document as a table for the report engine: the source of the shipped dataset

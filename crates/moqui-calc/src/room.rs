@@ -41,6 +41,12 @@ pub const MAX_USER_ROOMS: usize = 8;
 pub const MAX_BLOCK_CELLS: i64 = 20_000;
 /// The most points of one chart series.
 const MAX_CHART_POINTS: usize = 2_000;
+/// The most rows of one paste.
+const MAX_PASTE_ROWS: usize = 5_000;
+
+fn engine(message: String) -> Error {
+    Error::new(format!("Spreadsheet engine: {message}"))
+}
 
 static ROOM_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -165,6 +171,179 @@ impl Room {
         self.truncated = truncated;
         self.filled_at = Instant::now();
         Ok(())
+    }
+
+    /// The index of a sheet when it is a data sheet, whose cells come from the database and are not edited.
+    fn data_sheet_name(&self, sheet: u32) -> Option<String> {
+        let name = self.model().workbook.worksheets.get(sheet as usize)?.get_name();
+        self.data_rows
+            .iter()
+            .any(|(data, _)| data.eq_ignore_ascii_case(&name))
+            .then_some(name)
+    }
+
+    /// Whether there is an edit to take back, and one to do again.
+    #[must_use]
+    pub fn undo_state(&self) -> (bool, bool) {
+        (self.model.can_undo(), self.model.can_redo())
+    }
+
+    /// What was typed into a cell: a formula with its `=`, a number or a text as entered.
+    ///
+    /// # Errors
+    ///
+    /// Returns the engine's error for a cell outside the workbook.
+    pub fn cell_content(&self, sheet: u32, row: i32, column: i32) -> Result<String, Error> {
+        self.model.get_cell_content(sheet, row, column).map_err(engine)
+    }
+
+    /// Apply edits in order, then evaluate once (plans/IronCalc-DB.md, Phase 3). Each is a map with `op`:
+    ///
+    /// - `input` (`sheet`, `row`, `column`, `value`): a cell set as a person typing would; an empty value clears it.
+    /// - `paste` (`sheet`, `row`, `column`, `rows`: a list of rows of texts): cells set from a top-left cell.
+    /// - `clear` and `style` (`path`, `value`: `font.b`, `font.i`, `font.u`, `font.strike`, `font.color`,
+    ///   `fill.color`, `num_fmt`, `alignment.horizontal`, `alignment.wrap_text`) over `sheet`, `row`, `column`,
+    ///   `width`, `height`.
+    /// - `fill` (a source rectangle and `toRow` or `toColumn`): the engine's autofill, down or across.
+    /// - `width` (`sheet`, `column`, `columnEnd`, `width`) and `height` (`sheet`, `row`, `rowEnd`, `height`), pixels.
+    /// - `freeze` (`sheet`, `rows`, `columns`).
+    /// - `insertRows`, `deleteRows` (`sheet`, `row`, `count`), `insertColumns`, `deleteColumns` (`sheet`, `column`,
+    ///   `count`).
+    /// - `addSheet`, `renameSheet` (`sheet`, `name`), `deleteSheet` (`sheet`).
+    /// - `charts` (`charts`: the document's charts, replaced).
+    /// - `undo`, `redo`.
+    ///
+    /// A data sheet's cells, rows, columns and name are not edited: its widths, heights and frozen panes are.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first edit's refusal; the edits before it are applied (and can be undone).
+    pub fn edit(&mut self, ops: &[Json]) -> Result<(), Error> {
+        self.model.pause_evaluation();
+        let applied = ops.iter().try_for_each(|op| self.apply(op));
+        self.model.resume_evaluation();
+        let started = Instant::now();
+        self.model.evaluate();
+        self.evaluate_ms = started.elapsed().as_secs_f64() * 1000.0;
+        applied
+    }
+
+    fn apply(&mut self, op: &Json) -> Result<(), Error> {
+        let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
+        let small = |key: &str, default: i64| i32::try_from(int(key, default)).unwrap_or(i32::MAX);
+        let sheet = u32::try_from(int("sheet", 0)).unwrap_or(u32::MAX);
+        let text = |key: &str| match &op[key] {
+            Json::String(text) => text.clone(),
+            Json::Null => String::new(),
+            other => other.to_string(),
+        };
+        let area = || moqui_core::workbook::ironcalc::base::expressions::types::Area {
+            sheet,
+            row: small("row", 1),
+            column: small("column", 1),
+            width: small("width", 1).max(1),
+            height: small("height", 1).max(1),
+        };
+        let kind = op["op"].as_str().unwrap_or_default();
+        // what changes a sheet's cells, rows, columns or name is not done to a data sheet
+        let protects = matches!(
+            kind,
+            "input"
+                | "paste"
+                | "clear"
+                | "style"
+                | "fill"
+                | "insertRows"
+                | "deleteRows"
+                | "insertColumns"
+                | "deleteColumns"
+                | "renameSheet"
+                | "deleteSheet"
+        );
+        if protects {
+            if let Some(name) = self.data_sheet_name(sheet) {
+                return Err(Error::new(format!(
+                    "{name} is a data sheet: its rows come from the database and are not edited"
+                )));
+            }
+        }
+        match kind {
+            "input" => self
+                .model
+                .set_user_input(sheet, small("row", 1), small("column", 1), &text("value")),
+            "paste" => {
+                let (top, left) = (small("row", 1), small("column", 1));
+                let rows = op["rows"].as_array().map(Vec::as_slice).unwrap_or_default();
+                if rows.len() > MAX_PASTE_ROWS {
+                    return Err(Error::new(format!("A paste has at most {MAX_PASTE_ROWS} rows")));
+                }
+                rows.iter().enumerate().try_for_each(|(r, cells)| {
+                    cells
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                        .iter()
+                        .enumerate()
+                        .try_for_each(|(c, cell)| {
+                            let value = match cell {
+                                Json::String(text) => text.clone(),
+                                Json::Null => String::new(),
+                                other => other.to_string(),
+                            };
+                            let (row, column) = (
+                                top + i32::try_from(r).unwrap_or(i32::MAX),
+                                left + i32::try_from(c).unwrap_or(i32::MAX),
+                            );
+                            self.model.set_user_input(sheet, row, column, &value)
+                        })
+                })
+            }
+            "clear" => self.model.range_clear_contents(&area()),
+            "style" => self.model.update_range_style(&area(), &text("path"), &text("value")),
+            "fill" => match op["toRow"].as_i64() {
+                Some(to_row) => self
+                    .model
+                    .auto_fill_rows(&area(), i32::try_from(to_row).unwrap_or(i32::MAX)),
+                None => self.model.auto_fill_columns(&area(), small("toColumn", 1)),
+            },
+            "width" => {
+                let column = small("column", 1);
+                self.model.set_columns_width(
+                    sheet,
+                    column,
+                    small("columnEnd", i64::from(column)),
+                    op["width"].as_f64().unwrap_or(90.0),
+                )
+            }
+            "height" => {
+                let row = small("row", 1);
+                self.model.set_rows_height(
+                    sheet,
+                    row,
+                    small("rowEnd", i64::from(row)),
+                    op["height"].as_f64().unwrap_or(25.0),
+                )
+            }
+            "freeze" => self
+                .model
+                .set_frozen_rows_count(sheet, small("rows", 0))
+                .and_then(|()| self.model.set_frozen_columns_count(sheet, small("columns", 0))),
+            "insertRows" => self.model.insert_rows(sheet, small("row", 1), small("count", 1)),
+            "deleteRows" => self.model.delete_rows(sheet, small("row", 1), small("count", 1)),
+            "insertColumns" => self.model.insert_columns(sheet, small("column", 1), small("count", 1)),
+            "deleteColumns" => self.model.delete_columns(sheet, small("column", 1), small("count", 1)),
+            "addSheet" => self.model.new_sheet(),
+            "renameSheet" => self.model.rename_sheet(sheet, &text("name")),
+            "deleteSheet" => self.model.delete_sheet(sheet),
+            "undo" => self.model.undo(),
+            "redo" => self.model.redo(),
+            "charts" => {
+                self.charts = op["charts"].as_array().cloned().unwrap_or_default();
+                Ok(())
+            }
+            other => Err(format!("{other:?} is not an edit")),
+        }
+        .map_err(engine)
     }
 
     /// How long ago the data sheets were read.

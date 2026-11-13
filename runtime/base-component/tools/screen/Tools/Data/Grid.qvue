@@ -26,7 +26,9 @@ along with this software (see the LICENSE.md file). If not, see
     Calc (plans/IronCalc-DB.md, Phase 2) is the grid's second mode: the source, with the columns shown and the sort and
     filters set, as the read-only data sheet of a workbook on the server's spreadsheet engine, drawn by moqui.calc.sheet
     (js/WebrootCalc.js) from the cells the calc transitions answer; a spreadsheet file opens as a workbook, with its
-    formulas; a document is saved, opened and deleted from Documents, refreshed from its sources and exported as XLSX. -->
+    formulas; the workbook is edited beside the data sheet (formulas, formats, sheets, charts: the sheet's own toolbar and
+    formula bar, each edit sent to the server); a document is saved, opened and deleted from Documents, refreshed from its
+    sources and exported as XLSX. -->
 <template><div class="q-pa-sm">
     <div class="row items-center q-col-gutter-sm q-mb-sm">
         <div class="col-12 col-sm-5 col-md-4">
@@ -105,7 +107,8 @@ along with this software (see the LICENSE.md file). If not, see
     <div v-if="mode === 'calc'">
         <div v-if="calc.room && calc.room.truncated && calc.room.truncated.length" class="text-caption q-mb-xs text-warning">
             {{calc.room.truncated.join(', ')}}: only the first {{Number(calc.room.maxDataRows).toLocaleString()}} rows are in the sheet. Filter the source to see the rest.</div>
-        <component v-if="calc.room && calcSheet" :is="calcSheet" :room="calc.room" :cells-url="url('calcCells')" @gone="calcReopen"></component>
+        <component v-if="calc.room && calcSheet" :is="calcSheet" :room="calc.room" :cells-url="url('calcCells')" :edit-url="url('calcEdit')" :content-url="url('calcContent')"
+                @gone="calcReopen" @changed="calcChanged"></component>
         <div v-else-if="calc.busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
         <div v-else class="text-body2 q-pa-md" :class="mutedClass">Choose an entity, open a file, or open a saved document from Documents.</div>
     </div>
@@ -345,6 +348,8 @@ module.exports = {
                 filterJson: JSON.stringify(this.currentFilters()), title: this.sourceLabel }));
         },
         calcReopen() { if (this.calc.opened) this.calcOpenWith(this.calc.opened); },
+        // an edit's answer: the room's new state, taken into the same object so the sheet keeps its place
+        calcChanged(state) { if (this.calc.room) Object.assign(this.calc.room, state); },
         calcClose() {
             const room = this.calc.room;
             this.calc.room = null; this.calc.opened = null;

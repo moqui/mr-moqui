@@ -47,6 +47,15 @@
         <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').shareGroups())</script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a range of a saved document on a dashboard of the viewer's own, as a panel over the dataset calcgrid -->
+    <transition name="calcDashboards" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').dashboards())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcAddPanel" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').addPanel())</script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- open a saved document (definitionId) or a new one over an entity (entityName), into a room of the viewer's -->
     <transition name="calcOpen" method="post" begin-transaction="false">
         <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').open())</script></actions>
@@ -59,6 +68,15 @@
             if (out.errors || !out.blockJson) ec.web.sendJsonResponse({errors: out.errors || 'No cells'})
             else ec.web.sendTextResponse(String(out.blockJson), 'application/json', null)
         ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- edits to the room's workbook, an author's; and what was typed into a cell -->
+    <transition name="calcEdit" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').edit())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calcContent" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').content())</script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="calcRefresh" method="post" begin-transaction="false">

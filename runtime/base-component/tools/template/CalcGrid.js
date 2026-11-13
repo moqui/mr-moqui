@@ -111,6 +111,24 @@ const cells = () =>
         width: ec.context.get("width"),
         height: ec.context.get("height")
     })
+// Edits to the room's workbook (opsJson: a list of edits, as edit#CalcDocument takes them): the room's new state, with an
+// edit's refusal as errors beside it.
+function edit() {
+    const ops = parse("opsJson", null)
+    if (!Array.isArray(ops)) return {errors: "opsJson is not a list of edits"}
+    return ask(CALC + ".edit#CalcDocument", {profileId: profileId(), roomId: ec.context.get("roomId"), ops})
+}
+// What was typed into a cell, for the formula bar and a cell's editor.
+function content() {
+    const found = ask(CALC + ".get#CalcCellContent", {
+        profileId: profileId(),
+        roomId: ec.context.get("roomId"),
+        sheet: ec.context.get("sheet"),
+        row: ec.context.get("row"),
+        column: ec.context.get("column")
+    })
+    return {content: found.content || "", errors: found.errors}
+}
 const refresh = () => ask(CALC + ".refresh#CalcDocument", {profileId: profileId(), roomId: ec.context.get("roomId")})
 // Save the room's document; a group is named only where the mount's policy lets the viewer share.
 function save() {
@@ -133,6 +151,45 @@ function remove() {
     if (!found.definition || found.definition.type !== TYPE) return {errors: "Not a CalcGrid document"}
     return {errors: ask(REPORT + ".delete#Definition", {definitionId}).errors}
 }
+// The dashboards a range may be added to: the viewer's own, by title.
+function dashboards() {
+    const found = ask(REPORT + ".list#Definitions", {definitionType: "dashboard"})
+    return {
+        errors: found.errors,
+        dashboards: Array.from(found.definitions || [])
+            .filter(definition => definition.ownerId === ec.user.userId && definition.readOnly !== true)
+            .map(definition => ({value: definition.id, label: definition.title || definition.id}))
+    }
+}
+// Add a range of a saved document to a dashboard of the viewer's own as a panel over the dataset calcgrid: the report
+// engine's table, bar or pie panel of the range, read by each viewer of the dashboard under their own current access.
+// The engine's save holds the dashboard to its owner.
+const VISUALIZATIONS = ["table", "bar", "pie", "stat"]
+function addPanel() {
+    const definitionId = text(ec.context.get("definitionId"))
+    const dashboardId = text(ec.context.get("dashboardId"))
+    const range = text(ec.context.get("range"))
+    const visualization = text(ec.context.get("visualization")) || "table"
+    if (!definitionId) return {errors: "Save the document first: a panel reads a saved document"}
+    if (!dashboardId || !range) return {errors: "Choose a dashboard and a range"}
+    if (!VISUALIZATIONS.includes(visualization)) return {errors: "A panel of a range is a table, a bar chart, a pie chart or a number"}
+    const document = ask(REPORT + ".get#Definition", {definitionId})
+    if (document.errors || !document.definition || document.definition.type !== TYPE) return {errors: document.errors || "Not a CalcGrid document"}
+    const found = ask(REPORT + ".get#Definition", {definitionId: dashboardId})
+    if (found.errors || !found.definition || found.definition.type !== "dashboard") return {errors: found.errors || "Choose a dashboard"}
+    const dashboard = found.definition
+    dashboard.body = dashboard.body || {}
+    dashboard.body.panels = dashboard.body.panels || {}
+    let panelId = "calc-" + definitionId.replace(/[^a-zA-Z0-9_.:-]/g, "-").slice(0, 60)
+    for (let n = 2; dashboard.body.panels[panelId]; n++) panelId = panelId.replace(/(-\d+)?$/, "-" + n)
+    dashboard.body.panels[panelId] = {
+        title: text(ec.context.get("panelTitle")) || document.definition.title || "CalcGrid",
+        visualization,
+        queries: [{datasetId: "calcgrid", parameters: {definitionId, range}}]
+    }
+    const saved = ask(REPORT + ".save#Definition", {definition: dashboard, note: "Added a CalcGrid range"})
+    return {errors: saved.errors, dashboardId, panelId, link: mountLib.state().links.dashboard}
+}
 // The groups the viewer may share a document with: their own.
 function shareGroups() {
     if (mountLib.state().policy.features.share !== true) return {errors: null, groups: []}
@@ -145,4 +202,4 @@ function shareGroups() {
     }
 }
 
-;({access, choose, entities, documents, open, cells, refresh, save, exported, close, remove, shareGroups, profileId})
+;({access, choose, entities, documents, dashboards, addPanel, open, cells, edit, content, refresh, save, exported, close, remove, shareGroups, profileId})

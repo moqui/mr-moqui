@@ -148,3 +148,96 @@ fn a_user_holds_a_limited_number_of_rooms_and_a_closed_one_is_gone() {
     rooms.close("alice", &other);
     assert!(rooms.get("bob", &other).is_some(), "a room is closed only by its user");
 }
+
+#[test]
+fn edits_are_applied_in_order_evaluated_once_and_undone_and_a_data_sheet_is_not_edited() {
+    let rooms = Rooms::default();
+    let room = rooms.open(opening("alice", 5)).unwrap();
+    let mut room = lock(&room);
+    assert_eq!(room.undo_state(), (false, false));
+    // a sheet beside the data, a formula over the data sheet's table, a text, a pasted block, a style and a width
+    room.edit(&[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 1, "name": "Summary"}),
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders[amount])"}),
+        json!({"op": "input", "sheet": 1, "row": 2, "column": 1, "value": "Total above"}),
+        json!({"op": "paste", "sheet": 1, "row": 4, "column": 1, "rows": [["1", "2"], ["=A4+B4", "x"]]}),
+        json!({"op": "style", "sheet": 1, "row": 1, "column": 1, "width": 1, "height": 1, "path": "font.b", "value": "true"}),
+        json!({"op": "style", "sheet": 1, "row": 1, "column": 1, "width": 1, "height": 1, "path": "num_fmt", "value": "#,##0.00"}),
+        json!({"op": "width", "sheet": 1, "column": 1, "width": 180}),
+        json!({"op": "freeze", "sheet": 1, "rows": 1, "columns": 0}),
+    ])
+    .unwrap();
+    let cell = |room: &Room, sheet, row, column| room.model().get_formatted_cell_value(sheet, row, column).unwrap();
+    assert_eq!(cell(&room, 1, 1, 1), "150.00");
+    assert_eq!(cell(&room, 1, 5, 1), "3");
+    assert_eq!(room.cell_content(1, 1, 1).unwrap(), "=SUM(Orders!$B$2:$B$6)");
+    assert_eq!(room.cell_content(1, 2, 1).unwrap(), "Total above");
+    let layout = room.layout();
+    assert_eq!(layout[1]["name"], "Summary");
+    assert_eq!(layout[1]["data"], false);
+    assert_eq!(layout[1]["widths"][0], 180.0);
+    assert_eq!(layout[1]["frozenRows"], 1);
+    let block: serde_json::Value = serde_json::from_str(&room.block(1, 1, 1, 1, 1).unwrap()).unwrap();
+    assert_eq!(block["styles"][0]["style"]["font"]["b"], true);
+    assert_eq!(room.undo_state(), (true, false));
+
+    // a data sheet's cells, rows and name are not edited; its widths are
+    for op in [
+        json!({"op": "input", "sheet": 0, "row": 2, "column": 2, "value": "999"}),
+        json!({"op": "clear", "sheet": 0, "row": 2, "column": 1, "width": 2, "height": 2}),
+        json!({"op": "deleteRows", "sheet": 0, "row": 2, "count": 1}),
+        json!({"op": "renameSheet", "sheet": 0, "name": "Mine"}),
+        json!({"op": "deleteSheet", "sheet": 0}),
+    ] {
+        let err = room.edit(std::slice::from_ref(&op)).expect_err("a data sheet edit");
+        assert!(err.message().contains("is a data sheet"), "{op}: {}", err.message());
+    }
+    assert_eq!(cell(&room, 0, 2, 2), "10");
+    room.edit(&[json!({"op": "width", "sheet": 0, "column": 1, "width": 200})])
+        .unwrap();
+
+    // the edits before a refused one stay, and an unknown edit is refused
+    let err = room
+        .edit(&[
+            json!({"op": "input", "sheet": 1, "row": 9, "column": 1, "value": "kept"}),
+            json!({"op": "nonsense"}),
+        ])
+        .expect_err("an unknown edit");
+    assert!(err.message().contains("is not an edit"), "{}", err.message());
+    assert_eq!(cell(&room, 1, 9, 1), "kept");
+
+    // undo and redo, and a clear
+    room.edit(&[json!({"op": "undo"})]).unwrap();
+    assert_eq!(cell(&room, 1, 9, 1), "");
+    room.edit(&[json!({"op": "redo"})]).unwrap();
+    assert_eq!(cell(&room, 1, 9, 1), "kept");
+    room.edit(&[json!({"op": "clear", "sheet": 1, "row": 9, "column": 1, "width": 1, "height": 1})])
+        .unwrap();
+    assert_eq!(cell(&room, 1, 9, 1), "");
+
+    // the engine's autofill carries a formula down
+    room.edit(&[
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 4, "value": "=Orders!B2*2"}),
+        json!({"op": "fill", "sheet": 1, "row": 1, "column": 4, "width": 1, "height": 1, "toRow": 3}),
+    ])
+    .unwrap();
+    assert_eq!(cell(&room, 1, 3, 4), "60");
+
+    // the charts are the document's, replaced as a whole
+    room.edit(&[json!({"op": "charts", "charts": [{"title": "Amounts", "type": "bar", "categories": "Orders!A2:A3", "series": [{"name": "Amount", "values": "Orders!B2:B3"}]}]})])
+        .unwrap();
+    assert_eq!(room.charts()[0]["series"][0]["data"], json!([10.0, 20.0]));
+
+    // the stored form keeps the author's sheet and formula, with no row of the data; a refresh keeps them over new rows
+    let stored = fill::open_stored(&room.stored_form().unwrap()).unwrap();
+    assert_eq!(stored.workbook.get_worksheet_names(), ["Orders", "Summary"]);
+    assert_eq!(
+        stored.get_cell_formula(1, 1, 1).unwrap().as_deref(),
+        Some("=SUM(Orders!$B$2:$B$3)")
+    );
+    assert_eq!(stored.get_formatted_cell_value(1, 1, 1).unwrap(), "0.00");
+    room.refresh(vec![rows(8)]).unwrap();
+    assert_eq!(cell(&room, 1, 1, 1), "360.00");
+    assert_eq!(room.undo_state(), (false, false), "a refresh ends the undo history");
+}

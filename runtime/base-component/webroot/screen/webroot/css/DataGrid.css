@@ -153,3 +153,16 @@ body .tabulator-menu .tabulator-menu-separator { border-top:1px solid var(--m-di
 body .tabulator-menu .tabulator-menu-item.tabulator-menu-item-disabled { color:var(--m-text-muted); }
 body .tabulator-menu .tabulator-menu-item.tabulator-menu-item-submenu:after { border-color:var(--m-text-muted); }
 body .tabulator-tooltip { background:var(--m-text); color:var(--m-panel-bg); border-radius:3px; }
+
+/* The CalcGrid sheet (js/WebrootCalc.js): the formula bar, a cell's editor, the colour swatches and the name completions */
+.m-calc-bar { border: 1px solid rgba(128, 128, 128, .4); border-radius: 4px; }
+.m-calc-name { min-width: 72px; border-right: 1px solid rgba(128, 128, 128, .4); font-variant-numeric: tabular-nums; }
+.m-calc-formula { width: 100%; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; padding: 4px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.m-calc-cell-editor { width: 100%; height: 100%; border: 2px solid var(--q-primary); outline: 0; padding: 0 4px; font: inherit; background: var(--q-dark-page, #fff); color: inherit; box-sizing: border-box; }
+body.body--light .m-calc-cell-editor { background: #fff; }
+.m-calc-swatch { width: 20px; height: 20px; margin: 1px; border: 1px solid rgba(128, 128, 128, .5); cursor: pointer; }
+.m-calc-suggest { position: absolute; left: 0; top: 100%; z-index: 20; min-width: 180px; background: var(--q-dark, #fff); border: 1px solid rgba(128, 128, 128, .4); }
+body.body--light .m-calc-suggest { background: #fff; }
+.m-calc-suggest-item { padding: 2px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; cursor: pointer; }
+.m-calc-suggest-on, .m-calc-suggest-item:hover { background: rgba(128, 128, 128, .25); }
+.m-calc-grid:focus { outline: none; }
