@@ -1725,7 +1725,7 @@
               ]))
             }
         } },
-        "m-call-guest": { hash: "e2eb6cf", make: function (Vue) {
+        "m-call-guest": { hash: "61f2b793", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, createVNode: _createVNode, createSlots: _createSlots, withKeys: _withKeys, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
@@ -1778,7 +1778,7 @@
                       ]),
                       default: _withCtx(() => [
                         _createElementVNode("div", { class: "text-weight-medium" }, _toDisplayString(_ctx.moquiRecordingText(_ctx.recording)), 1),
-                        _createTextVNode(_toDisplayString(_ctx.withdrawn ? _ctx.t('You withdrew your consent: the recording is paused while you are in the call.') : _ctx.needsAck ? _ctx.t('This call is being recorded. The recording waits until everyone in the call acknowledges.') : _ctx.t('This call is being recorded. Staying in the call is consent.')), 1)
+                        _createTextVNode(_toDisplayString(_ctx.phase === 'lobby' || _ctx.phase === 'waiting' ? (_ctx.recording.ackRequired ? _ctx.t('This call is being recorded. Once you are in, you are asked to acknowledge it.') : _ctx.t('This call is being recorded. Joining it is consent.')) : _ctx.withdrawn ? _ctx.t('You withdrew your consent: the recording is paused while you are in the call.') : _ctx.needsAck ? _ctx.t('This call is being recorded. The recording waits until everyone in the call acknowledges.') : _ctx.t('This call is being recorded. Staying in the call is consent.')), 1)
                       ]),
                       _: 2
                     }, [

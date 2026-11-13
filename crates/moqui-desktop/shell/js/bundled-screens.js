@@ -2925,6 +2925,40 @@ const roomTemplate = `
             <q-toggle v-model="settings.verifiedOnly" :label="t('Messages only to verified devices')" class="q-mt-sm m-chat-room-verified-only"></q-toggle>
             <div class="text-caption m-muted">{{t("Each member's browser encrypts for the devices that were verified (by emoji or QR code, or by their owner's cross-signing) only; a device that is not verified cannot read what follows.")}}</div>
         </template>
+        <!-- the networks the room's messages go to (C1): its bridges' mappings, added, changed and ended by a bridge administrator -->
+        <template v-if="!sealed && !isDirect && (roomBridges.length || (me && me.bridgeAdmin))">
+            <div class="text-subtitle2 q-mt-md">{{t('Bridges')}}</div>
+            <q-list dense separator class="m-chat-room-bridges">
+                <q-item v-for="bridge in roomBridges" :key="bridge.chatRoomBridgeId">
+                    <q-item-section>
+                        <q-item-label>{{bridge.networkName || bridge.name}}<span v-if="bridge.externalRoomName"> · <a v-if="bridge.externalRoomUrl" :href="bridge.externalRoomUrl" target="_blank" rel="noopener noreferrer">{{bridge.externalRoomName}}</a><template v-else>{{bridge.externalRoomName}}</template></span></q-item-label>
+                        <q-item-label caption>{{directionText(bridge.directionEnumId)}} · <span :class="bridge.connected ? 'text-positive' : 'text-warning'">{{bridge.connected ? t('connected') : t('not connected')}}</span></q-item-label>
+                    </q-item-section>
+                    <q-item-section v-if="me && me.bridgeAdmin" side class="row no-wrap">
+                        <div class="row no-wrap">
+                            <q-btn flat dense round icon="sym_o_edit" @click="editBridge(bridge)"><q-tooltip>{{t('Change')}}</q-tooltip></q-btn>
+                            <q-btn flat dense round icon="sym_o_link_off" color="negative" @click="endBridge(bridge)"><q-tooltip>{{t('End')}}</q-tooltip></q-btn>
+                        </div>
+                    </q-item-section>
+                </q-item>
+                <q-item v-if="!roomBridges.length"><q-item-section class="text-caption m-muted">{{t('Not bridged: its messages stay here.')}}</q-item-section></q-item>
+            </q-list>
+            <template v-if="me && me.bridgeAdmin">
+                <q-btn v-if="!bridgeForm.open" flat dense no-caps icon="sym_o_add_link" :label="t('Bridge to another network')" class="q-mt-xs" @click="newBridge"></q-btn>
+                <div v-else class="q-mt-xs q-pa-sm rounded-borders m-tonal m-chat-room-bridge-form">
+                    <m-drop-down v-if="!bridgeForm.chatRoomBridgeId" v-model="bridgeForm.chatBridgeId" :name="'bridgeChoice' + uid" :options="bridgeChoices" :label="t('Bridge')"></m-drop-down>
+                    <m-text-line v-if="!bridgeForm.chatRoomBridgeId" v-model="bridgeForm.externalRoomId" :name="'bridgeRoomId' + uid" :label="t('Its room or conversation id on that network')" class="q-mt-xs"></m-text-line>
+                    <m-text-line v-model="bridgeForm.externalRoomName" :name="'bridgeRoomName' + uid" :label="t('Its name there')" class="q-mt-xs"></m-text-line>
+                    <m-text-line v-model="bridgeForm.externalRoomUrl" :name="'bridgeRoomUrl' + uid" :label="t('A link to it (optional)')" class="q-mt-xs"></m-text-line>
+                    <m-drop-down v-model="bridgeForm.directionEnumId" :name="'bridgeDirection' + uid" :options="directionOptions" :label="t('Messages go')" class="q-mt-xs"></m-drop-down>
+                    <div class="row q-gutter-sm q-mt-sm">
+                        <q-btn unelevated dense no-caps color="primary" :label="t('Save the bridge')" :loading="bridgeForm.busy"
+                                :disable="!bridgeForm.chatRoomBridgeId && (!bridgeForm.chatBridgeId || !bridgeForm.externalRoomId)" @click="saveBridge"></q-btn>
+                        <q-btn flat dense no-caps :label="t('Cancel')" @click="bridgeForm.open = false"></q-btn>
+                    </div>
+                </div>
+            </template>
+        </template>
         <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
         <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
@@ -3009,7 +3043,9 @@ const chatRoom = {
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
-            settings: { open: false, roomName: '', topic: '', visibility: '', busy: false }, previewBox: { open: false, src: '', name: '', download: '', file: null },
+            settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
+            bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
+            bridgeChoices: [], previewBox: { open: false, src: '', name: '', download: '', file: null },
             tick: Date.now(), width: 0, dragOver: false, anchor: null,
             fileOn: { open: false, item: null, value: null, busy: false },
             quickReactions: QUICK_REACTIONS, emoji: EMOJI, levels: LEVELS
@@ -3026,6 +3062,10 @@ const chatRoom = {
         canPost() { return !!this.access.canPost; },
         canModerate() { return !!this.access.canModerate; },
         isOwner() { return !!this.access.isOwner; },
+        roomBridges() { return (this.room && this.room.bridges) || []; },
+        directionOptions() {
+            return [{ value: 'CrbBoth', label: t('Both ways') }, { value: 'CrbIn', label: t('Only in: from there to here') }, { value: 'CrbOut', label: t('Only out: from here to there') }];
+        },
         // a bridged room (C1): what its bridges carry (an edit, a delete or a reaction one of them cannot carry is not offered)
         bridgeCaps() { return (this.room && this.room.bridgeCapabilities) || { edit: true, delete: true, reaction: true }; },
         bridgeNames() {
@@ -4184,6 +4224,41 @@ const chatRoom = {
             if (needsConnection()) return;
             this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '',
                 callE2ee: !!this.room.callE2eeRequired, verifiedOnly: !!this.room.verifiedDevicesOnly, busy: false };
+        },
+        // ---- the room's bridges (C1, a bridge administrator) ----
+        directionText(direction) {
+            return direction === 'CrbIn' ? t('Only in') : direction === 'CrbOut' ? t('Only out') : t('Both ways');
+        },
+        newBridge() {
+            this.bridgeForm = { open: true, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false };
+            moqui.request(this.url('bridgeChoices'), {}).then((result) => {
+                this.bridgeChoices = ((result.json && result.json.bridgeList) || []).map((b) => ({ value: b.chatBridgeId, label: b.name + (b.networkName ? ' (' + b.networkName + ')' : '') }));
+            }, () => { this.bridgeChoices = []; });
+        },
+        editBridge(bridge) {
+            this.bridgeForm = { open: true, chatRoomBridgeId: bridge.chatRoomBridgeId, chatBridgeId: bridge.chatBridgeId, externalRoomId: '',
+                externalRoomName: bridge.externalRoomName || '', externalRoomUrl: bridge.externalRoomUrl || '', directionEnumId: bridge.directionEnumId || 'CrbBoth', busy: false };
+        },
+        saveBridge() {
+            const form = this.bridgeForm;
+            form.busy = true;
+            const params = { chatRoomId: this.roomId, externalRoomName: form.externalRoomName || '', externalRoomUrl: form.externalRoomUrl || '', directionEnumId: form.directionEnumId };
+            if (form.chatRoomBridgeId) params.chatRoomBridgeId = form.chatRoomBridgeId;
+            else Object.assign(params, { chatBridgeId: form.chatBridgeId, externalRoomId: form.externalRoomId });
+            this.post('storeRoomBridge', params).then((json) => {
+                form.busy = false;
+                if (json.errors) { moqui.notifyMessages([], json.errors); return; }
+                this.bridgeForm = Object.assign({}, form, { open: false });
+                this.reloadMeta();
+            }, () => { form.busy = false; });
+        },
+        endBridge(bridge) {
+            this.confirm(t('End this bridge?'), t('Nothing more goes to it or comes from it; messages waiting to go are not sent.'), t('End'), true).then(() => {
+                this.post('endRoomBridge', { chatRoomBridgeId: bridge.chatRoomBridgeId }).then((json) => {
+                    if (json.errors) { moqui.notifyMessages([], json.errors); return; }
+                    this.reloadMeta();
+                }, () => {});
+            }, () => {});
         },
         saveSettings() {
             const params = { chatRoomId: this.roomId, roomName: this.settings.roomName, topic: this.settings.topic || '' };
@@ -7631,6 +7706,206 @@ module.exports = {
                               _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.t("Each member's browser encrypts for the devices that were verified (by emoji or QR code, or by their owner's cross-signing) only; a device that is not verified cannot read what follows.")), 1)
                             ], 64))
                           : _createCommentVNode("", true),
+                        (!_ctx.sealed && !_ctx.isDirect && (_ctx.roomBridges.length || (_ctx.me && _ctx.me.bridgeAdmin)))
+                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 3 }, [
+                              _createElementVNode("div", { class: "text-subtitle2 q-mt-md" }, _toDisplayString(_ctx.t('Bridges')), 1),
+                              _createVNode(_component_q_list, {
+                                dense: "",
+                                separator: "",
+                                class: "m-chat-room-bridges"
+                              }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.roomBridges, (bridge) => {
+                                    return (_openBlock(), _createBlock(_component_q_item, {
+                                      key: bridge.chatRoomBridgeId
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_label, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(bridge.networkName || bridge.name), 1),
+                                                (bridge.externalRoomName)
+                                                  ? (_openBlock(), _createElementBlock("span", { key: 0 }, [
+                                                      _createTextVNode(" · "),
+                                                      (bridge.externalRoomUrl)
+                                                        ? (_openBlock(), _createElementBlock("a", {
+                                                            key: 0,
+                                                            href: bridge.externalRoomUrl,
+                                                            target: "_blank",
+                                                            rel: "noopener noreferrer"
+                                                          }, _toDisplayString(bridge.externalRoomName), 9, ["href"]))
+                                                        : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                                            _createTextVNode(_toDisplayString(bridge.externalRoomName), 1)
+                                                          ], 64))
+                                                    ]))
+                                                  : _createCommentVNode("", true)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            _createVNode(_component_q_item_label, { caption: "" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.directionText(bridge.directionEnumId)) + " · ", 1),
+                                                _createElementVNode("span", {
+                                                  class: _normalizeClass(bridge.connected ? 'text-positive' : 'text-warning')
+                                                }, _toDisplayString(bridge.connected ? _ctx.t('connected') : _ctx.t('not connected')), 3)
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        (_ctx.me && _ctx.me.bridgeAdmin)
+                                          ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                              key: 0,
+                                              side: "",
+                                              class: "row no-wrap"
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createElementVNode("div", { class: "row no-wrap" }, [
+                                                  _createVNode(_component_q_btn, {
+                                                    flat: "",
+                                                    dense: "",
+                                                    round: "",
+                                                    icon: "sym_o_edit",
+                                                    onClick: $event => (_ctx.editBridge(bridge))
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_tooltip, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Change')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }, 8, ["onClick"]),
+                                                  _createVNode(_component_q_btn, {
+                                                    flat: "",
+                                                    dense: "",
+                                                    round: "",
+                                                    icon: "sym_o_link_off",
+                                                    color: "negative",
+                                                    onClick: $event => (_ctx.endBridge(bridge))
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_tooltip, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('End')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }, 8, ["onClick"])
+                                                ])
+                                              ]),
+                                              _: 2
+                                            }, 1024))
+                                          : _createCommentVNode("", true)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  }), 128)),
+                                  (!_ctx.roomBridges.length)
+                                    ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { class: "text-caption m-muted" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Not bridged: its messages stay here.')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }))
+                                    : _createCommentVNode("", true)
+                                ]),
+                                _: 1
+                              }),
+                              (_ctx.me && _ctx.me.bridgeAdmin)
+                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                    (!_ctx.bridgeForm.open)
+                                      ? (_openBlock(), _createBlock(_component_q_btn, {
+                                          key: 0,
+                                          flat: "",
+                                          dense: "",
+                                          "no-caps": "",
+                                          icon: "sym_o_add_link",
+                                          label: _ctx.t('Bridge to another network'),
+                                          class: "q-mt-xs",
+                                          onClick: _ctx.newBridge
+                                        }, null, 8, ["label", "onClick"]))
+                                      : (_openBlock(), _createElementBlock("div", {
+                                          key: 1,
+                                          class: "q-mt-xs q-pa-sm rounded-borders m-tonal m-chat-room-bridge-form"
+                                        }, [
+                                          (!_ctx.bridgeForm.chatRoomBridgeId)
+                                            ? (_openBlock(), _createBlock(_component_m_drop_down, {
+                                                key: 0,
+                                                modelValue: _ctx.bridgeForm.chatBridgeId,
+                                                "onUpdate:modelValue": $event => ((_ctx.bridgeForm.chatBridgeId) = $event),
+                                                name: 'bridgeChoice' + _ctx.uid,
+                                                options: _ctx.bridgeChoices,
+                                                label: _ctx.t('Bridge')
+                                              }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "options", "label"]))
+                                            : _createCommentVNode("", true),
+                                          (!_ctx.bridgeForm.chatRoomBridgeId)
+                                            ? (_openBlock(), _createBlock(_component_m_text_line, {
+                                                key: 1,
+                                                modelValue: _ctx.bridgeForm.externalRoomId,
+                                                "onUpdate:modelValue": $event => ((_ctx.bridgeForm.externalRoomId) = $event),
+                                                name: 'bridgeRoomId' + _ctx.uid,
+                                                label: _ctx.t('Its room or conversation id on that network'),
+                                                class: "q-mt-xs"
+                                              }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]))
+                                            : _createCommentVNode("", true),
+                                          _createVNode(_component_m_text_line, {
+                                            modelValue: _ctx.bridgeForm.externalRoomName,
+                                            "onUpdate:modelValue": $event => ((_ctx.bridgeForm.externalRoomName) = $event),
+                                            name: 'bridgeRoomName' + _ctx.uid,
+                                            label: _ctx.t('Its name there'),
+                                            class: "q-mt-xs"
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                                          _createVNode(_component_m_text_line, {
+                                            modelValue: _ctx.bridgeForm.externalRoomUrl,
+                                            "onUpdate:modelValue": $event => ((_ctx.bridgeForm.externalRoomUrl) = $event),
+                                            name: 'bridgeRoomUrl' + _ctx.uid,
+                                            label: _ctx.t('A link to it (optional)'),
+                                            class: "q-mt-xs"
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                                          _createVNode(_component_m_drop_down, {
+                                            modelValue: _ctx.bridgeForm.directionEnumId,
+                                            "onUpdate:modelValue": $event => ((_ctx.bridgeForm.directionEnumId) = $event),
+                                            name: 'bridgeDirection' + _ctx.uid,
+                                            options: _ctx.directionOptions,
+                                            label: _ctx.t('Messages go'),
+                                            class: "q-mt-xs"
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "options", "label"]),
+                                          _createElementVNode("div", { class: "row q-gutter-sm q-mt-sm" }, [
+                                            _createVNode(_component_q_btn, {
+                                              unelevated: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              color: "primary",
+                                              label: _ctx.t('Save the bridge'),
+                                              loading: _ctx.bridgeForm.busy,
+                                              disable: !_ctx.bridgeForm.chatRoomBridgeId && (!_ctx.bridgeForm.chatBridgeId || !_ctx.bridgeForm.externalRoomId),
+                                              onClick: _ctx.saveBridge
+                                            }, null, 8, ["label", "loading", "disable", "onClick"]),
+                                            _createVNode(_component_q_btn, {
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              label: _ctx.t('Cancel'),
+                                              onClick: $event => (_ctx.bridgeForm.open = false)
+                                            }, null, 8, ["label", "onClick"])
+                                          ])
+                                        ]))
+                                  ], 64))
+                                : _createCommentVNode("", true)
+                            ], 64))
+                          : _createCommentVNode("", true),
                         _createVNode(_component_q_toggle, {
                           modelValue: _ctx.settings.callE2ee,
                           "onUpdate:modelValue": $event => ((_ctx.settings.callE2ee) = $event),
@@ -10410,6 +10685,7 @@ module.exports = {
                 const status = { accept: 'accepted', tentative: 'tentative', decline: 'declined' }[response];
                 message.invitation.myStatus = status;
                 if (json.workEffortId) message.invitation.workEffortId = json.workEffortId;
+                if (json.eventUrl) message.invitation.eventUrl = json.eventUrl;
             }, () => {});
         },
         flagMessage(message) {
@@ -14287,35 +14563,37 @@ module.exports = {
                                                                               key: 3,
                                                                               class: "text-caption m-muted"
                                                                             }, _toDisplayString(_ctx.t('An answer to an invitation')), 1))
-                                                                          : (_openBlock(), _createElementBlock("div", {
-                                                                              key: 4,
-                                                                              class: "row q-gutter-xs q-mt-xs"
-                                                                            }, [
-                                                                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.invitationAnswers, (answer) => {
-                                                                                return (_openBlock(), _createBlock(_component_q_btn, {
-                                                                                  key: answer.value,
-                                                                                  dense: "",
-                                                                                  "no-caps": "",
-                                                                                  unelevated: "",
-                                                                                  icon: answer.icon,
-                                                                                  label: answer.label,
-                                                                                  color: item.message.invitation.myStatus === answer.status ? 'primary' : undefined,
-                                                                                  class: _normalizeClass(item.message.invitation.myStatus === answer.status ? '' : 'm-btn-tonal'),
-                                                                                  onClick: $event => (_ctx.respondInvite(item.message, answer.value))
-                                                                                }, null, 8, ["icon", "label", "color", "class", "onClick"]))
-                                                                              }), 128)),
-                                                                              (item.message.invitation.eventUrl)
-                                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                                                    key: 0,
-                                                                                    flat: "",
+                                                                          : (item.message.invitation.canRespond !== false)
+                                                                            ? (_openBlock(), _createElementBlock("div", {
+                                                                                key: 4,
+                                                                                class: "row q-gutter-xs q-mt-xs"
+                                                                              }, [
+                                                                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.invitationAnswers, (answer) => {
+                                                                                  return (_openBlock(), _createBlock(_component_q_btn, {
+                                                                                    key: answer.value,
                                                                                     dense: "",
                                                                                     "no-caps": "",
-                                                                                    color: "primary",
-                                                                                    label: _ctx.t('Open event'),
-                                                                                    onClick: $event => (_ctx.go(item.message.invitation.eventUrl))
-                                                                                  }, null, 8, ["label", "onClick"]))
-                                                                                : _createCommentVNode("", true)
-                                                                            ]))
+                                                                                    unelevated: "",
+                                                                                    icon: answer.icon,
+                                                                                    label: answer.label,
+                                                                                    color: item.message.invitation.myStatus === answer.status ? 'primary' : undefined,
+                                                                                    class: _normalizeClass(item.message.invitation.myStatus === answer.status ? '' : 'm-btn-tonal'),
+                                                                                    onClick: $event => (_ctx.respondInvite(item.message, answer.value))
+                                                                                  }, null, 8, ["icon", "label", "color", "class", "onClick"]))
+                                                                                }), 128)),
+                                                                                (item.message.invitation.eventUrl)
+                                                                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                                      key: 0,
+                                                                                      flat: "",
+                                                                                      dense: "",
+                                                                                      "no-caps": "",
+                                                                                      color: "primary",
+                                                                                      label: _ctx.t('Open event'),
+                                                                                      onClick: $event => (_ctx.go(item.message.invitation.eventUrl))
+                                                                                    }, null, 8, ["label", "onClick"]))
+                                                                                  : _createCommentVNode("", true)
+                                                                              ]))
+                                                                            : _createCommentVNode("", true)
                                                                     ])
                                                                   ]),
                                                                   _: 2
