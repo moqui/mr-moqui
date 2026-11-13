@@ -308,6 +308,30 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- edits applied to the room's workbook in order (opsJson: a list of edits, as edit#CalcDocument takes them); the
+        room's new state is answered with an edit's refusal beside it -->
+    <transition name="calcEdit" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let ops = []
+            try { ops = JSON.parse(String(ec.web.secureRequestParameters.opsJson != null ? ec.web.secureRequestParameters.opsJson : context.opsJson || '[]')) } catch (e) { ops = null }
+            const out = ops == null ? {} : (ec.service.sync().name('org.moqui.calc.CalcServices.edit#CalcDocument').parameters({roomId: context.roomId, ops}).call() || {})
+            const errors = ops == null ? 'opsJson is not JSON' : (ec.message.hasError() ? ec.message.errorsString : null)
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- what was typed into a cell, for the formula bar and a cell's editor -->
+    <transition name="calcContent" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.get#CalcCellContent').parameters({roomId: context.roomId, sheet: context.sheet,
+                row: context.row, column: context.column}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({content: out.content || '', errors})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the data sheets read again, the workbook evaluated -->
     <transition name="calcRefresh" method="post" begin-transaction="false">
         <actions><script><![CDATA[

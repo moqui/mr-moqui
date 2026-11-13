@@ -20,6 +20,8 @@
             <q-btn v-if="access.canAuthor" flat dense no-caps icon="add" label="New" @click="newOpen = true"></q-btn>
             <q-btn flat dense no-caps icon="refresh" label="Refresh" :disable="!room || busy" :loading="busy" @click="refresh"><q-tooltip>Read the data sheets again</q-tooltip></q-btn>
             <q-btn flat dense no-caps icon="download" label="XLSX" :disable="!room" @click="exportXlsx"></q-btn>
+            <q-btn flat dense no-caps icon="dashboard_customize" label="Add to dashboard" :disable="!room || !room.definitionId" @click="openPanel">
+                <q-tooltip>{{room && !room.definitionId ? 'Save the document first' : 'The cells selected as a panel of one of your dashboards'}}</q-tooltip></q-btn>
             <q-btn v-if="room && room.definitionId && ownsRoom" flat dense no-caps icon="delete" label="Delete" @click="deleteDocument"></q-btn>
             <q-btn v-if="access.canAuthor && room && (!room.definitionId || ownsRoom)" unelevated dense no-caps color="primary" icon="save" label="Save document"
                     :disable="busy" @click="openSave"></q-btn>
@@ -27,7 +29,8 @@
     </div>
     <div v-if="room && room.truncated && room.truncated.length" class="text-caption q-mb-xs text-warning">
         {{room.truncated.join(', ')}}: only the first {{Number(room.maxDataRows).toLocaleString()}} rows are in the sheet.</div>
-    <component v-if="room && calcSheet" :is="calcSheet" :room="room" :cells-url="url('calcCells')" :params="requestParams" @gone="reopen"></component>
+    <component v-if="room && calcSheet" :is="calcSheet" :room="room" :cells-url="url('calcCells')" :params="requestParams"
+            :edit-url="canEdit ? url('calcEdit') : ''" :content-url="url('calcContent')" @gone="reopen" @changed="changed" @selection="selected = $event"></component>
     <div v-else-if="busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
     <div v-else-if="loaded && !accessOptions.length" class="text-body2 q-pa-md" :class="mutedClass">CalcGrid is not set up for you: no access profile is granted to a group of yours.</div>
     <div v-else-if="loaded" class="text-body2 q-pa-md" :class="mutedClass">
@@ -44,6 +47,20 @@
             </q-card-section>
             <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
                 <q-btn unelevated no-caps color="primary" label="Open" :disable="!newEntity" @click="openNew"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+    <q-dialog v-model="panelOpen">
+        <q-card style="min-width:400px;max-width:90vw">
+            <q-card-section><div class="text-h6">Add to a dashboard</div></q-card-section>
+            <q-card-section class="q-pt-none q-gutter-sm">
+                <q-select dense outlined v-model="panel.dashboardId" :options="dashboardOptions" emit-value map-options label="Dashboard" hint="One of your own"></q-select>
+                <q-input dense outlined v-model="panel.range" label="Range" hint="Its first row names the columns: Summary!A1:D20"></q-input>
+                <q-input dense outlined v-model="panel.title" label="Panel title"></q-input>
+                <q-option-group v-model="panel.visualization" inline dense :options="[{label: 'Table', value: 'table'}, {label: 'Bars', value: 'bar'}, {label: 'Pie', value: 'pie'}, {label: 'Number', value: 'stat'}]"></q-option-group>
+                <div class="text-caption" :class="mutedClass">Each person who opens the dashboard sees the rows they may read. Edits show there once the document is saved.</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Add" :disable="!panel.dashboardId || !panel.range" @click="addPanel"></q-btn></q-card-actions>
         </q-card>
     </q-dialog>
     <q-dialog v-model="saveOpen">
@@ -68,9 +85,10 @@ module.exports = {
             loaded: false, busy: false, calcSheet: null,
             access: { tools: false, profiles: [], canAuthor: false, canShare: false, fixedProfile: null, userId: '' },
             // the access a call is made under: a profile's id, or '' for the Tools app's own
-            profileId: '', documents: [], documentId: null, room: null, opened: null,
+            profileId: '', documents: [], documentId: null, room: null, opened: null, selected: null,
             newOpen: false, newEntity: null, newTitle: '', entityOptions: [],
-            saveOpen: false, saveTitle: '', saveGroup: null, shareGroups: []
+            saveOpen: false, saveTitle: '', saveGroup: null, shareGroups: [],
+            panelOpen: false, dashboardOptions: [], panel: { dashboardId: null, range: '', title: '', visualization: 'table' }
         };
     },
     computed: {
@@ -84,6 +102,8 @@ module.exports = {
         },
         documentOptions() { return this.documents.map((doc) => ({ value: doc.definitionId, label: doc.title })); },
         requestParams() { return this.profileId ? { profileId: this.profileId } : {}; },
+        // an author edits a document of their own, or one not saved yet
+        canEdit() { return this.access.canAuthor && !!this.room && (!this.room.definitionId || this.ownsRoom); },
         ownsRoom() {
             const doc = this.room && this.documents.find((found) => found.definitionId === this.room.definitionId);
             return !!doc && doc.ownerId === this.access.userId;
@@ -118,6 +138,8 @@ module.exports = {
         },
         openDocument(definitionId) { if (!definitionId) return; this.closeRoom(); this.openWith({ definitionId }); },
         reopen() { if (this.opened) this.openWith(this.opened); },
+        // an edit's answer: the room's new state, taken into the same object so the sheet keeps its place
+        changed(state) { if (this.room) Object.assign(this.room, state); },
         // another profile reads other rows: the open document is read again under it, and the choice is kept as the
         // viewer's current access, which their dashboard panels over a document read under
         profileChanged() {
@@ -164,6 +186,23 @@ module.exports = {
                 this.opened = { definitionId: out.definitionId };
                 this.loadDocuments().then(() => { this.documentId = out.definitionId; });
                 moqui.notifyMessages('Document saved');
+            });
+        },
+        // the cells selected (or the sheet's used area) as a panel of a dashboard of the viewer's own
+        openPanel() {
+            const sheet = (this.room.sheets || []).find((found) => found.index === (this.selected ? this.selected.sheet : 0)) || (this.room.sheets || [])[0] || {};
+            const one = !this.selected || (this.selected.row === this.selected.lastRow && this.selected.column === this.selected.lastColumn);
+            const range = one ? moqui.calc.rangeName({ row: 1, column: 1, lastRow: Math.min(Number(sheet.rows) || 1, 200), lastColumn: Number(sheet.columns) || 1 }, sheet.name) : this.selected.name;
+            this.panel = { dashboardId: this.panel.dashboardId, range, title: this.room.title || '', visualization: 'table' };
+            this.panelOpen = true;
+            this.call('calcDashboards').then((out) => { this.dashboardOptions = (out && out.dashboards) || []; });
+        },
+        addPanel() {
+            this.call('calcAddPanel', { definitionId: this.room.definitionId, dashboardId: this.panel.dashboardId, range: this.panel.range, panelTitle: this.panel.title,
+                visualization: this.panel.visualization }, 'POST').then((out) => {
+                if (!out || !out.panelId) return;
+                this.panelOpen = false;
+                moqui.notifyMessages('Added to the dashboard');
             });
         },
         deleteDocument() {

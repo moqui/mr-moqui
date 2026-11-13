@@ -49,6 +49,8 @@ use crate::room::{DataSheet, Opening, Room, Rooms};
 
 /// The most data rows one data sheet takes; a source with more is cut and the sheet is marked.
 pub const MAX_DATA_ROWS: usize = 100_000;
+/// The most edits of one `edit#CalcDocument` call.
+const MAX_EDIT_OPS: usize = 2_000;
 /// The largest stored overlay, in bytes.
 pub const MAX_OVERLAY_BYTES: usize = 8 * 1024 * 1024;
 /// The largest workbook file opened as a document.
@@ -69,6 +71,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, find_calc_entities)?;
     rust_service!(map, get_calc_frame)?;
     rust_service!(map, set_calc_profile)?;
+    rust_service!(map, edit_calc_document)?;
+    rust_service!(map, get_calc_cell_content)?;
     Ok(())
 }
 
@@ -432,6 +436,9 @@ fn room_out(room: &Room) -> BTreeMap<String, Value> {
         "truncated".to_string(),
         Value::List(room.truncated.iter().map(Value::string).collect()),
     );
+    let (can_undo, can_redo) = room.undo_state();
+    out.insert("canUndo".to_string(), Value::Bool(can_undo));
+    out.insert("canRedo".to_string(), Value::Bool(can_redo));
     out.insert(
         "maxDataRows".to_string(),
         Value::I64(i64::try_from(MAX_DATA_ROWS).unwrap_or(i64::MAX)),
@@ -802,6 +809,53 @@ fn find_calc_entities(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         Value::List(names.into_iter().map(Value::String).collect()),
     );
     Ok(out)
+}
+
+/// `edit#CalcDocument`: apply edits to the room's workbook in order and evaluate once ([`Room::edit`]). Under a profile
+/// only an author edits. The room's sheets, charts and undo state are answered whether or not an edit was refused, with
+/// the refusal as an error: the edits before it stay.
+fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    if matches!(access, Access::Profile(_)) && !profile::may_author() {
+        return refused("Not available");
+    }
+    let Some(room) = room_of(parameters, &access) else {
+        return Ok(BTreeMap::new());
+    };
+    let ops: Vec<Json> = match parameters.get("ops").map(to_json) {
+        Some(Json::Array(ops)) => ops,
+        _ => return refused("ops is a list of edits"),
+    };
+    if ops.len() > MAX_EDIT_OPS {
+        return refused(format!("At most {MAX_EDIT_OPS} edits in one call"));
+    }
+    let mut room = moqui_lib::sync::lock(&room);
+    if let Err(err) = room.edit(&ops) {
+        add_error(err.message());
+    }
+    Ok(room_out(&room))
+}
+
+/// `get#CalcCellContent`: what was typed into a cell (a formula with its `=`), for the formula bar and a cell's editor.
+fn get_calc_cell_content(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(room) = room_of(parameters, &access) else {
+        return Ok(BTreeMap::new());
+    };
+    let room = moqui_lib::sync::lock(&room);
+    let sheet = u32::try_from(int(parameters, "sheet", 0)).unwrap_or(0);
+    match room.cell_content(sheet, int(parameters, "row", 1), int(parameters, "column", 1)) {
+        Ok(content) => {
+            let mut out = BTreeMap::new();
+            out.insert("content".to_string(), Value::String(content));
+            Ok(out)
+        }
+        Err(err) => refused(err.message()),
+    }
 }
 
 /// `get#CalcFrame`: a range of a saved document as a table for the report engine (a dataset with this service as its

@@ -68,3 +68,23 @@ test("a chart of the document is a Chart.js config", () => {
     assert.equal(pie.data.datasets[0].backgroundColor.length, 2);
     assert.equal(calc.chartConfig({ type: "area", series: [{ data: [1] }, { data: [2] }] }).data.datasets[1].fill, true);
 });
+test("a formula being typed completes function and table names, not cell references", () => {
+    assert.equal(calc.completions("SU", 2, []), null);
+    assert.deepEqual(calc.completions("=SU", 3, []), { from: 1, prefix: "SU", names: ["SUBSTITUTE(", "SUBTOTAL(", "SUM(", "SUMIF(", "SUMIFS(", "SUMPRODUCT("] });
+    assert.deepEqual(calc.completions("=A1+vl", 6, []).names, ["VLOOKUP("]);
+    assert.deepEqual(calc.completions("=SUM(Ord", 8, ["Orders", "Totals"]).names, ["Orders["]);
+    assert.equal(calc.completions("=SUM(B2", 7, []), null);
+    assert.equal(calc.completions("=SUM(", 5, []), null);
+    assert.equal(calc.completions("=ZZZ", 4, []), null);
+    assert.equal(calc.completions("=\"su", 4, []), null);
+});
+test("a range is named as a formula names it, and pasted text is rows of cells", () => {
+    assert.equal(calc.rangeName({ row: 2, column: 2, lastRow: 2, lastColumn: 2 }), "B2");
+    assert.equal(calc.rangeName({ row: 2, column: 2, lastRow: 7, lastColumn: 4 }), "B2:D7");
+    assert.equal(calc.rangeName({ row: 1, column: 27, lastRow: 3, lastColumn: 27 }, "Summary"), "Summary!AA1:AA3");
+    assert.equal(calc.rangeName({ row: 1, column: 1, lastRow: 1, lastColumn: 1 }, "Joe's sheet"), "'Joe''s sheet'!A1");
+    assert.deepEqual(calc.pasteRows("a\tb\r\n1\t2\n"), [["a", "b"], ["1", "2"]]);
+    assert.deepEqual(calc.pasteRows("one"), [["one"]]);
+    assert.equal(calc.tableName("Open orders 2026"), "Open_orders_2026");
+    assert.equal(calc.tableName("2026"), "T2026");
+});

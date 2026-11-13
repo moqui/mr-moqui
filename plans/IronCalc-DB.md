@@ -1,6 +1,6 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1, 2 and most of 2b built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1, 2 and most of 2b are built (the engine is the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, both read only, and a range of a document as a report dataset for dashboard panels and scheduled reports). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
+Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1 to 3 built but for editing together. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1 to 3 are built but for editing together (the engine is the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, edited by one person at a time, and a range of a document as a report dataset for dashboard panels and scheduled reports). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
 
 ## The idea
 
@@ -297,23 +297,28 @@ Added after the profile question was settled (2026-11-13: what an application gr
 Left of 2b:
 
 - **A sheet or a chart of a document as a panel** (the grid with its styles, a chart as its author drew it): the dataset gives a range's values to the report engine's own panels.
-- **A way to add a range to a dashboard from CalcGrid**, and the panel editor's fields for the dataset's parameters: today the query is written in the definition.
+- **The panel editor's fields for the dataset's parameters** (Add to dashboard, built with Phase 3, writes the panel).
 - **A scheduled export of the whole workbook** as XLSX: a scheduled report over the dataset exports its ranges.
 - **In BOSS, the dataset for Insights users:** `org.moqui.report.dataset.calcgrid` is not granted to a BOSS group, and Insights reads admitted business datasets under its mount.
 - **A file as an upload into the overlay** under a profile, and the guide's screenshots.
 
 ### Phase 3: editing
 
-Both screens get it at once, since the sheet component is one.
+Built 2026-11-13 for one person at a time; editing together is not. Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
 
-- Formula bar, cell editor, reference picking, autocomplete from `formula_completion`.
-- Styles, number formats, widths, heights, freeze, conditional formatting.
-- Undo and redo, copy and paste, fill handle.
-- Edits applied in the room in the order received, each viewer sent its viewport again; presence and other users' selections from awareness frames.
-- Overlay edits relayed to the other rooms of the document (other scopes) through the diff queue.
-- In a cluster, the owning server for an open workbook.
-- Merged cells shown through an overlay; not editable in the first version.
-- A terminal view in `moqui-tui`, with TironCalc as the reference, if wanted.
+- **The engine:** `Room::edit` applies a list of edits in order with evaluation paused, then evaluates once: `input`, `paste`, `clear`, `style` (the engine's style paths), `fill` (its autofill), `width`, `height`, `freeze`, rows and columns inserted and deleted, sheets added, renamed and deleted, `charts` (the document's charts, replaced), `undo` and `redo` (the engine's own history). A data sheet's cells, rows, columns and name are refused; its widths, heights and frozen panes are not. `edit#CalcDocument` answers the room's state whether or not an edit was refused; `get#CalcCellContent` answers a cell as typed. Under a profile only an author edits.
+- **The view** (`WebrootCalc.js`, both screens): a toolbar (undo, redo, bold, italic, underline, text and fill colour, alignment, number formats, rows and columns, freeze, fill down, Chart), a formula bar that completes function names and the data sheets' table names, a cell's editor on a double click, Delete, Ctrl+Z and Ctrl+Y, a paste of rows of cells, a column's width by its resize, sheets added, renamed and deleted, and charts added from the selection and removed. After an edit every sheet's cells are asked again, and the table is made again only when its shape changed.
+- **Add to dashboard** (the 2b gap): in Dashboards › CalcGrid the cells selected of a saved document become a panel (table, bars, pie or number) over the dataset `calcgrid` on one of the viewer's own dashboards.
+- **Tests:** `cargo test -p moqui-calc` (the edits, the data sheet's protection, undo, the stored form and a refresh after edits), `tools/test/CalcGrid.spec.js` (the edit transitions; a panel added and read), `webroot/test/client/WebrootCalc.spec.js` (completion, range names, pasted rows) in the regression suite; a third walk in `tools/acceptance/client/CalcGrid.spec.js` (a sheet added, a formula typed in the bar, bold, Undo).
+
+Not built, of the plan's Phase 3:
+
+- **Editing together.** A room is one user's: no room shared by the people of a scope, no edits pushed to other viewers over the notification WebSocket, no presence or other people's selections, no relay of overlay edits between scopes (Phase 0 showed the diff queue does it), no owning server in a cluster. Two people who edit the same document each have their copy, and the engine's version check refuses the second save. This is the largest piece left, and it is the host's work (a sheet frame on the notification socket) as much as this crate's.
+- **Picking references by clicking** while a formula is typed, and the **fill handle** by dragging (Fill down is in the menu): each needs a Tabulator module, so the ESM build.
+- **The function list** is a fixed list of about a hundred names in the view: the engine's `functions` module is private, so its 500 names and their arguments cannot be asked for. An upstream request.
+- **Conditional formatting, borders and row heights** have no control (they are drawn when a workbook has them); **merged cells** are not drawn as merged.
+- **Evaluation on a thread of its own**, and the budget's warning beyond the time shown.
+- **A terminal view.**
 
 ### Phase 4: charts and images in XLSX
 

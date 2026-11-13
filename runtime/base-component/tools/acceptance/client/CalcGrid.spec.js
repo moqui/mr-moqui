@@ -130,3 +130,49 @@ feature("in Dashboards an author starts a document over an entity, saves it, ope
         page.close()
     },
 })
+
+// Editing (Phase 3): in the Tools grid's Calc mode a sheet is added, a formula over the data sheet is typed in the formula
+// bar and shows its value, a cell is made bold from the toolbar, and Undo takes the last edit back.
+feature("in Calc a sheet is added, a formula over the data is typed in the bar, a cell is made bold, and Undo takes it back", {
+    expect() {
+        const page = gridPage()
+        page.goto("/qapps/tools/Data/Grid?entityName=moqui.basic.Enumeration&enumTypeId=ComparisonOperator").status == 200
+        page.waitFor(() => !!(window.Tabulator && document.querySelector(".m-data-grid.tabulator") && document.querySelectorAll(".m-data-grid .tabulator-row").length >= 3))
+        page.evaluate(() => {
+            const label = (b) => Array.from(b.querySelectorAll(".block")).map((part) => part.textContent).join("").trim()
+            window.walkButton = (text) => Array.from(document.querySelector(".m-data-grid").closest(".q-pa-sm").querySelectorAll("button")).find((b) => label(b).startsWith(text))
+            window.walkTexts = () => Array.from(document.querySelectorAll(".m-calc-grid .tabulator-row")).map((row) => Array.from(row.querySelectorAll(".tabulator-cell")).map((cell) => cell.textContent))
+            window.walkTabs = () => Array.from(document.querySelectorAll(".m-calc-sheet .q-tab")).map((tab) => tab.textContent.replace("table_rows", "").trim())
+            window.walkButton("Calc").click()
+            return true
+        })
+        page.waitFor(() => { const rows = window.walkTexts(); return rows.length > 2 && rows[0].includes("enumId") })
+        const dataRows = page.evaluate(() => { window.walkCount = String(window.walkTexts().filter((row) => row.some((text) => text.startsWith("ENTCO_"))).length); return Number(window.walkCount) })
+        dataRows >= 3
+        // a sheet beside the data sheet
+        page.evaluate(() => { document.querySelector('.m-calc-sheet button[aria-label="Add a sheet"]').click(); return true })
+        page.waitFor(() => window.walkTabs().length == 2 && window.walkTexts().length > 2 && window.walkTexts()[0].every((text, index) => index == 0 || text == ""))
+        // the formula bar: a name is completed, and the formula's value shows in the cell
+        page.evaluate(() => {
+            const bar = document.querySelector(".m-calc-formula")
+            bar.focus(); bar.value = "=COUNTA(Enum"; bar.setSelectionRange(12, 12); bar.dispatchEvent(new Event("input", { bubbles: true }))
+            return true
+        })
+        page.waitFor(() => Array.from(document.querySelectorAll(".m-calc-suggest-item")).some((item) => item.textContent == "Enumeration["))
+        page.evaluate(() => {
+            const bar = document.querySelector(".m-calc-formula")
+            bar.value = "=COUNTA(Enumeration[enumId])"; bar.dispatchEvent(new Event("input", { bubbles: true }))
+            bar.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+            return true
+        })
+        page.waitFor(() => window.walkTexts()[0][1] == window.walkCount)
+        page.evaluate(() => document.querySelector(".m-calc-formula").value).startsWith("=COUNTA(Enumeration!$A$2:$A$")
+        // bold from the toolbar, then Undo
+        page.evaluate(() => { document.querySelector('.m-calc-toolbar button[aria-label="Bold"]').click(); return true })
+        page.waitFor(() => Number(getComputedStyle(document.querySelectorAll(".m-calc-grid .tabulator-row")[0].querySelectorAll(".tabulator-cell")[1]).fontWeight) >= 600)
+        page.evaluate(() => { document.querySelector('.m-calc-toolbar button[aria-label="Undo"]').click(); return true })
+        page.waitFor(() => Number(getComputedStyle(document.querySelectorAll(".m-calc-grid .tabulator-row")[0].querySelectorAll(".tabulator-cell")[1]).fontWeight) < 600)
+        page.evaluate(() => window.walkTexts()[0][1] == window.walkCount) === true
+        page.close()
+    },
+})

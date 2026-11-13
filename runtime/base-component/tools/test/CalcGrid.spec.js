@@ -247,3 +247,86 @@ feature("a range of a saved document is a report dataset: a panel query answers 
         kept == "tools"
     },
 })
+
+feature("the workbook is edited beside its data sheet: a formula over the data, a style, an undo; a data sheet's cells are not edited", {
+    when() {
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"]),
+            sortJson: JSON.stringify([{field: "enumId", dir: "asc"}])}, "post")
+        const roomId = opened.json.roomId
+        const edit = (ops) => call("calcEdit", {roomId, opsJson: JSON.stringify(ops)}, "post")
+        const edited = edit([{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Summary"},
+            {op: "input", sheet: 1, row: 1, column: 1, value: "=COUNTA(Enumeration[enumId])"},
+            {op: "input", sheet: 1, row: 2, column: 1, value: "Artifact types"},
+            {op: "style", sheet: 1, row: 2, column: 1, width: 1, height: 1, path: "font.b", value: "true"}])
+        const names = Array.from(edited.json.sheets || []).map(sheet => sheet.name)
+        const cells = call("calcCells", {roomId, sheet: 1, row: 1, column: 1, width: 2, height: 2})
+        const texts = Array.from(cells.json.texts || []).map(text => text.row + ":" + text.column + "=" + text.text)
+        const content = call("calcContent", {roomId, sheet: 1, row: 1, column: 1})
+        const dataEdit = edit([{op: "input", sheet: 0, row: 2, column: 1, value: "CHANGED"}])
+        const undone = edit([{op: "undo"}])
+        const afterUndo = call("calcCells", {roomId, sheet: 1, row: 1, column: 1, width: 2, height: 2})
+        const bold = Array.from(afterUndo.json.styles || []).some(style => style.style && style.style.font && style.style.font.b === true)
+        const notJson = call("calcEdit", {roomId, opsJson: "{"}, "post")
+        const byGet = tools().render("Data/Grid/calcEdit", {roomId, opsJson: "[]"}, "get")
+        call("calcClose", {roomId}, "post")
+        return {opened, edited, names, texts, content, dataEdit, undone, bold, notJson, byGet, dataRows: opened.json.sheets[0].dataRows}
+    },
+    then({opened, edited, names, texts, content, dataEdit, undone, bold, notJson, byGet, dataRows}) {
+        !opened.json.errors
+        !edited.json.errors
+        names.join(",") == "Enumeration,Summary"
+        edited.json.canUndo === true
+        texts.includes("1:1=" + dataRows)
+        texts.includes("2:1=Artifact types")
+        content.json.content.startsWith("=COUNTA(Enumeration!$A$2:$A$")
+        String(dataEdit.json.errors).includes("is a data sheet")
+        // a refused edit still answers the room's state
+        dataEdit.json.sheets.length == 2
+        !undone.json.errors
+        undone.json.canRedo === true
+        bold === false
+        String(notJson.json.errors).includes("opsJson is not JSON")
+        byGet.status == 405
+    },
+})
+
+feature("a range of a saved document is added to a dashboard of the viewer's own as a panel that reads it", {
+    when() {
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"])}, "post")
+        call("calcSave", {roomId: opened.json.roomId, title: "Panel types", definitionId: "spec-calcgrid-panel"}, "post")
+        call("calcClose", {roomId: opened.json.roomId}, "post")
+        ec.service.sync().name("org.moqui.report.ReportServices.save#Definition").parameters({definition: {id: "spec-calcgrid-board", type: "dashboard", title: "Spec CalcGrid board", body: {panels: {}}}}).call()
+        const listed = Array.from(dashboardsCall("calcDashboards", {}).json.dashboards || []).map(option => option.value)
+        const added = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-panel", dashboardId: "spec-calcgrid-board", range: "Enumeration!A1:B5", panelTitle: "Types", visualization: "table"}, "post")
+        const again = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-panel", dashboardId: "spec-calcgrid-board", range: "Enumeration!A1:A3", visualization: "bar"}, "post")
+        const board = (ec.service.sync().name("org.moqui.report.ReportServices.get#Definition").parameters({definitionId: "spec-calcgrid-board"}).call() || {}).definition || {}
+        const panels = board.body.panels || {}
+        const panel = panels[added.json.panelId] || {}
+        // the panel's query answers the range
+        const frames = (ec.service.sync().name("org.moqui.report.ReportServices.run#Query").parameters({query: panel.queries[0]}).call() || {}).frames
+        const names = Array.from((Array.from(frames || [])[0] || {}).fields || []).map(field => field.name)
+        const notSaved = dashboardsCall("calcAddPanel", {dashboardId: "spec-calcgrid-board", range: "A1:B2"}, "post")
+        const notDashboard = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-panel", dashboardId: "spec-calcgrid-panel", range: "A1:B2"}, "post")
+        const badKind = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-panel", dashboardId: "spec-calcgrid-board", range: "A1:B2", visualization: "logs"}, "post")
+        for (const definitionId of ["spec-calcgrid-board", "spec-calcgrid-panel"]) ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId}).call()
+        ec.message.clearErrors()
+        return {listed, added, again, panelCount: Object.keys(panels).length, panel, names, notSaved, notDashboard, badKind}
+    },
+    then({listed, added, again, panelCount, panel, names, notSaved, notDashboard, badKind}) {
+        listed.includes("spec-calcgrid-board")
+        !added.json.errors
+        added.json.panelId == "calc-spec-calcgrid-panel"
+        !again.json.errors
+        again.json.panelId == "calc-spec-calcgrid-panel-2"
+        panelCount == 2
+        panel.title == "Types"
+        panel.visualization == "table"
+        panel.queries[0].datasetId == "calcgrid"
+        panel.queries[0].parameters.definitionId == "spec-calcgrid-panel"
+        panel.queries[0].parameters.range == "Enumeration!A1:B5"
+        names.join(",") == "enumId,sequenceNum"
+        String(notSaved.json.errors).includes("Save the document first")
+        String(notDashboard.json.errors).includes("Choose a dashboard")
+        String(badKind.json.errors).includes("A panel of a range is")
+    },
+})
