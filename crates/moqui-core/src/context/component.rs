@@ -286,6 +286,11 @@ fn add_component_dir(
                 _ => {}
             }
         }
+        // Only what the manifest lists loads; a directory beside it that it does not list is said, so a set or a
+        // component put in the wrong place is noticed rather than missing without a word (plans/Components-Dir.md).
+        for unlisted in unlisted_children(&dir, &list) {
+            tracing::warn!("{} is not in {}, not loaded", unlisted.display(), manifest.display());
+        }
         return Ok(());
     }
     let mut entries = Vec::new();
@@ -355,6 +360,28 @@ fn disabled_in_manifest(path: &Path) -> Result<bool, Error> {
         Some(raw) => Ok(env::expand(&raw)?.trim() == "true"),
         None => Ok(false),
     }
+}
+
+/// The directories in `dir` (not hidden ones) that no `component` or `component-dir` of its `components.xml`, `list`,
+/// names.
+fn unlisted_children(dir: &Path, list: &MNode) -> Vec<PathBuf> {
+    let listed: Vec<PathBuf> = list
+        .child_iter()
+        .filter(|child| matches!(&*child.name_rc(), "component" | "component-dir"))
+        .filter_map(|child| child.attribute("location").filter(|location| !location.is_empty()))
+        .map(|location| resolve_location(dir, &location))
+        .collect();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut unlisted: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && !listed.iter().any(|known| same_directory(known, path)))
+        .collect();
+    unlisted.sort();
+    unlisted
 }
 
 fn same_directory(left: &Path, right: &Path) -> bool {
@@ -686,6 +713,43 @@ mod tests {
             ["framework", "plain", "dev-lib", "dev-uses-app"]
         );
         assert_eq!(names(&root.0, &conf, "production"), ["framework", "plain"]);
+    }
+
+    /// A directory of component sets: only what its `components.xml` lists loads, each set on its purposes, and a
+    /// directory it does not list is found by `unlisted_children` and not loaded.
+    #[test]
+    fn a_components_xml_loads_only_the_sets_it_lists() {
+        let root = scratch("sets");
+        component(&root.0, "framework", "", &[]);
+        let sets = root.0.join("components");
+        for set in ["base", "addon", "dev", "test", "stray"] {
+            std::fs::create_dir_all(sets.join(set)).unwrap();
+        }
+        std::fs::write(
+            sets.join("components.xml"),
+            r#"<components><component-dir location="base"/><component-dir location="addon"/>
+                <component-dir location="dev" purpose="dev"/><component-dir location="test" purpose="dev, test"/>
+                </components>"#,
+        )
+        .unwrap();
+        component(&sets.join("base"), "tools", "", &[]);
+        component(&sets.join("addon"), "app", "", &[]);
+        component(&sets.join("dev"), "dev-aide", "", &[]);
+        component(&sets.join("test"), "fixtures", "", &[]);
+        component(&sets.join("stray"), "lost", "", &[]);
+        let conf = MNode::parse_text(
+            "conf",
+            r#"<moqui-conf><component-list><component-dir location="components"/></component-list></moqui-conf>"#,
+        )
+        .unwrap();
+        assert_eq!(names(&root.0, &conf, "production"), ["framework", "tools", "app"]);
+        assert_eq!(names(&root.0, &conf, "test"), ["framework", "tools", "app", "fixtures"]);
+        assert_eq!(
+            names(&root.0, &conf, "dev"),
+            ["framework", "tools", "app", "dev-aide", "fixtures"]
+        );
+        let list = MNode::parse_file(sets.join("components.xml")).unwrap();
+        assert_eq!(unlisted_children(&sets, &list), [sets.join("stray")]);
     }
 
     #[test]
