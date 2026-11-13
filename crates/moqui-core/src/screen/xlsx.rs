@@ -28,13 +28,13 @@ use std::borrow::Cow;
 use jiff::civil::{Date, DateTime, Time};
 use moqui_lib::format::ToPrimitive;
 use moqui_lib::object::Value;
-use rust_xlsxwriter::{Color, Format, FormatAlign, FormatPattern, Workbook};
 
 use crate::context::Error;
 use crate::l10n;
+use crate::workbook::{Align, CellStyle, WorkbookWriter};
 
 /// POI's `IndexedColors.GREY_40_PERCENT`.
-const HEADER_FILL: u32 = 0x0096_9696;
+const HEADER_FILL: &str = "#969696";
 /// Excel's limit on a sheet name.
 const SHEET_NAME_MAX: usize = 31;
 /// Excel's limit on the characters in one cell.
@@ -151,98 +151,101 @@ impl XlsxBook {
         if self.sheets.is_empty() {
             return Err(Error::new("No sheets rendered"));
         }
-        let styles = Styles::new();
-        let mut workbook = Workbook::new();
+        let mut workbook = WorkbookWriter::new()?;
+        let styles = Styles::new(&mut workbook);
         let mut used: Vec<String> = Vec::new();
         for sheet in &self.sheets {
             let name = unique_sheet_name(&sheet.name, &used);
             used.push(name.to_lowercase());
-            let worksheet = workbook.add_worksheet();
-            worksheet.set_name(name).map_err(xlsx_error)?;
+            let index = workbook.add_sheet(&name)?;
             for (col, title) in sheet.headers.iter().enumerate() {
-                worksheet
-                    .write_string_with_format(0, column(col)?, cell_text(title), &styles.header)
-                    .map_err(xlsx_error)?;
+                workbook.text(index, 1, column(col)?, &cell_text(title), styles.header)?;
             }
-            worksheet.set_freeze_panes(1, 0).map_err(xlsx_error)?;
-            for (index, row) in sheet.rows.iter().enumerate() {
-                let row_num = u32::try_from(index + 1).map_err(|_| Error::new("Too many rows for a sheet"))?;
-                for (col, cell) in row.iter().enumerate() {
+            workbook.freeze_rows(index, 1)?;
+            for (row, cells) in sheet.rows.iter().enumerate() {
+                let row_num = i32::try_from(row + 2).map_err(|_| Error::new("Too many rows for a sheet"))?;
+                for (col, cell) in cells.iter().enumerate() {
                     let col = column(col)?;
                     match &cell.value {
-                        CellValue::Empty => continue,
-                        CellValue::Text(text) => {
-                            worksheet.write_string_with_format(row_num, col, cell_text(text), &styles.text)
-                        }
+                        CellValue::Empty => {}
+                        CellValue::Text(text) => workbook.text(index, row_num, col, &cell_text(text), styles.text)?,
                         CellValue::Number(number) => {
-                            let format = if cell.hints.currency {
-                                &styles.currency
+                            let style = if cell.hints.currency {
+                                styles.currency
                             } else if cell.hints.align_right {
-                                &styles.number_right
+                                styles.number_right
                             } else {
-                                &styles.number
+                                styles.number
                             };
-                            worksheet.write_number_with_format(row_num, col, *number, format)
+                            workbook.number(index, row_num, col, *number, style)?;
                         }
                         CellValue::Date(date) => {
-                            worksheet.write_number_with_format(row_num, col, excel_date(*date), &styles.date)
+                            workbook.number(index, row_num, col, excel_date(*date), styles.date)?
                         }
                         CellValue::Time(time) => {
-                            worksheet.write_number_with_format(row_num, col, excel_time(*time), &styles.time)
+                            workbook.number(index, row_num, col, excel_time(*time), styles.time)?
                         }
-                        CellValue::DateTime(stamp) => worksheet.write_number_with_format(
+                        CellValue::DateTime(stamp) => workbook.number(
+                            index,
                             row_num,
                             col,
                             excel_date(stamp.date()) + excel_time(stamp.time()),
-                            &styles.date_time,
-                        ),
+                            styles.date_time,
+                        )?,
                     }
-                    .map_err(xlsx_error)?;
                 }
             }
-            worksheet.autofit();
+            workbook.fit_columns(index)?;
         }
-        workbook.save_to_buffer().map_err(xlsx_error)
+        workbook.to_xlsx()
     }
 }
 
+/// The style indexes of the workbook being written.
 struct Styles {
-    header: Format,
-    text: Format,
-    number: Format,
-    number_right: Format,
-    currency: Format,
-    date: Format,
-    time: Format,
-    date_time: Format,
+    header: i32,
+    text: i32,
+    number: i32,
+    number_right: i32,
+    currency: i32,
+    date: i32,
+    time: i32,
+    date_time: i32,
 }
 
 impl Styles {
-    fn new() -> Self {
-        let base = Format::new().set_align(FormatAlign::Top);
+    fn new(workbook: &mut WorkbookWriter) -> Self {
+        let mut make = |align: Align, format: Option<&str>| {
+            workbook.style(&CellStyle {
+                align,
+                number_format: format.map(str::to_string),
+                ..CellStyle::default()
+            })
+        };
+        let number = make(Align::Center, Some("#,##0.######"));
+        let number_right = make(Align::Right, Some("#,##0.######"));
+        let currency = make(Align::Right, Some("#,##0.00_);[Red](#,##0.00)"));
+        let date = make(Align::Left, Some("yyyy-mm-dd"));
+        let time = make(Align::Left, Some("hh:mm:ss"));
+        let date_time = make(Align::Left, Some("yyyy-mm-dd hh:mm"));
         Self {
-            header: base
-                .clone()
-                .set_bold()
-                .set_align(FormatAlign::Center)
-                .set_background_color(Color::RGB(HEADER_FILL))
-                .set_pattern(FormatPattern::Solid),
-            text: base.clone().set_align(FormatAlign::Left).set_text_wrap(),
-            number: base
-                .clone()
-                .set_align(FormatAlign::Center)
-                .set_num_format("#,##0.######"),
-            number_right: base
-                .clone()
-                .set_align(FormatAlign::Right)
-                .set_num_format("#,##0.######"),
-            currency: base
-                .clone()
-                .set_align(FormatAlign::Right)
-                .set_num_format("#,##0.00_);[Red](#,##0.00)"),
-            date: base.clone().set_align(FormatAlign::Left).set_num_format("yyyy-mm-dd"),
-            time: base.clone().set_align(FormatAlign::Left).set_num_format("hh:mm:ss"),
-            date_time: base.set_align(FormatAlign::Left).set_num_format("yyyy-mm-dd hh:mm"),
+            header: workbook.style(&CellStyle {
+                bold: true,
+                align: Align::Center,
+                fill: Some(HEADER_FILL.to_string()),
+                ..CellStyle::default()
+            }),
+            text: workbook.style(&CellStyle {
+                align: Align::Left,
+                wrap: true,
+                ..CellStyle::default()
+            }),
+            number,
+            number_right,
+            currency,
+            date,
+            time,
+            date_time,
         }
     }
 }
@@ -289,8 +292,9 @@ fn cell_text(text: &str) -> Cow<'_, str> {
     Cow::Owned(format!("{kept}\u{2026}"))
 }
 
-fn column(index: usize) -> Result<u16, Error> {
-    u16::try_from(index).map_err(|_| Error::new("Too many columns for a sheet"))
+/// The engine's column number (from 1) of a cell index (from 0).
+fn column(index: usize) -> Result<i32, Error> {
+    i32::try_from(index + 1).map_err(|_| Error::new("Too many columns for a sheet"))
 }
 
 /// A name Excel takes: no `[]:*?/\`, at most 31 characters, not blank, and not one already used in the workbook.
@@ -310,10 +314,6 @@ fn unique_sheet_name(name: &str, used: &[String]) -> String {
         counter += 1;
     }
     candidate
-}
-
-fn xlsx_error(err: rust_xlsxwriter::XlsxError) -> Error {
-    Error::new(format!("Error writing xlsx: {err}"))
 }
 
 #[cfg(test)]

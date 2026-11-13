@@ -261,11 +261,16 @@ oxc_span = "0.156"
 ammonia = "4"
 # HTML to terminal text for the tui render mode. The version ammonia already locks.
 html5ever = "0.40"
-# The xlsx render mode (the moqui-poi port). Defaults are empty; dates are written as Excel serial numbers, so the
-# chrono and jiff features stay off. Its zip dependency is `deflate` (zopfli and flate2 on zlib-rs).
+# The spreadsheet engine (plans/IronCalc-DB.md): the workbook model the xlsx writers fill (moqui_core::workbook), XLSX
+# read with formulas and write, and calculation (calculate#Spreadsheet). A pinned revision of main: get_cells_block,
+# which the sheet rooms need, is after the 0.9.1 release. `ironcalc` re-exports `ironcalc_base` as `ironcalc::base`.
+# Shares zip and quick-xml with the workspace.
+ironcalc = { git = "https://github.com/ironcalc/IronCalc", rev = "87b684bb04a87c63bdd6343c29036450b1cfd358" }
+# Test fixtures only (a dev-dependency of the crates whose tests read a workbook another writer made): the xlsx writers
+# are on ironcalc. Defaults are empty; the chrono and jiff features stay off.
 rust_xlsxwriter = { version = "0.102", default-features = false }
 # read#Spreadsheet: xlsx, xlsm, xlsb, xls, and ods. Defaults are empty; chrono (dates) stays off, dates are read as
-# Excel serial numbers. Shares zip with rust_xlsxwriter.
+# Excel serial numbers. Shares zip with ironcalc.
 calamine = { version = "0.37", default-features = false }
 # Zip data files for the entity data loader and writer. The zip and deflate (flate2 on zlib-rs) that calamine and
 # rust_xlsxwriter already build; zip64 is part of the crate.

@@ -15,7 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- Spreadsheet import, with the moqui-poi port (the Java component only wrote xlsx). The bodies are Rust
-        (crates/moqui-core/src/service/spreadsheet.rs), on calamine: xlsx, xlsm, xlsb, xls and ods, found from the content. -->
+        (crates/moqui-core/src/service/spreadsheet.rs), on calamine: xlsx, xlsm, xlsb, xls and ods, found from the content.
+        calculate#Spreadsheet is on the IronCalc engine (plans/IronCalc-DB.md), xlsx only. -->
 
     <service verb="read" noun="Spreadsheet" type="rust" location="moqui_core::service::spreadsheet::read_spreadsheet">
         <description>Read one sheet of a spreadsheet. With headerRow the first row names the columns and each row is a
@@ -34,6 +35,33 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sheetNameList" type="List"/>
             <parameter name="headerList" type="List"/>
             <parameter name="rowList" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="calculate" noun="Spreadsheet" type="rust" location="moqui_core::service::spreadsheet::calc::calculate_spreadsheet">
+        <description>Calculate over a workbook: open an xlsx with formulas (the template), set input cells, evaluate
+            it and return the cells asked for, and the calculated workbook when asked. A cell is named as in Excel:
+            B2 on the first sheet, Inputs!B2 on another, and A1:C3 for a range to read. A text value is set as a
+            person typing it would (=B2*2 is a formula, 12 a number), a number and a boolean as they are, and null
+            clears the cell; a cell keeps its style. The engine is IronCalc (crates/moqui-core/src/workbook.rs): xlsx
+            only, with about 500 Excel functions, and no charts, images, pivot tables or macros, which a workbook
+            given back does not keep. The body is Rust (crates/moqui-core/src/service/spreadsheet_calc.rs).</description>
+        <in-parameters>
+            <parameter name="location"><description>The resource location of the xlsx, when contentBytes is not given.</description></parameter>
+            <parameter name="contentBytes" type="byte[]"/>
+            <parameter name="cellValues" type="Map"><description>Cell to value, set in the map's order before the workbook is evaluated.</description></parameter>
+            <parameter name="readCells" type="List"><description>The cells and ranges to return, read after the evaluation.</description></parameter>
+            <parameter name="outputLocation"><description>Write the calculated workbook to this resource location.</description></parameter>
+            <parameter name="returnBytes" type="Boolean" default-value="false"><description>Return the calculated workbook as contentBytes.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sheetNameList" type="List"/>
+            <parameter name="valueMap" type="Map"><description>Each of readCells to its value: text, a number (a whole
+                number is a Long), a boolean or null; an error is its text (#DIV/0!). A range is a list of rows, each a
+                list of its cells.</description></parameter>
+            <parameter name="textMap" type="Map"><description>Each of readCells to its text as the cell's number format
+                shows it; a range as a list of rows.</description></parameter>
+            <parameter name="contentBytes" type="byte[]"/>
         </out-parameters>
     </service>
 

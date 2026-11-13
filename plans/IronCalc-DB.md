@@ -1,6 +1,6 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); nothing built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
+Active plan since 2026-11-13 (a proposal from 2026-11-09); Phase 1 of 5 built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phase 1 is built (the engine is the xlsx writer, and `calculate#Spreadsheet`). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
 
 ## The idea
 
@@ -153,10 +153,10 @@ Tabulator's own `spreadsheet` module (lettered columns, row numbers, array data,
 | Formats | xlsx, xlsm, xlsb, xls, ods | xlsx | xlsx |
 | Formulas | Stored values | Writes the text | Parses and calculates |
 | Charts, images | No | Yes | No |
-| Used for | ETL, the grid's file source, `SpreadsheetServices` | The xlsx render mode, `SpreadsheetServices`, scheduled reports | Nothing yet |
+| Used for | ETL, the grid's file source, `SpreadsheetServices`' reads | Test workbooks only, since Phase 1 | The xlsx render mode, the grid's export, scheduled reports, `calculate#Spreadsheet` |
 
 - **calamine stays.** IronCalc reads only xlsx, and the import formats must not be lost. calamine can also be the way in for the older formats: load values and formula text into an IronCalc model, without styles.
-- **rust_xlsxwriter can go** once IronCalc writes what we write. Today that is little: worksheets and their names, strings, numbers, number formats, freeze panes and sheet protection. IronCalc's model and exporter cover all but protection.
+- **rust_xlsxwriter is gone from the build** (Phase 1). What we wrote was little: worksheets and their names, strings, numbers, number formats, alignment, a header fill, freeze panes and fitted columns, all of which IronCalc's model and exporter cover. It is a dev-dependency for test workbooks.
 - **Charts and images** are the real new work in the exporter (Phase 4).
 
 ## Architecture
@@ -238,10 +238,15 @@ Done 2026-11-13: [Phase 0 results](#phase-0-results). The list as it was:
 
 ### Phase 1: the engine in the server
 
-- An `ironcalc` feature beside `xlsx`, on a pinned git revision until a release has `get_cells_block`.
-- The xlsx render mode, `SpreadsheetServices` and scheduled reports write through the IronCalc model. Sheet protection is the one missing piece: ask upstream for it, and keep rust_xlsxwriter for the protected exports until it lands.
-- A service that opens an XLSX, sets cells, evaluates and returns values or a file: calculation over a template workbook, useful on its own.
+Built 2026-11-13.
+
+- **The dependency.** `ironcalc` at the pinned revision `87b684bb` of main (workspace `Cargo.toml`; `deny.toml` allows the repository as a git source), 12 new packages, licenses and sources checked. It is core's `xlsx` feature, not a feature beside it: the engine is now the xlsx writer, so a build with xlsx has it and a build without has neither.
+- **`moqui_core::workbook`** (`crates/moqui-core/src/workbook.rs`): `WorkbookWriter` writes typed cells with styles below the engine's formula parser (a text that starts with `=` stays a text), freezes rows, fits columns by character count (the engine measures no font) and gives the engine's `Model` or the `.xlsx`; `open_xlsx` and `model_xlsx` are the engine's reader and writer; the engine is re-exported as `moqui_core::workbook::ironcalc` for the crates on core.
+- **The writers are on it:** the `xlsx` render mode and the data grid's export (`XlsxBook`, `screen/xlsx.rs`) and a scheduled report's xlsx (`moqui-report` `schedule.rs`). Their tests read the files back with calamine as before, and a rendered file opens in LibreOffice.
+- **`rust_xlsxwriter` is out of the build.** Nothing used sheet protection, and `SpreadsheetServices` only read, so nothing was left on it; it stays as a dev-dependency, for test workbooks from a writer other than the engine.
+- **`SpreadsheetServices.calculate#Spreadsheet`** (`service/spreadsheet_calc.rs`): open an xlsx with formulas, set cells (`cellValues`: `B2`, `Inputs!B2`; a text as typed, a number or boolean as it is, null clears), evaluate, and return `readCells` (cells and ranges) as values and as formatted texts, with the calculated workbook as bytes or at a location.
 - calamine unchanged.
+- Not done here: a spec that calls `calculate#Spreadsheet` through the service facade (its body is tested in the crate, and the registry test covers its location), and `./moq test-framework`.
 
 ### Phase 2: the virtual sheet in the Tools grid, read and export
 
@@ -280,8 +285,7 @@ The first place the engine itself needs to grow.
 - **Charts:** the same drawing parts, a chart model and a chart part for each chart. A business subset (column, bar, line, area, pie, scatter; titles, legend, axes, number formats, series colours) is perhaps 1,500 to 2,500 lines, with rust_xlsxwriter's `chart.rs` as the reference for the XML.
 - **Import** of both is about the same work again. Without it a workbook opened with charts loses them on save, as now.
 - The model structs are what `to_bytes` stores, so this changes the stored form. Agree the chart and image model with upstream first; fork only if that fails or takes too long.
-- The way round a fork: keep rust_xlsxwriter for exports with charts and walk the IronCalc model into it. It means mapping every style by hand and keeping two writers, so it is the fallback.
-- rust_xlsxwriter is dropped when this phase is done.
+- The way round a fork: bring rust_xlsxwriter back for exports with charts and walk the IronCalc model into it. It means mapping every style by hand and keeping two writers, so it is the fallback.
 
 ### Phase 5: as needed
 

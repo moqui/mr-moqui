@@ -51,7 +51,7 @@ jiff = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rcgen = { workspace = true, optional = true }
-rust_xlsxwriter = { workspace = true, optional = true }
+ironcalc = { workspace = true, optional = true }
 calamine = { workspace = true, optional = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
@@ -86,8 +86,9 @@ web-push = ["http", "dep:p256", "dep:hkdf", "dep:aes-gcm"]
 cluster-tls = ["dep:rcgen"]
 # org.moqui.impl.ImageServices (convert#Image) and elFinder thumbnails.
 image = ["dep:image"]
-# The xlsx render mode and org.moqui.resource.SpreadsheetServices.
-xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
+# The xlsx render mode, org.moqui.resource.SpreadsheetServices and moqui_core::workbook: calamine reads, the IronCalc
+# engine writes and calculates (plans/IronCalc-DB.md).
+xlsx = ["dep:ironcalc", "dep:calamine"]
 # moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
 # moqui-git, moqui-mail).
 test-support = ["moqui-entity/test-support"]
@@ -102,6 +103,8 @@ moqui-entity = { workspace = true, features = ["test-support"] }
 moqui-tui = { workspace = true, default-features = false, features = ["model"] }
 # Verifies the FCM sender's JWT signature (service/fcm_tests.rs); already linked through moqui-lib.
 rsa = { workspace = true }
+# Workbooks from another writer for the spreadsheet readers' tests (service/spreadsheet.rs).
+rust_xlsxwriter = { workspace = true }
 
 [lints]
 workspace = true

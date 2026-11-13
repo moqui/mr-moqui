@@ -50,6 +50,9 @@ pub use moqui_entity::testing;
 pub use moqui_entity::transaction;
 pub mod user;
 pub mod web;
+/// A workbook on the IronCalc engine, for the xlsx writers (plans/IronCalc-DB.md).
+#[cfg(feature = "xlsx")]
+pub mod workbook;
 
 /// Marker so the host links this crate.
 pub fn candidate() -> &'static str {

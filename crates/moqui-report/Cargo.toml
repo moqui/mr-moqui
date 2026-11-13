@@ -21,7 +21,6 @@ hmac = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
 regex = { workspace = true }
-rust_xlsxwriter = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -32,7 +31,7 @@ zip = { workspace = true }
 [features]
 default = ["xlsx"]
 # The xlsx format of a scheduled report export.
-xlsx = ["dep:rust_xlsxwriter", "moqui-core/xlsx"]
+xlsx = ["moqui-core/xlsx"]
 
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open.

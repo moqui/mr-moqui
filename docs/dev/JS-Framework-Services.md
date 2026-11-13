@@ -377,6 +377,7 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 | Service | |
 |---|---|
 | `SpreadsheetServices.read#Spreadsheet` | `location` or `contentBytes`, `sheetName` or `sheetIndex`, `headerRow`, `maxRows` → `sheetNameList`, `headerList`, `rowList`. The `xlsx` feature |
+| `SpreadsheetServices.calculate#Spreadsheet` | `location` or `contentBytes` (an xlsx with formulas), `cellValues` (cell to value: `B2`, `Inputs!B2`; a text is set as typed, so `=B2*2` is a formula), `readCells` (cells and ranges), `outputLocation`, `returnBytes` → `sheetNameList`, `valueMap`, `textMap` (as formatted), `contentBytes`. Sets the cells, evaluates the workbook on the IronCalc engine and reads; xlsx only, and a workbook given back keeps no charts, images or pivot tables |
 | `SpreadsheetServices.load#SpreadsheetEntity` | `entityName*`, `location` or `contentBytes`, `fieldMap`, `loadMode` → `recordCount` |
 | `ResourceServices.upload#RichTextImage`, `get#RichTextImage` | `contentFile*` → `url`; `imageId*` → `location` |
 | `ResourceServices.gc#ContentBlobs` | `dryRun` → `deletedCount`, `deletedBytes`: the job that removes unreferenced blobs |

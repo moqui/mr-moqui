@@ -19,8 +19,13 @@
 //! type: text, a number (a whole number is a `Long`), a boolean, or a date as a time stamp in the user's zone. An empty
 //! or error cell is null, and a row of only empty cells is skipped.
 //!
+//! `calculate#Spreadsheet` is in `spreadsheet_calc.rs`, on the IronCalc engine.
+//!
 //! Files previews read through [`preview_rows`] (the first rows of one sheet) and [`sheet_text`] (the text of every
 //! sheet, for search). Both stop reading an xlsx or xlsb sheet as soon as they have enough.
+
+#[path = "spreadsheet_calc.rs"]
+mod calc;
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -48,7 +53,7 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, read_spreadsheet)?;
     rust_service!(map, load_spreadsheet_entity)?;
-    Ok(())
+    calc::register(map)
 }
 
 fn flag(parameters: &BTreeMap<String, Value>, name: &str, default: bool) -> bool {
@@ -151,9 +156,10 @@ pub fn install_inline_load(load: InlineLoad) {
     let _ = INLINE_LOAD.set(load);
 }
 
-fn read_sheet(parameters: &BTreeMap<String, Value>) -> Result<Sheet, LibError> {
-    let bytes = match parameters.get("contentBytes") {
-        Some(Value::Bytes(bytes)) if !bytes.is_empty() => bytes.clone(),
+/// The file a service was given: `contentBytes`, else the resource at `location`.
+fn file_bytes(parameters: &BTreeMap<String, Value>) -> Result<Vec<u8>, LibError> {
+    match parameters.get("contentBytes") {
+        Some(Value::Bytes(bytes)) if !bytes.is_empty() => Ok(bytes.clone()),
         _ => {
             let location = param_text(parameters, "location");
             if location.is_empty() {
@@ -162,13 +168,15 @@ fn read_sheet(parameters: &BTreeMap<String, Value>) -> Result<Sheet, LibError> {
             let found = ExecutionContext::with_current(|ctx| ctx.factory().resource().get(&location))
                 .ok_or_else(|| LibError::new("no execution context is entered"))?;
             match found {
-                Ok(resource) if resource.exists() => {
-                    resource.read_bytes().map_err(|err| LibError::new(err.message()))?
-                }
-                _ => return Err(LibError::new(format!("Could not find spreadsheet at [{location}]"))),
+                Ok(resource) if resource.exists() => resource.read_bytes().map_err(|err| LibError::new(err.message())),
+                _ => Err(LibError::new(format!("Could not find spreadsheet at [{location}]"))),
             }
         }
-    };
+    }
+}
+
+fn read_sheet(parameters: &BTreeMap<String, Value>) -> Result<Sheet, LibError> {
+    let bytes = file_bytes(parameters)?;
     let mut book = calamine::open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|err| LibError::new(format!("Could not read spreadsheet: {err}")))?;
     let names = book.sheet_names();

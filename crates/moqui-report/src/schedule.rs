@@ -680,40 +680,38 @@ fn zip_files(files: &[(String, Vec<u8>)]) -> Result<Vec<u8>, Error> {
 /// One sheet per table, named for its panel. A panel with several frames stacks them, a blank row between.
 #[cfg(feature = "xlsx")]
 fn xlsx_tables(tables: &[ExportTable]) -> Result<Vec<u8>, Error> {
-    let mut book = rust_xlsxwriter::Workbook::new();
+    let mut book = moqui_core::workbook::WorkbookWriter::new()?;
+    let plain = book.style(&moqui_core::workbook::CellStyle::default());
     for table in tables {
-        let sheet = book.add_worksheet();
-        sheet.set_name(&table.sheet).map_err(fail)?;
-        let mut top = 0u32;
+        let sheet = book.add_sheet(&table.sheet)?;
+        let mut top = 1i32;
         for frame in &table.frames {
             let Some(fields) = frame["fields"].as_array() else {
                 continue;
             };
             let mut height = 0;
             for (col, field) in fields.iter().enumerate() {
-                let col = u16::try_from(col).map_err(fail)?;
-                sheet.write_string(top, col, jtext(field, "name", "")).map_err(fail)?;
+                let col = i32::try_from(col + 1).map_err(fail)?;
+                book.text(sheet, top, col, jtext(field, "name", ""), plain)?;
                 if let Some(values) = field["values"].as_array() {
                     height = height.max(values.len());
                     for (row, value) in values.iter().enumerate() {
-                        let row = top + u32::try_from(row + 1).map_err(fail)?;
+                        let row = top + i32::try_from(row + 1).map_err(fail)?;
                         if let Some(number) = value.as_f64() {
-                            sheet.write_number(row, col, number).map_err(fail)?;
+                            book.number(sheet, row, col, number, plain)?;
                         } else {
-                            sheet
-                                .write_string(row, col, value.as_str().unwrap_or(""))
-                                .map_err(fail)?;
+                            book.text(sheet, row, col, value.as_str().unwrap_or(""), plain)?;
                         }
                     }
                 }
             }
-            top += u32::try_from(height + 2).map_err(fail)?;
+            top += i32::try_from(height + 2).map_err(fail)?;
         }
     }
     if tables.is_empty() {
-        book.add_worksheet();
+        book.add_sheet("Sheet1")?;
     }
-    book.save_to_buffer().map_err(fail)
+    Ok(book.to_xlsx()?)
 }
 #[cfg(not(feature = "xlsx"))]
 fn xlsx_tables(_: &[ExportTable]) -> Result<Vec<u8>, Error> {
