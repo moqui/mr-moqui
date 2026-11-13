@@ -95,39 +95,53 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
     assert!(line("User Group            |Max Hits Count       |Max Hits Duration    |Tarpit Duration      |Update               |Delete Link          "), "{text}");
     assert!(line("All Users (all users mALL_USERS             |100                  |60                   |30                   ||"), "{text}");
 
-    // csv: a header line and a line for each row of each form-list, values quoted when they need it.
+    // csv: a header line and a line for each row of each form-list, values quoted when they need it, a row with as many
+    // values as its header. The group's members grow with the apps, so the rows are checked one by one.
     let (content_type, csv) = get("csv");
     assert_eq!(content_type.as_deref(), Some("text/csv;charset=UTF-8"));
+    let rows: Vec<&str> = csv.lines().collect();
     assert_eq!(
-        csv,
-        "Artifact Type,Artifact Name,Name Is Pattern,Inherit Authz,Filter Map,Update,Delete Link\n\
-         Screen,component://tools/screen/System.xml,N,Y,,\n\
-         ID,User Group,Authz Type,Action,Authz Service Name,Entity Filter Sets,Update,Delete Link\n\
-         SYSTEM_APP_ADMIN,Administrators (full access) - ADMIN,Always Allow (overrides Deny),All,,,\n\
-         SYSTEM_APP_ALL,All Users (all users members by default) - ALL_USERS,Deny (overrides Allow),Update,,,\n\
-         User Group,Max Hits Count,Max Hits Duration,Tarpit Duration,Update,Delete Link\n\
-         All Users (all users members by default) - ALL_USERS,100,60,30,\n"
+        rows[0], "Artifact Type,Artifact Name,Name Is Pattern,Inherit Authz,Filter Map,Delete Link",
+        "{csv}"
     );
+    for wanted in [
+        "Screen,component://tools/screen/System.xml,N,Y,,",
+        "Service,org.moqui.monitor.MonitorServices.*,Y,,,",
+        "ID,User Group,Authz Type,Action,Authz Service Name,Entity Filter Sets,Delete Link",
+        "SYSTEM_APP_ADMIN,Administrators (full access) - ADMIN,Always Allow (overrides Deny),All,,,",
+        "SYSTEM_APP_ALL,All Users (all users members by default) - ALL_USERS,Deny (overrides Allow),Update,,,",
+        "User Group,Max Hits Count,Max Hits Duration,Tarpit Duration,Delete Link",
+        "All Users (all users members by default) - ALL_USERS,100,60,30,",
+    ] {
+        assert!(rows.contains(&wanted), "{wanted}\n{csv}");
+    }
+    let mut columns = 0;
+    for row in &rows {
+        let count = row.split(',').count();
+        if row.starts_with("Artifact Type,") || row.starts_with("ID,") || row.starts_with("User Group,") {
+            columns = count;
+        }
+        assert_eq!(count, columns, "{row}\n{csv}");
+    }
 
     // xml: an element for each screen in the path, and for each form-list an element of entries whose
     // attributes are the displayed fields.
     let (content_type, xml) = get("xml");
     assert_eq!(content_type.as_deref(), Some("text/xml;charset=UTF-8"));
-    assert_eq!(
-        xml,
-        "<webroot>\n<System>\n<Access>\n<ArtifactGroupDetail>\n\
-         \x20   <ArtifactGroupMemberList>\n\
-         \x20       <ArtifactGroupMemberListEntry artifactTypeEnumId=\"Screen\" artifactName=\"component://tools/screen/System.xml\" nameIsPattern=\"N\" inheritAuthz=\"Y\" filterMap=\"\" deleteLink=\" \"/>\n\
-         \x20   </ArtifactGroupMemberList>\n\
-         \x20   <ArtifactAuthzList>\n\
-         \x20       <ArtifactAuthzListEntry artifactAuthzId=\"SYSTEM_APP_ADMIN\" userGroupId=\"Administrators (full access) - ADMIN\" authzTypeEnumId=\"Always Allow (overrides Deny)\" authzActionEnumId=\"All\" authzServiceName=\"\" entityFilterSets=\"\" deleteLink=\" \"/>\n\
-         \x20       <ArtifactAuthzListEntry artifactAuthzId=\"SYSTEM_APP_ALL\" userGroupId=\"All Users (all users members by default) - ALL_USERS\" authzTypeEnumId=\"Deny (overrides Allow)\" authzActionEnumId=\"Update\" authzServiceName=\"\" entityFilterSets=\"\" deleteLink=\" \"/>\n\
-         \x20   </ArtifactAuthzList>\n\
-         \x20   <ArtifactTarpitList>\n\
-         \x20       <ArtifactTarpitListEntry userGroupId=\"All Users (all users members by default) - ALL_USERS\" maxHitsCount=\"100\" maxHitsDuration=\"60\" tarpitDuration=\"30\" deleteLink=\" \"/>\n\
-         \x20   </ArtifactTarpitList>\n\
-         </ArtifactGroupDetail>\n</Access>\n</System>\n</webroot>\n"
+    assert!(
+        xml.starts_with("<webroot>\n<System>\n<Access>\n<ArtifactGroupDetail>\n    <ArtifactGroupMemberList>\n"),
+        "{xml}"
     );
+    assert!(xml.ends_with("</ArtifactGroupDetail>\n</Access>\n</System>\n</webroot>\n"), "{xml}");
+    for wanted in [
+        "        <ArtifactGroupMemberListEntry artifactTypeEnumId=\"Screen\" artifactName=\"component://tools/screen/System.xml\" nameIsPattern=\"N\" inheritAuthz=\"Y\" filterMap=\"\" deleteLink=\" \"/>",
+        "    </ArtifactGroupMemberList>\n    <ArtifactAuthzList>",
+        "        <ArtifactAuthzListEntry artifactAuthzId=\"SYSTEM_APP_ADMIN\" userGroupId=\"Administrators (full access) - ADMIN\" authzTypeEnumId=\"Always Allow (overrides Deny)\" authzActionEnumId=\"All\" authzServiceName=\"\" entityFilterSets=\"\" deleteLink=\" \"/>",
+        "        <ArtifactAuthzListEntry artifactAuthzId=\"SYSTEM_APP_ALL\" userGroupId=\"All Users (all users members by default) - ALL_USERS\" authzTypeEnumId=\"Deny (overrides Allow)\" authzActionEnumId=\"Update\" authzServiceName=\"\" entityFilterSets=\"\" deleteLink=\" \"/>",
+        "    <ArtifactTarpitList>\n        <ArtifactTarpitListEntry userGroupId=\"All Users (all users members by default) - ALL_USERS\" maxHitsCount=\"100\" maxHitsDuration=\"60\" tarpitDuration=\"30\" deleteLink=\" \"/>\n    </ArtifactTarpitList>",
+    ] {
+        assert!(xml.contains(wanted), "{wanted}\n{xml}");
+    }
 
     // html-print: one document with print CSS. The form-single is a table of title and value, each form-list
     // is a table with a repeated header, and .xsl-fo, the older name of the mode, is the same body.
@@ -425,13 +439,20 @@ fn the_seed_load_reads_the_data_directory_of_each_component() {
         ),
         ["Tools App (via root screen)"]
     );
+    // the root screen, and the services the Tools home reads, which its group grants with it
+    let mut members = text(
+        "moqui.security.ArtifactGroupMember",
+        &[("artifactGroupId", "TOOLS_APP")],
+        "artifactName",
+    );
+    members.sort();
     assert_eq!(
-        text(
-            "moqui.security.ArtifactGroupMember",
-            &[("artifactGroupId", "TOOLS_APP")],
-            "artifactName"
-        ),
-        ["component://tools/screen/Tools.xml"]
+        members,
+        [
+            "component://tools/screen/Tools.xml",
+            "moqui.tools.ToolsHomeServices.count#Screens",
+            "moqui.tools.ToolsHomeServices.get#ScreenCount"
+        ]
     );
     assert_eq!(
         text(

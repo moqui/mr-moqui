@@ -1045,10 +1045,41 @@ fn response_complete(buf: &[u8]) -> bool {
         return false;
     };
     let head = String::from_utf8_lossy(&buf[..split]);
+    if is_chunked(&head) {
+        // a streamed body ends with the last chunk, of size 0, and its blank line
+        return buf[split + 4..].ends_with(b"0\r\n\r\n");
+    }
     let Some(length) = content_length(&head) else {
         return false;
     };
     buf.len() >= split + 4 + length
+}
+
+/// Whether a response head says its body is chunked (a screen render streams it).
+fn is_chunked(head: &str) -> bool {
+    head.split("\r\n").any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("transfer-encoding") && value.to_ascii_lowercase().contains("chunked")
+        })
+    })
+}
+
+/// The body of a chunked response: each chunk's bytes, without the size lines.
+fn dechunk(mut body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(line_end) = body.windows(2).position(|window| window == b"\r\n") {
+        let size_text = String::from_utf8_lossy(&body[..line_end]);
+        let Ok(size) = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16) else {
+            break;
+        };
+        let start = line_end + 2;
+        if size == 0 || body.len() < start + size {
+            break;
+        }
+        out.extend_from_slice(&body[start..start + size]);
+        body = body.get(start + size + 2..).unwrap_or(&[]);
+    }
+    out
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
@@ -1068,7 +1099,10 @@ fn content_length(head: &str) -> Option<usize> {
 fn parse_response(buf: &[u8]) -> (u16, Vec<(String, String)>, Vec<u8>) {
     let split = find_header_end(buf);
     let head = String::from_utf8_lossy(split.map_or(buf, |at| &buf[..at]));
-    let body = split.map_or(Vec::new(), |at| buf[at + 4..].to_vec());
+    let mut body = split.map_or(Vec::new(), |at| buf[at + 4..].to_vec());
+    if is_chunked(&head) {
+        body = dechunk(&body);
+    }
     let mut lines = head.split("\r\n");
     let status_line = lines.next().unwrap_or("");
     let status = status_line

@@ -68,20 +68,27 @@ fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
     assert!(!fixture.render().contains("verdict clean"), "{}", fixture.render());
 
     // A screen that reads a server-only part of ec in a widget says so, with the screen, the element and the operation.
-    let service = find("tools/screen/Tools/Service/ServiceDetail.xml");
+    let review = find("tools/screen/System/Access/AccessReview.xml");
     assert!(
-        service
+        review
             .violations
             .iter()
-            .any(|violation| violation.kind == "ec" && violation.detail.contains("ec.resource.getLocationText")),
+            .any(|violation| violation.kind == "ec" && violation.detail.contains("ec.user.nowTimestamp")),
         "{}",
-        service.render()
+        review.render()
     );
     assert!(
-        service
+        review
             .violations
             .iter()
-            .all(|violation| violation.screen.ends_with("ServiceDetail.xml")),
+            .all(|violation| violation.screen.ends_with("AccessReview.xml")),
+        "{}",
+        review.render()
+    );
+    // A report-embed is computed for the viewer, so its screen stays a server merge and the report says why.
+    let service = find("tools/screen/Tools/Service/ServiceDetail.xml");
+    assert!(
+        !service.eligible && service.reasons.iter().any(|reason| reason.contains("report-embed")),
         "{}",
         service.render()
     );
