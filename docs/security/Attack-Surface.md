@@ -26,6 +26,10 @@ Screens carry `require-authentication`. The parser maps `false`, `anonymous-view
 
 Artifact authorization runs as each screen, transition, service, REST path, entity, git repository, and LLM call is pushed. Inheritable allow and always records cover children on that stack unless a more specific deny wins.
 
+### Parent frames
+
+A render checks only the last screen of its path; the screens above it are entered without their own check (Java's `pushInternal` with authorization required of the target alone), so their always- and pre-actions run for a user who may open the target. The qvt shell loads each level of a page as its own request, which checks that level as a target. A level the user may not open alone answers, only when the request names in `X-Moqui-Page-Path` a page strictly below it on the same screens that the user may open (the page's screen permitted with its parents on the stack, its subscreens items' user groups, and a shared device's route group), as the page's frame (`screen/frame.rs`): a GET in qvt, written from the level's widgets as its subscreens placeholders alone, `private, no-store`. Nothing of the level runs: no always-, pre- or widget actions, no section, no form, no label, no transition; its shell providers are not gathered for it (the shell gathers them only from roots the user may open), and its menu is the menu data's, which lists only the subscreens the user may open. What the frame tells the user is that the level exists and has a subscreens placeholder, which the page's own render (its menu data and breadcrumb titles) already showed them. The level asked for without the header, in another mode (an html page), as a transition, or for a page the user may not open, that does not resolve, or is not below it, is refused as before; the launcher lists only roots the user may open. Checking the page is one path resolution and one permission check of its screens, as its own request would be.
+
 Seed grants, from `runtime/base-component/tools/data/ToolsSecurityData.xml`:
 
 | Group | Artifact | Grant |

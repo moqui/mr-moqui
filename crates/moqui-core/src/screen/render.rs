@@ -824,6 +824,11 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
             format!("render mode {mode} is not supported by {}", rendered.location),
         ));
     }
+    // A parent level the shell loads for a page below it that the user may open, when the level itself is refused
+    // them: its placeholders alone, with nothing of its own run or written (frame.rs).
+    if super::frame::serve_frame(factory, job, &info, &mode) {
+        return Ok(());
+    }
     let (content_type, encoding) = output_type(&facade, &info, &mode);
     let state = Rc::new(RenderState::new(factory, &facade, info, mode, content_type, encoding));
     state
@@ -1121,7 +1126,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
 /// Refuse a path whose screens before `count` include a subscreens item limited to a user group the user is not in
 /// (`SubscreensItem.userGroupId`, `isValidInCurrentContext`): the screens a render starts above or at, and every screen
 /// of a transition's path.
-fn path_items_available(info: &ScreenUrlInfo, count: usize) -> Result<(), Error> {
+pub(super) fn path_items_available(info: &ScreenUrlInfo, count: usize) -> Result<(), Error> {
     let defs = &info.path_defs;
     for index in 1..count.min(defs.len()) {
         let item = info

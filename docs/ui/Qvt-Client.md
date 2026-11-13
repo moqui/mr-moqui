@@ -92,6 +92,14 @@ screen) with the extra path and query, and gives `callback` a component. It retu
   so the server checks the render modes of the screen it renders: a parent whose default subscreens end at a `.qvue`-only screen (an app root
   whose default is a `.qvue` inbox) renders in qvt, its menu and container, with no `qvt` on the leaf. A request that names the leaf in qvt, or a
   `lastStandalone` render that starts at it, is checked against the leaf (not found); html renders the levels inline, so there the leaf needs html.
+- **A parent's frame.** Each level is also checked as the target of its own path, while a render of the whole path enters the parents
+  without their own check. So `m-subscreens-active` names the page in `X-Moqui-Page-Path` (`basePath` and the current path, percent-encoded)
+  when it loads a level above the page's own. A level the user may not open alone, on the path of a page they may open (the same screens,
+  the page strictly below it, the page's screens and subscreens items permitted), answers as that page's frame: its placeholders alone
+  (`m-subscreens-tabs` for a tab panel or menu, `m-subscreens-active`), `merged-fragment`, `private, no-store`, with none of its actions run
+  and nothing else of it written (`crates/moqui-core/src/screen/frame.rs`). A user whose grants open an area below an app root and not the
+  root itself (a non-inheritable grant) then opens the area's pages in the shell; the root asked for alone, as a page, or for a page they
+  may not open is refused as before ([Attack-Surface](../security/Attack-Surface.md#parent-frames)).
 - **A screen's own path and query: `inject: ["mScreen"]`.** Each `m-dynamic-container` and `m-dynamic-dialog` provides `mScreen` for the screen
   it loaded, `{url, path, parameters, containerId}` (`path` without the query and the `.qvt`/`.qvue`/`.qjs`, `parameters` the query as an
   object; `moqui.urlScreen`), and the root provides the page's (`currentPath`, `currentParameters`), as the public shell does for its route. A

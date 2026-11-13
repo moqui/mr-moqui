@@ -25,6 +25,7 @@ mod definition;
 mod dispatch;
 pub mod ext;
 pub mod form;
+mod frame;
 pub mod gate;
 pub mod generate;
 pub(crate) mod html_text;

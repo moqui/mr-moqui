@@ -1080,6 +1080,7 @@ mod db_forms;
 mod decimal;
 mod files;
 mod forms;
+mod frame;
 mod gate;
 mod golden;
 mod html;

@@ -579,6 +579,24 @@ test("loadComponent asks for the best client mode of a screen whose render modes
     }
 });
 
+test("a parent level names the page it is loaded for, and the page's own level does not", async () => {
+    const requests = [];
+    const original = moqui.request, originalCache = moqui.componentCache;
+    moqui.request = (url, options) => { requests.push({ url: url.split("?")[0], page: options && options.headers ? options.headers["X-Moqui-Page-Path"] : undefined }); return answer("<p/>", { "X-Moqui-Qvt": "merged-fragment" }); };
+    moqui.componentCache = { get: () => undefined, containsKey: () => false, put() {} };
+    const subscreen = qvt.components["m-subscreens-active"];
+    const options = qvt.rootOptions({ basePath: "/apps" });
+    const root = Object.assign(options.data(), options.methods, { currentPathList: ["People", "Time", "Leave Requests"], currentSearch: "", basePathSize: 0, navMenuList: [] });
+    const level = (index) => Object.assign(subscreen.data(), subscreen.methods, { $root: root, pathIndex: index });
+    try {
+        level(0).loadActive();
+        level(2).loadActive();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.deepEqual(requests[0], { url: "/apps/People.qvt", page: "/apps/People/Time/Leave%20Requests" });
+        assert.deepEqual(requests[1], { url: "/apps/People/Time/Leave Requests.qvt", page: undefined });
+    } finally { moqui.request = original; moqui.componentCache = originalCache; }
+});
+
 test("a container provides the screen it loaded as mScreen, and the root the page's", () => {
     const vm = { id: "Dyn1", curUrl: "/apps/gallery/QuickTask.qvue?recordEntity=moqui.basic.Enumeration&recordId=A%20B&tag=x&tag=y" };
     const screen = qvt.components["m-dynamic-container"].provide.call(vm).mScreen;
