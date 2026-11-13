@@ -307,7 +307,8 @@ fn add_component_dir(
             }
         }
         // Only what the manifest lists loads; a directory beside it that it does not list is said, so a set or a
-        // component put in the wrong place is noticed rather than missing without a word (plans/Components-Dir.md).
+        // component put in the wrong place is noticed rather than missing without a word
+        // (plans/archive/Components-Dir.md).
         for unlisted in unlisted_children(&dir, &list) {
             tracing::warn!("{} is not in {}, not loaded", unlisted.display(), manifest.display());
         }

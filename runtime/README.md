@@ -8,7 +8,7 @@ instances). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/`
 
 | Path | In git | Purpose |
 |---|---|---|
-| `components/` | partly | The component sets, each a directory of components; `components/components.xml` lists the sets that load, in order, and only those load ([plans/Components-Dir.md](../plans/Components-Dir.md)) |
+| `components/` | partly | The component sets, each a directory of components; `components/components.xml` lists the sets that load, in order, and only those load ([plans/archive/Components-Dir.md](../plans/archive/Components-Dir.md)) |
 | `components/base/` | yes | The framework and base components that ship with Moqui |
 | `components/addon/` | no | Add-on components, normally checked out by `./moq component-get` or deployed from System > Components ([components/addon/README.md](components/addon/README.md)) |
 | `components/dev/` | partly | Components that load only when `instance_purpose` is `dev`: the framework's (`dev-aide`, `example`), the demo lock-down (off by default, loaded on a demo server by `conf/MoquiDemoConf.xml`) and the component template in git, a developer's own beside them ([components/dev/README.md](components/dev/README.md)) |

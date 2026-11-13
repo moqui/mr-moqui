@@ -103,8 +103,8 @@ if [ -n "${MOQUI_RUNTIME:-}" ]; then
 else
     RUNTIME_DIR=$ROOT/runtime
 fi
-# The runtime's component sets, relative to the runtime, in load order (plans/Components-Dir.md; the Rust side is
-# crates/moqui-core/src/context/layout.rs). Each task names a set by these, so a change of layout is made here.
+# The runtime's component sets, relative to the runtime, in load order (plans/archive/Components-Dir.md; the Rust side
+# is crates/moqui-core/src/context/layout.rs). Each task names a set by these, so a change of layout is made here.
 BASE_SET=components/base
 ADDON_SET=components/addon
 DEV_SET=components/dev
@@ -1229,9 +1229,10 @@ directory, never from the binary. On its first start it unpacks the embedded Pos
 The file goes in the current directory unless named elsewhere, with .zip (or .tgz) added when
 the name lacks it; a name ending in .tgz or .tar.gz means --tgz. A directory gets the default
 name inside it. The archive also leaves out .git, the target/ of component crates, OpenSearch
-logs, and pid files. A production archive carries no tests and no dev tools: it leaves out each
-component's test/ (its regression and acceptance suites, agent replays and load scripts) and the
-test set, components/test, unless --with-tests, and the dev set, components/dev, unless --with-dev. The database is copied as files, so the embedded Postgres must be stopped;
+logs, and pid files. A production archive carries no tests, plans or dev tools: it leaves out each
+component's test/ (its regression and acceptance suites, agent replays and load scripts), plan/ and
+plans/, and the test set, components/test, unless --with-tests, and the dev set, components/dev,
+unless --with-dev. The database is copied as files, so the embedded Postgres must be stopped;
 an OpenSearch daemon with a pid file is stopped for the copy and started again after. Needs zip,
 or tar and gzip.
   ./moq archive
@@ -1245,8 +1246,8 @@ $PACKAGE_OPTIONS_HELP
                        conf/MoquiProductionConf.xml); relative to the runtime directory, or a path
       --tgz            A gzipped tar (.tgz) instead of a zip
       --with-save      Include runtime/save (the save-db copies)
-      --with-tests     Keep each component's test/ and the test set (an archive for a staging server
-                       that runs moqui test or client specs against itself)
+      --with-tests     Keep each component's test/, plan/ and plans/, and the test set (an archive for a
+                       staging server that runs moqui test or client specs against itself)
       --with-dev       Keep the dev set (the dev tools still load only on a dev instance)
       --no-data        Leave out the instance data and secrets: runtime/db, the OpenSearch data,
                        runtime/txlog, runtime/.env and runtime/cert
@@ -2560,7 +2561,7 @@ has_spec_file() {
 }
 
 # Refuses a component of ACCEPT_NAMES (all when empty) that still has its acceptance suite in a top-level acceptance/,
-# which moved to test/acceptance/ (plans/Components-Dir.md), so its specs are not left out without a word.
+# which moved to test/acceptance/ (plans/archive/Components-Dir.md), so its specs are not left out without a word.
 refuse_stale_acceptance() {
     local set d
     for set in "${COMPONENT_SETS[@]}"; do for d in "$RUNTIME_DIR/$set"/*/; do
@@ -4701,10 +4702,10 @@ task_archive() {
         "*/postmaster.pid" "*/.git" "*/.git/*" "$name/components/*/*/target/*" "*/.venv/*"
         "*/__pycache__/*" "*/.DS_Store" "*~")
     [ -z "$no_data" ] || excludes+=("$name/opensearch/data/*")
-    # A production archive carries no tests and no dev set unless asked (plans/Components-Dir.md 3.6): each component's
-    # test/ (its suites, agent replays and load scripts) and the test set, and the dev set. Named one by one, since a
-    # wildcard would also take a directory named test deeper in a component.
-    local set component
+    # A production archive carries no tests, plans and dev set unless asked (plans/archive/Components-Dir.md 3.6): each
+    # component's test/ (its suites, agent replays and load scripts), plan/ and plans/, the test set, and the dev set.
+    # Named one by one, since a wildcard would also take a directory of that name deeper in a component.
+    local set component part dir
     ARCHIVE_LEFT_OUT=
     if [ -z "$with_dev" ]; then
         excludes+=("$name/$DEV_SET" "$name/$DEV_SET/*")
@@ -4714,12 +4715,15 @@ task_archive() {
         excludes+=("$name/$TEST_SET" "$name/$TEST_SET/*")
         for set in "${COMPONENT_SETS[@]}"; do
             for component in "$RUNTIME_DIR/$set"/*/; do
-                [ -d "${component}test" ] || continue
-                component=${component%/}
-                excludes+=("$name/$set/${component##*/}/test" "$name/$set/${component##*/}/test/*")
+                for part in test plan plans; do
+                    [ -d "$component$part" ] || continue
+                    dir=$name/$set/$(basename "$component")/$part
+                    excludes+=("$dir" "$dir/*")
+                done
             done
         done
-        ARCHIVE_LEFT_OUT="$ARCHIVE_LEFT_OUT the test set ($TEST_SET) and each component's test/ (--with-tests keeps them),"
+        ARCHIVE_LEFT_OUT="$ARCHIVE_LEFT_OUT the test set ($TEST_SET) and each component's test/, plan/ and plans/
+  (--with-tests keeps them),"
     fi
 
     # Beside the archive, so the binary is linked or copied onto the disk the archive goes to.

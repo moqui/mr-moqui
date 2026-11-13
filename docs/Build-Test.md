@@ -255,9 +255,9 @@ The embedded database, OpenSearch and Chromium go in when they are in `runtime/`
 stopped; `--no-data` leaves out the database, OpenSearch data, `.env` and `cert/` for a fresh instance. A binary runs
 on the OS and CPU it was built for.
 
-A production archive carries no tests and no dev tools by default: it leaves out each component's `test/` (the
-regression and acceptance suites, agent replays and load scripts) and the test set, `components/test/`, unless
-`--with-tests`, and the dev set, `components/dev/`, unless `--with-dev`. `--with-tests` is for a staging server that runs
+A production archive carries no tests, plans or dev tools by default: it leaves out each component's `test/` (the
+regression and acceptance suites, agent replays and load scripts), `plan/` and `plans/`, and the test set,
+`components/test/`, unless `--with-tests`, and the dev set, `components/dev/`, unless `--with-dev`. `--with-tests` is for a staging server that runs
 `moqui test` or client specs against itself; a demo server, whose conf loads the `demo` component from the dev set, needs
 `--with-dev`. `./moq component-zip` leaves out `test/` too, unless `--with-tests`, and the desktop app's runtime keeps
 the dev set (the tray's Developer tools) and leaves the tests out.

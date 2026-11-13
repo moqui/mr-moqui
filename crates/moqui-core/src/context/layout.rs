@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Where a runtime keeps its components (plans/Components-Dir.md), in one place: the component sets, the framework
-//! component, what marks a directory as a runtime, and the clone-relative paths that tests and dev builds join to
-//! `CARGO_MANIFEST_DIR`. Code that has a factory asks it for the loaded components instead; this is for code that
-//! runs without a boot (the test runners, the dev tools, the runtime lookup).
+//! Where a runtime keeps its components (plans/archive/Components-Dir.md), in one place: the component sets, the
+//! framework component, what marks a directory as a runtime, and the clone-relative paths that tests and dev builds
+//! join to `CARGO_MANIFEST_DIR`. Code that has a factory asks it for the loaded components instead; this is for code
+//! that runs without a boot (the test runners, the dev tools, the runtime lookup).
 
 use std::path::{Path, PathBuf};
 
@@ -114,7 +114,7 @@ pub fn component_dirs(runtime: &Path, sets: &[Set]) -> Vec<(Set, PathBuf)> {
     found
 }
 
-/// The component directories of the layout before `components/` (plans/Components-Dir.md), each with where its
+/// The component directories of the layout before `components/` (plans/archive/Components-Dir.md), each with where its
 /// components go now. Nothing moves them; a boot that finds one says so ([`warn_old_dirs`]).
 pub const OLD_DIRS: [(&str, &str); 5] = [
     ("base-component", "components/base"),
@@ -166,7 +166,7 @@ pub fn warn_old_dirs(runtime: &Path, listed: &[String]) {
         if in_use && !listed.iter().any(|location| location.trim_end_matches('/') == old) {
             tracing::warn!(
                 "{} is the old place of components and is not loaded: move its components to {} \
-                 (plans/Components-Dir.md)",
+                 (plans/archive/Components-Dir.md)",
                 dir.display(),
                 runtime.join(new).display()
             );
@@ -228,9 +228,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// The old component directories are named nowhere in the repository but this module, the plan that moved them and
-    /// the archived plans (plans/Components-Dir.md §5), so a stale path or a new hand-built one shows up here rather
-    /// than at the next move. Skipped outside a git checkout.
+    /// The old component directories are named nowhere in the repository but this module and the archived plans, the one
+    /// that moved them among them (plans/archive/Components-Dir.md §5), so a stale path or a new hand-built one shows up
+    /// here rather than at the next move. Skipped outside a git checkout.
     #[test]
     fn the_old_component_directories_are_named_nowhere() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -245,11 +245,8 @@ mod tests {
         if !out.status.success() {
             return;
         }
-        let allowed = |path: &str| {
-            path.starts_with("plans/archive/")
-                || path == "plans/Components-Dir.md"
-                || path == "crates/moqui-core/src/context/layout.rs"
-        };
+        let allowed =
+            |path: &str| path.starts_with("plans/archive/") || path == "crates/moqui-core/src/context/layout.rs";
         let old = [
             "base-component",
             "dev-component",

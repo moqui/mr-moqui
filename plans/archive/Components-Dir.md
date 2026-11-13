@@ -1,5 +1,10 @@
 # Components directory
 
+> Archived 2026-11-13: built in P1 to P6 on 2026-11-13 (§7), the add-on repositories' clones moved by hand into
+> `runtime/components/addon`. The layout is in `moqui_core::context::layout` and the set variables at the top of `moq`;
+> the guides are [runtime/README.md](../../runtime/README.md), [Run-Deploy](../../docs/Run-Deploy.md#runtime-directory-and-conf)
+> and [Build-Test](../../docs/Build-Test.md#the-two-suites). Nothing of it is left open.
+
 The runtime's component directories become one directory, `runtime/components/`, whose children each hold a set of
 components: `base` (the framework's, now `runtime/base-component`), `dev` (dev-only, now `runtime/dev-component`),
 `test` (new: test-only add-ons) and `addon` (the add-on components of `addons.xml`, now `runtime/component`). With it,
@@ -191,7 +196,7 @@ stay as they are. Served runs (`test-client --serve`, through the same `answer`)
 
 Every client spec moves to it in P1, before the move: 61 lines in mr-moqui (`/files/runtime/base-component/webroot/...`
 becomes `/files/component/webroot/...`, dev-aide's `/files/component/dev-aide/...`) and mr-boss's 5.
-[docs/dev/JS-Test-Client.md](../docs/dev/JS-Test-Client.md), which describes `/files/`, gains the component form as the
+[docs/dev/JS-Test-Client.md](../../docs/dev/JS-Test-Client.md), which describes `/files/`, gains the component form as the
 one to use.
 
 ### 3.6 A production archive: no tests, no dev set
@@ -223,7 +228,7 @@ site that wants that builds its archive with `--with-tests`, or adds an option o
 A component's acceptance suite moves from `<component>/acceptance/` (and `acceptance/client/`) to
 `<component>/test/acceptance/` (and `test/acceptance/client/`), so `test/` holds every kind of test: the regression
 specs at its top, and the special subdirectories `client`, `acceptance`, `agent` and `load`. The suites stay separate
-([the two suites](../docs/Build-Test.md#the-two-suites)); only the place changes.
+([the two suites](../../docs/Build-Test.md#the-two-suites)); only the place changes.
 
 - **`moqui test`** (`moqui-host/src/test_cmd/mod.rs`). `reserved_subdirs("test")` gains `acceptance` (and `load`, which
   holds no specs now but is another command's), so the regression suite does not pick up acceptance specs;
@@ -241,7 +246,7 @@ specs at its top, and the special subdirectories `client`, `acceptance`, `agent`
   `template_part_files` (4313), and `accept`, `accept-all` and their help (140–141, 795–816).
 - **A stale `acceptance/`**: `moqui test` and `moq accept` refuse a component that still has a top-level
   `acceptance/` with an error naming `test/acceptance/`, so its specs are not silently skipped.
-- **Docs**: [docs/Build-Test.md](../docs/Build-Test.md), AGENTS.md, the testing skill, the template's files and
+- **Docs**: [docs/Build-Test.md](../../docs/Build-Test.md), AGENTS.md, the testing skill, the template's files and
   README, and every doc and plan outside `plans/archive` that names an `acceptance/` path (39 files in mr-moqui).
 - **Built-in files**: `moqui-embedded`'s `COMPONENT_SKIP` (`build.rs` 30, `lib.rs` 40) drops `acceptance`, since
   `test` then covers it (§3.8).
@@ -256,7 +261,7 @@ This is independent of the components move and can land first (P2; the component
 
 The binary carries the framework and tools components whole and a webroot stub (`crates/moqui-embedded`, built in
 513e2e35 and ce6b26ed), compares the runtime's copies with them at startup, and writes them as a skeleton runtime when
-there is none ([Run-Deploy](../docs/Run-Deploy.md), "Built-in framework files"). What ties it to the layout:
+there is none ([Run-Deploy](../../docs/Run-Deploy.md), "Built-in framework files"). What ties it to the layout:
 
 - **`build.rs`** (34) packs from `../../runtime/base-component`: a literal, replaced in P4 by
   `../../runtime/components/base`. `webroot-files.txt` (its comment at 7) is relative to the webroot component and
@@ -332,6 +337,10 @@ Built Nov 13, 2026, in the order of §4, with these differences from the design 
   one, and the dev tools' component maps take both layouts (`layout::component_dirs_any_layout`).
 - **The desktop app's runtime** keeps the dev set and leaves the tests out (`stage_desktop_runtime`), as §3.6 says; the
   desktop crate was not compiled in the build (it needs `target/moqui-app` from `./moq desktop`).
+- **Plans stay out of a production archive** too: `./moq archive` leaves out each component's `plan/` and `plans/` with
+  its `test/`, and `--with-tests` keeps all three (added on the user's request, Nov 13).
+- **`/files/component/<name>/`** is a route of the offline origin only (`server: false` specs). §3.5's served runs
+  have no `/files/` route of any kind, so there was nothing to add there.
 - **The guard test** (§5) is `context::layout`'s `the_old_component_directories_are_named_nowhere`; it allows this
   plan, `plans/archive/` and `layout.rs`, which holds the boot WARN's names.
 

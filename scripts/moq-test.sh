@@ -778,6 +778,11 @@ if have zip && have unzip && have tar && have gzip; then
         "$R/runtime/components/test/tc" "$R/runtime/components/dev/dv"
     : >"$R/runtime/components/base/fw-z/test/acceptance/Walk.spec.js"
     : >"$R/runtime/components/base/fw-z/service/z/test/Keep.xml"
+    mkdir -p "$R/runtime/components/base/fw-z/plan" "$R/runtime/components/base/fw-z/plans" \
+        "$R/runtime/components/base/fw-z/screen/plan"
+    : >"$R/runtime/components/base/fw-z/plan/design.md"
+    : >"$R/runtime/components/base/fw-z/plans/Next.md"
+    : >"$R/runtime/components/base/fw-z/screen/plan/Keep.xml"
     : >"$R/runtime/components/test/tc/component.xml"
     : >"$R/runtime/components/dev/dv/component.xml"
     check "archive default name" 0 "Created $O/mr-moqui-[0-9]{8}\.zip .*expands to mr-moqui-[0-9]{8}/" -- \
@@ -803,8 +808,9 @@ if have zip && have unzip && have tar && have gzip; then
             check "$kind has $want" 0 '' -- grep -qF " $want" <<<"$list"
         done
         check "$kind keeps a deeper test directory" 0 '' -- grep -qF " $top/components/base/fw-z/service/z/test/Keep.xml" <<<"$list"
+        check "$kind keeps a deeper plan directory" 0 '' -- grep -qF " $top/components/base/fw-z/screen/plan/Keep.xml" <<<"$list"
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
-            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ components/test/ components/dev/; do
+            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done
         rm -rf "$O/x"
@@ -818,7 +824,7 @@ if have zip && have unzip && have tar && have gzip; then
         check "$kind conf is the production conf, not the runtime's" 0 '' -- \
             cmp "$O/x/$top/MoquiConf.xml" "$R/runtime/conf/MoquiProductionConf.xml"
         check "$kind readme" 0 'keep this archive private' -- cat "$O/x/$top/README.txt"
-        check "$kind readme says the tests are left out" 0 'each component.s test/ \(--with-tests' -- \
+        check "$kind readme says the tests are left out" 0 'each component.s test/, plan/ and plans/' -- \
             cat "$O/x/$top/README.txt"
     done
     rm -f "$R/runtime/MoquiConf.xml"
@@ -838,6 +844,8 @@ if have zip && have unzip && have tar && have gzip; then
     check "archive --with-tests keeps the tests" 0 ' tested/components/base/fw-z/test/acceptance/Walk.spec.js' -- \
         sh -c "'$M' archive --with-tests '$O/tested.zip' && unzip -l '$O/tested.zip'"
     check "archive --with-tests keeps the test set" 0 ' tested/components/test/tc/component.xml' -- unzip -l "$O/tested.zip"
+    check "archive --with-tests keeps plan/" 0 ' tested/components/base/fw-z/plan/design.md' -- unzip -l "$O/tested.zip"
+    check "archive --with-tests keeps plans/" 0 ' tested/components/base/fw-z/plans/Next.md' -- unzip -l "$O/tested.zip"
     lacks "archive --with-tests still leaves out the dev set" 'components/dev/' -- unzip -l "$O/tested.zip"
     check "archive --with-dev keeps the dev set" 0 ' withdev/components/dev/dv/component.xml' -- \
         sh -c "'$M' archive --with-dev '$O/withdev.zip' && unzip -l '$O/withdev.zip'"

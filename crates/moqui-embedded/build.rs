@@ -80,7 +80,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", skeleton.display());
     collect(&skeleton, "skeleton", &mut files);
-    // the sets' manifest a skeleton runtime needs, since only the sets it lists load (plans/Components-Dir.md)
+    // the sets' manifest a skeleton runtime needs, since only the sets it lists load (plans/archive/Components-Dir.md)
     let sets = manifest.join("../../runtime/components/components.xml");
     println!("cargo:rerun-if-changed={}", sets.display());
     files.push(("skeleton/components/components.xml".to_string(), sets));

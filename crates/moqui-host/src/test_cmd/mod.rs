@@ -412,8 +412,9 @@ pub(crate) fn is_acceptance_display(display: &str) -> bool {
 }
 
 /// The components of `names` (or all, when it is empty) that still have their acceptance suite in a top-level
-/// `acceptance/` directory, which moved to `test/acceptance/` (plans/Components-Dir.md), so its specs are not left out
-/// without a word: an acceptance run is refused, and a regression run, which does not read it, says so on stderr.
+/// `acceptance/` directory, which moved to `test/acceptance/` (plans/archive/Components-Dir.md), so its specs are not
+/// left out without a word: an acceptance run is refused, and a regression run, which does not read it, says so on
+/// stderr.
 pub(crate) fn check_stale_acceptance(runtime: &Path, acceptance: bool, names: &[String]) -> Result<(), Error> {
     let stale: Vec<String> = layout::component_dirs(runtime, &layout::Set::ALL)
         .into_iter()

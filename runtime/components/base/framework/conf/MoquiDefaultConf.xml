@@ -1865,7 +1865,7 @@
 
     <component-list>
         <!-- runtime/components: the sets of components that its components.xml lists, in load order: base, addon, dev
-            (loaded only when instance_purpose is dev) and test (dev and test); plans/Components-Dir.md. -->
+            (loaded only when instance_purpose is dev) and test (dev and test); plans/archive/Components-Dir.md. -->
         <component-dir location="components"/>
         <!-- Here are some examples of explicitly loading the example component in different ways: -->
         <!-- <component name="example" location="components/addon/example"/> -->

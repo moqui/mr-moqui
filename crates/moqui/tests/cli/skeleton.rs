@@ -185,7 +185,7 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     assert!(runtime
         .join("components/base/webroot/screen/webroot/qapps.xml")
         .is_file());
-    // only the sets the manifest lists load, so the skeleton writes it (plans/Components-Dir.md)
+    // only the sets the manifest lists load, so the skeleton writes it (plans/archive/Components-Dir.md)
     assert!(runtime.join("components/components.xml").is_file());
 
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
