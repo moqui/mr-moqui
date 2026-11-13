@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     the thread list in date groups with selection and hover actions; the reading pane right, bottom or off; the composer
     docks at the bottom right (Compose.qvue in an m-dynamic-container each); the Inbox key scope. The view is in the URL
     (view, account, folder, label, mailbox, q, thread), read from $root.currentParameters, so a view is a link and the
-    browser's Back works. Data and actions are the JSON transitions of Mail.xml. In the desktop client (its shell bundles
+    browser's Back works. Data and actions are the JSON transitions of Mail.xml; a message's More menus (the thread's, for its
+    last message, and each message's) end with what apps add (ext-action slot="message-actions"). In the desktop client (its shell bundles
     this screen): the Outbox card lists the mail waiting to send (Retry, Discard) and the thread changes waiting
     (moqui.hostOutbox()); with the server out of reach, read, unread, flag, archive, move and trash wait there and the rest
     says it needs a connection. What the server did not take is listed there too, each with Retry and Discard: a thread
@@ -383,6 +384,8 @@ along with this software (see the LICENSE.md file). If not, see
                                         <q-item clickable v-close-popup @click="createFrom(lastMessage, 'task')"><q-item-section avatar><q-icon name="sym_o_task_alt"></q-icon></q-item-section><q-item-section>{{t('Create a task')}}</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="createFrom(lastMessage, 'request')"><q-item-section avatar><q-icon name="sym_o_support"></q-icon></q-item-section><q-item-section>{{t('Create a request')}}</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="createFrom(lastMessage, 'event')"><q-item-section avatar><q-icon name="sym_o_event"></q-icon></q-item-section><q-item-section>{{t('Create an event')}}</q-item-section></q-item>
+                                        <!-- what an app adds to a message (ext-action slot message-actions; the item: store, emailMessageId, communicationEventId) -->
+                                        <m-ext-actions v-if="lastMessage" slot="message-actions" :item="{ store: lastMessage.store, emailMessageId: lastMessage.emailMessageId || null, communicationEventId: lastMessage.communicationEventId || null }" @done="reloadThread"></m-ext-actions>
                                         <q-item v-if="thread.canModerate && !thread.isClosed" clickable v-close-popup @click="threadAction('close')"><q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section><q-item-section>{{t('Close thread')}}</q-item-section></q-item>
                                         <q-item v-if="thread.canModerate && thread.isClosed" clickable v-close-popup @click="threadAction('reopen')"><q-item-section avatar><q-icon name="sym_o_lock_open"></q-icon></q-item-section><q-item-section>{{t('Reopen thread')}}</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="expandAll"><q-item-section avatar><q-icon name="sym_o_unfold_more"></q-icon></q-item-section><q-item-section>{{t('Expand all')}}</q-item-section></q-item>
@@ -454,6 +457,7 @@ along with this software (see the LICENSE.md file). If not, see
                                                         <q-item clickable v-close-popup @click="createFrom(item.message, 'task')"><q-item-section avatar><q-icon name="sym_o_task_alt"></q-icon></q-item-section><q-item-section>{{t('Create a task')}}</q-item-section></q-item>
                                                         <q-item clickable v-close-popup @click="createFrom(item.message, 'request')"><q-item-section avatar><q-icon name="sym_o_support"></q-icon></q-item-section><q-item-section>{{t('Create a request')}}</q-item-section></q-item>
                                                         <q-item clickable v-close-popup @click="createFrom(item.message, 'event')"><q-item-section avatar><q-icon name="sym_o_event"></q-icon></q-item-section><q-item-section>{{t('Create an event')}}</q-item-section></q-item>
+                                                        <m-ext-actions slot="message-actions" :item="{ store: item.message.store, emailMessageId: item.message.emailMessageId || null, communicationEventId: item.message.communicationEventId || null }" @done="reloadThread"></m-ext-actions>
                                                         <q-item clickable v-close-popup @click="openDetail(item.message)"><q-item-section avatar><q-icon name="sym_o_code"></q-icon></q-item-section><q-item-section>{{t('Print or view source')}}</q-item-section></q-item>
                                                         <template v-if="item.message.store === 'email' && !(item.message.from && item.message.from.isMe)">
                                                             <q-separator></q-separator>

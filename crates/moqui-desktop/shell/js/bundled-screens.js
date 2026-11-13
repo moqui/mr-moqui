@@ -11351,6 +11351,7 @@ module.exports = {
                   const _component_q_card_section = _resolveComponent("q-card-section")
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
+                  const _component_m_ext_actions = _resolveComponent("m-ext-actions")
                   const _component_m_html_view = _resolveComponent("m-html-view")
                   const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
                   const _component_m_dialog = _resolveComponent("m-dialog")
@@ -13698,9 +13699,17 @@ module.exports = {
                                                       }, 8, ["onClick"])), [
                                                         [_directive_close_popup]
                                                       ]),
+                                                      (_ctx.lastMessage)
+                                                        ? (_openBlock(), _createBlock(_component_m_ext_actions, {
+                                                            key: 2,
+                                                            slot: "message-actions",
+                                                            item: { store: _ctx.lastMessage.store, emailMessageId: _ctx.lastMessage.emailMessageId || null, communicationEventId: _ctx.lastMessage.communicationEventId || null },
+                                                            onDone: _ctx.reloadThread
+                                                          }, null, 8, ["item", "onDone"]))
+                                                        : _createCommentVNode("", true),
                                                       (_ctx.thread.canModerate && !_ctx.thread.isClosed)
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                            key: 2,
+                                                            key: 3,
                                                             clickable: "",
                                                             onClick: $event => (_ctx.threadAction('close'))
                                                           }, {
@@ -13725,7 +13734,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (_ctx.thread.canModerate && _ctx.thread.isClosed)
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                            key: 3,
+                                                            key: 4,
                                                             clickable: "",
                                                             onClick: $event => (_ctx.threadAction('reopen'))
                                                           }, {
@@ -14247,6 +14256,11 @@ module.exports = {
                                                                           }, 8, ["onClick"])), [
                                                                             [_directive_close_popup]
                                                                           ]),
+                                                                          _createVNode(_component_m_ext_actions, {
+                                                                            slot: "message-actions",
+                                                                            item: { store: item.message.store, emailMessageId: item.message.emailMessageId || null, communicationEventId: item.message.communicationEventId || null },
+                                                                            onDone: _ctx.reloadThread
+                                                                          }, null, 8, ["item", "onDone"]),
                                                                           _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                                             clickable: "",
                                                                             onClick: $event => (_ctx.openDetail(item.message))

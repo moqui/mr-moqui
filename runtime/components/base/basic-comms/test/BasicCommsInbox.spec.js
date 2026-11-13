@@ -2,7 +2,8 @@
 // CommsHomeServices; plans/archive/Comms-Framework.md A3): a user with no party and a mail account of their own sees its Inbox, a
 // thread, its details and its Home counter, acts on the thread, and writes, keeps and discards a reply; no internal
 // messages or mailboxes are offered. run#Operation hands the operations to an app's inbox-source when the user may open
-// one (IronStone's, when it is installed), and to these services otherwise.
+// one (IronStone's, when it is installed), and to these services otherwise. Mail renders the message-actions slot and hands a
+// message to the apps' create-from providers (createRecord).
 // Run: ./moq test basic-comms --spec BasicCommsInbox
 const USER = "BASIC_COMMS_INBOX"
 const CLIENT = "BASIC_COMMS_INBOX_CLIENT"
@@ -300,5 +301,45 @@ feature("the framework reads a message's invitation; with no invitation provider
         thread.thread.messageList[0].invitation.method == "REQUEST"
         thread.thread.messageList[0].invitation.canRespond == false
         answer.errors.includes("not available here")
+    }
+})
+
+// The message-actions slot (impl-sales P5, the user's call of Nov 13): Mail.qvue renders what apps add to a message in both of its More
+// menus (the thread's, for its last message, and each message's), with the message's store and ids as the item; Mail's createRecord
+// hands the message to the create-from providers of the apps the user may open, so a user no app answers that hook for is told so
+// and nothing is made; and an app's ext-action on the slot is in Mail's ext items (IronStone's, when it is installed).
+function render(path, parameters, method) {
+    const result = ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").render(path, parameters || {}, method || null)
+    let json = null
+    try {
+        json = JSON.parse(String(result.output || ""))
+    } catch (error) {
+        json = null
+    }
+    const errors = Array.from(result.errorMessages || []).join(" | ")
+    ec.message.clearErrors()
+    return {status: result.status, errors, json: json || {}}
+}
+feature("Mail renders the message-actions slot in a message's menus, and createRecord asks the apps' create-from providers", {
+    when() {
+        const source = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Mail.qvue", false)
+        const slots = source.match(/<m-ext-actions[^>]*slot="message-actions"[^>]*>/g) || []
+        // a user who may open no app with a create-from provider: the framework's screens alone
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const none = sys(() => render("Inbox/Mail/createRecord", {kind: "lead", emailMessageId: MESSAGE}, "post"))
+        login("john.doe")
+        const items = bossInstalled
+            ? JSON.parse(String(ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").render("extItems/apps/BasicComms/Inbox/Mail", {}, null).output || "{}"))
+            : null
+        ec.message.clearErrors()
+        return {slots, none, items}
+    },
+    then({slots, none, items}) {
+        slots.length == 2
+        slots.every(tag => tag.includes("emailMessageId") && tag.includes("communicationEventId") && tag.includes("store"))
+        none.errors.includes("Nothing here makes records from messages")
+        none.json.recordId == null
+        items == null || items.actions.some(action => action.slot == "message-actions" && action.kind == "transition" && action.url.endsWith("/createRecord")
+            && JSON.stringify(action.parameters).includes("emailMessageId"))
     }
 })

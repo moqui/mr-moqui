@@ -81,10 +81,13 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="create" noun="From" type="interface">
-        <description>create-from: make a record of kind from a message or a chat event; answers its url (recordUrl).</description>
+        <description>create-from: make a record of kind from a message (a mail's emailMessageId or an internal message's
+            communicationEventId, from Mail's createRecord) or a chat event (chatRoomId, eventSeq, from Chat's createFrom); answers
+            the record (recordEntityName, recordId), its url and a message for the user.</description>
         <in-parameters>
             <parameter name="kind" required="true"/>
             <parameter name="emailMessageId"/>
+            <parameter name="communicationEventId"/>
             <parameter name="chatRoomId"/>
             <parameter name="eventSeq"/>
         </in-parameters>
