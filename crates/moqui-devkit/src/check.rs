@@ -423,9 +423,14 @@ pub fn check_extensions(factory: &ExecutionContextFactory) -> Vec<Problem> {
 #[must_use]
 pub fn required_problems(index: &crate::index::MemoryIndex) -> Vec<Problem> {
     use std::collections::{HashMap, HashSet};
-    // the parameters of each transition and screen, and the parameters each form's bindings reach
+    // the parameters each transition and screen declares (not the ones a transition's service-call gives it), and the
+    // parameters each form's bindings reach
     let mut parameters: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for artifact in index.artifacts.iter().filter(|artifact| artifact.kind == "parameter") {
+    for artifact in index
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == "parameter" && artifact.origin.is_empty())
+    {
         if let (Some(parent), Some((_, _, name))) = (
             artifact.parent.as_deref(),
             crate::index::extract::parse_parameter_id(&artifact.id),

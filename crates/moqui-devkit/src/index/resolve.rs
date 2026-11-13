@@ -48,9 +48,10 @@ pub use expand::{path_seed, Expansion, FormCall};
 use std::collections::{HashMap, HashSet};
 
 use super::extract::{
-    parameter_id, parameter_name, short_of, ArtifactRow, BindingRow, RefRow, ToKind, CALLS_MARK, CONF_ITEM,
-    DERIVED_PATH, NO_SUB_PATH_MARK, ORIGIN_DERIVED, OWN_IN_MAP_MARK, PK_MARK, REQUEST_MARK, ROW_ITEM,
+    parameter_id, short_of, ArtifactRow, BindingRow, RefRow, ToKind, CALLS_MARK, CONF_ITEM, DERIVED_PATH,
+    NO_SUB_PATH_MARK, ORIGIN_DERIVED, OWN_IN_MAP_MARK, PK_MARK, REQUEST_MARK, ROW_ITEM,
 };
+use super::parameter::{parameter_row, ParamDirection, ParamPlace, ParamSpec};
 
 /// A field of an entity, as the entity-auto services take it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -583,16 +584,16 @@ impl Resolver {
             format!("entity-auto {verb} of {full}"),
             format!("entity:{full}"),
         )];
-        let mut parameter = |direction: &str, field: &str, kind: &str, required: bool| {
-            let parameter_name = parameter_name(id, direction, field);
-            rows.push(row(
-                parameter_id(id, direction, field),
-                "parameter",
-                &parameter_name,
-                short_of("parameter", &parameter_name),
-                format!("{direction} {kind}, required={required}"),
-                id.to_string(),
-            ));
+        let place = ParamPlace {
+            component: "",
+            path: DERIVED_PATH,
+            line: 0,
+            column: 0,
+            origin: ORIGIN_DERIVED,
+        };
+        let mut parameter = |direction: ParamDirection, field: &str, kind: &str, required: bool| {
+            let spec = ParamSpec::new(direction, field, kind, &required.to_string());
+            rows.push(parameter_row(id, &spec, &place));
         };
         let fields: Vec<&AutoField> = self.ordered_fields(full);
         let keys: Vec<&AutoField> = fields.iter().copied().filter(|field| field.pk).collect();
@@ -602,21 +603,21 @@ impl Resolver {
                 // create and store: a key left out is sequenced (the last of several by a secondary id)
                 _ => at + 1 < keys.len() && key.name != "fromDate",
             };
-            parameter("in", &key.name, &key.kind, required);
+            parameter(ParamDirection::In, &key.name, &key.kind, required);
         }
         if verb != "delete" {
             for field in fields
                 .iter()
                 .filter(|field| !field.pk && field.name != "lastUpdatedStamp")
             {
-                parameter("in", &field.name, &field.kind, false);
+                parameter(ParamDirection::In, &field.name, &field.kind, false);
             }
             for key in &keys {
-                parameter("out", &key.name, &key.kind, false);
+                parameter(ParamDirection::Out, &key.name, &key.kind, false);
             }
             if matches!(verb, "update" | "store") && fields.iter().any(|field| field.name == "statusId") {
-                parameter("out", "oldStatusId", "id", false);
-                parameter("out", "statusChanged", "Boolean", false);
+                parameter(ParamDirection::Out, "oldStatusId", "id", false);
+                parameter(ParamDirection::Out, "statusChanged", "Boolean", false);
             }
         }
         rows

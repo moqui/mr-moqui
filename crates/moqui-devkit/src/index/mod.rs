@@ -26,6 +26,7 @@
 // on the artifact stack's hot path, so core's
 pub use moqui_core::devtools::calls;
 pub mod extract;
+pub mod parameter;
 pub mod resolve;
 pub mod rows;
 
