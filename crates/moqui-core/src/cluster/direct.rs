@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A message to one member, not a broadcast (plans/Comms-Framework.md §6.3, "Cluster"): a call's signaling goes to the
+//! A message to one member, not a broadcast (plans/archive/Comms-Framework.md §6.3, "Cluster"): a call's signaling goes to the
 //! node holding its media, and its replies come back to the node holding the socket. [`send_to`] posts once over the
 //! same transport as [`super::publish`], from its own bounded queue and thread, so a burst of ICE candidates neither
 //! waits behind cache invalidations nor is retried after it has gone stale. What waits for one member goes as one

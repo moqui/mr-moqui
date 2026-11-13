@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Queues (plans/Comms-Framework.md §5.3, §5.4, §5.5, V5): call queues with their live stats (calls waiting, the longest
+<!-- Voice, Queues (plans/archive/Comms-Framework.md §5.3, §5.4, §5.5, V5): call queues with their live stats (calls waiting, the longest
     wait, agents free and logged in), their agents and each agent's state (available, logged out, paused, in wrap-up, in a call,
     ringing), and their settings: the strategy (longest idle, round robin, all at once), how long an offer rings, the wait
     and length limits and the fallback past them, wrap-up after a call, how often the caller hears their place, hold music

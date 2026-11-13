@@ -1,4 +1,4 @@
-// An end-to-end encrypted call in three browsers (plans/Comms-Framework.md §6.4, W8; docs/interfaces/WebRTC.md "Encrypted
+// An end-to-end encrypted call in three browsers (plans/archive/Comms-Framework.md §6.4, W8; docs/interfaces/WebRTC.md "Encrypted
 // calls"): john.doe starts an encrypted video call to calls.client.b and calls.client.c (CallClientFixtures) from the page's
 // call store. Each page takes its crypto device (moqui.crypto), names it on its leg, and sends its SFrame key to the
 // others' devices over Olm (moqui.callKeys); every frame goes through the RTCRtpScriptTransform worker. The callee answers:

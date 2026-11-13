@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Live captions of a call (plans/Comms-Framework.md §6.4, W6), on the call's media node. `start#Captions` (framework
+//! Live captions of a call (plans/archive/Comms-Framework.md §6.4, W6), on the call's media node. `start#Captions` (framework
 //! CallCaptionServices) checks the policy and sends `startCaptions` through `send#MediaControl`; the node's
 //! `rtc-signal` handler calls [`start`], which attaches a consumer ([`super::media::attach`], audio only) and runs one
 //! thread for the call. Every leg is told captions are on and which provider hears the audio

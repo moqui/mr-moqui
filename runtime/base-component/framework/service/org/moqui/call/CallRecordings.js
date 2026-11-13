@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// Call recording (plans/Comms-Framework.md W5, §5.4 "Recording", §6.4, D-V5): org.moqui.call.CallRecordingServices. A
+// Call recording (plans/archive/Comms-Framework.md W5, §5.4 "Recording", §6.4, D-V5): org.moqui.call.CallRecordingServices. A
 // CallRecording is started by a host of an active call; the call's media node records it (moqui-host src/rtc/recorder.rs),
 // told by send#MediaControl ({action: 'recording', op: start | pause | resume | stop | notice}) after the commit, and hands
 // back each closed segment file (store#RecordingSegment). Every current leg, and each leg bound later, gets the notice: the
@@ -20,7 +20,7 @@ const TRACK = 'moqui.call.CallRecordingTrack'
 const SEGMENT = 'moqui.call.CallRecordingSegment'
 const CONSENT = 'moqui.call.CallRecordingConsent'
 const CONSENT_HISTORY = 'moqui.call.CallRecordingConsentHistory'
-/** A recording's transcripts (W6's CallTranscript) go with it (plans/Comms-Framework.md §5.4). */
+/** A recording's transcripts (W6's CallTranscript) go with it (plans/archive/Comms-Framework.md §5.4). */
 const TRANSCRIPT = 'moqui.call.CallTranscript'
 
 /** Where the files go; store#RecordingFile refuses any other place. */

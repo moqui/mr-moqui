@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Numbers (plans/Comms-Framework.md §5.2, §5.4): the phone numbers the trunks bring, in E.164, each with its trunk, the
+<!-- Voice, Numbers (plans/archive/Comms-Framework.md §5.2, §5.4): the phone numbers the trunks bring, in E.164, each with its trunk, the
     user, ring group (V3), IVR menu or queue (V5) a call to it goes to, the emergency location its calls report, and its
     messaging (C4-SMS: the SMS bridge its texts go through, which needs no trunk).
     org.moqui.call.VoiceServices find#, store# and delete#PhoneNumber. -->

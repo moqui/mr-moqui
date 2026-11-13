@@ -1,5 +1,5 @@
 // Web Push subscriptions (org.moqui.ui.NotificationServices get#WebPushStatus, store#, delete#WebPushSubscription and
-// send#WebPush; service/web_push.rs; plans/Comms-Framework.md §7.2 P0): the status gives the VAPID key; a subscription
+// send#WebPush; service/web_push.rs; plans/archive/Comms-Framework.md §7.2 P0): the status gives the VAPID key; a subscription
 // is the signed-in user's only, moves when another user signs in on the same browser, and is deleted only by its user;
 // keys are checked; a failing push counts against the subscription and disables it after 5.
 // Run: ./moq test framework --spec WebPush

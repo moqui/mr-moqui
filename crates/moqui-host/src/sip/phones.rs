@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The engine's side of the registrar for desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones
+//! The engine's side of the registrar for desk and soft phones (plans/archive/Comms-Framework.md §5.2 "Registrar for phones
 //! (V4)"; docs/interfaces/SIP.md "Registrar"). Off unless `sip_registrar_enabled` is true, even with the SIP listeners
 //! on.
 //!

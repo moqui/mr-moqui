@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The browser's crypto device (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): moqui.crypto.
+ * The browser's crypto device (plans/archive/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): moqui.crypto.
  *
  * matrix-sdk-crypto's OlmMachine (the vendored @matrix-org/matrix-sdk-crypto-wasm, /libs/matrix-sdk-crypto/) holds this
  * browser's device: its identity keys, one-time keys and Olm sessions, in an IndexedDB store of its own per user and

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! VP8 in WebM (Matroska's EBML), written in house: the call recorder's video files (plans/Comms-Framework.md §6.4,
+//! VP8 in WebM (Matroska's EBML), written in house: the call recorder's video files (plans/archive/Comms-Framework.md §6.4,
 //! §10.1). The encoded frames go in as they came, never transcoded: one video track, a Cluster at each keyframe (and at
 //! least every 30 seconds), each frame a SimpleBlock with its keyframe flag, times in milliseconds. The file starts at
 //! a keyframe; frames before the first are dropped. On finish the Segment's size, the Duration, the Cues (each

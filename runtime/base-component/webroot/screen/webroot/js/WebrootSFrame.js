@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * SFrame (RFC 9605) on WebCrypto, for end-to-end encrypted calls (plans/Comms-Framework.md §6.4, W8;
+ * SFrame (RFC 9605) on WebCrypto, for end-to-end encrypted calls (plans/archive/Comms-Framework.md §6.4, W8;
  * docs/interfaces/WebRTC.md "Encrypted calls"). No dependencies and no WebAssembly: HKDF, AES-GCM, AES-CTR and HMAC are
  * the browser's own. It runs in a page (moqui.sframe) and in the call's RTCRtpScriptTransform worker
  * (WebrootSFrameWorker.js imports it: self.moquiSFrame).

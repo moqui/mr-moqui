@@ -32,7 +32,7 @@ pub const COLLAB_UPDATE: &str = "collab-update";
 pub const SESSION_END: &str = "session-end";
 
 /// A call's signaling and control for the node holding its media, or a reply for the node holding a leg's socket
-/// (plans/Comms-Framework.md §6.3), sent to that one member ([`crate::cluster::send_to`]) with its `target` in the body.
+/// (plans/archive/Comms-Framework.md §6.3), sent to that one member ([`crate::cluster::send_to`]) with its `target` in the body.
 pub const RTC_SIGNAL: &str = "rtc-signal";
 
 /// A timed override of a logging or telemetry setting set, extended or reverted on one server (Monitor › Settings,

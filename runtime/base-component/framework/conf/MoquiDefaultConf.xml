@@ -215,7 +215,7 @@
     <default-property name="chat_to_device_retention_days" value="30"/>
     <default-property name="chat_store_key_secret" value="CHANGEME" is-secret="true"/>
 
-    <!-- Call media (the rtc feature; plans/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
+    <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
         rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
         IP or IP:port, for a server behind 1:1 NAT (the bound address by default; required when rtc_media_host binds every
@@ -280,7 +280,7 @@
     <default-property name="call_recording_segment_minutes" value="30"/>
     <default-property name="call_recording_max_mb" value="2048"/>
     <default-property name="call_recording_prompt_audio" value=""/>
-    <!-- Phone calls over SIP trunks (the sip feature, V1; plans/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
+    <!-- Phone calls over SIP trunks (the sip feature, V1; plans/archive/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
         server with call media: sip_port (UDP and TCP, 5060 by convention) and sip_tls_port (TLS, 5061, the certificate from
         runtime/cert), off while both are empty; sip_host and sip_tls_host the addresses they bind (loopback by default),
         sip_rtp_ports the UDP range of the phone legs' RTP (one port a leg) on sip_rtp_host (sip_host by default);
@@ -303,7 +303,7 @@
     <default-property name="sip_max_transactions" value="2000"/>
     <default-property name="sip_max_connections" value="500"/>
     <default-property name="sip_max_connections_per_source" value="100"/>
-    <!-- Texts (C4-SMS; plans/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its messaging
+    <!-- Texts (C4-SMS; plans/archive/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its messaging
         bridge, a ChatBridge of type SMS (System, Chat Bridges; its provider settings in its configuration), with or without the
         SIP engine. channels_webhooks_enabled turns on the routes a provider calls: POST /channels/{chatBridgeId}/webhook (its
         signature checked over the raw body, at most channels_webhook_max_bytes) and GET /channels/{chatBridgeId}/media/{token}
@@ -326,7 +326,7 @@
     <default-property name="sip_registrar_max_expires" value="3600"/>
     <default-property name="sip_registrar_default_expires" value="600"/>
     <default-property name="sip_registrar_nat_expires" value="60"/>
-    <!-- XMPP for local users (the xmpp feature, C3a; plans/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
+    <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
         xmpp_domain is empty. xmpp_domain is the domain of the users' JIDs (user@domain), with the rooms on
         rooms.<domain> and uploads on upload.<domain> (xmpp_rooms_domain, xmpp_upload_domain to name others); xmpp_port
         (STARTTLS, 5222 by convention) on xmpp_host and xmpp_tls_port (direct TLS with ALPN xmpp-client, 5223) on
@@ -363,7 +363,7 @@
     <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>
     <default-property name="xmpp_s2s_port" value=""/>
 
-    <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
+    <!-- Voicemail (V2; plans/archive/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
         voicemail_max_seconds: the longest message (10 to 600). voicemail_prompt_location: a folder (any resource location)
         with the recorded speech played after the prompts' tones: greeting.wav (the default greeting), enter-box.wav,

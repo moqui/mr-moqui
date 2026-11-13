@@ -1,4 +1,4 @@
-// Voice (org.moqui.call.VoiceServices and Voice.js; framework/entity/VoiceEntities.xml; plans/Comms-Framework.md §5.2, V1):
+// Voice (org.moqui.call.VoiceServices and Voice.js; framework/entity/VoiceEntities.xml; plans/archive/Comms-Framework.md §5.2, V1):
 // the admin services only for VoiceAdmin, insecure trunks only with a profile that allows them, caller ID from the user's
 // grants, international and premium off until the deployment and the user allow them, the limits at once and per day,
 // failed digest attempts blocked per source without locking the account, emergency calls refused without readiness and

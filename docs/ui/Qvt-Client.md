@@ -264,7 +264,7 @@ once per page load:
 - Another component adds to an app root's providers with a `screen-extend` of it: each child merges by its element and key (a
   quick-create by `kind`, a palette source by `group`, a key of a keymap by `keys`, a provider hook by `name`; the XSD's
   `screen-extend` lists them). An equal key is replaced where it was, a new one is added at the end, and labels never key.
-- The provider hooks (`inbox-source`, `record-link` and the others of plans/Comms-Framework.md §3.3) are not in the shell data: the
+- The provider hooks (`inbox-source`, `record-link` and the others of plans/archive/Comms-Framework.md §3.3) are not in the shell data: the
   server calls them through `org.moqui.ui.ShellServices.call#Providers`, each as the app that declares it, and combines what they
   answer (`results` with each `sourceId`, `failedParts`, `unavailable`); `get#Providers` lists them. Both work outside a render (a
   service, a job), from the apps the current user may open.
@@ -1082,7 +1082,7 @@ A listener may unregister itself, or another, while it is called: the other list
 ## Declared actions and panels
 
 A component adds actions and panels to a screen it does not own with `<ext-action>` and `<ext-panel>` in a `screen-extend`
-of that screen (`xml-screen-3.xsd`; `crates/moqui-core/src/screen/ext.rs`; plans/Comms-Framework.md §3.3). Each names a
+of that screen (`xml-screen-3.xsd`; `crates/moqui-core/src/screen/ext.rs`; plans/archive/Comms-Framework.md §3.3). Each names a
 `slot` of the screen; the screen's `.qvue` decides where a slot's items show:
 
 ```html

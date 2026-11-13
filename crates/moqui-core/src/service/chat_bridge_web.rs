@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The bridge layer's web side (plans/Comms-Framework.md §4.3 "Webhooks", C4-SMS): what the host's `/channels/` routes
+//! The bridge layer's web side (plans/archive/Comms-Framework.md §4.3 "Webhooks", C4-SMS): what the host's `/channels/` routes
 //! call, and the files that go with a network's messages.
 //!
 //! - [`webhook`]: a request to `/channels/{chatBridgeId}/webhook`, handed to the bridge's adapter

@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * Calls in the browser (plans/Comms-Framework.md §6.3, §6.6, W1): the page's call store (moqui.call), the media of the call
+ * Calls in the browser (plans/archive/Comms-Framework.md §6.3, §6.6, W1): the page's call store (moqui.call), the media of the call
  * this page is in, and the shell's parts of a call: the ring bar in every tab of the user and the LiveCall window that keeps
  * a call while the user goes to another screen (m-call-dock, which the shell puts in its canvas), and m-call, the lobby
  * and call view a Call screen shows (any app may embed one by callSessionId; the services check the user's part).

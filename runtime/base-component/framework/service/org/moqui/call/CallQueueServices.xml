@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Call queues (plans/Comms-Framework.md §5.3, §5.4, V5; docs/interfaces/SIP.md "Queues"): queues, their agents and live stats,
+<!-- Call queues (plans/archive/Comms-Framework.md §5.3, §5.4, V5; docs/interfaces/SIP.md "Queues"): queues, their agents and live stats,
     the agents' own status, and the SIP engine's tick while a call waits. The model is the V5 block of
     framework/entity/VoiceEntities.xml; the logic is CallQueues.js beside this file. The queue services need the VoiceAdmin
     permission (notAllowed otherwise); an agent changes only their own status; tick#QueueCall is internal. No Java

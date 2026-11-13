@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, IVR menus (plans/Comms-Framework.md §5.3, §5.4, §5.5, V5): auto attendant menus, each with its prompt (uploaded WAV or
+<!-- Voice, IVR menus (plans/archive/Comms-Framework.md §5.3, §5.4, §5.5, V5): auto attendant menus, each with its prompt (uploaded WAV or
     Ogg Opus; without one a tone pattern plays), how long it waits for a key and how often it plays again, how many keys it
     takes (more than one: an extension ended by #), its options (a key and where it goes: a user, a ring group, a queue,
     another menu, a voicemail box, an outside number, this menu again or the end), and where no key, a wrong key and its

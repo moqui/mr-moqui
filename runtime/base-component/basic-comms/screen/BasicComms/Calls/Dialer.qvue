@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The dialer (plans/Comms-Framework.md §5.5, V3), the component Calls/Dialer.xml and the tray's Panel/Dialer.xml serve in
+<!-- The dialer (plans/archive/Comms-Framework.md §5.5, V3), the component Calls/Dialer.xml and the tray's Panel/Dialer.xml serve in
     the qvue render mode: a number field with a keypad, the search for a person or a number as it is typed (the apps'
     recipient-source providers, or the framework's users with a number), what the number becomes in E.164 by the deployment's
     rules, recent numbers, the caller ID (the user's numbers and their ring groups') with Hide my number, and Call, which

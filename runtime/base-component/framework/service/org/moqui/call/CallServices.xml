@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls (plans/Comms-Framework.md §5.4, §6.3): starting, ringing, answering, joining, leaving and ending a call, the
+<!-- Calls (plans/archive/Comms-Framework.md §5.4, §6.3): starting, ringing, answering, joining, leaving and ending a call, the
     signaling socket of each leg, and the cleanup that ends what was abandoned. The model is framework/entity/CallEntities.xml;
     the state machine is Calls.js beside this file. No Java counterpart.
 
@@ -183,7 +183,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="CallContext" transaction="ignore">
-        <description>The call-context of a call for the current user (plans/Comms-Framework.md §3.3, V5: a screen pop): its phone
+        <description>The call-context of a call for the current user (plans/archive/Comms-Framework.md §3.3, V5: a screen pop): its phone
             caller's number, and what the call-context providers of the apps the user may open answer for it, as this user
             (ShellServices.call#Providers: each in its own transaction, one that fails left out and named in failedParts):
             contactList (who it is: name, kind, url, detail) and recordList (open records: title, status, url), each with its

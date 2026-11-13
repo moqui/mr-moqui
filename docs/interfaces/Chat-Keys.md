@@ -3,7 +3,7 @@
 End-to-end encryption for chat: each browser holds a crypto device, and the server keeps its public keys and passes
 Olm ciphertext between devices. Encrypted chat rooms carry Megolm ciphertext over it, their room keys are backed up to a
 recovery key the user keeps, and devices are verified by emoji or QR code with cross-signing. Encrypted calls (W8) send
-their per-sender call keys over the same device layer. The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md)
+their per-sender call keys over the same device layer. The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md)
 §4.5, milestone C7.
 
 - **Browser:** `webroot/screen/webroot/js/WebrootCrypto.js` (`moqui.crypto`), over matrix-sdk-crypto's `OlmMachine`

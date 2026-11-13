@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voicemail (plans/Comms-Framework.md §5.5 VoicemailDetail, V2), the component Voicemail.xml serves in the qvue render
+<!-- Voicemail (plans/archive/Comms-Framework.md §5.5 VoicemailDetail, V2), the component Voicemail.xml serves in the qvue render
     mode: one of the user's messages (the voicemail transition), its player (the audio transition, inline; playing it marks
     it heard), its transcript or the transcript's state with Retry when it failed, Mark heard or unheard, Delete (to the
     Trash, and from it for good after a confirmation) or Put back, Call back (a phone call to the caller, then the Call

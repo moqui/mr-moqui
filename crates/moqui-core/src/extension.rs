@@ -47,7 +47,7 @@ pub struct Extension {
     /// Read again what the crate read from the components' files, after a component was loaded on a running server
     /// (plans/archive/Component-Deploy.md): the shipped report definitions.
     pub after_artifacts_changed: fn(&ExecutionContextFactory),
-    /// The crate's chat bridge adapters (plans/Comms-Framework.md §4.3), each serving the `ChatBridge` rows that name it
+    /// The crate's chat bridge adapters (plans/archive/Comms-Framework.md §4.3), each serving the `ChatBridge` rows that name it
     /// ([`crate::service::chat_bridge`]).
     pub chat_bridge_adapters: fn() -> Vec<std::sync::Arc<dyn crate::service::chat_bridge::ChatBridgeAdapter>>,
 }

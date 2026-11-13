@@ -1,4 +1,4 @@
-// A guest by link in a browser (plans/Comms-Framework.md W3): john.doe makes a call link and opens its meeting, a page with
+// A guest by link in a browser (plans/archive/Comms-Framework.md W3): john.doe makes a call link and opens its meeting, a page with
 // no account opens /call/<token>, gives a name and asks to join, waits in the lobby until john.doe lets them in from his
 // call view, then the two pages carry each other's audio and video through the server's SFU over the guest's own socket
 // (/callws), and the guest leaves. Chromium's fake camera and microphone stand in for devices. Needs a binary with the

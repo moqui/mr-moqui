@@ -1,4 +1,4 @@
-// BasicComms, the framework's Comms app (plans/Comms-Framework.md §3, A1): the screens render the same under an app's own
+// BasicComms, the framework's Comms app (plans/archive/Comms-Framework.md §3, A1): the screens render the same under an app's own
 // mount (IronStone's /qapps/Comms, when it is installed) with that app's extensions, and the launcher has one Comms; a
 // user with no party (users only) uses the mail settings; the user search leaves out disabled and system accounts; the
 // provider hooks answer for the apps the user may open, and a hook nobody declares is unavailable; Settings, Chat apps

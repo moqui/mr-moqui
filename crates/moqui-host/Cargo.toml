@@ -73,22 +73,22 @@ backup-s3 = ["moqui-core/backup-s3"]
 xlsx = ["moqui-core/xlsx", "moqui-report/xlsx"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
-# Calls (crates/moqui-rtc, plans/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
+# Calls (crates/moqui-rtc, plans/archive/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
 # on /notws (src/notws/rtc.rs). The media socket starts only when rtc_media_port is set. In Maximal, Enterprise and
 # Debug; not Lite.
 rtc = ["axum", "dep:moqui-rtc", "dep:turn-client-proto"]
-# Local speech to text for call captions (Whisper on candle, plans/Comms-Framework.md §6.4): not built yet, off in every
+# Local speech to text for call captions (Whisper on candle, plans/archive/Comms-Framework.md §6.4): not built yet, off in every
 # package; src/speech_local.rs answers notBuiltIn. Captions go through the moqui-llm endpoint meanwhile.
 speech-local = []
-# Phone calls (crates/moqui-sip, plans/Comms-Framework.md §5.2, docs/interfaces/SIP.md): the SIP engine (src/sip/), its
+# Phone calls (crates/moqui-sip, plans/archive/Comms-Framework.md §5.2, docs/interfaces/SIP.md): the SIP engine (src/sip/), its
 # trunks and the RTP of phone legs, joined to the call media. It starts only when sip_port or sip_tls_port is set. In
 # Maximal, Enterprise and Debug; not Lite.
 sip = ["rtc", "dep:moqui-sip"]
-# Business messaging channels (crates/moqui-channels, plans/Comms-Framework.md §4.3, docs/interfaces/SMS.md): the sms chat
+# Business messaging channels (crates/moqui-channels, plans/archive/Comms-Framework.md §4.3, docs/interfaces/SMS.md): the sms chat
 # bridge adapter on Telnyx. The /channels/ routes (src/channels.rs) are in every build with axum and answer only when
 # channels_webhooks_enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite.
 channels = ["dep:moqui-channels"]
-# XMPP for local users (crates/moqui-xmpp, plans/Comms-Framework.md §4.3 C3a, docs/interfaces/XMPP.md): the listeners
+# XMPP for local users (crates/moqui-xmpp, plans/archive/Comms-Framework.md §4.3 C3a, docs/interfaces/XMPP.md): the listeners
 # (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp_domain is set. In Maximal,
 # Enterprise and Debug; not Lite.
 xmpp = ["axum", "dep:moqui-xmpp"]

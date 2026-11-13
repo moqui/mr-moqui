@@ -13,7 +13,7 @@
  */
 
 //! The selective forwarding unit: rooms of legs, one str0m [`Rtc`] per leg, and the forwarding between them
-//! (plans/Comms-Framework.md §6.2). A room is a call (its `callSessionId`), a leg a `callLegId`. Each leg's peer is an
+//! (plans/archive/Comms-Framework.md §6.2). A room is a call (its `callSessionId`), a leg a `callLegId`. Each leg's peer is an
 //! ICE-lite endpoint on the node's shared media sockets; datagrams are routed to the peer whose ICE session accepts them.
 //!
 //! - A published track opens a send-only track on every other peer of the room, which the SFU offers to that peer

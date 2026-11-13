@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The composer of BasicComms over the user's mail accounts (plans/Comms-Framework.md §3.2, A3; first built as IronStone
+<!-- The composer of BasicComms over the user's mail accounts (plans/archive/Comms-Framework.md §3.2, A3; first built as IronStone
     Comms' ComposeServices, mr-boss design-drawers-commons.md §12): the identities the user sends as, what the composer starts
     with (a draft, a reply, a forward, a new message), the recipients, a draft saved, its files (uploaded, or copied from the
     drives), sending with undo and scheduling, and discarding. Every read and write goes through

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! DTMF as RTP events (RFC 4733; plans/Comms-Framework.md §5.2 "DTMF"): the keypad of a phone leg, both ways.
+//! DTMF as RTP events (RFC 4733; plans/archive/Comms-Framework.md §5.2 "DTMF"): the keypad of a phone leg, both ways.
 //!
 //! Sending, a digit is a run of event packets every 20 ms with the timestamp of its start, the marker on the first,
 //! the duration growing, then three copies of the last with the end bit; the next digit follows a short gap. Receiving,

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls, Queues (plans/Comms-Framework.md §5.3, §5.5, V5): the call queues the user takes calls for, with each queue's calls
+<!-- Calls, Queues (plans/archive/Comms-Framework.md §5.3, §5.5, V5): the call queues the user takes calls for, with each queue's calls
     waiting, the longest wait and the agents free, and the user's own state in it: log in, pause, resume, log out (one queue
     or all). A queue offers its calls to its free agents (logged in, not paused, not in a call, out of wrap-up), ringing their
     tabs and phones as any call does. org.moqui.call.CallQueueServices find#MyCallQueues and set#QueueAgentStatus, which act

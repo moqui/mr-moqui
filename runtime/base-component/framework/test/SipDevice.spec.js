@@ -1,5 +1,5 @@
 // Desk and soft phones (org.moqui.call.SipDeviceServices and SipDevices.js; the V4 block of VoiceEntities.xml;
-// plans/Comms-Framework.md §5.2 "Registrar for phones", V4): the registrar off by default, a phone's credentials shown once
+// plans/archive/Comms-Framework.md §5.2 "Registrar for phones", V4): the registrar off by default, a phone's credentials shown once
 // with only verifiers kept, another user refused with the same parameters, rotation and revocation ending the old
 // credentials and the registrations, a call ringing a user's registered phone beside their tabs with the first answer
 // winning (a phone over a tab, a tab over a phone, a phone over another phone), a phone call to a user with phones and a

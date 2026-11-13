@@ -1,4 +1,4 @@
-// A call in two browsers (plans/Comms-Framework.md W1, §7.3 "fake-media Chromium proves the application flow"): john.doe
+// A call in two browsers (plans/archive/Comms-Framework.md W1, §7.3 "fake-media Chromium proves the application flow"): john.doe
 // calls calls.client.b from the page's call store, the callee's tab rings and is answered from its ring bar, both pages
 // connect their media through the server's SFU and receive the other's audio and video, john.doe's raised hand reaches the
 // other page and the speaker view lays out the call, john.doe's LiveCall window keeps

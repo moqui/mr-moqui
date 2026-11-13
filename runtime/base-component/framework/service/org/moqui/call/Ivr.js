@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// The IVR and auto attendant (plans/Comms-Framework.md §5.3, §5.4, V5): the services of org.moqui.call.IvrServices. A
+// The IVR and auto attendant (plans/archive/Comms-Framework.md §5.3, §5.4, V5): the services of org.moqui.call.IvrServices. A
 // number routed to a menu (PhoneNumber PnrIvr) or to a queue (PnrQueue) is answered by the SIP engine, which runs the
 // menu's keys itself (moqui-host src/sip/ivr.rs: the prompt, a key or keys ended by #, the timeout and its retries) and
 // asks route#IvrCall where a choice goes. A target (CallTarget) is a user (their call handling rules), a ring group, a

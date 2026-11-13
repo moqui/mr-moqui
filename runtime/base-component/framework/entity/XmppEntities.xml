@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- XMPP for local users (plans/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): what the XMPP server keeps of its
+<!-- XMPP for local users (plans/archive/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): what the XMPP server keeps of its
     own beside Moqui chat. Rooms, membership, messages and presence are ChatRoom, ChatRoomMember, ChatEvent and UserStatus;
     these hold the sign-in tokens, PEP, blocking, push registrations and uploads. The services are
     org.moqui.chat.XmppServices, called by crates/moqui-xmpp as the signed-in user (the sign-in lookups as internal work).

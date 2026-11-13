@@ -13,7 +13,7 @@
  */
 
 //! Calls: the WebRTC endpoint and the selective forwarding unit (SFU) every call goes through
-//! (plans/Comms-Framework.md §6.1, §6.2, D-W1, D-W2). It is written on str0m, a sans-IO WebRTC library: ICE-lite, DTLS-SRTP,
+//! (plans/archive/Comms-Framework.md §6.1, §6.2, D-W1, D-W2). It is written on str0m, a sans-IO WebRTC library: ICE-lite, DTLS-SRTP,
 //! simulcast and TWCC bandwidth estimation, with every frame exposed to the caller.
 //!
 //! [`Sfu`] holds the rooms of one media node. Its caller owns the sockets and the clock: it hands in datagrams

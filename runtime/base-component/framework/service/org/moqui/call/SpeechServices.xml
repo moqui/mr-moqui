@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Speech to text for server code (plans/Comms-Framework.md §6.4, §10.1): one audio file to text by the model bound to the
+<!-- Speech to text for server code (plans/archive/Comms-Framework.md §6.4, §10.1): one audio file to text by the model bound to the
     transcribe feature on an OpenAI-compatible endpoint (moqui-llm; docs/ai/Models.md), with the user's api quota checked and
     the call kept as an LlmCall. Call captions, voicemail (V2) and recording transcripts (W5) use it. In a binary without the
     agent runtime (the llm feature) the answer is reasonCode notBuiltIn. Both services are internal: the caller checks who

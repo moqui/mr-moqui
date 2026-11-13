@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The IVR, queues and the far end's audio while it waits (plans/Comms-Framework.md §5.3, V5; docs/interfaces/SIP.md
+//! The IVR, queues and the far end's audio while it waits (plans/archive/Comms-Framework.md §5.3, V5; docs/interfaces/SIP.md
 //! "IVR", "Queues", "Transfer and merge"). The voice services decide where a call goes (`IvrServices`,
 //! `CallQueueServices`, `CallTransferServices`); the engine answers the call and runs what they answer:
 //!

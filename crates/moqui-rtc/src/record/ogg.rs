@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Opus in Ogg (RFC 3533, RFC 7845), written in house: the call recorder's audio files (plans/Comms-Framework.md §6.4,
+//! Opus in Ogg (RFC 3533, RFC 7845), written in house: the call recorder's audio files (plans/archive/Comms-Framework.md §6.4,
 //! §10.1). The first page holds `OpusHead`, the second `OpusTags`, then the packets as they came, never re-encoded.
 //! Each page's granule position is the 48 kHz sample count at the end of its last packet. A gap (packets that never
 //! came) is a jump in the granule positions at a page boundary, so a player keeps the timing and no audio is made up.

@@ -1807,7 +1807,7 @@ fn boot_server_factory(
     // the agent run engine: the lease keeper and the recovery sweep, after the cluster so leases name its instance
     #[cfg(feature = "llm")]
     moqui_llm::start(&factory);
-    // the chat bridges' delivery worker (plans/Comms-Framework.md §4.1), after the cluster so its leases name the instance;
+    // the chat bridges' delivery worker (plans/archive/Comms-Framework.md §4.1), after the cluster so its leases name the instance;
     // its first round picks up what a crash left
     moqui_core::service::chat_bridge::start(&factory);
     moqui_core::startup::integration(

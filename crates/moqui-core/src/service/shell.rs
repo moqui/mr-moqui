@@ -132,7 +132,7 @@ fn get_providers(
 }
 
 /// `call#Providers`: call each provider of `hook` (or only `sourceId`) with `parameters`, as the app that declares it,
-/// and combine the answers (plans/Comms-Framework.md §3.3).
+/// and combine the answers (plans/archive/Comms-Framework.md §3.3).
 ///
 /// - A read (the default) runs each provider in a transaction of its own; one that fails is logged by name and listed
 ///   in `failedParts`, and the others still answer. Each answer is in `results` with its `sourceId`, in order; the

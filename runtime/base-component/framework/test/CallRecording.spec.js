@@ -1,4 +1,4 @@
-// Call recording (org.moqui.call.CallRecordingServices and CallRecordings.js; plans/Comms-Framework.md W5, §5.4
+// Call recording (org.moqui.call.CallRecordingServices and CallRecordings.js; plans/archive/Comms-Framework.md W5, §5.4
 // "Recording", D-V5): the policy off refuses; the host records and each current leg gets the notice, logged, a late
 // joiner too; under the acknowledgement policy the recording pauses until every current leg acknowledged, and a resume
 // starts the next period of segments; a withdrawal pauses; only the owner and the hosts read a recording (another user

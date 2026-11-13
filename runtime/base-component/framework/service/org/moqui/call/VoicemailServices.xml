@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voicemail (plans/Comms-Framework.md §5.3, §5.4, V2; docs/interfaces/Voicemail.md): boxes, messages, greetings, the PIN
+<!-- Voicemail (plans/archive/Comms-Framework.md §5.3, §5.4, V2; docs/interfaces/Voicemail.md): boxes, messages, greetings, the PIN
     and phone access, notices and transcription. The model is VoicemailBox, Voicemail and VoicemailPinFailure
     (framework/entity/VoiceEntities.xml, the V2 block) with CallTranscript (CallEntities.xml); the logic is Voicemail.js beside
     this file. The SIP engine (moqui-host src/sip/voicemail.rs) answers the call, plays the greeting, records and runs the

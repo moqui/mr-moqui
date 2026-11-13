@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- My desk and soft phones (plans/Comms-Framework.md §5.5, V4), the component PhoneDevices.xml serves in the qvue render
+<!-- My desk and soft phones (plans/archive/Comms-Framework.md §5.5, V4), the component PhoneDevices.xml serves in the qvue render
     mode: the user's phones with their live registrations (user agent, address, expiry), Add a phone, New password and
     Remove. A new phone's credentials and a new password show once in a dialog, each with a copy button and a short setup
     note; closing it forgets them (nothing on the page or the server keeps the password). -->

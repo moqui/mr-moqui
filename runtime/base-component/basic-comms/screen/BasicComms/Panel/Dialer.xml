@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Dialer tab of the tray panel (plans/Comms-Framework.md §5.5, V3): the theme value STRT_TRAY_DIALER names Comms/Panel/Dialer
+<!-- The Dialer tab of the tray panel (plans/archive/Comms-Framework.md §5.5, V3): the theme value STRT_TRAY_DIALER names Comms/Panel/Dialer
     (BOSS) or BasicComms/Panel/Dialer, which the tray loads in its best client mode, qvue. The same component as Calls/Dialer
     (Calls/Dialer.qvue), with its transitions here too (template/DialerTransitions.xml); the terminal twin is DialerTui's. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Call recording, sans-IO (plans/Comms-Framework.md W5, §6.4): the frames a room's tap hands out
+//! Call recording, sans-IO (plans/archive/Comms-Framework.md W5, §6.4): the frames a room's tap hands out
 //! ([`crate::tap::TapEvent`]) written as files, with no transcoding.
 //!
 //! - Each published track is its own file: a leg's microphone, screen audio or phone audio as Opus in Ogg

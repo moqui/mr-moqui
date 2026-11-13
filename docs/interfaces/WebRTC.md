@@ -1,7 +1,7 @@
 # WebRTC calls
 
 Calls in the Comms app go through an SFU (selective forwarding unit) inside the moqui binary, a two-person call too.
-There is no peer-to-peer mode. The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.4 and §6. The
+There is no peer-to-peer mode. The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.4 and §6. The
 user guide is [Comms](../tools/Comms.md#calls).
 
 - **Media:** `crates/moqui-rtc`, on [str0m](https://github.com/algesten/str0m) (sans-IO: ICE-lite, DTLS-SRTP, simulcast,
@@ -126,7 +126,7 @@ are deleted with it.
 
 ## Encrypted calls
 
-A call can be end-to-end encrypted (W8; plans/Comms-Framework.md §6.4, D-W3): each browser encrypts the frames it sends
+A call can be end-to-end encrypted (W8; plans/archive/Comms-Framework.md §6.4, D-W3): each browser encrypts the frames it sends
 with SFrame (RFC 9605), with keys the server never has, and the SFU forwards them as they are. The user guide is
 [Comms, End-to-end encrypted calls](../tools/Comms.md#encrypted-calls).
 

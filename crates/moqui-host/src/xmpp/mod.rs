@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! XMPP for local users (plans/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): the host's side of
+//! XMPP for local users (plans/archive/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): the host's side of
 //! [`moqui_xmpp`]. Off while `xmpp_domain` is empty.
 //!
 //! - **Listeners.** `xmpp_port` (STARTTLS) on `xmpp_host` and `xmpp_tls_port` (direct TLS, ALPN `xmpp-client`) on

@@ -1,4 +1,4 @@
-// BasicComms texts (plans/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md): Calls History's Text a number, in the
+// BasicComms texts (plans/archive/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md): Calls History's Text a number, in the
 // browser and the terminal, for a user granted a number with messaging; its transition opens the number pair's external
 // room (one room for the pair, the user in it) and refuses a user with no such number the same post; an international
 // number is refused before any room. The provider itself (Telnyx) is the moqui-channels tests' fake: nothing here sends.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The registrar's cases (plans/Comms-Framework.md §7.1 V4) against in-memory phones: raw SIP peers on loopback UDP
+//! The registrar's cases (plans/archive/Comms-Framework.md §7.1 V4) against in-memory phones: raw SIP peers on loopback UDP
 //! sockets and a TCP connection that play a desk or soft phone message by message, so a test can register, unregister,
 //! replay, answer, ring or keep a flow alive as it needs. The bindings' own rules (expiry limits, ordering, Outbound
 //! keys) are `registrar_tests.rs`, on simulated time.

@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Records are an app's: what a record room or a message has to do with a record (its title, link, card; the records a
     message's links name; the records to file a message on) comes from the record-lookup providers of the apps the user may
-    open (lookup#Records over org.moqui.ui.ShellServices.call#Providers; plans/Comms-Framework.md §3.3). With none, a record
+    open (lookup#Records over org.moqui.ui.ShellServices.call#Providers; plans/archive/Comms-Framework.md §3.3). With none, a record
     room shows its name, and messages carry no record cards.
 
     Access: ChatServices checks every room against the current user's member row, a public room's visibility or a record room's

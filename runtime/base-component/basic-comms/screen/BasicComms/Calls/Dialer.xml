@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls, Dialer (plans/Comms-Framework.md §5.5, V3): a keypad and number field, a search for a person or a number (the apps'
+<!-- Calls, Dialer (plans/archive/Comms-Framework.md §5.5, V3): a keypad and number field, a search for a person or a number (the apps'
     recipient-source providers through ShellServices call#Providers, else the framework's users that a number rings), the caller
     ID (the user's numbers and their ring groups'), Hide my number, recent numbers, and Call (VoiceServices place#PhoneCall, with
     its fraud policy, caller-ID grants and emergency path). The same component is the tray's Dialer tab (Panel/Dialer). The

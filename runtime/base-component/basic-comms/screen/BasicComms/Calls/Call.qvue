@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Call (plans/Comms-Framework.md §6.6), the component Call.xml serves in the qvue render mode: m-call, the shell's call
+<!-- Call (plans/archive/Comms-Framework.md §6.6), the component Call.xml serves in the qvue render mode: m-call, the shell's call
     component (webroot js/WebrootCall.js), for the callSessionId of the URL. Going to another screen keeps the call in the
     LiveCall window; coming back here shows it again. The desktop client's shell bundles it (precompiled), and takes the
     encrypted calls there, as it holds the crypto device. -->

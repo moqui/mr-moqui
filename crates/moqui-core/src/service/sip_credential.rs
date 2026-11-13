@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.call.SipDeviceServices.make#SipCredential` (plans/Comms-Framework.md §5.2 "Registrar for phones (V4)"):
+//! `org.moqui.call.SipDeviceServices.make#SipCredential` (plans/archive/Comms-Framework.md §5.2 "Registrar for phones (V4)"):
 //! a desk or soft phone's new SIP credentials. The password is random and strong, and only its digest verifiers are
 //! kept: HA1 = H(username:realm:password) (RFC 7616 §3.4.2) for SHA-256, and for MD5 only for a legacy device
 //! (RFC 8760: SHA-256 is preferred; MD5 only where a phone has nothing else). The password goes back once, for the

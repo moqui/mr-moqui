@@ -560,7 +560,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
     noticeText: () => `Copyright (c) QZ Industries, LLC. The file header states "@license LGPL-2.1-only". The package carries no license file.\n\nThe full text is in licenses/LGPL-2.1.txt, from ${LGPL_URL}.\nSource: https://github.com/qzind/tray (tag v2.3.0), and the npm package qz-tray@2.3.0 contains the same file unmodified.`,
   },
   {
-    // End-to-end encryption in the browser (plans/Comms-Framework.md §4.5, C7 core): matrix-sdk-crypto's OlmMachine (on
+    // End-to-end encryption in the browser (plans/archive/Comms-Framework.md §4.5, C7 core): matrix-sdk-crypto's OlmMachine (on
     // vodozemac) built to WebAssembly by its maintainers. js/WebrootCrypto.js imports index.mjs only when a device is
     // needed, never on a page load: the module is 7.8 MB. Pinned Oct 31, 2026; 18.9.0 was published Sep 21, 2026.
     id: 'matrix-sdk-crypto', name: 'matrix-sdk-crypto-wasm', npm: '@matrix-org/matrix-sdk-crypto-wasm', version: '18.9.0',

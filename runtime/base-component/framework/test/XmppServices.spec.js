@@ -1,4 +1,4 @@
-// The services the XMPP server calls (org.moqui.chat.XmppServices; framework/entity/XmppEntities.xml; plans/Comms-Framework.md
+// The services the XMPP server calls (org.moqui.chat.XmppServices; framework/entity/XmppEntities.xml; plans/archive/Comms-Framework.md
 // §4.3, C3a; docs/interfaces/XMPP.md): an app password's SCRAM verifiers, made with it and sharing the user's salt; PLAIN
 // taking app passwords only; a FAST token and a session's sign-in check going with the app password they came from; the
 // archive, an event by its clientRef, an OMEMO message kept unreadable, PEP by access model, and uploads attached only by

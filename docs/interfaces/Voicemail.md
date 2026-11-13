@@ -2,7 +2,7 @@
 
 A call to a user's number that nobody answers goes to their voicemail box: the SIP engine answers it with no one else
 in it, plays the greeting and a beep, and records the caller. Its owner plays it in the browser, reads its transcript,
-and can listen by phone with a PIN. The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.3
+and can listen by phone with a PIN. The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.3
 (Zimbra's voicemail actions and preferences), §5.4 and §5.5, milestone V2. Phone calls themselves are in
 [SIP](SIP.md); the user guide is [Comms](../tools/Comms.md#voicemail).
 

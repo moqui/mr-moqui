@@ -4,7 +4,7 @@
     <!-- Where links to the Comms screens go in notifications, mail and push: an app that mounts the BasicComms screens under its
         own root (IronStone BOSS: /qapps/Comms) sets it to that root. -->
     <default-property name="comms_app_root" value="/qapps/BasicComms"/>
-    <!-- A call link (plans/Comms-Framework.md W3, D-A5): /call/<token>, the guest page screen/CallGuest.xml in the public shell,
+    <!-- A call link (plans/archive/Comms-Framework.md W3, D-A5): /call/<token>, the guest page screen/CallGuest.xml in the public shell,
         after org.moqui.call.CallServices.check#CallLinkToken; a guest joins with their name (a few a minute from a client). -->
     <webapp-list>
         <webapp name="webroot">
@@ -19,7 +19,7 @@
         <screen location="component://webroot/screen/webroot/apps.xml">
             <subscreens-item name="BasicComms" menu-title="Comms" menu-index="22" location="component://basic-comms/screen/BasicComms.xml"/>
         </screen>
-        <!-- Admin: Voice (plans/Comms-Framework.md §5.5, D-A6): trunks, numbers, caller IDs, fraud limits and emergency setup, in
+        <!-- Admin: Voice (plans/archive/Comms-Framework.md §5.5, D-A6): trunks, numbers, caller IDs, fraud limits and emergency setup, in
             the tools System app, with the files here -->
         <screen location="component://tools/screen/System.xml">
             <subscreens-item name="Voice" menu-title="Voice" menu-index="17" menu-group="Integration" location="component://basic-comms/screen/System/Voice.xml"/>

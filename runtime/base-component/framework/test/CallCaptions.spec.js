@@ -1,4 +1,4 @@
-// Call captions (org.moqui.call.CallCaptionServices and CallCaptions.js; plans/Comms-Framework.md §6.4, W6): the policy
+// Call captions (org.moqui.call.CallCaptionServices and CallCaptions.js; plans/archive/Comms-Framework.md §6.4, W6): the policy
 // switch, someone not in the call, an end-to-end encrypted call, and turning captions on and off. Every refusal uses the
 // same parameters as the case that works. The media node's side (chunking, order, timeouts, backpressure) is
 // crates/moqui-host rtc/captions_tests.rs; this spec's media node is a row, so no audio goes anywhere.

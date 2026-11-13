@@ -1,4 +1,4 @@
-// Transfer, add and merge (org.moqui.call.CallTransferServices and CallTransfers.js; plans/Comms-Framework.md §5.1, §5.3, V5):
+// Transfer, add and merge (org.moqui.call.CallTransferServices and CallTransfers.js; plans/archive/Comms-Framework.md §5.1, §5.3, V5):
 // a call that still rings is not transferred; a stale revision and a second open transfer are refused, so two transfers
 // cannot both win; an attended transfer holds the far end while the user consults the target, then cancels (the far end
 // back) or completes (the user leaves); a blind transfer leaves at once and the far end waits for the target, whose

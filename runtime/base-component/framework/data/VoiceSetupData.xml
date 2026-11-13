@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice (framework/entity/VoiceEntities.xml, org.moqui.call.VoiceServices, plans/Comms-Framework.md §5.2): the kinds and
+<!-- Voice (framework/entity/VoiceEntities.xml, org.moqui.call.VoiceServices, plans/archive/Comms-Framework.md §5.2): the kinds and
     states of trunks, numbers and emergency locations, the VoiceAdmin permission, and the topic of the fraud and emergency
     alerts. The fraud policy needs no row: without one the defaults apply (international and premium off). -->
 <entity-facade-xml type="seed">

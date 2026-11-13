@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Comms Home of BasicComms (plans/Comms-Framework.md §3.2, D-A4; first built as IronStone Comms' CommsHomeServices, mr-boss
+<!-- Comms Home of BasicComms (plans/archive/Comms-Framework.md §3.2, D-A4; first built as IronStone Comms' CommsHomeServices, mr-boss
     design-drawers-commons.md §12 Home): the unread of each mail account, flagged, snoozed until today, chat mentions, mail that
     could not be sent and the chat rooms with unread, each part on its own over the services that own the data. An app's Home
     (IronStone's adds its internal messages, Needs reply, follow-ups, meetings and mailboxes) answers through its inbox-source
@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="HomeSources">
-        <description>The boxes the apps' home-source providers add to Comms Home (plans/Comms-Framework.md §3.3; IronStone: its
+        <description>The boxes the apps' home-source providers add to Comms Home (plans/archive/Comms-Framework.md §3.3; IronStone: its
             mailboxes with unread), after the Home's own parts whoever answered them: cardList, each {sourceId, key, title,
             link, linkText, emptyText, rowList}. A provider that fails is left out and named in failedParts; with none, the
             list is empty.</description>

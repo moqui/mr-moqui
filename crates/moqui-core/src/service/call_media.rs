@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.call.CallServices.send#MediaControl` (plans/Comms-Framework.md §6.3): the call services tell the node
+//! `org.moqui.call.CallServices.send#MediaControl` (plans/archive/Comms-Framework.md §6.3): the call services tell the node
 //! holding a call's media that a leg left or was removed, or that the call ended, so the node closes its peers. The
 //! message goes on the `rtc-signal` cluster topic to that node only ([`crate::cluster::send_to`]), after the caller's
 //! transaction commits; moqui-host's rtc module takes it there. A node that is gone is logged and skipped: its calls
@@ -471,7 +471,7 @@ fn send_media_control(
     send_to_node(parameters, facade, "mediaNodeId", "control")
 }
 
-/// `org.moqui.call.VoiceServices.send#SipControl` (plans/Comms-Framework.md §5.2): the voice services tell the SIP
+/// `org.moqui.call.VoiceServices.send#SipControl` (plans/archive/Comms-Framework.md §5.2): the voice services tell the SIP
 /// engine of a node (`instanceId`) to dial, answer, hang up, hold, send digits or reload its trunks, on the same
 /// `rtc-signal` topic with kind `sip`, after the caller's commit; moqui-host's sip module takes it there.
 fn send_sip_control(

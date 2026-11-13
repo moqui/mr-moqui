@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 /*
- * The service worker of the /qapps PWA (plans/Comms-Framework.md §7.2 P0). Served uncached at the site root
+ * The service worker of the /qapps PWA (plans/archive/Comms-Framework.md §7.2 P0). Served uncached at the site root
  * (screen/static_files.rs), registered by js/WebrootPush.js.
  *
  * Caching: only versioned shell assets (a `v` parameter, or under /libs/), which never change at a URL. Nothing

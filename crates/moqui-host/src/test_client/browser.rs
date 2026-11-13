@@ -769,7 +769,7 @@ fn fresh_file(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 }
 
 /// The spec browser's switches beyond the shared ones: Chromium's fake camera and microphone, granted without a prompt,
-/// and media that plays without a gesture, so a call spec has media (plans/Comms-Framework.md §7.3); with `--insecure`,
+/// and media that plays without a gesture, so a call spec has media (plans/archive/Comms-Framework.md §7.3); with `--insecure`,
 /// certificate errors ignored.
 fn browser_args(insecure: bool) -> Vec<String> {
     let mut args = vec![

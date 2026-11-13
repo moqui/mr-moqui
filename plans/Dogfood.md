@@ -425,7 +425,7 @@ to be undone, and it joins what is in place.
 | Forum (Mantle, `mantle.forum`) | One review queue (held first posts, flags, classifier results, pending accounts) with claims, decisions, appeals and an audit of every action; rules by word, pattern and link; sanctions; trust levels with limits; rate limits; an optional classifier service (`pass_classifier_service`); a file scanner (`pass_scanner_service`). design-forum §10.1 | The layer |
 | BOSS Comms › Moderation | The same queue for internal moderators, over the same services (`boss/service/ironstone/comms/ModerationServices.xml`) | Yes, already |
 | Mail | The gateway's spam verdict (Rspamd, or the listener's own call to it) puts a message in Junk; a user's Spam and Not spam move it; a mail rule may mark spam ([Mail-Inbound](../docs/interfaces/Mail-Inbound.md)). Filtering in moqui itself is [Edge-Node](Edge-Node.md)'s late phase | A signal, joined here |
-| Chat | A person's own block list (`XmppBlockedJid`). Rooms have no moderation ([Comms-Framework](Comms-Framework.md)) | Nothing to join; left out |
+| Chat | A person's own block list (`XmppBlockedJid`). Rooms have no moderation ([Comms-Framework](archive/Comms-Framework.md)) | Nothing to join; left out |
 | Shop reviews | A review's moderation is a status change with its reason in the audit log | Left as it is |
 
 **The seams**, which Smithy uses and which keep the layer free of the forum's name:

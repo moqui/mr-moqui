@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SRTP for a phone leg (RFC 3711; plans/Comms-Framework.md §5.2 "media"), with keys exchanged by SDES (RFC 4568,
+//! SRTP for a phone leg (RFC 3711; plans/archive/Comms-Framework.md §5.2 "media"), with keys exchanged by SDES (RFC 4568,
 //! `a=crypto` in the SDP over TLS signaling). One suite, the one every trunk offers: `AES_CM_128_HMAC_SHA1_80`.
 //!
 //! str0m keeps its SRTP context to itself, but its crypto provider is public, and it is the aws-lc-rs one the

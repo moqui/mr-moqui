@@ -1,4 +1,4 @@
-# Phone calls (plans/Comms-Framework.md §5.1, §5.2; "The V1 gate" in §6.2): the SIP user agent and back-to-back user
+# Phone calls (plans/archive/Comms-Framework.md §5.1, §5.2; "The V1 gate" in §6.2): the SIP user agent and back-to-back user
 # agent (B2BUA) toward trunk providers, on rsipstack, and the phone side of a call's media: SDP offer and answer for
 # PCMU, PCMA and Opus with telephone-event, symmetric RTP, SRTP by SDES, RFC 4733 DTMF, the digest credentials and
 # their checks, the dial classes and the per-source block of failed digests. The signaling runs on Tokio (rsipstack's);

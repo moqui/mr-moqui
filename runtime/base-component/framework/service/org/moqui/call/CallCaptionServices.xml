@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Live captions of a call (plans/Comms-Framework.md §5.4, §6.4, W6; docs/interfaces/WebRTC.md, Captions). Someone in the
+<!-- Live captions of a call (plans/archive/Comms-Framework.md §5.4, §6.4, W6; docs/interfaces/WebRTC.md, Captions). Someone in the
     call turns them on or off; the call's media node transcribes each speaker's audio in chunks through the speech provider
     (org.moqui.call.SpeechServices, the model bound to the transcribe feature) and sends the text to every leg as rtc frames,
     with the notice that captions are on and which provider hears the audio. The policy is CallCaptions.js beside this file.

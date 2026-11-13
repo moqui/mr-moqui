@@ -1,4 +1,4 @@
-// BasicComms Chat (screen/BasicComms/Chat.xml and Chat.qvue, org.moqui.comms.ChatScreenServices; plans/Comms-Framework.md
+// BasicComms Chat (screen/BasicComms/Chat.xml and Chat.qvue, org.moqui.comms.ChatScreenServices; plans/archive/Comms-Framework.md
 // A2): a user with no party and john.doe make a room and talk in it through the framework's screens; the records of rooms
 // and messages come only from the record-lookup, record-link and create-from providers of the apps a user may open
 // (IronStone's, when it is installed), and its message actions (ext-action, hook create-from) reach only a user who has them,

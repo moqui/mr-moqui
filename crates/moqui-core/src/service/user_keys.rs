@@ -283,7 +283,7 @@ fn create_app_password(
     let hashed = crate::user::hash_login_key(&crate::user::app_password_key(&password))?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let mut row = EntityValue::make(facade, USER_APP_PASSWORD)?;
-    // its XMPP sign-in (SCRAM, plans/Comms-Framework.md §4.3): the only place the password is in the clear
+    // its XMPP sign-in (SCRAM, plans/archive/Comms-Framework.md §4.3): the only place the password is in the clear
     scram_fields(facade, &user_id, &password, &mut row)?;
     row.set_sequenced_id_primary(facade)?;
     let id = row.get("appPasswordId").map(to_plain_string).unwrap_or_default();

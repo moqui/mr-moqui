@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The W1 media gate (plans/Comms-Framework.md §6.2) on the in-memory network: two and five parties, simulcast layers
+//! The W1 media gate (plans/archive/Comms-Framework.md §6.2) on the in-memory network: two and five parties, simulcast layers
 //! following TWCC, renegotiation both ways and glare, ICE restart, ICE-TCP, generations, media taken out and put in, and
 //! keyframes asked of a room's publishers (the recorder, W5).
 

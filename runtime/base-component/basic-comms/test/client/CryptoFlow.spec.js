@@ -1,4 +1,4 @@
-// Crypto devices in two browsers (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): john.doe and
+// Crypto devices in two browsers (plans/archive/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): john.doe and
 // calls.client.b, who share a room (CryptoClientFixtures), each load matrix-sdk-crypto's OlmMachine (moqui.crypto,
 // js/WebrootCrypto.js), make a device and upload its keys; john.doe's page claims a one-time key of the other's device,
 // Olm-encrypts a to-device event for it and sends it; the other page is woken by the push, syncs and decrypts it, and

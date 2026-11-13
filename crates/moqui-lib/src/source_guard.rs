@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Failed sign-ins counted and blocked per source address (plans/Comms-Framework.md §5.2 "Fraud", §4.3 XMPP), shared by
+//! Failed sign-ins counted and blocked per source address (plans/archive/Comms-Framework.md §5.2 "Fraud", §4.3 XMPP), shared by
 //! the SIP engine (failed digests, moqui-sip) and the XMPP server (failed SASL, moqui-xmpp). Scanners probe a listener
 //! for weak credentials; `limit` failures from one address within `window` block that address for `block`, and
 //! everything it sends is then dropped without an answer. The account a scanner names is never locked,

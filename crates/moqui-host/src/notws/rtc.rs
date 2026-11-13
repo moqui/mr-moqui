@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Call signaling on the notification socket (plans/Comms-Framework.md §6.3). A client sends JSON frames with `rtc`:
+//! Call signaling on the notification socket (plans/archive/Comms-Framework.md §6.3). A client sends JSON frames with `rtc`:
 //! `join` (with its offer), `offer`, `answer`, `candidate`, `publish`, `unpublish`, `subscribe`, `mute`, `hand`,
 //! `reaction` and `leave`, each with `callSessionId` and `callLegId` and an optional `id` that the reply carries. Replies
 //! and the media node's offers and events come back on the topic `rtc:<callSessionId>`: `joined`, `answer`, `offer`,

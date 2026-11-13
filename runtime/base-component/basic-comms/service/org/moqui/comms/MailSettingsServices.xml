@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The BasicComms mail settings (plans/Comms-Framework.md §3.2; first built as IronStone Comms, mr-boss
+<!-- The BasicComms mail settings (plans/archive/Comms-Framework.md §3.2; first built as IronStone Comms, mr-boss
     design-drawers-commons.md §17 and impl-drawers-commons.md M5c): the services of screen/BasicComms/Settings/MailAccounts (the
     add-account wizard, the account list and an account's page), Identities, Rules, OutOfOffice and TextBlocks, and the
     mail defaults an app's preferences screen sets (get#MailDefaults, set#MailDefaults), over the framework's mail client

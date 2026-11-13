@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The SIP user agent and B2BUA toward trunk providers (plans/Comms-Framework.md §5.2; D-V1: rsipstack), on Tokio.
+//! The SIP user agent and B2BUA toward trunk providers (plans/archive/Comms-Framework.md §5.2; D-V1: rsipstack), on Tokio.
 //!
 //! [`Ua::start`] binds the listeners (UDP, TCP, TLS) and serves them; the host hears what happens through a channel of
 //! [`UaEvent`]s and acts through [`Ua`]'s methods. It runs no business logic: whether a call may ring a user, which

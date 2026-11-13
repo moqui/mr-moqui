@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Ring groups (plans/Comms-Framework.md §5.3, §5.4, V3): a number routed to a ring group (Numbers) rings its members by its
+<!-- Voice, Ring groups (plans/archive/Comms-Framework.md §5.3, §5.4, V3): a number routed to a ring group (Numbers) rings its members by its
     strategy (all at once, in order, round robin), each for its ring seconds; members in do not disturb or busy are skipped;
     with nobody answering, or outside its schedule, the fallback runs: the group's voicemail (its members share the box), another
     group, an outside number, or the end. org.moqui.call.CallHandlingServices find#, store#, delete#RingGroup and store#,

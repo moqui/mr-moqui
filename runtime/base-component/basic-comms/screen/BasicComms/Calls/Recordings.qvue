@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Recordings (plans/Comms-Framework.md W5, §6.4 "video calls played back by playing the tracks together"), the component
+<!-- Recordings (plans/archive/Comms-Framework.md W5, §6.4 "video calls played back by playing the tracks together"), the component
     Recordings.xml serves in the qvue render mode. The list of recordings the user may read (the recordings transition);
     choosing one shows its periods (a period is from the start or a resume to the next pause or the end), and a period plays
     its tracks together: a video element for each video track, an audio element for each audio track, and the mixed audio

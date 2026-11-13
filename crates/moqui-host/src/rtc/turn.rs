@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The embedded TURN server's sockets (plans/Comms-Framework.md §6.5, W4; docs/interfaces/TURN.md), on the media node:
+//! The embedded TURN server's sockets (plans/archive/Comms-Framework.md §6.5, W4; docs/interfaces/TURN.md), on the media node:
 //! UDP and TCP on `turn_port`, TLS on `turn_tls_port` and on 443 of `turn_tls443_host` (an address of its own, since the
 //! HTTPS listener does not share its port), all off while their setting is empty, and the UDP relay sockets in
 //! `turn_relay_ports`. One thread owns the [`Turn`] and the UDP sockets, and waits on its bounded input queue when

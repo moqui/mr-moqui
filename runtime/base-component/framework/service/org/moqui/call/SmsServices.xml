@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- SMS and MMS (plans/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md): a number's texts through its messaging
+<!-- SMS and MMS (plans/archive/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md): a number's texts through its messaging
     bridge (PhoneNumber.messagingBridgeId), in the number pair's external room. The logic is Sms.js beside this file; the
     provider's adapter is crates/moqui-channels (Telnyx), which calls receive#Sms from its webhook and check#SmsSend before
     each send. org.moqui.SmsServices.send#SmsMessage is the system's sender (a sign-in code). No Java counterpart.

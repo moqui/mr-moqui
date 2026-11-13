@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The transitions of the dialer (plans/Comms-Framework.md §5.5, V3), shared by Calls/Dialer and the tray's Panel/Dialer, each
+<!-- The transitions of the dialer (plans/archive/Comms-Framework.md §5.5, V3), shared by Calls/Dialer and the tray's Panel/Dialer, each
     included by name: dialerData (the user's caller IDs, their own numbers and their ring groups', whether their number is
     hidden, their recent numbers; CallHandlingServices get#DialerData), dialSearch (people and numbers for a text through the
     recipient-source providers, or the framework's users that a number rings; search#Dialable) and dialNumber

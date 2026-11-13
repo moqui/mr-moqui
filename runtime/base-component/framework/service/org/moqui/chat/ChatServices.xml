@@ -131,7 +131,7 @@ along with this software (see the LICENSE.md file). If not, see
     post their approvals, questions and replies as cards (send#AssistCard, content.assist, changed in place with
     update#AssistCard) and type with a status text (signal#Typing statusText).
 
-    Actors and bridges (plans/Comms-Framework.md §4.1, §4.4; C1). A member, sender, mention and vote is a ChatActor: a local
+    Actors and bridges (plans/archive/Comms-Framework.md §4.1, §4.4; C1). A member, sender, mention and vote is a ChatActor: a local
     user (get#LocalActors makes one on first use) or an external actor of a bridge (no userId, no login). These services take
     and answer userIds for local users as before; an external member is in memberList with chatActorId, external true, its
     name and its network, and an external sender's events have senderActorId, senderName and senderExternal {network,

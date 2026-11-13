@@ -32,7 +32,7 @@
         <actions><set field="offer" from="ec.user.getPreference('GALLERY_QUICK_TASK') != 'N'"/></actions>
     </service>
 
-    <!-- Two call-context providers of the suite shell (the shell-providers of screen/Gallery.xml; plans/Comms-Framework.md §3.3,
+    <!-- Two call-context providers of the suite shell (the shell-providers of screen/Gallery.xml; plans/archive/Comms-Framework.md §3.3,
         V5): who a phone caller is, for the ring bar and the call's screen pop (CallServices get#CallContext, as the user rung).
         The first knows the gallery's example numbers (+1 555 0100 xxxx); the second shows a provider that fails being left out
         (failedParts) while the others answer: it fails for +15550100666 and answers nothing for any other number. -->
@@ -79,7 +79,7 @@
         ]]></script></actions>
     </service>
 
-    <!-- A call-target provider of the suite shell (the shell-providers of screen/Gallery.xml; plans/Comms-Framework.md §3.3):
+    <!-- A call-target provider of the suite shell (the shell-providers of screen/Gallery.xml; plans/archive/Comms-Framework.md §3.3):
         of the users the signed-in user would call, transfer a call to or add to one, it refuses those whose username ends
         with .offlimits, as an app keeping them to the user's organizations would refuse another organization's. -->
     <service verb="get" noun="GalleryCallTarget">

@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// Transfer, add, merge (plans/Comms-Framework.md §5.1, §5.3, V5): the services of org.moqui.call.CallTransferServices.
+// Transfer, add, merge (plans/archive/Comms-Framework.md §5.1, §5.3, V5): the services of org.moqui.call.CallTransferServices.
 // Every call is one CallSession and these change its legs, not its media path:
 //
 // - **Blind transfer** (transfer#Call mode blind): the call's outside party (its answered phone leg) goes to a user, an

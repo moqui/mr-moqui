@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A phone leg's media (plans/Comms-Framework.md §5.1, §6.5; the M0 hook points in `rtc/media.rs`): its RTP socket
+//! A phone leg's media (plans/archive/Comms-Framework.md §5.1, §6.5; the M0 hook points in `rtc/media.rs`): its RTP socket
 //! from the `sip_rtp_ports` range and one thread, on a 20 ms tick, between that socket and the call's SFU room.
 //!
 //! - **In.** The phone's RTP is decoded (G.711, G.722 or Opus) and resampled to 48 kHz by

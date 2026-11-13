@@ -6,7 +6,7 @@ Most browsers reach a call's media node on its UDP media port ([WebRTC](WebRTC.m
 - **TURN:** a relay for browsers behind NAT or firewalls that pass only some ports or only TLS. The relay is
   embedded in the moqui binary (`crates/moqui-rtc` `turn/`, on `turn-server-proto`; the sockets in
   `crates/moqui-host/src/rtc/turn.rs`). coturn can take its place (below). The design is
-  [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §6.5.
+  [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §6.5.
 
 Both need the `rtc` feature and a media node (`rtc_media_port`). Every listener is off until its setting is set.
 

@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// Chat devices, keys and to-device messages (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the
+// Chat devices, keys and to-device messages (plans/archive/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the
 // services of org.moqui.chat.ChatKeyServices. The browser runs matrix-sdk-crypto's OlmMachine (js/WebrootCrypto.js), which
 // does no I/O: these are the endpoints it calls, with Matrix's payloads, so the Matrix client API (C6a) can serve the same
 // services at /_matrix/client/v3/keys/upload, keys/query, keys/claim, sendToDevice and the to-device part of /sync.

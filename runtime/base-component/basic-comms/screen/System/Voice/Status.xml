@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Voice, Status: whether phone calls are supported (the binary has the sip feature), configured (sip_port or sip_tls_port and
-    a trunk) and active (a SIP server up and a trunk working), each on its own with why not (plans/Comms-Framework.md §3.1);
+    a trunk) and active (a SIP server up and a trunk working), each on its own with why not (plans/archive/Comms-Framework.md §3.1);
     whether emergency calls are ready for the signed-in admin; the servers whose SIP engine is up and the media servers. From
     org.moqui.call.VoiceServices.get#VoiceStatus. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

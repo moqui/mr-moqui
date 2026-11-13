@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- My devices (plans/Comms-Framework.md §4.5, C7 core), the component Devices.xml serves in the qvue render mode: the
+<!-- My devices (plans/archive/Comms-Framework.md §4.5, C7 core), the component Devices.xml serves in the qvue render mode: the
     browsers that hold the user's encryption keys, this browser marked (moqui.crypto.thisDeviceId, which loads nothing),
     each with when it was added and last seen, its browser and its key's fingerprint; Rename and Remove. Removing this
     browser's own device also deletes its local store (moqui.crypto.forget); it gets a new device the next time it needs one.

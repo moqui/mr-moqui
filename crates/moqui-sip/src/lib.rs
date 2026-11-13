@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Phone calls over SIP (plans/Comms-Framework.md §5.1, §5.2; "The V1 gate" in §6.2).
+//! Phone calls over SIP (plans/archive/Comms-Framework.md §5.1, §5.2; "The V1 gate" in §6.2).
 //!
 //! Every call is one `CallSession` whatever its transport; a phone number through a trunk is one more leg of it (§5.1).
 //! This crate is that leg: its signaling toward the trunk provider and its media. It runs no business logic and knows

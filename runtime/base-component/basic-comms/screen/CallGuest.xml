@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- CallGuest (plans/Comms-Framework.md §6.3 Guests, W3, D-A5): the page of a call link for a person with no account, at
+<!-- CallGuest (plans/archive/Comms-Framework.md §6.3 Guests, W3, D-A5): the page of a call link for a person with no account, at
     /call/<token>: the token-route "call" of basic-comms MoquiConf.xml renders it in the public shell after
     org.moqui.call.CallServices.check#CallLinkToken accepted the token, so an expired, revoked or unknown link never
     reaches this screen. The component is CallGuest.qvue next to this file: the link's name and its owner, the guest's

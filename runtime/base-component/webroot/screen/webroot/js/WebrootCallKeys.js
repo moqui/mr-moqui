@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The call-key protocol of end-to-end encrypted calls (plans/Comms-Framework.md §6.4, W8; docs/interfaces/WebRTC.md
+ * The call-key protocol of end-to-end encrypted calls (plans/archive/Comms-Framework.md §6.4, W8; docs/interfaces/WebRTC.md
  * "Encrypted calls"): moqui.callKeys, which the page's call store (WebrootCall.js) uses for a call whose encryptionMode is
  * e2ee-sframe.
  *

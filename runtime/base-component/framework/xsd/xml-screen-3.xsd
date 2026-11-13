@@ -596,7 +596,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attributeGroup ref="provider-attributes"/>
     </xs:complexType>
     <xs:element name="inbox-source" type="provider-type"><xs:annotation><xs:documentation>
-        Comms providers (plans/Comms-Framework.md §3.3). The framework calls every provider of a hook declared by the app roots
+        Comms providers (plans/archive/Comms-Framework.md §3.3). The framework calls every provider of a hook declared by the app roots
         the user may open (org.moqui.ui.ShellServices.call#Providers) and combines the answers: a read runs each in its own
         transaction, and one that fails is logged and listed in failedParts while the others answer; a mutation reports the
         first failure; with no provider the feature is skipped (unavailable). inbox-source: accounts, settings and pages of
@@ -653,7 +653,7 @@ along with this software (see the LICENSE.md file). If not, see
             (create-from, record-link): it is left out for a user no app answers that hook for.</xs:documentation></xs:annotation></xs:attribute>
     </xs:attributeGroup>
     <xs:element name="ext-action"><xs:annotation><xs:documentation>
-        An action another app adds to this screen's items (plans/Comms-Framework.md §3.3): a .qvue screen renders the actions of
+        An action another app adds to this screen's items (plans/archive/Comms-Framework.md §3.3): a .qvue screen renders the actions of
         a slot in its menus (m-ext-actions), the terminal client lists them. Exactly one of screen (opened with the mapped
         parameters, as a dialog or a page) or transition (a transition of this screen, posted with them).
     </xs:documentation></xs:annotation><xs:complexType>

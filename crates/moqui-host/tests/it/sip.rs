@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Phone calls on a real server (plans/Comms-Framework.md §5.2, V1): a fake trunk (a raw SIP peer on a loopback UDP
+//! Phone calls on a real server (plans/archive/Comms-Framework.md §5.2, V1): a fake trunk (a raw SIP peer on a loopback UDP
 //! socket, with its own RTP socket) registers the trunk, takes an outbound call and places an inbound one, and a
 //! browser stand-in (the str0m peer of `rtc.rs`) hears the phone's audio through the call's SFU room.
 

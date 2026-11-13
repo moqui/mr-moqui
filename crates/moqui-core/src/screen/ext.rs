@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Declared actions and panels (plans/Comms-Framework.md §3.3, layers 2 and 3): `<ext-action>` and `<ext-panel>`, direct
+//! Declared actions and panels (plans/archive/Comms-Framework.md §3.3, layers 2 and 3): `<ext-action>` and `<ext-panel>`, direct
 //! children of a `screen` or a `screen-extend`, which another app adds to a screen it does not own, and which a `.qvue`
 //! screen renders in its menus (`m-ext-actions`) and panes (`m-ext-panel`) and the terminal client lists.
 //!

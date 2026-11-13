@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * Declared actions and panels (plans/Comms-Framework.md §3.3; crates/moqui-core/src/screen/ext.rs): what another app adds to a
+ * Declared actions and panels (plans/archive/Comms-Framework.md §3.3; crates/moqui-core/src/screen/ext.rs): what another app adds to a
  * .qvue screen it does not own, through ext-action and ext-panel in a screen-extend.
  *
  * - moqui.ext.items(path): {actions, panels} of the screen at path (/extItems), fetched once per path and page. The server

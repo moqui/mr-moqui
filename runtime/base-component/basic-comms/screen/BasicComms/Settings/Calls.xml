@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Settings, Calls (plans/Comms-Framework.md §5.5): the microphone, camera and speaker a call uses, a ringtone, and whether a
+<!-- Settings, Calls (plans/archive/Comms-Framework.md §5.5): the microphone, camera and speaker a call uses, a ringtone, and whether a
     call starts muted or with the camera off. These are kept in this browser only (each device has its own), by the page's
     call store (webroot js/WebrootCall.js); the component is Calls.qvue next to this file. In the terminal there are no
     devices: the twin says so. -->

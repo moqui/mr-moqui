@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SMS and MMS (plans/Comms-Framework.md §7.1 C4-SMS) against a fake Telnyx on loopback: a provider and a number with no
+//! SMS and MMS (plans/archive/Comms-Framework.md §7.1 C4-SMS) against a fake Telnyx on loopback: a provider and a number with no
 //! SIP engine; webhooks signed, badly signed, replayed and out of their window; duplicate callbacks; delivery receipts;
 //! MMS in and out within the limits; an uncertain send that is not sent again; refusals before the provider (an opt-out, a
 //! promotional text with no consent, an international number, a number not granted, the day's limit); the number pair's

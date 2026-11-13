@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Fraud (plans/Comms-Framework.md §5.2): the deployment's limits (international and premium destinations, off by
+<!-- Voice, Fraud (plans/archive/Comms-Framework.md §5.2): the deployment's limits (international and premium destinations, off by
     default; calls at once and per day; failed sign-ins before a source is blocked, and for how long), each user's phone
     permissions, and the source addresses with failed SIP sign-ins, blocked ones first, with Clear. A block is per source
     address and never locks an account. Texts (C4-SMS): the texts a person and the users in all send in a day, the system's

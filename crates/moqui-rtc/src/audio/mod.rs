@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The call audio core (plans/Comms-Framework.md §5.1, §5.2, §6.4; the M0 gate in §6.2): the codecs, resampling, a
+//! The call audio core (plans/archive/Comms-Framework.md §5.1, §5.2, §6.4; the M0 gate in §6.2): the codecs, resampling, a
 //! decoder per leg with its jitter buffer, and the mix-minus mixer that SIP legs, the mixed recording (W5) and captions
 //! (W6) share.
 //!

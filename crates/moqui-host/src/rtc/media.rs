@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The hook points for a call's media on this node (plans/Comms-Framework.md §5.1, §6.4; the M0 gate in §6.2): what the
+//! The hook points for a call's media on this node (plans/archive/Comms-Framework.md §5.1, §6.4; the M0 gate in §6.2): what the
 //! recorder (W5), captions (W6) and SIP legs (V1) build on. Both run on the caller's own thread and talk to the media
 //! driver thread through its command queue, so nothing here can stall forwarding.
 //!

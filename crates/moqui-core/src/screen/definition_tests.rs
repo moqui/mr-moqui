@@ -84,7 +84,7 @@ fn extensions_apply_in_order() {
     assert_eq!(names_in(&container), ["one", "two"]);
 }
 
-/// A screen-extend's `shell-providers` merge into the screen's by element and key (plans/Comms-Framework.md §3.3): an
+/// A screen-extend's `shell-providers` merge into the screen's by element and key (plans/archive/Comms-Framework.md §3.3): an
 /// equal key replaces in place, a new one is added at the end, a keymap merges its keys by `keys`, labels never key, and
 /// a later component's extension applies over an earlier one's.
 #[test]

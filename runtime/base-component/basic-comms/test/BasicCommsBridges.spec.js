@@ -1,4 +1,4 @@
-// BasicComms and chat bridges (plans/Comms-Framework.md §4.3, C1): a room mapped to a network that is not connected (no
+// BasicComms and chat bridges (plans/archive/Comms-Framework.md §4.3, C1): a room mapped to a network that is not connected (no
 // adapter of it in this build) shows the bridge and "not connected" in the room list, the room and its terminal twin; an
 // external member from that network has its badge and its message its network; a message of the room shows that it waits to
 // be sent, and System, Chat Bridges lists the bridge with its last error and the delivery that failed, with Send again, for

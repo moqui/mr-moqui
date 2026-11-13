@@ -1,5 +1,5 @@
 // Call handling (org.moqui.call.CallHandlingServices and CallHandling.js; the V3 block of framework/entity/VoiceEntities.xml;
-// plans/Comms-Framework.md §5.3, §5.4, V3): a user's rules for an inbound phone call, read in order. Anonymous and selective
+// plans/archive/Comms-Framework.md §5.3, §5.4, V3): a user's rules for an inbound phone call, read in order. Anonymous and selective
 // rejection and acceptance by caller list, selective forward, business hours and holidays across a time zone (the plan read
 // at a given time, atMs, not by waiting), do not disturb to voicemail, busy with and without call waiting, forward loops
 // and the hop bound, a forward back to the caller skipped, a forward to an outside number only with the forward permission,

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Streaming sample rate conversion between the codecs' rates and the mixer's (plans/Comms-Framework.md §5.2): 8 kHz
+//! Streaming sample rate conversion between the codecs' rates and the mixer's (plans/archive/Comms-Framework.md §5.2): 8 kHz
 //! G.711 and 16 kHz G.722 to and from 48 kHz. The ratios are small integers, so this is a polyphase FIR: a
 //! Kaiser-windowed sinc low-pass at the lower rate's band edge, run as `up` phases and kept every `down`th output. In
 //! house rather than `rubato`, whose general (and asynchronous) resamplers bring seven crates for what these fixed ratios

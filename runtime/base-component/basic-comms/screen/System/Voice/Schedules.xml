@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Schedules (plans/Comms-Framework.md §5.3, §5.4, V3): the deployment's business hours, for ring groups and for anyone's
+<!-- Voice, Schedules (plans/archive/Comms-Framework.md §5.3, §5.4, V3): the deployment's business hours, for ring groups and for anyone's
     call handling rules: weekly hours, hours on dates, and holidays (once, or each year), read in the schedule's time zone; with
     whether each is open now. org.moqui.call.CallHandlingServices find#CommsSchedules (shared), store#, delete#CommsSchedule,
     store#, delete#CommsScheduleRule and check#CommsSchedule (the VoiceAdmin permission). A user's own schedules are theirs. -->

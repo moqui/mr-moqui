@@ -1,5 +1,5 @@
 // The BasicComms Inbox, Compose and Home over the user's mail alone (org.moqui.comms.InboxServices, ComposeServices and
-// CommsHomeServices; plans/Comms-Framework.md A3): a user with no party and a mail account of their own sees its Inbox, a
+// CommsHomeServices; plans/archive/Comms-Framework.md A3): a user with no party and a mail account of their own sees its Inbox, a
 // thread, its details and its Home counter, acts on the thread, and writes, keeps and discards a reply; no internal
 // messages or mailboxes are offered. run#Operation hands the operations to an app's inbox-source when the user may open
 // one (IronStone's, when it is installed), and to these services otherwise.
@@ -250,7 +250,7 @@ feature("the operations go to the app's inbox-source when the user may open it, 
     }
 })
 
-// The home-source and contact-card hooks (plans/Comms-Framework.md §3.3) over the example gallery's providers: its Home box,
+// The home-source and contact-card hooks (plans/archive/Comms-Framework.md §3.3) over the example gallery's providers: its Home box,
 // one failing on purpose and named in failedParts, and its contact card for its own addresses; an address nobody knows
 // is the address alone. Skipped when the example component is not loaded.
 const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()

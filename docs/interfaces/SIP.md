@@ -16,7 +16,7 @@ call out as their user.
   transfers are `org.moqui.call.IvrServices`, `CallQueueServices` and `CallTransferServices` (`Ivr.js`, `CallQueues.js`,
   `CallTransfers.js`, V5), with the engine's side in `src/sip/ivr.rs`.
 - Administration is System, Voice (in basic-comms).
-- The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.2, and "The V1 gate" in §6.2.
+- The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.2, and "The V1 gate" in §6.2.
 
 The engine needs:
 
@@ -417,7 +417,7 @@ notice that comes while another plays waits for it.
 ## Registrar
 
 Desk phones (Yealink, Polycom, Grandstream) and soft phones (Linphone, Zoiper, Groundwire, on a computer or a mobile, the
-native-calls path of §7.2) register with the SIP engine, which is their registrar (plans/Comms-Framework.md §5.2
+native-calls path of §7.2) register with the SIP engine, which is their registrar (plans/archive/Comms-Framework.md §5.2
 "Registrar for phones", V4). It is off unless `sip_registrar_enabled` is true, even with the listeners on; until then a
 REGISTER is refused (403) without a challenge, so a phone pointed here is not blocked for failed digests, and phones may be added but cannot register or ring.
 

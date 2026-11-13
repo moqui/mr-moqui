@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! G.711 μ-law (PCMU, payload type 0) and A-law (PCMA, 8), the trunks' codecs (plans/Comms-Framework.md §5.2): one byte
+//! G.711 μ-law (PCMU, payload type 0) and A-law (PCMA, 8), the trunks' codecs (plans/archive/Comms-Framework.md §5.2): one byte
 //! a sample at 8 kHz, by the segment tables of ITU-T G.711. In house, as the published crates bring a media framework.
 
 use super::codec::{Codec, CodecError};

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! XMPP for local users on a real server (plans/Comms-Framework.md §7.1 C3a, docs/interfaces/XMPP.md).
+//! XMPP for local users on a real server (plans/archive/Comms-Framework.md §7.1 C3a, docs/interfaces/XMPP.md).
 //!
 //! Ann's client is tokio-xmpp: SCRAM-SHA-256-PLUS with tls-exporter channel binding over direct TLS (RFC 6120 SASL),
 //! a room joined, a message to it read by Ben in the web's way (`get#Timeline`) and his web message back, the room's

@@ -1888,7 +1888,7 @@ fn renders_under_always_and_the_shell_counts_leave_authorization_as_it_was() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The provider hooks (plans/Comms-Framework.md §3.3): call#Providers calls each provider of the apps the user may open,
+/// The provider hooks (plans/archive/Comms-Framework.md §3.3): call#Providers calls each provider of the apps the user may open,
 /// as its app; a failing read is left out in failedParts while the others answer; a hook nobody declares is unavailable;
 /// a mutation stops at the first failure; sourceId calls one.
 #[test]

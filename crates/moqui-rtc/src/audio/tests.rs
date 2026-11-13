@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The M0 audio core (plans/Comms-Framework.md §6.2): codec round trips and levels, resampling, the jitter buffer's
+//! The M0 audio core (plans/archive/Comms-Framework.md §6.2): codec round trips and levels, resampling, the jitter buffer's
 //! reorder and loss, the mix-minus mixer, and the queue tap that drops rather than blocks.
 
 use std::sync::Arc;

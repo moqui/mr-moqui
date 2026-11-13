@@ -2,7 +2,7 @@
 
 Texts to and from outside numbers, through the provider's messaging API and webhooks, on the chat bridge layer
 ([Chat bridges](Chat-Bridges.md)). Telnyx is the first provider (D-V4). A number's texts, calls and voicemail land in one
-room per outside number. The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.6, §5.4 ("One
+room per outside number. The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.6, §5.4 ("One
 conversation per outside number"), §4.3 ("Business channels"), milestone C4-SMS. Texting needs no SIP engine: a number
 with a messaging bridge and no trunk texts.
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The bridge layer (plans/Comms-Framework.md §7.1 C1) against an in-memory adapter registered only here, with crash and
+//! The bridge layer (plans/archive/Comms-Framework.md §7.1 C1) against an in-memory adapter registered only here, with crash and
 //! failure injection, on a simulated clock (`run#BridgeDeliveries` at `nowMillis`): a crash before and after the network
 //! took a message (sent once to a network that dedupes, uncertain to one that cannot), one failing destination while
 //! another delivers, permanent failures and the authorized retry, duplicate batches and echoes, edits that arrive before

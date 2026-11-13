@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// Live captions of a call (plans/Comms-Framework.md §5.4, §6.4, W6): the policy of org.moqui.call.CallCaptionServices.
+// Live captions of a call (plans/archive/Comms-Framework.md §5.4, §6.4, W6): the policy of org.moqui.call.CallCaptionServices.
 // Someone in the call turns captions on or off; the call's media node transcribes (moqui-host rtc/captions.rs), told by
 // send#MediaControl after the commit, and tells every leg that captions are on and which provider hears the audio (the
 // notice). The checks, in order: the deployment allows captions (call_captions_enabled), the user is in the call (anyone

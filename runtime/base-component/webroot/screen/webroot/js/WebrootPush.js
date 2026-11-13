@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The PWA and Web Push in the /qapps shell (plans/Comms-Framework.md §7.2 P0): moqui.push, and the account menu's
+ * The PWA and Web Push in the /qapps shell (plans/archive/Comms-Framework.md §7.2 P0): moqui.push, and the account menu's
  * "Notifications on this device" toggle (m-push-item).
  *
  * - start(): registers the service worker (/sw.js, root scope) and reconciles this browser with the server: a

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The mix-minus mixer of a room (plans/Comms-Framework.md §5.1, §6.4): each 20 ms tick, the legs that have audio put
+//! The mix-minus mixer of a room (plans/archive/Comms-Framework.md §5.1, §6.4): each 20 ms tick, the legs that have audio put
 //! their frame, and each listener takes the sum of every frame but its own. A phone hears everyone but itself; the
 //! mixed recording (W5) takes everyone ([`Mixer::all`]).
 //!

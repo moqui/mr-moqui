@@ -829,7 +829,7 @@ release.
 - **Not done.** A real client (Conversations) through a deployed edge node is checked by hand. The wizard's XMPP
   area is built (§5.7, "As built (E10, XMPP)").
 
-**XMPP federation (C3b) with an edge node.** The design C3b builds to ([Comms-Framework](Comms-Framework.md) §4.3).
+**XMPP federation (C3b) with an edge node.** The design C3b builds to ([Comms-Framework](archive/Comms-Framework.md) §4.3).
 - **On the edge node:** the 5269 listener (`xmpp_s2s_port`, documented and off; nothing listens yet) and the
   outbound s2s streams, with its own certificate for the XMPP domain (and `rooms.`); SASL EXTERNAL with the remote's
   certificate checked by WebPKI for its domain, and dialback (XEP-0220) as the fallback, with its dialback secret and
@@ -1758,7 +1758,7 @@ When it is built (done in E10 unless marked; all done):
 
 - Run and deploy: [Run-Deploy](../docs/Run-Deploy.md) (topologies, the PASS and cluster sections),
   [Build-Test](../docs/Build-Test.md#packages).
-- Comms: [Comms-Framework](Comms-Framework.md) (§6.3 signaling, §6.5 network, D-E1),
+- Comms: [Comms-Framework](archive/Comms-Framework.md) (§6.3 signaling, §6.5 network, D-E1),
   [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Chat-Bridges](../docs/interfaces/Chat-Bridges.md),
   [SMS](../docs/interfaces/SMS.md), [XMPP](../docs/interfaces/XMPP.md), [SIP](../docs/interfaces/SIP.md),
   [Voicemail](../docs/interfaces/Voicemail.md), [WebRTC](../docs/interfaces/WebRTC.md),

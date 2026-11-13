@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Business messaging channels (plans/Comms-Framework.md §4.3 "Business channels"): network adapters of the chat bridge
+//! Business messaging channels (plans/archive/Comms-Framework.md §4.3 "Business channels"): network adapters of the chat bridge
 //! layer ([`moqui_core::service::chat_bridge`]). C4-SMS adds the first, [`telnyx::TelnyxSms`], the `sms` adapter: SMS and
 //! MMS on the Telnyx Messaging API v2 (docs/interfaces/SMS.md).
 //!

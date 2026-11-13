@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The SDP of a phone leg (RFC 4566, RFC 3264 offer and answer; plans/Comms-Framework.md §5.2 "codecs", D-V3): one
+//! The SDP of a phone leg (RFC 4566, RFC 3264 offer and answer; plans/archive/Comms-Framework.md §5.2 "codecs", D-V3): one
 //! audio stream, G.711 μ-law and A-law, G.722 (V4, for desk phones; its 16 kHz audio on an 8000 clock) and Opus,
 //! telephone-event for DTMF (RFC 4733), and SDES keys (RFC 4568) when the media is SRTP. SIP legs are audio only, so a
 //! video stream in an offer is refused with port 0.

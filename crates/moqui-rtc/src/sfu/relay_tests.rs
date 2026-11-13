@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The W7 gate (plans/Comms-Framework.md §6.2): one room on two media nodes, an origin and a leg node, on the in-memory
+//! The W7 gate (plans/archive/Comms-Framework.md §6.2): one room on two media nodes, an origin and a leg node, on the in-memory
 //! network. Media both ways over the relay link; each track crossing once, in the layers up to the highest any
 //! subscriber behind the link wants, a layer changed at the leg node; the leg node's tracks reaching the origin's taps;
 //! the caps refusing a link; a lost link reported and replaced; the link closed when its last leg leaves or the room

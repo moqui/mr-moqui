@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! One trait over the codecs a leg can speak (plans/Comms-Framework.md §5.2): Opus, G.711 μ-law and A-law, G.722. A
+//! One trait over the codecs a leg can speak (plans/archive/Comms-Framework.md §5.2): Opus, G.711 μ-law and A-law, G.722. A
 //! SIP leg picks its codec by the SDP name it negotiated ([`by_name`]) and resamples between the codec's rate and the
 //! mixer's 48 kHz.
 

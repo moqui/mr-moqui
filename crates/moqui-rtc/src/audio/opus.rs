@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Opus at 48 kHz mono, as the browsers send it (plans/Comms-Framework.md §6.4), on opus-rs, a pure-Rust port of
+//! Opus at 48 kHz mono, as the browsers send it (plans/archive/Comms-Framework.md §6.4), on opus-rs, a pure-Rust port of
 //! libopus 1.6. The M0 spike (§6.2) chose it: its decoder matches libopus to float rounding on clean, lost (concealed),
 //! FEC and DTX streams. Swapping the library is this file.
 

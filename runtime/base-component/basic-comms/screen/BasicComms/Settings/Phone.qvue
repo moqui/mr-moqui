@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Settings, Phone (plans/Comms-Framework.md §5.5, V2), the component Phone.xml serves in the qvue render mode. My numbers;
+<!-- Settings, Phone (plans/archive/Comms-Framework.md §5.5, V2), the component Phone.xml serves in the qvue render mode. My numbers;
     then Voicemail: the greeting (Record with the microphone through MediaRecorder, then the browser decodes what it recorded
     and sends it as a 48 kHz mono WAV, which the server keeps as Ogg Opus; or Upload a WAV or Ogg Opus file; Play; Use the
     default), the PIN (set or change, remove) with how to reach the box by phone, the email notice (the audio and the

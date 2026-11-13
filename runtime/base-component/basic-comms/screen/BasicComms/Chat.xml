@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     Each transition is a JSON answer of org.moqui.comms.ChatScreenServices or of org.moqui.chat.ChatServices, which checks the
     room for the current user: a room the user may not reach, and its files, are "not found". What a message or a room has to do
     with an app's records (its record cards, filing a message on a record, making a record from one) comes from the apps' providers
-    (record-lookup, record-link, create-from; plans/Comms-Framework.md §3.3); with none, those parts are not offered. An app adds
+    (record-lookup, record-link, create-from; plans/archive/Comms-Framework.md §3.3); with none, those parts are not offered. An app adds
     message actions with ext-action slot="chat-message-actions" (the item: chatRoomId, eventSeq). A client that queues them offline
     gives edit, redact, react, votePoll and markRead a clientRef (ClientSyncServices.call#ClientRequest): one sent again
     answers what the first did, with duplicate true, and does nothing more. -->

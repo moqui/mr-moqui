@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a dialed number is (plans/Comms-Framework.md §5.2 "Fraud", "Emergency calls"): its E.164 form and its class.
+//! What a dialed number is (plans/archive/Comms-Framework.md §5.2 "Fraud", "Emergency calls"): its E.164 form and its class.
 //! The voice services decide a call with the same rules (`Voice.js`); the engine checks them again before it sends an
 //! INVITE, so a call the deployment does not allow never reaches a trunk whatever asked for it. Emergency numbers come
 //! first: they are dialed as they are, before any other rule.

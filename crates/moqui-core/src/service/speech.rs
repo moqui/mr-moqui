@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.call.SpeechServices` (plans/Comms-Framework.md §6.4, §10.1): speech to text for server code, through
+//! `org.moqui.call.SpeechServices` (plans/archive/Comms-Framework.md §6.4, §10.1): speech to text for server code, through
 //! [`crate::llm_hooks::transcribe`] (the model bound to the `transcribe` feature on an OpenAI-compatible endpoint).
 //! Call captions, voicemail (V2) and recordings (W5) use it. Both services are internal (`allow-remote="false"`): the
 //! audio location they read is the caller's to check. A transcription that does not work is an answer, not a failed

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Call recording (plans/Comms-Framework.md W5, §5.4 "Recording", §6.4, D-V5): starting, pausing, resuming and stopping
+<!-- Call recording (plans/archive/Comms-Framework.md W5, §5.4 "Recording", §6.4, D-V5): starting, pausing, resuming and stopping
     a call's recording, the notice and consent of each leg, the files, and retention. The model is the Recording block of
     framework/entity/CallEntities.xml; the logic is CallRecordings.js beside this file. The recorder itself runs on the
     call's media node (moqui-host src/rtc/recorder.rs), told by send#MediaControl ({action: 'recording'}).

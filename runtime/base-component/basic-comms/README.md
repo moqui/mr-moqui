@@ -1,7 +1,7 @@
 # basic-comms
 
 BasicComms, the framework's Comms app at `/qapps/BasicComms`: the Inbox, Compose, Home, chat, calls and their recordings, and the mail and call settings, then voice,
-usable with only the framework ([plans/Comms-Framework.md](../../../plans/Comms-Framework.md)). The data model is in
+usable with only the framework ([plans/archive/Comms-Framework.md](../../../plans/archive/Comms-Framework.md)). The data model is in
 `framework/entity`; this component has the screens and their services.
 
 | Path | What |

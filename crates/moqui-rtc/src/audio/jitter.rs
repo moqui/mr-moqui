@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A leg's Opus frames to one 20 ms frame of PCM a tick (plans/Comms-Framework.md §5.1, §6.4): a small jitter buffer
+//! A leg's Opus frames to one 20 ms frame of PCM a tick (plans/archive/Comms-Framework.md §5.1, §6.4): a small jitter buffer
 //! keyed by RTP time puts reordered frames back in order, and a gap is recovered from the next frame's in-band FEC when
 //! it is there, or concealed. A leg that stops (it left, muted, or its browser sends DTX) is silent after a few
 //! concealed frames, and starts again at its next frame.

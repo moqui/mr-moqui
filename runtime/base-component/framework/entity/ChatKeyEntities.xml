@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Chat devices and keys (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the server side of the
+<!-- Chat devices and keys (plans/archive/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the server side of the
     browser's end-to-end encryption, Matrix-style. A device is one browser's crypto store (OlmMachine of
     matrix-sdk-crypto, js/WebrootCrypto.js) and belongs to a user, not a chat actor. The server keeps only public keys,
     ciphertext and routing: private keys, Olm sessions and plaintext stay in the browser. The services are

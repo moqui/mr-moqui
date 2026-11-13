@@ -1,5 +1,5 @@
 // Chat key trust and backup (org.moqui.chat.ChatKeyServices and ChatKeys.js; framework/entity/ChatKeyEntities.xml;
-// plans/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md): a device's store key, answered only to its own user,
+// plans/archive/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md): a device's store key, answered only to its own user,
 // stable, absent from the device list and cleared by a revoke; cross-signing keys uploaded once, the same again a no-op,
 // a different master key refused unless reset; signatures by the caller's keys over what those keys may sign, merged into
 // key queries; key backup versions, the current version rule and the better-session rule; device_lists.left when the only

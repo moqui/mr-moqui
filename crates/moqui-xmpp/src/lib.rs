@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! XMPP for local users (plans/Comms-Framework.md §4.3 "XMPP server (C3)", C3a; docs/interfaces/XMPP.md).
+//! XMPP for local users (plans/archive/Comms-Framework.md §4.3 "XMPP server (C3)", C3a; docs/interfaces/XMPP.md).
 //!
 //! - [`framing`] reads a client's stream (TCP: one XML document with a stanza per child; WebSocket, RFC 7395: one
 //!   element per frame) into [`minidom::Element`]s, and writes them.

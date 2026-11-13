@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Phone calls over SIP trunks (plans/Comms-Framework.md §5.1, §5.2, §6.5; docs/interfaces/SIP.md): the SIP engine of
+//! Phone calls over SIP trunks (plans/archive/Comms-Framework.md §5.1, §5.2, §6.5; docs/interfaces/SIP.md): the SIP engine of
 //! this node. Off while `sip_port` and `sip_tls_port` are empty, like the other listeners, and only beside this node's
 //! call media (`rtc_media_port`), since a phone leg's audio joins the call's SFU room here.
 //!

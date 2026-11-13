@@ -1,4 +1,4 @@
-// End-to-end encrypted calls (plans/Comms-Framework.md §6.4, D-W3, W8; docs/interfaces/WebRTC.md "Encrypted calls"): the
+// End-to-end encrypted calls (plans/archive/Comms-Framework.md §6.4, D-W3, W8; docs/interfaces/WebRTC.md "Encrypted calls"): the
 // policy of org.moqui.call.CallServices and Calls.js. A call is encrypted when its starter asks for it, or when its room's
 // or call link's policy says so, and stays so. Only a browser that can take part answers or joins one (it has
 // RTCRtpScriptTransform and names a crypto device of its user's, ChatDevice); a leg binds its media only with a device,

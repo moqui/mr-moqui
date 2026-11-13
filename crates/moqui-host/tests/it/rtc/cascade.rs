@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Cascading media nodes (plans/Comms-Framework.md W7): one call on two servers of one cluster, on one test database,
+//! Cascading media nodes (plans/archive/Comms-Framework.md W7): one call on two servers of one cluster, on one test database,
 //! each with its media port and `rtc_cascade_enabled`. The call's media is on the first (the origin); a leg whose
 //! socket is on the second has its media there (a leg node), which relays to the origin. Media goes both ways, a
 //! subscriber at the leg node changes its layer of a publisher at the origin, and losing the leg node ends only the leg

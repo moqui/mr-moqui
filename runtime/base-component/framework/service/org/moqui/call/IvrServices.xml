@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The IVR and auto attendant (plans/Comms-Framework.md §5.3, §5.4, V5; docs/interfaces/SIP.md "IVR"): menus, their options and
+<!-- The IVR and auto attendant (plans/archive/Comms-Framework.md §5.3, §5.4, V5; docs/interfaces/SIP.md "IVR"): menus, their options and
     prompts, and the SIP engine's questions while a call is in a menu. The model is the V5 block of
     framework/entity/VoiceEntities.xml; the logic is Ivr.js beside this file. The menu services need the VoiceAdmin permission
     (notAllowed otherwise); route#IvrCall is internal (the SIP engine). No Java counterpart. -->

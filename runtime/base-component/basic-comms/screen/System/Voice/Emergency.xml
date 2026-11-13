@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Emergency (plans/Comms-Framework.md §5.2, D-V2): the readiness checklist (what the system checks: an emergency-capable
+<!-- Voice, Emergency (plans/archive/Comms-Framework.md §5.2, D-V2): the readiness checklist (what the system checks: an emergency-capable
     trunk, validated locations with a callback number and a notification destination, the people and numbers with a location;
     and what the operator confirms with the provider), and the emergency locations with Add, Edit and Remove. An emergency call
     without these is refused with a clear message. Never test with a real emergency call: use the provider's test procedure.

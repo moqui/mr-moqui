@@ -1,4 +1,4 @@
-// The IVR and auto attendant (org.moqui.call.IvrServices and Ivr.js; plans/Comms-Framework.md §5.3, §5.4, V5): only a voice
+// The IVR and auto attendant (org.moqui.call.IvrServices and Ivr.js; plans/archive/Comms-Framework.md §5.3, §5.4, V5): only a voice
 // admin keeps menus (the same parameters refused for anyone else); a number routed to a menu is answered with the menu
 // (receive#PhoneCall's ivr); the caller's keys route through route#IvrCall: to a user (V3's plan: their tabs ring), a
 // nested menu, a queue, a voicemail box; no key goes to the timeout target, a key no option has to the invalid target

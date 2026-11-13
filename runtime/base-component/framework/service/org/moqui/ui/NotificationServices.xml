@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     so the others no longer see it waiting. An approval that needs each of several users to decide is one notification
     message per user.
 
-    Web Push (the PWA; plans/Comms-Framework.md §7.2): a browser the user turns notifications on in subscribes with the
+    Web Push (the PWA; plans/archive/Comms-Framework.md §7.2): a browser the user turns notifications on in subscribes with the
     server's VAPID public key (get#WebPushStatus) and stores its subscription (store#WebPushSubscription). Each persisted
     notification then also goes to the subscribed browsers of the recipients who want it pushed (pushNotifications on
     NotificationTopicUser, else NotificationTopic, else yes for the NinNotifications inbox), through send#WebPush on a

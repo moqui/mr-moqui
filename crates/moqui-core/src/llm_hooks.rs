@@ -56,7 +56,7 @@ pub struct SkillsSynced {
 }
 
 /// Audio to transcribe, for [`transcribe`]: the bytes of one file (WAV, Ogg, WebM, MP3 and the like) with its media
-/// type, and what the caller knows of it. Live captions (plans/Comms-Framework.md §6.4), voicemail and recordings use
+/// type, and what the caller knows of it. Live captions (plans/archive/Comms-Framework.md §6.4), voicemail and recordings use
 /// this one seam.
 #[derive(Debug, Clone, Default)]
 pub struct SpeechRequest<'a> {

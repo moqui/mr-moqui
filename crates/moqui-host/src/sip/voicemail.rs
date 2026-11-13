@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Voicemail on the SIP engine (plans/Comms-Framework.md §5.3, V2; docs/interfaces/Voicemail.md): a phone leg that
+//! Voicemail on the SIP engine (plans/archive/Comms-Framework.md §5.3, V2; docs/interfaces/Voicemail.md): a phone leg that
 //! nobody here answers. The voice services decide when (`VoicemailServices.begin#Voicemail`): an inbound call that rang
 //! the box's rings with no answer (the engine's timer), whose user is in another call (`receive#PhoneCall` answers busy),
 //! that its user declined (the control `voicemail`), or to the access number. Then the engine answers the call with no one

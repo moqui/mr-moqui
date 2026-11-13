@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A room's audio as its consumers want it (plans/Comms-Framework.md §5.1, §6.4): the Opus frames a
+//! A room's audio as its consumers want it (plans/archive/Comms-Framework.md §5.1, §6.4): the Opus frames a
 //! [`crate::tap::QueueTap`] hands out, a [`LegDecoder`] per leg, and the [`Mixer`] filled each tick. The consumer owns
 //! it on its own thread: it pushes the frames it receives as they come and calls [`AudioRoom::tick`] every 20 ms, then
 //! reads what it needs (a phone leg's mix-minus, the whole mix, a leg's own audio for captions). A leg's microphone and

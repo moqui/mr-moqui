@@ -1,4 +1,4 @@
-// Call queues (org.moqui.call.CallQueueServices and CallQueues.js; plans/Comms-Framework.md §5.3, §5.4, V5): only a voice admin
+// Call queues (org.moqui.call.CallQueueServices and CallQueues.js; plans/archive/Comms-Framework.md §5.3, §5.4, V5): only a voice admin
 // keeps queues (the same parameters refused for anyone else); agents log in, pause and log out themselves; a call to a
 // number routed to a queue waits there and is offered to the free agent idle longest, each offer ringing their tabs and
 // phones with a CallUserLog row; an offer that rings out is missed and the next agent is offered; with all at once the

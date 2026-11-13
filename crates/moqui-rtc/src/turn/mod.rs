@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The embedded TURN server (plans/Comms-Framework.md §6.5, W4, D-W4), on `turn-server-proto`, sans-IO like the SFU:
+//! The embedded TURN server (plans/archive/Comms-Framework.md §6.5, W4, D-W4), on `turn-server-proto`, sans-IO like the SFU:
 //! the caller owns the listeners (UDP, TCP, TLS) and the relay sockets, and hands in what arrives.
 //!
 //! - **Credentials** are the TURN REST form coturn's `use-auth-secret` takes: the username is `<expiry>:<legId>` (the

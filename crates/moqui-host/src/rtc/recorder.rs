@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The call recorder on the media node (plans/Comms-Framework.md W5, §6.4): one thread per recording going here.
+//! The call recorder on the media node (plans/archive/Comms-Framework.md W5, §6.4): one thread per recording going here.
 //!
 //! The call recording services (`org.moqui.call.CallRecordingServices`) send `{action: 'recording', op, ...}` by
 //! `send#MediaControl` to the call's media node; [`control`] takes it. Each carries the `notice` for the legs (the rtc

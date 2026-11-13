@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice (plans/Comms-Framework.md §5.2, §5.4, V1): SIP trunks to the phone network, the numbers they bring and where a
+<!-- Voice (plans/archive/Comms-Framework.md §5.2, §5.4, V1): SIP trunks to the phone network, the numbers they bring and where a
     call to each goes, the numbers a user may present as caller ID, emergency locations, the fraud policy and its state,
     and the servers whose SIP engine is up. A phone call is a CallSession (CallEntities.xml) with a CltPstn leg; these
     entities say how it reaches the phone network. The enumerations and status items are in data/VoiceSetupData.xml.
@@ -220,7 +220,7 @@ along with this software (see the LICENSE.md file). If not, see
             its CallMediaNode row; the engine registers none itself</description></field>
     </entity>
 
-    <!-- ========== V2: voicemail (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/Voicemail.md) ========== -->
+    <!-- ========== V2: voicemail (plans/archive/Comms-Framework.md §5.3, §5.4; docs/interfaces/Voicemail.md) ========== -->
 
     <entity entity-name="VoicemailBox" package="moqui.call" use="transactional" cache="never">
         <description>A user's voicemail box, made the first time a call to them goes to voicemail or they open its settings
@@ -303,7 +303,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <!-- ========== end V2 ========== -->
 
-    <!-- ========== V4: the registrar for desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones",
+    <!-- ========== V4: the registrar for desk and soft phones (plans/archive/Comms-Framework.md §5.2 "Registrar for phones",
         §5.4; docs/interfaces/SIP.md "Registrar"). The services are org.moqui.call.SipDeviceServices (SipDevices.js). ========== -->
 
     <entity entity-name="SipDevice" package="moqui.call" use="configuration" cache="never">
@@ -377,7 +377,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="SIP_REG_DEVICE"><index-field name="sipDeviceId"/></index>
     </entity>
 
-    <!-- ========== V3: call handling rules, schedules, ring groups (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/SIP.md
+    <!-- ========== V3: call handling rules, schedules, ring groups (plans/archive/Comms-Framework.md §5.3, §5.4; docs/interfaces/SIP.md
         "Call handling"). The services are org.moqui.call.CallHandlingServices (CallHandling.js). ========== -->
 
     <entity entity-name="CommsSchedule" package="moqui.call" use="configuration" cache="never">
@@ -572,7 +572,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
     </entity>
     <!-- ========== end V3 ========== -->
-    <!-- ========== V5: the IVR, call queues, transfer and merge (plans/Comms-Framework.md §5.1, §5.3, §5.4; docs/interfaces/SIP.md
+    <!-- ========== V5: the IVR, call queues, transfer and merge (plans/archive/Comms-Framework.md §5.1, §5.3, §5.4; docs/interfaces/SIP.md
         "IVR", "Queues", "Transfer and merge"). The services are org.moqui.call.IvrServices (Ivr.js), CallQueueServices
         (CallQueues.js) and CallTransferServices (CallTransfers.js). ========== -->
 
@@ -771,7 +771,7 @@ along with this software (see the LICENSE.md file). If not, see
     </extend-entity>
     <!-- ========== end V5 ========== -->
 
-    <!-- ========== SMS and MMS (C4-SMS; plans/Comms-Framework.md §5.6, docs/interfaces/SMS.md) ==========
+    <!-- ========== SMS and MMS (C4-SMS; plans/archive/Comms-Framework.md §5.6, docs/interfaces/SMS.md) ==========
         A number's texts go through its messagingBridgeId (a ChatBridge of type CbtSms) and land in the number pair's external
         room (ChatRoom CrtExternal, one per our number and their number, mapped by a ChatRoomBridge whose externalRoomId is
         "ours/theirs"). org.moqui.call.SmsServices and Sms.js; the Telnyx adapter is crates/moqui-channels. -->

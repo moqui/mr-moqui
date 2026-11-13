@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice (plans/Comms-Framework.md §5.2, §5.4, V1): phone calls through SIP trunks. The model is
+<!-- Voice (plans/archive/Comms-Framework.md §5.2, §5.4, V1): phone calls through SIP trunks. The model is
     framework/entity/VoiceEntities.xml; the logic is Voice.js beside this file, and a phone call's state is the CallServices
     state machine's (Calls.js startPhone and phoneEvent). The SIP engine is the host's (crates/moqui-host/src/sip/, the sip
     feature): it reads its trunks and policy with get#EngineConfig, registers itself with register#SipNode, hands a call that
@@ -105,7 +105,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="VoiceCapabilities">
-        <description>Whether phone calls can be made here (plans/Comms-Framework.md §3.1):
+        <description>Whether phone calls can be made here (plans/archive/Comms-Framework.md §3.1):
             supported (the binary has the sip feature), configured (this server's sip_port or sip_tls_port is set and a trunk is
             set up) and active (a SIP server is up in the cluster and a trunk has not failed), each on its own; reasonCode
             notBuilt, notConfigured, noTrunk, noSipServer or trunkFailed when not active. emergencyReady says whether the current

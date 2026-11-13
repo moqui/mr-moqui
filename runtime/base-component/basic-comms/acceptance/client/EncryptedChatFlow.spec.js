@@ -1,4 +1,4 @@
-// Encrypted chat rooms in browsers (plans/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md "Encrypted rooms"):
+// Encrypted chat rooms in browsers (plans/archive/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md "Encrypted rooms"):
 // john.doe makes an encrypted room with calls.client.b and calls.client.c (CallClientFixtures). Each page holds its own
 // crypto device (moqui.crypto over matrix-sdk-crypto); messages are Megolm-encrypted in the sending page and decrypted in
 // the others (moqui.chat.sealMessage, openEvents), an image goes up encrypted and comes back as a decrypted blob, and

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls, Recordings (plans/Comms-Framework.md W5, §6.4; docs/interfaces/Call-Recording.md): the call recordings the user
+<!-- Calls, Recordings (plans/archive/Comms-Framework.md W5, §6.4; docs/interfaces/Call-Recording.md): the call recordings the user
     may read (their own, and those of calls they host), newest first, each with who was in the call, when, how long and its
     state; a player that plays one period of a recording's tracks together (each person's audio and video, with the mixed
     audio of the whole call as the clock when there is one); a download of each file; and Delete for the one who recorded it.

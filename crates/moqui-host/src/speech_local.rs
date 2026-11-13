@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Local speech to text (`speech-local`, plans/Comms-Framework.md §6.4, §10.1): Whisper on candle, with the audio never
+//! Local speech to text (`speech-local`, plans/archive/Comms-Framework.md §6.4, §10.1): Whisper on candle, with the audio never
 //! leaving the server. Not built yet: the feature is off in every package, and with or without it this stub answers
 //! `notBuiltIn`, so a deployment that picks it (`call_captions_provider=local`) sees captions unavailable with that
 //! reason. Until it is built, speech to text goes through the `moqui-llm` endpoint

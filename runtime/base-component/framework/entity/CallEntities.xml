@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls (plans/Comms-Framework.md §5.4, §6.3): a call is one CallSession whatever its transport; its people are
+<!-- Calls (plans/archive/Comms-Framework.md §5.4, §6.3): a call is one CallSession whatever its transport; its people are
     CallParticipants, and each way a participant is in it (a browser now; a guest, a desk phone or a phone number later) is
     a CallLeg. A leg's live signaling socket is its CallConnection, replaced on a reconnect with the next generation, so a
     reconnect makes no second participant or answer. Each user's history is CallUserLog. The media of a call is on one
@@ -341,7 +341,7 @@ along with this software (see the LICENSE.md file). If not, see
             whose row the edge link keeps (its heartbeat from the link's liveness), and which new calls prefer</description></field>
     </entity>
 
-    <!-- ========== Recording (W5; plans/Comms-Framework.md §5.4 "Recording", §6.4, D-V5) ==========
+    <!-- ========== Recording (W5; plans/archive/Comms-Framework.md §5.4 "Recording", §6.4, D-V5) ==========
         A recording of a call (CallRecording) is made on the call's media node: each published track as its own file
         (Opus in Ogg, VP8 in WebM, no transcoding) and the mixed audio of the whole call (Opus in Ogg), cut into segments
         (CallRecordingSegment) at each pause and resume and at a size or time cap. Every leg gets the notice, and it is
@@ -525,7 +525,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CALL_REC_CONSENT_HIST"><index-field name="callRecordingId"/><index-field name="callLegId"/></index>
     </entity>
 
-    <!-- ========== W6: captions and transcripts (plans/Comms-Framework.md §5.4, §6.4) ==========
+    <!-- ========== W6: captions and transcripts (plans/archive/Comms-Framework.md §5.4, §6.4) ==========
         After W5's recording block. voicemailId is a plain id until V2 adds Voicemail and its relationship here (type
         one-nofk to moqui.call.Voicemail). -->
     <entity entity-name="CallCaptions" package="moqui.call" use="transactional" cache="never">
@@ -607,7 +607,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <!-- ========== end W6 ========== -->
 
-    <!-- ========== Encrypted calls (W8; plans/Comms-Framework.md §6.4, D-W3; docs/interfaces/WebRTC.md "Encrypted calls") ==========
+    <!-- ========== Encrypted calls (W8; plans/archive/Comms-Framework.md §6.4, D-W3; docs/interfaces/WebRTC.md "Encrypted calls") ==========
         A call whose encryptionMode is e2ee-sframe: each leg in a browser names the crypto device (C7 core, ChatDevice) its
         page holds, and the server publishes the roster of those legs and devices; each sender sends its own SFrame key to
         every device on it over Olm to-device messages, which the server only passes on. -->

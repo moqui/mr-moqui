@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The M0 audio gate (plans/Comms-Framework.md §6.2) on the in-memory network: consumers that fall behind drop frames
+//! The M0 audio gate (plans/archive/Comms-Framework.md §6.2) on the in-memory network: consumers that fall behind drop frames
 //! while forwarding goes on, and the whole path, tap to decode to mix to encode to an injected leg, heard by a peer.
 
 use std::time::Duration;

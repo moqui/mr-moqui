@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Media taken out of and put into a room (plans/Comms-Framework.md §5.1, §6.2): the seam the SIP mixer, recording and
+//! Media taken out of and put into a room (plans/archive/Comms-Framework.md §5.1, §6.2): the seam the SIP mixer, recording and
 //! captions use. The [`MediaTap`]s added to a room ([`crate::Sfu::add_tap`], several per room) see every frame a
 //! participant publishes, after depacketizing and before forwarding, and every frame of an injected source. An injected
 //! source ([`crate::Sfu::add_injected_source`]) is a participant with no browser: the frames its owner writes

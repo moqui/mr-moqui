@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The outcome of an outbound leg's INVITE when answers, a cancel and the ring timeout race (plans/Comms-Framework.md
+//! The outcome of an outbound leg's INVITE when answers, a cancel and the ring timeout race (plans/archive/Comms-Framework.md
 //! §5.4 "Call state": the first successful answer wins and the others are ended). Sans-IO with the time passed in, so
 //! the races are tested with simulated time; [`crate::ua`] acts on its answers.
 //!

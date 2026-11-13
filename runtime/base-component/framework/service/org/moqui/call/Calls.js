@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// Calls (plans/Comms-Framework.md §5.4, §6.3): the state machine of org.moqui.call.CallServices. A call is a
+// Calls (plans/archive/Comms-Framework.md §5.4, §6.3): the state machine of org.moqui.call.CallServices. A call is a
 // CallSession; its people are CallParticipants; each way one is in it is a CallLeg; a leg's signaling socket is its
 // CallConnection, whose generation fences an older socket of the same leg. Every write checks the current user's part
 // in the call (or their room, for a group call) and the call's state, with the session row locked, so two answers,
@@ -141,7 +141,7 @@ function liveMediaNodes() {
 }
 
 /**
- * Cascading media nodes (W7, plans/Comms-Framework.md §6.3 "Cluster"): with rtc_cascade_enabled a leg's media is on the
+ * Cascading media nodes (W7, plans/archive/Comms-Framework.md §6.3 "Cluster"): with rtc_cascade_enabled a leg's media is on the
  * node its signaling socket is on, when that node holds media, and the node relays to the call's node (its origin).
  * Off by default: every leg's media is on the call's node.
  */

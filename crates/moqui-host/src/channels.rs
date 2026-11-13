@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The chat bridges' web routes (plans/Comms-Framework.md §4.3 "Webhooks", C4-SMS; docs/interfaces/SMS.md), off unless
+//! The chat bridges' web routes (plans/archive/Comms-Framework.md §4.3 "Webhooks", C4-SMS; docs/interfaces/SMS.md), off unless
 //! `channels_webhooks_enabled` is true:
 //!
 //! - `POST /channels/{chatBridgeId}/webhook`: a network's webhook. The raw body is read first, within

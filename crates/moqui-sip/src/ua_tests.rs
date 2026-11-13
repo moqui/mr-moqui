@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The V1 spike's cases (plans/Comms-Framework.md §5.7) against an in-process fake trunk: a raw SIP peer on a loopback
+//! The V1 spike's cases (plans/archive/Comms-Framework.md §5.7) against an in-process fake trunk: a raw SIP peer on a loopback
 //! UDP socket that plays the provider's part message by message (so it can fork, cross a CANCEL and challenge as a
 //! test needs), and for TLS a second user agent as the far end. The media of a call runs between two
 //! [`crate::media::PhoneMedia`] over real loopback sockets.

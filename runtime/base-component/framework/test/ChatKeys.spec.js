@@ -1,5 +1,5 @@
 // Chat devices, keys and to-device messages (org.moqui.chat.ChatKeyServices and ChatKeys.js; framework/entity/ChatKeyEntities.xml;
-// plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): Matrix user IDs that map back; a device's keys
+// plans/archive/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): Matrix user IDs that map back; a device's keys
 // uploaded with its identity keys fixed; another user refused with the very same parameters; key queries, claims and
 // to-device sends reaching only users who share a room or a live call (and the user's own devices); a revoked device left out
 // of everything; one-time keys never handed out twice by concurrent claims; the to-device queue's stream positions, cursor and

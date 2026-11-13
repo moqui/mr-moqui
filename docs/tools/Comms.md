@@ -4,7 +4,7 @@ BasicComms is the framework's Comms app at `/qapps/BasicComms`: the Inbox and Co
 MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab), calls, and the mail, chat and call
 settings. It works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
 records) mounts the same screens under its own root and adds its parts, without a copy of them. The design and its
-order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); phone calls through SIP trunks are there
+order of work are in [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md); phone calls through SIP trunks are there
 (V1), voicemail (V2), call handling, ring groups and the dialer (V3), the IVR, queues, transfer and merge (V5); chat
 bridges come later.
 

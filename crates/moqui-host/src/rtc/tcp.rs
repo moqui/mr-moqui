@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! ICE-TCP, passive (plans/Comms-Framework.md §6.5, W4): a TCP listener on `rtc_media_tcp_port` for browsers that cannot
+//! ICE-TCP, passive (plans/archive/Comms-Framework.md §6.5, W4): a TCP listener on `rtc_media_tcp_port` for browsers that cannot
 //! reach the UDP media port, tried before a TURN relay. Each connection carries ICE and DTLS-SRTP datagrams framed as
 //! RFC 4571 says (a two-byte length before each). A thread per connection reads and hands each datagram to the driver;
 //! the driver writes back through the connection's stream. At most [`MAX_CONNECTIONS`] connections, [`PER_SOURCE`] of

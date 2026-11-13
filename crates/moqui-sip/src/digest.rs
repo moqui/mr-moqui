@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SIP Digest authentication (RFC 3261 §22, RFC 7616, RFC 8760; plans/Comms-Framework.md §5.2 "auth").
+//! SIP Digest authentication (RFC 3261 §22, RFC 7616, RFC 8760; plans/archive/Comms-Framework.md §5.2 "auth").
 //!
 //! **Answering a challenge.** A trunk's credentials are for its realm and the algorithms its profile names
 //! ([`Credentials`]). [`answer`] picks the strongest challenge the credentials allow (SHA-512-256, SHA-256, then MD5),

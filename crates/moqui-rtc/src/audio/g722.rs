@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! G.722 at 64 kbit/s (payload type 9), the wideband codec of desk phones (plans/Comms-Framework.md §5.2, V4): 16 kHz
+//! G.722 at 64 kbit/s (payload type 9), the wideband codec of desk phones (plans/archive/Comms-Framework.md §5.2, V4): 16 kHz
 //! audio split by a quadrature mirror filter into a lower band coded with 6-bit ADPCM and an upper band with 2-bit, one
 //! byte per two samples. Written from the blocks of ITU-T G.722 (QMF, BLOCK 1 to 6 of each band, whose names the code
 //! keeps), in house, as the published crate brings a media framework. Its RTP clock is 8000 (RFC 3551 §4.5.2).

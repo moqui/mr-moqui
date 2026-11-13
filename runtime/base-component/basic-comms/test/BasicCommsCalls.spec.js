@@ -1,4 +1,4 @@
-// BasicComms Calls (screen/BasicComms/Calls.xml, Calls/History, Calls/Call and its terminal twin; plans/Comms-Framework.md
+// BasicComms Calls (screen/BasicComms/Calls.xml, Calls/History, Calls/Call and its terminal twin; plans/archive/Comms-Framework.md
 // W1): a user with no party calls john.doe through the Calls transitions the page's call store posts to, john.doe answers
 // and both see the call in History; a user who is not in the call is refused the same post that works for john.doe, through
 // either mount (IronStone's /qapps/Comms when it is installed); the terminal twin shows the call and leaves it; a stored

@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Call handling (plans/Comms-Framework.md §5.3, §5.5, V3), the component CallHandling.xml serves in the qvue render mode: do
+<!-- Call handling (plans/archive/Comms-Framework.md §5.3, §5.5, V3), the component CallHandling.xml serves in the qvue render mode: do
     not disturb, call waiting, the mobile that rings too, Hide my number; the rules in the order they are read, each with Edit,
     Off and Remove, and Add a rule (what, for which callers, where to, when); the caller lists with their numbers. -->
 <template><div class="m-call-handling q-pa-sm column q-gutter-md" style="max-width:900px">

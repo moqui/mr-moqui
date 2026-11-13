@@ -3,7 +3,7 @@
 A chat room can reach outside Moqui: a connector maps it to a room or conversation on another network (SMS, WhatsApp,
 Telegram, Slack and others), and a native endpoint (XMPP, Matrix) serves Moqui rooms to their clients. This is the layer
 under both: chat actors, the input from a network, and the durable delivery of what goes out. The design is
-[plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
+[plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
 of its own: C4-SMS adds the first, `sms` on Telnyx ([SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
 
 - **Entities:** the C1 block at the end of `framework/entity/ChatEntities.xml` (`ChatActor`, `ChatExternalUser`,

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Web Push to the browsers a user subscribed (the installed PWA or a browser tab; plans/Comms-Framework.md §7.2 P0), in
+//! Web Push to the browsers a user subscribed (the installed PWA or a browser tab; plans/archive/Comms-Framework.md §7.2 P0), in
 //! `org.moqui.ui.NotificationServices`:
 //!
 //! - `store#WebPushSubscription`, `delete#WebPushSubscription` and `get#WebPushStatus` work on the current user's

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The chat bridge layer (plans/Comms-Framework.md §4.1, §4.3, §4.4; C1): input from a connector or federated network, the
+<!-- The chat bridge layer (plans/archive/Comms-Framework.md §4.1, §4.3, §4.4; C1): input from a connector or federated network, the
     delivery state of the messages that go out, and the bridges' administration. The model is the end of
     framework/entity/ChatEntities.xml; the adapter contract and the delivery worker are crates/moqui-core/src/service/chat_bridge.rs.
     No Java counterpart.
@@ -803,7 +803,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="file" noun="ExternalConversation" authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal (SmsServices receive, after a text of a pair room's outside party was taken): the conversation
-            filed on a record by the apps' external-conversation providers (plans/Comms-Framework.md §3.3; IronStone: on the
+            filed on a record by the apps' external-conversation providers (plans/archive/Comms-Framework.md §3.3; IronStone: on the
             party with that number), from the message eventSeq, as the room's first local member (the apps they may open;
             a disabled one is passed over). Once one provider filed it, the mapping's filedDate is set and it is not asked
             again; until then each new message tries again with the same idempotencyKey (conversation:chatRoomBridgeId).

@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// Desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones", V4): the services of
+// Desk and soft phones (plans/archive/Comms-Framework.md §5.2 "Registrar for phones", V4): the services of
 // org.moqui.call.SipDeviceServices. A user adds a phone and gets its SIP credentials once (a generated username and a strong
 // password, of which only digest verifiers are kept, encrypted: SHA-256, and MD5 too for a legacy profile); rotating them
 // makes new ones and ends the old verifiers and the phone's registrations; revoking the phone ends it. The SIP engine of a

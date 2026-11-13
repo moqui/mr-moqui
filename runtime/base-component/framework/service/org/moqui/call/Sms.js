@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// SMS and MMS (plans/Comms-Framework.md §5.6, §5.4 "One conversation per outside number", C4-SMS): the services of
+// SMS and MMS (plans/archive/Comms-Framework.md §5.6, §5.4 "One conversation per outside number", C4-SMS): the services of
 // org.moqui.call.SmsServices and org.moqui.SmsServices.send#SmsMessage. A number's texts go through its messagingBridgeId
 // (a ChatBridge whose adapter is the provider's: Telnyx in crates/moqui-channels) and land in the number pair's external room:
 // one ChatRoom (CrtExternal) for our number and their number, mapped to the bridge by a ChatRoomBridge whose externalRoomId

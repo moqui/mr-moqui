@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls, Call (plans/Comms-Framework.md §6.6, mr-boss design-drawers-commons.md §14 Call, W1): the lobby (camera preview,
+<!-- Calls, Call (plans/archive/Comms-Framework.md §6.6, mr-boss design-drawers-commons.md §14 Call, W1): the lobby (camera preview,
     microphone and camera pickers, a level meter, Join) and the call view (the grid of participants, the bottom bar: mute,
     camera, leave), with callSessionId. The component is Call.qvue next to this file, a frame around m-call, the shell's
     call component (webroot js/WebrootCall.js), which joins the call over the notification socket and keeps it in the

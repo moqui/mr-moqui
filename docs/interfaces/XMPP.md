@@ -13,7 +13,7 @@ is C3b, not built. The XMPP view is of the same rooms, messages and presence the
   bus.
 - The services are `org.moqui.chat.XmppServices`, with `framework/entity/XmppEntities.xml`; chat is
   `org.moqui.chat.ChatServices`, called as the signed-in user.
-- The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.3 "XMPP server (C3)", §6.5 and D-C3.
+- The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.3 "XMPP server (C3)", §6.5 and D-C3.
 
 ## Settings
 
@@ -68,7 +68,7 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/Edge-
   `xmpp_port` and `xmpp_tls_port`, and the tunnel ports, which must differ, serve the local node's domain. A tunnel
   port the same as one of the server's is off, with an error logged, and not offered to the local node.
 - Federation (C3b) will take 5269 (`xmpp_s2s_port`, off) on the edge node, with stanzas to local users queued while
-  the local node is away ([plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.3).
+  the local node is away ([plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.3).
 
 ## Addresses
 

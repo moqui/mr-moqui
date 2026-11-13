@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Transfer, add and merge (plans/Comms-Framework.md §5.1, §5.3, V5; docs/interfaces/SIP.md "Transfer and merge"): blind and
+<!-- Transfer, add and merge (plans/archive/Comms-Framework.md §5.1, §5.3, V5; docs/interfaces/SIP.md "Transfer and merge"): blind and
     attended transfer of a phone call's outside party, a person or a number added to a call, two calls merged into a meeting,
     and a call made a meeting. The logic is CallTransfers.js beside this file. Each user service acts on a call the
     signed-in user is in (another's is "not found"), refuses a call that still rings, and takes the call's revision (a

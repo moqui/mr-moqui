@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Admin: Chat bridges (plans/Comms-Framework.md §4.3, C1): the connectors and federated networks chat rooms are mapped to,
+<!-- Admin: Chat bridges (plans/archive/Comms-Framework.md §4.3, C1): the connectors and federated networks chat rooms are mapped to,
     each with its status as its adapter last reported it (connected, not connected, disabled), its last error, its mapped
     rooms and the deliveries waiting, failed and uncertain; and the latest deliveries that did not go, each with Send again
     (the same idempotency key; an uncertain one may then arrive twice). Disable stops a bridge's deliveries and input; Enable

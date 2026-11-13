@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- XMPP for local users (plans/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): what crates/moqui-xmpp asks of
+<!-- XMPP for local users (plans/archive/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): what crates/moqui-xmpp asks of
     Moqui beyond ChatServices. The protocol is in the crate; the rules are here and in ChatServices, which the XMPP
     server calls as the signed-in user, with that user's authorization, as the web client does. The sign-in lookups
     (get#Account, get#ScramCredentials, check#PlainPassword and the FAST tokens) are internal work: authenticate false,

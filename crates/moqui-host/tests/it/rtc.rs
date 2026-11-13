@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A call on a seeded server with its media port on (plans/Comms-Framework.md W1): john.doe calls another user, both
+//! A call on a seeded server with its media port on (plans/archive/Comms-Framework.md W1): john.doe calls another user, both
 //! answer through the call services, and each browser stand-in (a str0m peer on a loopback UDP socket) joins its leg
 //! over the notification socket and exchanges audio through the server's SFU, renegotiating as the other's tracks
 //! arrive. Then a second socket of the same leg takes the next generation and the first socket's frames are refused,

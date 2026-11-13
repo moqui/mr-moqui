@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Inbox of BasicComms over the user's mail (plans/Comms-Framework.md §3.2, A3; first built as IronStone Comms' InboxServices,
+<!-- The Inbox of BasicComms over the user's mail (plans/archive/Comms-Framework.md §3.2, A3; first built as IronStone Comms' InboxServices,
     mr-boss design-drawers-commons.md §12): the rail's accounts, folders, labels and saved searches, a page of threads of a
     view, the reading pane's thread, its files, actions on threads, the palette's search and one message's details, each over
     org.moqui.mail.EmailClientServices, which checks the user's access to every account and message.
@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="run" noun="Operation">
         <description>What the Inbox, MessageDetail, Compose and Home screens call for each of their operations
-            (plans/Comms-Framework.md §3.3, A3). An app that keeps the user's messages beyond mail (IronStone's Internal account
+            (plans/archive/Comms-Framework.md §3.3, A3). An app that keeps the user's messages beyond mail (IronStone's Internal account
             and mailboxes) answers the operations through its inbox-source provider, and its answer is the whole answer: its
             page is the list, nothing is joined to it. Otherwise the framework answers the operations it has, over the user's
             mail alone (this file, ComposeServices, CommsHomeServices); an operation only an app has (a mailbox, filing on a
@@ -423,7 +423,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ContactCard">
         <description>Who an address is, for the contact card of the reading pane: the card of the apps' contact-card providers
-            (plans/Comms-Framework.md §3.3; the first that knows the address or party: IronStone's party with its organization,
+            (plans/archive/Comms-Framework.md §3.3; the first that knows the address or party: IronStone's party with its organization,
             phone, link and the latest threads), else the address and name alone, which the user may add as a contact where an
             app keeps contacts. A provider that fails is left out (named in failedParts).</description>
         <in-parameters>
@@ -482,7 +482,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="respond" noun="Invitation">
         <description>Answer the invitation a message carries (accept, tentative or decline) through the apps' invitation
-            providers (plans/Comms-Framework.md §3.3; the first that answers: IronStone puts it on the user's calendar and tells
+            providers (plans/archive/Comms-Framework.md §3.3; the first that answers: IronStone puts it on the user's calendar and tells
             the organizer). The message must be one the user may read (EmailClientServices.get#Thread) and carry an
             invitation. With no provider it is not available here. Out: what the provider answered (workEffortId, statusId,
             replySent, eventUrl).</description>

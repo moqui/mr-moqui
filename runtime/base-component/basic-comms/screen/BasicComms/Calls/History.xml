@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Calls, History (plans/Comms-Framework.md §5.5, §5.3, W1, W2): whether calls can be made here (a media server running;
+<!-- Calls, History (plans/archive/Comms-Framework.md §5.5, §5.3, W1, W2): whether calls can be made here (a media server running;
     why not, when not), New call (people picked by name, a video or an audio call), the calls ringing for the user or that
     they are in (Answer, Decline or Open), and the user's call history: All, Missed, Placed and Answered (outcome), each
     call with the others in it, when, how long, and Call back (the same people, or the room's call). Opening Missed marks

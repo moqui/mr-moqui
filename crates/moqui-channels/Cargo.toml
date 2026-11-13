@@ -1,4 +1,4 @@
-# Business messaging channels (plans/Comms-Framework.md §4.3 "Business channels", C4): network adapters of the chat bridge
+# Business messaging channels (plans/archive/Comms-Framework.md §4.3 "Business channels", C4): network adapters of the chat bridge
 # layer, on top of moqui-core (plans/archive/Crate-Split.md). C4-SMS has the first, `sms`: SMS and MMS on the Telnyx
 # Messaging API v2 (docs/interfaces/SMS.md). Core reaches it only through moqui_core::extension (its
 # chat_bridge_adapters); the host links it under its channels feature, and its /channels/ routes call

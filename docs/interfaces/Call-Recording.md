@@ -2,7 +2,7 @@
 
 A call's host can record it. Recording is off until the deployment turns it on, every leg of the call gets a notice,
 and only the host and the one who recorded it can play or download the files. The design is
-[plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.4 "Recording", §6.4 and D-V5. Calls themselves are in
+[plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.4 "Recording", §6.4 and D-V5. Calls themselves are in
 [WebRTC](WebRTC.md); the user guide is [Comms](../tools/Comms.md#calls).
 
 - **Writers:** `crates/moqui-rtc/src/record/` (sans-IO): Ogg Opus, WebM VP8, and the recorder that cuts tracks into

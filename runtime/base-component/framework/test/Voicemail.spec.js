@@ -1,5 +1,5 @@
 // Voicemail (org.moqui.call.VoicemailServices and Voicemail.js; the V2 block of framework/entity/VoiceEntities.xml;
-// plans/Comms-Framework.md §5.3, §5.4, V2): a call to a busy user goes straight to voicemail and one not answered after the
+// plans/archive/Comms-Framework.md §5.3, §5.4, V2): a call to a busy user goes straight to voicemail and one not answered after the
 // box's rings; begin#Voicemail moves the call there (the user missed it); a stored message, its private audio (refused for
 // another user with the same id), the PIN over the phone with its refusal and its limits per box and per source, the
 // notices (email optional, attachments off by default), a failed transcription that keeps the audio and shows its state,

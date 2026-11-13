@@ -1,4 +1,4 @@
-// Ring groups (org.moqui.call.CallHandlingServices and CallHandling.js, RingGroup and RingGroupMember; plans/Comms-Framework.md
+// Ring groups (org.moqui.call.CallHandlingServices and CallHandling.js, RingGroup and RingGroupMember; plans/archive/Comms-Framework.md
 // §5.3, §5.4, V3): a number routed to a ring group rings its members by strategy. All at once: every free member (one in do not
 // disturb or busy is skipped), each with a CallUserLog row as a ring group member, and the first answer wins across their
 // tabs, phones and mobiles, the others' offers canceled. In order: one member at a time, the next when the SIP engine's

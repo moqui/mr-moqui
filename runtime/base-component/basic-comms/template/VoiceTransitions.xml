@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The transitions the System Voice screens share (screen/System/Voice/*, plans/Comms-Framework.md §5.5, D-A6), each included by
+<!-- The transitions the System Voice screens share (screen/System/Voice/*, plans/archive/Comms-Framework.md §5.5, D-A6), each included by
     name: searchUsers, the users a number rings, a caller-ID grant names or a setting is for, by name or username, with the
     label of a selected one that is not in the page; searchTargets (V5), the targets of IVR options and queue fallbacks. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">

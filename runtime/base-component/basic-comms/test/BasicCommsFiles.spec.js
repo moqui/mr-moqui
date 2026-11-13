@@ -1,4 +1,4 @@
-// The drive picker of BasicComms (org.moqui.comms.FilePickerServices, template/FilePickerTransitions.xml; plans/Comms-Framework.md
+// The drive picker of BasicComms (org.moqui.comms.FilePickerServices, template/FilePickerTransitions.xml; plans/archive/Comms-Framework.md
 // §7.4 DP): Compose's Attach from Files and the Inbox's Save to Files over the framework drives alone. A user with no party
 // and a mail account of their own sees their drives, recent files, a folder and a search; attaches a drive file to a draft;
 // saves a mail attachment into a folder (a second time renamed); another user with the same parameters is refused, and so

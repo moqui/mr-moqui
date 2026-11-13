@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A phone leg's audio, sans-IO (plans/Comms-Framework.md §5.1, §5.2; the M0 gate in §6.2).
+//! A phone leg's audio, sans-IO (plans/archive/Comms-Framework.md §5.1, §5.2; the M0 gate in §6.2).
 //!
 //! A phone takes one stream, so each phone leg hears a mix of everyone but itself (§5.1). [`PhoneMedia`] sits between
 //! the leg's RTP socket, which the host owns, and the call's mixer:

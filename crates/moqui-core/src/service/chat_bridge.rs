@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Chat actors and the bridge layer's Rust half (plans/Comms-Framework.md §4.1, §4.3, §4.4; C1). The entities are
+//! Chat actors and the bridge layer's Rust half (plans/archive/Comms-Framework.md §4.1, §4.3, §4.4; C1). The entities are
 //! `framework/entity/ChatEntities.xml`; the inbound side (`ingest#Event`) and the screens' reads are
 //! `org.moqui.chat.ChatBridgeServices`.
 //!

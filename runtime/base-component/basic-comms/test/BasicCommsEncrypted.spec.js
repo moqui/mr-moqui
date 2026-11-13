@@ -1,4 +1,4 @@
-// Encrypted chat rooms on the server (plans/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md "Encrypted rooms"):
+// Encrypted chat rooms on the server (plans/archive/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md "Encrypted rooms"):
 // a room made encrypted takes only Megolm ciphertext and keeps no plaintext (no bodyText, snippet, search document, link
 // preview or notification summary), with the relation targets and the mentioned users in the clear; and it refuses what
 // needs the plaintext, each refusal with the very same valid parameters that pass in a plain room: a plaintext send, edit

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- BasicComms, the framework's Comms app (plans/Comms-Framework.md §3): the Inbox, chat and the mail settings now, then calls
+<!-- BasicComms, the framework's Comms app (plans/archive/Comms-Framework.md §3): the Inbox, chat and the mail settings now, then calls
     and voice, usable with only the framework. Another app mounts these screens under its own root and adds to them through
     screen-extend, its shell-providers' provider hooks, and ext-action and ext-panel (§3.3, §3.4). Authorized for BASIC_COMMS_USERS
     and ADMIN by BASIC_COMMS (data/BasicCommsSetupData.xml), not ALL_USERS. -->

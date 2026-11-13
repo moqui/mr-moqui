@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The registrar's bindings for desk and soft phones, sans-IO (RFC 3261 §10.3, RFC 5626; plans/Comms-Framework.md §5.2
+//! The registrar's bindings for desk and soft phones, sans-IO (RFC 3261 §10.3, RFC 5626; plans/archive/Comms-Framework.md §5.2
 //! "Registrar for phones (V4)").
 //!
 //! A phone (a `SipDevice`) registers its contacts; each is a [`Binding`]: the contact, the flow its REGISTER came

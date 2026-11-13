@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Chat devices, keys and to-device messages (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the
+<!-- Chat devices, keys and to-device messages (plans/archive/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the
     endpoints the browser's OlmMachine (matrix-sdk-crypto, js/WebrootCrypto.js) calls, with Matrix's payloads and names
     (device_keys, one_time_keys, one_time_key_counts, ...), so the Matrix client API (C6a) can serve the same services at
     /_matrix/client/v3/keys/upload, keys/query, keys/claim, sendToDevice/{eventType}/{txnId} and the to-device part of

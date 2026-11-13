@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Settings, My desk and soft phones (plans/Comms-Framework.md §5.5 Settings/Phone, V4; docs/interfaces/SIP.md "Registrar"):
+<!-- Settings, My desk and soft phones (plans/archive/Comms-Framework.md §5.5 Settings/Phone, V4; docs/interfaces/SIP.md "Registrar"):
     the user's phones that register with Moqui's registrar, each with its live registrations (the phone's user agent, the
     address it registered from, when it expires); Add a phone, which shows its username, password, domain, port and
     transport once, with copy buttons and a short setup note; New password (rotate, shown once too) and Remove (revoke). All

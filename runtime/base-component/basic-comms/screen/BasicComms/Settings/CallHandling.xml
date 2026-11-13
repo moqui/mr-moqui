@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Settings, Call handling (plans/Comms-Framework.md §5.3, §5.5 Settings/Phone, V3; docs/interfaces/SIP.md "Call handling"): do not
+<!-- Settings, Call handling (plans/archive/Comms-Framework.md §5.3, §5.5 Settings/Phone, V3; docs/interfaces/SIP.md "Call handling"): do not
     disturb (calls go to voicemail), call waiting, the mobile that rings with the user (and when), Hide my number, the user's
     rules in order (reject anonymous callers; reject, accept only or forward the callers on a list; forward all calls; when
     busy; when not answered; each to a number, a person, a ring group, voicemail or a refusal, and while a schedule is open or

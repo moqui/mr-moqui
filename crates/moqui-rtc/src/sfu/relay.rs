@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Cascading media nodes (plans/Comms-Framework.md §6.2 "The W7 gate", §6.3 "Cluster"): a relay link between the call's
+//! Cascading media nodes (plans/archive/Comms-Framework.md §6.2 "The W7 gate", §6.3 "Cluster"): a relay link between the call's
 //! media node (its origin) and another node holding some of its legs (a leg node). A link is one str0m peer on each
 //! side for one room, on the nodes' media sockets: the origin is ICE-lite, as it is to browsers, and the leg node is
 //! full ICE, the controlling side, which offers first. The offers, answers and the rest go between the nodes as

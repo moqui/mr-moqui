@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Speech to text (plans/Comms-Framework.md §6.4, §10.1): one audio file to text by the model bound to the `transcribe`
+//! Speech to text (plans/archive/Comms-Framework.md §6.4, §10.1): one audio file to text by the model bound to the `transcribe`
 //! feature, on an OpenAI-compatible endpoint (`POST <endpoint>/v1/audio/transcriptions`, a multipart form). The
 //! drawer's dictation ([`crate::assist`]) and the server's jobs (call captions, and later voicemail and recordings)
 //! share [`transcribe_with`]; the jobs come through [`moqui_core::llm_hooks::transcribe`] to [`transcribe`], which

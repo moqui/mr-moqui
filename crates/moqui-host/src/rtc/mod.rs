@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The call media node (plans/Comms-Framework.md §6.2, §6.5): the UDP media socket and one driver thread that owns it
+//! The call media node (plans/archive/Comms-Framework.md §6.2, §6.5): the UDP media socket and one driver thread that owns it
 //! and the [`moqui_rtc::Sfu`]. Off while `rtc_media_port` is empty, like the other listeners. The socket binds
 //! `rtc_media_host` (127.0.0.1 by default) and advertises `rtc_public_address` (the bound address by default; a node
 //! behind 1:1 NAT names its public one) as its ICE candidate.

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Call handling (plans/Comms-Framework.md §5.3, §5.4, V3; docs/interfaces/SIP.md "Call handling"): a user's rules, caller
+<!-- Call handling (plans/archive/Comms-Framework.md §5.3, §5.4, V3; docs/interfaces/SIP.md "Call handling"): a user's rules, caller
     lists and phone settings, the ring groups and schedules, how an inbound phone call is handled, and the dialer's search.
     The model is the V3 block of framework/entity/VoiceEntities.xml; the logic is CallHandling.js beside this file.
 

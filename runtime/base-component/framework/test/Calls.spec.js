@@ -1,4 +1,4 @@
-// Calls (org.moqui.call.CallServices and Calls.js; framework/entity/CallEntities.xml; plans/Comms-Framework.md §5.4,
+// Calls (org.moqui.call.CallServices and Calls.js; framework/entity/CallEntities.xml; plans/archive/Comms-Framework.md §5.4,
 // §6.3, W1): starting, ringing, the first answer winning, repeated requests, binding a socket with a fenced generation,
 // presence across two calls, leaving and ending, declining, ringing out, a lost connection and a lost media node, and a
 // room's group call. With cascading media nodes (W7, rtc_cascade_enabled) a leg's media goes to its signaling node, an
