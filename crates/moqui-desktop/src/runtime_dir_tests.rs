@@ -89,7 +89,10 @@ fn a_bundled_runtime_links_the_read_only_parts_and_keeps_the_rest() {
         runtime: runtime.clone(),
     };
     location.prepare().unwrap();
-    assert_eq!(std::fs::read_link(runtime.join("conf")).unwrap(), moved.join("conf"));
+    assert_eq!(
+        std::fs::read_link(runtime.join("components")).unwrap(),
+        moved.join("components")
+    );
     let location = Location::Bundled {
         resources: moved.clone(),
         runtime: runtime.clone(),

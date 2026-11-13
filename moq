@@ -1757,6 +1757,9 @@ task_desktop() {
     local app=$ROOT/crates/moqui-desktop
     if [ ! -f "$app/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$app/Cargo.lock" ]; then
         run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
+        # The workspace's lock has none of the app's own crates (Tauri, CEF); resolve them now, since a build stages the
+        # notices from the cef crate the lock names before cargo tauri runs.
+        (cd "$app" && run_cmd cargo metadata --format-version 1 >/dev/null) || die "could not resolve $(rel "$app")/Cargo.lock"
     fi
     local -a tauri_args
     tauri_args=()

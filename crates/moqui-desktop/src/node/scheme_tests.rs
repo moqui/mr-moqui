@@ -77,3 +77,18 @@ fn only_a_get_navigation_may_come_from_another_site() {
     assert!(!navigation("POST", true), "a form from another site");
     assert!(!navigation("GET", false), "a fetch from another site");
 }
+
+#[test]
+fn a_navigation_from_the_splash_page_reaches_the_node_without_its_origin() {
+    let sent = vec![
+        ("Origin".to_string(), "http://tauri.localhost".to_string()),
+        ("Accept".to_string(), "text/html".to_string()),
+        ("Host".to_string(), "tauri.localhost".to_string()),
+    ];
+    assert_eq!(
+        forwarded(sent.clone(), true),
+        [("Accept".to_string(), "text/html".to_string())]
+    );
+    // the node's own pages keep theirs, for its CORS and CSRF checks
+    assert_eq!(forwarded(sent, false).len(), 2);
+}

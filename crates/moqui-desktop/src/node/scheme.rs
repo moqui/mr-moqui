@@ -101,6 +101,15 @@ pub(crate) fn passed_on(name: &str) -> bool {
     !HOST_HEADERS.contains(&name.as_str()) && !name.starts_with("x-forwarded-") && !name.starts_with("x-moqui-edge")
 }
 
+/// The headers of a request the node gets: those [`passed_on`], and of a navigation from another site (`cross`, the
+/// splash page going to the node), not its `Origin`, which the node's CORS check would refuse: the navigation was
+/// already allowed here, and the page it opens is on the node's own origin.
+pub(crate) fn forwarded(sent: Vec<(String, String)>, cross: bool) -> Vec<(String, String)> {
+    sent.into_iter()
+        .filter(|(name, _)| passed_on(name) && !(cross && name.eq_ignore_ascii_case("origin")))
+        .collect()
+}
+
 /// Whether a request is a window's `GET` (or `HEAD`) navigation to a `document`, which may come from another site:
 /// the app's own splash page going to the node (with its `Origin`; Chromium sends no `Sec-Fetch-*` to a custom
 /// scheme), as a link to a page does on the web. A page's other requests from another site are refused.
@@ -128,11 +137,12 @@ fn answer(app: &AppHandle, request: tauri::http::Request<Vec<u8>>) -> Response<V
         .iter()
         .map(|(name, value)| (name.to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned()))
         .collect();
-    if cross_site(&sent, NODE_ORIGIN) && !navigation(request.method().as_str(), document) {
+    let cross = cross_site(&sent, NODE_ORIGIN);
+    if cross && !navigation(request.method().as_str(), document) {
         tracing::warn!("{path}: refused, a request from another site");
         return plain(StatusCode::FORBIDDEN, "A request from another site");
     }
-    let mut headers: Vec<(String, String)> = sent.into_iter().filter(|(name, _)| passed_on(name)).collect();
+    let mut headers = forwarded(sent, cross);
     headers.push(("Host".to_string(), NODE_HOST.to_string()));
     if let Some(cookie) = local.jar.header() {
         headers.push(("Cookie".to_string(), cookie));
