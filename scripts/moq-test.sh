@@ -719,7 +719,7 @@ EOF
     check "create --rest" 0 'REST API only' -- "$M" component-create my_api --rest --no-git
     check "create --rest has no screens" 1 '' -- test -e "$R/runtime/component/my_api/screen" -o \
         -e "$R/runtime/component/my_api/MoquiConf.xml" -o -e "$R/runtime/component/my_api/test/MyApiScreens.spec.js"
-    check "create --rest has no screen sweep" 1 '' -- test -e "$R/runtime/component/my_api/acceptance"
+    check "create --rest has no screen sweep" 1 '' -- test -e "$R/runtime/component/my_api/test/acceptance"
     check "create has the screen sweep in acceptance" 0 '' -- test -f "$S/test/acceptance/MyShopScreenSweep.spec.js"
     check "create --rest keeps the REST API" 0 '' -- test -f "$R/runtime/component/my_api/service/my_api.rest.xml"
     check "create --screens --dev" 0 'Screens only' -- "$M" component-create shop --screens --dev --no-git
