@@ -505,7 +505,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A connector's mapping of a Moqui room to a room or conversation elsewhere (externalRoomId), in from it,
             out to it or both (directionEnumId). An external room has one active mapping (thruDate empty) per bridge; delivery
             rows keep this mapping's id. A native endpoint addresses the Moqui room itself and has none. A link to an external
-            room grants no rights.</description>
+            room grants no rights. filedDate: when the apps' external-conversation providers filed the conversation of a new
+            outside party (ChatBridgeServices.file#ExternalConversation); empty until one did, so a later message tries again.</description>
         <field name="chatRoomBridgeId" type="id" is-pk="true"/>
         <field name="chatRoomId" type="id"/>
         <field name="chatBridgeId" type="id"/>
@@ -515,6 +516,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="directionEnumId" type="id"/>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
+        <field name="filedDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
         <relationship type="one" title="ChatBridgeDirection" related="moqui.basic.Enumeration" short-alias="direction">

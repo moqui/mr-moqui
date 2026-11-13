@@ -507,7 +507,7 @@ along with this software (see the LICENSE.md file). If not, see
                                                 <div v-if="item.message.invitation.organizer" class="text-caption m-muted">{{t('Organizer')}}: {{item.message.invitation.organizer.name || item.message.invitation.organizer.email}}</div>
                                                 <div v-if="item.message.invitation.method === 'CANCEL'" class="text-caption text-negative">{{t('This event was cancelled')}}</div>
                                                 <div v-else-if="item.message.invitation.method === 'REPLY'" class="text-caption m-muted">{{t('An answer to an invitation')}}</div>
-                                                <div v-else class="row q-gutter-xs q-mt-xs">
+                                                <div v-else-if="item.message.invitation.canRespond !== false" class="row q-gutter-xs q-mt-xs">
                                                     <q-btn v-for="answer in invitationAnswers" :key="answer.value" dense no-caps unelevated :icon="answer.icon" :label="answer.label"
                                                             :color="item.message.invitation.myStatus === answer.status ? 'primary' : undefined"
                                                             :class="item.message.invitation.myStatus === answer.status ? '' : 'm-btn-tonal'" @click="respondInvite(item.message, answer.value)"></q-btn>
@@ -1962,6 +1962,7 @@ module.exports = {
                 const status = { accept: 'accepted', tentative: 'tentative', decline: 'declined' }[response];
                 message.invitation.myStatus = status;
                 if (json.workEffortId) message.invitation.workEffortId = json.workEffortId;
+                if (json.eventUrl) message.invitation.eventUrl = json.eventUrl;
             }, () => {});
         },
         flagMessage(message) {

@@ -211,7 +211,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'respond#Invitation', parameters: {emailMessageId: emailMessageId || '',
                 response: response || ''}}).call()?.result || {}
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {workEffortId: out.workEffortId, statusId: out.statusId, replySent: out.replySent,
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {workEffortId: out.workEffortId, statusId: out.statusId, replySent: out.replySent, eventUrl: out.eventUrl || null,
                 messageInfos: [{type: 'success', message: ec.l10n.localize({accept: 'Accepted', tentative: 'Tentative', decline: 'Declined'}[response] || 'Answered'),
                     link: out.eventUrl || null, linkText: ec.l10n.localize('Open event')}]})
         ]]></script></actions>

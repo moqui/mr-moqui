@@ -249,3 +249,56 @@ feature("the operations go to the app's inbox-source when the user may open it, 
         unknown.errors.includes("Unknown Comms operation")
     }
 })
+
+// The home-source and contact-card hooks (plans/Comms-Framework.md §3.3) over the example gallery's providers: its Home box,
+// one failing on purpose and named in failedParts, and its contact card for its own addresses; an address nobody knows
+// is the address alone. Skipped when the example component is not loaded.
+const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
+feature("Home adds the apps' home-source boxes and leaves out one that fails; the contact card is a provider's, else the address alone", {
+    when() {
+        if (!exampleInstalled) return {skip: true}
+        login("john.doe")
+        const sources = attempt("org.moqui.comms.CommsHomeServices.get#HomeSources")
+        const known = inbox("get#ContactCard", {emailAddress: "pat@gallery.example", name: "Pat"})
+        const unknown = inbox("get#ContactCard", {emailAddress: "nobody@unknown.example", name: "Nobody Known"})
+        return {sources, known, unknown}
+    },
+    then({skip, sources, known, unknown}) {
+        skip || sources.cardList.some(card => card.sourceId == "gallery.home" && card.title == "Gallery notes" && card.rowList[0].title == "Gallery home row")
+        skip || sources.failedParts.includes("gallery.homeFailing")
+        skip || !sources.cardList.some(card => card.sourceId == "gallery.homeFailing")
+        skip || known.card.name == "Gallery contact"
+        skip || known.card.url == "/qapps/gallery/Widgets"
+        skip || unknown.card.emailAddress == "nobody@unknown.example"
+        skip || unknown.card.name == "Nobody Known"
+        skip || unknown.card.url == null
+    }
+})
+
+feature("the framework reads a message's invitation; with no invitation provider of an app the user may open it has no answers and its answer is refused", {
+    when() {
+        const location = "dbresource://email/spec/BCI_INVITE/invite.ics"
+        sys(() => ec.resource.getLocationReference(location).putText(["BEGIN:VCALENDAR", "VERSION:2.0", "METHOD:REQUEST", "BEGIN:VEVENT",
+            "UID:bci-invite@example.org", "DTSTART:20261201T150000Z", "DTEND:20261201T160000Z", "SUMMARY:Fence walk-through",
+            "LOCATION:Back yard", "ORGANIZER;CN=Lee Asker:mailto:lee@example.org", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n")))
+        store("moqui.basic.email.EmailMessage", {emailMessageId: "BCI_INVITE", rootEmailMessageId: "BCI_INVITE", emailAccountId: ACCOUNT,
+            emailFolderId: FOLDER, statusId: "ES_RECEIVED", fromAddress: "lee@example.org", fromName: "Lee Asker", toAddresses: "inbox.spec@example.com",
+            subject: "Invitation: Fence walk-through", body: "Please come", contentType: "text/plain", isRead: "Y", messageId: "<bci-invite@example.org>",
+            messageDate: ec.user.nowTimestamp, receivedDate: ec.user.nowTimestamp})
+        store("moqui.basic.email.EmailMessageAttachment", {emailMessageAttachmentId: "BCI_INVITE_ICS", emailMessageId: "BCI_INVITE",
+            attachmentLocation: location, fileName: "invite.ics", fileSize: 300, contentType: "text/calendar"})
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const thread = inbox("get#ThreadView", {store: "email", threadId: "BCI_INVITE"})
+        const answer = attempt("org.moqui.comms.InboxServices.run#Operation", {operation: "respond#Invitation",
+            parameters: {emailMessageId: "BCI_INVITE", response: "accept"}})
+        return {thread, answer}
+    },
+    then({thread, answer}) {
+        thread.errors == ""
+        thread.thread.messageList[0].invitation.summary == "Fence walk-through"
+        thread.thread.messageList[0].invitation.location == "Back yard"
+        thread.thread.messageList[0].invitation.method == "REQUEST"
+        thread.thread.messageList[0].invitation.canRespond == false
+        answer.errors.includes("not available here")
+    }
+})

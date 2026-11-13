@@ -428,6 +428,19 @@ function receive(p) {
   if (ec.message.hasError()) return { outcome: 'failed', reasonCode: out.reasonCode || 'failed' }
   const first = Array.from(out.outcomeList || [])[0] || {}
   if (first.outcome === 'rejected') ec.logger.warn(`SMS ${p.messageId} on ${p.chatBridgeId} was rejected: ${first.reasonCode} ${first.message || ''}`)
+  // the conversation of a new outside party filed on a record by the apps (external-conversation), until one did it
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && pair.chatRoomBridgeId) {
+    const mapping = one(MAPPING, { chatRoomBridgeId: pair.chatRoomBridgeId })
+    if (mapping && !mapping.filedDate) {
+      try {
+        ec.service.sync().name('org.moqui.chat.ChatBridgeServices.file#ExternalConversation').parameters({ chatRoomBridgeId: pair.chatRoomBridgeId,
+          eventSeq: first.eventSeq }).disableAuthz().call()
+      } catch (err) {
+        ec.logger.error(`SMS ${p.messageId}: its conversation was not filed: ${err && err.message ? err.message : err}`)
+      }
+      ec.message.clearErrors()
+    }
+  }
   // a webhook sent again answers as the first did, as a duplicate
   return { outcome: out.duplicate === true ? 'duplicate' : first.outcome || 'waiting', reasonCode: first.reasonCode || null, message: first.message || null,
     duplicate: out.duplicate === true, chatRoomId: pair.chatRoomId, eventSeq: first.eventSeq ?? null }

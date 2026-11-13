@@ -67,12 +67,12 @@ along with this software (see the LICENSE.md file). If not, see
                 'apply#ViewAction': ['org.moqui.comms.InboxServices.apply#ViewAction', true],
                 'get#MessageDetail': ['org.moqui.comms.InboxServices.get#MessageDetail', false],
                 'search#Messages': ['org.moqui.comms.InboxServices.search#Messages', false],
-                'get#ContactCard': [null, false],
+                'get#ContactCard': ['org.moqui.comms.InboxServices.get#ContactCard', false],
                 'search#LinkRecords': [null, false],
                 'link#ThreadRecord': [null, true],
                 'unlink#ThreadRecord': [null, true],
                 'prepare#CreateFromMessage': [null, false],
-                'respond#Invitation': [null, true],
+                'respond#Invitation': ['org.moqui.comms.InboxServices.respond#Invitation', true],
                 'get#MailboxHeader': [null, false],
                 'save#MessageFiles': ['org.moqui.comms.InboxServices.save#MessageFiles', true],
                 'get#ComposeData': ['org.moqui.comms.ComposeServices.get#ComposeData', false],
@@ -421,6 +421,104 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="get" noun="ContactCard">
+        <description>Who an address is, for the contact card of the reading pane: the card of the apps' contact-card providers
+            (plans/Comms-Framework.md §3.3; the first that knows the address or party: IronStone's party with its organization,
+            phone, link and the latest threads), else the address and name alone, which the user may add as a contact where an
+            app keeps contacts. A provider that fails is left out (named in failedParts).</description>
+        <in-parameters>
+            <parameter name="emailAddress" allow-html="any"/>
+            <parameter name="partyId"/>
+            <parameter name="name" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="card" type="Map"/>
+            <parameter name="failedParts" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const address = emailAddress ? String(emailAddress).trim() : null
+            card = {emailAddress: address, name: name || null, partyId: null, isPrivate: false, organizationName: null, phone: null,
+                emailList: [], url: null, recentList: []}
+            failedParts = []
+            if (!address && !partyId) return
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'contact-card',
+                parameters: {address: address, partyId: partyId || null, name: name || null}}).call() || {}
+            ec.message.clearErrors()
+            failedParts = Array.from(out.failedParts || []).map((part) => part.sourceId || part.name || 'provider')
+            const known = Array.from(out.results || []).map((result) => result.card).find((found) => found && (found.partyId || found.url))
+            if (known) card = Object.assign({}, card, known)
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="InvitationCard">
+        <description>The invitation a message carries (an iMIP text/calendar part or .ics file of at most 512 KiB), read by the
+            framework's ICalendar tool: {method, uid, summary, start, end, allDay, location, organizer, attendeeCount, status,
+            emailMessageAttachmentId}, or null without one or without the tool. A file that does not parse is logged and no card
+            shows. Whether the user is on the event and how they answered is an app's (its invitation provider, or its own
+            thread view: IronStone adds workEffortId and myStatus).</description>
+        <in-parameters><parameter name="attachmentList" type="List"/></in-parameters>
+        <out-parameters><parameter name="invitation" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            invitation = null
+            const file = Array.from(attachmentList || []).find((item) => /text\/calendar/i.test(item.contentType || '') || /\.ics$/i.test(item.fileName || ''))
+            if (!file || !file.attachmentLocation || Number(file.fileSize || 0) > 512 * 1024) return
+            if (ec.factory.getToolFactory('ICalendar') == null) return
+            try {
+                const text = ec.resource.getLocationReference(file.attachmentLocation).getText()
+                const parsed = ec.factory.getTool('ICalendar').parse(text)
+                const event = Array.from(parsed?.events || [])[0]
+                if (!event) return
+                invitation = {method: parsed.method ? String(parsed.method).toUpperCase() : null, uid: event.uid ?? null, summary: event.summary ?? null,
+                    start: event.start ?? null, end: event.end ?? null, allDay: event.allDay === true, location: event.location ?? null,
+                    organizer: event.organizer ?? null, attendeeCount: Array.from(event.attendees || []).length, status: event.status ?? null,
+                    emailMessageAttachmentId: file.emailMessageAttachmentId, workEffortId: null, myStatus: 'needsAction'}
+            } catch (err) {
+                ec.logger.warn(`The invitation of attachment ${file.emailMessageAttachmentId} is not shown: ${err && err.message ? err.message : err}`)
+                ec.message.clearErrors()
+                invitation = null
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="respond" noun="Invitation">
+        <description>Answer the invitation a message carries (accept, tentative or decline) through the apps' invitation
+            providers (plans/Comms-Framework.md §3.3; the first that answers: IronStone puts it on the user's calendar and tells
+            the organizer). The message must be one the user may read (EmailClientServices.get#Thread) and carry an
+            invitation. With no provider it is not available here. Out: what the provider answered (workEffortId, statusId,
+            replySent, eventUrl).</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="response" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="workEffortId"/>
+            <parameter name="statusId"/>
+            <parameter name="replySent" type="Boolean"/>
+            <parameter name="eventUrl"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const answer = String(response || '').toLowerCase()
+            if (!['accept', 'tentative', 'decline'].includes(answer)) { ec.message.addError(`The answer is accept, tentative or decline, not ${response}`); return }
+            const thread = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#Thread').parameter('emailMessageId', emailMessageId).call()
+            if (ec.message.hasError()) return
+            const message = Array.from(thread?.messageList || []).find((item) => item.emailMessageId === emailMessageId)
+            const card = message ? ec.service.sync().name('org.moqui.comms.InboxServices.get#InvitationCard')
+                .parameter('attachmentList', Array.from(message.attachmentList || [])).call()?.invitation : null
+            if (!card) { ec.message.addError(ec.l10n.localize('This message has no invitation')); return }
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'invitation', mutation: true,
+                parameters: {emailMessageId: emailMessageId, response: answer}}).call() || {}
+            if (ec.message.hasError()) return
+            const failed = Array.from(out.failedParts || [])
+            if (failed.length) { ec.message.addError(failed.map((part) => part.error).join('; ')); return }
+            const result = Array.from(out.results || [])[0]
+            if (!result) { ec.message.addError(ec.l10n.localize('This is not available here')); return }
+            workEffortId = result.workEffortId ?? null
+            statusId = result.statusId ?? null
+            replySent = result.replySent === true
+            eventUrl = result.eventUrl ?? null
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="ThreadView">
         <description>
             The thread of the reading pane, oldest message first, through org.moqui.mail.EmailClientServices.get#Thread
@@ -490,13 +588,22 @@ along with this software (see the LICENSE.md file). If not, see
                 const eventOf = {}
                 const links = {}
                 const labels = {}
+                let respondable = null
+                const canRespondInvitations = () => {
+                    if (respondable == null) respondable = Array.from(ec.service.sync().name('org.moqui.ui.ShellServices.get#Providers')
+                        .parameter('hook', 'invitation').call()?.providerList || []).length > 0
+                    return respondable
+                }
                 const messageList = messages.map((message) => {
                     const from = person({address: message.fromAddress, name: message.fromName})
                     const files = Array.from(message.attachmentList || [])
                     const cidMap = {}
                     for (const file of files) if (file.contentId) cidMap[String(file.contentId).replace(/^<|>$/g, '')] = 'attachment?store=email&id=' + encodeURIComponent(file.emailMessageAttachmentId)
                     for (const label of Array.from(message.labelList || [])) labels[label.emailLabelId] = label
-                    const invitation = null
+                    // the invitation it carries, read here; its answer goes to the apps' invitation providers (none: no buttons)
+                    const invitation = files.length ? ec.service.sync().name('org.moqui.comms.InboxServices.get#InvitationCard')
+                        .parameter('attachmentList', files).call()?.invitation || null : null
+                    if (invitation) invitation.canRespond = canRespondInvitations()
                     const html = isHtml(message.contentType, message.body) ? message.body : null
                     return {key: 'email:' + message.emailMessageId, store: 'email', emailMessageId: message.emailMessageId, communicationEventId: eventOf[message.emailMessageId] || null,
                         emailAccountId: message.emailAccountId, from: from, toList: splitAddresses(message.toAddresses).map(person),

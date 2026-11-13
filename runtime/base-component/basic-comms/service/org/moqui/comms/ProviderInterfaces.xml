@@ -90,19 +90,33 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="invitation" noun="Response" type="interface">
-        <description>invitation: answer the calendar invitation a message carries (accept, tentative or decline).</description>
+        <description>invitation: answer the calendar invitation a message carries (accept, tentative or decline), as the user:
+            put it on their calendar and tell its organizer (org.moqui.comms.InboxServices.respond#Invitation calls it, and the
+            first provider that answers is the answer). Answers the event (workEffortId, statusId), whether a reply went out
+            (replySent) and a link to the event (eventUrl); a refusal is an error.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="response" required="true"/>
         </in-parameters>
+        <out-parameters>
+            <parameter name="workEffortId"/>
+            <parameter name="statusId"/>
+            <parameter name="replySent" type="Boolean"/>
+            <parameter name="eventUrl"/>
+        </out-parameters>
     </service>
     <service verb="contact" noun="Card" type="interface">
-        <description>contact-card: a card for an address or a number (card), with an add-to-contacts action when there is no
-            contact yet.</description>
+        <description>contact-card: who an address (or a party the item names) is, as the user may see it, for the contact
+            card of the Inbox's reading pane (org.moqui.comms.InboxServices.get#ContactCard calls it). card {emailAddress,
+            name, partyId, isPrivate, organizationName, phone, emailList, url (the contact's record), recentList (the latest
+            threads with it, each {threadKey, subject, date})}; a provider that does not know it answers no partyId and no
+            url, and the framework shows the address alone.</description>
         <in-parameters>
             <parameter name="address"/>
-            <parameter name="number"/>
+            <parameter name="partyId"/>
+            <parameter name="name"/>
         </in-parameters>
+        <out-parameters><parameter name="card" type="Map"/></out-parameters>
     </service>
     <service verb="meetings" noun="Source" type="interface">
         <description>meetings-source: the user's meetings in a range, each with its call link (meetingList).</description>
@@ -126,7 +140,9 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="home" noun="Source" type="interface">
-        <description>home-source: the Comms Home cards it adds (cardList, each with its rows and a link to more).</description>
+        <description>home-source: the boxes it adds to Comms Home (org.moqui.comms.CommsHomeServices.get#HomeSources calls it, after
+            the Home's own parts, whoever answered them): cardList, each {key, title, link (to more), linkText, emptyText,
+            rowList (ten at most, each {title, detail, countText, link})}, as the user may see them.</description>
         <in-parameters>
             <parameter name="sourceId"/>
             <parameter name="fromDate" type="Timestamp"/>
@@ -134,16 +150,25 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageIndex" type="Integer" default="0"/>
             <parameter name="pageSize" type="Integer" default="10"/>
         </in-parameters>
+        <out-parameters><parameter name="cardList" type="List"/></out-parameters>
     </service>
     <service verb="external" noun="Conversation" type="interface">
-        <description>external-conversation: file a bridged conversation on a record; retried with idempotencyKey, which must
-            not file it twice. Answers the link (recordUrl).</description>
+        <description>external-conversation: file the conversation of a new outside party (an SMS number pair's room, C4-SMS) on
+            a record, from its first message (eventSeq, sent by the external actor chatActorId), as the room's first local
+            member (org.moqui.chat.ChatBridgeServices.file#ExternalConversation calls it). Tried again on the room's next
+            message until one provider filed it, with the same idempotencyKey, which must not file it twice. Answers filed
+            (false: nothing here matched it) and the record's link (recordUrl).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="chatBridgeId"/>
             <parameter name="chatActorId"/>
+            <parameter name="eventSeq" type="Integer"/>
             <parameter name="idempotencyKey" required="true"/>
         </in-parameters>
+        <out-parameters>
+            <parameter name="filed" type="Boolean"/>
+            <parameter name="recordUrl"/>
+        </out-parameters>
     </service>
     <service verb="sms" noun="Consent" type="interface">
         <description>sms-consent (C4-SMS): whether a promotional text may go from our number fromNumber to toNumber, as the

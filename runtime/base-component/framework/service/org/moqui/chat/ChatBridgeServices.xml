@@ -801,6 +801,59 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="file" noun="ExternalConversation" authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (SmsServices receive, after a text of a pair room's outside party was taken): the conversation
+            filed on a record by the apps' external-conversation providers (plans/Comms-Framework.md §3.3; IronStone: on the
+            party with that number), from the message eventSeq, as the room's first local member (the apps they may open;
+            a disabled one is passed over). Once one provider filed it, the mapping's filedDate is set and it is not asked
+            again; until then each new message tries again with the same idempotencyKey (conversation:chatRoomBridgeId).
+            Failure tolerant: a provider that fails is logged and the message is kept. Out: filed, recordUrl.</description>
+        <in-parameters>
+            <parameter name="chatRoomBridgeId" required="true"/>
+            <parameter name="eventSeq" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="filed" type="Boolean"/>
+            <parameter name="recordUrl"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            filed = false
+            recordUrl = null
+            const mapping = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomBridgeId', chatRoomBridgeId).disableAuthz().one()
+            if (!mapping || mapping.thruDate || mapping.filedDate) return
+            const event = eventSeq != null ? ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: mapping.chatRoomId, eventSeq: eventSeq})
+                .disableAuthz().one() : null
+            const members = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', mapping.chatRoomId)
+                .condition('leftDate', null).condition('userId', 'is-not-null', null).orderBy('joinedDate').disableAuthz().list())
+            const account = members.map((member) => ec.entity.find('moqui.security.UserAccount').condition('userId', member.userId).disableAuthz().one())
+                .find((row) => row && row.disabled !== 'Y')
+            if (!account) return
+            const wasUser = ec.user.username
+            try {
+                ec.user.internalLoginUser(account.username)
+                const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'external-conversation', mutation: true,
+                    parameters: {chatRoomId: mapping.chatRoomId, chatBridgeId: mapping.chatBridgeId, chatActorId: event?.senderActorId || null,
+                        eventSeq: event ? Number(event.eventSeq) : null, idempotencyKey: 'conversation:' + mapping.chatRoomBridgeId}})
+                    .requireNewTransaction(true).call() || {}
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                const failed = Array.from(out.failedParts || [])
+                if (errors || failed.length) {
+                    ec.logger.error(`Chat room ${mapping.chatRoomId}: its conversation was not filed, tried again on its next message: ${errors || failed.map((part) => part.error).join('; ')}`)
+                    return
+                }
+                const done = Array.from(out.results || []).find((result) => result.filed === true)
+                if (!done) return
+                filed = true
+                recordUrl = done.recordUrl || null
+                mapping.set('filedDate', ec.user.nowTimestamp)
+                mapping.update()
+            } finally {
+                if (ec.user.username !== wasUser) ec.user.logoutUser()
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="store" noun="Bridge">
         <description>Make or change a chat bridge (ChatBridgeAdmin): name, typeEnumId, adapterName (empty: the network's code),
             configJson (JSON; its secrets are kept encrypted; empty keeps the old; its publicKey is also kept as

@@ -47,6 +47,29 @@
             recordList = [{title: 'Example record for ' + n, status: 'Open', url: '/qapps/gallery/Widgets'}]
         ]]></script></actions>
     </service>
+    <service verb="get" noun="GalleryHomeSource">
+        <implements service="org.moqui.comms.ProviderInterfaces.home#Source"/>
+        <actions><script><![CDATA[
+            cardList = [{key: 'galleryHome', title: 'Gallery notes', link: '/qapps/gallery/Widgets', linkText: 'Gallery',
+                emptyText: 'No gallery notes', rowList: [{title: 'Gallery home row', countText: '1 new', link: '/qapps/gallery/Widgets'}]}]
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="GalleryHomeSourceFailing">
+        <implements service="org.moqui.comms.ProviderInterfaces.home#Source"/>
+        <actions><script><![CDATA[
+            cardList = []
+            ec.message.addError('The example home source fails on purpose')
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="GalleryContactCard">
+        <implements service="org.moqui.comms.ProviderInterfaces.contact#Card"/>
+        <actions><script><![CDATA[
+            card = null
+            if (!String(address || '').toLowerCase().endsWith('@gallery.example')) return
+            card = {emailAddress: address, name: 'Gallery contact', partyId: 'GALLERY_CONTACT', organizationName: 'Gallery Co',
+                phone: '+15550100777', emailList: [address], url: '/qapps/gallery/Widgets', recentList: []}
+        ]]></script></actions>
+    </service>
     <service verb="get" noun="GalleryCallContextFailing">
         <implements service="org.moqui.comms.ProviderInterfaces.call#Context"/>
         <actions><script><![CDATA[

@@ -116,7 +116,10 @@ call. The outside person is an external actor of the bridge (`ChatExternalUser` 
    (`media`) are fetched by the adapter, each on its own, within `maxInboundMediaBytes`, and kept as `ChatAttachment`
    rows of the room with no uploader (`store#BridgeMedia`): a type outside images, audio, video, vCard, plain text and
    PDF is kept as `application/octet-stream`, so nothing from a network is served as a page. A file that cannot be
-   fetched is named in the message (`[A file not received: image/png]`) and the rest go on.
+   fetched is named in the message (`[A file not received: image/png]`) and the rest go on. The first text of a new
+   outside number is filed on a record by the apps' `external-conversation` providers (`file#ExternalConversation`, as
+   the room's first local member: IronStone files it on the one party with that number); until one filed it
+   (`ChatRoomBridge.filedDate`), each new text tries again, and a failure is logged and the text kept.
 4. `message.sent` and `message.finalized` (the receipts of texts that went out): `note#DeliveryReceipt` keeps the
    receipt on the message's delivery (`sent`, `delivered`, `unconfirmed`); a `sending_failed` or `delivery_failed` fails
    the delivery (`deliveryFailed`, with the carrier's reason), which its sender may send again. A receipt never takes a

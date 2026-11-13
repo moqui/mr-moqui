@@ -213,10 +213,10 @@ feature("the user search finds active people by name and leaves out disabled and
     }
 })
 
-feature("a hook nobody declares is unavailable and a hook name that is not one is refused", {
+feature("a hook no app the caller may open declares is unavailable and a hook name that is not one is refused", {
     when() {
-        login("john.doe")
-        // V5: call-context has providers now (the example gallery's, IronStone's); external-conversation has none yet
+        // signed in as no one, who opens no app: every hook has its providers in an app (IronStone declares them all)
+        ec.user.logoutUser()
         const none = sys(() => call("org.moqui.ui.ShellServices.call#Providers", {hook: "external-conversation"})) || {}
         let refused = ""
         try {
@@ -226,6 +226,7 @@ feature("a hook nobody declares is unavailable and a hook name that is not one i
         }
         refused += ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
+        login("john.doe")
         return {none, refused}
     },
     then({none, refused}) {

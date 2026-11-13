@@ -74,13 +74,39 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="get" noun="HomeSources">
+        <description>The boxes the apps' home-source providers add to Comms Home (plans/Comms-Framework.md §3.3; IronStone: its
+            mailboxes with unread), after the Home's own parts whoever answered them: cardList, each {sourceId, key, title,
+            link, linkText, emptyText, rowList}. A provider that fails is left out and named in failedParts; with none, the
+            list is empty.</description>
+        <out-parameters>
+            <parameter name="cardList" type="List"/>
+            <parameter name="failedParts" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            cardList = []
+            failedParts = []
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'home-source',
+                parameters: {pageSize: 10}}).call() || {}
+            ec.message.clearErrors()
+            failedParts = Array.from(out.failedParts || []).map((part) => part.sourceId || 'home-source')
+            for (const result of Array.from(out.results || [])) {
+                for (const card of Array.from(result.cardList || [])) {
+                    if (!card || !card.title) continue
+                    cardList.push(Object.assign({linkText: null, emptyText: null, link: null}, card, {sourceId: result.sourceId || null,
+                        rowList: Array.from(card.rowList || []).slice(0, 10)}))
+                }
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="CommsHome">
         <description>Comms Home for the current user, over the user's mail and chat. cardList: the counters, each {key, title,
             value, icon, link}: one per mail account with its unread Inbox mail, Flagged, Snoozed (back by the end of today),
             Mentions (chat), Not sent (sends that failed) and Missed calls (not seen yet), and Voicemail (unheard; only for a user with a voicemail box). roomList: the chat rooms with unread, ten at most. needsReplyList:
             the mail threads waiting for the user's answer (find#InboxRows needsReply), ten at most, each {rowKey, subject,
-            who, snippet, whenText, store, link}. followUpList, meetingList and mailboxList are an app's (its inbox-source
-            answers this operation) and empty here.
+            who, snippet, whenText, store, link}. followUpList and meetingList are an app's (its inbox-source answers this
+            operation) and empty here; an app's other boxes come from its home-source provider (get#HomeSources).
             hasMailAccount is false until the user has a mail account; problemAccountList names the accounts whose sign-in or
             sync failed, with canManage (only a manager fixes one). failedParts names what could not be read.</description>
         <out-parameters>
@@ -88,7 +114,6 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="needsReplyList" type="List"/>
             <parameter name="followUpList" type="List"/>
             <parameter name="meetingList" type="List"/>
-            <parameter name="mailboxList" type="List"/>
             <parameter name="roomList" type="List"/>
             <parameter name="hasMailAccount" type="Boolean"/>
             <parameter name="problemAccountList" type="List"/>
@@ -103,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const number = Number(value)
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
-            cardList = []; needsReplyList = []; followUpList = []; meetingList = []; mailboxList = []; roomList = []
+            cardList = []; needsReplyList = []; followUpList = []; meetingList = []; roomList = []
             hasMailAccount = false; problemAccountList = []; failedParts = []
             const nowMillis = toMillis(ec.user.nowTimestamp)
             const day = (millis) => ec.l10n.format(new Date(Number(millis)), 'yyyy-MM-dd')

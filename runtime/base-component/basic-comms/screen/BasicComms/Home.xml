@@ -26,6 +26,8 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <service-call name="org.moqui.comms.InboxServices.run#Operation" in-map="{operation: 'get#CommsHome'}" out-map="homeOut"/>
         <set field="home" from="homeOut?.result || {}"/>
+        <!-- the apps' own boxes (home-source providers), after the Home's parts whoever answered them -->
+        <service-call name="org.moqui.comms.CommsHomeServices.get#HomeSources" out-map="sourcesOut"/>
         <set field="appLink" from="'/qapps/' + (appRoot || 'BasicComms')"/>
         <script><![CDATA[
             const L = (text) => ec.l10n.localize(text)
@@ -33,16 +35,15 @@ along with this software (see the LICENSE.md file). If not, see
             needsReplyList = Array.from(home?.needsReplyList || [])
             followUpList = Array.from(home?.followUpList || [])
             meetingList = Array.from(home?.meetingList || [])
-            mailboxList = Array.from(home?.mailboxList || [])
             roomList = Array.from(home?.roomList || [])
             hasMailAccount = home?.hasMailAccount === true
             problemAccountList = Array.from(home?.problemAccountList || [])
-            failedParts = Array.from(home?.failedParts || [])
+            failedParts = Array.from(home?.failedParts || []).concat(Array.from(sourcesOut?.failedParts || []))
+            sourceCardList = Array.from(sourcesOut?.cardList || [])
             todayLabel = ec.l10n.format(new Date(Number(ec.user.nowTimestamp)), 'EEEE, MMMM d')
             roomList.forEach((room) => { room.countText = room.mentionCount ? ec.resource.expand(room.mentionCount === 1 ? '${n} unread, 1 mention' : '${n} unread, ${m} mentions', '',
                     {n: room.unreadCount, m: room.mentionCount})
                 : ec.resource.expand('${n} unread', '', {n: room.unreadCount}) })
-            mailboxList.forEach((box) => { box.countText = ec.resource.expand('${n} unread', '', {n: box.unreadCount}) })
         ]]></script>
     </actions>
 
@@ -133,6 +134,23 @@ along with this software (see the LICENSE.md file). If not, see
                     <label type="span" text="Settings" style="q-ml-sm"/>
                     <render-mode><text type="qvt"><![CDATA[</q-btn></div>]]></text><text type="tui" template="false">[]</text></render-mode>
                 </box-body></container-box>
+
+                <!-- the boxes of the apps' home-source providers (IronStone: the mailboxes with unread) -->
+                <section-iterate name="SourceCards" list="sourceCardList" entry="sourceCard"><widgets>
+                    <container-box><box-header title="${sourceCard.title}"/>
+                        <box-toolbar><section name="SourceCardLink" condition="sourceCard.link"><widgets>
+                            <link url="${sourceCard.link}" url-type="plain" link-type="anchor" text="${sourceCard.linkText || ec.l10n.localize('More')}"/>
+                        </widgets></section></box-toolbar>
+                        <box-body-nopad>
+                        <form-list name="SourceCardRows" list="sourceCard.rowList" skip-form="true" skip-header="true" paginate="false">
+                            <field name="title"><default-field><link url="${link || ''}" url-type="plain" text="${title}"/></default-field></field>
+                            <field name="countText" align="right"><default-field><display text="${countText || detail || ''}" style="text-caption text-weight-medium text-no-wrap"/></default-field></field>
+                        </form-list>
+                        <section name="SourceCardEmpty" condition="!sourceCard.rowList.length"><widgets>
+                            <label type="p" text="${sourceCard.emptyText || ec.l10n.localize('Nothing new')}" style="m-muted q-pa-sm q-mb-none"/>
+                        </widgets></section>
+                    </box-body-nopad></container-box>
+                </widgets></section-iterate>
 
             </row-col>
         </container-row>

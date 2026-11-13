@@ -242,16 +242,17 @@ records drive's folders by their records.
 | `record-lookup` | A record room's title and link, a message's record cards, the records to file a message on |
 | `record-link` | Filing a chat message on a record |
 | `create-from` | Making a record (a task) from a chat message |
-
+| `invitation` | Answering the calendar invitation a message carries (`emailMessageId`, `response`; answers `workEffortId`, `statusId`, `replySent`, `eventUrl`). The framework reads the card itself (`InboxServices.get#InvitationCard`); without a provider it shows no answers (IronStone: the event on the user's calendar, the organizer told) |
+| `contact-card` | Who a sender or recipient is, for the reading pane's contact card (`address`, `partyId`, `name`; answers `card`); without one the card is the address alone (IronStone: the party with the address and its threads; the example gallery has one for its addresses) |
+| `home-source` | Boxes of its own on Home (answers `cardList`, each with its rows and a link to more), after Home's parts whoever answered them (`CommsHomeServices.get#HomeSources`; IronStone: its mailboxes with unread; the example gallery has two, one failing on purpose) |
+| `external-conversation` | Filing the conversation of a new outside party on a record: the first text of a new number's pair room (`chatRoomId`, `chatBridgeId`, `chatActorId`, `eventSeq`, `idempotencyKey`; answers `filed`, `recordUrl`), as the room's first local member; tried again on the next text until one filed it (`ChatRoomBridge.filedDate`; IronStone: on the one party with that number) |
 | `meetings-source` | The user's meetings in a range, for the Calls screen's Meetings (IronStone: the calendar's) |
 | `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
 | `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out); Mantle answers from its consent records) |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 | `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
 
-The other hooks (`invitation`, `contact-card`, `home-source`,
-`external-conversation`) are declared for the work after this one. A provider runs with the app's authorization and
-entity filters; a read that fails is left out and named, and a mutation that fails is an error.
+A provider runs with the app's authorization and entity filters; a read that fails is left out and named, and a mutation that fails is an error.
 
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is

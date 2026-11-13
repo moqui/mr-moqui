@@ -77,6 +77,11 @@ along with this software (see the LICENSE.md file). If not, see
         <call-context name="gallery.callContextFailing" service="example.ExampleServices.get#GalleryCallContextFailing" sequence="91"/>
         <!-- who may be called, transferred to or added (the hardening pass): an example refusing the users named *.offlimits -->
         <call-target name="gallery.callTarget" service="example.ExampleServices.get#GalleryCallTarget" sequence="90"/>
+        <!-- a box on Comms Home and a provider failing on purpose, and the contact card of the gallery's addresses
+            (plans/Comms-Framework.md §3.3) -->
+        <home-source name="gallery.home" service="example.ExampleServices.get#GalleryHomeSource" sequence="90"/>
+        <home-source name="gallery.homeFailing" service="example.ExampleServices.get#GalleryHomeSourceFailing" sequence="91"/>
+        <contact-card name="gallery.contactCard" service="example.ExampleServices.get#GalleryContactCard" sequence="90"/>
     </shell-providers>
 
     <widgets><subscreens-panel id="gallery-panel" type="popup"/></widgets>
