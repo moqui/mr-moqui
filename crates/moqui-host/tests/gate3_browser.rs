@@ -284,7 +284,7 @@ fn palette_row(browser: &mut Browser, what: &str, shown: &str) -> String {
 /// The suite shell of `/qapps` (IronStone impl-drawers-commons M1) over the gallery's shell providers, without BOSS: the
 /// launcher (to the AppList) and the app title, Ctrl+K and the palette (a screen by title, the gallery's palette source by its `~` prefix,
 /// `:` and Enter to open), the `+` menu and the quick-create dialog with the screen context's record, closing when its form
-/// submits, and the keys (`?` and the gallery's `g w`). No tray, counters, Mail or Messages without the theme values. The console
+/// submits, and the keys (`?` and the gallery's `g w`). Comms' counters and tray tabs, none of BOSS's. The console
 /// stays clean. With `MOQUI_SHELL_SHOTS=<dir>` it saves PNGs of the header with the palette and the `+` menu open, light
 /// and dark, 1280 and 390 px wide.
 #[test]
@@ -325,12 +325,16 @@ fn the_suite_shell_palette_quick_create_and_keys_work_in_chromium() {
         !crumbs.contains("Applications") && !crumbs.contains("Gallery"),
         "{crumbs}"
     );
+    // Comms is a framework component (basic-comms), so its counters (chat, mail, missed calls) and its tray tabs (Chat and
+    // the Dialer) are there without BOSS; BOSS's own (Today, the notifications tab) are not.
     assert_eq!(
         browser.eval(
-            "!!document.getElementById('m-launcher') && !!document.getElementById('m-search') && !document.querySelector('[id^=m-counter-]') \
-             && !document.getElementById('m-tray') && moqui.webrootVue.trayTabs.length === 0"
+            "JSON.stringify({launcher: !!document.getElementById('m-launcher'), search: !!document.getElementById('m-search'), \
+             counters: [...document.querySelectorAll('[id^=m-counter-]')].map((el) => el.id), tray: !!document.getElementById('m-tray'), \
+             trayTabs: (moqui.webrootVue.trayTabs || []).map((tab) => tab.name || tab.id || tab.title)})"
         ),
-        true
+        "{\"launcher\":true,\"search\":true,\"counters\":[\"m-counter-chat\",\"m-counter-email\",\"m-counter-calls\"],\
+         \"tray\":false,\"trayTabs\":[\"Chat\",\"Dialer\"]}"
     );
     // the launcher opens the AppList, and back is the record again
     browser.click("the launcher", "document.getElementById('m-launcher')");
@@ -570,13 +574,14 @@ fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
     if !crate::common::own_process() {
         return;
     }
+    // below Comms' own values (basic-comms, 301 and up), as an app that names its own screens does
     let gate = start_with_data(
         "browser-tray",
         r#"<entity-facade-xml type="seed">
-            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="900" resourceTypeEnumId="STRT_TRAY_TODAY" resourceValue="gallery/Panel"/>
-            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="901" resourceTypeEnumId="STRT_TRAY_NOTIFICATIONS" resourceValue="gallery/Landing"/>
-            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="902" resourceTypeEnumId="STRT_MAIL_SCREEN" resourceValue="gallery/List"/>
-            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="903" resourceTypeEnumId="STRT_MESSAGES_SCREEN" resourceValue="gallery/Split"/>
+            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="200" resourceTypeEnumId="STRT_TRAY_TODAY" resourceValue="gallery/Panel"/>
+            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="201" resourceTypeEnumId="STRT_TRAY_NOTIFICATIONS" resourceValue="gallery/Landing"/>
+            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="202" resourceTypeEnumId="STRT_MAIL_SCREEN" resourceValue="gallery/List"/>
+            <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="203" resourceTypeEnumId="STRT_MESSAGES_SCREEN" resourceValue="gallery/Split"/>
         </entity-facade-xml>"#,
     );
     let base = format!("http://{}", gate.server.address());
@@ -590,11 +595,12 @@ fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
          && !!document.getElementById('m-counter-email') && !!document.getElementById('m-counter-messages')",
         WAIT,
     );
-    // no Chat tab without its theme value, and the notify history gives way to the Notifications tab
+    // Comms' Chat and Dialer tabs (basic-comms, a framework component) beside the theme's Today and Notifications, and the
+    // notify history gives way to the Notifications tab
     assert_eq!(
-        browser.eval("!document.getElementById('m-counter-chat') && !document.querySelector('#top .q-btn i.q-icon[class*=notifications]') \
+        browser.eval("!!document.getElementById('m-counter-chat') && !document.querySelector('#top .q-btn i.q-icon[class*=notifications]') \
              && moqui.webrootVue.trayTabs.map((tab) => tab.key).join(',')"),
-        "today,notifications"
+        "today,chat,notifications,dialer"
     );
     browser.click("Today", "document.getElementById('m-counter-today')");
     browser.wait_for(
@@ -612,7 +618,7 @@ fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
         400
     );
     // the other tab, then back: Today was loaded once and kept
-    browser.click("the Notifications tab", &by_text("#m-tray .q-tab", "Notifications"));
+    browser.click("the Notifications tab", &by_text("#m-tray .q-tab", "Alerts"));
     browser.wait_for(
         "the Landing archetype in the tray",
         "document.getElementById('m-tray').innerText.indexOf('Archetype 3.1') >= 0",
@@ -1331,8 +1337,6 @@ fn a_background_submit_closes_the_container_dialog_it_names_in_chromium() {
         "!!moqui.webrootVue && !!moqui.webrootVue.activeContainers.NewEnumDialog && document.body.innerText.indexOf('Comparison operators') >= 0",
         WAIT,
     );
-    // the submit asks first (data-confirm); the test answers yes
-    browser.eval("(() => { window.confirm = () => true; return true; })()");
     browser.click("New", &by_text("button", "New"));
     browser.wait_for(
         "the dialog open",
@@ -1342,6 +1346,13 @@ fn a_background_submit_closes_the_container_dialog_it_names_in_chromium() {
     browser.click("the id", "document.querySelector('.q-dialog [name=enumId]')");
     browser.type_text("GATE_DLG");
     browser.click("Create", &by_text(".q-dialog button", "Create"));
+    // the submit asks first (data-confirm), in the app's own confirmation dialog; only Confirm goes on
+    browser.wait_for(
+        "the confirmation",
+        "[...document.querySelectorAll('.q-dialog')].some((dialog) => dialog.innerText.indexOf('Create this enumeration?') >= 0)",
+        WAIT,
+    );
+    browser.click("Confirm", &by_text(".q-dialog button", "Confirm"));
     let answer = fetched(&mut browser, "the create post", "/createEnum");
     assert_eq!(answer["status"], 200, "{answer}");
     browser.wait_for(

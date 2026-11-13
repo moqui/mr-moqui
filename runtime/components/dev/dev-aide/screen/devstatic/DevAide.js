@@ -401,8 +401,9 @@
         methods: {
             get(name, params) { return moqui.request(this.base + "/" + name, { params: params || {} }).then((result) => result.json || {}); },
             post(name, params) { return moqui.request(this.base + "/" + name, { method: "POST", params: params || {} }).then((result) => result.json || {}); },
-            fail(error) { this.busy = ""; this.$q.notify({ type: "negative", message: pure.errorText(error), timeout: 8000 }); },
-            note(message, type) { this.$q.notify({ type: type || "positive", message, timeout: 4000 }); },
+            // Notes and failures at the bottom: at the app's top right they would cover the editor's toolbar (Save) while shown.
+            fail(error) { this.busy = ""; this.$q.notify({ type: "negative", message: pure.errorText(error), timeout: 8000, position: "bottom-right" }); },
+            note(message, type) { this.$q.notify({ type: type || "positive", message, timeout: 4000, position: "bottom-right" }); },
             loadRoots() {
                 return this.get("roots").then((answer) => {
                     this.roots = answer.roots || [];

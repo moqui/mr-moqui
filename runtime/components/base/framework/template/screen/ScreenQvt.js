@@ -151,6 +151,15 @@
             rowBuf = null;
             if (text) sri.write(text);
         };
+        // A field's source stamp, for the next tag written. The render puts it on the first tag of the next sri.write, so a
+        // buffered row writes what it holds first: each cell's stamp then lands on its own cell, not all on the row's first tag.
+        const stamp = (src) => {
+            if (rowBuf) {
+                sri.write(rowBuf);
+                rowBuf = "";
+            }
+            sri.stamp(src);
+        };
         const at = (n, key) => {
             const value = n && n.attrs ? n.attrs[key] : null;
             return value === null || value === undefined ? "" : String(value);
@@ -2407,7 +2416,7 @@
             dropDown, check: (n) => checkOrRadio(n, "checkbox"), radio: (n) => checkOrRadio(n, "radio"), display: displayWidget, displayEntity,
             image, label: labelWidget, link, editable, containerDialog, dynamicDialog, dynamicContainer, tree,
             subscreensTabs, subscreensPanel, formOpen, formClose, fieldBox, rowOpen, colOpen, fieldGroup, fieldGroupClose,
-            formList, rowCellOpen, rowCellClose, valueText, sectionPaginate, headerCell,
+            formList, rowCellOpen, rowCellClose, valueText, sectionPaginate, headerCell, stamp,
             accordion: (id, active) => { st.accordion = id; st.accIndex = 0; st.accActive = active; },
             endAccordion: () => { st.accordion = ""; },
             quasarColor, icon, iconTag, tooltipTag, tonal, btnKind, js: js_, screenContext, numberCard, navCardOpen, navCardClose, chatter, recordFiles, splitOpen, htmlView, statusBar,
@@ -2465,7 +2474,7 @@
     // The code of one field of a form-single.
     // A field's source stamp (dev instances, plans/design-dev-aide.md F10): the form macros write a field's box or
     // cell themselves, so the field names its source to the render just before it.
-    const stampCode = (node) => (node.src ? `sri.stamp(${lit(node.src)});\n` : "");
+    const stampCode = (node) => (node.src ? `$v.stamp(${lit(node.src)});\n` : "");
 
     // ai-opt-out (design-people PE-21): a field's box and cell carry data-ai-opt-out="field", a section and a screen are in a
     // display:contents div with data-ai-opt-out="section" or "screen"; m-rich-text offers no text actions inside one, and
