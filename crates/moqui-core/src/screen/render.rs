@@ -268,6 +268,8 @@ impl ScreenRender {
         // a screen test's render is the thread's request for the code it runs, as a served request is
         if self.as_request {
             web::set_request(Arc::clone(&request), bytes::Bytes::new());
+            // its Range and conditional headers, as a served request's: a file answer reads them
+            web::set_conditional(&request);
         }
         let job = Job {
             request: &request,

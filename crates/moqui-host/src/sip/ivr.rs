@@ -408,6 +408,14 @@ pub(super) struct QueueCall {
 /// The ticks of a queue call that may fail in a row (the services unavailable for a moment) before the call ends.
 const MAX_TICK_FAILURES: u32 = 3;
 
+/// What a failed route does to a call: for one waiting in a queue whose ticks failed `failures` times in a row before
+/// this one, the count to try its tick again with; `None` ends the call (no queue, or [`MAX_TICK_FAILURES`] reached).
+fn tick_retry(queued: Option<&QueueCall>) -> Option<u32> {
+    queued
+        .map(|q| q.failures + 1)
+        .filter(|&failures| failures < MAX_TICK_FAILURES)
+}
+
 /// The audio at a location for the leg `leg` (the engine's key, whose owner says where its audio is, E12), 48 kHz
 /// mono; none when it is not set or does not read (logged).
 fn location_audio(
@@ -605,9 +613,10 @@ impl Engine {
                 let answer = out.get("answer").cloned().unwrap_or(Json::Null);
                 self.route_answer(leg, &answer);
             }
-            Err(err) if self.queued.get(leg).is_some_and(|q| q.failures + 1 < MAX_TICK_FAILURES) => {
+            Err(err) if tick_retry(self.queued.get(leg)).is_some() => {
                 let Some(call) = self.queued.get(leg) else { return };
-                let (entry, seconds, failures) = (call.entry.clone(), call.seconds, call.failures + 1);
+                let Some(failures) = tick_retry(Some(call)) else { return };
+                let (entry, seconds) = (call.entry.clone(), call.seconds);
                 tracing::error!("SIP leg {leg}: its queue tick failed ({failures} in a row), tried again: {err}");
                 self.arm_tick(leg, entry, seconds, failures);
             }

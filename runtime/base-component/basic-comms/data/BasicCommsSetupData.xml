@@ -29,4 +29,20 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="apply_ChatDndHours" description="Do not disturb hours of the chat users"
             serviceName="org.moqui.comms.ChatScreenServices.apply#DndHours" cronExpression="0 */5 * * * ?" paused="N"
             errorHistoryOnly="Y"/>
+
+    <!-- The suite shell's Comms values on the Quasar theme when BasicComms is the Comms app (docs/ui/Qvt-Client.md, "Shell data
+        and providers"): the tray's Chat and Dialer tabs, the header's Mail and Missed calls buttons and the counts of their
+        badges (CommsHomeServices.get#ShellCounts: mail, chat and missed calls). Each is a path under the apps root, sent only
+        to a user who may open it. An app suite that mounts these screens under its own root (IronStone BOSS's Comms) seeds
+        the same sequence numbers, so its values replace these. -->
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="301" resourceTypeEnumId="STRT_TRAY_CHAT"
+            resourceValue="BasicComms/Panel/Chat"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="320" resourceTypeEnumId="STRT_TRAY_DIALER"
+            resourceValue="BasicComms/Panel/Dialer"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="304" resourceTypeEnumId="STRT_MAIL_SCREEN"
+            resourceValue="BasicComms/Inbox"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="321" resourceTypeEnumId="STRT_CALLS_SCREEN"
+            resourceValue="BasicComms/Calls/History?outcome=missed"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="307" resourceTypeEnumId="STRT_SHELL_COUNTS_SERVICE"
+            resourceValue="org.moqui.comms.CommsHomeServices.get#ShellCounts"/>
 </entity-facade-xml>

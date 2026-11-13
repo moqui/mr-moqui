@@ -121,8 +121,15 @@ impl Limits {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Control {
     Pause,
-    Resume { period: u32 },
+    Resume {
+        period: u32,
+    },
     Stop,
+    /// The most the recording may hold from its start, lowered as the owner's drive fills (what was stored already and
+    /// the room left after it); never raised above the limit it started with.
+    Limit {
+        bytes: u64,
+    },
 }
 
 /// The recorders' control senders: unbounded, apart from the media queue, so a Pause, Resume or Stop is never dropped
@@ -207,6 +214,11 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
         "pause" => tell(&key, Control::Pause),
         "resume" => tell(&key, Control::Resume { period }),
         "stop" => tell(&key, Control::Stop),
+        "limit" => {
+            if let Some(bytes) = body.get("maxBytes").and_then(Json::as_u64) {
+                tell(&key, Control::Limit { bytes: bytes.max(1) });
+            }
+        }
         _ => {}
     }
 }
@@ -374,6 +386,7 @@ impl<S: Store> Session<S> {
                 self.ticked_ms = now_ms;
             }
             Control::Stop => return Ok(false),
+            Control::Limit { bytes } => self.recorder.lower_total_limit(bytes).map_err(ended)?,
         }
         self.flush().map(|()| true)
     }

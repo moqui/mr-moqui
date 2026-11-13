@@ -597,7 +597,9 @@ their `UserScreenTheme`, else a group's (`UserGroupScreenTheme`), else the type'
 type with `DEFAULT` in its id (`crates/moqui-core/src/screen/sri/theme.rs`).
 
 **A theme builds on a parent** (`ScreenTheme.parentScreenThemeId`), so a theme sets only what it changes and keeps what the apps seed
-on `DEFAULT_QUASAR` (BOSS's tray screens, counts service, record and contact hooks, logo):
+on `DEFAULT_QUASAR` (BOSS's tray screens, counts service, record and contact hooks, logo; without BOSS, basic-comms seeds the Chat
+and Dialer tray tabs, the Mail and Missed calls buttons and `org.moqui.comms.CommsHomeServices.get#ShellCounts` for mail, chat and
+missed calls, which BOSS's rows replace by their sequence numbers):
 - A resource type the theme has any row of is its own: its rows replace the parent's. So a theme's `STRT_STYLESHEET` list replaces the
   parent's style sheets (list the parent's it keeps), and one empty row hides a parent's value, such as a tray screen.
 - A type it has no row of comes from the parent, and so on up (at most 8 themes; a cycle is logged once and the chain ends there).

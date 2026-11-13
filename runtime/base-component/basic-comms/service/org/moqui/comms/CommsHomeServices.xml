@@ -20,6 +20,60 @@ along with this software (see the LICENSE.md file). If not, see
     its own; one that fails is logged by name, named in failedParts and left out, and the rest is answered. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
+    <service verb="get" noun="ShellCounts">
+        <description>The header badge counts of a user over what the framework holds, for the theme value
+            STRT_SHELL_COUNTS_SERVICE when BasicComms is the Comms app (BasicCommsSetupData.xml; an app suite replaces it with
+            its own, as IronStone BOSS does with mantle.party.PartyServices.get#ShellCounts, which adds today, notifications and
+            internal messages). counts: email (org.moqui.mail.EmailClientServices.count#UnreadEmail), chat
+            (org.moqui.chat.ChatServices.get#UnreadCounts total) and calls (org.moqui.call.CallServices.count#MissedCalls).
+            Each part stands alone: one that fails is logged by name, null in counts and named in failedParts. Another user's
+            counts only with authorization already disabled (internal work: publish#ShellCounts).</description>
+        <in-parameters><parameter name="userId"><description>Default the current user</description></parameter></in-parameters>
+        <out-parameters>
+            <parameter name="counts" type="Map">
+                <parameter name="email" type="Integer"/><parameter name="chat" type="Integer"/><parameter name="calls" type="Integer"/>
+            </parameter>
+            <parameter name="failedParts" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            counts = {}
+            failedParts = []
+            const currentUserId = ec.user.userId || null
+            if (!userId) userId = currentUserId
+            if (!userId) return
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                if (userId !== currentUserId && !wasDisabled) {
+                    ec.message.addError("Another user's shell counts are read only with authorization disabled")
+                    counts = null
+                    return
+                }
+                // each part in a transaction of its own; its errors are its own, and a failure leaves its count null
+                const part = (name, service, read) => {
+                    ec.message.pushErrors()
+                    try {
+                        const out = ec.service.sync().name(service).parameters({userId}).requireNewTransaction(true).call()
+                        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                        if (out == null) throw new Error(`${service} answered nothing`)
+                        counts[name] = read(out) ?? 0
+                    } catch (err) {
+                        counts[name] = null
+                        failedParts.push(name)
+                        ec.logger.error(`Shell counts of user ${userId}: the ${name} count failed and is left out: ${err && err.message ? err.message : err}`)
+                    } finally {
+                        ec.message.clearErrors()
+                        ec.message.popErrors()
+                    }
+                }
+                part('email', 'org.moqui.mail.EmailClientServices.count#UnreadEmail', (out) => out.unreadCount)
+                part('chat', 'org.moqui.chat.ChatServices.get#UnreadCounts', (out) => out.total)
+                part('calls', 'org.moqui.call.CallServices.count#MissedCalls', (out) => out.missedCount)
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="CommsHome">
         <description>Comms Home for the current user, over the user's mail and chat. cardList: the counters, each {key, title,
             value, icon, link}: one per mail account with its unread Inbox mail, Flagged, Snoozed (back by the end of today),

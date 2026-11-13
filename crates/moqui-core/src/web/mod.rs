@@ -397,6 +397,16 @@ pub(crate) fn resource_distinct_value() -> String {
         .clone()
 }
 
+/// The conditional and range headers of a request ([`crate::screen::static_files::Conditional`]) a file answer reads, for
+/// a request the host did not serve: a screen test's render with its own headers.
+pub(crate) fn set_conditional(request: &WebRequest) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.conditional = crate::screen::static_files::Conditional::of(request);
+        }
+    });
+}
+
 pub(crate) fn set_host(host: &str) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {

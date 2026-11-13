@@ -1451,15 +1451,28 @@ function revokeLink(p) {
   return { revoked: true }
 }
 
+/**
+ * Whether a call is being recorded, as a page may show it before its person is in the call (the notice of D-V5, in the
+ * lobby): {state: recording or paused, ackRequired}, or null. Nothing else of the recording.
+ */
+function lobbyRecording(callSessionId) {
+  if (!callSessionId) return null
+  const recording = Array.from(find('moqui.call.CallRecording').condition('callSessionId', callSessionId)
+    .condition('statusId', 'in', ['CrsRecording', 'CrsPaused']).orderBy('-startedDate').limit(1).list())[0]
+  return recording ? { state: recording.statusId === 'CrsRecording' ? 'recording' : 'paused', ackRequired: recording.ackRequired === 'Y' } : null
+}
+
 /** The token check of the /call/<token> route: what the public page may show of a link that works. */
 function checkToken(p) {
   const link = linkByToken(p.token)
   if (!link) return { valid: false, routeContext: null }
   const owner = userNames([link.ownerUserId])[link.ownerUserId] || null
+  const going = Array.from(find(SESSION).condition('callLinkId', link.callLinkId).condition('statusId', '!=', 'CssEnded')
+    .orderBy('-startedDate').limit(1).list())[0]
   return {
     valid: true,
     routeContext: { name: link.name, ownerName: owner, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby', video: link.video !== 'N',
-      encrypted: link.e2eeRequired === 'Y' },
+      encrypted: link.e2eeRequired === 'Y', recording: going ? lobbyRecording(going.callSessionId) : null },
   }
 }
 
@@ -1571,6 +1584,7 @@ function guestState(p) {
     callLegId: (legs.find((leg) => OPEN_LEG.includes(leg.statusId)) || {}).callLegId || null,
     callSessionId: g.participant.callSessionId,
     people: g.participant.admissionStatusId === 'CasAdmitted' ? admitted.map((x) => ({ displayName: x.displayName || names[x.userId] || '' })) : [],
+    recording: session && session.statusId !== 'CssEnded' ? lobbyRecording(session.callSessionId) : null,
   }
 }
 

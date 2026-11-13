@@ -557,6 +557,47 @@ fn a_segment_past_its_cap_is_cut_and_the_total_stops_the_recording() {
 }
 
 #[test]
+fn a_lowered_total_limit_stops_the_recording_there_and_a_higher_one_changes_nothing() {
+    let spool = MemorySpool::default();
+    let config = RecordConfig {
+        mix: false,
+        max_segment_bytes: 2_000,
+        max_total_bytes: 1_000_000,
+        ..RecordConfig::default()
+    };
+    let mut r = recorder(config, &spool);
+    let packet = vec![0xF8u8; 100];
+    for n in 0..20u64 {
+        r.event(n * 20, &audio("a", n * 960, &packet)).unwrap();
+    }
+    // the owner's drive filled meanwhile: a limit above what was recorded holds, and a higher one later is ignored
+    r.lower_total_limit(4_000).unwrap();
+    r.lower_total_limit(2_000_000).unwrap();
+    let mut error = None;
+    for n in 20..200u64 {
+        if let Err(err) = r.event(n * 20, &audio("a", n * 960, &packet)) {
+            error = Some(err);
+            break;
+        }
+    }
+    assert!(matches!(error, Some(RecordError::Limit)), "{error:?}");
+    let total: u64 = r.take_closed().iter().map(|s| s.bytes).sum();
+    assert!(total < 4_400, "{total}");
+    // a limit below what is recorded already ends it at once
+    let mut r = recorder(
+        RecordConfig {
+            mix: false,
+            ..RecordConfig::default()
+        },
+        &spool,
+    );
+    for n in 0..20u64 {
+        r.event(n * 20, &audio("b", n * 960, &packet)).unwrap();
+    }
+    assert!(matches!(r.lower_total_limit(10), Err(RecordError::Limit)));
+}
+
+#[test]
 fn a_video_cut_waits_for_a_keyframe_and_layers_switch_at_keyframes() {
     let spool = MemorySpool::default();
     let config = RecordConfig {

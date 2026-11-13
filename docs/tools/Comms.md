@@ -83,8 +83,8 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   gets audio only, and their tile says so. Going to another screen keeps the call in the small window at the bottom
   right. Calls lists the calls ringing now and the history (All, Missed, Placed, Answered) with Call back (an end-to-end
   encrypted call is called back encrypted); Home counts the missed calls until the Missed tab is opened, and so does the
-  header's Missed calls badge where the theme names its screen (`STRT_CALLS_SCREEN`; IronStone: Calls, Missed) and the
-  app's shell counts have `calls` (Mantle's).
+  header's Missed calls badge (the theme's `STRT_CALLS_SCREEN`, Calls, Missed, and the shell counts' `calls`: basic-comms
+  seeds both, with the tray's Chat and Dialer tabs and the Mail button, and IronStone's theme rows replace them).
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
@@ -116,8 +116,10 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   anyone in a call can press CC. Everyone in the call, including people who join later, sees that captions are on and
   which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
   they are unavailable and the call goes on. Captions are not kept unless the administrator asks for that
-  (`call_captions_store`). An end-to-end encrypted call has no captions. See [WebRTC, Captions](../interfaces/WebRTC.md#captions).
-- <a id="phone"></a>**Phone calls.** Calls, Dialer (also the tray's Dialer tab, in IronStone): type a number or
+  (`call_captions_store`). An end-to-end encrypted call has no captions. In the terminal a call shows whether captions
+  are on, who turned them on and which service hears them, with Turn on and Turn off; the lines show in the browser. See
+  [WebRTC, Captions](../interfaces/WebRTC.md#captions).
+- <a id="phone"></a>**Phone calls.** Calls, Dialer (also the tray's Dialer tab): type a number or
   use the keypad, or type a name to find a person with a number (the app's contacts, or here the people one of our
   numbers rings); the dialer shows the number as it will be called (with its country code), your recent numbers, and
   which of your numbers (or your ring groups') calls from; Hide my number withholds it. Calls, Call a number does the

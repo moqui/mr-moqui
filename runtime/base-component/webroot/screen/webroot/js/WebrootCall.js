@@ -1628,7 +1628,9 @@
         props: { base: String, link: { type: Object, default: () => ({}) } },
         data() {
             return { call: state, name: "", phase: "lobby", credential: null, callSessionId: null, callLegId: null, preview: null,
-                people: [], poll: null, error: "", busy: false, video: this.link.video !== false };
+                people: [], poll: null, error: "", busy: false, video: this.link.video !== false,
+                // the notice before joining (D-V5): whether the call is being recorded, from the token check, then the lobby's
+                lobbyRecording: this.link.recording || null };
         },
         computed: {
             inCall() { return this.call.current && this.call.current === this.callSessionId; },
@@ -1636,7 +1638,10 @@
             // live captions (W6): a guest gets the notice and the lines as every leg does, by its socket
             captionNotice() { return captionNotice(this.call.captions); },
             rec() { return this.callSessionId ? this.call.recordingOf[this.callSessionId] || null : null; },
-            recording() { return this.rec ? this.rec.recording : null; },
+            recording() {
+                if (this.rec && this.rec.recording) return this.rec.recording;
+                return this.phase === "lobby" || this.phase === "waiting" ? this.lobbyRecording : null;
+            },
             needsAck() { const r = this.rec; return !!(r && r.recording && r.recording.ackRequired && !(r.myConsent && r.myConsent.acknowledged)); },
             withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); },
             gridStyle() {
@@ -1685,6 +1690,7 @@
                 this.post("recordingState", { credential: this.credential }).then((json) => call.noteRecording(this.callSessionId, json), () => null);
                 this.post("guestState", { credential: this.credential }).then((json) => {
                     this.people = json.people || [];
+                    this.lobbyRecording = json.recording || null;
                     if (json.admission === "admitted" && this.phase === "waiting") {
                         clearInterval(this.poll);
                         this.enter();
@@ -1730,7 +1736,7 @@
             '<q-banner v-if="error" dense rounded class="m-tonal text-negative">{{error}}</q-banner>' +
             '<q-banner v-if="recording" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" :color="recording.state === \'recording\' ? \'negative\' : \'warning\'"></q-icon></template>' +
             '<div class="text-weight-medium">{{moquiRecordingText(recording)}}</div>' +
-            '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
+            '{{phase === \'lobby\' || phase === \'waiting\' ? (recording.ackRequired ? t(\'This call is being recorded. Once you are in, you are asked to acknowledge it.\') : t(\'This call is being recorded. Joining it is consent.\')) : withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
             '<template v-if="phase === \'in\'" v-slot:action><q-btn v-if="needsAck || withdrawn" flat no-caps color="primary" :label="withdrawn ? t(\'Consent again\') : t(\'Acknowledge\')" @click="recAction(\'ackRecording\')"></q-btn>' +
             '<q-btn v-if="!withdrawn" flat no-caps color="negative" :label="t(\'Withdraw consent\')" @click="recAction(\'withdrawRecording\')"></q-btn></template></q-banner>' +
             // the lobby: name, preview, join

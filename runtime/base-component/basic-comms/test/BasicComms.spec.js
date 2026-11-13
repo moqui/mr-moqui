@@ -534,3 +534,27 @@ feature("out of office retains user-zone date strings and supplies instants to t
         }
     }
 })
+
+feature("the framework's shell counts give the user's unread mail, chat and missed calls, as the shell calls them; another user's are refused", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.spec")
+        // the shell calls the theme's counts service with authorization disabled, for the current user
+        const mine = sys(() => ec.service.sync().name("org.moqui.comms.CommsHomeServices.get#ShellCounts").call()) || {}
+        let otherErrors = ""
+        try {
+            ec.service.sync().name("org.moqui.comms.CommsHomeServices.get#ShellCounts").parameter("userId", "EX_JOHN_DOE").call()
+            otherErrors = ec.message.errorsString
+        } catch (err) {
+            otherErrors = String(err.message || err)
+        }
+        ec.message.clearErrors()
+        login("john.doe")
+        return {mine, otherErrors}
+    },
+    then({mine, otherErrors}) {
+        Object.keys(mine.counts).sort().join() == "calls,chat,email"
+        Object.values(mine.counts).every(value => typeof value == "number")
+        mine.failedParts.length == 0
+        otherErrors != ""
+    }
+})

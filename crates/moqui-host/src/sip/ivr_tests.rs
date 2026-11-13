@@ -256,3 +256,20 @@ fn a_transfer_that_is_over_leaves_the_leg_where_it_is_now() {
     let routed = expired_route("L1", Ok(voicemail.clone())).expect("routed");
     assert_eq!(routed, Ok(voicemail));
 }
+
+#[test]
+fn a_queue_calls_failed_tick_is_tried_again_until_the_failures_in_a_row_reach_the_limit() {
+    let waiting = |failures| QueueCall {
+        entry: "E1".to_string(),
+        generation: 1,
+        seconds: 5,
+        failures,
+    };
+    // a call in no queue is not tried again: its failed route ends it
+    assert_eq!(tick_retry(None), None);
+    // a first and a second failure in a row are tried again, counted
+    assert_eq!(tick_retry(Some(&waiting(0))), Some(1));
+    assert_eq!(tick_retry(Some(&waiting(1))), Some(2));
+    // the third in a row ends the call
+    assert_eq!(tick_retry(Some(&waiting(MAX_TICK_FAILURES - 1))), None);
+}

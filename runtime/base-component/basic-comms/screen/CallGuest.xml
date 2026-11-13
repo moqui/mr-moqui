@@ -42,7 +42,8 @@ along with this software (see the LICENSE.md file). If not, see
             const out = check.valid ? ec.service.sync().name('org.moqui.call.CallServices.get#GuestState').parameter('credential', credential || '')
                 .requireNewTransaction(true).call() || {} : {admission: 'gone'}
             ec.message.clearErrors()
-            ec.web.sendJsonResponse({admission: out.admission || 'gone', callStatus: out.callStatus || null, people: out.people || []})
+            ec.web.sendJsonResponse({admission: out.admission || 'gone', callStatus: out.callStatus || null, people: out.people || [],
+                recording: out.recording || null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

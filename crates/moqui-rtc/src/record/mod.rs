@@ -426,6 +426,14 @@ impl<S: Spool> Recorder<S> {
         self.check_total()
     }
 
+    /// Lowers the most the recording may hold from its start ([`RecordConfig::max_total_bytes`]) to `bytes`, as the
+    /// owner's drive fills; a higher value changes nothing. Past it already, the recording ends at once with
+    /// [`RecordError::Limit`], as at its size limit.
+    pub fn lower_total_limit(&mut self, bytes: u64) -> Result<(), RecordError> {
+        self.config.max_total_bytes = self.config.max_total_bytes.min(bytes);
+        self.check_total()
+    }
+
     /// Pauses: every open segment closes, and frames are dropped until [`Recorder::resume`].
     pub fn pause(&mut self, now_ms: u64) -> Result<(), RecordError> {
         if self.paused {

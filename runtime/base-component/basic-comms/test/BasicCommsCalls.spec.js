@@ -172,10 +172,11 @@ feature("a user who is not in the call is refused what works for john.doe, throu
     }
 })
 
-feature("the terminal twin shows the call and leaves it", {
+feature("the terminal twin shows the call, its captions with Turn on while the policy allows them, and leaves it", {
     when() {
         login("john.doe")
-        const shown = sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/CallTui", {callSessionId: callId}, null))
+        const shown = withProperty("call_captions_enabled", "true", () =>
+            sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/CallTui", {callSessionId: callId}, null)))
         const text = String(shown.output || "")
         ec.message.clearErrors()
         request(root, "Calls/CallTui/leave", {callSessionId: callId}, "post")
@@ -185,6 +186,8 @@ feature("the terminal twin shows the call and leaves it", {
     then({text, after}) {
         text.includes("not live in the terminal")
         text.includes("Calls basic.comms.caller")
+        text.includes("Captions are off")
+        text.includes("Turn on captions")
         after.call.status == "ended"
     }
 })
@@ -289,17 +292,26 @@ feature("Recordings lists a recording for its owner, and its file is nothing for
         const tuiText = String(tui.output || "")
         ec.message.clearErrors()
         const owner = request(root, "Calls/Recordings/recordingFile", file, null)
+        // a player seeking: one byte range of the file, 206 with its Content-Range
+        const ranged = sys(() => ec.screen.makeTest().rootScreen(root).header("Range", "bytes=2-5").render("Calls/Recordings/recordingFile", file, null))
+        const rangedOut = {status: ranged.status, output: String(ranged.output || ""), contentRange: ranged.header("Content-Range"),
+            acceptRanges: owner.status == 200 ? sys(() => ec.screen.makeTest().rootScreen(root).render("Calls/Recordings/recordingFile", file, null)).header("Accept-Ranges") : null}
+        ec.message.clearErrors()
         ec.user.internalLoginUser("basic.comms.call.stranger")
         const stranger = request(root, "Calls/Recordings/recordingFile", file, null)
         const strangerList = request(root, "Calls/Recordings/recordings", {}, null).json
         login("john.doe")
         const member = request(root, "Calls/Recordings/recordingFile", file, null)
-        return {list, tuiText, owner, stranger, strangerList, member}
+        return {list, tuiText, owner, rangedOut, stranger, strangerList, member}
     },
-    then({list, tuiText, owner, stranger, strangerList, member}) {
+    then({list, tuiText, owner, rangedOut, stranger, strangerList, member}) {
         list.recordingList.some(r => r.callRecordingId == "BCC_SPEC_REC" && r.canDelete && r.periods.length == 1)
         tuiText.includes("They play in the browser")
         owner.output.includes("OggS-spec")
+        rangedOut.status == 206
+        rangedOut.output == "gS-s"
+        rangedOut.contentRange == "bytes 2-5/9"
+        rangedOut.acceptRanges == "bytes"
         Object.keys(stranger.json || {nothing: true}).length == 0
         !stranger.output.includes("OggS")
         Object.keys(member.json || {nothing: true}).length == 0

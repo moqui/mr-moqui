@@ -1,3 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd"
-        name="basic-comms" version="${moqui_version}"/>
+        name="basic-comms" version="${moqui_version}">
+    <!-- after webroot: the Comms shell values of BasicCommsSetupData.xml go on webroot's Quasar theme -->
+    <depends-on name="webroot"/>
+</component>

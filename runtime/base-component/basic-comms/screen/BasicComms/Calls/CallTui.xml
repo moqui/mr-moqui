@@ -16,7 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     sees it (org.moqui.call.CallServices get#Call: not found for a call they may not see): its state, kind and start, and its
     people with whether each is in it or ringing; Answer and Decline while it rings for the user, Leave while they are in
     it. Its media encryption (W8): an end-to-end encrypted call shows so, and each person's encryption device (the roster
-    the browsers send their keys to); the terminal does not answer one, as it cannot encrypt media. -->
+    the browsers send their keys to); the terminal does not answer one, as it cannot encrypt media. Live captions (W6): whether
+    they are on, who turned them on and who transcribes them (CallCaptionServices get#CaptionState), with Turn on and Turn
+    off for a person in the call; the lines themselves are the browser's, as they come with the call's media. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Call" default-menu-include="false">
 
@@ -34,6 +36,17 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="leave">
         <actions><script>ec.service.sync().name('org.moqui.call.CallServices.leave#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."><parameter name="callSessionId"/></default-response>
+        <error-response url="."><parameter name="callSessionId"/></error-response>
+    </transition>
+
+    <transition name="startCaptions">
+        <actions><script>ec.service.sync().name('org.moqui.call.CallCaptionServices.start#Captions').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."><parameter name="callSessionId"/></default-response>
+        <error-response url="."><parameter name="callSessionId"/></error-response>
+    </transition>
+    <transition name="stopCaptions">
+        <actions><script>ec.service.sync().name('org.moqui.call.CallCaptionServices.stop#Captions').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."><parameter name="callSessionId"/></default-response>
         <error-response url="."><parameter name="callSessionId"/></error-response>
     </transition>
@@ -59,6 +72,25 @@ along with this software (see the LICENSE.md file). If not, see
         canAnswer = !!call && call.status !== 'ended' && call.myLegStatus === 'offered' && !encrypted
         mustUseBrowser = !!call && call.status !== 'ended' && call.myLegStatus === 'offered' && encrypted
         canLeave = !!call && call.status !== 'ended' && call.myLegStatus === 'answered'
+        // W6: the call's captions, as the user in it sees them
+        const captionOut = call && call.status !== 'ended' ? ec.service.sync().name('org.moqui.call.CallCaptionServices.get#CaptionState')
+            .parameter('callSessionId', callSessionId).requireNewTransaction(true).disableAuthz().call() || {} : {}
+        ec.message.clearErrors()
+        const captions = captionOut.captions || null
+        captionsShown = !!captions && captions.allowed === true
+        captionsOn = captionsShown && captions.on === true
+        let starter = ''
+        if (captionsOn && captions.startedByUserId) {
+            const account = ec.entity.find('moqui.security.UserAccount').condition('userId', captions.startedByUserId).disableAuthz().one()
+            starter = account ? account.userFullName || account.username || '' : ''
+        }
+        const by = captions && captions.local ? L('transcribed on this server')
+            : ec.resource.expand('transcribed by ${provider}', '', {provider: (captions && captions.providerLabel) || L('the speech service')})
+        captionsText = !captionsShown ? '' : captionsOn
+            ? L('Captions are on') + (starter ? ' (' + ec.resource.expand('turned on by ${name}', '', {name: starter}) + ')' : '') + ': ' + by
+                + '. ' + L('The lines show in the browser.')
+            : L('Captions are off')
+        canCaptions = captionsShown && canLeave
     ]]></script></actions>
 
     <widgets>
@@ -70,6 +102,13 @@ along with this software (see the LICENSE.md file). If not, see
             <label type="p" text="A call is not live in the terminal; open it in the browser to talk." style="m-muted"/>
             <section name="UseBrowser" condition="mustUseBrowser"><widgets>
                 <label type="p" text="This call is end-to-end encrypted: answer it in a browser that can encrypt call media." style="text-warning"/>
+            </widgets></section>
+            <section name="Captions" condition="captionsShown"><widgets>
+                <label type="p" text="${captionsText}"/>
+                <section name="CaptionsToggle" condition="canCaptions"><widgets>
+                    <link url="startCaptions" text="Turn on captions" icon="sym_o_closed_caption" condition="!captionsOn"><parameter name="callSessionId"/></link>
+                    <link url="stopCaptions" text="Turn off captions" icon="sym_o_closed_caption_disabled" condition="captionsOn"><parameter name="callSessionId"/></link>
+                </widgets></section>
             </widgets></section>
             <form-list name="People" list="peopleList" skip-form="true">
                 <field name="name"><default-field title="Person"><display/></default-field></field>

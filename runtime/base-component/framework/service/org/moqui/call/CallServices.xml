@@ -370,7 +370,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="CallLinkToken" authenticate="anonymous-all">
         <description>The token check of the /call/&lt;token&gt; route (the token-route in basic-comms MoquiConf): valid when the
             token names a link that is not revoked or expired. routeContext is what the guest page may show: the link's
-            name, its owner's name, the policy and whether it has video. Nothing else is read for a bad token.</description>
+            name, its owner's name, the policy, whether it has video, and whether its meeting is being recorded (recording:
+            state and ackRequired, the notice before joining). Nothing else is read for a bad token.</description>
         <in-parameters>
             <parameter name="token" required="true"/>
             <parameter name="routeName"/>
@@ -403,8 +404,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="GuestState" authenticate="anonymous-all">
         <description>What a guest's page may know, by its credential: admission (waiting, admitted, denied, revoked; gone for
-            a credential that no longer works), the call's status, the guest's leg, and once admitted the names of those
-            in the call. Nothing of the room or its history.</description>
+            a credential that no longer works), the call's status, the guest's leg, whether the call is being recorded
+            (recording: state and ackRequired, also in the lobby, so a guest is told before being let in), and once admitted
+            the names of those in the call. Nothing of the room or its history.</description>
         <in-parameters>
             <parameter name="credential" required="true"/>
         </in-parameters>
@@ -414,6 +416,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callSessionId"/>
             <parameter name="callLegId"/>
             <parameter name="people" type="List"/>
+            <parameter name="recording" type="Map"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('guestState', context))</script></actions>
     </service>

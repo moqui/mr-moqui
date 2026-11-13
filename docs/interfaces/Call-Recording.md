@@ -83,8 +83,10 @@ call goes on.
 it count them (`get#RecordingBytes`). A host whose drive is full cannot start a recording (`quotaFull`). One that
 starts gets what is left as its recorder's limit (`maxBytes`), where it stops as at `call_recording_max_mb`; and a
 stored segment that fills the drive (its other files grew meanwhile) stops it, "the drive quota of its owner is full".
-A drive with no quota limits nothing. The last segment may pass the quota by up to a segment of each track
-(`call_recording_segment_mb`).
+After each stored segment the recorder is told the room left (`op: limit`, `maxBytes`: what the recording stored and
+what the drive has left after it; never above the limit it started with), so files added to the drive during the call
+stop it within a segment. A drive with no quota limits nothing. The open segments may pass the quota by what the drive
+gained since the last segment was stored, at most a segment of each track (`call_recording_segment_mb`).
 
 ## The notice and consent
 
@@ -126,8 +128,9 @@ A drive with no quota limits nothing. The last segment may pass the quota by up 
 - **Record** (start, pause, resume, stop): a host of the call, that is its starter, or the owner of the call link it
   was opened by.
 - **Play, download and list:** the one who recorded it and the call's hosts. `find#Recordings` lists only those, and
-  `get#RecordingFile` serves one segment by its id; anyone else gets "not found" for the same id. A guest is told of
-  the recording once let in, not in the lobby, which shows a waiting guest nothing of the call. No route serves the
+  `get#RecordingFile` serves one segment by its id; anyone else gets "not found" for the same id. A guest is told the
+  call is being recorded before joining and while waiting in the lobby (`check#CallLinkToken` and `get#GuestState`
+  answer `recording`: its state and whether acknowledgement is required, nothing else), and gets the rest once let in. No route serves the
   `dbresource://` locations to users, and an app's record links (BOSS) go through these services and never widen this.
 - **Delete:** the one who recorded it, once it is not going (`delete#Recording`): its files and rows, its transcripts (`CallTranscript`) too.
 - **Acknowledge or withdraw:** each leg for itself; a guest by the credential of its page.

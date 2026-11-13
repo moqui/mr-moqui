@@ -563,7 +563,8 @@ function storeSegment(p) {
     track.update()
   }
   // the owner's drive quota, with this file: a recording that filled it stops (its recorder's maxBytes is the first stop;
-  // this one holds when the drive's other files grew meanwhile)
+  // this one holds when the drive's other files grew meanwhile). Else the recorder is told the room left now, so files
+  // added to the drive since the start stop it within a segment
   if (ACTIVE.includes(recording.statusId)) {
     const left = quotaLeft(recording.ownerUserId)
     if (left != null && left <= 0) {
@@ -571,6 +572,17 @@ function storeSegment(p) {
       if (locked && ACTIVE.includes(locked.statusId)) {
         stopRecording(locked, ec.l10n.localize('The recording stopped: the drive quota of its owner is full'), false)
         ec.logger.warn(`Call recording ${recording.callRecordingId} stopped: the drive quota of ${recording.ownerUserId} is full`)
+      }
+    } else if (left != null) {
+      // the recorder counts this recording's bytes from its start: what it stored already, and the room left after it
+      let stored = 0
+      for (const row of find(SEGMENT).condition('callRecordingId', recording.callRecordingId).selectField('byteSize').list()) {
+        stored += Number(row.byteSize || 0)
+      }
+      try {
+        control(recording, 'limit', { maxBytes: stored + left })
+      } catch (err) {
+        ec.logger.warn(`Call recording ${recording.callRecordingId}: its recorder was not told the quota left: ${err && err.message ? err.message : err}`)
       }
     }
   }

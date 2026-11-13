@@ -173,6 +173,53 @@ feature("a late joiner gets the notice when its leg is bound, logged for its leg
     }
 })
 
+// a guest's page, signed in as no one (the /call/<token> route's transitions)
+function anon(name, parameters) {
+    ec.user.logoutUser()
+    let out = {}
+    let thrown = ""
+    try {
+        out = ec.service.sync().name(name).parameters(parameters || {}).call() || {}
+    } catch (err) {
+        thrown = String(err.message || err)
+    }
+    const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+    ec.message.clearErrors()
+    return Object.assign({errors}, out)
+}
+
+feature("a guest is told of the recording before joining and while waiting in the lobby, and reads nothing more of it", {
+    when() {
+        const link = as(A, calls("create#CallLink"), {name: "Recorded meeting", policy: "lobby"})
+        const quiet = anon(calls("check#CallLinkToken"), {token: link.token})
+        const opened = as(A, calls("open#CallLink"), {callLinkId: link.callLinkId})
+        as(A, calls("bind#Connection"), {callSessionId: opened.callSessionId, callLegId: opened.callLegId})
+        const started = as(A, "start#Recording", {callSessionId: opened.callSessionId})
+        const before = anon(calls("check#CallLinkToken"), {token: link.token})
+        const guest = anon(calls("join#AsGuest"), {token: link.token, displayName: "Visitor"})
+        const waiting = anon(calls("get#GuestState"), {credential: guest.credential})
+        const detail = anon("org.moqui.call.CallRecordingServices.get#RecordingState", {credential: guest.credential})
+        as(A, "stop#Recording", {callSessionId: opened.callSessionId})
+        const stopped = anon(calls("get#GuestState"), {credential: guest.credential})
+        as(A, calls("end#Call"), {callSessionId: opened.callSessionId})
+        return {quiet, started, before, guest, waiting, detail, stopped}
+    },
+    then({quiet, started, before, guest, waiting, detail, stopped}) {
+        quiet.valid == true
+        quiet.routeContext.recording == null
+        started.errors == ""
+        before.routeContext.recording.state == "recording"
+        before.routeContext.recording.ackRequired == false
+        Object.keys(before.routeContext.recording).sort().join() == "ackRequired,state"
+        guest.admission == "waiting"
+        waiting.admission == "waiting"
+        waiting.recording.state == "recording"
+        waiting.people.length == 0
+        detail.reasonCode == "notFound"
+        stopped.recording == null
+    }
+})
+
 feature("under the acknowledgement policy the recording waits for every current leg, and each resume is a new period", {
     when() {
         const stopped = as(A, "stop#Recording", {callSessionId: callId})
