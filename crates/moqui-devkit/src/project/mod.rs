@@ -23,7 +23,7 @@ pub mod cache;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use moqui_core::context::{BootOptions, ExecutionContextFactory};
+use moqui_core::context::{layout, BootOptions, ExecutionContextFactory};
 use moqui_lib::error::Error;
 use serde::Serialize;
 
@@ -78,7 +78,7 @@ impl Project {
         match self.layout {
             Layout::Mr => Ok(ModelDirs {
                 runtime: self.runtime.clone(),
-                framework: self.runtime.join("base-component/framework"),
+                framework: layout::framework_dir(&self.runtime),
                 framework_component: None,
             }),
             Layout::Java => {
@@ -163,10 +163,7 @@ pub fn detect_java(dir: &Path) -> Result<Project, Error> {
             dir.display()
         )));
     };
-    if checkout
-        .join("runtime/base-component/framework/component.xml")
-        .is_file()
-    {
+    if checkout.join(layout::REPO_FRAMEWORK).join("component.xml").is_file() {
         return Err(Error::new(format!(
             "{} is an MR Moqui clone (runtime/base-component/framework), not a Java Moqui checkout",
             checkout.display()
@@ -225,7 +222,7 @@ fn has_sources(dir: &Path, depth: u32, budget: &mut u32) -> bool {
 fn mr_runtime(dir: &Path) -> Option<PathBuf> {
     [dir.join("runtime"), dir.to_path_buf()]
         .into_iter()
-        .find(|runtime| runtime.join("base-component/framework/component.xml").is_file())
+        .find(|runtime| layout::framework_dir(runtime).join("component.xml").is_file())
 }
 
 fn canonical_dir(dir: &Path) -> Result<PathBuf, Error> {

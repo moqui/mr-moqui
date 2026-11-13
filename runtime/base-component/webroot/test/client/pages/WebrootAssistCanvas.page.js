@@ -27,7 +27,7 @@ test("the library spec is what the component declarations make (UPDATE: node -e 
 });
 
 test("the skill gives every signature", async () => {
-    const skill = await (await fetch("/files/runtime/base-component/framework/skill/openui-lang.md")).text();
+    const skill = await (await fetch("/files/component/framework/skill/openui-lang.md")).text();
     canvas.library.forEach((def) => assert.ok(skill.includes(canvas.signature(def.name)), canvas.signature(def.name)));
 });
 

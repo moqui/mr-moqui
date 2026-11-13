@@ -498,10 +498,8 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
             "no client spec has server: false".to_string()
         } else {
             format!(
-                "no {tree}/*.spec.js files under {}/base-component, {}/component or {}/dev-component",
-                runtime.display(),
-                runtime.display(),
-                runtime.display()
+                "no {tree}/*.spec.js files in the components of {}",
+                crate::test_cmd::set_dirs_text(runtime)
             )
         }));
     }
@@ -666,7 +664,7 @@ fn default_out_dir(runtime: &Path) -> PathBuf {
         jiff::Zoned::now().strftime("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    if runtime.join("base-component").is_dir() {
+    if moqui_core::context::layout::is_runtime(runtime) {
         runtime.join("tmp/test-client").join(run)
     } else {
         PathBuf::from("test-client-out").join(run)

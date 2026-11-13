@@ -534,7 +534,7 @@ fn out_location(runtime: &Path, out: Option<&Path>) -> Result<Out, Error> {
             run_id: None,
         });
     }
-    let root = if runtime.join("base-component").is_dir() {
+    let root = if moqui_core::context::layout::is_runtime(runtime) {
         runtime.join("tmp/test-load")
     } else {
         PathBuf::from("test-load-out")

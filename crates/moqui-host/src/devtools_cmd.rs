@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use moqui_core::context::ExecutionContextFactory;
+use moqui_core::context::{layout, ExecutionContextFactory};
 use moqui_devkit::index::{Direction, MemoryIndex};
 use moqui_devkit::{check, Problem, Severity};
 use moqui_lib::error::Error;
@@ -341,7 +341,7 @@ fn detected_java_checkout() -> Option<moqui_devkit::project::Project> {
         return java_checkout(Path::new(&runtime));
     }
     let cwd = std::env::current_dir().ok()?;
-    if cwd.join("runtime/base-component/framework/component.xml").is_file() {
+    if cwd.join(layout::REPO_FRAMEWORK).join("component.xml").is_file() {
         return None;
     }
     cwd.ancestors().find_map(java_checkout)
@@ -366,12 +366,7 @@ fn mr_framework_for(configured: Option<PathBuf>, exe: Option<&Path>) -> Option<P
     let exe_dir = exe?.parent()?;
     exe_dir
         .ancestors()
-        .flat_map(|dir| {
-            [
-                dir.join("base-component/framework"),
-                dir.join("runtime/base-component/framework"),
-            ]
-        })
+        .flat_map(|dir| [layout::framework_dir(dir), dir.join(layout::REPO_FRAMEWORK)])
         .find(|dir| is_framework(dir))
 }
 

@@ -957,11 +957,8 @@ fn clone_repository(
     {
         return Err(LibError::new(format!("{name} is not a component directory name")));
     }
-    let parent = context.factory.runtime_dir().join(if flag(parameters, "dev") {
-        "dev-component"
-    } else {
-        "component"
-    });
+    let parent =
+        moqui_core::context::layout::set_dir(context.factory.runtime_dir(), crate::workspace::placed_set(parameters));
     std::fs::create_dir_all(&parent).map_err(|err| LibError::new(format!("{}: {err}", parent.display())))?;
     if parent.join(&name).exists() {
         return Err(LibError::new(format!(

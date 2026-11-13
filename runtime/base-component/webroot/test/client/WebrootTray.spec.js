@@ -7,5 +7,5 @@ spec({ server: false, timeout: 60 })
 browser.runInPage({
     styles: ["/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css"],
     scripts: ["/libs/vue/vue.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootFloats.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootTray.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootTray.page.js",
 })

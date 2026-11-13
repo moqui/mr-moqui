@@ -4,7 +4,7 @@ spec({ server: false, timeout: 60 })
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.views.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.views.page.js",
 })
 
 // From WebrootVue.qvt.htmlview.spec.js, merged here to share a spec run.
@@ -13,5 +13,5 @@ browser.runInPage({
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.htmlview.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.htmlview.page.js",
 })

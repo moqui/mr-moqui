@@ -4,5 +4,5 @@ spec({ server: false, timeout: 60 })
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.shell.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.shell.page.js",
 })

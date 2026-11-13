@@ -103,6 +103,12 @@ if [ -n "${MOQUI_RUNTIME:-}" ]; then
 else
     RUNTIME_DIR=$ROOT/runtime
 fi
+# The runtime's component sets, relative to the runtime, in load order (plans/Components-Dir.md; the Rust side is
+# crates/moqui-core/src/context/layout.rs). Each task names a set by these, so a change of layout is made here.
+BASE_SET=base-component
+ADDON_SET=component
+DEV_SET=dev-component
+COMPONENT_SETS=("$BASE_SET" "$ADDON_SET" "$DEV_SET")
 if [ -n "${MOQUI_FRAMEWORK:-}" ]; then
     MOQUI_FRAMEWORK=$(abs_path "$MOQUI_FRAMEWORK")
     export MOQUI_FRAMEWORK
@@ -1435,11 +1441,11 @@ build_binary() {
     local -a addons
     local addon
     while IFS= read -r addon; do addons+=("$addon"); done \
-        < <(component_crate_dirs "$RUNTIME_DIR/component" "$RUNTIME_DIR/ecomponent")
+        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/ecomponent")
     # A dev component crate other than the framework's own (which crates/moqui links) needs the generated crate too.
     while IFS= read -r addon; do
         framework_dev_crate "$addon" || { addons+=("$addon"); }
-    done < <(component_crate_dirs "$ROOT/runtime/dev-component")
+    done < <(component_crate_dirs "$ROOT/runtime/$DEV_SET")
     if [ ${#addons[@]} -eq 0 ]; then
         run_cmd cargo build "${package_args[@]}" -p moqui "$@" >&2 || die "cargo build failed"
         return
@@ -1482,7 +1488,7 @@ component_crate_dirs() {
 # by crates/moqui under its devtools feature.
 framework_dev_crate() {
     case $1 in
-        "$ROOT/runtime/dev-component/dev-aide" | "$ROOT/runtime/dev-component/example") return 0 ;;
+        "$ROOT/runtime/$DEV_SET/dev-aide" | "$ROOT/runtime/$DEV_SET/example") return 0 ;;
     esac
     return 1
 }
@@ -1517,17 +1523,17 @@ write_app_crate() {
     local app=$1 dir package deps="" uses="" unoptimized="" crate tui_features= devtools_features=
     shift
     local -a dirs
-    while IFS= read -r dir; do dirs+=("$dir"); done < <(component_crate_dirs "$ROOT/runtime/base-component")
+    while IFS= read -r dir; do dirs+=("$dir"); done < <(component_crate_dirs "$ROOT/runtime/$BASE_SET")
     while IFS= read -r dir; do
         framework_dev_crate "$dir" && dirs+=("$dir")
-    done < <(component_crate_dirs "$ROOT/runtime/dev-component")
+    done < <(component_crate_dirs "$ROOT/runtime/$DEV_SET")
     dirs+=("$@")
     for dir in "${dirs[@]}"; do
         package=$(crate_package_name "$dir")
         [ -n "$package" ] || die "$(rel "$dir")/Cargo.toml has no [package] name"
         unoptimized+=$'\n'"[profile.dev.package.$package]"$'\n'"opt-level = 0"$'\n'"debug = true"$'\n'
         case $dir in
-            "$ROOT/runtime/dev-component/"*)
+            "$ROOT/runtime/$DEV_SET/"*)
                 deps+="$package = { path = \"$dir\", optional = true }"$'\n'
                 devtools_features+=", \"dep:$package\""
                 uses+="#[cfg(feature = \"devtools\")]"$'\n'"use ${package//-/_} as _;"$'\n'
@@ -1729,10 +1735,10 @@ task_desktop() {
     local addon
     addons=()
     while IFS= read -r addon; do addons+=("$addon"); done \
-        < <(component_crate_dirs "$RUNTIME_DIR/component" "$RUNTIME_DIR/ecomponent")
+        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/ecomponent")
     while IFS= read -r addon; do
         framework_dev_crate "$addon" || { addons+=("$addon"); }
-    done < <(component_crate_dirs "$ROOT/runtime/dev-component")
+    done < <(component_crate_dirs "$ROOT/runtime/$DEV_SET")
     write_app_crate "$ROOT/target/moqui-app" ${addons[@]+"${addons[@]}"}
     local app=$ROOT/crates/moqui-desktop
     if [ ! -f "$app/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$app/Cargo.lock" ]; then
@@ -2184,7 +2190,7 @@ stage_desktop_sidecar() {
 # webroot/libs/<id>. Both apps carry it: a desktop bundle in its resources (target/desktop-shell), the mobile app
 # embedded as its Tauri assets (target/mobile-shell, its frontendDist).
 stage_client_shell() {
-    local stage=$1 webroot=$ROOT/runtime/base-component/webroot/screen/webroot lib
+    local stage=$1 webroot=$ROOT/runtime/$BASE_SET/webroot/screen/webroot lib
     need_tool rsync
     # the libraries of shell/libs.txt only: one dropped from the list goes from the stage too
     run_cmd rm -rf -- "${stage:?}/webroot/libs"
@@ -2411,10 +2417,10 @@ framework_suites() {
     client=()
     while IFS= read -r name; do
         [ "$name" = demo ] || server+=("$name")
-    done < <(spec_components test base-component dev-component)
+    done < <(spec_components test "$BASE_SET" "$DEV_SET")
     while IFS= read -r name; do
         client+=("$name")
-    done < <(served_components test/client base-component dev-component)
+    done < <(served_components test/client "$BASE_SET" "$DEV_SET")
     need_cargo
     suite "cargo test --workspace" cargo test --workspace
     suite "scripts/moq-test.sh" bash scripts/moq-test.sh
@@ -2424,8 +2430,8 @@ framework_suites() {
     suite "moqui test demo" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild -D demo_disabled=false demo
     # the binary is built by now. Offline specs open no server; --serve runs the suites that declare one.
     suite "moqui test-client webroot --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- webroot --offline
-    suite "moqui test-client runtime/dev-component/dev-aide --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" \
-        --nobuild -- runtime/dev-component/dev-aide --offline
+    suite "moqui test-client runtime/$DEV_SET/dev-aide --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" \
+        --nobuild -- "runtime/$DEV_SET/dev-aide" --offline
     if [ ${#client[@]} -gt 0 ]; then
         suite "moqui test-client --serve (framework)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
             "${client[@]}"
@@ -2441,10 +2447,10 @@ apps_suites() {
     client=()
     while IFS= read -r name; do
         server+=("$name")
-    done < <(spec_components test component)
+    done < <(spec_components test "$ADDON_SET")
     while IFS= read -r name; do
         client+=("$name")
-    done < <(served_components test/client component)
+    done < <(served_components test/client "$ADDON_SET")
     if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ]; then
         info "No application component under runtime/component has specs."
         return 0
@@ -2518,7 +2524,8 @@ in_names() {
 # has_spec_file <tree> <component>: whether the component's <tree> holds one of the ACCEPT_SPECS files.
 has_spec_file() {
     local tree=$1 name=$2 d spec
-    for d in "$RUNTIME_DIR"/*/*/; do
+    local set
+    for set in "${COMPONENT_SETS[@]}"; do for d in "$RUNTIME_DIR/$set"/*/; do
         [ -f "${d}component.xml" ] && [ "$(component_name_of "${d%/}")" = "$name" ] || continue
         for spec in ${ACCEPT_SPECS//,/ }; do
             if [ "$tree" = acceptance ]; then
@@ -2527,7 +2534,7 @@ has_spec_file() {
                 [ -z "$(find "${d}$tree" -name "$spec.spec.js" -print -quit 2>/dev/null)" ] || return 0
             fi
         done
-    done
+    done; done
     return 1
 }
 
@@ -2548,17 +2555,17 @@ accept_suites() {
         [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance "$name" || continue
         server+=("$name")
         [ "$name" != demo ] || demo=(-D demo_disabled=false)
-    done < <(spec_components acceptance base-component component dev-component)
+    done < <(spec_components acceptance "${COMPONENT_SETS[@]}")
     while IFS= read -r name; do
         in_names "$name" || continue
         [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
         client+=("$name")
-    done < <(served_components acceptance/client base-component component dev-component)
+    done < <(served_components acceptance/client "${COMPONENT_SETS[@]}")
     while IFS= read -r name; do
         in_names "$name" || continue
         [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
         offline+=("$name")
-    done < <(offline_components acceptance/client base-component component dev-component)
+    done < <(offline_components acceptance/client "${COMPONENT_SETS[@]}")
     if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ] && [ ${#offline[@]} -eq 0 ]; then
         info "No acceptance specs${ACCEPT_SPECS:+ named $ACCEPT_SPECS} in ${ACCEPT_NAMES[*]:-any component}."
         return 0
@@ -3752,7 +3759,7 @@ git_repos() {
     if [ -e "$RUNTIME_DIR/.git" ] && [ "$RUNTIME_DIR" != "$ROOT" ]; then
         printf '%s\n' "$RUNTIME_DIR"
     fi
-    for dir in "$RUNTIME_DIR"/base-component/* "$RUNTIME_DIR"/component/* "$RUNTIME_DIR"/dev-component/*; do
+    for dir in "$RUNTIME_DIR"/$BASE_SET/* "$RUNTIME_DIR"/$ADDON_SET/* "$RUNTIME_DIR"/$DEV_SET/*; do
         if [ -d "$dir" ] && [ -e "$dir/.git" ]; then
             printf '%s\n' "$dir"
         fi
@@ -4099,11 +4106,11 @@ component_name_of() {
 # one whose component.xml has that name.
 component_dir_named() {
     local dir
-    if [ -e "$RUNTIME_DIR/component/$1" ]; then
-        printf '%s\n' "$RUNTIME_DIR/component/$1"
+    if [ -e "$RUNTIME_DIR/$ADDON_SET/$1" ]; then
+        printf '%s\n' "$RUNTIME_DIR/$ADDON_SET/$1"
         return 0
     fi
-    for dir in "$RUNTIME_DIR"/component/*; do
+    for dir in "$RUNTIME_DIR"/$ADDON_SET/*; do
         if [ -f "$dir/component.xml" ] && [ "$(component_name_of "$dir")" = "$1" ]; then
             printf '%s\n' "$dir"
             return 0
@@ -4115,7 +4122,7 @@ component_dir_named() {
 # $1 the component, $2 the location type, $3 the component directory it goes in (runtime/component unless --dev; the
 # components it depends on always go in runtime/component).
 component_get_one() {
-    local name type=$2 element target base=${3:-$RUNTIME_DIR/component}
+    local name type=$2 element target base=${3:-$RUNTIME_DIR/$ADDON_SET}
     name=$(addons_name_for "$1")
     case $COMPONENTS_CHECKED in *" $name "*) return 0 ;; esac
     element=$(addons_find component "$name") || die "component $name is not in myaddons.xml or addons.xml"
@@ -4136,7 +4143,7 @@ component_get_one() {
 # A depends-on names a component by its component.xml name, which for a fork is not always its directory (a depends-on
 # shop finds the fork in my-shop).
 component_check_depends() {
-    local name=$1 type=$2 dir=${3:-$RUNTIME_DIR/component/$1} dep dep_dir line
+    local name=$1 type=$2 dir=${3:-$RUNTIME_DIR/$ADDON_SET/$1} dep dep_dir line
     case $COMPONENTS_CHECKED in *" $name "*) return 0 ;; esac
     COMPONENTS_CHECKED="$COMPONENTS_CHECKED$name "
     [ -f "$dir/component.xml" ] || return 0
@@ -4167,11 +4174,11 @@ components_checked_summary() {
 parse_component_args() {
     LOCATION_TYPE=$(default_location_type)
     REPOSITORY=
-    COMPONENT_BASE=$RUNTIME_DIR/component
+    COMPONENT_BASE=$RUNTIME_DIR/$ADDON_SET
     COMPONENT_ARGS=()
     while [ $# -gt 0 ]; do
         case $1 in
-            --dev) COMPONENT_BASE=$RUNTIME_DIR/dev-component ;;
+            --dev) COMPONENT_BASE=$RUNTIME_DIR/$DEV_SET ;;
             -t | --type)
                 [ $# -ge 2 ] || die "$1 needs a type"
                 LOCATION_TYPE=$2
@@ -4235,7 +4242,7 @@ component_set_get() {
 
 component_dirs() {
     local dir
-    for dir in "$RUNTIME_DIR"/component/*; do
+    for dir in "$RUNTIME_DIR"/$ADDON_SET/*; do
         if [ -f "$dir/component.xml" ]; then
             printf '%s\n' "$dir"
         fi
@@ -4289,7 +4296,7 @@ template_name() {
 # @component@.
 component_template() {
     local dir
-    for dir in "$RUNTIME_DIR/dev-component/$1" "$RUNTIME_DIR/component/$1"; do
+    for dir in "$RUNTIME_DIR/$DEV_SET/$1" "$RUNTIME_DIR/$ADDON_SET/$1"; do
         if [ -f "$dir/component.xml" ] && grep -q 'name="@component@"' "$dir/component.xml"; then
             printf '%s\n' "$dir"
             return 0
@@ -4301,7 +4308,7 @@ component_template() {
 # The templates for --from completion.
 component_template_names() {
     local dir
-    for dir in "$RUNTIME_DIR"/dev-component/*/ "$RUNTIME_DIR"/component/*/; do
+    for dir in "$RUNTIME_DIR"/$DEV_SET/*/ "$RUNTIME_DIR"/$ADDON_SET/*/; do
         grep -qs 'name="@component@"' "${dir}component.xml" && basename "$dir"
     done
 }
@@ -4317,10 +4324,10 @@ template_part_files() {
 
 task_component_create() {
     local name='' from=template part='' remote='' no_git='' group='' template target file dir base new branch
-    local component_base=$RUNTIME_DIR/component
+    local component_base=$RUNTIME_DIR/$ADDON_SET
     while [ $# -gt 0 ]; do
         case $1 in
-            --dev) component_base=$RUNTIME_DIR/dev-component ;;
+            --dev) component_base=$RUNTIME_DIR/$DEV_SET ;;
             --from)
                 [ $# -ge 2 ] || die "--from needs a template name"
                 from=$2
@@ -4439,10 +4446,10 @@ task_component_zip() {
         while IFS= read -r dir; do
             dirs+=("$dir")
         done < <(component_dirs)
-        [ ${#dirs[@]} -gt 0 ] || die "no components with a component.xml in $(rel "$RUNTIME_DIR/component")"
+        [ ${#dirs[@]} -gt 0 ] || die "no components with a component.xml in $(rel "$RUNTIME_DIR/$ADDON_SET")"
     else
         for name in "$@"; do
-            dir=$RUNTIME_DIR/component/$name
+            dir=$RUNTIME_DIR/$ADDON_SET/$name
             [ -f "$dir/component.xml" ] || die "no component.xml in $(rel "$dir")"
             dirs+=("$dir")
         done
@@ -4452,12 +4459,12 @@ task_component_zip() {
         element=$(xml_elements "$dir/component.xml" component | head -n 1)
         cname=$(xml_attr "$element" name)
         version=$(xml_attr "$element" version)
-        zip=$RUNTIME_DIR/component/${cname:-$name}${version:+-$version}.zip
+        zip=$RUNTIME_DIR/$ADDON_SET/${cname:-$name}${version:+-$version}.zip
         if [ -e "$zip" ]; then
             rm_path "$zip"
         fi
         if dry_run; then
-            show_cmd cd "$RUNTIME_DIR/component"
+            show_cmd cd "$RUNTIME_DIR/$ADDON_SET"
         fi
         # A Rust component (a Cargo.toml) ships its source, which the binary is built from; a Java one leaves it out.
         local -a leave_out
@@ -4466,7 +4473,7 @@ task_component_zip() {
         else
             leave_out=("$name/src/*")
         fi
-        (cd "$RUNTIME_DIR/component" && run_cmd zip -qr "$zip" "$name" \
+        (cd "$RUNTIME_DIR/$ADDON_SET" && run_cmd zip -qr "$zip" "$name" \
             -x "$name/.git" "$name/.git/*" "$name/build/*" "${leave_out[@]}" "$name/librepo/*" "$name/build.gradle" \
             "*/.DS_Store" "*~") || die "zip failed for $name"
         info "Created $(rel "$zip")"
@@ -4643,7 +4650,7 @@ task_archive() {
         entries+=("$name/$base")
     done
     excludes=("$name/db/install" "$name/db/install/*" "$name/opensearch/logs/*" "$name/opensearch/pid"
-        "*/postmaster.pid" "*/.git" "*/.git/*" "$name/component/*/target/*" "$name/ecomponent/*/target/*" "*/.venv/*"
+        "*/postmaster.pid" "*/.git" "*/.git/*" "$name/$ADDON_SET/*/target/*" "$name/ecomponent/*/target/*" "*/.venv/*"
         "*/__pycache__/*" "*/.DS_Store" "*~")
     [ -z "$no_data" ] || excludes+=("$name/opensearch/data/*")
 
@@ -4844,17 +4851,17 @@ conf_names() {
 }
 
 data_types() {
-    local framework=${MOQUI_FRAMEWORK:-$RUNTIME_DIR/base-component/framework}
+    local framework=${MOQUI_FRAMEWORK:-$RUNTIME_DIR/$BASE_SET/framework}
     {
         echo all
-        find "$framework/data" "$RUNTIME_DIR"/base-component/*/data "$RUNTIME_DIR"/component/*/data \
+        find "$framework/data" "$RUNTIME_DIR"/$BASE_SET/*/data "$RUNTIME_DIR"/$ADDON_SET/*/data \
             -name '*.xml' -type f -exec grep -hoE '<entity-facade-xml[^>]*type="[^"]*"' {} + 2>/dev/null |
             sed -E 's/.*type="([^"]*)".*/\1/' | tr ',' '\n' | sed 's/^ *//;s/ *$//'
     } | grep -v '^$' | sort -u
 }
 
 property_names() {
-    local framework=${MOQUI_FRAMEWORK:-$RUNTIME_DIR/base-component/framework}
+    local framework=${MOQUI_FRAMEWORK:-$RUNTIME_DIR/$BASE_SET/framework}
     grep -ho '<default-property name="[^"]*"' "$framework/conf/MoquiDefaultConf.xml" 2>/dev/null |
         sed 's/.*name="\([^"]*\)"/\1=/' | sort -u
 }
@@ -4870,7 +4877,7 @@ save_names() {
 # Components with server specs, in runtime/base-component, runtime/component and runtime/dev-component; not a template,
 # whose name is a placeholder (runtime/dev-component/template).
 test_components() {
-    spec_components test base-component component dev-component
+    spec_components test "${COMPONENT_SETS[@]}"
 }
 
 # spec_component_dirs <tree> <parent...>: the directories under runtime/<parent> of the components with a *.spec.js
@@ -4935,7 +4942,7 @@ git_refs() {
 
 # Components with client specs, in runtime/base-component, runtime/component and runtime/dev-component.
 client_test_components() {
-    spec_components test/client base-component component dev-component
+    spec_components test/client "${COMPONENT_SETS[@]}"
 }
 
 # Candidate lists below come from $(...) and are split on purpose: names hold no spaces or glob characters.
@@ -5056,7 +5063,7 @@ complete_task() {
         desktop) filter_prefix "$cur" dev build --release ;;
         android) filter_prefix "$cur" emulator init dev build --release --window ;;
         test-all | test-apps | test-framework) filter_prefix "$cur" --lite --debug --release --enterprise --nobuild ;;
-        accept) filter_prefix "$cur" $(spec_components acceptance base-component component dev-component) --spec --junit \
+        accept) filter_prefix "$cur" $(spec_components acceptance "${COMPONENT_SETS[@]}") --spec --junit \
             --lite --debug --release --enterprise --nobuild ;;
         accept-all) filter_prefix "$cur" --junit --lite --debug --release --enterprise --nobuild ;;
         autodoc)

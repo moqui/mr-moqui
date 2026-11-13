@@ -64,7 +64,7 @@ fn roots() -> Roots {
         return roots;
     }
     Roots {
-        framework: fallback_root().join("runtime/base-component/framework"),
+        framework: fallback_root().join(super::layout::REPO_FRAMEWORK),
         components: Vec::new(),
     }
 }
@@ -125,13 +125,16 @@ fn component_root(roots: &Roots, name: &str) -> Option<PathBuf> {
     if let Some((_, location)) = roots.components.iter().find(|(known, _)| known == name) {
         return Some(location.clone());
     }
-    // Not discovered. The framework component lives in runtime/base-component, beside tools and
-    // webroot, and app components live in runtime/component. An external framework directory whose
-    // parent is still the install root keeps the older runtime/component lookup.
+    // Not discovered. The framework component lives in the base set, beside tools and webroot, and the
+    // other components in the runtime's other sets (context::layout).
     let parent = roots.framework.parent()?;
-    let mut candidates = vec![parent.join(name), parent.join("runtime/component").join(name)];
+    let mut candidates = vec![parent.join(name)];
     if let Some(runtime) = parent.parent() {
-        candidates.insert(1, runtime.join("component").join(name));
+        candidates.extend(
+            super::layout::Set::ALL
+                .iter()
+                .map(|set| super::layout::set_dir(runtime, *set).join(name)),
+        );
     }
     candidates.into_iter().find(|path| path.is_dir())
 }

@@ -24,6 +24,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use moqui_core::context::layout;
 use moqui_devkit::testkit::SpecFile;
 use moqui_lib::error::Error;
 use moqui_llm::testkit::agents::{self, AgentSpecFile, EvalOptions, Mode, TaskOutcome, TaskResult};
@@ -80,17 +81,12 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
     }
     if components.is_empty() {
         return Err(Error::new(format!(
-            "no test/agent/*.agent.js files under {}/component, {}/base-component or {}/dev-component",
-            runtime.display(),
-            runtime.display(),
-            runtime.display()
+            "no test/agent/*.agent.js files in the components of {}",
+            super::set_dirs_text(runtime)
         )));
     }
     // a dev component's agents run on a dev instance, where it loads (plans/design-dev-aide.md 3.1)
-    if components
-        .iter()
-        .any(|component| component.dir.starts_with(runtime.join("dev-component")))
-        && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty()
+    if super::needs_dev_purpose(runtime, &components) && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty()
     {
         moqui_lib::env::set_property("instance_purpose", "dev");
     }
@@ -289,49 +285,37 @@ pub(super) fn llm_settings(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The components under `runtime/base-component`, `runtime/component` and `runtime/dev-component` with
-/// `test/agent/*.agent.js` files, their specs by file name.
+/// The components in the runtime's component sets with `test/agent/*.agent.js` files, their specs by file name.
 fn discover(runtime: &Path) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
-    for parent in ["base-component", "component", "dev-component"] {
-        let Ok(entries) = std::fs::read_dir(runtime.join(parent)) else {
+    for (_, dir) in layout::component_dirs(runtime, &layout::Set::ALL) {
+        let agent_dir = dir.join("test/agent");
+        let Ok(files) = std::fs::read_dir(&agent_dir) else {
             continue;
         };
-        let mut dirs: Vec<PathBuf> = entries
+        let name = super::component_name(&dir);
+        let mut paths: Vec<PathBuf> = files
             .flatten()
             .map(|entry| entry.path())
-            .filter(|dir| dir.is_dir())
+            .filter(|path| path.to_string_lossy().ends_with(".agent.js"))
             .collect();
-        dirs.sort();
-        for dir in dirs {
-            let agent_dir = dir.join("test/agent");
-            let Ok(files) = std::fs::read_dir(&agent_dir) else {
-                continue;
-            };
-            let name = super::component_name(&dir);
-            let mut paths: Vec<PathBuf> = files
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| path.to_string_lossy().ends_with(".agent.js"))
-                .collect();
-            paths.sort();
-            let mut specs = Vec::new();
-            for path in paths {
-                let file_name = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let source = std::fs::read_to_string(&path)
-                    .map_err(|err| Error::new(format!("could not read {}", path.display())).with_source(err))?;
-                specs.push(SpecFile {
-                    name: file_name.trim_end_matches(".agent.js").to_string(),
-                    display: format!("{name}/test/agent/{file_name}"),
-                    source,
-                });
-            }
-            if !specs.is_empty() {
-                found.push(TestComponent { name, dir, specs });
-            }
+        paths.sort();
+        let mut specs = Vec::new();
+        for path in paths {
+            let file_name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let source = std::fs::read_to_string(&path)
+                .map_err(|err| Error::new(format!("could not read {}", path.display())).with_source(err))?;
+            specs.push(SpecFile {
+                name: file_name.trim_end_matches(".agent.js").to_string(),
+                display: format!("{name}/test/agent/{file_name}"),
+                source,
+            });
+        }
+        if !specs.is_empty() {
+            found.push(TestComponent { name, dir, specs });
         }
     }
     Ok(found)

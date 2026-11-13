@@ -167,28 +167,30 @@ fn io(context: &str) -> impl Fn(std::io::Error) -> Error + '_ {
     move |err| Error::new(context.to_string()).with_source(err)
 }
 
-/// A scratch runtime under `/tmp` (the Postgres socket path must stay under 108 bytes): `conf` copied, and
-/// `base-component`, `dev-component`, each component, the instance `MoquiConf.xml`, the shared Postgres install and the
-/// downloaded Chromium linked.
+/// A scratch runtime under `/tmp` (the Postgres socket path must stay under 108 bytes): `conf` copied, and the component
+/// sets (`context::layout`; the add-on set component by component), the instance `MoquiConf.xml`, the shared Postgres
+/// install and the downloaded Chromium linked.
 fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
+    use moqui_core::context::layout::{self, Set};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
     let scratch = PathBuf::from("/tmp").join(format!("mt-{}-{nanos:x}", std::process::id()));
-    std::fs::create_dir_all(scratch.join("component")).map_err(io("could not create the scratch runtime"))?;
+    std::fs::create_dir_all(layout::set_dir(&scratch, Set::Addon))
+        .map_err(io("could not create the scratch runtime"))?;
     std::fs::create_dir_all(scratch.join("db")).map_err(io("could not create the scratch db directory"))?;
     copy_files(&runtime.join("conf"), &scratch.join("conf"))?;
-    link(&runtime.join("base-component"), &scratch.join("base-component"))?;
-    // the dev components, which load on a dev instance
-    if runtime.join("dev-component").is_dir() {
-        link(&runtime.join("dev-component"), &scratch.join("dev-component"))?;
-    }
-    if let Ok(entries) = std::fs::read_dir(runtime.join("component")) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                link(&entry.path(), &scratch.join("component").join(entry.file_name()))?;
+    for set in Set::ALL {
+        let dir = layout::set_dir(runtime, set);
+        if set == Set::Addon {
+            for (_, component) in layout::component_dirs(runtime, &[set]) {
+                if let Some(name) = component.file_name() {
+                    link(&component, &layout::set_dir(&scratch, set).join(name))?;
+                }
             }
+        } else if dir.is_dir() {
+            link(&dir, &layout::set_dir(&scratch, set))?;
         }
     }
     // The real runtime's install, after any move from where an earlier build put it.

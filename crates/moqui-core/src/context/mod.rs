@@ -25,6 +25,7 @@ pub mod conf_reload;
 mod confcache;
 mod factory;
 pub(crate) mod identity;
+pub mod layout;
 mod locate;
 mod message;
 mod resource;

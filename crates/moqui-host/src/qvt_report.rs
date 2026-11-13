@@ -63,22 +63,23 @@ pub(crate) fn model_only_factory(runtime: &Path, framework: &Path) -> Result<Arc
     Ok(factory)
 }
 
-/// Component directories whose screens are scanned: `base-component`, `component`, and each component in
-/// `dev-component` but a template, whose names are placeholders (`runtime/dev-component/template`). The framework
-/// directory is included when it sits outside `base-component` and `component`, so an external `MOQUI_FRAMEWORK` is
-/// scanned once along with the runtime components.
+/// Component directories whose screens are scanned: each component set's directory (`context::layout`), but of the
+/// dev set each component but a template, whose names are placeholders (the dev set's `template`). The framework
+/// directory is included when it sits outside them, so an external `MOQUI_FRAMEWORK` is scanned once along with the
+/// runtime components.
 pub(crate) fn component_roots(runtime: &Path, framework: &Path) -> Vec<PathBuf> {
-    let mut roots = vec![runtime.join("base-component"), runtime.join("component")];
-    let mut dev: Vec<PathBuf> = std::fs::read_dir(runtime.join("dev-component"))
-        .map(|dir| {
-            dir.flatten()
-                .map(|entry| entry.path())
-                .filter(|path| scanned_component(path))
-                .collect()
-        })
-        .unwrap_or_default();
-    dev.sort();
-    roots.extend(dev);
+    use moqui_core::context::layout::{self, Set};
+    let mut roots: Vec<PathBuf> = Set::ALL
+        .iter()
+        .filter(|set| **set != Set::Dev)
+        .map(|set| layout::set_dir(runtime, *set))
+        .collect();
+    roots.extend(
+        layout::component_dirs(runtime, &[Set::Dev])
+            .into_iter()
+            .map(|(_, dir)| dir)
+            .filter(|path| scanned_component(path)),
+    );
     if !roots.iter().any(|root| framework.starts_with(root)) {
         roots.insert(0, framework.to_path_buf());
     }

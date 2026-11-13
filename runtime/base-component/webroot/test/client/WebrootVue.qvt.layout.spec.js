@@ -4,7 +4,7 @@ spec({ server: false, timeout: 60 })
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.layout.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.layout.page.js",
 })
 
 feature("the tray fits its layout when a scrollbar reduces the available width", {

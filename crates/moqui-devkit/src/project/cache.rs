@@ -388,16 +388,10 @@ pub fn parameters_of(def: &moqui_core::service::define::ServiceDef) -> serde_jso
 /// `component.xml` and `MoquiConf.xml`), the runtime's conf files and the framework component of a Java checkout.
 fn structure(project: &Project, factory: &ExecutionContextFactory) -> BTreeMap<PathBuf, Option<Stamp>> {
     let mut found = BTreeMap::new();
-    let mut dirs: Vec<PathBuf> = ["base-component", "component", "dev-component"]
-        .iter()
-        .flat_map(|kind| {
-            std::fs::read_dir(project.runtime.join(kind))
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| path.is_dir())
-        })
+    let sets = &moqui_core::context::layout::Set::ALL;
+    let mut dirs: Vec<PathBuf> = moqui_core::context::layout::component_dirs(&project.runtime, sets)
+        .into_iter()
+        .map(|(_, dir)| dir)
         .collect();
     dirs.extend(factory.components().iter().map(|component| component.location.clone()));
     let known: HashSet<PathBuf> = dirs.drain(..).collect();

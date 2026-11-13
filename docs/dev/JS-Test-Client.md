@@ -165,8 +165,9 @@ Chromium's pages load at `https://moqui.test`. Nothing listens: the browser asks
 
 | Path | File |
 |---|---|
-| `/js`, `/css`, `/libs` | `runtime/base-component/webroot/screen/webroot` |
-| `/files/<repo-relative>` | the repository, read-only; a `..` segment is a 404 |
+| `/js`, `/css`, `/libs` | the webroot component's `screen/webroot` |
+| `/files/component/<name>/<path>` | a file of the component `<name>`, wherever its set keeps it, read-only; a `..` segment or a path outside the component is a 404. The form a spec uses for a component's own files (`/files/component/webroot/screen/webroot/js/...`, `/files/component/mr-boss/screen/...`) |
+| `/files/<repo-relative>` | the repository, read-only; a `..` segment is a 404. For files outside a component (`/files/crates/moqui-lib/testdata/...`) |
 | `/favicon.ico` | an empty 204, because the browser asks for one |
 
 `files.read` stays inside the spec's component. Fetch runs only for `https://moqui.test`, and only on an offline page.

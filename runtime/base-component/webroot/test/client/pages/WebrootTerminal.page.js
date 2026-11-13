@@ -187,7 +187,7 @@ test("the terminal's components and the Terminal screen compile", async () => {
         assert.deepEqual(errors, [], name)
     }
     for (const name of ["m-terminal-view", "m-terminal-node", "m-terminal-copy"]) compile(name, moqui.qvtComponents[name].template)
-    const source = await fetch("/files/runtime/base-component/webroot/screen/webroot/apps/Terminal.qvue").then(response => response.text())
+    const source = await fetch("/files/component/webroot/screen/webroot/apps/Terminal.qvue").then(response => response.text())
     const screen = moqui.parseVue(source)
     compile("Terminal.qvue", screen.template)
     for (const id of ["TerminalNew", "TerminalSessionsToggle", "TerminalSettingsOpen", "TerminalSessions"]) assert.ok(screen.template.includes('id="' + id + '"'), id)

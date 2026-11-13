@@ -126,7 +126,9 @@ fn shell_assets(dev: bool, resources: &Path) -> Assets {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         Assets::new(
             crate_dir.join("shell"),
-            crate_dir.join("../../runtime/base-component/webroot/screen/webroot"),
+            crate_dir
+                .join("../..")
+                .join(moqui_core::context::layout::REPO_WEBROOT_FILES),
         )
     } else {
         Assets::staged(resources)

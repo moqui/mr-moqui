@@ -3,5 +3,5 @@ spec({ server: false, timeout: 60 })
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/MoquiLib.page.js",
+    test: "/files/component/webroot/test/client/pages/MoquiLib.page.js",
 })

@@ -26,24 +26,16 @@ use super::TestArgs;
 /// The recall@3 a component's set needs.
 const MIN_RECALL: f64 = 0.9;
 
-/// The component directories under `base-component` and `component`, the framework first, each with its name.
+/// The component directories of the sets that load on every instance purpose (`context::layout`), the framework first,
+/// each with its name.
 fn component_dirs(runtime: &Path, framework: &Path) -> Vec<(String, PathBuf)> {
+    use moqui_core::context::layout::{self, Set};
     let mut dirs: Vec<(String, PathBuf)> = vec![("framework".to_string(), framework.to_path_buf())];
-    for parent in ["base-component", "component"] {
-        let Ok(entries) = std::fs::read_dir(runtime.join(parent)) else {
-            continue;
-        };
-        let mut found: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|dir| dir.is_dir())
-            .collect();
-        found.sort();
-        for dir in found {
-            let same = |known: &PathBuf| std::fs::canonicalize(known).ok() == std::fs::canonicalize(&dir).ok();
-            if !dirs.iter().any(|(_, known)| same(known)) {
-                dirs.push((super::component_name(&dir), dir));
-            }
+    let sets: Vec<Set> = Set::ALL.into_iter().filter(|set| !set.is_restricted()).collect();
+    for (_, dir) in layout::component_dirs(runtime, &sets) {
+        let same = |known: &PathBuf| std::fs::canonicalize(known).ok() == std::fs::canonicalize(&dir).ok();
+        if !dirs.iter().any(|(_, known)| same(known)) {
+            dirs.push((super::component_name(&dir), dir));
         }
     }
     dirs

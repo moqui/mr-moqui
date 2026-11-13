@@ -2,5 +2,5 @@
 spec({ server: false, timeout: 60 })
 browser.runInPage({
     scripts: ["/libs/vue/vue.runtime.global.prod.js", "/js/MoquiLib.js", "/libs/chartjs/chart.umd.min.js", "/js/WebrootReport.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootReport.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootReport.page.js",
 })

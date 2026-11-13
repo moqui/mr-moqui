@@ -10,7 +10,7 @@ const ops = moqui.devAide.serviceOps;
 const el = (name, path, attrs, children, text) => ({ name, path, attrs: attrs || [], children: children || [], text });
 
 test("each sentence's chips are attributes the XSD gives its element", async () => {
-    const response = await fetch("/files/runtime/base-component/framework/xsd/xml-actions-3.xsd");
+    const response = await fetch("/files/component/framework/xsd/xml-actions-3.xsd");
     const xsd = new DOMParser().parseFromString(await response.text(), "application/xml");
     const NS = "http://www.w3.org/2001/XMLSchema";
     const elements = {};

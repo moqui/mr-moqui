@@ -4,10 +4,10 @@ spec({ server: false, timeout: 60 })
 
 browser.runInPage({
     scripts: [
-        "/files/runtime/base-component/webroot/test/client/pages/moqui-html-module.js",
+        "/files/component/webroot/test/client/pages/moqui-html-module.js",
         "/js/moqui-html.js",
     ],
-    test: "/files/runtime/base-component/webroot/test/client/pages/moqui-html.page.js",
+    test: "/files/component/webroot/test/client/pages/moqui-html.page.js",
 })
 
 // From Dialog.spec.js, merged here to share a spec run.

@@ -45,7 +45,7 @@ pub(crate) fn runtime_dir(app: &AppHandle) -> Option<PathBuf> {
 
 /// The `<client-conf>` of the merged conf of `runtime`; the defaults when there is none, or the conf cannot be read.
 pub(crate) fn read(runtime: &Path) -> ClientConf {
-    let framework = runtime.join("base-component/framework");
+    let framework = moqui_core::context::layout::framework_dir(runtime);
     if !framework.join("conf/MoquiDefaultConf.xml").is_file() {
         tracing::warn!(
             "No framework conf in {}: the client's settings are the defaults",

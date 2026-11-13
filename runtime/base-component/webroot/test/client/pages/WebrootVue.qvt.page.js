@@ -68,7 +68,7 @@ test("every component has a template that compiles", () => {
 test("the components the macros write are all defined", async () => {
     const used = new Set();
     for (const file of ["ScreenQvt.js", "ScreenQvtStatic.js"]) {
-        const macros = await (await fetch("/files/runtime/base-component/framework/template/screen/" + file)).text();
+        const macros = await (await fetch("/files/component/framework/template/screen/" + file)).text();
         for (const match of macros.matchAll(/<(m-[a-z-]+)/g)) used.add(match[1]);
     }
     // m-box-body and the like are written through a string that holds the whole tag

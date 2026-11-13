@@ -15,7 +15,8 @@
 //! The local origin of an offline client spec (`spec({ server: false })`, plans/archive/NodeDependency.md).
 //!
 //! Pages open at [`ORIGIN`]. Nothing listens: the browser's Fetch domain asks here, and the answer is the file or a
-//! 404. `/js`, `/css` and `/libs` are the webroot. `/files/<repo-relative>` is the repo, read-only. A `..` segment is a
+//! 404. `/js`, `/css` and `/libs` are the webroot. `/files/component/<name>/<path>` is a file of the component `<name>`
+//! of the runtime, wherever its set keeps it, and `/files/<repo-relative>` the repo, both read-only. A `..` segment is a
 //! 404. `/favicon.ico` is an empty 204, because the browser asks for one on its own.
 
 use std::path::{Path, PathBuf};
@@ -26,10 +27,12 @@ pub const ORIGIN: &str = "https://moqui.test";
 /// Where an offline page's URLs are read from.
 #[derive(Clone, Debug)]
 pub struct Roots {
-    /// `runtime/base-component/webroot/screen/webroot`.
+    /// The webroot component's `screen/webroot`.
     pub webroot: PathBuf,
     /// The repo root, parent of `runtime` when `crates/` is there.
     pub repo: PathBuf,
+    /// The runtime's components by name, for `/files/component/<name>/...`.
+    pub components: Vec<(String, PathBuf)>,
 }
 
 /// One fulfilled response.
@@ -44,16 +47,22 @@ impl Roots {
     /// The webroot under `runtime`, and the repo that contains it.
     pub fn from_runtime(runtime: &Path) -> Self {
         let runtime = std::fs::canonicalize(runtime).unwrap_or_else(|_| runtime.to_path_buf());
-        let webroot = runtime.join("base-component/webroot/screen/webroot");
+        let webroot = moqui_core::context::layout::set_dir(&runtime, moqui_core::context::layout::Set::Base)
+            .join("webroot/screen/webroot");
         let repo = runtime
             .parent()
             .filter(|parent| parent.join("crates").is_dir() || parent.join("Cargo.toml").is_file())
             .unwrap_or(&runtime)
             .to_path_buf();
         let canon = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+        let components = moqui_core::context::layout::component_dirs(&runtime, &moqui_core::context::layout::Set::ALL)
+            .into_iter()
+            .map(|(_, dir)| (crate::test_cmd::component_name(&dir), canon(dir)))
+            .collect();
         Self {
             webroot: canon(webroot),
             repo: canon(repo),
+            components,
         }
     }
 }
@@ -91,13 +100,8 @@ pub fn answer(roots: &Roots, url: &str, content: Option<&[u8]>) -> Answer {
             body: Vec::new(),
         };
     }
-    let Some(file) = mapped(roots, &path) else {
+    let Some((root, file)) = mapped(roots, &path) else {
         return not_found();
-    };
-    let root = if path.starts_with("/files/") {
-        &roots.repo
-    } else {
-        &roots.webroot
     };
     let (Ok(root), Ok(file)) = (std::fs::canonicalize(root), std::fs::canonicalize(&file)) else {
         return not_found();
@@ -136,13 +140,17 @@ fn request_path(url: &str) -> Option<String> {
     Some(rest.to_string())
 }
 
-/// The file for a path on the origin, or none when it leaves the two trees.
-fn mapped(roots: &Roots, path: &str) -> Option<PathBuf> {
+/// The root a path on the origin is served from and its file, or none when it names no root or leaves its root.
+fn mapped<'a>(roots: &'a Roots, path: &str) -> Option<(&'a Path, PathBuf)> {
     let rel = path.trim_start_matches('/');
-    if let Some(rest) = rel.strip_prefix("files/") {
-        under(&roots.repo, rest)
+    if let Some(rest) = rel.strip_prefix("files/component/") {
+        let (name, rest) = rest.split_once('/')?;
+        let (_, dir) = roots.components.iter().find(|(known, _)| known == name)?;
+        Some((dir, under(dir, rest)?))
+    } else if let Some(rest) = rel.strip_prefix("files/") {
+        Some((&roots.repo, under(&roots.repo, rest)?))
     } else if rel.starts_with("js/") || rel.starts_with("css/") || rel.starts_with("libs/") {
-        under(&roots.webroot, rel)
+        Some((&roots.webroot, under(&roots.webroot, rel)?))
     } else {
         None
     }
@@ -198,7 +206,19 @@ mod tests {
         std::fs::write(webroot.join("css/moqui-html.css"), b"body{color:red}").unwrap();
         std::fs::write(repo.join("crates/moqui-lib/testdata/format-vectors.json"), b"[1]").unwrap();
         std::fs::write(repo.join("secret.txt"), b"no").unwrap();
-        (TempDir { dir }, Roots { webroot, repo })
+        let component = repo.join("runtime/set/comp");
+        std::fs::create_dir_all(component.join("screen")).unwrap();
+        std::fs::write(component.join("screen/Page.xml"), b"<screen/>").unwrap();
+        std::fs::write(repo.join("runtime/set/outside.txt"), b"no").unwrap();
+        let components = vec![("comp".to_string(), component)];
+        (
+            TempDir { dir },
+            Roots {
+                webroot,
+                repo,
+                components,
+            },
+        )
     }
 
     struct TempDir {
@@ -240,5 +260,22 @@ mod tests {
         assert_eq!(page.body, b"<p>hi</p>");
         assert_eq!(answer(&roots, "https://moqui.test/", None).status, 404);
         assert_eq!(answer(&roots, "https://moqui.test/favicon.ico", None).status, 204);
+    }
+
+    #[test]
+    fn a_component_file_is_served_by_component_name_and_nothing_outside_it() {
+        let (_keep, roots) = roots();
+        let page = answer(&roots, "https://moqui.test/files/component/comp/screen/Page.xml", None);
+        assert_eq!(page.status, 200);
+        assert_eq!(page.body, b"<screen/>");
+        for url in [
+            "https://moqui.test/files/component/comp/../outside.txt",
+            "https://moqui.test/files/component/comp/screen/../../outside.txt",
+            "https://moqui.test/files/component/other/screen/Page.xml",
+            "https://moqui.test/files/component/comp",
+            "https://moqui.test/files/component/comp/",
+        ] {
+            assert_eq!(answer(&roots, url, None).status, 404, "{url}");
+        }
     }
 }

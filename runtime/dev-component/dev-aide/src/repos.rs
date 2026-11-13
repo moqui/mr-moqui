@@ -213,9 +213,14 @@ fn get_addons(
                 if names.iter().any(|have| have["name"] == name.as_str()) {
                     continue;
                 }
-                let here = ["component", "dev-component"]
+                let here = moqui_core::context::layout::Set::ALL
                     .iter()
-                    .any(|dir| context.factory.runtime_dir().join(dir).join(&name).is_dir());
+                    .filter(|set| **set != moqui_core::context::layout::Set::Base)
+                    .any(|set| {
+                        moqui_core::context::layout::set_dir(context.factory.runtime_dir(), *set)
+                            .join(&name)
+                            .is_dir()
+                    });
                 names.push(json!({ "name": name, "here": here, "file": file }));
             }
         }
@@ -279,11 +284,8 @@ fn get_component(
     }
     let mut out = Parameters::new();
     out.insert("output".into(), Value::string(output.1));
-    let found = context.factory.runtime_dir().join(if flag(parameters, "dev") {
-        "dev-component"
-    } else {
-        "component"
-    });
+    let found =
+        moqui_core::context::layout::set_dir(context.factory.runtime_dir(), crate::workspace::placed_set(parameters));
     offer_load(&context, &found.join(&name), &mut out);
     Ok(out)
 }

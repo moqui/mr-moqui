@@ -10,7 +10,7 @@ const ops = moqui.devAide.entityOps;
 const pure = moqui.devAide.pure;
 
 test("the view's builders make the operations of the vectors", async () => {
-    const response = await fetch("/files/runtime/dev-component/dev-aide/test/vectors/entity-view-vectors.json");
+    const response = await fetch("/files/component/dev-aide/test/vectors/entity-view-vectors.json");
     const file = await response.json();
     const built = { picklist: ops.picklist(file.specs.picklist), status: ops.status(file.specs.status) };
     assert.ok(file.vectors.length >= 12);

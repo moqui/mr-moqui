@@ -49,7 +49,7 @@ feature("code editor names reach the editable content, restored buffers and the 
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js", "/libs/marked/marked.umd.min.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.markdown.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.markdown.page.js",
 })
 
 // From WebrootCode.spec.js, merged here to share a spec run.
@@ -57,7 +57,7 @@ browser.runInPage({
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/libs/codemirror/codemirror.min.js", "/js/WebrootCode.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootCode.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootCode.page.js",
 })
 
 // Tools' SQL screen (component://tools/screen/Tools/Sql.qvue) mounted in the page with its transitions answered by fixtures
@@ -94,7 +94,7 @@ feature("the SQL screen runs a statement, fetches more, confirms changes and sho
             window.notified = []
             moqui.notifyMessages = (messages, errors) => { notified.push(errors || messages) }
             moqui.handleAjaxError = (err) => { notified.push(String(err)) }
-            fetch("/files/runtime/base-component/tools/screen/Tools/Sql.qvue").then((r) => r.text()).then((text) => {
+            fetch("/files/component/tools/screen/Tools/Sql.qvue").then((r) => r.text()).then((text) => {
                 const module = {}
                 // the script and template of the component file, cut by index: a closing script tag would end this script
                 const part = (tag) => text.slice(text.indexOf("<" + tag + ">") + tag.length + 2, text.lastIndexOf("<" + "/" + tag + ">"))
@@ -195,7 +195,7 @@ feature("the data grid loads rows, edits, saves with a refused row, pastes a ran
             moqui.handleAjaxError = (err) => { notified.push(String(err)) }
             window.downloads = []
             HTMLAnchorElement.prototype.click = function () { downloads.push(this.getAttribute("href")) }
-            fetch("/files/runtime/base-component/tools/screen/Tools/Data/Grid.qvue").then((r) => r.text()).then((text) => {
+            fetch("/files/component/tools/screen/Tools/Data/Grid.qvue").then((r) => r.text()).then((text) => {
                 const module = {}
                 const part = (tag) => text.slice(text.indexOf("<" + tag + ">") + tag.length + 2, text.lastIndexOf("<" + "/" + tag + ">"))
                 new Function("module", part("script"))(module)
@@ -276,7 +276,7 @@ feature("the data grid loads rows, edits, saves with a refused row, pastes a ran
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootSql.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootSql.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootSql.page.js",
 })
 
 // From WebrootVue.qvt.code.spec.js, merged here to share a spec run.
@@ -284,7 +284,7 @@ browser.runInPage({
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js", "/libs/highlightjs/highlight.min.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.code.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.code.page.js",
 })
 
 // From WebrootVue.qvt.coedit.spec.js, merged here to share a spec run.
@@ -292,6 +292,6 @@ browser.runInPage({
 
 browser.runInPage({
     scripts: ["/libs/tiptap/tiptap.min.js", "/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.coedit.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.coedit.page.js",
 })
 

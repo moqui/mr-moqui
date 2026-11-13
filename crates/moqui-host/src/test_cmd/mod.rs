@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use moqui_core::context::layout;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_devkit::testkit::{
     run_spec, spec_database_free, spec_depends_on, spec_missing_features, suite_order, CaseResult, Outcome, RunOptions,
@@ -286,52 +287,52 @@ pub(crate) struct TestComponent {
     pub(crate) specs: Vec<SpecFile>,
 }
 
-/// The components under `runtime/base-component`, `runtime/component` and `runtime/dev-component` (which load on a dev
-/// instance) that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`, `acceptance` and
-/// `acceptance/client` for their `--acceptance`. By directory
-/// name within each. Not a template, whose name is a placeholder (`runtime/dev-component/template`).
+/// The components in each of the runtime's component sets (`context::layout`; the dev set loads on a dev instance)
+/// that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`, `acceptance` and
+/// `acceptance/client` for their `--acceptance`. By directory name within each set. Not a template, whose name is a
+/// placeholder (the dev set's `template`).
 pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
-    for parent in ["base-component", "component", "dev-component"] {
-        let Ok(entries) = std::fs::read_dir(runtime.join(parent)) else {
+    for (_, dir) in layout::component_dirs(runtime, &layout::Set::ALL) {
+        let test_dir = dir.join(sub);
+        if !test_dir.is_dir() {
             continue;
-        };
-        let mut dirs: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|dir| dir.is_dir())
-            .collect();
-        dirs.sort();
-        for dir in dirs {
-            let test_dir = dir.join(sub);
-            if !test_dir.is_dir() {
-                continue;
-            }
-            let name = component_name(&dir);
-            if name.contains('@') {
-                continue;
-            }
-            let specs = component_specs(&name, &test_dir, sub)?;
-            if !specs.is_empty() {
-                found.push(TestComponent { name, dir, specs });
-            }
+        }
+        let name = component_name(&dir);
+        if name.contains('@') {
+            continue;
+        }
+        let specs = component_specs(&name, &test_dir, sub)?;
+        if !specs.is_empty() {
+            found.push(TestComponent { name, dir, specs });
         }
     }
     Ok(found)
 }
 
-/// The directory of the component named `name` under `runtime/base-component`, `runtime/component` or
-/// `runtime/dev-component`.
+/// The directory of the component named `name` in one of the runtime's component sets.
 pub(crate) fn component_dir_named(runtime: &Path, name: &str) -> Option<PathBuf> {
-    ["base-component", "component", "dev-component"]
+    layout::component_dirs(runtime, &layout::Set::ALL)
+        .into_iter()
+        .map(|(_, dir)| dir)
+        .find(|dir| component_name(dir) == name)
+}
+
+/// Whether a component of `components` is in a set that loads only on some instance purposes, so the run boots on the
+/// dev purpose, where it loads (plans/design-dev-aide.md 3.1).
+pub(crate) fn needs_dev_purpose(runtime: &Path, components: &[TestComponent]) -> bool {
+    components
         .iter()
-        .find_map(|parent| {
-            std::fs::read_dir(runtime.join(parent))
-                .ok()?
-                .flatten()
-                .map(|entry| entry.path())
-                .find(|dir| dir.is_dir() && component_name(dir) == name)
-        })
+        .any(|component| layout::set_of(runtime, &component.dir).is_some_and(layout::Set::is_restricted))
+}
+
+/// The runtime's component set directories, for a message that none of them has what was asked for.
+pub(crate) fn set_dirs_text(runtime: &Path) -> String {
+    let dirs: Vec<String> = layout::Set::ALL
+        .iter()
+        .map(|set| layout::set_dir(runtime, *set).display().to_string())
+        .collect();
+    dirs.join(", ")
 }
 
 /// The `name` of `component.xml`, else the directory name.
@@ -777,18 +778,12 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     }
     if components.is_empty() && args.serve.is_none() {
         return Err(Error::new(format!(
-            "no {tree}/*.spec.js files under {}/component, {}/base-component or {}/dev-component",
-            runtime.display(),
-            runtime.display(),
-            runtime.display()
+            "no {tree}/*.spec.js files in the components of {}",
+            set_dirs_text(&runtime)
         )));
     }
     // A dev component's specs run on a dev instance, where it loads (plans/design-dev-aide.md 3.1).
-    if components
-        .iter()
-        .any(|component| component.dir.starts_with(runtime.join("dev-component")))
-        && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty()
-    {
+    if needs_dev_purpose(&runtime, &components) && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty() {
         moqui_lib::env::set_property("instance_purpose", "dev");
     }
     // a spec may answer outbound HTTP with fixtures (docs/dev/JS-Testkit.md, "HTTP fixtures"), only in a test run

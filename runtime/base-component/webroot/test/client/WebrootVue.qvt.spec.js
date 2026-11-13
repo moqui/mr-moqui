@@ -180,7 +180,7 @@ feature("find and compact checkbox controls name their field and preserve keyboa
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/libs/vue/compiler-dom.cjs.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.page.js",
 })
 
 // From WebrootVue.qvt.start.spec.js, merged here to share a spec run.
@@ -188,7 +188,7 @@ browser.runInPage({
 
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootVue.qvt.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.start.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.start.page.js",
 })
 
 // From WebrootVueDisplay.spec.js, merged here to share a spec run.

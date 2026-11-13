@@ -893,18 +893,18 @@ fn default_runtime_dir() -> std::path::PathBuf {
     runtime_dir_in(&start)
 }
 
-/// `runtime` in `start` when it has a `base-component` directory; else `start` itself when it has one (an unpacked
+/// `runtime` in `start` when it is a runtime (`context::layout::is_runtime`); else `start` itself when it is one (an unpacked
 /// archive, or `/opt/moqui`, started in its own directory); else `runtime` in `start`, a new one that the server and
 /// `moqui load` fill with a skeleton runtime from the files built into the binary.
 fn runtime_dir_in(start: &std::path::Path) -> std::path::PathBuf {
     let local = start.join("runtime");
-    if !local.join("base-component").is_dir() && start.join("base-component").is_dir() {
+    if !moqui_core::context::layout::is_runtime(&local) && moqui_core::context::layout::is_runtime(start) {
         return start.to_path_buf();
     }
     local
 }
 
-/// The first of `local`, `runtime` beside `exe` and the directory of `exe` that has a `base-component` directory: the
+/// The first of `local`, `runtime` beside `exe` and the directory of `exe` that is a runtime (`layout::is_runtime`): the
 /// desktop app's search before it uses its bundled runtime, since an app is started from anywhere. `moqui` itself
 /// looks only in its working directory ([`runtime_dir_in`]).
 pub fn find_runtime_dir(local: &std::path::Path, exe: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
@@ -912,7 +912,7 @@ pub fn find_runtime_dir(local: &std::path::Path, exe: Option<&std::path::Path>) 
     std::iter::once(local.to_path_buf())
         .chain(exe_dir.map(|dir| dir.join("runtime")))
         .chain(exe_dir.map(std::path::Path::to_path_buf))
-        .find(|dir| dir.join("base-component").is_dir())
+        .find(|dir| moqui_core::context::layout::is_runtime(dir))
 }
 
 /// Create `dir` and its parents when missing.

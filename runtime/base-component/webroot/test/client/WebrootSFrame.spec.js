@@ -5,5 +5,5 @@ spec({ server: false, timeout: 60 })
 
 browser.runInPage({
     scripts: ["/js/WebrootSFrame.js"],
-    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootSFrame.page.js",
+    test: "/files/component/webroot/test/client/pages/WebrootSFrame.page.js",
 })

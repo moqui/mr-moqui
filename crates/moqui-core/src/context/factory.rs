@@ -258,7 +258,7 @@ impl std::fmt::Debug for BootOptions {
 /// The framework component beside `tools` and `webroot`, when `MOQUI_FRAMEWORK` is not set.
 #[must_use]
 pub fn default_framework_dir(runtime_dir: &Path) -> PathBuf {
-    runtime_dir.join("base-component/framework")
+    super::layout::framework_dir(runtime_dir)
 }
 
 impl ExecutionContextFactory {

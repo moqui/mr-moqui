@@ -188,7 +188,7 @@ test("loadScript: a failed load rejects every waiter and a later call tries agai
         return node;
     };
     const missing = "/js/__moqui_load_script_missing__.js";
-    const present = "/files/runtime/base-component/webroot/test/client/pages/load-ok.js";
+    const present = "/files/component/webroot/test/client/pages/load-ok.js";
     try {
         moqui.scriptLoads.clear();
         const calls = [];

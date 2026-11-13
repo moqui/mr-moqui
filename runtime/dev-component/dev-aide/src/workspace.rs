@@ -164,6 +164,15 @@ pub(crate) fn flag(parameters: &Parameters, key: &str) -> bool {
     matches!(text(parameters, key).as_str(), "true" | "Y" | "y" | "1")
 }
 
+/// The component set a component placed here goes into: the dev set with `dev`, else the add-on set.
+pub(crate) fn placed_set(parameters: &Parameters) -> moqui_core::context::layout::Set {
+    if flag(parameters, "dev") {
+        moqui_core::context::layout::Set::Dev
+    } else {
+        moqui_core::context::layout::Set::Addon
+    }
+}
+
 /// A serde value as a service value.
 pub(crate) fn json_value<T: serde::Serialize>(value: &T) -> Value {
     moqui_lib::json::from_json(&serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
@@ -1235,9 +1244,11 @@ fn create_site_component(
     if let Some(bad) = depends.iter().find(|depend| !valid(depend)) {
         return Err(LibError::new(format!("{bad} is not a component name")));
     }
-    let target = context.factory.runtime_dir().join("component").join(&name);
+    let target =
+        moqui_core::context::layout::set_dir(context.factory.runtime_dir(), moqui_core::context::layout::Set::Addon)
+            .join(&name);
     if target.exists() {
-        return Err(LibError::new(format!("runtime/component/{name} is there already")));
+        return Err(LibError::new(format!("{} is there already", target.display())));
     }
     let site_template = context
         .factory
@@ -1310,21 +1321,17 @@ fn create_component(
     }
     let part = template::Part::of(&text(parameters, "part"))
         .ok_or_else(|| LibError::new("the part is all, screens or rest"))?;
-    let directory = if flag(parameters, "dev") {
-        "dev-component"
-    } else {
-        "component"
-    };
     let runtime = context.factory.runtime_dir();
-    let target = runtime.join(directory).join(&name);
+    let target = moqui_core::context::layout::set_dir(runtime, placed_set(parameters)).join(&name);
     if target.exists() {
-        return Err(LibError::new(format!("runtime/{directory}/{name} is there already")));
+        return Err(LibError::new(format!("{} is there already", target.display())));
     }
-    let source = runtime.join("dev-component/template");
+    let source = moqui_core::context::layout::set_dir(runtime, moqui_core::context::layout::Set::Dev).join("template");
     if !source.join("component.xml").is_file() {
-        return Err(LibError::new(
-            "the component template, runtime/dev-component/template, is not there",
-        ));
+        return Err(LibError::new(format!(
+            "the component template, {}, is not there",
+            source.display()
+        )));
     }
     if let Err(err) = template::create(&source, &target, &name, part) {
         // a component half made would load at the next start
@@ -1344,7 +1351,7 @@ fn create_component(
         &context.facade,
         &Write {
             action: "DAA_CREATE",
-            root: directory,
+            root: placed_set(parameters).dir_name(),
             path: &name,
             detail: Some(serde_json::json!({ "template": "template", "part": part.name() })),
             ..Write::default()

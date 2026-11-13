@@ -369,7 +369,7 @@ pub(crate) fn location_of(path: &Path) -> Option<String> {
     None
 }
 
-/// The components of this runtime by name: the directories of `base-component`, `component` and `dev-component`.
+/// The components of this runtime by name: the directories of its component sets (`context::layout`).
 fn component_dirs() -> HashMap<String, PathBuf> {
     component_dirs_in(&crate::runtime_framework_dirs().0)
 }
@@ -377,15 +377,10 @@ fn component_dirs() -> HashMap<String, PathBuf> {
 /// The components of the runtime `runtime` by name.
 fn component_dirs_in(runtime: &Path) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
-    for kind in ["base-component", "component", "dev-component"] {
-        let Ok(entries) = std::fs::read_dir(runtime.join(kind)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if dir.join("component.xml").is_file() {
-                out.insert(component_name(&dir), dir);
-            }
+    let sets = &moqui_core::context::layout::Set::ALL;
+    for (_, dir) in moqui_core::context::layout::component_dirs(runtime, sets) {
+        if dir.join("component.xml").is_file() {
+            out.insert(component_name(&dir), dir);
         }
     }
     out
