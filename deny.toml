@@ -79,8 +79,8 @@ unknown-git = "deny"
 # quickjs-oxide, the moqui fork (plans/archive/Script-Engine-Oxide.md §6); rsipstack and mysql, forked to keep ring out
 # (docs/Build-Test.md, Forks).
 allow-git = [
-    # ironcalc at a pinned revision of main, until a release has get_cells_block (plans/IronCalc-DB.md)
-    "https://github.com/ironcalc/IronCalc",
+    # ironcalc, the moqui fork at a pinned revision of its main (plans/IronCalc-DB.md)
+    "https://github.com/moqui/IronCalc",
     "https://github.com/moqui/quickjs-oxide",
     "https://github.com/moqui/rsipstack",
     "https://github.com/moqui/rust-mysql-simple",

@@ -273,10 +273,11 @@ ammonia = "4"
 # HTML to terminal text for the tui render mode. The version ammonia already locks.
 html5ever = "0.40"
 # The spreadsheet engine (plans/IronCalc-DB.md): the workbook model the xlsx writers fill (moqui_core::workbook), XLSX
-# read with formulas and write, and calculation (calculate#Spreadsheet). A pinned revision of main: get_cells_block,
-# which the sheet rooms need, is after the 0.9.1 release. `ironcalc` re-exports `ironcalc_base` as `ironcalc::base`.
-# Shares zip and quick-xml with the workspace.
-ironcalc = { git = "https://github.com/ironcalc/IronCalc", rev = "87b684bb04a87c63bdd6343c29036450b1cfd358" }
+# read with formulas and write, and calculation (calculate#Spreadsheet). The moqui fork's main at a pinned revision:
+# upstream main (get_cells_block, which the sheet rooms need, is after the 0.9.1 release) with our speed and memory work,
+# offered back (plans/IronCalc-DB.md, Engine speed in the fork). `ironcalc` re-exports `ironcalc_base` as
+# `ironcalc::base`. Shares zip and quick-xml with the workspace.
+ironcalc = { git = "https://github.com/moqui/IronCalc", rev = "aac9d61e84d148d878e461702de41afbf2daf015" }
 # Test fixtures only (a dev-dependency of the crates whose tests read a workbook another writer made): the xlsx writers
 # are on ironcalc. Defaults are empty; the chrono and jiff features stay off.
 rust_xlsxwriter = { version = "0.102", default-features = false }
