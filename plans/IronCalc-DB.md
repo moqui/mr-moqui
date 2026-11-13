@@ -537,7 +537,17 @@ Not run: the bindings' own tests (WASM, Node.js, Python; they build and pass cli
 
 ### Next: evaluate only what changed
 
-Every edit still evaluates every formula of the workbook. At 0.38 s for the mix, the rows are no longer the limit for a sheet of aggregates; the number of formulas is, and an edit that touches nothing they read costs as much as one that does. The design, to be talked through with upstream before it is written, since it changes the evaluation they rewrote in September:
+Every edit still evaluates every formula of the workbook. At 0.38 s for the mix, the rows are no longer the limit for a sheet of aggregates; the number of formulas is, and an edit that touches nothing they read costs as much as one that does.
+
+**Upstream, as of 2026-11-13: planned, not started.** [Issue 849](https://github.com/ironcalc/IronCalc/issues/849) (opened April 2026) asks for it. The main author calls it "the biggest problem in IronCalc as of now" (July), said in October that it is "NOT a great issue to pick up" and "definitely not something I want to give to an LLM", needing brainstorming and design first, and on October 29, answering a prototype, that it "might just be the right amount of inspiration I need to finally kick this off". There is no branch for it upstream. In the issue:
+
+- A prototype on [incr](https://github.com/Anyesh/incr), an incremental computation library: one query for each formula, reads recorded in `evaluate_cell`; 0.06 ms against 314 ms for an edit at 1 million rows, about 340 bytes for each formula, and the full pass for spills and cycles. Built with AI agents, as its author says.
+- A sketch of the same idea inside the existing evaluator: reads recorded at run time, a map for single cells and a spatial index (R*-tree) for ranges, a dirty set walked from the edit, volatiles always dirty; then an early cutoff by height in the graph.
+- [Pull request 1435](https://github.com/ironcalc/IronCalc/pull/1435) (September, from outside the project): `Model::evaluate_incremental(edited_cells)` with an index built by `evaluate()` and a fallback to the full pass near spills and cycles, 0.3 s to 50 µs on 100,000 formulas. Not reviewed, and it no longer merges with main.
+
+What follows for us: the design upstream is converging on is the one below, so the two do not pull apart. The main author wants to write it himself and is wary of contributions written by models, so we do not send this one as a pull request; our use (formulas over data sheets of 100,000 rows, rooms on a server that want the changed cells) is worth adding to the issue, by the user. Our speed commits do not conflict with it, and `walk_row` helps it: the reads of a range now pass through one place, where a read can be recorded as one rectangle. If upstream has not begun in a few weeks, we build it in the fork on the same design, and offer it as a reference rather than a pull request.
+
+The design:
 
 - **Record what each formula read in its last run**, where the reads already pass through one place: `evaluate_cell` for single cells, and the range readers (`walk_row`, `read_row`, `clip_to_used_area`) for rectangles, one record for each range and not for each cell. The evaluation already records reads for the dynamic arrays (`record_seen`, `seen_ranges`), for the root of the recursion; this is the same for every formula, kept across evaluations.
 - **An edit marks dirty** the cells it changed, the formulas whose records cover them, and transitively the formulas that read those. An evaluation then runs the dirty formulas only, in the existing pass with the clean ones read as the stored values they are. A formula's references that depend on values (`INDIRECT`, `OFFSET`, `INDEX` returning a reference, a defined name) are covered as they were last resolved: the cell that changes the reference is itself a read, so the formula is dirtied and records its new reads.
@@ -561,9 +571,9 @@ What `moqui-calc` works around, with what the engine could offer instead. In ord
 
 ### Proposed next, in order
 
-1. Offer the commits upstream, one at a time and the example first, once we have used them for a while; ask about evaluating only what changed (above) before writing it.
+1. Offer the commits upstream, one at a time and the example first, once we have used them for a while. Add our use to issue 849 (the user's call).
 2. The bulk load on `UserModel`, so that a refresh is an edit. Small, and in `user_model` only.
-3. Evaluate only what changed, with the list of changed cells.
+3. Evaluate only what changed, with the list of changed cells: upstream's if it comes soon, else ours in the fork on the same design.
 4. The remaining speed in the profiles: `COUNTA` on text still copies each text (100,000 allocations), `MEDIAN` sorts a copy, `VLOOKUP` and `MATCH` hold 4 to 5 MB while they run (an array of the lookup column).
 
 ### Upstream's practices
