@@ -625,6 +625,11 @@ EOF
     check "git includes components/dev repos" 0 '== runtime/components/dev/comp-a' -- "$M" git rev-parse HEAD
     rm -rf "$R/runtime/components/dev"
     check "complete --dev on create" 0 '^--dev$' -- "$M" __complete 2 component-create --de
+    check "component-get --test" 0 'Checked: comp-a' -- "$M" component-get --test comp-a
+    check "component-get --test clones into components/test" 0 '' -- test -f "$R/runtime/components/test/comp-a/component.xml"
+    check "git includes components/test repos" 0 '== runtime/components/test/comp-a' -- "$M" git rev-parse HEAD
+    rm -rf "$R/runtime/components/test"
+    check "complete --test on create" 0 '^--test$' -- "$M" __complete 2 component-create --te
 
     # Repository: -r, then the component's repository attribute, then default-repository, then how the root
     # repo was cloned (https -> github, git@ -> github-ssh, no origin -> github).
@@ -743,8 +748,15 @@ if have git && have zip && have unzip && have curl; then
     rm -rf "$R/runtime/components/addon/comp-c"
     check "component-get current (zip)" 0 'Downloaded comp-c' -- "$M" component-get -t current comp-c
     check "zip unpacked one level up" 0 '' -- test -f "$R/runtime/components/addon/comp-c/component.xml"
+    mkdir -p "$R/runtime/components/addon/comp-a/test"
+    : >"$R/runtime/components/addon/comp-a/test/Rule.spec.js"
     check "component-zip" 0 'Created runtime/components/addon/comp-a-1.0.zip' -- "$M" component-zip comp-a
     lacks "component-zip leaves out .git" '\.git/' -- unzip -l "$R/runtime/components/addon/comp-a-1.0.zip"
+    lacks "component-zip leaves out test/" 'comp-a/test/' -- unzip -l "$R/runtime/components/addon/comp-a-1.0.zip"
+    check "component-zip --with-tests" 0 'Created' -- "$M" component-zip --with-tests comp-a
+    check "component-zip --with-tests keeps test/" 0 'comp-a/test/Rule.spec.js' -- \
+        unzip -l "$R/runtime/components/addon/comp-a-1.0.zip"
+    rm -rf "$R/runtime/components/addon/comp-a/test"
     check "complete component-zip" 0 '^comp-a$' -- "$M" __complete 2 component-zip comp-a
 else
     skipped="$skipped zip"
@@ -761,6 +773,13 @@ if have zip && have unzip && have tar && have gzip; then
     echo 'scratch' >"$R/runtime/tmp/x"
     echo 'secret=1' >"$R/runtime/.env"
     echo '<moqui-conf dev-override=""/>' >"$R/runtime/MoquiConf.xml"
+    # tests and the dev set stay out of a production archive; a deeper directory named test stays in
+    mkdir -p "$R/runtime/components/base/fw-z/test/acceptance" "$R/runtime/components/base/fw-z/service/z/test" \
+        "$R/runtime/components/test/tc" "$R/runtime/components/dev/dv"
+    : >"$R/runtime/components/base/fw-z/test/acceptance/Walk.spec.js"
+    : >"$R/runtime/components/base/fw-z/service/z/test/Keep.xml"
+    : >"$R/runtime/components/test/tc/component.xml"
+    : >"$R/runtime/components/dev/dv/component.xml"
     check "archive default name" 0 "Created $O/mr-moqui-[0-9]{8}\.zip .*expands to mr-moqui-[0-9]{8}/" -- \
         sh -c "cd '$O' && '$M' archive"
     # the name moq gave it, so a run across midnight checks the day moq saw
@@ -783,8 +802,9 @@ if have zip && have unzip && have tar && have gzip; then
             "$top/components/base/" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
             check "$kind has $want" 0 '' -- grep -qF " $want" <<<"$list"
         done
+        check "$kind keeps a deeper test directory" 0 '' -- grep -qF " $top/components/base/fw-z/service/z/test/Keep.xml" <<<"$list"
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
-            opensearch/logs/. '\.git/' '\.moq-archive'; do
+            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ components/test/ components/dev/; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done
         rm -rf "$O/x"
@@ -798,6 +818,8 @@ if have zip && have unzip && have tar && have gzip; then
         check "$kind conf is the production conf, not the runtime's" 0 '' -- \
             cmp "$O/x/$top/MoquiConf.xml" "$R/runtime/conf/MoquiProductionConf.xml"
         check "$kind readme" 0 'keep this archive private' -- cat "$O/x/$top/README.txt"
+        check "$kind readme says the tests are left out" 0 'each component.s test/ \(--with-tests' -- \
+            cat "$O/x/$top/README.txt"
     done
     rm -f "$R/runtime/MoquiConf.xml"
     check "archive exists" 1 'there already; -f replaces it' -- sh -c "cd '$O' && '$M' archive"
@@ -813,6 +835,13 @@ if have zip && have unzip && have tar && have gzip; then
     check "archive into a directory" 0 "Created $O/x/mr-moqui-[0-9]{8}\.zip" -- "$M" archive "$O/x/"
     check "archive --with-save" 0 ' saved/save/t1/moqui.dump' -- sh -c "'$M' archive --with-save '$O/saved.zip' && unzip -l '$O/saved.zip'"
     check "archive --conf" 0 'Created' -- "$M" archive -c conf/MoquiDevConf.xml "$O/dev.zip"
+    check "archive --with-tests keeps the tests" 0 ' tested/components/base/fw-z/test/acceptance/Walk.spec.js' -- \
+        sh -c "'$M' archive --with-tests '$O/tested.zip' && unzip -l '$O/tested.zip'"
+    check "archive --with-tests keeps the test set" 0 ' tested/components/test/tc/component.xml' -- unzip -l "$O/tested.zip"
+    lacks "archive --with-tests still leaves out the dev set" 'components/dev/' -- unzip -l "$O/tested.zip"
+    check "archive --with-dev keeps the dev set" 0 ' withdev/components/dev/dv/component.xml' -- \
+        sh -c "'$M' archive --with-dev '$O/withdev.zip' && unzip -l '$O/withdev.zip'"
+    lacks "archive --with-dev still leaves out the tests" 'fw-z/test/' -- unzip -l "$O/withdev.zip"
     check "archive --no-data" 0 'Created' -- "$M" archive --no-data "$O/clean.zip"
     list=$(unzip -l "$O/clean.zip")
     for unwanted in clean/db clean/.env opensearch/data; do

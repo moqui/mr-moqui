@@ -88,6 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="name"><default-field title="Component (addons.xml)"><drop-down allow-empty="false">
                             <list-options list="addonOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                         <field name="dev"><default-field title="Into runtime/components/dev (dev only)"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="test"><default-field title="Into runtime/components/test (test only)"><check><option key="true" text=" "/></check></default-field></field>
                         <field name="submitButton"><default-field title="Get"><submit/></default-field></field>
                     </form-single>
                 </widgets><fail-widgets><label type="p" text="This runtime has no ./moq beside it: clone a URL instead."/></fail-widgets></section>
@@ -95,6 +96,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="url"><default-field title="Clone a URL"><text-line size="50"/></default-field></field>
                     <field name="name"><default-field title="Directory (from the URL when empty)"><text-line size="20"/></default-field></field>
                     <field name="dev"><default-field title="Into runtime/components/dev (dev only)"><check><option key="true" text=" "/></check></default-field></field>
+                    <field name="test"><default-field title="Into runtime/components/test (test only)"><check><option key="true" text=" "/></check></default-field></field>
                     <field name="submitButton"><default-field title="Clone"><submit/></default-field></field>
                 </form-single>
                 <label type="p" text="A new site component is made from Home. A component got or cloned is offered to Load now when it needs no restart; otherwise it loads after a restart."/>

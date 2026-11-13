@@ -548,12 +548,14 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="clone" noun="Repository" type="rust" location="dev_aide::repo::clone_repository" allow-remote="false">
-        <description>Clone a URL into runtime/components/addon/name, or runtime/components/dev/name with dev; it can be loaded now
+        <description>Clone a URL into runtime/components/addon/name, runtime/components/dev/name with dev, or
+            runtime/components/test/name with test; it can be loaded now
             when nothing in it waits for a restart (loadable), or it loads after a restart.</description>
         <in-parameters>
             <parameter name="url" required="true"/>
             <parameter name="name"/>
             <parameter name="dev" type="Boolean"/>
+            <parameter name="test" type="Boolean"><description>Into the test set, loaded on a dev or test instance only</description></parameter>
             <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
         </in-parameters>
         <out-parameters>
@@ -610,11 +612,12 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="addons" type="List"/></out-parameters>
     </service>
     <service verb="get" noun="Component" type="rust" location="dev_aide::repos::get_component" allow-remote="false">
-        <description>./moq component-get name (--dev for runtime/components/dev): the component and those it depends on; it can
+        <description>./moq component-get name (--dev for runtime/components/dev, --test for runtime/components/test): the component and those it depends on; it can
             be loaded now when nothing in it waits for a restart (loadable), or it loads after a restart.</description>
         <in-parameters>
             <parameter name="name" required="true"/>
             <parameter name="dev" type="Boolean"/>
+            <parameter name="test" type="Boolean"><description>Into the test set, loaded on a dev or test instance only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="output"/>

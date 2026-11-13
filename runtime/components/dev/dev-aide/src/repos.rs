@@ -259,6 +259,8 @@ fn get_component(
     command.arg("component-get");
     if flag(parameters, "dev") {
         command.arg("--dev");
+    } else if flag(parameters, "test") {
+        command.arg("--test");
     }
     command
         .arg(&name)
@@ -272,7 +274,12 @@ fn get_component(
             action: "DAA_GIT",
             root: "",
             path: &name,
-            detail: Some(json!({ "command": "component-get", "dev": flag(parameters, "dev"), "ok": output.0 })),
+            detail: Some(json!({
+                "command": "component-get",
+                "dev": flag(parameters, "dev"),
+                "test": flag(parameters, "test"),
+                "ok": output.0
+            })),
             ..Write::default()
         },
     );

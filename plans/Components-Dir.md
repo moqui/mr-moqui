@@ -327,6 +327,11 @@ Built Nov 13, 2026, in the order of §4, with these differences from the design 
   (`components/addon` by default).
 - **Relative Markdown links**: 272 in 43 files gained a `../` (surveyed before the move, applied after); the
   unresolved links after the move are the 33 there were before.
+- **A Java Moqui checkout** read by the dev tools (`--java`, `--project`) keeps its own layout: discovery reads
+  `layout::JAVA_DIRS` (`base-component`, `mantle`, `component`, `ecomponent`) when the framework component is a Java
+  one, and the dev tools' component maps take both layouts (`layout::component_dirs_any_layout`).
+- **The desktop app's runtime** keeps the dev set and leaves the tests out (`stage_desktop_runtime`), as §3.6 says; the
+  desktop crate was not compiled in the build (it needs `target/moqui-app` from `./moq desktop`).
 - **The guard test** (§5) is `context::layout`'s `the_old_component_directories_are_named_nowhere`; it allows this
   plan, `plans/archive/` and `layout.rs`, which holds the boot WARN's names.
 

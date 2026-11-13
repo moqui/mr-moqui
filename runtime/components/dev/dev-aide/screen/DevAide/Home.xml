@@ -119,10 +119,11 @@ along with this software (see the LICENSE.md file). If not, see
                                     <option key="rest" text="REST API only"/>
                                 </drop-down></default-field></field>
                                 <field name="dev"><default-field title="Dev only (runtime/components/dev)"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="test"><default-field title="Test only (runtime/components/test)"><check><option key="true" text=" "/></check></default-field></field>
                                 <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                                 <field-layout>
                                     <field-row><field-ref name="componentName"/><field-ref name="part"/></field-row>
-                                    <field-ref name="dev"/>
+                                    <field-row><field-ref name="dev"/><field-ref name="test"/></field-row>
                                     <field-row-big><field-ref name="submitButton"/></field-row-big>
                                 </field-layout>
                             </form-single>

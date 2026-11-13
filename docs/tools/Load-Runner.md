@@ -38,7 +38,8 @@ The code:
 - Scripts: `runtime/components/base/tools/test/load/ServiceCall.load.js` (one service called again and again, what the
   Java screen did), `runtime/components/base/tools/test/load/AgentApps.load.js` (the apps over SSH as an agent drives
   them, each step an `agent-apps` command) and `runtime/components/addon/mr-marble/test/load/OrderToCash.load.js` (a sales
-  order through the Marble ERP screens, on MR Moqui or a Java MarbleERP).
+  order through the Marble ERP screens, on MR Moqui or a Java MarbleERP). `./moq archive` leaves `test/` out unless
+  `--with-tests`, so a production server lists no scripts: load comes from another instance, not from production.
 
 ## Writing a script
 

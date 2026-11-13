@@ -1156,6 +1156,9 @@ Options:
       --dev            Get the named components into runtime/components/dev, the components that load
                        only when instance_purpose is dev; what they depend on still goes in
                        runtime/components/addon
+      --test           Get them into runtime/components/test, the test-only components that load on
+                       a dev or test instance, never on production and not in ./moq archive unless
+                       --with-tests; what they depend on still goes in runtime/components/addon
 $COMPONENT_TYPE_HELP
 $COMPONENT_REPO_HELP
 EOF
@@ -1183,6 +1186,7 @@ and has letters, digits, '-' and '_'. The new component loads at the next start.
 
 Options:
       --dev            Create it in runtime/components/dev, loaded only when instance_purpose is dev
+      --test           Create it in runtime/components/test, loaded on a dev or test instance only
       --from NAME      Another template, in runtime/components/dev or runtime/components/addon (a component.xml
                        named @component@)
       --rest           REST API only: no screen/, MoquiConf.xml, or screen security data and spec
@@ -1196,8 +1200,12 @@ EOF
 help_component_zip() {
     cat <<'EOF'
 Writes runtime/components/addon/<name>-<version>.zip for each named component, or for every directory
-in runtime/components/addon with a component.xml. It leaves out .git, build/, src/, librepo/, and
-build.gradle. Needs zip.
+in runtime/components/addon with a component.xml. It leaves out .git, build/, src/, librepo/,
+build.gradle and, unless --with-tests, test/ (the regression and acceptance suites, agent replays and
+load scripts), so a zip for production carries no tests. Needs zip.
+
+Options:
+      --with-tests     Keep the component's test/
 EOF
 }
 
@@ -1221,7 +1229,9 @@ directory, never from the binary. On its first start it unpacks the embedded Pos
 The file goes in the current directory unless named elsewhere, with .zip (or .tgz) added when
 the name lacks it; a name ending in .tgz or .tar.gz means --tgz. A directory gets the default
 name inside it. The archive also leaves out .git, the target/ of component crates, OpenSearch
-logs, and pid files. The database is copied as files, so the embedded Postgres must be stopped;
+logs, and pid files. A production archive carries no tests and no dev tools: it leaves out each
+component's test/ (its regression and acceptance suites, agent replays and load scripts) and the
+test set, components/test, unless --with-tests, and the dev set, components/dev, unless --with-dev. The database is copied as files, so the embedded Postgres must be stopped;
 an OpenSearch daemon with a pid file is stopped for the copy and started again after. Needs zip,
 or tar and gzip.
   ./moq archive
@@ -1235,6 +1245,9 @@ $PACKAGE_OPTIONS_HELP
                        conf/MoquiProductionConf.xml); relative to the runtime directory, or a path
       --tgz            A gzipped tar (.tgz) instead of a zip
       --with-save      Include runtime/save (the save-db copies)
+      --with-tests     Keep each component's test/ and the test set (an archive for a staging server
+                       that runs moqui test or client specs against itself)
+      --with-dev       Keep the dev set (the dev tools still load only on a dev instance)
       --no-data        Leave out the instance data and secrets: runtime/db, the OpenSearch data,
                        runtime/txlog, runtime/.env and runtime/cert
   -f, --force          Replace the file when it is there
@@ -2216,10 +2229,14 @@ stage_desktop_runtime() {
     local stage=$1 name
     need_tool rsync
     run_cmd mkdir -p "$stage" || die "could not create $(rel "$stage")"
-    # components/dev: the Dev AIDE and the example, which load only on a dev instance (the tray's Developer tools)
+    # components/dev: the Dev AIDE and the example, which load only on a dev instance (the tray's Developer tools). No
+    # tests, as in ./moq archive: the test set and each component's test/.
+    local -a no_tests
     for name in components conf; do
+        no_tests=()
+        [ "$name" != components ] || no_tests=(--exclude "/${TEST_SET#components/}/" --exclude '/*/*/test/')
         if [ -d "$RUNTIME_DIR/$name" ]; then
-            run_cmd rsync -a --delete --exclude .git --exclude target --exclude '.DS_Store' \
+            run_cmd rsync -a --delete --exclude .git --exclude target --exclude '.DS_Store' ${no_tests[@]+"${no_tests[@]}"} \
                 "$RUNTIME_DIR/$name/" "$stage/$name/" || die "could not stage runtime/$name"
         else
             run_cmd rm -rf -- "${stage:?}/$name"
@@ -3772,7 +3789,7 @@ git_repos() {
     if [ -e "$RUNTIME_DIR/.git" ] && [ "$RUNTIME_DIR" != "$ROOT" ]; then
         printf '%s\n' "$RUNTIME_DIR"
     fi
-    for dir in "$RUNTIME_DIR"/$BASE_SET/* "$RUNTIME_DIR"/$ADDON_SET/* "$RUNTIME_DIR"/$DEV_SET/*; do
+    for dir in "$RUNTIME_DIR"/$BASE_SET/* "$RUNTIME_DIR"/$ADDON_SET/* "$RUNTIME_DIR"/$DEV_SET/* "$RUNTIME_DIR"/$TEST_SET/*; do
         if [ -d "$dir" ] && [ -e "$dir/.git" ]; then
             printf '%s\n' "$dir"
         fi
@@ -4192,6 +4209,7 @@ parse_component_args() {
     while [ $# -gt 0 ]; do
         case $1 in
             --dev) COMPONENT_BASE=$RUNTIME_DIR/$DEV_SET ;;
+            --test) COMPONENT_BASE=$RUNTIME_DIR/$TEST_SET ;;
             -t | --type)
                 [ $# -ge 2 ] || die "$1 needs a type"
                 LOCATION_TYPE=$2
@@ -4341,6 +4359,7 @@ task_component_create() {
     while [ $# -gt 0 ]; do
         case $1 in
             --dev) component_base=$RUNTIME_DIR/$DEV_SET ;;
+            --test) component_base=$RUNTIME_DIR/$TEST_SET ;;
             --from)
                 [ $# -ge 2 ] || die "--from needs a template name"
                 from=$2
@@ -4451,9 +4470,19 @@ add_to_myaddons() {
 }
 
 task_component_zip() {
-    local dir name element cname version zip
-    local -a dirs
+    local dir name element cname version zip with_tests=''
+    local -a dirs names
     dirs=()
+    names=()
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --with-tests) with_tests=1 ;;
+            -*) die "unknown option $1" ;;
+            *) names+=("$1") ;;
+        esac
+        shift
+    done
+    set -- ${names[@]+"${names[@]}"}
     need_tool zip
     if [ $# -eq 0 ]; then
         while IFS= read -r dir; do
@@ -4486,6 +4515,7 @@ task_component_zip() {
         else
             leave_out=("$name/src/*")
         fi
+        [ -n "$with_tests" ] || leave_out+=("$name/test" "$name/test/*")
         (cd "$RUNTIME_DIR/$ADDON_SET" && run_cmd zip -qr "$zip" "$name" \
             -x "$name/.git" "$name/.git/*" "$name/build/*" "${leave_out[@]}" "$name/librepo/*" "$name/build.gradle" \
             "*/.DS_Store" "*~") || die "zip failed for $name"
@@ -4560,8 +4590,8 @@ Run
 
 Contents
   moqui, MoquiConf.xml, README.txt, LICENSE.md, and from the runtime:$list
-  Left out: log, tmp, save, install, db/install, .git, component target/ directories, OpenSearch
-  logs and pid files.
+  Left out: log, tmp, save, install, db/install, .git, component target/ directories,${ARCHIVE_LEFT_OUT}
+  OpenSearch logs and pid files.
 EOF
         if [ -n "$secrets" ]; then
             cat <<EOF
@@ -4574,7 +4604,7 @@ EOF
 }
 
 task_archive() {
-    local file='' conf=$PRODUCTION_CONF force='' with_save='' no_data='' named='' tgz=''
+    local file='' conf=$PRODUCTION_CONF force='' with_save='' no_data='' named='' tgz='' with_tests='' with_dev=''
     OPT_PACKAGE=
     OPT_NOBUILD=
     while [ $# -gt 0 ]; do
@@ -4592,6 +4622,8 @@ task_archive() {
             --conf=*) conf=${1#--conf=} ;;
             --tgz) tgz=1 ;;
             --with-save) with_save=1 ;;
+            --with-tests) with_tests=1 ;;
+            --with-dev) with_dev=1 ;;
             --no-data) no_data=1 ;;
             -f | --force) force=1 ;;
             -*) die "unknown option $1" ;;
@@ -4666,6 +4698,26 @@ task_archive() {
         "*/postmaster.pid" "*/.git" "*/.git/*" "$name/components/*/*/target/*" "*/.venv/*"
         "*/__pycache__/*" "*/.DS_Store" "*~")
     [ -z "$no_data" ] || excludes+=("$name/opensearch/data/*")
+    # A production archive carries no tests and no dev set unless asked (plans/Components-Dir.md 3.6): each component's
+    # test/ (its suites, agent replays and load scripts) and the test set, and the dev set. Named one by one, since a
+    # wildcard would also take a directory named test deeper in a component.
+    local set component
+    ARCHIVE_LEFT_OUT=
+    if [ -z "$with_dev" ]; then
+        excludes+=("$name/$DEV_SET" "$name/$DEV_SET/*")
+        ARCHIVE_LEFT_OUT=" the dev set ($DEV_SET; --with-dev keeps it),"
+    fi
+    if [ -z "$with_tests" ]; then
+        excludes+=("$name/$TEST_SET" "$name/$TEST_SET/*")
+        for set in "${COMPONENT_SETS[@]}"; do
+            for component in "$RUNTIME_DIR/$set"/*/; do
+                [ -d "${component}test" ] || continue
+                component=${component%/}
+                excludes+=("$name/$set/${component##*/}/test" "$name/$set/${component##*/}/test/*")
+            done
+        done
+        ARCHIVE_LEFT_OUT="$ARCHIVE_LEFT_OUT the test set ($TEST_SET) and each component's test/ (--with-tests keeps them),"
+    fi
 
     # Beside the archive, so the binary is linked or copied onto the disk the archive goes to.
     local stage
@@ -5116,9 +5168,9 @@ complete_task() {
             case $cur in
                 -*)
                     if [ "$task" = component-create ]; then
-                        filter_prefix "$cur" --dev --from --rest --screens --git-remote --no-git --myaddons
+                        filter_prefix "$cur" --dev --test --from --rest --screens --git-remote --no-git --myaddons
                     elif [ "$task" = component-get ]; then
-                        filter_prefix "$cur" -t --type -r --repo --dev
+                        filter_prefix "$cur" -t --type -r --repo --dev --test
                     else
                         filter_prefix "$cur" -t --type -r --repo
                     fi
@@ -5130,7 +5182,7 @@ complete_task() {
                     ;;
             esac
             ;;
-        component-zip) filter_prefix "$cur" $(component_names_local) ;;
+        component-zip) filter_prefix "$cur" $(component_names_local) --with-tests ;;
         archive)
             case $prev in
                 -c | --conf)
@@ -5140,7 +5192,7 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --lite --debug --release --enterprise --nobuild -c --conf --tgz --with-save \
+                    filter_prefix "$cur" --lite --debug --release --enterprise --nobuild -c --conf --tgz --with-save --with-tests --with-dev \
                         --no-data -f --force
                     ;;
                 *) echo @files ;;

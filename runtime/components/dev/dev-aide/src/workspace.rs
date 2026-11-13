@@ -164,10 +164,13 @@ pub(crate) fn flag(parameters: &Parameters, key: &str) -> bool {
     matches!(text(parameters, key).as_str(), "true" | "Y" | "y" | "1")
 }
 
-/// The component set a component placed here goes into: the dev set with `dev`, else the add-on set.
+/// The component set a component placed here goes into: the dev set with `dev`, the test set with `test`, else the
+/// add-on set.
 pub(crate) fn placed_set(parameters: &Parameters) -> moqui_core::context::layout::Set {
     if flag(parameters, "dev") {
         moqui_core::context::layout::Set::Dev
+    } else if flag(parameters, "test") {
+        moqui_core::context::layout::Set::Test
     } else {
         moqui_core::context::layout::Set::Addon
     }

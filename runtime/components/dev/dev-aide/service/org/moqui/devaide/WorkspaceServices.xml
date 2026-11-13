@@ -194,11 +194,12 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="create" noun="Component" type="rust" location="dev_aide::workspace::create_component" allow-remote="false">
-        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, or runtime/components/dev with dev, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
+        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev, or runtime/components/test with test, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
             <parameter name="part" default-value="all"><description>all, screens (no REST API) or rest (no screens)</description></parameter>
             <parameter name="dev" type="Boolean"><description>In runtime/components/dev, loaded only on a dev instance</description></parameter>
+            <parameter name="test" type="Boolean"><description>In runtime/components/test, loaded on a dev or test instance only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
