@@ -162,7 +162,7 @@
     <default-property name="smtp_tls_cert_file" value=""/>
     <default-property name="smtp_tls_key_file" value=""/>
     <!--
-        Mail authentication and the MTA in moqui (plans/Edge-Node.md §5.4, E5b). smtp_internet: true takes mail from the
+        Mail authentication and the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b). smtp_internet: true takes mail from the
         internet (smtp-server internet; port 25 on an edge node): any address, STARTTLS, per-address limits, SPF, DKIM,
         DMARC and ARC checked with an Authentication-Results of its own (DMARC is RFC 9989's: t=y lowers the policy, and
         there is no pct). mail_arc_trusted_sealers: the domains whose passing ARC seal overrides a DMARC reject or
@@ -340,7 +340,7 @@
         xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
         of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
         xmpp_s2s_port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
-        behind an edge node it will be the edge node's (plans/Edge-Node.md §5.4). On an edge node (node_role=edge) no XMPP
+        behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (node_role=edge) no XMPP
         server starts: its edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node. An all-in-one node
         (node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge_xmpp_port and
         edge_xmpp_tls_port, which must differ from them (a tunnel port on the same port is off, logged). -->
@@ -456,7 +456,7 @@
     <!-- The address the cluster listener binds; empty for every interface, as a member on another host must reach it. -->
     <default-property name="cluster_bind_address" value=""/>
     <default-property name="instance_id" value=""/>
-    <!-- The edge link (plans/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, edge for an edge node,
+    <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, edge for an edge node,
         which then takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1), or all-in-one for a
         full server that also takes the link of a paired local node (§10, runtime/conf/MoquiAllInOneConf.xml): its own
         names, mail, webhooks and calls stay its own, and the paired node's go over the link. A local node needs no
@@ -471,7 +471,7 @@
         certificate, so certificate renewal never breaks a link; local nodes pin it at pairing. Generated into
         runtime/.env; a new one means each local node pairs again. -->
     <default-property name="edge_link_key" value="CHANGEME" is-secret="true"/>
-    <!-- An edge node's web access (plans/Edge-Node.md §5.3). The paired nodes' host names and their modes are
+    <!-- An edge node's web access (plans/archive/Edge-Node.md §5.3). The paired nodes' host names and their modes are
         moqui.edge.EdgeHost rows (System › Edge Clients). edge_offline_page is the location of the page a terminate host
         shows while its node's link is down (503 with Retry-After); empty for the built-in one. edge_ssh_tunnel_port, when
         set, is a TCP port on edge_ssh_tunnel_host (empty for every address) whose connections go down the link to the
@@ -1273,7 +1273,7 @@
             session-timeout="1800" protocol="smtp" starttls="false" require-tls="false"
             tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"/>
 
-    <!-- How work crosses the edge link (plans/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
+    <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
         items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
@@ -1285,7 +1285,7 @@
         replicate (set) names the entities and fields a local node copies to its edge node, read-only there. A local
         node runs each delegated call and queued item as the user _EDGE_, whose grants (the EDGE_DELEGATE artifact
         group) must cover the service too. The comms phases add their entries here, since both ends need them.
-        Mail (E5a, plans/Edge-Node.md §5.4): an edge node's listener queues what it takes as mail for the local node,
+        Mail (E5a, plans/archive/Edge-Node.md §5.4): an edge node's listener queues what it takes as mail for the local node,
         answering RCPT TO from the replicated mailRecipients; a local node's EmailServer with smtpHost edge: queues its
         sends as mailOut, and the edge node answers each with a mailStatus (from its relay, or a later bounce to its
         VERP address); a mailOut that fails for good puts its message back in the Outbox. With the MTA in moqui (E5b) the

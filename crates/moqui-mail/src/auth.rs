@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Mail authentication (plans/Edge-Node.md §5.4, E5b), on `mail-auth`: SPF, DKIM, DMARC and ARC verified, with an
+//! Mail authentication (plans/archive/Edge-Node.md §5.4, E5b), on `mail-auth`: SPF, DKIM, DMARC and ARC verified, with an
 //! `Authentication-Results` field (RFC 8601) under the node's authserv-id, and DKIM signing. The edge node's MTA uses it
 //! for mail from the internet and to the MX; internal mail between the organization's hosted accounts on any node uses
 //! it too ("the same standards inside"): signed when it is sent ([`sign_for`]) and verified against the node's own key
@@ -229,7 +229,7 @@ pub fn dkim_record() -> Result<String, String> {
 /// none, by the node's role:
 /// - a normal node: its own accounts';
 /// - a dedicated edge node: its copies of the local nodes' accounts;
-/// - an all-in-one node (plans/Edge-Node.md §10): both, the server's own and its paired node's. Only the list of
+/// - an all-in-one node (plans/archive/Edge-Node.md §10): both, the server's own and its paired node's. Only the list of
 ///   `get#DkimRecord` takes both; a send signs for one side ([`is_hosted_domain`] for the server's own,
 ///   [`paired_domains`] for a paired node's).
 ///

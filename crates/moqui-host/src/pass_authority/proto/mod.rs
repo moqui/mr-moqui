@@ -13,7 +13,7 @@
  */
 
 //! The PASS authority's gRPC messages and service (`moqui.pass.v1`), generated from `crates/moqui-host/proto/pass.proto`
-//! by tonic-prost-build on protox and checked in, as the edge link's are (plans/Edge-Node.md §5.5, §5.6). The test
+//! by tonic-prost-build on protox and checked in, as the edge link's are (plans/archive/Edge-Node.md §5.5, §5.6). The test
 //! beside it fails when the checked-in code is not what the proto generates; `MOQUI_REGENERATE_PROTO=1` rewrites it.
 //! Changes to the proto are additive only.
 

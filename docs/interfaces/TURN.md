@@ -68,7 +68,7 @@ Open these ports on the firewall:
 
 ## On an edge node
 
-An edge node ([Edge-Node](../../plans/Edge-Node.md) §5.4) runs the embedded TURN of its local node's calls, beside its
+An edge node ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4) runs the embedded TURN of its local node's calls, beside its
 media socket (`turn_port` 3478 in `MoquiEdgeConf.xml`, relays to its own media port). The local node gives the legs
 their credentials, and the edge node's TURN checks them with its own `turn_auth_secret`, which the two do not share as
 configuration. So the edge node tells its secret to the local node in the answer to the link's Hello, on an up
@@ -78,7 +78,7 @@ signs the edge node's TURN URLs with it (`mediaNodeId`); `turn_external_urls` ge
 node's own. Changing the edge node's secret takes effect for the local node at the next link; credentials signed with
 the old one stop working on the edge node at once.
 
-The Edge Node wizard checks this end to end (Apply and Test, plans/Edge-Node.md §5.7): Apply says whether the link
+The Edge Node wizard checks this end to end (Apply and Test, plans/archive/Edge-Node.md §5.7): Apply says whether the link
 handed the secret over; Test has `make#IceServers` sign the edge node's URLs for a probe leg (`edgeSetupProbe.<random>`,
 no leg of a call), then allocates with that credential on the edge node's TURN over UDP, as a browser would, asks a
 permission for the IP of its media address (a permission is for an IP alone; the port rule is checked on data), and deletes the allocation. A refused allocation means the secret the edge node checks

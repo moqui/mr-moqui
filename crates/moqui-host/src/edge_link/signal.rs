@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Messages on cluster topics over the link (plans/Edge-Node.md §5.4, "Calls (WebRTC)", E7): while a link is up, each
+//! Messages on cluster topics over the link (plans/archive/Edge-Node.md §5.4, "Calls (WebRTC)", E7): while a link is up, each
 //! end routes the messages `moqui_core::cluster::send_to` has for the node at the other end ([`route`]) into one
 //! client-streaming call, `Link.Signal` up and `LocalLink.Signal` down ([`forward`]), so they arrive in the order they
 //! were sent (an offer before its candidates) without a round trip each. The receiver ([`receive`]) publishes each on

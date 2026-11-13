@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.edge.EdgeServices, plans/Edge-Node.md): the statuses of a
+<!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.edge.EdgeServices, plans/archive/Edge-Node.md): the statuses of a
     paired local node, the modes of its public host names, and the user and grants of delegated calls. -->
 <entity-facade-xml type="seed">
     <moqui.basic.StatusType statusTypeId="EdgeClient" description="Edge Client"/>
@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>
     <moqui.basic.Enumeration enumId="EdgeHostTerminate" enumTypeId="EdgeHostMode" sequenceNum="2" description="Terminate"/>
 
-    <!-- The user the local node runs the edge node's delegated calls and queued items as (plans/Edge-Node.md §5.2, §5.8).
+    <!-- The user the local node runs the edge node's delegated calls and queued items as (plans/archive/Edge-Node.md §5.2, §5.8).
         It has no password, so nobody logs in as it; the caller's identity travels as data. It holds only the
         EDGE_DELEGATE group, which is granted only the services in the EDGE_DELEGATE artifact group, and the local node
         also runs only the services its own edge conf lists (delegate, queue-kind). The group starts with the diagnostic

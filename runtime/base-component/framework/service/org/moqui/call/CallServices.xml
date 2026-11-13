@@ -566,7 +566,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="draining" type="Boolean" default="false"/>
             <parameter name="turnUrls"><description>The node's TURN URLs, comma separated, for get#IceServers</description></parameter>
             <parameter name="edgeLinked" type="Boolean" default="false"><description>The row of this node's edge node,
-                which the edge link keeps (plans/Edge-Node.md §5.4): new calls prefer it</description></parameter>
+                which the edge link keeps (plans/archive/Edge-Node.md §5.4): new calls prefer it</description></parameter>
             <parameter name="startedDate" type="Timestamp"><description>When the node's media started, when it says so (an
                 edge node, in its Hello): a recording that began before it is failed; else the row's first
                 registration</description></parameter>
@@ -597,7 +597,7 @@ along with this software (see the LICENSE.md file). If not, see
             with a credential in the TURN REST form coturn's use-auth-secret takes: username &lt;expiry&gt;:&lt;callLegId&gt;,
             password base64 of HMAC-SHA1 of it with turn_auth_secret. Empty without URLs or a secret. The URLs of
             mediaNodeId when it is this node's edge node get a credential signed with that node's secret, which its link
-            told this node (plans/Edge-Node.md §5.4), and the external ones another.</description>
+            told this node (plans/archive/Edge-Node.md §5.4), and the external ones another.</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="turnUrls"/>

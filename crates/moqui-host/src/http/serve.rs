@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Serving one connection and one request (plans/Edge-Node.md §5.3): what a request is served with ([`WebApp`]), where
+//! Serving one connection and one request (plans/archive/Edge-Node.md §5.3): what a request is served with ([`WebApp`]), where
 //! it came from ([`Peer`]), the per-request checks and the router or an edge node's forward ([`serve_request`]), shared
 //! by the listeners, the edge link's down connection and its passthrough tunnels ([`serve_tunneled`]).
 //!
@@ -42,7 +42,7 @@ use super::{forwarded_https, plain, ClientAddr, HttpsRequest, ListenLimits, TlsC
 use crate::guard::Guard;
 
 /// What a request is served with: the router, and the limits and web protection in front of it. The listeners and the
-/// edge link's down connection share it (plans/Edge-Node.md §5.3).
+/// edge link's down connection share it (plans/archive/Edge-Node.md §5.3).
 #[derive(Clone)]
 pub(crate) struct WebApp {
     pub router: Router,
@@ -124,7 +124,7 @@ impl Forward {
 pub(crate) struct ExtendedConnect;
 
 /// What the edge link's down connection serves on a local node: the app, and for passthrough tunnels the HTTPS
-/// listener's TLS settings, with the listeners' stop for their connections (plans/Edge-Node.md §5.3).
+/// listener's TLS settings, with the listeners' stop for their connections (plans/archive/Edge-Node.md §5.3).
 #[derive(Clone)]
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
 pub(crate) struct DownServe {
@@ -230,7 +230,7 @@ impl Activity {
 }
 
 /// Serve an HTTPS connection that came another way than the listener as the listener serves its own: the edge link's
-/// passthrough tunnel, whose client `remote` its PROXY header named (plans/Edge-Node.md §5.3). The caller has had the
+/// passthrough tunnel, whose client `remote` its PROXY header named (plans/archive/Edge-Node.md §5.3). The caller has had the
 /// guard admit the client, before the TLS handshake; `closing` turning true shuts the connection down gracefully.
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
 pub(crate) async fn serve_tunneled<S>(
@@ -459,7 +459,7 @@ fn grpc_routes<B>(web: &WebApp, request: &http::Request<B>) -> Option<tonic::ser
 
 /// Serve one request with `web`, from `peer`: the URI length and web protection checks, then on an edge node the
 /// forward of a terminate host down its link, else the router, either under the request deadline. The listeners'
-/// connections and the edge link's down connection call it (plans/Edge-Node.md §5.3).
+/// connections and the edge link's down connection call it (plans/archive/Edge-Node.md §5.3).
 pub(crate) fn serve_request<B>(
     web: &WebApp,
     mut request: hyper::Request<B>,

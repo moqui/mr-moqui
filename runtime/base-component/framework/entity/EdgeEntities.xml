@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (plans/Edge-Node.md §5.1, §5.2, §5.7): what an edge node keeps of the local nodes paired with it, and
+<!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.2, §5.7): what an edge node keeps of the local nodes paired with it, and
     the queues and receipts both ends keep. Every row that belongs to one local node is keyed by its pairedNodeId, the
     local node's instance id (decision 1), so several local nodes on one edge node can come later. A local node keeps
     its own side of the link (the URL, its key and the edge node's pin) in runtime/.env, not here. The services are
@@ -52,7 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="features" type="text-medium"/>
         <field name="nodeName" type="text-medium"/>
         <field name="setupJson" type="text-long"><description>What the node's last Configure (the Edge Node wizard's
-            Apply, plans/Edge-Node.md §5.7) set besides its host names: a JSON object of mailDomains, chatBridgeIds and
+            Apply, plans/archive/Edge-Node.md §5.7) set besides its host names: a JSON object of mailDomains, chatBridgeIds and
             passSites, checked as input from any client.</description></field>
         <field name="setupDate" type="date-time"/>
         <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
@@ -60,7 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeHost" package="moqui.edge" use="configuration" cache="never">
-        <description>A public host name this edge node answers for a paired local node (plans/Edge-Node.md §5.3), lower
+        <description>A public host name this edge node answers for a paired local node (plans/archive/Edge-Node.md §5.3), lower
             case with no port. A name belongs to one node. In EdgeHostPassthrough mode the edge node reads the TLS
             ClientHello's server name and pipes the connection down the node's link, where the local node ends TLS with
             its own certificate; while the link is down the connection is refused. In EdgeHostTerminate mode the edge
@@ -77,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="EDGE_HOST_NODE"><index-field name="pairedNodeId"/></index>
     </entity>
 
-    <!-- ========== How work crosses the link (plans/Edge-Node.md §5.2): queue and replicate ========== -->
+    <!-- ========== How work crosses the link (plans/archive/Edge-Node.md §5.2): queue and replicate ========== -->
     <entity entity-name="EdgeQueueItem" package="moqui.edge" use="transactional" cache="never">
         <description>One unit of work queued for the other end of the link: on an edge node the items for a local node
             (EqdToLocal), on a local node its outbox for the edge node (EqdToEdge). pairedNodeId is the local node of
@@ -180,7 +180,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeMailDelivery" package="moqui.edge" use="transactional" cache="never">
-        <description>On an edge node with the MTA in moqui (edge_mail_mta=moqui, plans/Edge-Node.md §5.4 E5b), the
+        <description>On an edge node with the MTA in moqui (edge_mail_mta=moqui, plans/archive/Edge-Node.md §5.4 E5b), the
             delivery of one message a local node sent (its mailOut queueItemId) to the recipients of one domain, by that
             domain's MX; the domain "(local node)" is the recipients queued back to the local node itself. Written in
             the transaction that applies the mailOut item, so the item is delivered once these rows are there.
@@ -258,7 +258,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeReplicaConflict" package="moqui.edge" use="transactional" cache="never">
-        <description>On an all-in-one node (node_role=all-in-one, plans/Edge-Node.md §10), a record of a paired node's
+        <description>On an all-in-one node (node_role=all-in-one, plans/archive/Edge-Node.md §10), a record of a paired node's
             replicated set that was not applied because it claims an item the server holds itself: a mail address, a
             chat bridge id or a phone number (claimKind: MailAddress, ChatBridge, PhoneNumber; itemKey the item). The
             server's own item wins; ownerText names its holder. Keyed as the EdgeReplicaValue it would have been, with
@@ -284,7 +284,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgeMedia" package="moqui.edge" use="transactional" cache="never">
         <description>On an edge node, a file of a message its local node sends by address (an MMS picture), put here
             with the send (the queue kind chatMedia), so the network fetches it from the edge node at
-            /channels/{chatBridgeId}/media/{token} (plans/Edge-Node.md §5.4, E6). edgeMediaId is the SHA-256 (hex) of
+            /channels/{chatBridgeId}/media/{token} (plans/archive/Edge-Node.md §5.4, E6). edgeMediaId is the SHA-256 (hex) of
             the token, which the local node makes and only it and the network know; location is the file, under
             dbresource://moqui/edge/media/. Served until expireDate (channels_media_minutes after it came), then
             removed with its file.</description>

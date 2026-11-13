@@ -196,7 +196,7 @@ imap = { version = "=3.0.0-alpha.15", default-features = false }
 # empty; the single-byte charsets are built in. `full_encoding` (encoding_rs for multi-byte CJK) is on through mail-auth
 # below.
 mail-parser = { version = "1", default-features = false }
-# Mail authentication (moqui-mail `auth`, plans/Edge-Node.md §5.4 E5b): SPF, DKIM, DMARC and ARC verified, DKIM signed,
+# Mail authentication (moqui-mail `auth`, plans/archive/Edge-Node.md §5.4 E5b): SPF, DKIM, DMARC and ARC verified, DKIM signed,
 # MTA-STS records. aws-lc-rs is its crypto (it names aws-lc-sys 0.46 itself, for ML-DSA, so aws-lc-rs is held to the
 # release on 0.46 above; rust-crypto would add a second rsa instead) and hickory its DNS. It turns on mail-parser's
 # full_encoding.
@@ -237,7 +237,7 @@ opentelemetry-proto = { version = "0.33", default-features = false, features = [
 prost = "0.14"
 # The OTLP/gRPC receiver (moqui-host `grpc` feature): the server half only; opentelemetry-proto's gen-tonic has the services.
 tonic = { version = "0.14", default-features = false, features = ["server", "router", "gzip"] }
-# The edge link's generated gRPC code (moqui-host `edge` feature, plans/Edge-Node.md §5.6): its protobuf codec.
+# The edge link's generated gRPC code (moqui-host `edge` feature, plans/archive/Edge-Node.md §5.6): its protobuf codec.
 tonic-prost = { version = "0.14", default-features = false }
 # The edge link's code generation, dev-dependencies only: the generated code is checked in, and a test regenerates it
 # with MOQUI_REGENERATE_PROTO=1. protox is a protobuf compiler in Rust, so no protoc is needed.

@@ -1,4 +1,4 @@
-// SIP on an edge node, the local node's side (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8): the edge node's
+// SIP on an edge node, the local node's side (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8): the edge node's
 // SipNode row kept by the link and never another's, the delegate user _edge_ limited to calls and the node of its edge
 // node, each number's fallback for while this node is away, the registrar's digest checked here so the verifiers never
 // leave, a message the edge node queued stored in the number's box with its notices, and a saved message played only for

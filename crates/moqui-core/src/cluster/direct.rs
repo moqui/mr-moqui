@@ -65,7 +65,7 @@ pub fn send_to(
         return Err(Error::new("no member to send to"));
     }
     // the other end of an edge link is no member of this cluster: its message goes over the link while it is up
-    // (plans/Edge-Node.md §5.4, E7)
+    // (plans/archive/Edge-Node.md §5.4, E7)
     if let Some(sent) = crate::edge::signal::send(instance_id, topic, message) {
         return sent.map_err(|err| Error::new(err.message().to_string()));
     }

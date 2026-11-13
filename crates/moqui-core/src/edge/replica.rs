@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Replication (plans/Edge-Node.md §5.2): a local node copies the sets its conf names
+//! Replication (plans/archive/Edge-Node.md §5.2): a local node copies the sets its conf names
 //! (`<edge><replicate set=".."><entity name=".." fields=".."/></replicate></edge>`) to its edge node, read-only there,
 //! as `moqui.edge.EdgeReplicaValue` rows (the edge node's schema keeps none of the business entities).
 //!

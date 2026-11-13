@@ -10,7 +10,7 @@
 // along with this software (see the LICENSE.md file). If not, see
 // <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-// The PASS authority's operations over gRPC (plans/Edge-Node.md §5.5): what mr-pass sends to the Mantle authority
+// The PASS authority's operations over gRPC (plans/archive/Edge-Node.md §5.5): what mr-pass sends to the Mantle authority
 // instead of its REST routes, on the authority's gRPC listener (direct, with the client's secret in metadata) or down
 // the edge link from the edge node to its local node (the link is the client).
 //

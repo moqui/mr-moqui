@@ -28,9 +28,9 @@
 //! - **Calls from a device** go to `receive#DeviceCall`, which places them as the device's user: to another user, or
 //!   to a number through `place#PhoneCall`'s policy (caller ID, fraud limits, emergency).
 //! - **Rotation and revocation**: `dropDevice` ends the device's bindings and hangs up its legs here.
-//! - **On an edge node** (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) no verifier is here: each answer is
+//! - **On an edge node** (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) no verifier is here: each answer is
 //!   checked on the local node (`check#SipDeviceDigest`), so phones sign in only while it is reachable.
-//! - **On an all-in-one node** (plans/Edge-Node.md §10, E12) by the domain a phone registers to: the server's own realm
+//! - **On an all-in-one node** (plans/archive/Edge-Node.md §10, E12) by the domain a phone registers to: the server's own realm
 //!   (`sip_domain`) is its own phones', checked here; the paired node's domain (its Configure's `sipDomain`, which
 //!   the user agent challenges in, `Ua::set_device_realms`) is the paired node's, checked there. A paired node's
 //!   device ids are keyed by the node, and its bindings by `username@domain` (`moqui_sip::ua::aor_key`).
@@ -173,7 +173,7 @@ impl DeviceDirectory for ServiceDirectory {
         })
     }
 
-    /// A paired node's phone (on an edge node, plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8; on an all-in-one
+    /// A paired node's phone (on an edge node, plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8; on an all-in-one
     /// node the phones of its domain, E12): the verifiers stay on the local node, the answer is checked there
     /// (`check#SipDeviceDigest`, delegated), and this registrar keeps the nonces. While the local node is away no
     /// phone signs in (503, not a failed attempt). The server's own as the default, against `get#SipDeviceAuth`'s

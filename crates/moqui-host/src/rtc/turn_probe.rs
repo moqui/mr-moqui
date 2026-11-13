@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge wizard's TURN check (plans/Edge-Node.md §5.7, "As built (E10, calls)"): from the local node, as a browser
+//! The edge wizard's TURN check (plans/archive/Edge-Node.md §5.7, "As built (E10, calls)"): from the local node, as a browser
 //! would, an allocation on the edge node's TURN over UDP with the credential `make#IceServers` gave, then a permission
 //! for the IP of the edge node's media address, then the allocation deleted. A TURN permission is for an IP alone
 //! (RFC 8656); the edge node's TURN grants one only for an IP of its allowed peers, and its rule that data goes only

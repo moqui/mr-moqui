@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge node's rows of the link (plans/Edge-Node.md §5.1, §5.7): pairing codes (`moqui.edge.EdgePairingCode`) and
+//! The edge node's rows of the link (plans/archive/Edge-Node.md §5.1, §5.7): pairing codes (`moqui.edge.EdgePairingCode`) and
 //! paired local nodes (`moqui.edge.EdgeClient`), each keyed by the paired node (decision 1). Each function runs in a
 //! transaction of its own (or the caller's), with authorization off: the link's own bookkeeping.
 

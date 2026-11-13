@@ -37,9 +37,9 @@
 //! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
 //! On an edge node (`node_role=edge`) the listener takes mail for its local node's accounts and queues it for the
-//! local node instead of storing it ([`queue`], plans/Edge-Node.md §5.4).
+//! local node instead of storing it ([`queue`], plans/archive/Edge-Node.md §5.4).
 //!
-//! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/Edge-Node.md §5.4 E5b) takes mail from
+//! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/archive/Edge-Node.md §5.4 E5b) takes mail from
 //! any address, with STARTTLS on by default and per-address limits (`max-connections-per-ip`,
 //! `connections-per-minute`, 421 past them). After the data and before the answer it checks SPF, DKIM, DMARC and ARC
 //! (`moqui_mail::auth`) and asks Rspamd (`rspamd-url`, `mail_rspamd_url`) for its verdict: its own
@@ -181,7 +181,7 @@ pub struct SmtpConfig {
     pub internet: Option<Internet>,
 }
 
-/// The internet mode's settings (plans/Edge-Node.md §5.4, E5b).
+/// The internet mode's settings (plans/archive/Edge-Node.md §5.4, E5b).
 #[derive(Clone)]
 pub struct Internet {
     /// The most connections at once from one address.
@@ -470,7 +470,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
         let backend = queue::QueueBackend::new(Arc::downgrade(factory), config.plus_separator.clone(), options);
         crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     } else if all_in_one {
-        // by owner (plans/Edge-Node.md §10): the server's own accounts here, the paired node's queued for it
+        // by owner (plans/archive/Edge-Node.md §10): the server's own accounts here, the paired node's queued for it
         let backend = queue::SplitBackend::new(Arc::downgrade(factory), config.plus_separator.clone(), options);
         crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     } else {

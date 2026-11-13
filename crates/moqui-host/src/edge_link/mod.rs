@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link (plans/Edge-Node.md §5.1): a local node behind NAT dials its edge node's HTTPS port and keeps a link
+//! The edge link (plans/archive/Edge-Node.md §5.1): a local node behind NAT dials its edge node's HTTPS port and keeps a link
 //! open, gRPC both ways on HTTP/2.
 //!
 //! - **TLS.** Two ALPN protocols on the edge node's HTTPS listener, which hands such connections here
@@ -184,7 +184,7 @@ pub(crate) async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> std::io
 /// Ok when the edge node's Hello names the id this node pinned for it (`pinned`; any when none is pinned yet), and that
 /// id is not this node's own (`own`), else what to tell the operator. Whether it is a live member of this node's
 /// cluster is checked apart, with the database. An edge node that took another media node's id would get that node's
-/// call signaling and media row (plans/Edge-Node.md §5.4).
+/// call signaling and media row (plans/archive/Edge-Node.md §5.4).
 pub(crate) fn check_edge_id(pinned: &str, seen: &str, own: &str) -> Result<(), String> {
     if seen.is_empty() {
         return Err("the edge node's Hello names no instance id".to_string());

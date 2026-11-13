@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Pair step 2, connect (plans/Edge-Node.md §5.7): the edge node at the address, as it answers now
+<!-- Pair step 2, connect (plans/archive/Edge-Node.md §5.7): the edge node at the address, as it answers now
     (org.moqui.edge.EdgeServices.check#EdgeNode, as step 1 kept it in the session; asked again for an address step 1 did
     not check): its name, the fingerprint of its link key (told over the
     WebPKI-checked web certificate), its versions, public names and

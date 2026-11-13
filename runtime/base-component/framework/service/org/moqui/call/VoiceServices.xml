@@ -138,14 +138,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sipDomain"><description>The edge node's realm (E8)</description></parameter>
             <parameter name="registrarEnabled" type="Boolean"><description>The edge node's registrar is on (E8)</description></parameter>
             <parameter name="edgeLinked" type="Boolean" default="false"><description>The row of this node's edge node,
-                kept by the edge link from its Hello and liveness (plans/Edge-Node.md §5.4, E8). Never a row an engine
+                kept by the edge link from its Hello and liveness (plans/archive/Edge-Node.md §5.4, E8). Never a row an engine
                 registered, nor the reverse (refused, notAllowed).</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('registerNode', context))</script></actions>
     </service>
 
-    <!-- ========== SIP on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8) ========== -->
+    <!-- ========== SIP on an edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8) ========== -->
 
     <service verb="refresh" noun="PhoneFallbacks" authenticate="false" allow-remote="false">
         <description>Internal (the edge link while it is up, every minute, and the services that change a number, a

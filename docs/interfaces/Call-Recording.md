@@ -63,7 +63,7 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
    second for room in the media queue. One that still does not arrive (the recorder ended, the media node is gone) is
    logged with the recording's id.
 
-**On an edge node** ([Edge-Node](../../plans/Edge-Node.md) §5.4), the media node of a local node's calls, the recorder
+**On an edge node** ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4), the media node of a local node's calls, the recorder
 runs there, and the rows and files are the local node's. Each closed segment is queued to the local node as an item of
 the link's queue kind `callRecording`, with the file as the item's content (the spool file goes once queued), keyed by
 the recording and the file's name; the recorder's end (`note#RecorderEnd`) goes in the same conversation, the

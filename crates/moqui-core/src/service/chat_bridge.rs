@@ -223,7 +223,7 @@ pub trait ChatBridgeAdapter: Send + Sync {
         Some(WebhookResponse::not_signed())
     }
     /// The network's id of the event a request [`Self::verify_webhook`] passed, and what orders it with others (their
-    /// number), for an edge node that queues it for its local node (plans/Edge-Node.md §5.4): the id is the queue
+    /// number), for an edge node that queues it for its local node (plans/archive/Edge-Node.md §5.4): the id is the queue
     /// item's idempotency key, so a repeat is dropped. None when the request names no event; the default names none,
     /// and an edge node then refuses the request.
     fn webhook_event_id(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookEventKey> {

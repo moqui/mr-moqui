@@ -273,7 +273,7 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
             return WebhookResponse::text(500, "the bridge could not be read");
         }
     };
-    // an all-in-one node (plans/Edge-Node.md §10): the server's own bridge, else a paired node's copy, never both
+    // an all-in-one node (plans/archive/Edge-Node.md §10): the server's own bridge, else a paired node's copy, never both
     if settings.all_in_one() {
         match super::edge::bridge_owner(&facade, bridge_id, row.is_some()) {
             Ok(super::edge::BridgeOwner::Paired(node, fields)) => {
@@ -422,7 +422,7 @@ pub fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, no
     if settings.edge_node() {
         return super::edge::media(factory, bridge_id, token, now);
     }
-    // an all-in-one node (plans/Edge-Node.md §10): a token of the server's own first, else a paired node's file
+    // an all-in-one node (plans/archive/Edge-Node.md §10): a token of the server's own first, else a paired node's file
     let own = own_media(factory, bridge_id, token, now);
     if own.is_none() && settings.all_in_one() {
         return super::edge::media(factory, bridge_id, token, now);

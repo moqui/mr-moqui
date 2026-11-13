@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link as the screens and services see it (plans/Edge-Node.md §5.2, §5.3, §5.7): the link's status, pairing
+//! The edge link as the screens and services see it (plans/archive/Edge-Node.md §5.2, §5.3, §5.7): the link's status, pairing
 //! and unpairing on a local node, and on an edge node its pairing codes, paired local nodes and their public host
 //! names. Core has no network stack; a host built with the `edge` feature installs an [`EdgeLink`]
 //! (`crates/moqui-host/src/edge_link/`). With none installed a call fails with [`NOT_BUILT`].
@@ -48,7 +48,7 @@ pub use setup::{Configured, EdgeOffer, EdgeSetup};
 pub const NOT_BUILT: &str = "edge link not built into this host";
 
 /// The property that sets a node's role ([`NodeRole`]): `edge`, `all-in-one`, or empty for a normal node
-/// (plans/Edge-Node.md §5.6, §10).
+/// (plans/archive/Edge-Node.md §5.6, §10).
 pub const NODE_ROLE: &str = "node_role";
 /// A local node's link properties, in `runtime/.env`, written by pairing and removed by unpairing (§5.1).
 pub const NODE_URL: &str = "edge_node_url";
@@ -71,7 +71,7 @@ pub fn node_role() -> String {
     moqui_lib::env::get_prop_or_env(NODE_ROLE).trim().to_ascii_lowercase()
 }
 
-/// A node's role (`node_role`, plans/Edge-Node.md §5.6, §10).
+/// A node's role (`node_role`, plans/archive/Edge-Node.md §5.6, §10).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NodeRole {
     /// A normal node (`node_role` empty): its own data, and a local node when paired with an edge node.

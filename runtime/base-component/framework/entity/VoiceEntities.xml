@@ -79,7 +79,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <entity entity-name="PhoneNumberFallback" package="moqui.call" use="configuration" cache="never">
         <description>What the SIP engine of this node's edge node does with a call to the number while this node is away
-            (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8), derived from the number's route, the ring group's
+            (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8), derived from the number's route, the ring group's
             fallback, the user's mobile and the box, and written again when they change (refresh#PhoneFallbacks, also
             every minute while the edge link is up); the replicated set voiceFallbacks copies it to the edge node. A
             number with nothing to fall back to has no row (the edge node answers 480 so the trunk's failover acts).
@@ -216,7 +216,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="registrarEnabled" type="text-indicator"><description>The edge node's (E8): Y when its registrar is on
             (its sip_registrar_enabled)</description></field>
         <field name="edgeLinked" type="text-indicator"><description>Y: the SIP engine of this node's edge node
-            (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the edge link keeps from its Hello and liveness, as
+            (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the edge link keeps from its Hello and liveness, as
             its CallMediaNode row; the engine registers none itself</description></field>
     </entity>
 

@@ -92,17 +92,37 @@ Resource streaming is shared with Media; the LFS placement item below remains a 
 
 ## Chat and presence
 
-Framework Comms ([Comms-Framework](archive/Comms-Framework.md), archived 2026-11-12) is built through P0, A0–A4,
-W1–W8, M0, V1–V5, C1, C7, C4-SMS and C3a (the PWA and Web Push, BasicComms and its extension model, calls with links
-and guests, TURN, recording, captions, cascading media nodes, end-to-end encrypted calls, phone calls with voicemail,
-the IVR, queues, transfer and merge, chat actors and bridges, encrypted rooms and chat keys, SMS and MMS on Telnyx, and
-XMPP for local users; guide [Comms](../docs/tools/Comms.md)). The steps after it (C4, C3b, C6a–C6c, C2, C5), what the
-built steps left out and the checks not run live are post-0.1.0, in [Future-Plans, Comms](Future-Plans.md#comms). The
-comms of an edge node in front of a local node are in [Edge-Node](Edge-Node.md).
+Framework Comms ([Comms-Framework](archive/Comms-Framework.md), archived 2026-11-12) is built through P0, A0–A4, W1–W8,
+M0, V1–V5, C1, C7, C4-SMS and C3a (the PWA and Web Push, BasicComms and its extension model, calls with links and
+guests, TURN, recording, captions, cascading media nodes, end-to-end encrypted calls, phone calls with voicemail, the
+IVR, queues, transfer and merge, chat actors and bridges, encrypted rooms and chat keys, SMS and MMS on Telnyx, and XMPP
+for local users; guide [Comms](../docs/tools/Comms.md)). The steps after it (C4, C3b, C6a–C6c, C2, C5), what the built
+steps left out and the checks not run live are post-0.1.0, in [Future-Plans, Comms](Future-Plans.md#comms). The comms of
+an edge node in front of a local node are built ([Edge-Node](archive/Edge-Node.md), archived 2026-11-12); what that plan
+left open and its next phases are under [Edge node and deployment topologies](#edge-node-and-deployment-topologies).
 
 | Item | Source |
 |---|---|
 | A link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
+
+## Edge node and deployment topologies
+
+[Edge-Node2](Edge-Node2.md) (plan, Nov 12, 2026; nothing built) follows the archived [Edge-Node](archive/Edge-Node.md).
+The user's call: the bulk of it comes before the first release, as what sets MR Moqui apart, saves administration and
+opens these topologies to small businesses and homelabs. In order; E11 (filtering in moqui) and its Later row are in
+[Future-Plans](Future-Plans.md#edge-node).
+
+| Item | Source |
+|---|---|
+| The checks on a deployed edge node, none run: PASS on the link, mail at a large provider, a Telnyx round trip, calls with real browsers, a real trunk and phones, an XMPP client, the whole wizard, a served all-in-one server | [Edge-Node2 §2.1](Edge-Node2.md#21-checks-on-a-deployed-edge-node) |
+| E13: an example conf directory for each topology under `runtime/conf/` (MoquiEdgeConf.xml and MoquiAllInOneConf.xml move), a test that loads every conf, and Run-Deploy cut down to refer to them | [§4.9](Edge-Node2.md#49-example-confs-for-each-topology) |
+| E14: root screens by host name, as Moqui Java has: ten checks on a served instance, what they find fixed, each host with its own session, mr-pass's wrapper roots | [§4.2](Edge-Node2.md#42-root-screens-by-host-name) |
+| E15: System › Certificates and an ACME client used only from it; a name with no certificate gets no HTTPS and nothing is requested for it | [§4.8](Edge-Node2.md#48-certificates-and-acme) |
+| E16: several local nodes on one edge node, each area routed by its domain's owner, with claims and limits per pairing | [§4.1](Edge-Node2.md#41-domains-on-one-edge-node) |
+| E17: the front option set; pools of cluster members balanced with sticky sessions, the cluster's member list kept in memory on the edge node and reported there; failover to a standby started by hand | [§4.3](Edge-Node2.md#43-the-front-option-set), [§4.4](Edge-Node2.md#44-pools-load-balancing), [§4.5](Edge-Node2.md#45-failover-to-a-standby) |
+| E18: a cluster of edge nodes, each local node linked to every member | [§4.6](Edge-Node2.md#46-a-cluster-of-edge-nodes) |
+| E19: a front node (`node_role=front`; an edge node as built becomes `front_edge`, one behind a front may be `edge`) before a local cluster or an edge cluster; the full stack | [§4.7](Edge-Node2.md#47-a-front-node) |
+| The user's review pass through the plan: what a front does beyond web protection as built, renewal by a job, `edge` members needing a local node's second pairing, the additions to the simple failover | [§8](Edge-Node2.md#8-for-the-review-pass) |
 
 ## Files and drives
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Byte tunnels down an edge link, on the edge node (plans/Edge-Node.md §5.2, §5.3). Each is an extended CONNECT
+//! Byte tunnels down an edge link, on the edge node (plans/archive/Edge-Node.md §5.2, §5.3). Each is an extended CONNECT
 //! (RFC 8441, `:protocol` `moqui-tunnel`) on the node's down connection, with its kind in a header; the local node
 //! picks the listener it goes to, so the edge node never names an address and is no open proxy.
 //!
@@ -203,7 +203,7 @@ pub(crate) fn ports(config: &super::EdgeConfig) -> Vec<TunnelPort> {
 
 /// On an all-in-one node with its own XMPP server (`xmpp_domain` set), the property of the server's own XMPP listener
 /// that `bind` would take: `xmpp_port` or `xmpp_tls_port` on the same port and an overlapping host. The paired node's
-/// XMPP domain gets tunnel ports of its own (plans/Edge-Node.md §10), so such a tunnel port is skipped, logged.
+/// XMPP domain gets tunnel ports of its own (plans/archive/Edge-Node.md §10), so such a tunnel port is skipped, logged.
 pub(crate) fn own_xmpp_clash(bind: SocketAddr) -> Option<&'static str> {
     let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
     if property("xmpp_domain").is_empty() {

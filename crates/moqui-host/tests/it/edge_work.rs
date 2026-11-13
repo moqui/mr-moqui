@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! How work crosses the edge link (plans/Edge-Node.md §5.2, E3). Both ends are real servers in the test's own process,
+//! How work crosses the edge link (plans/archive/Edge-Node.md §5.2, E3). Both ends are real servers in the test's own process,
 //! as in `edge_web.rs`: the local node starts first, then the edge node (`node_role=edge`, set only after the local node
 //! read its edge conf); the local node's link is its dialer driven with an explicit `LocalConfig` serving the local
 //! server (`local_web`), stopped and started again to cut the link. Both have the same edge conf: the diagnostic

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- On an all-in-one node (node_role=all-in-one, plans/Edge-Node.md §10), the server's own mail addresses, chat bridges
+<!-- On an all-in-one node (node_role=all-in-one, plans/archive/Edge-Node.md §10), the server's own mail addresses, chat bridges
     and phone numbers must not be ones its paired node holds: after each create or update writes, check#ReplicaClaim
     reads the record and adds an error naming the item and the node when the paired node's replica has it, so the
     service's transaction rolls back. On any other node the check returns at once. -->

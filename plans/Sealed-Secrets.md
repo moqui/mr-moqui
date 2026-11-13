@@ -22,7 +22,7 @@ MR Moqui runs as two parts. They have different attackers, so they get different
 
 | Part | Components | What it does | Zone |
 |---|---|---|---|
-| **BOSS** | `mr-boss` + `mr-mantle` | The back office. It holds the business database, jobs, mail and media. | **Inner.** The system of record. Often a local node behind a firewall ([Edge-Node](Edge-Node.md)). |
+| **BOSS** | `mr-boss` + `mr-mantle` | The back office. It holds the business database, jobs, mail and media. | **Inner.** The system of record. Often a local node behind a firewall ([Edge-Node](archive/Edge-Node.md)). |
 | **PASS** | `mr-pass` | The public sites: Forum, Account, Members, Sites. It holds no business data. | **Outer.** Faces the internet. Often on the edge node. |
 
 Rules for the two zones:
@@ -31,7 +31,7 @@ Rules for the two zones:
    compromised gives no key that decrypts a BOSS row, backup or field.
 2. **The outer zone holds the fewest secrets.** It holds only what it needs to answer while BOSS is away: its own
    session key, TLS keys, the link key, its PASS client credential, and the secrets that BOSS replicates to it (a chat
-   bridge's webhook secret, a trunk's `authJson`). The [Edge-Node §4a](Edge-Node.md#4a-entity-access-audit) audit
+   bridge's webhook secret, a trunk's `authJson`). The [Edge-Node §4a](archive/Edge-Node.md#4a-entity-access-audit) audit
    lists them. Each replicated secret is re-encrypted under the outer keyring when it arrives. It is never stored in
    BOSS's format.
 3. **Credentials go inward and are scoped.** PASS reaches BOSS's authority (`moqui.pass.v1.PassAuthority`) with a
@@ -264,7 +264,7 @@ What is not built, not bound or not reachable cannot be attacked. Apply these in
    and `devtools`.
 2. **Bind less.** Every optional listener stays off until its port is set. This is the default now; a test keeps it so.
 3. **Split by role.** Only PASS or the edge node faces the internet. BOSS dials out to it and opens no inbound port
-   ([Edge-Node](Edge-Node.md)).
+   ([Edge-Node](archive/Edge-Node.md)).
 4. **One public port.** A reverse proxy on 443, with `webapp_trusted_proxies` set. The cluster port stays on a private
    network.
 5. **Fewer privileged accounts.** An administrator uses a separate admin account with a second factor.

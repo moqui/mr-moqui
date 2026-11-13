@@ -587,7 +587,7 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
 
 ## Behind an edge node
 
-A local node behind NAT takes its trunks and outside phones through its edge node (plans/Edge-Node.md §5.4 "Voice
+A local node behind NAT takes its trunks and outside phones through its edge node (plans/archive/Edge-Node.md §5.4 "Voice
 (SIP)", E8; [Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node)). The edge node runs the SIP listeners,
 the RTP and the call media; the local node keeps the numbers, the users, the call state and the boxes.
 
@@ -596,7 +596,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   the local node. The edge node gets the trunks and the policy by replication (set `voiceTrunks`, `authJson` encrypted
   at rest there), registers them and keeps them registered while the local node is away; it loads them again when a
   change arrives.
-- **The wizard** (System › Edge Node, plans/Edge-Node.md §5.7 "As built (E10, phones)"). Discover shows the edge
+- **The wizard** (System › Edge Node, plans/archive/Edge-Node.md §5.7 "As built (E10, phones)"). Discover shows the edge
   node's SIP engine, the local trunks and their numbers that go through it, its registrar and how many numbers have a
   fallback. Apply writes `edge_sip_enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
   it). Off, the local node sends `voiceTrunks` and `voiceFallbacks` empty, so the edge node's engine registers no trunk
@@ -632,7 +632,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   per number to the user's limits at once and a day (a ring group's: the policy's), then
   take a message ([Voicemail](Voicemail.md#while-the-local-node-is-away)); a number with neither, and an IVR, queue or
   access number, gets 480, so the trunk's own failover can act. Call handling rules and schedules are not followed then.
-- **On an all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), plans/Edge-Node.md §10): one engine
+- **On an all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), plans/archive/Edge-Node.md §10): one engine
   for both sides. Trunks come from the server's own config and the local node's copy. An inbound call goes by the
   number dialled: the server's own `PhoneNumber`, else the local node's fallback copy, else the trunk's owner. Phones
   go by realm: the server's `sip_domain` is checked on the server, the local node's domain is delegated to it. The

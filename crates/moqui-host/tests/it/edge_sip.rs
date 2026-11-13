@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SIP on the edge node and the voicemail fallback (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8). The edge
+//! SIP on the edge node and the voicemail fallback (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8). The edge
 //! node runs in a child process of this test binary (the test `edge_sip::edge_node_process`) with its SIP engine and
 //! call media, on a database of its own, as `edge_call.rs`'s does: the SIP engine, the media driver and the notify bus
 //! are process globals. The local node, in the test's process, has no SIP engine or media of its own; it pairs with the

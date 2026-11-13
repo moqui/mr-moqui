@@ -23,7 +23,7 @@ pub struct Hello {
     /// A name to show the operator of the other end.
     #[prost(string, tag = "7")]
     pub node_name: ::prost::alloc::string::String,
-    /// The edge node's, when it is a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): the address
+    /// The edge node's, when it is a media node of its local nodes' calls (plans/archive/Edge-Node.md §5.4, E7): the address
     /// browsers send media to (rtc_public_address, else the media socket's), empty when its media socket is off.
     #[prost(string, tag = "8")]
     pub media_address: ::prost::alloc::string::String,
@@ -34,7 +34,7 @@ pub struct Hello {
     /// the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
     #[prost(uint64, tag = "10")]
     pub media_started_ms: u64,
-    /// The edge node's, when its SIP engine runs (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
+    /// The edge node's, when its SIP engine runs (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
     /// TCP, and for TLS (the public address and port), empty when off. The local node keeps the edge node's SipNode row
     /// from them, so its phone calls are routed to the edge node's engine.
     #[prost(string, tag = "11")]
@@ -112,7 +112,7 @@ pub struct PingReply {
 pub struct UnpairRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UnpairReply {}
-/// A queued item (plans/Edge-Node.md §5.2), from the sender's moqui.edge.EdgeQueueItem.
+/// A queued item (plans/archive/Edge-Node.md §5.2), from the sender's moqui.edge.EdgeQueueItem.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct QueueItem {
     /// A UUID, which the receiver's receipt is keyed by.
@@ -135,7 +135,7 @@ pub struct QueueItem {
     pub attempts: u32,
 }
 /// A message of a cluster topic for one node, which is the link's other end (E7): the rtc-signal frames, replies and
-/// controls of calls whose media is on the edge node (moqui_core::cluster::send_to, plans/Edge-Node.md §5.4). The
+/// controls of calls whose media is on the edge node (moqui_core::cluster::send_to, plans/archive/Edge-Node.md §5.4). The
 /// receiver publishes it on its own notification bus, and only on the topics it takes (rtc-signal).
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SignalMessage {
@@ -329,7 +329,7 @@ pub struct ReplicateReply {
     #[prost(bool, tag = "1")]
     pub resync: bool,
 }
-/// A public host name of a local node, with how the edge node handles it (plans/Edge-Node.md §5.3).
+/// A public host name of a local node, with how the edge node handles it (plans/archive/Edge-Node.md §5.3).
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HostSetting {
     /// Lower case, with no port or trailing dot.
@@ -469,7 +469,7 @@ pub struct SipOffer {
     #[prost(bool, tag = "8")]
     pub other_nodes: bool,
 }
-/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own.
+/// What an edge node offers a local node (plans/archive/Edge-Node.md §5.7, Discover). Each area is a message of its own.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Offer {
     #[prost(message, optional, tag = "1")]
@@ -499,7 +499,7 @@ pub struct Offer {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferRequest {}
-/// The local node's part of its setup (plans/Edge-Node.md §5.7, Apply). The edge node checks it as input from any
+/// The local node's part of its setup (plans/archive/Edge-Node.md §5.7, Apply). The edge node checks it as input from any
 /// client: only the asking node's names are changed, and a name another node holds is refused.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigureRequest {

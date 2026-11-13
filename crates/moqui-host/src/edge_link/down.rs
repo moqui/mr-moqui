@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The local node's side of the down connection (plans/Edge-Node.md §5.1, §5.3): one HTTP/2 server with extended
+//! The local node's side of the down connection (plans/archive/Edge-Node.md §5.1, §5.3): one HTTP/2 server with extended
 //! CONNECT (RFC 8441) that serves the edge node
 //! - the link's own gRPC calls (`content-type: application/grpc` on `/moqui.edge.v1.LocalLink/`, with no client named),
 //!   and the PASS authority's on `/moqui.pass.v1.PassAuthority/` the same way (§5.5), for which the edge node is the
@@ -155,7 +155,7 @@ where
 }
 
 /// The path prefixes of the calls the edge node makes on the down connection: the link's own, and the PASS authority's
-/// (plans/Edge-Node.md §5.5, `crate::pass_authority`), whose client is the edge node.
+/// (plans/archive/Edge-Node.md §5.5, `crate::pass_authority`), whose client is the edge node.
 const LINK_CALLS: [&str; 2] = ["/moqui.edge.v1.LocalLink/", crate::pass_authority::PATH_PREFIX];
 
 /// A call of the edge node's own: gRPC on one of [`LINK_CALLS`], with no client named (checked before).

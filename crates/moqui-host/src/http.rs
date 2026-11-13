@@ -385,7 +385,7 @@ pub(crate) async fn listen(
             guard: Arc::clone(&guard),
         }));
     let web = WebApp::new(app, limits, Arc::clone(&guard));
-    // the edge link (plans/Edge-Node.md §5.1, §5.3): on an edge node the HTTPS listener's hand-off and the terminate
+    // the edge link (plans/archive/Edge-Node.md §5.1, §5.3): on an edge node the HTTPS listener's hand-off and the terminate
     // hosts' forward, and on a paired local node its dialer, whose down connection serves this app
     let down = DownServe {
         app: web.clone(),

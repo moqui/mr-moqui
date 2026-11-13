@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Mail through an edge node (plans/Edge-Node.md §5.4, E5a): the link's queue carries it, the message itself as the
+//! Mail through an edge node (plans/archive/Edge-Node.md §5.4, E5a): the link's queue carries it, the message itself as the
 //! item's content.
 //!
 //! - **In** (kind `mail`): the edge node's SMTP listener (moqui-host `smtp.rs`, its queue backend) answers `RCPT TO`
@@ -466,7 +466,7 @@ pub(super) fn enqueue_outbound(
     }
     let factory = current_factory().map_err(Error::from)?;
     // after unpairing nothing queues for whichever edge node comes next: the send fails, retryable, and the message
-    // stays in the Outbox (plans/Edge-Node.md §5.7)
+    // stays in the Outbox (plans/archive/Edge-Node.md §5.7)
     if !moqui_core::edge::settings(&factory).edge_node() && !moqui_core::edge::setup::is_paired(facade) {
         return Err(Error::new(
             "this node is not paired with an edge node, so mail for its edge: server is not queued",
@@ -728,7 +728,7 @@ struct Split {
 }
 
 /// Split `to` by where each recipient goes: back to the paired node when `paired` has it, else to the server's own
-/// account `own` finds, else by MX. An address both sides have (ownership is exclusive, plans/Edge-Node.md §10) goes
+/// account `own` finds, else by MX. An address both sides have (ownership is exclusive, plans/archive/Edge-Node.md §10) goes
 /// back to the paired node, as the sender's own side, logged as an error naming it.
 #[cfg(feature = "imap")]
 fn split_recipients(
@@ -788,7 +788,7 @@ fn split_local(
 /// Why a paired node's `mailOut` item may not go out from an all-in-one node, or none: its envelope sender or `From`
 /// is an address the server holds (`own_claim` names its holder), or of a domain that only the server has (its
 /// accounts' domains not the paired node's, or its bounce domain, which it holds whole). Ownership is exclusive
-/// (plans/Edge-Node.md §10): a paired node never sends as the server's users, so it never gets their signature.
+/// (plans/archive/Edge-Node.md §10): a paired node never sends as the server's users, so it never gets their signature.
 #[cfg(feature = "imap")]
 fn sender_refusal(
     senders: &[String],

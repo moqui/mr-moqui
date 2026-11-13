@@ -13,7 +13,7 @@
  */
 
 //! `ec.service.passAuthority(endpoint)`: a PASS frontend's calls to its authority over the host's gRPC, beside
-//! `ec.service.rest()` (plans/Edge-Node.md §5.5, `crate::pass_authority`). The endpoint is `grpc://host:port`,
+//! `ec.service.rest()` (plans/archive/Edge-Node.md §5.5, `crate::pass_authority`). The endpoint is `grpc://host:port`,
 //! `grpcs://host:port` or `edge:`.
 //!
 //! ```text

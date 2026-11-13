@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge node's end of the link (plans/Edge-Node.md §5.1, §5.7): the TLS hand-off on the HTTPS listener and the
+//! The edge node's end of the link (plans/archive/Edge-Node.md §5.1, §5.7): the TLS hand-off on the HTTPS listener and the
 //! registry of live links by paired node, with each one's generation and its down connection's sender for
 //! edge-to-local calls. The rows are in [`super::store`].
 //!
@@ -23,7 +23,7 @@
 //! handshake. Any other client gets the listener's own settings, so a browser is never asked for a certificate.
 //!
 //! A ClientHello whose server name is a passthrough host of a linked node gets no handshake here: the connection and
-//! the bytes read so far go down that node's link ([`super::tunnel`], plans/Edge-Node.md §5.3). The server name of a
+//! the bytes read so far go down that node's link ([`super::tunnel`], plans/archive/Edge-Node.md §5.3). The server name of a
 //! passthrough host whose node is not linked closes the connection.
 
 use std::collections::{HashMap, HashSet};
@@ -512,7 +512,7 @@ impl EdgeServer {
             &self.config.capabilities,
             &self.config.public_names,
         );
-        // a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): its media address and TURN URLs, and
+        // a media node of its local nodes' calls (plans/archive/Edge-Node.md §5.4, E7): its media address and TURN URLs, and
         // its area (§5.7, E10 calls) as the media socket is now, not as it was when the areas were read at start
         hello
             .capabilities
@@ -928,7 +928,7 @@ impl EdgeServer {
             let call: super::signal::Call = Box::pin(async move { client.signal(messages).await.map(drop) });
             call
         }));
-        // the node's queued items go down while this connection lasts (plans/Edge-Node.md §5.2)
+        // the node's queued items go down while this connection lasts (plans/archive/Edge-Node.md §5.2)
         let delivery = tokio::spawn(super::queue::deliver(
             Weak::clone(&self.factory),
             node.clone(),
@@ -953,7 +953,7 @@ impl EdgeServer {
 
     /// The only local node whose link is up, with its down connection's sender and the link's generation: what a
     /// delegated call or a PASS authority call goes down. [`OFFLINE`] at once while no link is up, and refused while
-    /// several are (plans/Edge-Node.md decision 1).
+    /// several are (plans/archive/Edge-Node.md decision 1).
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) fn only_link(
@@ -967,14 +967,14 @@ impl EdgeServer {
         let first = up.next().ok_or_else(|| Error::new(moqui_core::edge::OFFLINE))?;
         if up.next().is_some() {
             return Err(Error::new(
-                "several local nodes are linked; a call down the link needs one (plans/Edge-Node.md decision 1)",
+                "several local nodes are linked; a call down the link needs one (plans/archive/Edge-Node.md decision 1)",
             ));
         }
         Ok(first)
     }
 
     /// The link of `node` while its down connection is up, as [`EdgeServer::only_link`] gives it: what an all-in-one
-    /// node's delegated call of a paired node's item goes down (plans/Edge-Node.md §10). [`OFFLINE`] at once while that
+    /// node's delegated call of a paired node's item goes down (plans/archive/Edge-Node.md §10). [`OFFLINE`] at once while that
     /// node's link is down.
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE

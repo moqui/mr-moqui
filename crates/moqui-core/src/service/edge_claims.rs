@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The ownership services of an all-in-one node (plans/Edge-Node.md §10, E12), in `org.moqui.edge.EdgeServices`:
+//! The ownership services of an all-in-one node (plans/archive/Edge-Node.md §10, E12), in `org.moqui.edge.EdgeServices`:
 //! `check#ReplicaClaim`, which the server's own create and update services of mail accounts, identities, chat bridges
 //! and numbers run (`EdgeClaims.secas.xml`) so the server does not take an item a paired node holds, and the
 //! replication conflicts Edge Clients shows (`get#ReplicaConflicts`, `recheck#ReplicaConflicts`,

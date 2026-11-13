@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The all-in-one node (plans/Edge-Node.md §10, E12): a full server with its own users, mail accounts, chat bridges,
+//! The all-in-one node (plans/archive/Edge-Node.md §10, E12): a full server with its own users, mail accounts, chat bridges,
 //! calls, numbers and XMPP domain that is also the edge node of a local node with no listening port. The server runs
 //! in a child process of this test binary (the test `edge_allinone::server_process`), on a database of its own, as
 //! `edge_call.rs`'s edge node does: the media driver, the notification socket's bindings, the SIP engine, the XMPP

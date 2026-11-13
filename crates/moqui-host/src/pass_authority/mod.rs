@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The PASS authority over gRPC (plans/Edge-Node.md §5.5): `moqui.pass.v1.PassAuthority`, generated from
+//! The PASS authority over gRPC (plans/archive/Edge-Node.md §5.5): `moqui.pass.v1.PassAuthority`, generated from
 //! `proto/pass.proto` ([`proto`]), what mr-pass calls in place of the authority's REST routes. It is served
 //! - **direct**, on the host's gRPC listener (`crate::grpc_listen`) when `pass_authority_grpc_enabled=true`: a call names
 //!   a registered client in the `x-pass-client` metadata (or its `client_id`) with its secret in

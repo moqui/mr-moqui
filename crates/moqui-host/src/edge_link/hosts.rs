@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The public host names an edge node answers for its paired local nodes (plans/Edge-Node.md §5.3):
+//! The public host names an edge node answers for its paired local nodes (plans/archive/Edge-Node.md §5.3):
 //! `moqui.edge.EdgeHost` rows, and the table in memory the listener reads for each connection and request. Only a
 //! name in the table goes down a link, and only to its own node, so the edge node is no open proxy.
 

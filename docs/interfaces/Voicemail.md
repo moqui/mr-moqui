@@ -158,7 +158,7 @@ transcripts and its row.
 
 ## While the local node is away
 
-Behind an edge node ([SIP](SIP.md#behind-an-edge-node), plans/Edge-Node.md §5.4, decision 4, E8) the edge node's
+Behind an edge node ([SIP](SIP.md#behind-an-edge-node), plans/archive/Edge-Node.md §5.4, decision 4, E8) the edge node's
 engine records every message and queues it to the local node with its audio (kind `voicemail`), which stores it
 (`receive#EdgeVoicemail`) and tells its owner as above. The box is the one `begin#Voicemail` chose for the call, or,
 when the local node did not route it, the called number's own: the user's (made when they have none), or the ring

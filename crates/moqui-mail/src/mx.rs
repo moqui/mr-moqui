@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge node's MX delivery, the MTA in moqui (plans/Edge-Node.md §5.4, E5b), when `edge_mail_mta` is `moqui`
+//! The edge node's MX delivery, the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b), when `edge_mail_mta` is `moqui`
 //! (MoquiEdgeConf.xml sets it; empty or `postfix` keeps E5a's relay to the MTA beside the edge node).
 //!
 //! - **Recorded.** `deliver#EdgeOutboundMail` signs the message with the node's DKIM key (`super::auth`), queues it
@@ -312,7 +312,7 @@ fn flight() -> &'static Mutex<Flight> {
     FLIGHT.get_or_init(|| Mutex::new(Flight::default()))
 }
 
-/// Start the delivery thread on a node that takes links (a dedicated edge node, or an all-in-one node, plans/Edge-Node.md
+/// Start the delivery thread on a node that takes links (a dedicated edge node, or an all-in-one node, plans/archive/Edge-Node.md
 /// §10) whose `edge_mail_mta` is `moqui`; once per factory. It holds the factory only for a round, so a stopped server
 /// ends it. It delivers only the rows [`record`] made for a paired node's `mailOut` items: an all-in-one node's own
 /// mail goes out by its `EmailServer` as on a normal node, never through these rows, so it is not delivered twice.

@@ -190,7 +190,7 @@ function liveSipNodes() {
 }
 
 /**
- * Whether phones go through this node's edge node (the wizard's phones area, plans/Edge-Node.md §5.7 "As built (E10,
+ * Whether phones go through this node's edge node (the wizard's phones area, plans/archive/Edge-Node.md §5.7 "As built (E10,
  * phones)"): on unless edge_sip_enabled is false, n, no, 0 or off (moqui_core::edge::sip::sip_enabled).
  */
 function edgeSipEnabled() {
@@ -199,7 +199,7 @@ function edgeSipEnabled() {
 
 /**
  * The nodes a phone call can go to: a live SIP engine with a live media node that takes calls. The edge node's
- * (plans/Edge-Node.md §5.4 "Voice (SIP)", E8) takes phone calls also while its media row drains (the wizard's calls
+ * (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8) takes phone calls also while its media row drains (the wizard's calls
  * off, edge_calls_enabled): its trunks and phones reach only it, and their media is there whatever the browsers do.
  * With phones off (edge_sip_enabled) its link-kept row stays but takes no new call.
  */
@@ -677,7 +677,7 @@ function myCallerIds() {
 function registerNode(p) {
   const row = one(SIP_NODE, { instanceId: p.instanceId })
   const now = ec.user.nowTimestamp
-  // the edge link keeps only its edge node's row (plans/Edge-Node.md §5.4, E8), as CallServices register#MediaNode: never
+  // the edge link keeps only its edge node's row (plans/archive/Edge-Node.md §5.4, E8), as CallServices register#MediaNode: never
   // a row an engine registered, and an engine's own heartbeat never takes a link-kept row over or ends it
   const linked = !!row && row.edgeLinked === 'Y'
   if (row && yes(p.edgeLinked) !== linked) {
@@ -704,13 +704,13 @@ function registerNode(p) {
 /**
  * Whether the caller may act for a call (callSessionId, callLegId) or as a node (instanceId): anyone but the edge link's
  * delegate user, which may only for a call whose media is on this node's edge node, or as that node (Calls.js
- * edgeAllowed; plans/Edge-Node.md §5.4 "Voice (SIP)", E8).
+ * edgeAllowed; plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8).
  */
 function edgeAllowed(p) {
   return ec.user.username !== '_edge_' || !!calls('edgeAllowed', p).allowed
 }
 
-// ---------- SIP on the edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
+// ---------- SIP on the edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
 
 const FALLBACK = 'moqui.call.PhoneNumberFallback'
 const BOX = 'moqui.call.VoicemailBox'

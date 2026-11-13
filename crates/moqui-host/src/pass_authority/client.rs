@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A PASS frontend's calls to its authority over gRPC (plans/Edge-Node.md §5.5): the `moqui_core::pass_authority`
+//! A PASS frontend's calls to its authority over gRPC (plans/archive/Edge-Node.md §5.5): the `moqui_core::pass_authority`
 //! sender behind scripts' `ec.service.passAuthority(endpoint)`, on the host's runtime.
 //! - `grpc://host:port` and `grpcs://host:port`: the authority's gRPC listener, plain HTTP/2 or TLS (WebPKI roots,
 //!   ALPN h2), one connection per endpoint kept and dialed again when it closes; the client is `pass_client_id`, its

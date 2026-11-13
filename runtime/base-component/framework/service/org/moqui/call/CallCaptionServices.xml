@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallCaptions.js').execute('legJoined', context))</script></actions>
     </service>
 
-    <!-- ========== The media node's captions (rtc/captions.rs). On an edge node (plans/Edge-Node.md §5.4, E7) the
+    <!-- ========== The media node's captions (rtc/captions.rs). On an edge node (plans/archive/Edge-Node.md §5.4, E7) the
         call's rows and the agent runtime's quota are its local node's: these are delegated there (MoquiDefaultConf.xml
         edge) and granted to _EDGE_ (EdgeSetupData.xml). ========== -->
     <service verb="get" noun="CaptionSpeaker" type="rust" location="moqui_core::service::call_media::get_caption_speaker"

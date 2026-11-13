@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Pair with an edge node and set this node up with it (plans/Edge-Node.md §5.7; style-guide §3.10 Wizard): a
+<!-- Pair with an edge node and set this node up with it (plans/archive/Edge-Node.md §5.7; style-guide §3.10 Wizard): a
     subscreens-panel type="wizard" over the steps in Pair/: EdgeUrl (the edge node's address and the pairing code its
     operator made; Next connects and checks its certificate), Connect (its name, link key fingerprint and versions to
     confirm; Next pairs, pinning that fingerprint, and waits for the link), Discover (what the edge node offers, as a

@@ -337,7 +337,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="startedDate" type="date-time"/>
         <field name="heartbeatDate" type="date-time"/>
         <field name="draining" type="text-indicator"><description>Y: takes no new calls, its calls finish</description></field>
-        <field name="edgeLinked" type="text-indicator"><description>Y: this node's edge node (plans/Edge-Node.md §5.4),
+        <field name="edgeLinked" type="text-indicator"><description>Y: this node's edge node (plans/archive/Edge-Node.md §5.4),
             whose row the edge link keeps (its heartbeat from the link's liveness), and which new calls prefer</description></field>
     </entity>
 

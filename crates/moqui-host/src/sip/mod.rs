@@ -40,12 +40,12 @@
 //!   keys, a queue's music and ticks, ringback during a ring step or a blind transfer, hold music, a transfer's timer,
 //!   a merge's move to another room (the controls `route`, `ringback`, `connect`, `transferTimer`, `move`), and a desk
 //!   phone's REFER.
-//! - **On an edge node** (plans/Edge-Node.md §5.4 "Voice (SIP)", E8, `edge.rs`, `fallback.rs`): the voice services it
+//! - **On an edge node** (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8, `edge.rs`, `fallback.rs`): the voice services it
 //!   calls run on the local node (delegated), its trunks come from the replicated copy, it registers no `SipNode` (the
 //!   local node keeps its row from the link's Hello), its messages and the greetings it plays cross the link's queue,
 //!   and a call whose routing finds the local node away is answered from the number's fallback: its outside number,
 //!   then a message, or 480.
-//! - **On an all-in-one node** (plans/Edge-Node.md §10, E12, `owners.rs`): both. Its own trunks, numbers and phones
+//! - **On an all-in-one node** (plans/archive/Edge-Node.md §10, E12, `owners.rs`): both. Its own trunks, numbers and phones
 //!   as a normal node's, and its paired node's as an edge node's, each item by its owner: the trunks of both sides,
 //!   an inbound call by the number called, a phone by the domain it registers to, a call's services and its fallback
 //!   by the call's owner. It registers its own `SipNode` and advertises the paired node's domain over the link.

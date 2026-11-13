@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The link's queue delivery (plans/Edge-Node.md §5.2): while a link is up, one task per direction takes the head of
+//! The link's queue delivery (plans/archive/Edge-Node.md §5.2): while a link is up, one task per direction takes the head of
 //! each conversation key in order (`moqui_core::edge::queue`) and sends it, on an edge node down to the local node
 //! (`LocalLink.Deliver`), on a local node up to the edge node (`Link.Deliver`). The receiver applies it with its
 //! receipt and answers applied, duplicate, failed or paused; no answer (the link dropped) is not counted as an attempt.

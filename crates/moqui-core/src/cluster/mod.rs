@@ -592,7 +592,7 @@ pub fn live_member_count(factory: &ExecutionContextFactory, facade: &EntityFacad
 }
 
 /// Whether `instance_id` is a live member of this factory's cluster (its heartbeat within the window): an edge node
-/// that names a member's id is refused (plans/Edge-Node.md §5.4).
+/// that names a member's id is refused (plans/archive/Edge-Node.md §5.4).
 ///
 /// # Errors
 ///

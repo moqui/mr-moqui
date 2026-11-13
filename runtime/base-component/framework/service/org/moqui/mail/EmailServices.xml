@@ -86,7 +86,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <!-- ========== Mail through an edge node (plans/Edge-Node.md §5.4): the handlers of the link's queue kinds mail,
+    <!-- ========== Mail through an edge node (plans/archive/Edge-Node.md §5.4): the handlers of the link's queue kinds mail,
         mailOut and mailStatus (MoquiDefaultConf.xml edge), granted to _EDGE_ in EdgeSetupData.xml ========== -->
     <service verb="apply" noun="EdgeQueueItem" type="interface">
         <description>What the handler of a mail queue kind gets (moqui_core::edge::queue::apply): the item, on the node

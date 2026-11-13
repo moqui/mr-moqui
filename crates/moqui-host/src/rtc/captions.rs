@@ -40,7 +40,7 @@
 //! The transcriber is a trait ([`Transcriber`]): the `moqui-llm` endpoint ([`moqui_core::llm_hooks::transcribe`]), or
 //! `speech-local` (`call_captions_provider=local`, not built yet, see `crate::speech_local`). With
 //! `call_captions_store=true` each caption is kept as a `CallTranscript` row (`store#CallTranscript`); by default
-//! nothing is stored. Speakers are named by `get#CaptionSpeaker`. On an edge node (plans/Edge-Node.md §5.4) those two
+//! nothing is stored. Speakers are named by `get#CaptionSpeaker`. On an edge node (plans/archive/Edge-Node.md §5.4) those two
 //! run on its local node (delegated), and so does transcription (`transcribe#CaptionAudio`, [`DelegatedTranscriber`]),
 //! where the call's rows and the agent runtime's quota are.
 
@@ -691,7 +691,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
             language: settings.language.clone(),
         })
     } else if paired.is_some() || moqui_core::edge::settings(factory).edge_node() {
-        // the agent runtime, the quota and the LlmCall are the local node's (plans/Edge-Node.md §5.4)
+        // the agent runtime, the quota and the LlmCall are the local node's (plans/archive/Edge-Node.md §5.4)
         Arc::new(DelegatedTranscriber {
             factory: Arc::clone(factory),
             call: call.to_string(),
@@ -867,7 +867,7 @@ impl Outside for NodeOutside {
 }
 
 /// The participant of a leg and the name the call shows for them, by `get#CaptionSpeaker` (on an edge node, its local
-/// node's, plans/Edge-Node.md §5.4).
+/// node's, plans/archive/Edge-Node.md §5.4).
 fn speaker_of(leg: &str) -> Result<Speaker, moqui_core::context::Error> {
     let parameters = BTreeMap::from([("callLegId".to_string(), Value::string(leg))]);
     let out = service(SPEAKER_SERVICE, &parameters)?;

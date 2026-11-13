@@ -10,7 +10,7 @@
 // along with this software (see the LICENSE.md file). If not, see
 // <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-// The edge link between a local node and its edge node (plans/Edge-Node.md §5.1).
+// The edge link between a local node and its edge node (plans/archive/Edge-Node.md §5.1).
 //
 // Changes are additive only: a new field or RPC gets a new number or name, and no field or RPC is removed, renamed or
 // renumbered. A change that cannot be made that way is a new link protocol version (LINK_VERSION in
@@ -39,7 +39,7 @@ message Hello {
   string instance_id = 6;
   // A name to show the operator of the other end.
   string node_name = 7;
-  // The edge node's, when it is a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): the address
+  // The edge node's, when it is a media node of its local nodes' calls (plans/archive/Edge-Node.md §5.4, E7): the address
   // browsers send media to (rtc_public_address, else the media socket's), empty when its media socket is off.
   string media_address = 8;
   // The edge node's: its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
@@ -47,7 +47,7 @@ message Hello {
   // The edge node's: when its media socket started (epoch milliseconds), 0 when it is off. The local node keeps it as
   // the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
   uint64 media_started_ms = 10;
-  // The edge node's, when its SIP engine runs (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
+  // The edge node's, when its SIP engine runs (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
   // TCP, and for TLS (the public address and port), empty when off. The local node keeps the edge node's SipNode row
   // from them, so its phone calls are routed to the edge node's engine.
   string sip_address = 11;
@@ -109,7 +109,7 @@ message UnpairRequest {}
 
 message UnpairReply {}
 
-// A queued item (plans/Edge-Node.md §5.2), from the sender's moqui.edge.EdgeQueueItem.
+// A queued item (plans/archive/Edge-Node.md §5.2), from the sender's moqui.edge.EdgeQueueItem.
 message QueueItem {
   // A UUID, which the receiver's receipt is keyed by.
   string queue_item_id = 1;
@@ -125,7 +125,7 @@ message QueueItem {
 }
 
 // A message of a cluster topic for one node, which is the link's other end (E7): the rtc-signal frames, replies and
-// controls of calls whose media is on the edge node (moqui_core::cluster::send_to, plans/Edge-Node.md §5.4). The
+// controls of calls whose media is on the edge node (moqui_core::cluster::send_to, plans/archive/Edge-Node.md §5.4). The
 // receiver publishes it on its own notification bus, and only on the topics it takes (rtc-signal).
 message SignalMessage {
   // The link generation the sender is on.
@@ -240,7 +240,7 @@ message ReplicateReply {
   bool resync = 1;
 }
 
-// A public host name of a local node, with how the edge node handles it (plans/Edge-Node.md §5.3).
+// A public host name of a local node, with how the edge node handles it (plans/archive/Edge-Node.md §5.3).
 message HostSetting {
   // Lower case, with no port or trailing dot.
   string host_name = 1;
@@ -343,7 +343,7 @@ message SipOffer {
   bool other_nodes = 8;
 }
 
-// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own.
+// What an edge node offers a local node (plans/archive/Edge-Node.md §5.7, Discover). Each area is a message of its own.
 message Offer {
   WebOffer web = 1;
   MailOffer mail = 2;
@@ -363,7 +363,7 @@ message Offer {
 
 message OfferRequest {}
 
-// The local node's part of its setup (plans/Edge-Node.md §5.7, Apply). The edge node checks it as input from any
+// The local node's part of its setup (plans/archive/Edge-Node.md §5.7, Apply). The edge node checks it as input from any
 // client: only the asking node's names are changed, and a name another node holds is refused.
 message ConfigureRequest {
   // The local node's host names: with set_hosts, the whole list, so a name of this node not in it is removed.

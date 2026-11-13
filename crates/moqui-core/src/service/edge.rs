@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.edge.EdgeServices` (plans/Edge-Node.md §5.2, §5.7): the edge link for the System app's Edge Node and
+//! `org.moqui.edge.EdgeServices` (plans/archive/Edge-Node.md §5.2, §5.7): the edge link for the System app's Edge Node and
 //! Edge Clients screens, through the host's [`crate::edge::EdgeLink`]. In a host without the `edge` feature each call
 //! fails with [`crate::edge::NOT_BUILT`], except `get#LinkStatus`, which answers `state` notBuilt (or notStarted in a
 //! build with the link that no HTTP listener started) so a screen can say so. The queue's and replication's services
@@ -644,7 +644,7 @@ fn xmpp_domain() -> String {
         .to_ascii_lowercase()
 }
 
-/// The XMPP choice of `apply#EdgeSetup` (plans/Edge-Node.md §5.7, E10): this node's `xmpp_domain`, which must be one of
+/// The XMPP choice of `apply#EdgeSetup` (plans/archive/Edge-Node.md §5.7, E10): this node's `xmpp_domain`, which must be one of
 /// its host names on the edge node, since uploads (`https://<domain>`) and `/xmpp-websocket` ride on web access. With
 /// web access on, the domain is added to `hosts` as passthrough when it is not listed; with it off, the edge node should
 /// have it already, and the answer's second part is false when it does not (a failed line, the rest still applied).
@@ -1180,7 +1180,7 @@ fn xmpp_tests(link: Option<&dyn crate::edge::EdgeLink>) -> Vec<TestLine> {
     tests
 }
 
-/// The Test step's calls lines (plans/Edge-Node.md §5.7, E10 calls): the edge node's row is live and preferred
+/// The Test step's calls lines (plans/archive/Edge-Node.md §5.7, E10 calls): the edge node's row is live and preferred
 /// (`callsNode`, [`crate::edge::calls::row_check`]), `make#IceServers` gives its TURN URLs a credential signed with
 /// the secret its link handed this node (`iceServers`), and, on a thread of its own, that credential allocates on its
 /// TURN with a permission for its media address's IP (`turn`, [`crate::edge::EdgeLink::turn_probe`]). A check with no TURN
@@ -1271,7 +1271,7 @@ fn calls_tests(
     (lines, Some(probe))
 }
 
-/// The Test step's phones lines (plans/Edge-Node.md §5.7, E10 phones): the edge node's `SipNode` row is live with its
+/// The Test step's phones lines (plans/archive/Edge-Node.md §5.7, E10 phones): the edge node's `SipNode` row is live with its
 /// Hello's addresses (`sipNode`, [`crate::edge::sip::row_check`]), its engine has loaded this node's enabled trunks,
 /// none failed (`sipTrunks`), and its copy holds each number's fallback with nothing waiting (`sipFallbacks`). Not
 /// checked while `edge_sip_enabled` is off. No SIP request is sent: the edge node's engine answers OPTIONS only from

@@ -28,7 +28,7 @@ sip = ["moqui-host/sip"]
 channels = ["moqui-host/channels"]
 # XMPP for local users (crates/moqui-xmpp), in Enterprise, Maximal and Debug.
 xmpp = ["moqui-host/xmpp"]
-# The edge link (plans/Edge-Node.md), in Enterprise and Maximal.
+# The edge link (plans/archive/Edge-Node.md), in Enterprise and Maximal.
 edge = ["moqui-host/edge"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]

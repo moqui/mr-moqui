@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Web access through an edge node (plans/Edge-Node.md §5.3, E2). Both ends are real servers in the test's own
+//! Web access through an edge node (plans/archive/Edge-Node.md §5.3, E2). Both ends are real servers in the test's own
 //! process: the local node starts first, with its HTTPS listener on a certificate for `pass.localhost`, an SSH server
 //! and web protection that denies 203.0.113.0/24; then the edge node (`node_role=edge`, set only after the local node
 //! has read its properties) with a certificate for `term.localhost` and an SSH tunnel port. The local node's link is

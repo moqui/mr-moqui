@@ -461,7 +461,7 @@ along with this software (see the LICENSE.md file). If not, see
             it (empty: the adapter's limit). webhookPublicKey is the public key the network signs its webhooks with (an
             SMS bridge's configJson publicKey, copied by store#Bridge and, for a bridge saved before, at start) and
             webhookToleranceSeconds its window: not secret, so they are all of the configuration an edge node's
-            replicated copy has (plans/Edge-Node.md §5.4).</description>
+            replicated copy has (plans/archive/Edge-Node.md §5.4).</description>
         <field name="chatBridgeId" type="id" is-pk="true"/>
         <field name="typeEnumId" type="id"/>
         <field name="adapterName" type="text-short"/>

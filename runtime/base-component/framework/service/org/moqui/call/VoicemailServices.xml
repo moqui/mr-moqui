@@ -324,7 +324,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="receive" noun="EdgeVoicemail" allow-remote="false">
-        <description>On a local node, the edge link's queue kind voicemail (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): a
+        <description>On a local node, the edge link's queue kind voicemail (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): a
             message the SIP engine of its edge node recorded, the item's content. The payload names the number called
             (toNumber), the caller (fromNumber, fromName), its length (durationMs) and when it came (receivedMs), and
             callSessionId when this node had routed the call (its box is the one begin#Voicemail chose for it); with none,

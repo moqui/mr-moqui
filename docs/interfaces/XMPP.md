@@ -44,7 +44,7 @@ certificate. In dev an empty `runtime/cert` gets a self-signed `localhost` certi
 
 ## Behind an edge node
 
-A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/Edge-Node.md](../../plans/Edge-Node.md)
+A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archive/Edge-Node.md](../../plans/archive/Edge-Node.md)
 §5.4) keeps its XMPP server; the edge node starts none, and its tunnel ports pipe clients down the link.
 
 - On the edge node, `edge_xmpp_port` (STARTTLS, 5222) and `edge_xmpp_tls_port` (direct TLS, 5223) on

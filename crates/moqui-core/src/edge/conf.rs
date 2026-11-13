@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `<edge>` conf (plans/Edge-Node.md §5.2): the delegated services, the queue's kinds and limits and the
+//! The `<edge>` conf (plans/archive/Edge-Node.md §5.2): the delegated services, the queue's kinds and limits and the
 //! replicated sets, read once per factory with this node's role, so two servers in one process (a test's edge node and
 //! local node) each keep their own.
 

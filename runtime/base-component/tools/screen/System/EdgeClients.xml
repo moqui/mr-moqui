@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Edge Clients (plans/Edge-Node.md §5.7): on an edge node (node_role=edge), the local nodes paired with it and their links
+<!-- Edge Clients (plans/archive/Edge-Node.md §5.7): on an edge node (node_role=edge), the local nodes paired with it and their links
     (org.moqui.edge.EdgeServices.get#EdgeClients): state, generation, last connect, address and versions. Ping sends a
     Ping down a node's down connection and shows the round trip; Revoke ends its key and closes its link. Make a pairing
     code (create#PairingCode) shows the code once, after the redirect, as the Chat apps screen shows a new app password;
@@ -80,7 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
         const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
-        // a dedicated edge node and an all-in-one node both take links (plans/Edge-Node.md §10)
+        // a dedicated edge node and an all-in-one node both take links (plans/archive/Edge-Node.md §10)
         notEdge = !notBuilt && !notStarted && !['edge', 'all-in-one'].includes(link.nodeRole)
         isEdge = !notBuilt && !notStarted && !notEdge
         allInOne = isEdge && link.nodeRole === 'all-in-one'

@@ -179,7 +179,7 @@ on every member.
   code, not of the issues. DG9 restores a backup to a second machine before cutover. Run logs, artifacts and caches
   have a retention time, so they do not grow the database without end.
 - **Mail.** moqui.org has no mail server today. The server takes mail itself (`smtp_internet`) or through an edge
-  node ([Edge-Node](Edge-Node.md)), and signs what it sends. A list's mail at volume from a new domain needs its
+  node ([Edge-Node](archive/Edge-Node.md)), and signs what it sends. A list's mail at volume from a new domain needs its
   reputation built (question 11).
 - **Certificates.** certbot writes into `runtime/cert`, which the server re-reads, until F10.
 - **Runners.** On a machine other than the server's, always ([§8.4](#84-safety)).
@@ -424,7 +424,7 @@ to be undone, and it joins what is in place.
 | --- | --- | --- |
 | Forum (Mantle, `mantle.forum`) | One review queue (held first posts, flags, classifier results, pending accounts) with claims, decisions, appeals and an audit of every action; rules by word, pattern and link; sanctions; trust levels with limits; rate limits; an optional classifier service (`pass_classifier_service`); a file scanner (`pass_scanner_service`). design-forum §10.1 | The layer |
 | BOSS Comms › Moderation | The same queue for internal moderators, over the same services (`boss/service/ironstone/comms/ModerationServices.xml`) | Yes, already |
-| Mail | The gateway's spam verdict (Rspamd, or the listener's own call to it) puts a message in Junk; a user's Spam and Not spam move it; a mail rule may mark spam ([Mail-Inbound](../docs/interfaces/Mail-Inbound.md)). Filtering in moqui itself is [Edge-Node](Edge-Node.md)'s late phase | A signal, joined here |
+| Mail | The gateway's spam verdict (Rspamd, or the listener's own call to it) puts a message in Junk; a user's Spam and Not spam move it; a mail rule may mark spam ([Mail-Inbound](../docs/interfaces/Mail-Inbound.md)). Filtering in moqui itself is [Edge-Node](archive/Edge-Node.md)'s late phase | A signal, joined here |
 | Chat | A person's own block list (`XmppBlockedJid`). Rooms have no moderation ([Comms-Framework](archive/Comms-Framework.md)) | Nothing to join; left out |
 | Shop reviews | A review's moderation is a status change with its reason in the audit log | Left as it is |
 
@@ -689,7 +689,7 @@ them.
 | F7 | The CI engine: `ci.xml` and `git-ci-3.xsd`, the records, the queue, job tokens, the runner's REST, logs and artifacts, `moqui ci-run`. | `git/`, `host/`, `fw/` |
 | F8 | Runner drivers: host type services for a run that ends (start with limits and an environment, remove, clean up); the Docker Engine API on Docker and on Podman, over a socket or TLS; the `moqui-build` image in `podman/`; registered runners. | `fw/service/org/moqui/dev/InstanceServices.xml`, `fw/entity/ServerEntities.xml` |
 | F9 | REST for repositories, merge requests, reviews, threads and pipeline runs, in OpenAPI, for the Dev AIDE and for anyone's tools. | `runtime/base-component/tools/service/moqui.rest.xml` |
-| F10 | An ACME client, for moqui.org and for a site's own host names; [Edge-Node](Edge-Node.md) notes its absence too. | `host/tls.rs` |
+| F10 | An ACME client, for moqui.org and for a site's own host names; [Edge-Node2](Edge-Node2.md#22-not-built) plans it (E15: from a System screen, never on its own). | `host/tls.rs` |
 | F11 | A file system or S3-like store behind content blobs, for artifacts, caches and LFS. In [Remaining-Work](Remaining-Work.md#git-and-git-hosting) already. moqui.org keeps them in the database (D16), with retention, so this waits until their size asks for it. | `crates/moqui-entity/src/resource/blob.rs` |
 | F12 | Later: code search over default branches. | |
 

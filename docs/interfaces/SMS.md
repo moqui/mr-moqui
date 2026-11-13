@@ -51,7 +51,7 @@ with a messaging bridge and no trunk texts.
    at (an MMS that goes out is refused, `mediaUnreachable`, without it); System, Voice, Fraud: the SMS limits (people's
    texts a day each and in all; the system's own texts a day) and the system's number (sign-in codes).
 
-**Behind an edge node** ([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node), [plan](../../plans/Edge-Node.md)
+**Behind an edge node** ([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node), [plan](../../plans/archive/Edge-Node.md)
 §5.4). A local server that providers cannot reach takes its texts through its edge node:
 - The webhook URL in the portal is the edge node's: `https://<edge node>/channels/<chatBridgeId>/webhook`. The edge node
   checks the signature with the bridge's public key (replicated to it; the API key stays on the local node), answers 200

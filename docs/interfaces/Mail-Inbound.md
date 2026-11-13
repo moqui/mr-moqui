@@ -161,7 +161,7 @@ verdict and the authentication results in short (`spf=pass dkim=pass dmarc=pass`
 ## The edge node as the gateway
 
 A local server behind a firewall gets its mail through its edge node ([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node),
-[plan](../../plans/Edge-Node.md) §5.4). The local node then runs no listener of its own for the internet: the edge node
+[plan](../../plans/archive/Edge-Node.md) §5.4). The local node then runs no listener of its own for the internet: the edge node
 takes the mail and queues each message for it over the link, and the local node delivers it as this listener would.
 `RCPT TO` is answered on the edge node from the local node's accounts, replicated to it, so an unknown address is refused
 while the local node is away too.

@@ -65,7 +65,7 @@ function voice(op, parameters) {
 /** A refusal: an error for the user and a reason code for the caller. */
 /**
  * Anyone, or the edge link's delegate user for a call whose media is on this node's edge node (Calls.js edgeAllowed;
- * plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP engine routes only its own calls.
+ * plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP engine routes only its own calls.
  */
 function edgeAllowed(p) {
   return ec.user.username !== '_edge_' || !!(ec.resource.script(CALLS).execute('edgeAllowed', p) || {}).allowed

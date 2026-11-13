@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Whose trunk, number, call and phone the SIP engine handles (plans/Edge-Node.md §10, E12): the server's own, or the
+//! Whose trunk, number, call and phone the SIP engine handles (plans/archive/Edge-Node.md §10, E12): the server's own, or the
 //! paired local node's. An all-in-one node has both: its own trunks, numbers and phones, as a normal node, and its
 //! paired node's, as an edge node (E8). A dedicated edge node has only the paired node's.
 //!

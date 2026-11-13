@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Chat bridges and SMS through the edge node (plans/Edge-Node.md §5.4, E6). Both ends are real servers in the test's
+//! Chat bridges and SMS through the edge node (plans/archive/Edge-Node.md §5.4, E6). Both ends are real servers in the test's
 //! own process, as in `edge_mail.rs`, with the edge conf of MoquiDefaultConf.xml (the kinds chatWebhook and chatMedia,
 //! the replicated `chatBridges`). An SMS bridge on Telnyx is on the local node; a test Ed25519 key signs its webhooks
 //! as Telnyx does, and a fake Telnyx takes its sends.

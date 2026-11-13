@@ -14,7 +14,7 @@
 
 //! gRPC clients on an HTTP/2 connection of our own: the [`H2Channel`] the generated clients take, and [`dial`], which
 //! opens such a connection over TCP, with TLS (ALPN `h2`) or without. The cluster's sender (`crate::cluster_grpc`),
-//! the PASS authority's (`crate::pass_authority::client`) and the edge link (plans/Edge-Node.md §5.1) use them.
+//! the PASS authority's (`crate::pass_authority::client`) and the edge link (plans/archive/Edge-Node.md §5.1) use them.
 
 use std::future::Future;
 use std::pin::Pin;

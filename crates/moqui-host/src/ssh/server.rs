@@ -388,7 +388,7 @@ async fn dialog_expired(slot: &Slot, since: tokio::time::Instant) {
 
 /// What serves one connection: the server's settings, its shared state and counts, and its stop. The listener hands
 /// it each TCP connection, and an edge link's SSH tunnel hands it a tunnel stream with the client's address
-/// ([`serve_stream`], plans/Edge-Node.md §5.3).
+/// ([`serve_stream`], plans/archive/Edge-Node.md §5.3).
 struct Intake {
     config: Arc<russh::server::Config>,
     shared: Arc<Shared>,

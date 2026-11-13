@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Calls with the edge node as media node (plans/Edge-Node.md §5.4, E7). The local node runs in the test's process with
+//! Calls with the edge node as media node (plans/archive/Edge-Node.md §5.4, E7). The local node runs in the test's process with
 //! no media socket of its own; the edge node runs in a child process of this test binary (the test
 //! `edge_call::edge_node_process`), with its own database, its media socket and its embedded TURN: the media driver's
 //! command channel, the notification socket's bindings and the notify bus are process globals, so the media node and

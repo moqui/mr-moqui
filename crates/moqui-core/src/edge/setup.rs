@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Attaching a local node to its edge node (plans/Edge-Node.md §5.7, E10): what the edge node offers ([`EdgeOffer`]),
+//! Attaching a local node to its edge node (plans/archive/Edge-Node.md §5.7, E10): what the edge node offers ([`EdgeOffer`]),
 //! the local node's part it sends back on the link's Configure ([`EdgeSetup`], checked on the edge node by
 //! [`check_setup`]), the local rows and settings the wizard's Apply step writes ([`apply_local`]), and the Test step's
 //! round trips over the queue ([`start_echo`], [`receive_echo`], [`wait_echo`]). The host's link carries the offer and
@@ -39,7 +39,7 @@ pub const ECHO_KIND: &str = "edgeEcho";
 pub const EDGE_SERVER_ID: &str = "EDGE";
 /// The `EmailServer` the framework's own mail (the email templates) goes through.
 pub const SYSTEM_SERVER_ID: &str = "SYSTEM";
-/// The `smtpHost` of a server whose mail the local node queues for its edge node (plans/Edge-Node.md §5.4, E5a).
+/// The `smtpHost` of a server whose mail the local node queues for its edge node (plans/archive/Edge-Node.md §5.4, E5a).
 pub const EDGE_SMTP_HOST: &str = "edge:";
 /// The local node's address for chat providers and MMS files, which on a paired node is the edge node's (E6).
 pub const CHAT_PUBLIC_URL: &str = "channels_public_url";
@@ -118,7 +118,7 @@ pub struct CallsOffer {
 }
 
 /// The edge node's SIP engine (E8): its addresses, its registrar, the trunks it loaded from the asking node's copy and
-/// the fallbacks it holds for that node (plans/Edge-Node.md §5.7, E10 phones).
+/// the fallbacks it holds for that node (plans/archive/Edge-Node.md §5.7, E10 phones).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SipOffer {
     /// Its SIP engine runs.
@@ -384,7 +384,7 @@ impl SetupLine {
     }
 }
 
-/// Write the local rows and settings of the chosen areas (plans/Edge-Node.md §5.7, Apply), each on its own, so one
+/// Write the local rows and settings of the chosen areas (plans/archive/Edge-Node.md §5.7, Apply), each on its own, so one
 /// that fails is a line and the others still go:
 /// - mail: an `EmailServer` [`EDGE_SERVER_ID`] with `smtpHost` `edge:`; `SYSTEM`'s `smtpHost` set to it; each chosen
 ///   hosted or shared account sends through it (its own server, when it owns one with no incoming store, gets

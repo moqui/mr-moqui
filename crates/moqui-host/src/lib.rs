@@ -78,7 +78,7 @@ pub mod lsp;
 mod monitor;
 #[cfg(feature = "pdf")]
 pub mod pdf;
-// The PASS authority over gRPC (plans/Edge-Node.md §5.5): direct on the gRPC listener and on the edge link, and the
+// The PASS authority over gRPC (plans/archive/Edge-Node.md §5.5): direct on the gRPC listener and on the edge link, and the
 // sender of scripts' calls to one; with gRPC but no edge feature, an off stub for the listener.
 #[cfg(feature = "edge")]
 mod pass_authority;
@@ -1728,7 +1728,7 @@ fn boot_server_factory(
     tracing::info!("Request pool started");
     // Empty cluster_https_port listens on 8444. 0 is ephemeral for tests.
     moqui_core::notify::install();
-    // scripts' calls to a PASS authority over gRPC (plans/Edge-Node.md §5.5), with or without listeners
+    // scripts' calls to a PASS authority over gRPC (plans/archive/Edge-Node.md §5.5), with or without listeners
     let pass_sender = install_pass_sender();
     if matches!(listeners, Listeners::None) {
         tracing::info!(
@@ -1798,7 +1798,7 @@ fn boot_server_factory(
     #[cfg(feature = "imap")]
     moqui_mail::start_idle(&factory);
     // the node's DKIM key is made into runtime/.env when first needed; on an edge node with the MTA in moqui, its MX
-    // delivery (plans/Edge-Node.md §5.4, E5b)
+    // delivery (plans/archive/Edge-Node.md §5.4, E5b)
     #[cfg(feature = "imap")]
     {
         moqui_mail::auth::enable_key_generation(factory.runtime_dir().join(".env"));

@@ -13,7 +13,7 @@ is left, by stream; the designs are in the archived plan and the interface guide
   (Telegram's long poll) needs its adapter to run on one node only, by a leader election; today an adapter starts on
   every node that runs the worker.
 - **C3b**, XMPP federation (server to server with TLS and SASL EXTERNAL, dialback), with its edge node split
-  ([Edge-Node](Edge-Node.md) E9). It is what XMPP push and a XEP-0479 level need.
+  ([Edge-Node](archive/Edge-Node.md) E9). It is what XMPP push and a XEP-0479 level need.
 - **C6a, C6b, C6c**: the Matrix client API (Element on C7's key endpoints), federation and the appservice API.
 - **C2** (an appservice on an external homeserver) and **C5** (Slack, Teams, Discord), when needed.
 
@@ -58,6 +58,15 @@ consent or real devices, and are listed in [§7.4](archive/Comms-Framework.md#74
   reaching an app server; Firefox and Safari for encrypted chat and calls.
 - What headless Chromium cannot drive: screen share and the active speaker, captions and a recorded greeting (its
   microphone is a steady tone), QR verification (a camera); the Recordings player with real media.
+
+## Edge node
+
+[Edge-Node2](Edge-Node2.md)'s phases E13 to E19 are for the first release
+([Remaining-Work](Remaining-Work.md#edge-node-and-deployment-topologies)). After it: E11, filtering in moqui (content
+and reputation scoring for mail, internal mail, public forms and outside chat, in place of the external Rspamd), and
+the plan's [Later row](Edge-Node2.md#5-phases): a PASS read cache on the edge node, monitoring over the link, sealing
+queued items, media cascading between a local node and the edge node, the voicemail fallback following rules and
+schedules, QUIC and DANE.
 
 ## Messaging — runtime-reflective FlatBuffers ([Messaging.md](proposals/Messaging.md), 1286 lines)
 Binary request/response and WebSocket document subscriptions using FlatBuffers `.bfbs` schemas generated at runtime from service, screen-transition and Data Document definitions, with a Rust reflective reader, a browser reader/writer on Emscripten WASM, shared message buffers and large-scale fan-out. JSON and other contracts stay. Status: roadmap shows 0 of 6 phases done. Today `moqui-browser` speaks JSON ([`crates/moqui-browser/src/api.rs`](../crates/moqui-browser/src/api.rs)) and cites this plan for the binary forms. Prerequisites in place: Wasm browser build, cached QuickJS service functions, committed-update path. Go/no-go gates are in §19; capacity model in §12–13.

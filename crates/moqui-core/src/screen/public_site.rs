@@ -61,7 +61,7 @@ fn normalize_host(host: &str) -> String {
 }
 
 /// The hosts of the conf's `public-site` routes (mr-pass's sites), normalized: on an edge node, names no local node's
-/// setup may claim (plans/Edge-Node.md §5.7).
+/// setup may claim (plans/archive/Edge-Node.md §5.7).
 pub fn hosts(factory: &ExecutionContextFactory) -> Vec<String> {
     let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) else {
         return Vec::new();

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The PASS authority over gRPC (plans/Edge-Node.md §5.5, E4), with a stub authority service in a test component written
+//! The PASS authority over gRPC (plans/archive/Edge-Node.md §5.5, E4), with a stub authority service in a test component written
 //! into each runtime (`pass_authority_service`), so no Mantle is needed: Call, Download (several chunks) and Upload
 //! round trips, and an account flow's session handle,
 //! - **direct**, on the local server's gRPC listener (`pass_authority_grpc_enabled`, plain h2c with no certificate), the

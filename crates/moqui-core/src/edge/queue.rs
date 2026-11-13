@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The link's queue (plans/Edge-Node.md §5.2): durable and ordered, delivered at least once and applied once by
+//! The link's queue (plans/archive/Edge-Node.md §5.2): durable and ordered, delivered at least once and applied once by
 //! receipt, either way. The sender keeps `moqui.edge.EdgeQueueItem` rows (on an edge node the items for a local node,
 //! on a local node its outbox); the host's link takes the head of each conversation key in order ([`due_heads`],
 //! [`claim`]), sends it, and records the answer ([`finish`]). The receiver writes the item's `moqui.edge.EdgeReceipt`
@@ -37,7 +37,7 @@
 //! removed by the retention pass. Content counts toward the size cap with the payload.
 //!
 //! On a clustered local node only the member that holds the link sends its outbox (the others' items wait for it, by
-//! lease); a lock row for that is later work (plans/Edge-Node.md §2).
+//! lease); a lock row for that is later work (plans/archive/Edge-Node.md §2).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};

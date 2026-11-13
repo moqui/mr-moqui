@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The local node's dialer (plans/Edge-Node.md §5.1): it opens the up connection (this node the HTTP/2 client, Hello
+//! The local node's dialer (plans/archive/Edge-Node.md §5.1): it opens the up connection (this node the HTTP/2 client, Hello
 //! first) and then the down connection (this node the HTTP/2 server of [`LocalLink`] and its web app,
 //! [`super::down`]), keeps them alive with HTTP/2 PINGs and a Ping that measures the round trip, and dials again with a
 //! backoff when either drops. A panic in one attempt is caught and logged, and the loop goes on
@@ -22,7 +22,7 @@
 //! `_EDGE_`, through `moqui_core::edge`), and sends its own outbox and replicated sets up ([`super::queue`],
 //! [`super::replicate`]). These need the server's factory, which comes with [`LocalConfig::web`]. The Edge Node
 //! wizard asks the edge node's offer and sends its Configure on the up connection ([`Dialer::offer`],
-//! [`Dialer::configure`], plans/Edge-Node.md §5.7).
+//! [`Dialer::configure`], plans/archive/Edge-Node.md §5.7).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -356,13 +356,13 @@ async fn connect_down(
     })
     .max_decoding_message_size(super::MAX_MESSAGE)
     .max_encoding_message_size(super::MAX_MESSAGE);
-    // the PASS authority for the edge node's mr-pass, the link its client (plans/Edge-Node.md §5.5); it runs on the
+    // the PASS authority for the edge node's mr-pass, the link its client (plans/archive/Edge-Node.md §5.5); it runs on the
     // server's factory, so only with a web app
     let mut grpc = tonic::service::Routes::new(link);
     if let Some(factory) = factory {
         grpc = grpc.add_service(crate::pass_authority::link_server(factory));
     }
-    // the link's calls, and this node's web app and tunnels (plans/Edge-Node.md §5.3)
+    // the link's calls, and this node's web app and tunnels (plans/archive/Edge-Node.md §5.3)
     let builder = super::down::builder(config.keepalive, config.web.as_ref());
     let service = super::down::service(grpc, config.web.clone());
     let (ended_tx, ended) = watch::channel(false);
@@ -440,7 +440,7 @@ impl Dialer {
         });
         let (stop, stop_rx) = watch::channel(false);
         let timeout = config.connect_timeout;
-        // replication notes writes from now on, and keeps its notes across links and dialers (plans/Edge-Node.md §5.2)
+        // replication notes writes from now on, and keeps its notes across links and dialers (plans/archive/Edge-Node.md §5.2)
         let replica = config
             .web
             .as_ref()
@@ -560,7 +560,7 @@ pub(crate) async fn configure_on(
 }
 
 /// The edge node's instance id, from its Hello, before the link carries anything: the one pinned (pinned now when none
-/// was), not this node's own, and no live member of this node's cluster (plans/Edge-Node.md §5.4). An edge node that
+/// was), not this node's own, and no live member of this node's cluster (plans/archive/Edge-Node.md §5.4). An edge node that
 /// took another media node's id would get that node's call signaling and media row; it is refused, as a changed key is.
 async fn check_peer(config: &LocalConfig, shared: &Shared, seen: &str) -> Result<(), String> {
     let pinned = lock(&shared.pinned).clone();
@@ -839,7 +839,7 @@ fn run_internal(
     }
 }
 
-/// The edge node's `CallMediaNode` and `SipNode` rows while this link lasts (plans/Edge-Node.md §5.4): written now and
+/// The edge node's `CallMediaNode` and `SipNode` rows while this link lasts (plans/archive/Edge-Node.md §5.4): written now and
 /// again every `every`, from the link's liveness, so they go stale (and their calls end, `expire#Calls`) only when
 /// the link has been down past the nodes' grace. An edge node with no media, or no SIP engine, has that row removed.
 /// With this node's `edge_calls_enabled` off the media row is draining, read again each time, so the wizard's choice

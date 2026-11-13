@@ -408,7 +408,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     assert_eq!(gateway.command("QUIT"), "221 2.0.0 Bye");
     assert_eq!(gateway.reply(), "");
 
-    // internal mail (plans/Edge-Node.md §5.4, E5b): a hosted account's send is DKIM-signed with the node's key (made
+    // internal mail (plans/archive/Edge-Node.md §5.4, E5b): a hosted account's send is DKIM-signed with the node's key (made
     // into runtime/.env now), and delivered here it is verified against that key, with an Authentication-Results
     sync(
         "create#moqui.basic.email.EmailServer",

@@ -467,7 +467,7 @@ feature("an edge node's recorder's segment and end come through the edge link's 
         const started = as(A, calls("start#Call"), {calleeUserIdList: [B]})
         as(B, calls("answer#Call"), {callSessionId: started.callSessionId})
         const rec = as(A, "start#Recording", {callSessionId: started.callSessionId})
-        // the queue's copy of the item's content, as the link's receiver keeps it (plans/Edge-Node.md §5.2, §5.4)
+        // the queue's copy of the item's content, as the link's receiver keeps it (plans/archive/Edge-Node.md §5.2, §5.4)
         const received = "dbresource://moqui/edge/content/in/spec-edge-node/spec-edge-item-1.r1"
         sys(() => ec.resource.getLocationReference(received).putText("OggS an edge node's segment"))
         const segment = {op: "segment", parameters: {callRecordingId: rec.callRecordingId, trackKind: "audio", source: "microphone",

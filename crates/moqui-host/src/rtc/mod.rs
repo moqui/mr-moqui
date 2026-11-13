@@ -24,13 +24,13 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 //!
-//! On an edge node (`node_role=edge`, plans/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
+//! On an edge node (`node_role=edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
 //! no row of its own, since it has no call state. Its media address and TURN URLs go in its link Hello
 //! (`moqui_core::edge::media::set_advert`), and the local node keeps its `CallMediaNode` row from the link. Its frames,
 //! replies and controls go over the link (`moqui_core::edge::signal`), its media events and captions' services are
 //! delegated to the local node, and its recordings' segments are queued there (`recorder.rs`).
 //!
-//! An all-in-one node (`node_role=all-in-one`, plans/Edge-Node.md §10, E12) is both: it registers its own row for its
+//! An all-in-one node (`node_role=all-in-one`, plans/archive/Edge-Node.md §10, E12) is both: it registers its own row for its
 //! own calls and advertises its media node to its paired node. The driver keys a paired node's rooms by node and call
 //! (`moqui_core::edge::media::room_key`, from the link's stamp on each message), so the two databases' call ids never
 //! meet; the room's work (media events, captions, recordings) goes to the room's owner.

@@ -25,7 +25,7 @@
 //! Files are spooled under `runtime/tmp/call-recording/<callRecordingId>/`. A closed segment goes to a store thread
 //! (a bounded queue) that hands it to `store#RecordingSegment`, which moves it to `dbresource://` and writes its rows.
 //!
-//! On an edge node (plans/Edge-Node.md §5.4, E7) the recording's rows are its local node's: each closed segment is
+//! On an edge node (plans/archive/Edge-Node.md §5.4, E7) the recording's rows are its local node's: each closed segment is
 //! queued to the local node as an item of kind [`QUEUE_KIND`] with the file as its content (the spool file goes once
 //! it is queued), and its end (`note#RecorderEnd`) under the same conversation key, the recording's id, so it never
 //! overtakes a segment; the local node's `receive#EdgeRecording` stores them. Its segments are at most

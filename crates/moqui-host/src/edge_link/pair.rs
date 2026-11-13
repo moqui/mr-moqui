@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The local node's identity on the link and pairing (plans/Edge-Node.md §5.1, §5.7): its key and the certificate made
+//! The local node's identity on the link and pairing (plans/archive/Edge-Node.md §5.1, §5.7): its key and the certificate made
 //! from it, the TLS client settings (WebPKI at pairing, the pinned key after), and the pairing connection's Probe and
 //! Pair calls.
 

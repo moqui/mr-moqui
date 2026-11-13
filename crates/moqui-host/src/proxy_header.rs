@@ -14,7 +14,7 @@
 
 //! The PROXY protocol header (HAProxy's v1 text and v2 binary forms) that names the client of a proxied connection:
 //! read by the SMTP listener behind a mail gateway (`smtp.rs`) and by a local node on an edge link's passthrough tunnel
-//! (`edge_link/down.rs`, plans/Edge-Node.md §5.3), and written by the edge node. Nothing reads it on an open socket.
+//! (`edge_link/down.rs`, plans/archive/Edge-Node.md §5.3), and written by the edge node. Nothing reads it on an open socket.
 
 use std::net::{IpAddr, SocketAddr};
 

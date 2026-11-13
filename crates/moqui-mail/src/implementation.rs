@@ -1532,7 +1532,7 @@ fn captured(letter: &Letter) -> bool {
 
 /// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when its From domain is a hosted account's
 /// (or one of `mail_dkim_domains`: `auth.rs`), so mail between the hosted accounts carries the same signature as mail
-/// out (plans/Edge-Node.md §5.4, "the same standards inside"). Only when the key is configured (so its record can be
+/// out (plans/archive/Edge-Node.md §5.4, "the same standards inside"). Only when the key is configured (so its record can be
 /// published), or when the server is this node's own SMTP listener, where the node verifies its own key: a node that
 /// sends through another provider's server sends no signature of a key nobody published.
 fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {

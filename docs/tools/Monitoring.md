@@ -147,7 +147,7 @@ with an `artifact` override and the receiver limits written out:
 `application/json`, gzip allowed, and answer as OTLP does, with partial success. In a build with the `grpc` feature
 (every package), `<telemetry><receiver grpc-enabled="true">` also opens OTLP/gRPC on `grpc-port` (4317) at
 `grpc-bind` (the HTTP listener's address by default); the dev conf turns it on. The port is the host's gRPC listener,
-which the PASS authority's gRPC shares when that is on ([Edge-Node](../../plans/Edge-Node.md) §5.5). It is TLS with the
+which the PASS authority's gRPC shares when that is on ([Edge-Node](../../plans/archive/Edge-Node.md) §5.5). It is TLS with the
 HTTPS listener's certificates, else plain h2c, takes gzip, and answers refusals as gRPC statuses (`UNAUTHENTICATED`,
 `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INVALID_ARGUMENT`; `OUT_OF_RANGE` over the body limit). The HTTPS listener
 takes the same OTLP/gRPC calls over HTTP/2, so a sender can use the HTTPS port instead of 4317.

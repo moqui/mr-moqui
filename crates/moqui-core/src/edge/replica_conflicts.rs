@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Replication conflicts on an all-in-one node (plans/Edge-Node.md §10, E12): a record of a paired node's set that
+//! Replication conflicts on an all-in-one node (plans/archive/Edge-Node.md §10, E12): a record of a paired node's set that
 //! claims an item the server holds itself ([`claims::copy_claim`], [`claims::own_claim`]: a mail address, a chat bridge
 //! id, a phone number) is not applied. The server's own item wins. The record is logged as an error and kept as a
 //! `moqui.edge.EdgeReplicaConflict` row, keyed as its `EdgeReplicaValue` would be, and Edge Clients shows it; the rest

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (plans/Edge-Node.md §5.2, §5.3, §5.7) for the System app: on a local node its Edge Node screen
+<!-- The edge link (plans/archive/Edge-Node.md §5.2, §5.3, §5.7) for the System app: on a local node its Edge Node screen
     (check, pair, status, unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired
     local nodes, revoke, their public host names); the link's queue and replication on both. The bodies are Rust
     (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/, the edge
@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="capabilities" type="List"/>
             <parameter name="publicNames" type="List"/>
             <parameter name="mediaAddress"><description>The edge node's media address, when it is a media node of this
-                node's calls (plans/Edge-Node.md §5.4, E7); empty when its media socket is off.</description></parameter>
+                node's calls (plans/archive/Edge-Node.md §5.4, E7); empty when its media socket is off.</description></parameter>
             <parameter name="turnUrls" type="List"><description>The edge node's TURN URLs; empty without TURN.</description></parameter>
             <parameter name="compatible" type="Boolean"/>
             <parameter name="message"/>
@@ -188,7 +188,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
     </service>
 
-    <!-- ========== How work crosses the link (plans/Edge-Node.md §5.2): queue and replicate ========== -->
+    <!-- ========== How work crosses the link (plans/archive/Edge-Node.md §5.2): queue and replicate ========== -->
     <service verb="enqueue" noun="Item" type="rust" location="moqui_core::service::edge::enqueue_item"
             allow-remote="false">
         <description>Queue an item for the other end of the link (moqui.edge.EdgeQueueItem): on an edge node for its
@@ -278,7 +278,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <!-- ========== Ownership on an all-in-one node (plans/Edge-Node.md §10, E12): each mail address, chat bridge and
+    <!-- ========== Ownership on an all-in-one node (plans/archive/Edge-Node.md §10, E12): each mail address, chat bridge and
         phone number belongs to the server or to its paired node. Replication skips a record that claims the server's
         own item (moqui.edge.EdgeReplicaConflict), and the server's own services refuse an item the paired node holds
         (EdgeClaims.secas.xml). On any other node these services do nothing. ========== -->
@@ -330,7 +330,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="applied" type="Long"/></out-parameters>
     </service>
 
-    <!-- ========== Attaching a local node (plans/Edge-Node.md §5.7, E10): the wizard's Discover, Apply and Test steps
+    <!-- ========== Attaching a local node (plans/archive/Edge-Node.md §5.7, E10): the wizard's Discover, Apply and Test steps
         after pairing. The edge node's offer and Configure cross the link (Link.GetOffer, Link.Configure); the rest is
         crates/moqui-core/src/edge/setup.rs, and the DNS check moqui-mail's resolver. ========== -->
     <service verb="get" noun="EdgeOffer" type="rust" location="moqui_core::service::edge::get_edge_offer"

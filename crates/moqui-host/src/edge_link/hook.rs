@@ -18,7 +18,7 @@
 //! An all-in-one node (`node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
 //! and XMPP stay a normal node's, and only its paired node's `EdgeHost` names go down the link.
 //! Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as properties;
-//! unpairing removes them (plans/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
+//! unpairing removes them (plans/archive/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
 
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -64,9 +64,9 @@ pub(crate) fn start(
     down: crate::http::DownServe,
 ) -> Started {
     let role = moqui_core::edge::node_role_kind();
-    // the edge end of a link: a dedicated edge node or an all-in-one node (plans/Edge-Node.md §10)
+    // the edge end of a link: a dedicated edge node or an all-in-one node (plans/archive/Edge-Node.md §10)
     let takes_links = role.takes_links();
-    // the edge conf is read now, with the role this node started with (plans/Edge-Node.md §5.2)
+    // the edge conf is read now, with the role this node started with (plans/archive/Edge-Node.md §5.2)
     let settings = moqui_core::edge::settings(factory);
     if settings.role != role {
         tracing::warn!("node_role changed after this server read its edge conf; it keeps the role it started with");
@@ -422,7 +422,7 @@ impl EdgeLink for Hook {
         };
         // the dialer stopped: wait for its link's work to end (the media row's heartbeat among it), then the edge
         // node is no media node of this node's calls any more: its rows go, whether or not a link came up since this
-        // process started, and so does its TURN secret (plans/Edge-Node.md §5.4)
+        // process started, and so does its TURN secret (plans/archive/Edge-Node.md §5.4)
         if let Some(dialer) = dialer {
             let waiting = std::time::Instant::now();
             while is_linked(&dialer) && waiting.elapsed() < LINK_WAIT {
@@ -462,10 +462,10 @@ impl EdgeLink for Hook {
             moqui_lib::env::clear_property(name);
         }
         // nothing more goes to that edge node: replication stops noting writes, and the outbox fails, kept for
-        // inspection, rather than going to whichever edge node this node pairs with next (plans/Edge-Node.md §5.2)
+        // inspection, rather than going to whichever edge node this node pairs with next (plans/archive/Edge-Node.md §5.2)
         if let Some(facade) = self.factory()?.entity() {
             moqui_core::edge::replica::disable(&facade);
-            // the mail servers the wizard's Apply set to edge: send as they did before it (plans/Edge-Node.md §5.7)
+            // the mail servers the wizard's Apply set to edge: send as they did before it (plans/archive/Edge-Node.md §5.7)
             for line in moqui_core::edge::setup::restore_local(&facade) {
                 if line.ok {
                     tracing::info!("Unpaired: {}", line.text);

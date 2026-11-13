@@ -545,7 +545,7 @@ feature("a leg in the call gets its TURN servers with a credential of its own; n
 
 feature("a new call's media goes to the edge node, whose row the edge link keeps, before a newer media node", {
     when() {
-        // the edge node's row (plans/Edge-Node.md §5.4), its heartbeat older than the other media node's
+        // the edge node's row (plans/archive/Edge-Node.md §5.4), its heartbeat older than the other media node's
         sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000",
             edgeLinked: true}))
         age("moqui.call.CallMediaNode", {instanceId: EDGE_NODE}, "heartbeatDate", 5000)

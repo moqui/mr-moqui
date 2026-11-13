@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Pair step 5, test (plans/Edge-Node.md §5.7; modeled on MailAccounts Add/Test.xml): the areas chosen in Discover,
+<!-- Pair step 5, test (plans/archive/Edge-Node.md §5.7; modeled on MailAccounts Add/Test.xml): the areas chosen in Discover,
     end to end, each with a pass or fail line (org.moqui.edge.EdgeServices.test#EdgeSetup): the link is up; mail in
     (the edge node takes mail for the first chosen account's address, and its answer comes back on the queue as
     inbound mail does) and mail out (it takes this node's mail, through the EDGE mail server); chat (it takes the
@@ -52,7 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
-        // an edge or all-in-one node takes links; the wizard is a local node's (plans/Edge-Node.md §10)
+        // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
         isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
         notPaired = running && !isEdge && (!link.state || link.state === 'unpaired')
         let choices = null

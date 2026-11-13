@@ -296,7 +296,7 @@ pub enum Verdict {
     /// A nonce this process did not issue, for another realm, or a wrong response: a failed attempt.
     Invalid,
     /// The answer could not be checked now: whoever holds the verifiers did not answer (an edge node's local node away,
-    /// plans/Edge-Node.md §5.4 "Voice (SIP)"). Not a failed attempt; the request is answered 503.
+    /// plans/archive/Edge-Node.md §5.4 "Voice (SIP)"). Not a failed attempt; the request is answered 503.
     Unavailable,
 }
 
@@ -390,7 +390,7 @@ impl NonceBook {
 
     /// [`NonceBook::verify_ha1`] with the response already checked against the verifier elsewhere (`matched`, from
     /// [`ResponseCheck::matches`]): by the node that holds the verifiers, for a registrar that holds none (an edge
-    /// node's, plans/Edge-Node.md §5.4 "Voice (SIP)"). The nonce, its realm, its lifetime and its counts are checked
+    /// node's, plans/archive/Edge-Node.md §5.4 "Voice (SIP)"). The nonce, its realm, its lifetime and its counts are checked
     /// here, as they are this book's.
     pub fn verify_checked(&mut self, auth: &Authorization, matched: bool, now_secs: u64) -> Verdict {
         let Some(issued) = self.issued_at(&auth.nonce) else {
@@ -453,7 +453,7 @@ fn nonce_count(auth: &Authorization) -> Option<u32> {
 }
 
 /// What an answer's response is computed from besides the HA1, so that whoever holds the verifier can check it: the
-/// local node, for an edge node's registrar, which keeps the nonces but no verifier (plans/Edge-Node.md §5.4 "Voice
+/// local node, for an edge node's registrar, which keeps the nonces but no verifier (plans/archive/Edge-Node.md §5.4 "Voice
 /// (SIP)", decision 4). `ha2` is H(method:uri).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseCheck {

@@ -133,7 +133,7 @@
     </actions>
   </service>
   <!-- A registered PASS client's id and secret, the check the REST servlet makes: the host's PassAuthority gRPC listener
-       runs it before a direct call (mr-moqui plans/Edge-Node.md §5.5). -->
+       runs it before a direct call (mr-moqui plans/archive/Edge-Node.md §5.5). -->
   <service verb="check" noun="Client" authenticate="false" allow-remote="false">
     <in-parameters>
       <parameter name="clientId"/>

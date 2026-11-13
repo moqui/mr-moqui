@@ -23,7 +23,7 @@
 //! address is one account: when several accounts claim it at the same step, the one made first (the lowest sequenced
 //! id) gets the mail and a warning names the others, so an identity added later cannot read another account's mail.
 //! [`RecipientMap`] answers by the same rules from copies of the rows held in memory: an edge node's replicated set
-//! `mailRecipients` (plans/Edge-Node.md §5.4).
+//! `mailRecipients` (plans/archive/Edge-Node.md §5.4).
 //!
 //! Delivery, once per account however many of its addresses were recipients:
 //!
@@ -236,7 +236,7 @@ fn replica_field(fields: &serde_json::Value, name: &str) -> String {
     }
 }
 
-/// The recipients of each local node from an edge node's copies of its `mailRecipients` (plans/Edge-Node.md §5.4):
+/// The recipients of each local node from an edge node's copies of its `mailRecipients` (plans/archive/Edge-Node.md §5.4):
 /// the edge node's listener answers `RCPT TO` from them, and its MTA queues mail to them back to the local node.
 #[must_use]
 pub fn recipient_maps(values: &[moqui_core::edge::replica::ReplicaValue]) -> Vec<(String, RecipientMap)> {
@@ -525,7 +525,7 @@ pub fn deliver(
         }
         kept.push(field);
     }
-    // internal mail (plans/Edge-Node.md §5.4): a signature of this node's own key verified against that key, with no
+    // internal mail (plans/archive/Edge-Node.md §5.4): a signature of this node's own key verified against that key, with no
     // DNS query, unless a trusted field reports DKIM already
     let internal = if results.iter().any(|value| value.to_ascii_lowercase().contains("dkim=")) {
         None

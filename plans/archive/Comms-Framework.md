@@ -17,7 +17,7 @@ SFU, call links and guests, TURN and ICE-TCP, recording, captions, cascading med
 M0 (the audio core), V1–V5 (phone calls: SIP trunks, voicemail, call handling, the registrar, the IVR, queues,
 transfer and merge), C1 (chat actors and bridges), C7 (encrypted rooms and chat keys), C4-SMS (SMS and MMS on Telnyx)
 and C3a (XMPP for local users) built; see [§7.4](#74-built). XMPP clients reach a local server through an edge node's
-tunnel ports, and C3b's and C6b's split with an edge node is designed (§4.3, [Edge-Node](../Edge-Node.md) E9); calls and
+tunnel ports, and C3b's and C6b's split with an edge node is designed (§4.3, [Edge-Node](Edge-Node.md) E9); calls and
 phone calls go through an edge node too, with a voicemail fallback while the local server is away (Edge-Node E7, E8),
 each set up in its wizard (E10). Next: C4
 (WhatsApp, Messenger, Instagram, Telegram), C3b, C6a, C6b and C6c.
@@ -37,7 +37,7 @@ The framework app is BasicComms. IronStone Comms in mr-boss stays the full app. 
 adds BOSS's parts by screen-extend and providers (§3.4).
 
 Email moves with the rest; this plan adds no new mail features. The new mail work, the MTA in moqui on an edge node and
-filtering in moqui, is in [Edge-Node](../Edge-Node.md) §5.4 (E5a, E5b, E11). Its known limitations, and the outstanding
+filtering in moqui, is in [Edge-Node](Edge-Node.md) §5.4 (E5a, E5b, E11). Its known limitations, and the outstanding
 live sync and OAuth checks, remain in [Remaining-Work, Mail](../Remaining-Work.md#mail).
 
 Sections: [1 starting point](#1-starting-point) · [2 scope](#2-scope) · [3 the framework Comms app](#3-the-framework-comms-app) ·
@@ -476,7 +476,7 @@ The appservice (C2) and Slack, Teams and Discord (C5) come when a deployment nee
     `/xmpp-websocket` (RFC 7395).
   - **C3b, federation:** server to server on 5269 with TLS and SASL EXTERNAL, with dialback (XEP-0220) as the fallback.
     Remote users reach only rooms with federation on (§4.4).
-    - **Split with an edge node** ([Edge-Node](../Edge-Node.md) §5.4, designed in E9). A local server behind an edge
+    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.4, designed in E9). A local server behind an edge
       node takes s2s on the edge node; room and user state stay on the local node.
       - The edge node holds the 5269 listener (`xmpp_s2s_port`) and the outbound streams, its own certificate for the
         domain, SASL EXTERNAL and dialback with its dialback secret, the remote's SRV lookups and the domain checks.
@@ -533,7 +533,7 @@ The appservice (C2) and Slack, Teams and Discord (C5) come when a deployment nee
     - C7's key endpoints (§4.5).
   - **C6b, federation:** signing keys, event signing, the room DAG, state resolution v2, backfill and media, on 8448 or
     443 with `.well-known` delegation (§6.5).
-    - **Split with an edge node** ([Edge-Node](../Edge-Node.md) §5.2, §5.4, designed in E9). The federation endpoint is
+    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.2, §5.4, designed in E9). The federation endpoint is
       public, so on a local server behind an edge node it is the edge node's own, served there and never forwarded.
       - The edge node checks each request's X-Matrix signature against the origin's keys (fetched and cached there)
         and each transaction's PDU hashes and signatures, queues it (`matrixTxn`, keyed by room id) and answers 200.

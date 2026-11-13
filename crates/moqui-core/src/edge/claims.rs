@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Who holds a name, address, number or bridge (plans/Edge-Node.md §10, E12). Ownership is exclusive: each item
+//! Who holds a name, address, number or bridge (plans/archive/Edge-Node.md §10, E12). Ownership is exclusive: each item
 //! belongs to the server itself or to one paired node. [`own_claim`] finds the server's own holder of an item and
 //! [`replica_claim`] the paired node whose copies (its replicated sets, its Configure) hold it. Configure and
 //! replication refuse what the server holds, and the server's own setup refuses what a paired node holds, each with

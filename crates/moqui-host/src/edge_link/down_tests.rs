@@ -160,7 +160,7 @@ async fn a_forwarded_request_never_reaches_the_link_calls_whatever_its_content_t
     }
     let (status, body) = ask(&mut send, "/echo", Some("203.0.113.9:1")).await;
     assert_eq!(status, 405, "{body}");
-    // nor the PASS authority's calls, whose client must be the edge node (plans/Edge-Node.md §5.5)
+    // nor the PASS authority's calls, whose client must be the edge node (plans/archive/Edge-Node.md §5.5)
     for call in ["Call", "Download", "Upload"] {
         let path = format!("/moqui.pass.v1.PassAuthority/{call}");
         let (status, _) = ask(&mut send, &path, Some("203.0.113.9:1")).await;
@@ -252,7 +252,7 @@ async fn a_passthrough_tunnel_is_from_the_client_its_proxy_header_names() {
 
 #[tokio::test]
 async fn an_xmpp_tunnel_is_refused_on_a_node_with_no_xmpp_server() {
-    // the STARTTLS and direct TLS kinds (plans/Edge-Node.md §5.4, E9) go only to this node's own XMPP server, which an
+    // the STARTTLS and direct TLS kinds (plans/archive/Edge-Node.md §5.4, E9) go only to this node's own XMPP server, which an
     // app with no factory has not; tests/it/edge_xmpp.rs serves them on a real one
     let (web, _, _stop) = local("down-xmpp");
     let mut send = connect(web).await;

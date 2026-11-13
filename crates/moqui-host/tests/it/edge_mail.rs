@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Mail through the edge node with Postfix beside it (plans/Edge-Node.md §5.4, E5a). Both ends are real servers in
+//! Mail through the edge node with Postfix beside it (plans/archive/Edge-Node.md §5.4, E5a). Both ends are real servers in
 //! the test's own process, as in `edge_work.rs`, with the edge conf of MoquiDefaultConf.xml (the mail kinds and the
 //! replicated `mailRecipients`). The edge node's LMTP listener stands where Postfix hands it mail, a scripted client
 //! in Postfix's place; a fake SMTP server stands for Postfix's relay port on the outbound side.

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Edge Node status (plans/Edge-Node.md §5.7): the link's state, generation, round trip, last connect, links lost and last
+<!-- Edge Node status (plans/archive/Edge-Node.md §5.7): the link's state, generation, round trip, last connect, links lost and last
     error, and the edge node as its last Hello said (name, the pinned fingerprint of its link key, versions, public names). Unpair
     (org.moqui.edge.EdgeServices.unpair#EdgeNode) revokes this node's key on the edge node and removes the link's settings
     from runtime/.env. Queue and replication (§5.2, get#QueueStatus): this node's outbox by kind (waiting, failed, the
@@ -58,7 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
         notBuilt = state === 'notBuilt'
         notStarted = state === 'notStarted'
         const running = !notBuilt && !notStarted
-        // an edge or all-in-one node takes links; the wizard is a local node's (plans/Edge-Node.md §10)
+        // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
         isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
         paired = running && !isEdge && state !== 'unpaired'
         unpaired = running && !isEdge && state === 'unpaired'
@@ -79,7 +79,7 @@ along with this software (see the LICENSE.md file). If not, see
             versionText: link.binaryVersion ? link.binaryVersion + (link.linkVersion ? ' · ' + L('link') + ' ' + link.linkVersion : '') : '',
             publicNamesText: list(link.publicNames),
             featuresText: list(link.features)}
-        // the queue and replication (plans/Edge-Node.md §5.2): this node's own rows and state, with or without the
+        // the queue and replication (plans/archive/Edge-Node.md §5.2): this node's own rows and state, with or without the
         // link; a probe (Practices-App-Dev §4), so a failure shows on the page instead of failing it
         let work = {}
         queueError = ''
@@ -106,7 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
             stateLabel: set.snapshotNeeded ? L('Full send due') : L('Up to date'),
             stateColor: set.snapshotNeeded ? 'warning' : 'positive',
             lastAckText: set.lastAckDate ? ec.l10n.format(set.lastAckDate, '') : L('Not yet')}))
-        // the areas set up (plans/Edge-Node.md §5.7): the host names from the edge node while the link is up, the
+        // the areas set up (plans/archive/Edge-Node.md §5.7): the host names from the edge node while the link is up, the
         // rest from this node's own rows and settings
         setup = {}
         if (paired) {

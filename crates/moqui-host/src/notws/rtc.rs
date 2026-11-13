@@ -447,7 +447,7 @@ pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64
     });
 }
 
-/// A reply of the edge node `edge`'s media driver for a socket here (plans/Edge-Node.md §5.4, E7), from the link. A
+/// A reply of the edge node `edge`'s media driver for a socket here (plans/archive/Edge-Node.md §5.4, E7), from the link. A
 /// compromised edge node must not reach any socket of this server, so it is delivered only to a socket that bound a
 /// leg of that call whose media is on `edge`: the frame names the call (`callSessionId`, topic `rtc:<call>`) and the
 /// leg (`to`, else `callLegId`), and the message targets this node.

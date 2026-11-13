@@ -162,7 +162,7 @@ impl ClientAddressing {
     /// `header` and `trusted` as set, except that on a node that takes links (an edge or all-in-one node) a header with
     /// no trusted proxies is ignored, with an error: an edge node faces the internet, a header believed from any peer
     /// would let each client name its own address, and the edge node passes that address on to its local nodes
-    /// (plans/Edge-Node.md §5.3, §10).
+    /// (plans/archive/Edge-Node.md §5.3, §10).
     fn for_node(header: &str, trusted: Vec<Cidr>, takes_links: bool) -> Self {
         if takes_links && !header.trim().is_empty() && trusted.is_empty() {
             tracing::error!(

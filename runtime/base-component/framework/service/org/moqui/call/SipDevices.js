@@ -49,12 +49,12 @@ function isAdmin() {
 
 /**
  * Whether phones go through this node's edge node: on unless edge_sip_enabled is false, n, no, 0 or off (the wizard's
- * phones area, plans/Edge-Node.md §5.7 "As built (E10, phones)"; moqui_core::edge::sip::sip_enabled).
+ * phones area, plans/archive/Edge-Node.md §5.7 "As built (E10, phones)"; moqui_core::edge::sip::sip_enabled).
  */
 const edgeSipEnabled = () => !['false', 'n', 'no', '0', 'off'].includes(property('edge_sip_enabled').toLowerCase())
 
 /**
- * The live SIP node of this node's edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
+ * The live SIP node of this node's edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
  * its Hello with its realm and registrar switch; null when there is none, or phones are off (edge_sip_enabled). Its
  * registrar is the phones'.
  */
@@ -285,7 +285,7 @@ function deviceAuth(p) {
   return { sipDeviceId: device.sipDeviceId, username: device.username, credentialRevision: Number(device.credentialRevision || 1), verifierList }
 }
 
-// ---------- the registrar of this node's edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
+// ---------- the registrar of this node's edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
 
 /** How long after a digest answer checked here the edge node may store the phone's binding or place its call. */
 const EDGE_DIGEST_MS = 60000

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Edge Node (plans/Edge-Node.md §5.7): on a local node, its link to an edge node. Status is the link's state and the
+<!-- Edge Node (plans/archive/Edge-Node.md §5.7): on a local node, its link to an edge node. Status is the link's state and the
     edge node it is paired with, with Unpair; Pair is the pairing wizard (the edge node's address and pairing code, then
     its name and fingerprint to confirm). On an edge node (node_role=edge) and in a build without the edge link, Status
     says so. The menu cannot leave this screen out by node role, so it is listed on every node. Every call goes through

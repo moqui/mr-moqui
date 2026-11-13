@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The PASS authority over gRPC in a host built with `grpc` but not `edge` (plans/Edge-Node.md §5.5): its generated
+//! The PASS authority over gRPC in a host built with `grpc` but not `edge` (plans/archive/Edge-Node.md §5.5): its generated
 //! service is the `edge` feature's, so the gRPC listener serves only the OTLP receiver and scripts have no sender
 //! (`ec.service.passAuthority` says "gRPC not built into this host", and mr-pass takes REST). The same API as
 //! `pass_authority/` for `grpc_listen.rs`.

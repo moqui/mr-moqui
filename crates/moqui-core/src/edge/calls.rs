@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The calls area of the wizard on a local node (plans/Edge-Node.md §5.7, "As built (E10, calls)"), on E7's edge node
+//! The calls area of the wizard on a local node (plans/archive/Edge-Node.md §5.7, "As built (E10, calls)"), on E7's edge node
 //! as media node (§5.4): the edge node's `CallMediaNode` row, which the link keeps ([`register_row`]), the local
 //! setting that turns its preference off ([`CALLS_ENABLED`]), Apply's lines ([`apply`]) and the Test step's checks of
 //! the row and the TURN credentials ([`row_check`], [`ice_check`]). The TURN allocation itself is the host's
@@ -118,7 +118,7 @@ pub fn register_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
     written
 }
 
-/// Write or remove (`stopping`) the `SipNode` row of the edge node `edge` (its SIP engine, plans/Edge-Node.md §5.4
+/// Write or remove (`stopping`) the `SipNode` row of the edge node `edge` (its SIP engine, plans/archive/Edge-Node.md §5.4
 /// "Voice (SIP)", E8), as the link keeps it from its Hello, under the lock of [`register_row`]: a write is refused
 /// unless the edge node's link came up and the node has not unpaired since ([`allow_row`], [`forget_rows`], which
 /// removes this row too).
@@ -321,7 +321,7 @@ pub fn row_check(facade: &EntityFacade, edge: &EdgeInfo, now_ms: i64) -> (bool, 
     }
 }
 
-/// Apply's calls lines (plans/Edge-Node.md §5.7, E10 calls): [`CALLS_ENABLED`] in `env_file`, the row written again
+/// Apply's calls lines (plans/archive/Edge-Node.md §5.7, E10 calls): [`CALLS_ENABLED`] in `env_file`, the row written again
 /// at once with it (the link writes it every 15 s after that), then a line each for the media address, the TURN
 /// secret the link's Hello handed this node, and the row. `edge` is the edge node as its last Hello said.
 pub fn apply(

@@ -739,7 +739,7 @@ along with this software (see the LICENSE.md file). If not, see
             cluster, encrypted on EmailServerAccessToken.</description></field>
         <field name="oauthSignInDate" type="date-time"><description>When the user last signed in with the provider</description></field>
         <field name="edgePriorSmtpHost" type="text-medium"><description>The smtpHost the Edge Node wizard's Apply replaced
-            with edge: (none: when there was none), put back when the node unpairs (plans/Edge-Node.md §5.7)</description></field>
+            with edge: (none: when there was none), put back when the node unpairs (plans/archive/Edge-Node.md §5.7)</description></field>
         <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: nothing is sent through the
             server (the SMTP transport refuses it); test#EmailServer still tries it. Set by an administrator, or by
             org.moqui.admin.ConfigurationServices.store#Connection when the host, port or sign-in of a relay changed, until
@@ -893,7 +893,7 @@ along with this software (see the LICENSE.md file). If not, see
             account's settings change and remove it; a server shared with others (SYSTEM) is never changed through an
             account</description></field>
         <field name="edgePriorServerId" type="id"><description>The server the Edge Node wizard's Apply replaced with EDGE
-            (none: when there was none), put back when the node unpairs (plans/Edge-Node.md §5.7)</description></field>
+            (none: when there was none), put back when the node unpairs (plans/archive/Edge-Node.md §5.7)</description></field>
         <field name="emailAddress" type="text-medium"/>
         <field name="accountName" type="text-medium"/>
         <field name="color" type="text-short"/>

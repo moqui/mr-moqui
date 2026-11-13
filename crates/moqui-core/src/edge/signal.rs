@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A message for one node over the edge link (plans/Edge-Node.md §5.4, "Calls (WebRTC)", E7). An edge node and its
+//! A message for one node over the edge link (plans/archive/Edge-Node.md §5.4, "Calls (WebRTC)", E7). An edge node and its
 //! local node share no database, so neither is a cluster member the other can post to. While a link is up, its end
 //! adds a route here for the node at the other end (the local node's dialer for its edge node, the edge node for each
 //! linked local node), and [`crate::cluster::send_to`] hands a message for that node to the route instead of the
@@ -24,7 +24,7 @@
 //! (`the edge link to .. is down`), never published here or posted to the cluster, which it is no member of. The
 //! registry is per process (as the bus is): two servers of one process (a test's) share it, keyed by instance id.
 //! On a clustered local node only the member that holds the link has its edge node's route; a call's socket on
-//! another member is refused the same way (plans/Edge-Node.md §5.4, "As built (E7)").
+//! another member is refused the same way (plans/archive/Edge-Node.md §5.4, "As built (E7)").
 //!
 //! As the cluster's direct send, a route is fire and forget, from a bounded queue: a full one is refused at once
 //! (`overloaded`), and a message lost with the link is not sent again (the client renegotiates).

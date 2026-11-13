@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link (plans/Edge-Node.md §5.1, E1). The edge end is a real server (`node_role=edge`, the HTTPS listener on
+//! The edge link (plans/archive/Edge-Node.md §5.1, E1). The edge end is a real server (`node_role=edge`, the HTTPS listener on
 //! a certificate from a test authority) in the test's own process; the local end is the link's dialer driven with an
 //! explicit `LocalConfig`, which needs no factory and opens no port, so the two share the process without sharing
 //! properties. Pairing works once per code; a local node with no listening port links up and down, with Hello both

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Who owns the item being handled (plans/Edge-Node.md §10, E12): the server itself, or a paired local node. An
+//! Who owns the item being handled (plans/archive/Edge-Node.md §10, E12): the server itself, or a paired local node. An
 //! all-in-one node is a full server that also takes a paired node's link, so each engine (mail, chat, calls, SIP)
 //! decides an item's owner when it takes the item, and runs the work for a paired node's item under [`with`]. The
 //! service facade reads [`scoped`] to send a delegated service's call down that node's link, and runs the same service

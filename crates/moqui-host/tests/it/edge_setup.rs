@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Attaching a local node from the Edge Node wizard (plans/Edge-Node.md §5.7, E10). Both ends are real servers in the
+//! Attaching a local node from the Edge Node wizard (plans/archive/Edge-Node.md §5.7, E10). Both ends are real servers in the
 //! test's own process, as in `edge_chat.rs`; the local end's link is a dialer driven with an explicit `LocalConfig`,
 //! so the wizard's link calls are the dialer's (`offer`, `configure`) and the rest is called as the services call it.
 //!

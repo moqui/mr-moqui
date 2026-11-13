@@ -12,12 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Replication over the link (plans/Edge-Node.md §5.2), the local node's sender: while a link is up, one task sends
+//! Replication over the link (plans/archive/Edge-Node.md §5.2), the local node's sender: while a link is up, one task sends
 //! each set's batches up (`Link.Replicate`): first an empty batch at the cursor, then the keys noted since, read as
 //! they are after their commits, and the whole set when the edge node asks for it or none was sent in this process
 //! yet. The state (noted keys, epochs, cursors) is `moqui_core::edge::replica`; the edge node's side applies a batch
 //! with `moqui_core::edge::replica::apply_batch`. A set the local node holds back (`moqui_core::edge::sip::withheld`:
-//! the trunks and fallbacks while phones are off, plans/Edge-Node.md §5.7 E10 phones) is sent empty, so the edge node's
+//! the trunks and fallbacks while phones are off, plans/archive/Edge-Node.md §5.7 E10 phones) is sent empty, so the edge node's
 //! copy is emptied, and its changes are dropped; it is sent whole again when that changes.
 
 use std::sync::{Arc, Weak};

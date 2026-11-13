@@ -108,7 +108,7 @@ grpc = [
     "hyper/client",
     "hyper-util/service",
 ]
-# The edge link (plans/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
+# The edge link (plans/archive/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
 # edge node (node_role=edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
@@ -234,7 +234,7 @@ rsipstack = { workspace = true }
 # against the server, as an independent implementation. default-features off: no DNS or connectors of its own.
 tokio-xmpp = { workspace = true }
 sasl = { workspace = true }
-# The edge link's code generation (src/edge_link/proto/, plans/Edge-Node.md §5.6): a test regenerates the checked-in
+# The edge link's code generation (src/edge_link/proto/, plans/archive/Edge-Node.md §5.6): a test regenerates the checked-in
 # code with MOQUI_REGENERATE_PROTO=1, and otherwise checks that it matches. No protoc.
 tonic-prost-build = { workspace = true }
 protox = { workspace = true }

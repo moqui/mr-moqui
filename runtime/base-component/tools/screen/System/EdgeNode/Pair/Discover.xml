@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Pair step 3, discover (plans/Edge-Node.md §5.7): what the paired edge node offers now
+<!-- Pair step 3, discover (plans/archive/Edge-Node.md §5.7): what the paired edge node offers now
     (org.moqui.edge.EdgeServices.get#EdgeOffer, asked on the link), as a filled-out form with each area on or off and
     this node's choices filled in: web access (its host names, passthrough or terminate; by default this node's
     webapp_http_host and the names it has there now), mail (the domains of the hosted and shared accounts, and whether
@@ -117,7 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
-        // an edge or all-in-one node takes links; the wizard is a local node's (plans/Edge-Node.md §10)
+        // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
         isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
         notPaired = running && !isEdge && (!link.state || link.state === 'unpaired')
         offerError = ''

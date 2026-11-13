@@ -148,7 +148,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="check" noun="SipDeviceDigest" authenticate="false" allow-remote="false">
-        <description>Internal (the registrar of this node's edge node, plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4,
+        <description>Internal (the registrar of this node's edge node, plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4,
             E8): a phone's digest answer checked here, against its verifier for realm and algorithm, so the verifiers
             (HA1) never leave this node. The edge node keeps the nonce and its counts; it sends the response and what it
             is computed from besides the HA1 (nonce, nc, cnonce, qop, ha2 = H(method:uri)). matched with the device's

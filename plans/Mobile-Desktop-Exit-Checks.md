@@ -27,7 +27,7 @@ moqui-calls`.
 - A clean machine or user account for each OS: macOS (the version of MD0's matrix) and Linux (Ubuntu 26.04, GNOME).
 - An edge node (`node_role=edge`) and an all-in-one node (`node_role=all-in-one`) reachable from the internet, each with
   a name for the local node's web access, mail (MX) and, for the call check, calls and TURN set up
-  ([Edge-Node](Edge-Node.md)).
+  ([Edge-Node](archive/Edge-Node.md)).
 - A remote server with BOSS for the client checks, with a user who has a second factor, and one identity provider for
   SSO.
 - A second device (a phone or another computer) with a browser.

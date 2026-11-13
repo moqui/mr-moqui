@@ -362,7 +362,7 @@ fn code(resp: &Response) -> u16 {
     u16::from(resp.status_code.clone())
 }
 
-/// An all-in-one node's registrar (plans/Edge-Node.md §10, E12): a phone of the paired node's domain is challenged in
+/// An all-in-one node's registrar (plans/archive/Edge-Node.md §10, E12): a phone of the paired node's domain is challenged in
 /// that realm and checked by the directory for it, and its bindings are kept apart from the same username's in the
 /// registrar's own realm.
 #[tokio::test]
@@ -474,7 +474,7 @@ async fn a_phone_registers_with_sha_256_and_md5_is_refused_for_a_standard_device
     h.ua.shutdown();
 }
 
-/// An edge node's registrar while its local node is away (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): the answer
+/// An edge node's registrar while its local node is away (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): the answer
 /// cannot be checked, so the REGISTER is answered 503 and is no failed attempt; past the guard's limit the phone still
 /// registers once it can be checked again.
 #[tokio::test]

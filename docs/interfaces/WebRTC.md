@@ -267,7 +267,7 @@ own multiplexing of rooms; that waits for a measured need.
 
 ### The edge node as media node
 
-A local node behind NAT with an edge node ([Edge-Node](../../plans/Edge-Node.md) §5.4) has its calls' media on the edge
+A local node behind NAT with an edge node ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4) has its calls' media on the edge
 node, which browsers and phones outside and in the office reach at its fixed address. The two share no database, so
 the edge node is not a member of the local node's cluster:
 

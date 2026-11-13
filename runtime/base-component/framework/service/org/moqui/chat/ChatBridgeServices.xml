@@ -570,7 +570,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <!-- ========== Through an edge node (plans/Edge-Node.md §5.4, E6): the handlers of the link's queue kinds
+    <!-- ========== Through an edge node (plans/archive/Edge-Node.md §5.4, E6): the handlers of the link's queue kinds
         chatWebhook and chatMedia (MoquiDefaultConf.xml edge), granted to _EDGE_ in EdgeSetupData.xml ========== -->
     <service verb="apply" noun="EdgeWebhook" type="rust" location="moqui_core::service::chat_bridge::edge::apply_edge_webhook"
             allow-remote="false">
@@ -860,7 +860,7 @@ along with this software (see the LICENSE.md file). If not, see
             webhookPublicKey, its webhookToleranceSeconds as webhookToleranceSeconds), inboundToken (its hash is kept; empty keeps the
             old), sendsPerMinute, disabled (Y stops its deliveries and input; N lets the worker start it). The worker is woken.
             On an all-in-one node a new bridge's id skips the ids its paired node's bridges have, and a bridge a paired node
-            holds is refused (EdgeClaims.secas.xml, plans/Edge-Node.md §10).</description>
+            holds is refused (EdgeClaims.secas.xml, plans/archive/Edge-Node.md §10).</description>
         <in-parameters>
             <parameter name="chatBridgeId"/>
             <parameter name="name"/>
@@ -884,7 +884,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!row) {
                 row = ec.entity.makeValue('moqui.chat.ChatBridge')
                 row.setSequencedIdPrimary()
-                // on an all-in-one node a new id is not one of the paired node's bridges (plans/Edge-Node.md §10): its
+                // on an all-in-one node a new id is not one of the paired node's bridges (plans/archive/Edge-Node.md §10): its
                 // ids come from another database's sequence
                 const pairedHas = (id) => ec.service.sync().name('org.moqui.edge.EdgeServices.check#ReplicaClaim')
                         .parameters({claimKind: 'ChatBridge', itemKey: id, refuse: false}).disableAuthz().call()?.pairedNodeId

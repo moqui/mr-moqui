@@ -1,5 +1,10 @@
 # Edge Node
 
+Archived 2026-11-12. E0–E10 and E12 are built, and this is their design and as-built record. Everything it left open
+(the checks on a deployed edge node, E11, the Later row, the gaps each phase names) is carried in
+[Edge-Node2](../Edge-Node2.md), with what comes next: several domains on one edge node, pools of primary nodes with
+load balancing and failover, and a cluster of edge nodes.
+
 Status 2026-11-02: E0–E10 and E12 built, the all-in-one node last; E11 not yet. The manual checks below are
 pending. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
 direct; the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches
@@ -76,7 +81,7 @@ inbound SIP and RTP, the SFU, TURN, public sites, and outside users of the apps.
 
 ## 2. Topologies
 
-How an edge node changes the topologies in [Run-Deploy](../docs/Run-Deploy.md#choose-a-topology), and what it adds:
+How an edge node changes the topologies in [Run-Deploy](../../docs/Run-Deploy.md#choose-a-topology), and what it adds:
 
 | Topology | With an edge node |
 |---|---|
@@ -86,7 +91,7 @@ How an edge node changes the topologies in [Run-Deploy](../docs/Run-Deploy.md#ch
 | Dev instances with a dev group server | The group server can sit in the office. Laptops reach git, the LLM gateway and tasks through the edge node (web access, and the SSH tunnel) |
 | New: several local nodes on one edge node | Branch offices, or a provider hosting edge nodes for many small businesses. One local node per edge node comes first, but the edge node's rows are keyed by the paired node, so several can come later without a redesign ([decision 1](#8-decisions)) |
 | New: an edge node with more media nodes | W7 cascading from the edge node to regional media nodes. Later |
-| New: a desktop or laptop local node | A personal instance ([Usability](proposals/Usability.md) hosts) attached to an edge node. It follows from the rest; [Mobile-Desktop](Mobile-Desktop.md) §4 packages it as a desktop application |
+| New: a desktop or laptop local node | A personal instance ([Usability](../proposals/Usability.md) hosts) attached to an edge node. It follows from the rest; [Mobile-Desktop](../Mobile-Desktop.md) §4 packages it as a desktop application |
 | New: an all-in-one node | A full server, with its own users, apps and data, that is also the edge node of a local node, such as a desktop local node. No second cloud instance is needed. [§10](#10-all-in-one-node-e12), phase E12 |
 
 ## 3. What is built
@@ -104,7 +109,7 @@ These pieces exist today. Each is a seam or a model for the edge node; none does
   (`crates/moqui-host/src/monitor/grpc.rs`). It is the `grpc` feature, in Enterprise and Maximal.
   - There is no client and no `.proto` of our own: the OTLP messages come pre-generated.
   - The main listener was HTTP/1.1 only then (ALPN `http/1.1` in `tls.rs`); it has offered `h2` as well since
-    2026-11-03 ([Run-Deploy](../docs/Run-Deploy.md#http2)).
+    2026-11-03 ([Run-Deploy](../../docs/Run-Deploy.md#http2)).
 - **An outbound reconnecting socket.** `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`) reconnects to
   `/notws` with a backoff from 2 s to 60 s. It is the only reconnecting outbound socket, and it is client only.
 - **Instance-to-instance data.**
@@ -124,7 +129,7 @@ These pieces exist today. Each is a seam or a model for the edge node; none does
   - There are 154 routes onto 149 operations. Each takes one `input` map and returns one `result` map.
   - The authority's servlet is `mr-mantle/script/PassApi.js`.
   - The PASS server dials the authority.
-- **A remote mail gateway.** [Mail-Inbound](../docs/interfaces/Mail-Inbound.md#dns-and-the-gateway) already describes a
+- **A remote mail gateway.** [Mail-Inbound](../../docs/interfaces/Mail-Inbound.md#dns-and-the-gateway) already describes a
   small VPS gateway (Postfix with Rspamd) that delivers to mr-moqui over WireGuard. The `inbound-smtp` listener speaks
   SMTP or LMTP, takes PROXY headers, and drops duplicates by Message-ID.
 - **A media node apart from the signaling node.** A call's media lives on one node (`CallSession.mediaNodeId`).
@@ -829,7 +834,7 @@ release.
 - **Not done.** A real client (Conversations) through a deployed edge node is checked by hand. The wizard's XMPP
   area is built (§5.7, "As built (E10, XMPP)").
 
-**XMPP federation (C3b) with an edge node.** The design C3b builds to ([Comms-Framework](archive/Comms-Framework.md) §4.3).
+**XMPP federation (C3b) with an edge node.** The design C3b builds to ([Comms-Framework](Comms-Framework.md) §4.3).
 - **On the edge node:** the 5269 listener (`xmpp_s2s_port`, documented and off; nothing listens yet) and the
   outbound s2s streams, with its own certificate for the XMPP domain (and `rooms.`); SASL EXTERNAL with the remote's
   certificate checked by WebPKI for its domain, and dialback (XEP-0220) as the fallback, with its dialback secret and
@@ -1226,7 +1231,7 @@ operator's own choices stay off until `.env` sets them: SIP ports, the XMPP doma
 
 ```xml
 <?xml version="1.0" encoding="UTF-8" ?>
-<!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node.
+<!-- An edge node (plans/archive/Edge-Node.md): the production conf for a small cloud instance in front of a local node.
     Build with --release (the Maximal package: rtc, sip, xmpp, inbound-smtp, channels, grpc and embedded Postgres).
     The runtime has the base components and mr-pass only. Per-host settings (names, addresses, ports) go in .env.
         ./moq run-production --release -c conf/MoquiEdgeConf.xml -->
@@ -1666,7 +1671,7 @@ Its actions are pause, resync and unpair.
   of that phone (its nonce at most 330 s old, each nonce count once: a kept answer cannot be sent again), and play or
   act on a box's messages only on a call that gave its PIN. A delegated call it gave up on is not run, or is rolled
   back.
-- [Attack-Surface](../docs/security/Attack-Surface.md) gets the edge node's listeners and the link.
+- [Attack-Surface](../../docs/security/Attack-Surface.md) gets the edge node's listeners and the link.
 
 ### 5.9 Operations
 
@@ -1751,21 +1756,21 @@ When it is built (done in E10 unless marked; all done):
 7. **gRPC payloads.** One generic operation message, with the input and the result as JSON, to start. Typed messages
    may come later, for efficiency or for what they make possible.
 8. **Lite and gRPC.** Lite keeps REST for PASS, not gRPC, as a supported mode for the long term, and REST is the default
-   transport on Lite (§5.5). Lite has `grpc` since 2026-11-03, for the cluster ([Cluster](archive/Cluster.md)), 5 crates
+   transport on Lite (§5.5). Lite has `grpc` since 2026-11-03, for the cluster ([Cluster](Cluster.md)), 5 crates
    (§5.6); PASS's gRPC binding is in `edge`, which Lite still leaves out, so PASS on Lite stays on REST.
 
 ## 9. References
 
-- Run and deploy: [Run-Deploy](../docs/Run-Deploy.md) (topologies, the PASS and cluster sections),
-  [Build-Test](../docs/Build-Test.md#packages).
-- Comms: [Comms-Framework](archive/Comms-Framework.md) (§6.3 signaling, §6.5 network, D-E1),
-  [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Chat-Bridges](../docs/interfaces/Chat-Bridges.md),
-  [SMS](../docs/interfaces/SMS.md), [XMPP](../docs/interfaces/XMPP.md), [SIP](../docs/interfaces/SIP.md),
-  [Voicemail](../docs/interfaces/Voicemail.md), [WebRTC](../docs/interfaces/WebRTC.md),
-  [TURN](../docs/interfaces/TURN.md), [Call-Recording](../docs/interfaces/Call-Recording.md).
+- Run and deploy: [Run-Deploy](../../docs/Run-Deploy.md) (topologies, the PASS and cluster sections),
+  [Build-Test](../../docs/Build-Test.md#packages).
+- Comms: [Comms-Framework](Comms-Framework.md) (§6.3 signaling, §6.5 network, D-E1),
+  [Mail-Inbound](../../docs/interfaces/Mail-Inbound.md), [Chat-Bridges](../../docs/interfaces/Chat-Bridges.md),
+  [SMS](../../docs/interfaces/SMS.md), [XMPP](../../docs/interfaces/XMPP.md), [SIP](../../docs/interfaces/SIP.md),
+  [Voicemail](../../docs/interfaces/Voicemail.md), [WebRTC](../../docs/interfaces/WebRTC.md),
+  [TURN](../../docs/interfaces/TURN.md), [Call-Recording](../../docs/interfaces/Call-Recording.md).
 - PASS: `runtime/component/mr-pass/docs/Deployment.md`, `plan/design-forum.md` (the remote adapter, caches),
   `plan/design-shop.md` (authority outage, caches).
-- Cluster: [Cluster](archive/Cluster.md), [Ssh](archive/Ssh.md) (the cluster channel).
+- Cluster: [Cluster](Cluster.md), [Ssh](Ssh.md) (the cluster channel).
 - Code:
   - the link's models: `crates/moqui-core/src/cluster/`, `crates/moqui-host/src/cluster_edge/`,
     `crates/moqui-host/src/tui_remote.rs`;
@@ -1775,13 +1780,13 @@ When it is built (done in E10 unless marked; all done):
   - sync: `crates/moqui-core/src/service/system_sync/`;
   - mail: `crates/moqui-host/src/smtp.rs`, `crates/moqui-mail/src/delivery.rs`;
   - comms: `crates/moqui-host/src/channels.rs`, `crates/moqui-host/src/rtc/`, `crates/moqui-host/src/sip/`.
-- Messaging: [Messaging](proposals/Messaging.md), the FlatBuffers proposal for browsers and gateways. It rejected
+- Messaging: [Messaging](../proposals/Messaging.md), the FlatBuffers proposal for browsers and gateways. It rejected
   protobuf for that purpose. The link here is server to server, where gRPC's tooling and streaming fit.
 
 ## 10. All-in-one node (E12)
 
 Added 2026-11-02, after E10, and built the same day ("As built (E12)" below). E12 comes before E11 and is numbered after it so that this section and its phase row
-are appended. [Mobile-Desktop](Mobile-Desktop.md) needs it for configuration 1, a desktop local node.
+are appended. [Mobile-Desktop](../Mobile-Desktop.md) needs it for configuration 1, a desktop local node.
 
 An **all-in-one node** is a full server, with its own users, apps, business data, mail domains and calls, that is also
 the edge node of a local node. A person or a small organization that already runs a public server can attach a desktop

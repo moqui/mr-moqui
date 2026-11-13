@@ -28,7 +28,7 @@
 //!   user, logged in by username (`internal_login_user`, which refuses a disabled account), or as internal work.
 //! - **Pushes.** A subscription to the notification bus's `notification-message` topic, as `/notws` has, hands every
 //!   chat push to the session registry, which keeps the ones for its users.
-//! - **Behind an edge node** (plans/Edge-Node.md §5.4, E9). An edge node starts no XMPP server of its own; its tunnel
+//! - **Behind an edge node** (plans/archive/Edge-Node.md §5.4, E9). An edge node starts no XMPP server of its own; its tunnel
 //!   ports (`edge_xmpp_port`, `edge_xmpp_tls_port`) pipe each client down the link, and [`serve_tunneled`] serves the
 //!   stream here as a connection from the client the edge node names, with this node's certificates and TLS, so
 //!   channel binding keeps its exporter. This node needs no listener of its own for that.
@@ -223,7 +223,7 @@ pub(crate) fn routes(
 
 /// Start the listeners and the subscription when `xmpp_domain` is set. Never on a dedicated edge node, whose client
 /// ports tunnel to its local node (checked for this factory, as a test runs both ends in one process). An all-in-one
-/// node starts its own, on its own ports, beside the tunnel ports of its paired node's domain (plans/Edge-Node.md §10).
+/// node starts its own, on its own ports, beside the tunnel ports of its paired node's domain (plans/archive/Edge-Node.md §10).
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     let node = start_node(factory);
     // a start that recorded nothing returned early on an error it logged
@@ -465,7 +465,7 @@ pub(crate) fn running(factory: &ExecutionContextFactory, direct: bool) -> bool {
     intake.is_some_and(|intake| intake.acceptor(direct).is_some())
 }
 
-/// Serve a stream an edge node tunneled here (plans/Edge-Node.md §5.4) as a client connection from `client`, on the
+/// Serve a stream an edge node tunneled here (plans/archive/Edge-Node.md §5.4) as a client connection from `client`, on the
 /// server's runtime: STARTTLS first, or TLS at once when `direct`. The client's address is the one the edge node
 /// names, so a source blocked for failed sign-ins is refused and the connection is counted against it, as at
 /// [`accept_loop`]. False when it was not taken (the server stopped, that kind has no TLS settings, the source is

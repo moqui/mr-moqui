@@ -110,7 +110,7 @@ moqui_entity::hooks::submit! {
 }
 
 /// A committed write's observers: the cluster's cache invalidation, and the edge link's replication
-/// (plans/Edge-Node.md §5.2), which notes the record's key for its set after commit.
+/// (plans/archive/Edge-Node.md §5.2), which notes the record's key for its set after commit.
 fn note_write(
     facade: &crate::entity::EntityFacade,
     entity_name: &str,

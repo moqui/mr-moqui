@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The PASS authority's operations over gRPC (plans/Edge-Node.md §5.5), the part that needs no network:
+//! The PASS authority's operations over gRPC (plans/archive/Edge-Node.md §5.5), the part that needs no network:
 //! - on the authority, [`serve`] and [`serve_download`] run one call of the host's `PassAuthority` service: they check
 //!   the client, bind the authority session an account flow carries as its handle, and run the authority service
 //!   (`pass_authority_service`, Mantle's `mantle.pass.PassAuthorityServices.handle#Call` by default), the same function

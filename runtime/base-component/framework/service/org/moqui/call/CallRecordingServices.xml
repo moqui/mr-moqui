@@ -320,7 +320,7 @@ along with this software (see the LICENSE.md file). If not, see
             tmp/call-recording) to contentLocation (under dbresource://moqui/call/recording/), and deletes the spooled file.
             byteSize is what was stored. A path outside the spool, or a location outside the recordings' root, is refused.
             Or fromLocation, the content of an item this node's edge link queue received (under
-            dbresource://moqui/edge/content/in/; plans/Edge-Node.md §5.4), copied to contentLocation; the queue removes
+            dbresource://moqui/edge/content/in/; plans/archive/Edge-Node.md §5.4), copied to contentLocation; the queue removes
             its copy. Any other location is refused.</description>
         <in-parameters>
             <parameter name="tempPath"/>
@@ -346,7 +346,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="receive" noun="EdgeRecording" allow-remote="false">
-        <description>On a local node, the edge link's queue kind callRecording (MoquiDefaultConf.xml edge, plans/Edge-Node.md
+        <description>On a local node, the edge link's queue kind callRecording (MoquiDefaultConf.xml edge, plans/archive/Edge-Node.md
             §5.4): what its edge node's recorder, the media node of this node's calls, made. The payload is a segment
             ({op: 'segment', parameters} of store#RecordingSegment, its file the item's content at contentLocation) or the
             recorder's end ({op: 'end', callRecordingId, outcome, errorText} of note#RecorderEnd), queued in the

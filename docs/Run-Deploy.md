@@ -773,7 +773,7 @@ the Dev AIDE loads there.
 ## A local server with an edge node
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
-open ([plan](../plans/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
+open ([plan](../plans/archive/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
 edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
 beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
 their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
@@ -915,7 +915,7 @@ node's own names.
   `_xmpps-client._tcp` name the edge node in public DNS. Uploads and `/xmpp-websocket` go through web access, so the
   XMPP domain is one of the node's host names. While the link is down clients cannot connect, and retry
   ([XMPP](interfaces/XMPP.md#behind-an-edge-node)).
-- **Work over the link** (the `<edge>` conf element, the same on both nodes; [plan](../plans/Edge-Node.md) §5.2). A
+- **Work over the link** (the `<edge>` conf element, the same on both nodes; [plan](../plans/archive/Edge-Node.md) §5.2). A
   service listed in `delegate` runs on the local node when called on the edge node, as the user `_EDGE_`, whose grants
   (the `EDGE_DELEGATE` artifact group) must cover it; it fails at once while the link is down. A `queue-kind` names the
   service that applies queued items of that kind; what waits for a local node that is away is kept
@@ -926,17 +926,17 @@ node's own names.
   replication. System › Edge Node shows the outbox and the sets, with Pause and Resync; Edge Clients shows each node's
   queue and sets. The edge node's database now holds the queue: unpause its backup job
   (`backup_EmbeddedDatabase_daily`).
-- **PASS** ([plan](../plans/Edge-Node.md) §5.5). With `pass_backend_url=edge:` (set in MoquiEdgeConf.xml), the edge
+- **PASS** ([plan](../plans/archive/Edge-Node.md) §5.5). With `pass_backend_url=edge:` (set in MoquiEdgeConf.xml), the edge
   node's mr-pass calls its local node as the authority over gRPC down the link; the local node needs no public authority
   and no PASS client secret for it. On the local node, the edge node is the client `pass_edge_client` (default `edge`):
   set `pass_client_edge_sites` (the sites the edge node serves) and `pass_client_edge_callback` (its SSO callback). Set
   `pass_backend_web_url` on the edge node to the local node's web address (a host name with web access through the
   edge node) for the SSO front channel. While the link is down every PASS page fails as unavailable.
-- **Chat and SMS** ([plan](../plans/Edge-Node.md) §5.4, [SMS](interfaces/SMS.md)). MoquiEdgeConf.xml sets
+- **Chat and SMS** ([plan](../plans/archive/Edge-Node.md) §5.4, [SMS](interfaces/SMS.md)). MoquiEdgeConf.xml sets
   `channels_webhooks_enabled=true`: the edge node checks each webhook's signature with the local node's replicated
   bridge and queues it for the local node. On the local node, `channels_public_url` is the edge node's address, so the
   files of an MMS are served by the edge node.
-- **Mail** ([plan](../plans/Edge-Node.md) §5.4). The MTA in moqui is the default (`edge_mail_mta=moqui` in
+- **Mail** ([plan](../plans/archive/Edge-Node.md) §5.4). The MTA in moqui is the default (`edge_mail_mta=moqui` in
   MoquiEdgeConf.xml; an empty `edge_mail_mta` keeps E5a's relay to Postfix, so an older edge node is not switched by
   an upgrade): the edge node takes port 25 itself and delivers to each domain's MX. Postfix and Rspamd beside it are
   the alternative, below.
@@ -1007,7 +1007,7 @@ node's own names.
 ## An all-in-one node
 
 A full server, with its own users, apps, data, mail domains, chat bridges, calls and XMPP domain, can also be the edge
-node of one local node, such as a desktop node ([plan](../plans/Edge-Node.md#10-all-in-one-node-e12) §10). The local
+node of one local node, such as a desktop node ([plan](../plans/archive/Edge-Node.md#10-all-in-one-node-e12) §10). The local
 node pairs and runs the wizard as with a dedicated edge node (above), and sees no difference.
 
 - **Conf.** Run `conf/MoquiAllInOneConf.xml` (`node_role=all-in-one`) with the server's full runtime, on the Maximal

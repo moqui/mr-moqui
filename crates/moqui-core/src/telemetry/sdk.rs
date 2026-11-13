@@ -989,7 +989,7 @@ const ALLOWED_ATTRIBUTES: &[&str] = &[
     // a transaction's cache mode: off, hold or read-through (moqui.transaction.duration)
     "moqui.transaction.cache",
     "moqui.operation.name",
-    // the edge link's queue and replication (plans/Edge-Node.md §5.9): names from its conf, never from a request
+    // the edge link's queue and replication (plans/archive/Edge-Node.md §5.9): names from its conf, never from a request
     "moqui.edgelink.kind",
     "moqui.edgelink.direction",
     "moqui.edgelink.set",

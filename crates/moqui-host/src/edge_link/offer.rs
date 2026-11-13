@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Attaching a local node (plans/Edge-Node.md §5.7, E10), the edge node's side: what it offers ([`offer`], the link's
+//! Attaching a local node (plans/archive/Edge-Node.md §5.7, E10), the edge node's side: what it offers ([`offer`], the link's
 //! GetOffer, and the area names of its Hello), and the local node's Configure ([`configure`]): its host names applied
 //! with E2's host code, only this node's and never a name another node holds, and the rest of its setup kept on its
 //! `moqui.edge.EdgeClient` row. Everything a local node sends is checked as input from any client (§5.8,

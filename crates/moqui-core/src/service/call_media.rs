@@ -23,7 +23,7 @@
 //! recordings' `dbresource://` root, and `org.moqui.call.VoicemailServices.store#VoicemailFile` (V2) a message the SIP
 //! engine recorded into the voicemail root.
 //!
-//! SIP on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): `VoiceServices.get#CallAudio` and
+//! SIP on an edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): `VoiceServices.get#CallAudio` and
 //! `VoicemailServices.get#PhoneVoicemailAudio` give the edge node's engine a greeting or prompt, or a saved message for
 //! the call that opened its box, and `VoiceServices.store#EdgeCallAudio` keeps a greeting its local node queued.
 
@@ -62,7 +62,7 @@ const RECORDING_ROOT: &str = "dbresource://moqui/call/recording/";
 /// `store#RecordingFile`: a spooled segment file (`tempPath`, under the runtime's [`RECORDING_SPOOL`]) to
 /// `contentLocation` (under [`RECORDING_ROOT`]); the spooled file is deleted once stored. Or, on a local node, a
 /// segment its edge node's recorder queued (`fromLocation`, where this node's queue keeps an item's content, under
-/// [`crate::edge::queue::CONTENT_IN`]; plans/Edge-Node.md §5.4, E7), copied there; the queue removes its copy. Anything
+/// [`crate::edge::queue::CONTENT_IN`]; plans/archive/Edge-Node.md §5.4, E7), copied there; the queue removes its copy. Anything
 /// else is refused, so the service reads no other local file or location and writes no other place. A spooled file is
 /// streamed to storage.
 fn store_recording_file(
@@ -386,7 +386,7 @@ const EXTERNAL_PROPERTY: &str = "turn_external_urls";
 /// `make#IceServers`: the ICE servers of a leg for its RTCPeerConnection: the TURN URLs of its call's media node
 /// (`turnUrls`, which the node registered) and any external ones, with a credential for this leg in the TURN REST form
 /// (`<expiry>:<legId>`, base64 HMAC-SHA1). Nothing when there are no URLs or no secret. A media node that is this local
-/// node's edge node (`mediaNodeId`, plans/Edge-Node.md §5.4, E7) checks its own secret, which its link told this node
+/// node's edge node (`mediaNodeId`, plans/archive/Edge-Node.md §5.4, E7) checks its own secret, which its link told this node
 /// ([`crate::edge::media::turn_secret`]): its URLs get a credential signed with that, and the external ones another
 /// signed with this node's.
 fn make_ice_servers(
@@ -536,7 +536,7 @@ fn send_to_node(
 
 /// `org.moqui.call.CallCaptionServices.get#CaptionSpeaker` (W6): the participant of a leg (`callLegId`) and the name the
 /// call shows for them: the participant's `displayName`, else its user's full name or username. Empty for a leg not
-/// found. The media node's captions call it, so on an edge node it runs on the local node (plans/Edge-Node.md §5.4).
+/// found. The media node's captions call it, so on an edge node it runs on the local node (plans/archive/Edge-Node.md §5.4).
 fn get_caption_speaker(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -591,7 +591,7 @@ fn get_caption_speaker(
 }
 
 /// Whether the current user may act for the call `call`'s media (a leg's own media node `leg_node` when it has one):
-/// anyone but the edge link's delegate user (`_edge_`, plans/Edge-Node.md §5.4), which may only for a call whose
+/// anyone but the edge link's delegate user (`_edge_`, plans/archive/Edge-Node.md §5.4), which may only for a call whose
 /// media is on this node's edge node (its `CallMediaNode` row is `edgeLinked`).
 fn edge_caller_allowed(facade: &EntityFacade, call: &str, leg_node: Option<&str>) -> Result<bool, LibError> {
     let user = crate::user::current_username().ok().flatten();
@@ -623,7 +623,7 @@ fn edge_caller_allowed(facade: &EntityFacade, call: &str, leg_node: Option<&str>
 /// The most audio one caption chunk may carry: 30 seconds of 16 kHz mono WAV is under 1 MiB; this leaves room.
 const MAX_CAPTION_AUDIO: usize = 4 * 1024 * 1024;
 
-/// `org.moqui.call.CallCaptionServices.transcribe#CaptionAudio` (W6, plans/Edge-Node.md §5.4 E7): an edge node's chunk
+/// `org.moqui.call.CallCaptionServices.transcribe#CaptionAudio` (W6, plans/archive/Edge-Node.md §5.4 E7): an edge node's chunk
 /// of a call's audio (`audioBase64`, WAV) through [`crate::llm_hooks::transcribe`] on this node, counted against
 /// `userId` (who must be a participant of `callSessionId`) and kept as an `LlmCall` with the client
 /// `captions:<callSessionId>`. A refusal is `errorCode` and `errorMessage`, not a service error, so the media node keeps

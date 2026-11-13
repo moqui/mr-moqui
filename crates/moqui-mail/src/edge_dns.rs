@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.edge.EdgeServices.check#EdgeDns` (plans/Edge-Node.md §5.7, the Apply step, E10): the DNS records a
+//! `org.moqui.edge.EdgeServices.check#EdgeDns` (plans/archive/Edge-Node.md §5.7, the Apply step, E10): the DNS records a
 //! local node behind an edge node needs, each looked up now with this crate's resolver ([`super::dns`]) and compared
 //! with what it should be: MX, SPF, the DKIM key and DMARC for each mail domain, A and AAAA for each host name, and
 //! the XMPP domain's client SRV records (`_xmpp-client._tcp`, `_xmpps-client._tcp`), which name the edge node and its
@@ -62,7 +62,7 @@ pub struct Expected {
 }
 
 /// The SIP records: the edge node's SIP domain (its `sip_domain`, the realm phones register to), whose SRV records
-/// (RFC 3263) name the edge node and its SIP ports (plans/Edge-Node.md §5.4 "Voice (SIP)", E8). None when `domain`
+/// (RFC 3263) name the edge node and its SIP ports (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8). None when `domain`
 /// is empty; a port of 0 is off, and its records are not listed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SipExpected {
@@ -76,7 +76,7 @@ pub struct SipExpected {
 }
 
 /// The XMPP records: the local node's XMPP domain, whose client SRV records name the edge node and its tunnel ports
-/// (plans/Edge-Node.md §5.4, E9). None when `domain` is empty; a port of 0 is off, and its record is not listed.
+/// (plans/archive/Edge-Node.md §5.4, E9). None when `domain` is empty; a port of 0 is off, and its record is not listed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct XmppExpected {
     pub domain: String,

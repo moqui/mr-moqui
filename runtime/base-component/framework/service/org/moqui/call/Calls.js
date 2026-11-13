@@ -131,7 +131,7 @@ function callLink(callSessionId) {
 }
 
 /**
- * The live media nodes, this node's edge node first (plans/Edge-Node.md §5.4: a paired node's calls have their media on
+ * The live media nodes, this node's edge node first (plans/archive/Edge-Node.md §5.4: a paired node's calls have their media on
  * the edge node), then newest heartbeat first; one that is draining takes no new call.
  */
 function liveMediaNodes() {
@@ -1062,7 +1062,7 @@ function bindNode(session, leg, signalingNodeId) {
   if (!cascadeOn() || !signalingNodeId || signalingNodeId === session.mediaNodeId || leg.mediaNodePinned === 'Y') {
     return session.mediaNodeId
   }
-  // a call whose media is on the edge node does not cascade (plans/Edge-Node.md §5.4): the edge link carries no relay
+  // a call whose media is on the edge node does not cascade (plans/archive/Edge-Node.md §5.4): the edge link carries no relay
   // link between media nodes, so every leg's media stays on the edge node
   const callNode = session.mediaNodeId ? one(MEDIA_NODE, { instanceId: session.mediaNodeId }) : null
   if (callNode && callNode.edgeLinked === 'Y') return session.mediaNodeId
@@ -1138,7 +1138,7 @@ function release(p) {
 }
 
 /**
- * Whether the caller may act for this call's media: anyone but the edge link's delegate user (plans/Edge-Node.md §5.4),
+ * Whether the caller may act for this call's media: anyone but the edge link's delegate user (plans/archive/Edge-Node.md §5.4),
  * which may only for a call whose media (the leg's node, else the call's) is on this node's edge node.
  */
 function edgeCallerAllowed(session, leg) {
@@ -1150,7 +1150,7 @@ function edgeCallerAllowed(session, leg) {
 
 /**
  * For the engine services of the other modules (Voice.js, Voicemail.js, SipDevices.js, Ivr.js, CallQueues.js,
- * CallTransfers.js; plans/Edge-Node.md §5.4 "Voice (SIP)", E8): whether the caller may act for a call (callSessionId, or
+ * CallTransfers.js; plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): whether the caller may act for a call (callSessionId, or
  * a leg's, callLegId) or as a node (instanceId): anyone but the edge link's delegate user, which may only for a call
  * whose media is on this node's edge node, or as that node.
  */
@@ -1776,7 +1776,7 @@ function guestIceServers(p) {
 function registerNode(p) {
   const row = find(MEDIA_NODE).condition('instanceId', p.instanceId).one()
   const now = ec.user.nowTimestamp
-  // the edge link keeps only the edge node's own row (plans/Edge-Node.md §5.4): never a row another media node
+  // the edge link keeps only the edge node's own row (plans/archive/Edge-Node.md §5.4): never a row another media node
   // registered, and a media node's own heartbeat never takes an edge row over or ends it
   const linked = row && row.edgeLinked === 'Y'
   if (row && !!p.edgeLinked !== linked) {

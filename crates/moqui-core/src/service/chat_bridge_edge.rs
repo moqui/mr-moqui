@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Chat bridges and SMS through an edge node (plans/Edge-Node.md §5.4, E6): the link's queue carries a network's
+//! Chat bridges and SMS through an edge node (plans/archive/Edge-Node.md §5.4, E6): the link's queue carries a network's
 //! webhooks to the local node, and the files of the messages the local node sends by address to the edge node.
 //!
 //! - **Webhooks** (kind [`KIND_WEBHOOK`], edge node to local node). On the edge node [`webhook`] reads the bridge from
@@ -162,7 +162,7 @@ fn number_field(fields: &serde_json::Value, name: &str) -> Option<i64> {
         .filter(|seconds| *seconds > 0)
 }
 
-/// Who answers a chat bridge's webhooks and serves its files on an all-in-one node (plans/Edge-Node.md §10).
+/// Who answers a chat bridge's webhooks and serves its files on an all-in-one node (plans/archive/Edge-Node.md §10).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum BridgeOwner {
     /// The server's own `ChatBridge`, and no paired node's copy: the normal path.

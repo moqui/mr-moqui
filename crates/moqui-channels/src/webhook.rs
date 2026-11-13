@@ -35,7 +35,7 @@
 //!    (or an edge node's queue) tries again; a text `ingest#Event` refuses for what it is (an unknown bridge, a bad
 //!    transaction id, a batch too large) is 422.
 //!
-//! Through an edge node (plans/Edge-Node.md §5.4) the steps split: the edge node checks the signature ([`verify`]) and
+//! Through an edge node (plans/archive/Edge-Node.md §5.4) the steps split: the edge node checks the signature ([`verify`]) and
 //! queues the request by its event id ([`event_key`]), which drops a repeat; the local node works the event
 //! ([`apply`]) without checking again, since the window has passed by then.
 
@@ -130,7 +130,7 @@ pub(crate) fn handle(bridge: &BridgeInfo, config: &Config, request: &WebhookRequ
 }
 
 /// The event step of [`handle`] alone, after the signature and replay checks: on any node after them, and on a local
-/// node for a request its edge node checked and queued (plans/Edge-Node.md §5.4).
+/// node for a request its edge node checked and queued (plans/archive/Edge-Node.md §5.4).
 pub(crate) fn apply(bridge: &BridgeInfo, config: &Config, request: &WebhookRequest) -> WebhookResponse {
     match serde_json::from_slice::<Json>(&request.body) {
         Ok(event) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(bridge, config, &event)))

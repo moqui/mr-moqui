@@ -13,7 +13,7 @@
  */
 
 //! First run (plans/Mobile-Desktop.md §4 configuration 1): once the first user (the initial admin an empty runtime
-//! asks for) is signed in, the window opens the attach wizard (`/qapps/system/EdgeNode/Pair`, plans/Edge-Node.md
+//! asks for) is signed in, the window opens the attach wizard (`/qapps/system/EdgeNode/Pair`, plans/archive/Edge-Node.md
 //! §5.7) to pair the node with an edge node. It does this once, kept by a marker file in the app config directory, and
 //! not on a node that is already paired or that takes links itself. The wizard has its own way out, so it can be
 //! skipped.

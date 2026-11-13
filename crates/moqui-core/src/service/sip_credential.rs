@@ -79,7 +79,7 @@ fn claim(
     true
 }
 
-/// `claim#SipDigestNonce` (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): before a phone's answer that the edge node's
+/// `claim#SipDigestNonce` (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): before a phone's answer that the edge node's
 /// registrar sent is taken here, its nonce's age and its first use. The response covers the nonce, so the edge node
 /// cannot change the time in it after the phone answered; refusing an old one and a repeated (`sipDeviceId`, `nonce`,
 /// `nc`) means an answer the edge node kept cannot be sent again later to sign the phone in. `fresh` false otherwise.
@@ -104,7 +104,7 @@ fn claim_sip_digest_nonce(
     Ok(BTreeMap::from([("fresh".to_string(), Value::Bool(fresh))]))
 }
 
-/// `compute#SipDigestResponse` (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): the response a phone's digest answer must
+/// `compute#SipDigestResponse` (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8): the response a phone's digest answer must
 /// have, from its verifier `ha1` and what the edge node's registrar sent (`nonce`, `nc`, `cnonce`, `qop`, and `ha2`, its
 /// H(method:uri)), as moqui-sip's `NonceBook::verify_ha1` computes it: H(ha1:nonce:nc:cnonce:auth:ha2) with qop auth,
 /// H(ha1:nonce:ha2) with none. Empty for an algorithm other than SHA-256, SHA-512-256 or MD5, or another qop.

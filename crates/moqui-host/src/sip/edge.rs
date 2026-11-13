@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The SIP engine on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8), which has none of the
+//! The SIP engine on an edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8), which has none of the
 //! business data: its routing, registrar, IVR and voicemail services are delegated to the local node (the `<edge>`
 //! conf), and what it needs while the local node is away is here.
 //!
@@ -26,7 +26,7 @@
 //!   stamped, never written again), and a saved message played by phone is fetched for the call that opened its box
 //!   ([`fetch_audio`]); the boxes' greetings also come ahead on the queue (`callAudio`), for the fallback.
 //!
-//! On an all-in-one node (plans/Edge-Node.md §10, E12) all of this is for the paired node's items only (`owners.rs`),
+//! On an all-in-one node (plans/archive/Edge-Node.md §10, E12) all of this is for the paired node's items only (`owners.rs`),
 //! and what it keeps of the paired node's audio is under a location of that node's
 //! (`moqui_core::edge::media::kept_audio_location`), apart from the server's own greetings at the same paths.
 

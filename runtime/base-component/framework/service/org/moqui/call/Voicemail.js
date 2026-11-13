@@ -75,7 +75,7 @@ function refuse(reasonCode, text) {
   return { reasonCode }
 }
 
-/** The edge link's delegate user (plans/Edge-Node.md §5.4 "Voice (SIP)", E8). */
+/** The edge link's delegate user (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8). */
 const isEdgeCaller = () => ec.user.username === '_edge_'
 
 /** Anyone, or the edge node's delegate user for a call whose media is on the edge node (Calls.js edgeAllowed). */
@@ -278,7 +278,7 @@ function store(p) {
   return { voicemailId: voicemail.voicemailId }
 }
 
-// ---------- messages the edge node recorded (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
+// ---------- messages the edge node recorded (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
 
 /** The most ring groups a number's fallback is followed through (Voice.js MAX_GROUP_HOPS). */
 const MAX_GROUP_HOPS = 5

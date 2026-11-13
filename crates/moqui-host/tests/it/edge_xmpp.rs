@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The XMPP tunnel (plans/Edge-Node.md §5.4, E9): outside XMPP clients sign in through the edge node's tunnel ports
+//! The XMPP tunnel (plans/archive/Edge-Node.md §5.4, E9): outside XMPP clients sign in through the edge node's tunnel ports
 //! and chat with each other on the local node, which ends their TLS. Both ends are real servers in the test's own
 //! process, as in `edge_web.rs`: the local node with `xmpp_domain` and a direct TLS port of its own, then the edge node
 //! (`node_role=edge`), which inherits those properties and still starts no XMPP server, with `edge_xmpp_port`

@@ -362,7 +362,7 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
     Ok(AsyncCall::Run(cleaned))
 }
 
-/// A call an edge node delegates to its local node (plans/Edge-Node.md §5.2), after the checks this node can make:
+/// A call an edge node delegates to its local node (plans/archive/Edge-Node.md §5.2), after the checks this node can make:
 /// with the service's definition here, its authorization and `authenticate`, as an async call is checked before it is
 /// queued; without one, a caller with no user is refused unless the conf entry allows anonymous callers. The local node
 /// checks its own allowlist and `_EDGE_`'s grants again.
@@ -452,7 +452,7 @@ fn sync_input(
     };
     let name = canonical(name);
     let facade = current_facade();
-    // On an edge node a service its conf delegates runs on the local node (plans/Edge-Node.md §5.2); the edge node
+    // On an edge node a service its conf delegates runs on the local node (plans/archive/Edge-Node.md §5.2); the edge node
     // may not have its definition. An all-in-one node delegates it only for a paired node's item (§10).
     let delegated = crate::edge::delegate::listed(&name);
     // An unknown service is an error first, as Java's `call` looks it up before `callSingle`.

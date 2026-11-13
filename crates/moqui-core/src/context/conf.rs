@@ -264,7 +264,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     }
 }
 
-/// The edge link's conf (plans/Edge-Node.md §5.2): the attributes, and each delegate, queue-kind and replicate by its
+/// The edge link's conf (plans/archive/Edge-Node.md §5.2): the attributes, and each delegate, queue-kind and replicate by its
 /// key; a replicate of the same set replaces its entities.
 fn merge_edge(base: &MNode, over: &MNode) {
     let Some(over_edge) = over.first_named("edge") else {

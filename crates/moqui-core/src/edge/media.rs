@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge node as a media node of its local node's calls (plans/Edge-Node.md §5.4, "Calls (WebRTC)", E7), as far as
+//! The edge node as a media node of its local node's calls (plans/archive/Edge-Node.md §5.4, "Calls (WebRTC)", E7), as far as
 //! it needs no network.
 //!
 //! - On an edge node the media node tells what it advertises ([`set_advert`]: its media address and TURN URLs), which
@@ -75,7 +75,7 @@ pub struct SipAdvert {
 struct SipAdverts(Mutex<Option<SipAdvert>>);
 
 /// On an edge node, as its SIP engine starts (or `None` as it stops): what its Hello tells its local nodes, which keep
-/// its `SipNode` row from it instead of the engine registering one (plans/Edge-Node.md §5.4 "Voice (SIP)").
+/// its `SipNode` row from it instead of the engine registering one (plans/archive/Edge-Node.md §5.4 "Voice (SIP)").
 pub fn set_sip_advert(factory: &ExecutionContextFactory, advert: Option<SipAdvert>) {
     *lock(&factory.extension(|_| SipAdverts::default()).0) = advert;
 }
@@ -86,7 +86,7 @@ pub fn sip_advert(factory: &ExecutionContextFactory) -> Option<SipAdvert> {
 }
 
 /// A trunk an edge node's SIP engine loaded (from its copy of `voiceTrunks`), with its state: what its offer tells the
-/// local node (plans/Edge-Node.md §5.7, E10 phones).
+/// local node (plans/archive/Edge-Node.md §5.7, E10 phones).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SipTrunkState {
     pub voice_trunk_id: String,
@@ -179,7 +179,7 @@ pub fn turn_secret(factory: &ExecutionContextFactory, instance_id: &str) -> Opti
 const ROOM_SEPARATOR: char = '\u{1f}';
 
 /// The media driver's room for the call `call`: the call id alone for this node's own call (`node` `None`), else the
-/// paired node `node` and the call (plans/Edge-Node.md §10, E12). A call id from `node`'s link is keyed as it is, also
+/// paired node `node` and the call (plans/archive/Edge-Node.md §10, E12). A call id from `node`'s link is keyed as it is, also
 /// one that holds the separator (which none of its own does): [`split_room`] splits at the first one, so the key stays
 /// `node`'s and never names another node's call or the server's own.
 pub fn room_key(node: Option<&str>, call: &str) -> String {

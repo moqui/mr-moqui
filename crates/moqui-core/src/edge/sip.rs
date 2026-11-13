@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The phones area of the wizard on a local node (plans/Edge-Node.md §5.7, "As built (E10, phones)"), on E8's SIP on
+//! The phones area of the wizard on a local node (plans/archive/Edge-Node.md §5.7, "As built (E10, phones)"), on E8's SIP on
 //! the edge node (§5.4 "Voice (SIP)"): the local setting that turns it off ([`SIP_ENABLED`]), the replicated sets it
 //! holds back while off ([`withheld`]), Apply's lines ([`apply`]) and the Test step's checks of the edge node's
 //! `SipNode` row, its engine's trunks and its copy of the fallbacks ([`row_check`], [`trunk_check`],
@@ -399,7 +399,7 @@ fn set_line(set: Option<&SetStatus>, name: &str, on: bool) -> SetupLine {
     )
 }
 
-/// Apply's phones lines (plans/Edge-Node.md §5.7, E10 phones): [`SIP_ENABLED`] in `env_file`, the two replicated
+/// Apply's phones lines (plans/archive/Edge-Node.md §5.7, E10 phones): [`SIP_ENABLED`] in `env_file`, the two replicated
 /// sets sent whole again (empty while off), then a line each for the sets' replication, the row, the phones' realm and
 /// the registrar, and the numbers' fallbacks. `edge` is the edge node as its last Hello said. Nothing goes to the
 /// edge node.

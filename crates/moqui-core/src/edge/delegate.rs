@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Delegated calls (plans/Edge-Node.md §5.2). On an edge node the service facade hands a synchronous call of a
+//! Delegated calls (plans/archive/Edge-Node.md §5.2). On an edge node the service facade hands a synchronous call of a
 //! service the conf lists (`<edge><delegate service=".."/>`) to the link (`crate::service::call::sync_with`, which
 //! checks authorization first when the edge node has the service's definition): the parameters and the caller's
 //! identity go as JSON data, and the local node's result or errors come back. On the local node [`run`] runs it as the

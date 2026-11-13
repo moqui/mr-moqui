@@ -151,7 +151,7 @@ settings, Bridges: each with its network, its name there and which way it carrie
 `storeRoomBridge` and `endRoomBridge`, over the services above, which check the permission again). The terminal names
 each mapping with its name there and its direction; it does not change them.
 
-**Behind an edge node** ([plan](../../plans/Edge-Node.md) §5.4). A network's webhook URL is the edge node's,
+**Behind an edge node** ([plan](../../plans/archive/Edge-Node.md) §5.4). A network's webhook URL is the edge node's,
 `/channels/{chatBridgeId}/webhook`; the edge node checks the request with the bridge's replicated copy (its type,
 adapter, status and webhook key, never `configJson`) and queues it, and the local node applies it through the adapter's
 `apply_webhook` with the same input checks and dedupe. Files a message sends by address (MMS) are put on the edge node

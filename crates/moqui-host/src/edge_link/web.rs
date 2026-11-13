@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge node's web front (plans/Edge-Node.md §5.3): a request to a terminate host goes down its local node's link
+//! The edge node's web front (plans/archive/Edge-Node.md §5.3): a request to a terminate host goes down its local node's link
 //! as an HTTP/2 request, after the edge node's own web protection, with the bodies streamed both ways. The client's
 //! address goes in [`CLIENT_HEADER`]; any forwarding header the client sent is removed, and so are the hop-by-hop
 //! headers. A WebSocket upgrade becomes an extended CONNECT (RFC 8441) down the link, answered 101 here once the local

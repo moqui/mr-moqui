@@ -87,7 +87,7 @@ pub enum RequestVia {
     Direct,
     /// The Desktop app's node in process: the app's own pages, with no network between.
     InProcess,
-    /// The edge node's link: a client of the edge node, forwarded or tunneled (plans/Edge-Node.md §5.3).
+    /// The edge node's link: a client of the edge node, forwarded or tunneled (plans/archive/Edge-Node.md §5.3).
     Edge,
 }
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The voicemail fallback of an edge node's SIP engine (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8): a call
+//! The voicemail fallback of an edge node's SIP engine (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8): a call
 //! the local node cannot route now (the link is down, or it did not answer in time) is answered from the number's
 //! replicated fallback (`edge.rs`), with no call state anywhere:
 //!

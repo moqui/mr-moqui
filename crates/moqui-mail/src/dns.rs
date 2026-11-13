@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The DNS of mail (plans/Edge-Node.md §5.4, E5b): the resolver that SPF, DKIM, DMARC and ARC verification query
+//! The DNS of mail (plans/archive/Edge-Node.md §5.4, E5b): the resolver that SPF, DKIM, DMARC and ARC verification query
 //! ([`super::auth`]), and the MX, A and AAAA lookups of the edge node's MX delivery ([`super::mx`]). E10's DNS checks
 //! ([`super::edge_dns`]) use [`txt`], [`mx`] and [`ips`] too, and [`srv`] for the XMPP records.
 //!
