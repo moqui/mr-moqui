@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Comms Home (mr-boss design-drawers-commons.md §12 Home; style-guide §3.1 Landing; plans/Comms-Framework.md D-A4): the
     counters (the unread of each mail account, flagged, snoozed until today, mentions, and mail that could not be sent), each a
-    number card into the Inbox view it counts; the chat rooms with unread; the shortcuts (Compose, New room, Add a mail account
+    number card into the Inbox view it counts; Needs reply (the mail threads waiting for the user's answer); the chat rooms
+    with unread; the shortcuts (Compose, New room, Add a mail account
     until there is one). A mail account whose sign-in or sync failed is named at the top with the way to fix it. The data is
     get#CommsHome through org.moqui.comms.InboxServices.run#Operation (an app's own Home data when it answers the inbox), which
     reads each part on its own: one that fails is left out and said so. An app adds its boxes with a screen-extend into
@@ -83,6 +84,26 @@ along with this software (see the LICENSE.md file). If not, see
 
         <container-row>
             <row-col md="8" id="HomeMain">
+                <!-- the mail waiting for the user's answer; an app's Home answer fills it with its own (IronStone: internal
+                    messages too) -->
+                <section name="NeedsReplyBox" condition="hasMailAccount || needsReplyList.length"><widgets>
+                    <container-box id="HomeNeedsReply"><box-header title="Needs reply"/><box-toolbar>
+                        <link url="${appLink}/Inbox" url-type="plain" link-type="anchor" text="Inbox"/>
+                    </box-toolbar><box-body-nopad>
+                        <form-list name="NeedsReply" list="needsReplyList" skip-form="true" skip-header="true" paginate="false">
+                            <field name="subject"><default-field><link url="${link}" url-type="plain" text="${subject}"/></default-field></field>
+                            <field name="who"><default-field><display style="text-caption"/></default-field></field>
+                            <field name="whenText" align="right"><default-field><display style="text-caption m-muted text-no-wrap"/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="subject"/><field-ref name="who"/></column>
+                                <column><field-ref name="whenText"/></column>
+                            </columns>
+                        </form-list>
+                        <section name="NoNeedsReply" condition="!needsReplyList.length"><widgets>
+                            <label type="p" text="Nothing waiting for your answer" style="m-muted q-pa-sm q-mb-none"/>
+                        </widgets></section>
+                    </box-body-nopad></container-box>
+                </widgets></section>
                 <container-box id="HomeRooms"><box-header title="Rooms with unread"/><box-toolbar>
                     <link url="${appLink}/Chat" url-type="plain" link-type="anchor" text="Chat"/>
                 </box-toolbar><box-body-nopad>

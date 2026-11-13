@@ -312,7 +312,10 @@ along with this software (see the LICENSE.md file). If not, see
             (searchText, with Gmail's operators) is a view of all mail, or of the account open, unless it names an in:.
             MAIL_CONVERSATION messages lists the mail one message at a time (threadMode false); threads, the default, keeps a
             thread as one row. The cursor is email:millis of the last row's sortDate. termList is the search's operators for
-            the query chips. conversationView is the mode this page used.
+            the query chips. conversationView is the mode this page used. needsReply keeps the threads of the view waiting
+            for the user's answer, as Mantle's find#InboxThreads has it: the thread's newest message is a day old or more and
+            not answered, and nothing was sent in the thread after it (a reply waiting in the Outbox counts); it reads at most
+            200 threads of the view for a page, newest first, and the cursor goes on from the last one read.
         </description>
         <in-parameters>
             <parameter name="view"/>
@@ -322,6 +325,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="contactListId"/>
             <parameter name="searchText" allow-html="any"/>
             <parameter name="unreadOnly" type="Boolean" default="false"/>
+            <parameter name="needsReply" type="Boolean" default="false"/>
             <parameter name="cursor"/>
             <parameter name="pageSize" type="Integer" default="50"/>
         </in-parameters>
@@ -356,13 +360,64 @@ along with this software (see the LICENSE.md file). If not, see
             conversationView = ec.user.getPreference('MAIL_CONVERSATION') === 'messages' ? 'messages' : 'threads'
             params.threadMode = conversationView !== 'messages'
             findView = params.view
-            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.find#Messages').parameters(params).call()
-            if (ec.message.hasError()) return
-            threadList = Array.from(out.threadList || []).map((row) => Object.assign({}, row, {store: 'email',
+            const keyed = (rows) => rows.map((row) => Object.assign({}, row, {store: 'email',
                 rowKey: 'email:' + (params.threadMode ? row.threadId : row.emailMessageId)}))
-            hasMore = out.hasMore === true
-            nextCursor = hasMore && out.nextBeforeDate != null ? 'email:' + out.nextBeforeDate : null
-            termList = Array.from(out.termList || [])
+            if (!needsReply) {
+                const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.find#Messages').parameters(params).call()
+                if (ec.message.hasError()) return
+                threadList = keyed(Array.from(out.threadList || []))
+                hasMore = out.hasMore === true
+                nextCursor = hasMore && out.nextBeforeDate != null ? 'email:' + out.nextBeforeDate : null
+                termList = Array.from(out.termList || [])
+                return
+            }
+            // Needs reply: the newest message of the thread (the row's) is a day old or more, not answered, and nothing was
+            // sent in the thread after it
+            const toMillis = (value) => value == null || value === '' ? null : typeof value === 'number' ? value
+                : value instanceof Date ? value.getTime() : (Number.isNaN(Number(value)) ? new Date(String(value)).getTime() : Number(value))
+            const cf = ec.entity.conditionFactory
+            const dayAgo = toMillis(ec.user.nowTimestamp) - 86400000
+            const waiting = (rows) => {
+                const candidates = rows.filter((row) => toMillis(row.sortDate) <= dayAgo)
+                if (candidates.length === 0) return []
+                const answered = new Set(Array.from(ec.entity.find('moqui.basic.email.EmailMessage')
+                        .condition('emailMessageId', 'in', candidates.map((row) => row.emailMessageId)).condition('isAnswered', 'Y')
+                        .selectField('emailMessageId').disableAuthz().list()).map((row) => row.emailMessageId))
+                const roots = Array.from(new Set(candidates.map((row) => row.rootEmailMessageId || row.threadId)))
+                const sentAt = {}
+                for (const message of ec.entity.find('moqui.basic.email.EmailMessage').condition(cf.makeCondition([
+                        cf.makeCondition('rootEmailMessageId', 'in', roots), cf.makeCondition('emailMessageId', 'in', roots)], 'or'))
+                        .condition('statusId', 'in', ['ES_SENT', 'ES_SCHEDULED', 'ES_READY']).selectField('emailMessageId')
+                        .selectField('rootEmailMessageId').selectField('messageDate').selectField('sentDate').disableAuthz().list()) {
+                    const root = message.rootEmailMessageId || message.emailMessageId
+                    const at = toMillis(message.sentDate || message.messageDate)
+                    if (at != null && !(sentAt[root] >= at)) sentAt[root] = at
+                }
+                return candidates.filter((row) => !answered.has(row.emailMessageId) &&
+                        !(sentAt[row.rootEmailMessageId || row.threadId] > toMillis(row.sortDate)))
+            }
+            // the threads of the view the user may see (find#Messages checks the accounts), 50 at a time, at most 200
+            params.pageSize = 50
+            let read = 0
+            let lastDate = null
+            while (threadList.length < size && read < 200) {
+                if (lastDate != null) params.beforeDate = new Date(Number(lastDate))
+                const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.find#Messages').parameters(params).call()
+                if (ec.message.hasError()) return
+                const rows = Array.from(out.threadList || [])
+                read += rows.length
+                lastDate = out.nextBeforeDate ?? (rows.length ? toMillis(rows[rows.length - 1].sortDate) : null)
+                hasMore = out.hasMore === true
+                for (const row of waiting(rows)) {
+                    // the page is full: the next one starts after its last row, so a waiting thread read past it is not lost
+                    if (threadList.length >= size) { hasMore = true; lastDate = toMillis(threadList[threadList.length - 1].sortDate); break }
+                    threadList.push(row)
+                }
+                if (!hasMore || rows.length === 0) break
+            }
+            threadList = keyed(threadList)
+            // the cursor goes on from the last thread read, which may be past the page's last row
+            nextCursor = hasMore && lastDate != null ? 'email:' + lastDate : null
         ]]></script></actions>
     </service>
 

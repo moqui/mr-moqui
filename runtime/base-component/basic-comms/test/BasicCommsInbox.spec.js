@@ -162,6 +162,39 @@ feature("an action on the thread, and Home counts the account", {
     }
 })
 
+feature("Needs reply keeps the mail a day old or more that is not answered and has no reply sent after it, on Home and as an Inbox filter", {
+    when() {
+        const daysAgo = (days) => new Date(Date.now() - days * 86400000)
+        const message = (id, fields) => store("moqui.basic.email.EmailMessage", Object.assign({emailMessageId: id, rootEmailMessageId: id,
+            emailAccountId: ACCOUNT, emailFolderId: FOLDER, statusId: "ES_RECEIVED", fromAddress: "lee@example.org", fromName: "Lee Asker",
+            toAddresses: "inbox.spec@example.com", contentType: "text/plain", isRead: "Y", messageId: "<" + id + "@example.org>"}, fields))
+        // waiting: three days old, not answered
+        message("BCI_NR_WAIT", {subject: "Quote for the fence", body: "Can you send a quote?", messageDate: daysAgo(3), receivedDate: daysAgo(3)})
+        // answered (the client marked it)
+        message("BCI_NR_ANSWERED", {subject: "Answered already", body: "x", messageDate: daysAgo(3), receivedDate: daysAgo(3), isAnswered: "Y"})
+        // a reply was sent in the thread after it
+        message("BCI_NR_REPLIED", {subject: "Replied in thread", body: "x", messageDate: daysAgo(4), receivedDate: daysAgo(4)})
+        message("BCI_NR_REPLY", {rootEmailMessageId: "BCI_NR_REPLIED", parentEmailMessageId: "BCI_NR_REPLIED", statusId: "ES_SENT",
+            fromAddress: "inbox.spec@example.com", toAddresses: "lee@example.org", subject: "Re: Replied in thread", body: "y",
+            messageDate: daysAgo(2), sentDate: daysAgo(2), emailFolderId: null})
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const rows = inbox("find#InboxRows", {view: "inbox", needsReply: true, pageSize: 10})
+        const home = attempt("org.moqui.comms.CommsHomeServices.get#CommsHome")
+        const shown = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui").render("Home", {}, null))
+        return {rows, home, text: String(shown.output || "")}
+    },
+    then({rows, home, text}) {
+        rows.errors == ""
+        rows.threadList.map(row => row.rowKey).join() == "email:BCI_NR_WAIT"
+        home.needsReplyList.map(row => row.rowKey).join() == "email:BCI_NR_WAIT"
+        home.needsReplyList[0].who == "Lee Asker"
+        home.needsReplyList[0].link.endsWith("/Inbox?thread=email%3ABCI_NR_WAIT")
+        text.includes("Needs reply")
+        text.includes("Quote for the fence")
+        !text.includes("Lunch on Friday")
+    }
+})
+
 feature("a reply starts from the account it came to, is kept as a draft and discarded; other kinds of recipients are refused", {
     when() {
         ec.user.internalLoginUser("basic.comms.inbox")

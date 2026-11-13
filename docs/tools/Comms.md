@@ -203,7 +203,8 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   and uncertain; the deliveries that did not go, with Send again; Disable and Enable. A network's bridge is set up with
   its adapter ([Chat bridges](../interfaces/Chat-Bridges.md#administration)).
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
-  you have a voicemail box), and rooms with unread.
+  you have a voicemail box), Needs reply (mail a day old or more that is not answered and has no reply sent after it;
+  `find#InboxRows` `needsReply`), and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).
 
