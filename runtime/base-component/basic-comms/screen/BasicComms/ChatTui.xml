@@ -20,7 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
     as the user (a member of the room), Mark read, and Join for a room the user may join. A bridged room (C1) says where else
     its messages go and whether a bridge is not connected; an external member's messages carry their network, and each message
     of a bridged room its delivery, with Send again for one that failed or is uncertain (its sender or a moderator). Threads,
-    reactions, files, polls and the room's settings are the browser's. An encrypted room (C7) is read and written only in a
+    reactions, files, polls and the room's settings (its bridges' mappings among them) are the browser's; the terminal names each
+    mapping with its name there and which way it carries. An encrypted room (C7) is read and written only in a
     browser, which holds its keys: the terminal lists its messages as "Encrypted message" and says to open it in a browser,
     and its send refuses (reasonCode encryptedRoom from send#Message). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -94,7 +95,11 @@ along with this software (see the LICENSE.md file). If not, see
                     canPost = !!(out.access && out.access.canPost) && !encryptedRoom
                     canJoin = !!(out.access && out.access.canJoin)
                     const canModerate = !!(out.access && out.access.canModerate)
-                    const networks = Array.from(new Set(Array.from(room.bridges || []).map((bridge) => bridge.networkName || bridge.name).filter((name) => name)))
+                    // each mapping: its network, the room's name there and which way messages go (they are set in the browser)
+                    const WAYS = {CrbIn: ec.l10n.localize('only in'), CrbOut: ec.l10n.localize('only out')}
+                    const networks = Array.from(new Set(Array.from(room.bridges || []).map((bridge) => (bridge.networkName || bridge.name || '')
+                        + (bridge.externalRoomName || WAYS[bridge.directionEnumId] ? ' (' + [bridge.externalRoomName, WAYS[bridge.directionEnumId]].filter((part) => part).join(', ') + ')' : ''))
+                        .filter((name) => name)))
                     bridgeText = networks.length ? ec.resource.expand(ec.l10n.localize('Messages here also go to ${names}'), '', {names: networks.join(', ')}) : ''
                     notConnected = !!room.notConnected
                     const STATES = {accepted: 'Delivered', pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}

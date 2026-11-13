@@ -130,3 +130,59 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         ownerRetry.errors == ""
     },
 })
+
+feature("a bridge administrator maps a room to a bridge in its settings, changes and ends the mapping; a member is refused with the same parameters", {
+    when() {
+        const post = (path, parameters) => {
+            const str = ec.screen.makeTest().rootScreen(root).render("Chat/" + path, parameters || {}, "post")
+            ec.message.clearErrors()
+            try { return JSON.parse(String(str.output || "")) } catch (err) { return null }
+        }
+        // the room's member opens BasicComms (its users group) and is no bridge administrator
+        sys(() => {
+            if (!ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: "BASIC_COMMS_USERS", userId: USER}).count()) {
+                const member = ec.entity.makeValue("moqui.security.UserGroupMember")
+                member.setFields({userGroupId: "BASIC_COMMS_USERS", userId: USER, fromDate: ec.user.nowTimestamp}, true, null, null)
+                member.create()
+            }
+        })
+        ec.user.internalLoginUser("john.doe")
+        const bridge = call(BRIDGES + ".store#Bridge", {name: "Spec settings line", typeEnumId: "CbtSms", adapterName: "spec-missing",
+            inboundToken: "spec-settings-token"}).chatBridgeId
+        const room = call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "private", roomName: "Spec settings room",
+            memberUserIdList: [USER]}).chatRoomId
+        const adminData = json("chatData", {})
+        const choices = json("bridgeChoices", {})
+        const added = post("storeRoomBridge", {chatRoomId: room, chatBridgeId: bridge, externalRoomId: "+15550177", externalRoomName: "Front desk line"})
+        const changed = post("storeRoomBridge", {chatRoomId: room, chatRoomBridgeId: added.chatRoomBridgeId, externalRoomName: "Front desk", directionEnumId: "CrbOut"})
+        const viewed = json("roomView", {chatRoomId: room})
+        const tui = render(root, "ChatTui", "tui", {chatRoomId: room})
+        // a member of the room who is no bridge administrator, with the same parameters
+        ec.user.internalLoginUser("basic.comms.bridges")
+        const memberData = json("chatData", {})
+        const memberChoices = json("bridgeChoices", {})
+        const memberChange = post("storeRoomBridge", {chatRoomId: room, chatRoomBridgeId: added.chatRoomBridgeId, directionEnumId: "CrbBoth"})
+        const memberEnd = post("endRoomBridge", {chatRoomBridgeId: added.chatRoomBridgeId})
+        ec.user.internalLoginUser("john.doe")
+        const ended = post("endRoomBridge", {chatRoomBridgeId: added.chatRoomBridgeId})
+        const after = json("roomView", {chatRoomId: room})
+        return {adminData, choices, bridge, added, changed, viewed, tui, memberData, memberChoices, memberChange, memberEnd, ended, after}
+    },
+    then({adminData, choices, bridge, added, changed, viewed, tui, memberData, memberChoices, memberChange, memberEnd, ended, after}) {
+        adminData.me.bridgeAdmin === true
+        choices.bridgeList.some(b => b.chatBridgeId == bridge && b.networkName == "SMS")
+        added.errors == null
+        added.chatRoomBridgeId != null
+        changed.errors == null
+        viewed.room.bridges.length == 1
+        viewed.room.bridges[0].externalRoomName == "Front desk"
+        viewed.room.bridges[0].directionEnumId == "CrbOut"
+        tui.output.includes("Messages here also go to SMS (Front desk, only out)")
+        memberData.me.bridgeAdmin === false
+        memberChoices.bridgeList.length == 0
+        memberChange.errors.includes("Chat bridges are for administrators")
+        memberEnd.errors.includes("Chat bridges are for administrators")
+        ended.errors == null
+        after.room.bridges.length == 0
+    },
+})

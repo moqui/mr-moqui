@@ -455,6 +455,41 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <!-- a room's bridges (C1, ChatBridgeAdmin; org.moqui.chat.ChatBridgeServices, which checks the permission): the bridges to map
+        it to, a mapping added or changed, and one ended -->
+    <transition name="bridgeChoices" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.find#Bridges').requireNewTransaction(true).disableAuthz().call() || {}
+            const refused = ec.message.hasError()
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({bridgeList: refused ? [] : Array.from(out.bridgeList || []).filter((b) => b.statusId !== 'CbsDisabled')
+                .map((b) => ({chatBridgeId: b.chatBridgeId, name: b.name, networkName: b.networkName || b.typeEnumId || ''}))})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="storeRoomBridge">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.store#RoomBridge').parameters({chatRoomBridgeId: chatRoomBridgeId || null,
+                chatRoomId: chatRoomId || '', chatBridgeId: chatBridgeId || null, externalRoomId: externalRoomId || null,
+                externalRoomName: externalRoomName || null, externalRoomUrl: externalRoomUrl || null, directionEnumId: directionEnumId || null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, chatRoomBridgeId: out.chatRoomBridgeId || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="endRoomBridge">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatBridgeServices.end#RoomBridge').parameter('chatRoomBridgeId', chatRoomBridgeId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
     <!-- the room's calls end-to-end encrypted, or not (W8: owners and moderators; org.moqui.call.CallServices) -->
     <transition name="setCallEncryption">
         <actions><script><![CDATA[

@@ -145,7 +145,11 @@ The `ChatBridgeAdmin` permission (the `ADMIN` group has it, `ChatBridgeSetupData
 error, mapped rooms, the deliveries waiting, failed and uncertain, the latest ones that did not go), `store#Bridge` (the
 configuration is encrypted and never returned; the inbound token is kept only as its hash), `store#RoomBridge` (one active
 mapping of an external room per bridge; no direct conversation) and `end#RoomBridge`. System, Chat Bridges lists the
-bridges and the failed deliveries with Send again, and disables or enables a bridge.
+bridges and the failed deliveries with Send again, and disables or enables a bridge. A room's mappings are in Chat, Room
+settings, Bridges: each with its network, its name there and which way it carries, and for a bridge administrator
+(`get#ChatData` `me.bridgeAdmin`) Bridge to another network, Change and End (the Chat transitions `bridgeChoices`,
+`storeRoomBridge` and `endRoomBridge`, over the services above, which check the permission again). The terminal names
+each mapping with its name there and its direction; it does not change them.
 
 **Behind an edge node** ([plan](../../plans/Edge-Node.md) §5.4). A network's webhook URL is the edge node's,
 `/channels/{chatBridgeId}/webhook`; the edge node checks the request with the bridge's replicated copy (its type,

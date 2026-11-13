@@ -59,7 +59,9 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   messages carry it. Each of your messages says whether it was delivered there, is being sent, was not delivered (with
   why) or may not have arrived; the sender or a moderator can Send again. When the bridge is not connected the room says
   so and keeps its messages, which go out once it is back. An edit, a delete or a reaction the network cannot carry is
-  not offered. The terminal shows the same, with Send again. See [Chat bridges](../interfaces/Chat-Bridges.md).
+  not offered. The terminal shows the same, with Send again. Room settings, Bridges lists where the room goes; a bridge
+  administrator connects it to another network there (the bridge, the room or conversation there, which way messages
+  go), changes or ends it. See [Chat bridges](../interfaces/Chat-Bridges.md).
 - <a id="texts"></a>**Texts** (C4-SMS). A number of ours with messaging has one room for each outside number it texts
   with (the SMS icon, named their number): its texts, pictures, calls and voicemail are there, and everyone our number
   reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person

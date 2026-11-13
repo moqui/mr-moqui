@@ -2010,10 +2010,10 @@ along with this software (see the LICENSE.md file). If not, see
             const nameOf = (row) => row.senderUserId ? names[row.senderUserId] || row.senderUserId : (actors[row.senderActorId]?.name ?? null)
             const externalOf = (row) => !row.senderUserId && actors[row.senderActorId]
                     ? {network: actors[row.senderActorId].network, networkName: actors[row.senderActorId].networkName} : null
-            // the delivery state of a bridged room's messages
-            const deliveries = room.bridged ? (ec.service.sync().name('org.moqui.chat.ChatBridgeServices.get#EventDeliveries').parameters({
-                chatRoomId: chatRoomId, eventSeqList: rows.filter((row) => row.eventTypeEnumId === 'CetMessage').map((row) => Number(row.eventSeq))})
-                .call()?.deliveryMap || {}) : {}
+            // the delivery state of a bridged room's messages (none to ask of for a page without messages: a new bridged room)
+            const messageSeqs = rows.filter((row) => row.eventTypeEnumId === 'CetMessage').map((row) => Number(row.eventSeq))
+            const deliveries = room.bridged && messageSeqs.length ? (ec.service.sync().name('org.moqui.chat.ChatBridgeServices.get#EventDeliveries')
+                .parameters({chatRoomId: chatRoomId, eventSeqList: messageSeqs}).call()?.deliveryMap || {}) : {}
             const removedLabel = ec.l10n.localize('Message removed')
             const snippet = (row) => {
                 if (!row || row.redactedDate) return null

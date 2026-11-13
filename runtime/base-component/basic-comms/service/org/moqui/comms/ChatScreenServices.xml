@@ -301,7 +301,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="ChatData">
-        <description>What the Chat screen and the tray's Chat tab start with: me {userId, username, name, partyId}, the
+        <description>What the Chat screen and the tray's Chat tab start with: me {userId, username, name, partyId, bridgeAdmin (ChatBridgeAdmin: the room settings map the room to bridges)}, the
             preferences (get#ChatPrefs, with recordLink: an app files messages on its records), the user's rooms (org.moqui.chat.ChatServices.find#Rooms, pinned first, then by the
             last event, decorate#Rooms) up to limit, and the unread and mention totals.</description>
         <in-parameters><parameter name="limit" type="Integer" default="200"/></in-parameters>
@@ -314,7 +314,8 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             const account = ec.user.userAccount || {}
-            me = {userId: ec.user.userId, username: ec.user.username, name: account.userFullName || ec.user.username, partyId: account.partyId || null}
+            me = {userId: ec.user.userId, username: ec.user.username, name: account.userFullName || ec.user.username, partyId: account.partyId || null,
+                bridgeAdmin: ec.user.hasPermission('ChatBridgeAdmin')}
             prefs = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#ChatPrefs').call().prefs
             // File on a record is offered only with an app that files messages on its records (a record-link provider)
             const linkers = ec.service.sync().name('org.moqui.ui.ShellServices.get#Providers').parameter('hook', 'record-link').call()
