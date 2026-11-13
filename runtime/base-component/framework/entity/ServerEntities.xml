@@ -704,7 +704,9 @@ along with this software (see the LICENSE.md file). If not, see
             and names the five steps (stageService, configureService, validateService, applyService, getService, with an
             optional reportService, sampleService and kindsService), each carrying the import contract's parameters, as
             mantle.product.ProductImportServices. rows: the owner has no batch, and the framework keeps one (TransferBatch,
-            TransferItem) for it: columnsJson names the only fields a row may carry (name, label, required), keyFields the
+            TransferItem) for it: columnsJson names the only fields a row may carry (name, label, required, and permission:
+            what a reader must hold, comma separated, to see the field's values in the staged rows and the report, masked for
+            anyone else, and cleared from a row's staged values once it is applied), keyFields the
             fields that may not repeat in one file, optionsJson the options of a whole batch (name, label, type integer,
             text or option, with min, max, maxLength, options and default), refusedColumns words that refuse a file with
             such a column (beside the secret names every file is refused for), validateRowService

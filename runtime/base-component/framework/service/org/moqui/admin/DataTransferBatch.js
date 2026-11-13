@@ -19,6 +19,12 @@
 // kept. The validation's fingerprint covers the content's hash, the mapping, the options, the registration's revision and
 // every row's preview: an apply names it and is refused when anything of it changed (STALE_PREVIEW).
 //
+// Restricted columns. A column of the registration may name a permission (columnsJson permission, comma separated, every one
+// needed): its values are shown only to a reader who holds it, in the rows, the report and the mapping's defaults and value
+// mappings, and masked ("Restricted") for anyone else, the user who staged the file included; once a row is applied they are
+// cleared from what was staged of it (the file's cells and the preview), its outcome kept. A file's column is the field's when it
+// is mapped to it or, unmapped, when its header reads as the field's name or label.
+//
 // Applying. Each valid row is on its own: locked, validated again (a source that changed since the preview is not written:
 // STALE_SOURCE), then given to the target's applyRowService apart from the others, under an operation key made of the
 // batch, the row and its values, so an owner that honors the key answers a repeat with what it made. An applied row is never
@@ -176,6 +182,43 @@ function fingerprintOf(revision, items) {
 }
 function write(entityName, fields) {
     lib.write(entityName, fields, false)
+}
+
+// ===== restricted columns =====
+const restrictedText = "Restricted"
+// the restricted fields the caller may not read, or (all) every restricted field
+function hiddenFields(target, all = false) {
+    return new Set(
+        target.columns.filter(column => column.permission && (all || !lib.holdsAll(column.permission))).map(column => column.name)
+    )
+}
+// the file's headers that are those fields' (mapped to one, or unmapped and read as one's name or label)
+function hiddenHeaders(target, request, fields) {
+    if (!fields.size) return new Set()
+    const keys = new Set(
+        target.columns
+            .filter(column => fields.has(column.name))
+            .flatMap(column => [fieldKey(column.name), fieldKey(column.label)])
+    )
+    const mapping = plain(request.mapping)
+    return new Set(
+        (request.headers || []).filter(header => {
+            const mapped = text(mapping[header])
+            return mapped ? fields.has(mapped) : keys.has(fieldKey(header))
+        })
+    )
+}
+function masked(values, names) {
+    if (!values || !names.size) return values
+    const out = Object.assign({}, values)
+    for (const name of Object.keys(out)) if (names.has(name)) out[name] = restrictedText
+    return out
+}
+function cleared(values, names) {
+    if (!values || !names.size) return values
+    const out = Object.assign({}, values)
+    for (const name of Object.keys(out)) if (names.has(name)) delete out[name]
+    return out
 }
 
 // ===== stage =====
@@ -562,9 +605,21 @@ function applyItem(p) {
     if (asked.failure) return Object.assign(failed("FAILED", asked.failure), {operationKey})
     if (asked.out.applied !== true)
         return failed(text(asked.out.reasonCode) || "REFUSED", asked.out.reason || "Its owner did not take the row")
+    // a restricted column's values are cleared from what was staged of the row once it is applied
+    const restricted = hiddenFields(target, true)
+    const appliedFields = {}
+    if (restricted.size) {
+        const source = lib.json(item.sourceJson, {sourceValues: {}})
+        appliedFields.sourceJson = JSON.stringify(
+            Object.assign({}, source, {
+                sourceValues: cleared(plain(source.sourceValues), hiddenHeaders(target, batch.request, restricted))
+            })
+        )
+    }
     mark({
+        ...appliedFields,
         result: "applied",
-        previewJson: JSON.stringify(now),
+        previewJson: JSON.stringify(restricted.size ? Object.assign({}, now, {values: cleared(now.values, restricted)}) : now),
         reasonCode: null,
         errorMessage: null,
         resultRef: lineText(asked.out.resultRef, 120) || null,
@@ -755,6 +810,8 @@ const countsOf = items => ({
 })
 function get(target, p) {
     const batch = batchOf(target, p.operationKey, "read")
+    const hidden = hiddenFields(target)
+    const hiddenSource = hiddenHeaders(target, batch.request, hidden)
     const all = itemsOf(batch.row.transferId)
     const shown = p.errorsOnly === true ? all.filter(item => ["invalid", "failed"].includes(item.result)) : all
     const pageIndex = Math.max(0, Math.min(Math.max(0, Math.ceil(shown.length / pageSize) - 1), Number(p.pageIndex) || 0))
@@ -772,8 +829,8 @@ function get(target, p) {
             fileHash: batch.row.fileHash,
             headers: batch.request.headers || [],
             mapping: plain(batch.request.mapping),
-            defaults: plain(batch.request.defaults),
-            valueMappings: plain(batch.request.valueMappings),
+            defaults: masked(plain(batch.request.defaults), hidden),
+            valueMappings: cleared(plain(batch.request.valueMappings), hidden),
             batchOptions: plain(batch.request.batchOptions),
             clearFields: [],
             updateMode: "create",
@@ -783,7 +840,8 @@ function get(target, p) {
                 name: column.name,
                 label: column.label,
                 type: "text",
-                required: column.required
+                required: column.required,
+                restricted: hidden.has(column.name)
             })),
             mappingRevision: mappingRevision(batch.row, batch.request, target),
             inputFingerprint: batch.row.inputFingerprint || null,
@@ -802,8 +860,8 @@ function get(target, p) {
                 return {
                     itemSeqId: Number(item.itemSeqId),
                     rowNumber: Number(item.rowNumber),
-                    sourceValues: plain(lib.json(item.sourceJson, {})?.sourceValues),
-                    values: preview?.values || null,
+                    sourceValues: masked(plain(lib.json(item.sourceJson, {})?.sourceValues), hiddenSource),
+                    values: masked(preview?.values, hidden) || null,
                     changes: [],
                     warnings: preview?.warnings || [],
                     displayText: preview?.displayText || null,
@@ -823,6 +881,7 @@ function get(target, p) {
 // spreadsheet would read as a formula is written as text.
 function report(target, p) {
     const batch = batchOf(target, p.operationKey, "read")
+    const hiddenSource = hiddenHeaders(target, batch.request, hiddenFields(target))
     const headers = (batch.request.headers || []).concat(["Import result", "Import reason", "Reference"])
     const failedOnly = p.errorsOnly === true
     return {
@@ -831,7 +890,7 @@ function report(target, p) {
             itemsOf(batch.row.transferId)
                 .filter(item => !failedOnly || ["invalid", "failed"].includes(item.result))
                 .map(item =>
-                    Object.assign({}, plain(lib.json(item.sourceJson, {})?.sourceValues), {
+                    Object.assign({}, masked(plain(lib.json(item.sourceJson, {})?.sourceValues), hiddenSource), {
                         "Import result": item.result,
                         "Import reason": item.errorMessage || "",
                         Reference: item.resultRef || ""
