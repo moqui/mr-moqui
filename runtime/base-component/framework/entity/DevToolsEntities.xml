@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="origin" type="text-short"><description>Where it comes from when not a file's definition: derived
             (an entity-auto service and its parameters, from the entity's fields); auto-parameters, implements,
             auto-fields-entity, auto-fields-service or extends (a parameter or form field expanded from what its service or
-            form declares)</description></field>
+            form declares); service-call (a transition's parameter from the service its service-call calls)</description></field>
         <field name="marks" type="text-long"><description>What a service, form or transition declares to be filled in
             from elsewhere (auto-parameters, implements, auto-fields, extends, a transition's calls and field-maps), for
             the parameters and fields the index expands from it</description></field>

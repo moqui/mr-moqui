@@ -1,4 +1,5 @@
 # The regression budget in seconds of feature time (docs/Build-Test.md, "The regression budget"), set from
 # the measured ./moq test-all of Nov 4, 2026 (on 4 workers), raised to 4 with the user's agreement on Nov 10, 2026
-# for the load runner's specs. Raise it only with the user's agreement.
-server = 4
+# for the load runner's specs, and to 4.5 with the user's agreement on Nov 13, 2026 for CalcGrid's editing together and
+# scheduled export (4.2 measured). Raise it only with the user's agreement.
+server = 4.5
