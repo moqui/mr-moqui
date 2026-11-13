@@ -4817,6 +4817,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-embedded"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "similar",
+ "tar",
+]
+
+[[package]]
 name = "moqui-entity"
 version = "0.1.0"
 dependencies = [
@@ -4904,6 +4913,7 @@ dependencies = [
  "moqui-db",
  "moqui-devkit",
  "moqui-drivers",
+ "moqui-embedded",
  "moqui-git",
  "moqui-lib",
  "moqui-llm",

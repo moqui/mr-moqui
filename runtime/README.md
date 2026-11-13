@@ -23,3 +23,8 @@ first with `base-component/` in it). `./moq archive` zips this directory, withou
 | `MoquiConf.xml` | no | The instance conf, merged over `MoquiDefaultConf.xml` when `MOQUI_CONF` is not set |
 
 Directories marked "no" are listed in `.gitignore` and are created when first needed.
+
+The binary carries a copy of `base-component/framework` and of a webroot stub (`crates/moqui-embedded`). At startup it
+logs each framework or webroot file here that differs from that copy, and uses the files here. With no runtime it
+writes the copy as a skeleton runtime (beside the binary when it can, else here in the working directory), which boots
+and answers `/rest`, `/Login` and `/status` ([Run-Deploy](../docs/Run-Deploy.md#built-in-framework-files)).

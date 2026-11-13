@@ -22,10 +22,10 @@ fn runtime_is_the_local_one_else_beside_or_around_the_executable() {
     let archive = root.join("archive");
     let beside = archive.join("runtime");
     let exe = archive.join("moqui");
-    // A directory without base-component is not a runtime.
+    // A directory without base-component is not a runtime; with none, a new one goes beside a writable executable.
     std::fs::create_dir_all(&local).unwrap();
     std::fs::create_dir_all(&beside).unwrap();
-    assert_eq!(super::runtime_dir_for(&local, Some(&exe)), local);
+    assert_eq!(super::runtime_dir_for(&local, Some(&exe)), beside);
     // The archive layout: the binary sits in the runtime.
     std::fs::create_dir_all(archive.join("base-component")).unwrap();
     assert_eq!(super::runtime_dir_for(&local, Some(&exe)), archive);

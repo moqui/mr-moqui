@@ -187,6 +187,28 @@ in it, from this list:
 3. `runtime` beside the binary;
 4. the binary's own directory, which is how an unpacked archive runs as `<dir>/moqui` from anywhere.
 
+With none of them, the runtime goes in `runtime` beside the binary when that directory is writable, else in `runtime`
+in the working directory. The server and `moqui load` fill a runtime that has no framework component with a
+skeleton runtime written from the files built into the binary (below), so a lone binary starts.
+
+### Built-in framework files
+
+The binary carries a copy of the framework component (less its `test/` and `acceptance/`) and of a webroot stub: the
+REST, login and error screens, the html theme and its style sheets, scripts and icons, listed in
+`crates/moqui-embedded/webroot-files.txt`. It uses them two ways:
+
+- **Startup comparison.** After the factory boots, the server and `moqui load` compare the framework and webroot
+  components on disk with the copies and log `N framework and webroot files differ from the ones built into this
+  binary`, then one line per file: changed (with the first line that differs), missing on disk, or added on disk.
+  The files on disk are used; the lines say why a changed file may no longer fit the binary. A file the binary has
+  compiled in (`template/XmlActions.js` and three others) is marked as ignored, since its disk copy is never read.
+  `moqui embedded diff [framework/<path>]` prints the diffs and `moqui embedded list` the built-in files.
+- **Skeleton runtime.** A runtime with no `base-component/framework/component.xml`, and no `MOQUI_FRAMEWORK`, gets
+  the framework, and the webroot stub when there is no `base-component/webroot`, with a placeholder page at `/` in
+  place of the web client. It boots, loads the seed data, and answers `/rest`, `/Login` and `/status`; the other
+  base and application components are not there until they are installed. `moqui embedded extract <dir>` writes the
+  same files into a directory. Files already there are never replaced.
+
 Keep the runtime path short. The embedded Postgres socket, `<runtime>/db/embedded/.s.PGSQL.5432`, must be under 108
 bytes, or the start fails with "postgres socket path is N bytes".
 

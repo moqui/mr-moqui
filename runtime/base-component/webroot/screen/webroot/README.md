@@ -6,6 +6,12 @@ files, no `..`, no screen or template sources (`.xml`, `.ftl`, `.fancy`, `.groov
 leads out of this directory, a media type by extension, a weak `ETag` and 304, `Cache-Control` of a year for `*.min.*` and for
 a request with a `v` parameter and an hour with revalidation for the rest. The host compresses text with gzip.
 
+The binary carries a stub of this component, the files that `/rest`, `/Login`, `/status` and the error pages need,
+listed in [crates/moqui-embedded/webroot-files.txt](../../../../../crates/moqui-embedded/webroot-files.txt): it logs
+each one that differs at startup and writes them into a skeleton runtime
+([Built-in framework files](../../../../../docs/Run-Deploy.md#built-in-framework-files)). When one of those pages
+comes to use another file, add the file to that list.
+
 ## Moqui files
 
 | Path | What |

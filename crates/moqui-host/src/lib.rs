@@ -60,6 +60,7 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+mod embedded_files;
 // gRPC clients on HTTP/2 connections of our own: the cluster's, the PASS authority's and the edge link's.
 #[cfg(feature = "grpc")]
 mod grpc_client;
@@ -749,6 +750,10 @@ where
             dispatch_types(rest)?;
             Ok(None)
         }
+        [command, rest @ ..] if command == "embedded" => {
+            embedded_files::dispatch(rest)?;
+            Ok(None)
+        }
         [command, rest @ ..] if command == "check" => {
             devtools_cmd::dispatch_check(rest)?;
             Ok(None)
@@ -863,7 +868,7 @@ fn usage_error(args: &[String]) -> moqui_lib::error::Error {
     match args.first().map(String::as_str) {
         Some(
             name @ ("save-db" | "load-save" | "lint" | "convert" | "types" | "load" | "test" | "tui" | "serve"
-            | "version"),
+            | "version" | "embedded"),
         ) => usage::command_usage(name),
         Some("--version") => usage::command_usage("version"),
         Some(name) => usage::unknown_command(name),
@@ -883,14 +888,15 @@ fn runtime_framework_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
 
 /// The first runtime directory, one with `base-component` in it, of: `runtime` in the working directory, `runtime`
 /// beside the executable (links resolved), and the executable's own directory, so an archive from `./moq archive` (a
-/// runtime with the binary in it) runs as `/path/to/it/moqui` from anywhere. None: `runtime`, which boot reports.
+/// runtime with the binary in it) runs as `/path/to/it/moqui` from anywhere. None: where a new one goes
+/// ([`embedded_files::new_runtime_dir`]), which the server and `moqui load` fill with a skeleton runtime.
 fn default_runtime_dir() -> std::path::PathBuf {
     let exe = std::env::current_exe().and_then(std::fs::canonicalize).ok();
     runtime_dir_for(std::path::Path::new("runtime"), exe.as_deref())
 }
 
 fn runtime_dir_for(local: &std::path::Path, exe: Option<&std::path::Path>) -> std::path::PathBuf {
-    find_runtime_dir(local, exe).unwrap_or_else(|| local.to_path_buf())
+    find_runtime_dir(local, exe).unwrap_or_else(|| embedded_files::new_runtime_dir(local, exe))
 }
 
 /// The first of `local`, `runtime` beside `exe` and the directory of `exe` that has a `base-component` directory: the
@@ -1200,6 +1206,7 @@ fn load_embedded(
     flags: &LoadFlags,
 ) -> Result<LoadReport, moqui_lib::error::Error> {
     create_dir(runtime_dir)?;
+    embedded_files::ensure_runtime(runtime_dir, framework_dir)?;
     create_dir(cluster_dir)?;
     let runtime_dir = canonical_dir(runtime_dir)?;
     let framework_dir = canonical_dir(framework_dir)?;
@@ -1214,6 +1221,7 @@ fn load_embedded(
     let factory = moqui_core::context::ExecutionContextFactory::boot_with_framework(&runtime_dir, &framework_dir)
         .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
     log_files_attached(&factory);
+    embedded_files::check(&factory, false);
     let opened_at = std::time::Instant::now();
     let opened = crate::db::entity_db::transactional_conf(&factory).and_then(|conf| {
         let pool = load_pool(&conf.pool);
@@ -1599,6 +1607,7 @@ fn boot_server_factory(
 
     let boot_started = std::time::Instant::now();
     create_dir(runtime_dir)?;
+    embedded_files::ensure_runtime(runtime_dir, framework_dir)?;
     create_dir(cluster_dir)?;
     let runtime_dir = canonical_dir(runtime_dir)?;
     let framework_dir = canonical_dir(framework_dir)?;
@@ -1619,6 +1628,7 @@ fn boot_server_factory(
         moqui_core::context::ExecutionContextFactory::boot_with_options(&runtime_dir, &framework_dir, options)
             .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
     log_files_attached(&factory);
+    embedded_files::check(&factory, true);
     // Tool checks before the database: which Chromium PDF uses, or why there is none.
     let pdf = install_pdf(&factory);
     let conf = crate::db::entity_db::transactional_conf(&factory)?;

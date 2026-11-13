@@ -22,7 +22,7 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 [Crate-Split](../../plans/archive/Crate-Split.md). Dependencies point one way:
 
 ```
-moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui, moqui-calc (optional features), moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit
+moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui, moqui-calc (optional features), moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit, moqui-embedded
               moqui-host → moqui-drivers → moqui-core
               moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
 moqui-llm → moqui-devkit
@@ -47,6 +47,7 @@ moqui-client → moqui-lib
 | `moqui-calc` | CalcGrid, database-driven spreadsheets ([IronCalc-DB](../../plans/IronCalc-DB.md)): workbooks on the IronCalc engine whose data sheets are filled through the data grid's reader, their rooms, and `org.moqui.calc.CalcServices`. A framework crate, as `moqui-collab`, on `moqui-tools` too; the host links it under its `xlsx` feature. |
 | `moqui-dav` | The DAV server (WebDAV over the drives, CalDAV and CardDAV), the `VCard` and `ICalendar` tools and the elFinder connector. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-devkit` | The development kit: reload and the file watcher (its `watch` feature), `moqui check`, the artifact index, the Groovy converter, typegen (`moqui types`) and the spec runner (`moqui test`). A framework crate, linked in every host build; what core itself needs (`is_dev_instance`, restart, the observed calls) stays in `moqui_core::devtools`. |
+| `moqui-embedded` | The framework component and the webroot stub built into the binary (build.rs packs them): the startup comparison with the runtime's files and the skeleton runtime. No framework dependency, so a framework file edit rebuilds only it and relinks. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
 | `moqui-drivers` | The database drivers: Postgres on the host's own blocking client, MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens the entity facade over them. No Tokio. The host links it as `moqui_host::db` and forwards its features. |
 | `moqui-host` | The process edge: the HTTP server (Tokio, axum), process spawn, the integration tests. |

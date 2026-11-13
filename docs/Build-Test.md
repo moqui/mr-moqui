@@ -245,7 +245,10 @@ mr-moqui-20261019/
 ```
 
 The binary takes the first directory with `base-component/` in it of: `runtime` in the working directory, `runtime`
-beside the binary, and the binary's own directory (links resolved), so `<dir>/moqui` runs from anywhere. With no
+beside the binary, and the binary's own directory (links resolved), so `<dir>/moqui` runs from anywhere. The binary
+also carries the framework component and a webroot stub (`crates/moqui-embedded`, about 2.7 MB compressed): it
+compares the runtime's copies with them at startup and logs each difference, and writes them as a skeleton runtime
+when it finds none ([Built-in framework files](Run-Deploy.md#built-in-framework-files)). With no
 `MOQUI_CONF`, it merges `<runtime>/MoquiConf.xml`, else `<runtime>/conf/MoquiDevConf.xml`. `--tgz` needs GNU or BSD tar.
 The embedded database, OpenSearch and Chromium go in when they are in `runtime/`, so the embedded Postgres must be
 stopped; `--no-data` leaves out the database, OpenSearch data, `.env` and `cert/` for a fresh instance. A binary runs
