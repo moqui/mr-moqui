@@ -965,7 +965,7 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     java_checkout_at(&dir);
     let dir = std::fs::canonicalize(&dir).unwrap();
     let project = dir.display().to_string();
-    let screen = dir.join(&format!(
+    let screen = dir.join(format!(
         "runtime/{JAVA_COMPONENT}/fp-core/screen/Batch/BatchDetails.xml"
     ));
     let answer = |arguments: Json| -> Json {
@@ -1090,7 +1090,7 @@ fn another_project(ann: &Caller, address: SocketAddr) {
         let found = remote.find("PicklistBatch", &["entity".to_string()], 5);
         assert_eq!(
             found[0].path,
-            dir.join(&format!("runtime/{JAVA_COMPONENT}/fp-core/entity/PicklistEntities.xml")),
+            dir.join(format!("runtime/{JAVA_COMPONENT}/fp-core/entity/PicklistEntities.xml")),
             "{found:?}"
         );
         // --java goes to the server too

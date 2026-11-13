@@ -66,12 +66,15 @@ impl Event {
 }
 
 /// A `rate-limit`: `requests` per `seconds` sustained, `burst` at once, for each client, over the requests its
-/// `path` and `methods` match (all of them when left out). GCRA: one arrival time per client and limit.
+/// `path` and `methods` match (all of them when left out), and with `anonymous` only those that carry no credentials
+/// ([`has_credentials`]). GCRA: one arrival time per client and limit.
 #[derive(Debug)]
 struct RateLimit {
     name: String,
     paths: Vec<Glob>,
     methods: Vec<String>,
+    /// `anonymous="true"`: only requests without credentials count, such as a clone of a public repository.
+    anonymous: bool,
     /// Nanoseconds between requests at the sustained rate.
     interval: u64,
     /// How far ahead of now the arrival time may run: `interval * burst`.
@@ -79,10 +82,21 @@ struct RateLimit {
 }
 
 impl RateLimit {
-    fn applies(&self, method: &str, path: &str) -> bool {
-        (self.methods.is_empty() || self.methods.iter().any(|allowed| allowed.eq_ignore_ascii_case(method)))
+    fn applies(&self, method: &str, path: &str, credentials: bool) -> bool {
+        !(self.anonymous && credentials)
+            && (self.methods.is_empty() || self.methods.iter().any(|allowed| allowed.eq_ignore_ascii_case(method)))
             && (self.paths.is_empty() || self.paths.iter().any(|glob| glob.matches(path)))
     }
+}
+
+/// Whether a request names who it is from, by what its head shows: an `Authorization` header (Basic, Bearer, or a
+/// token of another scheme) or an `api_key` or `login_key` header. They are not checked here, and a session cookie
+/// does not count: the session is read later, in a request worker. A client that sends made-up credentials to pass an
+/// anonymous limit meets the `auth-failure` ban instead.
+fn has_credentials(headers: &HeaderMap) -> bool {
+    headers.contains_key(axum::http::header::AUTHORIZATION)
+        || headers.contains_key("api_key")
+        || headers.contains_key("login_key")
 }
 
 /// A `ban`: `threshold` of its `events` within `window` bans the client for `duration`.
@@ -408,6 +422,7 @@ fn rate_limit(element: &MNode, attr: &impl Fn(&MNode, &str) -> String) -> Option
         name: attr(element, "name"),
         paths: list(&attr(element, "path")).filter_map(Glob::new).collect(),
         methods: list(&attr(element, "methods")).map(str::to_ascii_uppercase).collect(),
+        anonymous: attr(element, "anonymous") == "true",
         interval,
         tolerance,
     })
@@ -696,12 +711,13 @@ impl Guard {
             return Ok(());
         }
         let limits = &self.conf().rate_limits;
+        let credentials = has_credentials(headers);
         let waited = self.with_client(key, |client_state, now| {
             // a conf reload between reading the rules and this client (Self::replace_conf) changes their count
             client_state.arrivals.resize(limits.len(), 0);
             let mut next = Vec::with_capacity(limits.len());
             for (index, limit) in limits.iter().enumerate() {
-                if !limit.applies(method, &decoded) {
+                if !limit.applies(method, &decoded, credentials) {
                     next.push(None);
                     continue;
                 }
@@ -729,6 +745,20 @@ impl Guard {
         Err(Refused {
             response: Box::new(refusal(429, "too many requests", false, Some(seconds))),
         })
+    }
+
+    /// The path rules again, for the path a request is served at when that is not the one it came with (git at a
+    /// page's URL, served under `/git/`): a `path-rule` that denies the served path stops the request too. The client
+    /// rules, the methods and the rate limits were applied by [`Self::check`], to the path it came with.
+    pub(crate) fn check_served_path(&self, client: IpAddr, path: &str) -> Result<(), Refused> {
+        if !self.conf().enabled || self.exempt(client) {
+            return Ok(());
+        }
+        let decoded = decode_path(path);
+        if self.conf().deny_paths.iter().any(|glob| glob.matches(&decoded)) {
+            return Err(self.deny(self.key(client), client, refusal(404, "not found", false, None)));
+        }
+        Ok(())
     }
 
     fn deny(&self, key: IpAddr, client: IpAddr, response: Response) -> Refused {

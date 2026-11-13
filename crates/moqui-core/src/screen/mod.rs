@@ -35,6 +35,7 @@ pub mod overlay;
 mod pdf;
 mod public_site;
 pub use public_site::hosts as public_site_hosts;
+pub use public_site::{is_framework_route as is_public_site_framework_route, is_site_host as is_public_site_host};
 mod render;
 pub(crate) mod saved_finds;
 pub(crate) mod scan;

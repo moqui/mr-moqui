@@ -74,6 +74,14 @@ along with this software (see the LICENSE.md file). If not, see
         No Java counterpart. The repositoryId is the first segment of a location: git://<repositoryId>/<path>. -->
     <entity entity-name="GitRepository" package="moqui.resource" use="nontransactional" short-alias="gitRepositories">
         <field name="repositoryId" type="id" is-pk="true"/>
+        <field name="repositoryPath" type="text-medium"><description>The path git URLs carry (moqui/mr-moqui):
+            /git/[repositoryPath].git, SSH [repositoryPath].git and, on a public-site host, the page URL. Unique; one to
+            eight segments of letters, digits, '.', '_' and '-'. Empty: the repository is addressed by its repositoryId,
+            which always works too. Written only by set#GitRepositoryPath, with repositoryPathKey, which keeps the old
+            path as a GitRepositoryPathRedirect (docs/interfaces/Git-Hosting.md, Clone URLs).</description></field>
+        <field name="repositoryPathKey" type="text-medium"><description>repositoryPath in lower case: what a URL's path
+            is looked up by, and what is unique, so two repositories never have paths that differ only in case. A data
+            file that sets repositoryPath sets this too.</description></field>
         <field name="description" type="text-medium"/>
         <field name="repositoryKind" type="text-short">
             <description>remote (a read-only mirror of remoteUrl, kept by fetch), local (a bare repository at localPath
@@ -119,6 +127,7 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="pushMirrorRemoteId" related="systemMessageRemoteId"/></relationship>
         <relationship type="one-nofk" title="DefaultMergeMethod" related="moqui.basic.Enumeration" short-alias="defaultMergeMethod">
             <key-map field-name="defaultMergeMethodEnumId" related="enumId"/></relationship>
+        <index name="GIT_REPO_PATH_KEY" unique="true"><index-field name="repositoryPathKey"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Git Merge Method" enumTypeId="GitMergeMethod"/>
             <moqui.basic.Enumeration enumId="GmmMerge" enumTypeId="GitMergeMethod" enumCode="merge" sequenceNum="1" description="Merge commit"/>
@@ -126,6 +135,17 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="GmmFastForward" enumTypeId="GitMergeMethod" enumCode="fast-forward" sequenceNum="3" description="Fast-forward"/>
             <moqui.basic.Enumeration enumId="GmmRebase" enumTypeId="GitMergeMethod" enumCode="rebase" sequenceNum="4" description="Rebase"/>
         </seed-data>
+    </entity>
+    <entity entity-name="GitRepositoryPathRedirect" package="moqui.resource" use="nontransactional">
+        <description>A path a repository had before it was renamed or moved (set#GitRepositoryPath): git over HTTP, SSH
+            and LFS at the path reaches repositoryId, until another repository takes the path.</description>
+        <field name="oldPathKey" type="text-medium" is-pk="true"><description>The old path in lower case, as
+            GitRepository.repositoryPathKey</description></field>
+        <field name="oldPath" type="text-medium"><description>The old path as it was written</description></field>
+        <field name="repositoryId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <index name="GIT_PATH_REDIR_REPO"><index-field name="repositoryId"/></index>
     </entity>
     <entity entity-name="GitObject" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <description>A git object of a db kind repository, keyed by its SHA-1 hex id, stored as storage says.

@@ -85,21 +85,6 @@ fn serve_upstream(listener: TcpListener) {
     }
 }
 
-/// The body of a chunked response.
-fn dechunk(mut raw: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let end = raw.windows(2).position(|pair| pair == b"\r\n").unwrap();
-        let size = usize::from_str_radix(std::str::from_utf8(&raw[..end]).unwrap().trim(), 16).unwrap();
-        raw = &raw[end + 2..];
-        if size == 0 {
-            return out;
-        }
-        out.extend_from_slice(&raw[..size]);
-        raw = &raw[size + 2..];
-    }
-}
-
 #[test]
 fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
     if !crate::common::own_process() {
@@ -133,8 +118,8 @@ fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
             "the body",
         ),
     );
-    // the body streams back with its length left to the chunks, as every proxied body
-    let body = String::from_utf8(dechunk(&body)).unwrap();
+    // the body streams back with its length left to the chunks, as every proxied body (the test client joins them)
+    let body = String::from_utf8(body).unwrap();
     assert_eq!(status, 202, "{body}");
     assert_eq!(header(&headers, "x-upstream").as_deref(), Some("yes"));
     let (line, rest) = body.split_once('|').unwrap();
@@ -150,7 +135,6 @@ fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
     let (status, headers, large) = exchange_bytes(address, &http_request("GET", "/upstream/large", &[], ""));
     assert_eq!(status, 200);
     assert_eq!(header(&headers, "transfer-encoding").as_deref(), Some("chunked"));
-    let large = dechunk(&large);
     assert_eq!(large.len(), LARGE);
     assert!(large.chunks(1024 * 1024).all(|chunk| chunk
         .iter()

@@ -722,6 +722,20 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
 - DG1 alone is worth having: a public, read-only moqui.org over mirrors, before anything moves.
 - F10 and F11 are taken up when DG9 and DG5 need them, not before.
 
+**Built**
+
+- **DG0**, Nov 13, 2026: `mr-pass/plan/design-smithy.md`, reviewed against this plan and the code and revised. Its
+  inventories of the outside systems (§18) are empty named tables, filled before DG9. It reads "members" visibility
+  as the site's active members, which is its open question 1.
+- **DG1**, Nov 13, 2026: F1 and F2 ([Git-Hosting](../docs/interfaces/Git-Hosting.md) "No credentials" and
+  "Repository paths"), `mantle.smithy` (groups, repositories, visibility, roles, the one check, the read
+  operations) and Smithy's public pages (Home, Explore, a group, a repository's Files, Commits, Branches, Tags,
+  a commit, Compare, raw). Differences: a path is unique without case (`repositoryPathKey`) and a one-segment path
+  is only a repository's own id; a push is never anonymous whatever a record allows; anonymous git jobs have a
+  share of the pool (`anonymous-max-concurrent`); an old path answers with the repository, not an HTTP redirect.
+  Not built: blame and archive download (no framework service yet), syntax highlighting, the client walk. Not
+  shown: mirrors of GitHub on a staging host; the checks are a real `git` client against the test servers.
+
 ---
 
 ## 14. Tests and docs

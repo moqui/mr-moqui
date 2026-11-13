@@ -762,6 +762,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="path" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated url-pattern style globs: * within a segment, ** across segments.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="methods" type="xs:string"/>
+                    <xs:attribute name="anonymous" type="xs:string" default="false"><xs:annotation><xs:documentation>
+                        true: only requests with no credentials count, those with no Authorization, api_key or login_key
+                        header (a session cookie is not looked at). For what anyone may use without signing in, such as
+                        git clones of public repositories.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="enabled" type="xs:string" default="true"/>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="ban"><xs:complexType>
@@ -1706,6 +1710,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="lfs-token-key" type="xs:string"><xs:annotation><xs:documentation>The key Git LFS action tokens are signed with.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-token-key-previous" type="xs:string"><xs:annotation><xs:documentation>A key that still reads while lfs-token-key is changed.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-concurrent" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>Clones and pushes that run at once, on threads of their own.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="anonymous-max-concurrent" type="xs:string"><xs:annotation><xs:documentation>Of those, the clones, fetches and LFS downloads that run at once for requests with no credentials (repositories anyone may view); one more is answered 503 with Retry-After. Half of max-concurrent, at least 1, when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-queued" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>Clones and pushes that wait for one of those threads.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-request" type="non-neg-int-expandable" default="67108864"><xs:annotation><xs:documentation>Bytes of an upload-pack request.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-push-size" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>Bytes of a push.</xs:documentation></xs:annotation></xs:attribute>

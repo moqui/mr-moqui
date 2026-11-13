@@ -831,6 +831,11 @@
                 <rate-limit name="all" requests="50" seconds="1" burst="500"/>
                 <rate-limit name="login" path="/Login/**,/rest/login,/rest/login/**,/SecondFactor/**" methods="POST"
                         requests="10" seconds="60" burst="10"/>
+                <!-- git with no credentials (a clone or fetch of a public repository, its LFS files; a clone is three or
+                    more requests), under /git/ and at a page's URL on a public-site host. A signed-in client is not
+                    counted. docs/interfaces/Git-Hosting.md, Access. -->
+                <rate-limit name="git-anonymous" anonymous="true" requests="120" seconds="60" burst="240"
+                        path="/git/**,/**/info/refs,/**/git-upload-pack,/**/git-receive-pack,/**/*.git/info/lfs/**"/>
 
                 <ban name="auth-failure" events="auth-failure" threshold="20" seconds="600" duration="900"/>
                 <ban name="abuse" events="rate-limited,denied" threshold="300" seconds="60" duration="300"/>
@@ -1248,7 +1253,7 @@
     -->
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
-            max-concurrent="4" max-queued="16" max-request="67108864" max-push-size="2147483648"
+            max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
             lfs-max-object-size="5368709120" eca-max-commits="10000" webhook-private-network="false"
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"

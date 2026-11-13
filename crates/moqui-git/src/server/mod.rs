@@ -18,14 +18,19 @@
 //! blocking streams. Each request logs its user in (HTTP Basic with the password or an access token, `Bearer`, or an
 //! API key; the SSH server already checked the key or password), and every repository is checked against
 //! `AT_GIT_REPOSITORY`: `view` to fetch, `create`/`update` to push new refs and fast-forwards, `delete` to force a
-//! push or delete a ref. With that type's authorization off in the conf the server refuses everything. Guide:
-//! `docs/interfaces/Git-Hosting.md`.
+//! push or delete a ref. An HTTP request with no credentials is checked as no user: it is served what the
+//! authorization records of `ALL_USERS` let anyone view, and answered 401 for the rest, so git asks for a login. A
+//! request names its repository by a path ([`path`]). With that type's authorization off in the conf the server
+//! refuses everything. Guide: `docs/interfaces/Git-Hosting.md`.
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 mod hosting_tests;
 pub mod lfs;
 pub(crate) mod pack_in;
 pub(crate) mod pack_out;
+pub mod path;
 pub(crate) mod pktline;
 pub(crate) mod plan;
 pub(crate) mod push;
@@ -153,16 +158,10 @@ fn wants_v2(git_protocol: Option<&str>) -> bool {
     git_protocol.is_some_and(|text| text.split(':').any(|part| part.trim() == "version=2"))
 }
 
-/// The repository id of a path: a leading `/`, a `git/` before it and a `.git` after it are dropped.
-pub fn repository_of(path: &str) -> Option<String> {
-    let path = path.trim().trim_matches('/');
-    let path = path.strip_prefix("git/").unwrap_or(path);
-    let id = path.strip_suffix(".git").unwrap_or(path);
-    (!id.is_empty() && !id.contains('/') && !id.starts_with('.')).then(|| id.to_string())
-}
+pub use path::repository_of;
 
 /// An SSH `exec` command for git: `git-upload-pack '<path>'` (or `git upload-pack`), the same for `git-receive-pack`,
-/// with git's single quoting (`'\''` for a quote).
+/// with git's single quoting (`'\''` for a quote). The service and the repository's path.
 pub fn parse_ssh_command(command: &str) -> Option<(GitService, String)> {
     let command = command.trim();
     let (service, rest) = [
@@ -184,12 +183,13 @@ pub fn parse_ssh_command(command: &str) -> Option<(GitService, String)> {
         }
         None => rest.to_string(),
     };
-    repository_of(&path).map(|id| (service, id))
+    repository_of(&path).map(|path| (service, path))
 }
 
 /// One HTTP request of the smart protocol.
 #[derive(Clone, Debug)]
 pub struct GitHttpRequest {
+    /// The repository's path, as [`repository_of`] gives it.
     pub repository: String,
     pub service: GitService,
     /// `GET .../info/refs?service=...`: the advertisement; otherwise the `POST` of a service.
@@ -366,14 +366,67 @@ enum Refusal {
     NotFound(String),
     /// The server cannot serve git now: 503.
     Unavailable(String),
+    /// Too many requests with no credentials are served now: 503 with `Retry-After`.
+    Busy(String),
+}
+
+/// What a request with no credentials is told, whatever the reason: nothing of the answer tells a repository that is
+/// not there from one the request may not view, or from a push.
+const LOG_IN: &str = "log in to reach this repository";
+
+/// The `Retry-After` seconds of a [`Refusal::Busy`].
+const BUSY_RETRY_SECONDS: u64 = 5;
+
+/// The git jobs running for requests with no credentials (clones and LFS downloads of repositories anyone may view),
+/// at most `git-server` `anonymous-max-concurrent` at once: half of `max-concurrent` when it is not set, at least one,
+/// so signed-in users always have workers of the pool left.
+struct AnonymousJobs {
+    running: std::sync::atomic::AtomicUsize,
+    max: usize,
+}
+
+/// One running job of [`AnonymousJobs`], until it is dropped.
+struct AnonymousSlot(Arc<AnonymousJobs>);
+
+impl Drop for AnonymousSlot {
+    fn drop(&mut self) {
+        self.0.running.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// A slot for a request with no credentials that is about to be served, or [`Refusal::Busy`] when they are all taken.
+/// Asked only once the request may view its repository: a request that is answered 401 (every signed-in client's first
+/// one) takes none.
+fn anonymous_slot() -> Result<AnonymousSlot, Refusal> {
+    let jobs = factory()?.extension(|factory| {
+        let workers = Some(factory.conf_number("git-server", "max-concurrent", 4))
+            .filter(|n| *n > 0)
+            .unwrap_or(4);
+        let max = Some(factory.conf_number("git-server", "anonymous-max-concurrent", 0))
+            .filter(|n| *n > 0)
+            .unwrap_or((workers / 2).max(1));
+        AnonymousJobs {
+            running: std::sync::atomic::AtomicUsize::new(0),
+            max,
+        }
+    });
+    if jobs.running.fetch_add(1, Ordering::AcqRel) >= jobs.max {
+        jobs.running.fetch_sub(1, Ordering::AcqRel);
+        return Err(Refusal::Busy(
+            "the git server is busy with requests that are not signed in; try again, or sign in".into(),
+        ));
+    }
+    Ok(AnonymousSlot(jobs))
 }
 
 impl Refusal {
     fn message(&self) -> &str {
         match self {
-            Self::Unauthenticated(text) | Self::Forbidden(text) | Self::NotFound(text) | Self::Unavailable(text) => {
-                text
-            }
+            Self::Unauthenticated(text)
+            | Self::Forbidden(text)
+            | Self::NotFound(text)
+            | Self::Unavailable(text)
+            | Self::Busy(text) => text,
         }
     }
 }
@@ -411,9 +464,16 @@ fn authenticate(request: &GitHttpRequest) -> Result<bool, Refusal> {
 }
 
 /// Log a user in by an `Authorization` header (Basic, with a password or an access token, or Bearer) or an `api_key`.
-/// False when there are no credentials.
+/// False when there are no credentials: neither header. A header that is there and cannot be used (another scheme,
+/// Basic that does not decode to `user:password`, an empty key) is credentials that are not valid, an auth failure as
+/// a wrong password is: web protection counts a request by its headers ([`permitted`]'s caps are for those with
+/// none), so such a request must not be served as one with no credentials.
 fn authenticate_with(authorization: Option<&str>, api_key: Option<&str>) -> Result<bool, Refusal> {
     let refused = |err: Error| Refusal::Unauthenticated(err.message().to_string());
+    let unusable = |what: &str| {
+        moqui_core::web::note_auth_failure();
+        Refusal::Unauthenticated(format!("{what} is not credentials this server takes"))
+    };
     if let Some(header) = authorization.map(str::trim) {
         if let Some(token) = header
             .strip_prefix("Bearer ")
@@ -452,8 +512,12 @@ fn authenticate_with(authorization: Option<&str>, api_key: Option<&str>) -> Resu
             }
             return Ok(true);
         }
+        return Err(unusable("the Authorization header"));
     }
-    if let Some(key) = api_key.filter(|key| !key.is_empty()) {
+    if let Some(key) = api_key {
+        if key.trim().is_empty() {
+            return Err(unusable("an empty api_key"));
+        }
         moqui_core::user::login_user_key(key).map_err(refused)?;
         return Ok(true);
     }
@@ -471,7 +535,14 @@ fn may_push(id: &str) -> bool {
 /// authorization, or as a member of the drive the repository holds (`ResourceDrive.repositoryId`), by the drive's own
 /// rule (`FileServices.get#DriveAccess`): view to fetch, edit to push new refs and fast-forwards on a drive that is not
 /// read only, manage to force a push or delete a ref. Asked once per request and action.
+///
+/// With no user logged in the same records are asked, as no user: only those of `ALL_USERS` apply, and an
+/// `authzServiceName` of one is called with an empty `userId`, so it can let anyone view a public repository. Such a
+/// refusal records no `ArtifactAuthzFailure`: a git client's first request has no credentials.
 pub(crate) fn permitted(id: &str, action: &str) -> bool {
+    let Some(_user) = current_user() else {
+        return moqui_core::user::authorize_own_unrecorded(GIT_ARTIFACT_TYPE, id, action).is_ok();
+    };
     if moqui_core::user::authorize_own(GIT_ARTIFACT_TYPE, id, action).is_ok() {
         return true;
     }
@@ -565,6 +636,10 @@ fn drive_access(id: &str) -> (i64, bool) {
 
 /// The repository a logged-in user may see, and may push to when `service` is receive-pack.
 fn open(provider: &GitProvider, id: &str, service: GitService) -> Result<Arc<Repo>, Refusal> {
+    // nobody pushes without a login, whatever an authorization record lets everyone do
+    if service == GitService::ReceivePack && current_user().is_none() {
+        return Err(Refusal::Unauthenticated(LOG_IN.into()));
+    }
     let not_found = || Refusal::NotFound(format!("repository {id} not found"));
     if !permitted(id, "view") {
         return Err(not_found());
@@ -594,6 +669,23 @@ fn open(provider: &GitProvider, id: &str, service: GitService) -> Result<Arc<Rep
     Ok(repo)
 }
 
+/// [`open`] for the repository a request's `path` names, for a request that logged a user in (`logged_in`) or came
+/// with no credentials. A request with no credentials is refused only as unauthenticated, whatever the reason (no such
+/// repository, one it may not view, a push): the answer asks for a login and says nothing of the repository.
+fn open_path(provider: &GitProvider, path: &str, service: GitService, logged_in: bool) -> Result<Arc<Repo>, Refusal> {
+    let opened = match path::resolve(path) {
+        Some(id) => open(provider, &id, service),
+        None => Err(Refusal::NotFound(format!("repository {path} not found"))),
+    };
+    match opened {
+        Err(Refusal::NotFound(_) | Refusal::Forbidden(_) | Refusal::Unauthenticated(_)) if !logged_in => {
+            Err(Refusal::Unauthenticated(LOG_IN.into()))
+        }
+        Err(Refusal::NotFound(_)) => Err(Refusal::NotFound(format!("repository {path} not found"))),
+        opened => opened,
+    }
+}
+
 fn content_type(service: GitService, advertise: bool) -> String {
     let kind = if advertise { "advertisement" } else { "result" };
     format!("application/x-{}-{kind}", service.name())
@@ -612,11 +704,14 @@ fn refuse_http(out: &mut dyn HttpResponder, refusal: &Refusal) {
         Refusal::Unauthenticated(_) => 401,
         Refusal::Forbidden(_) => 403,
         Refusal::NotFound(_) => 404,
-        Refusal::Unavailable(_) => 503,
+        Refusal::Unavailable(_) | Refusal::Busy(_) => 503,
     };
     let mut headers = vec![("Content-Type", "text/plain; charset=utf-8".to_string())];
     if status == 401 {
         headers.push(("WWW-Authenticate", "Basic realm=\"Moqui Git\"".to_string()));
+    }
+    if matches!(refusal, Refusal::Busy(_)) {
+        headers.push(("Retry-After", BUSY_RETRY_SECONDS.to_string()));
     }
     if out.head(status, &headers).is_ok() {
         let body = out.body();
@@ -635,7 +730,7 @@ pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn H
     } else {
         body
     };
-    let started = (|| -> Result<(GitProvider, Arc<Repo>), Refusal> {
+    let started = (|| -> Result<(GitProvider, Arc<Repo>, Option<AnonymousSlot>), Refusal> {
         let provider = provider()?;
         let has_credentials = request.authorization.is_some() || request.api_key.is_some();
         if has_credentials && !request.secure {
@@ -643,16 +738,13 @@ pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn H
                 "credentials over plain HTTP are refused; use HTTPS".into(),
             ));
         }
-        if !authenticate(request)? {
-            return Err(Refusal::Unauthenticated(format!(
-                "log in to reach repository {}",
-                request.repository
-            )));
-        }
-        let repo = open(&provider, &request.repository, request.service)?;
-        Ok((provider, repo))
+        let logged_in = authenticate(request)?;
+        let repo = open_path(&provider, &request.repository, request.service, logged_in)?;
+        let slot = if logged_in { None } else { Some(anonymous_slot()?) };
+        Ok((provider, repo, slot))
     })();
-    let (provider, repo) = match started {
+    // held while the request is served
+    let (provider, repo, _anonymous) = match started {
         Ok(started) => started,
         Err(refusal) => {
             if !matches!(refusal, Refusal::Unauthenticated(_) | Refusal::NotFound(_)) {
@@ -737,14 +829,14 @@ pub fn serve_ssh(
             }
         };
     }
-    let Some((service, id)) = parse_ssh_command(command) else {
+    let Some((service, path)) = parse_ssh_command(command) else {
         return fail(stderr, &format!("not a git command: {command}"));
     };
     let started = (|| -> Result<(GitProvider, Arc<Repo>), Refusal> {
         let provider = provider()?;
         moqui_core::user::internal_login_user(username)
             .map_err(|err| Refusal::Unauthenticated(err.message().to_string()))?;
-        let repo = open(&provider, &id, service)?;
+        let repo = open_path(&provider, &path, service, /* logged_in */ true)?;
         Ok((provider, repo))
     })();
     let (provider, repo) = match started {
@@ -797,7 +889,7 @@ pub fn serve_ssh(
     match outcome {
         Ok(()) => 0,
         Err(err) => {
-            tracing::warn!(repository = %id, "git {} over SSH failed: {err}", service.name());
+            tracing::warn!(repository = %path, "git {} over SSH failed: {err}", service.name());
             let _ = pktline::text(output, &format!("ERR {}", err.message()));
             let _ = output.flush();
             fail(stderr, err.message())

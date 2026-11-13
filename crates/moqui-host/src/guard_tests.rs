@@ -105,6 +105,67 @@ fn a_rate_limit_answers_429_past_its_burst_and_only_where_it_applies() {
     assert!((1..=60).contains(&retry), "{retry}");
 }
 
+/// An `anonymous="true"` limit counts only the requests with no `Authorization`, `api_key` or `login_key` header: a
+/// clone of a public repository, not a signed-in client's (docs/interfaces/Git-Hosting.md, Access).
+#[test]
+fn an_anonymous_rate_limit_counts_only_requests_without_credentials() {
+    let guard = guard(
+        r#"<web-protection enabled="true">
+                <rate-limit name="git-anonymous" path="/git/**,**/info/refs" anonymous="true" requests="1"
+                        seconds="60" burst="2"/>
+            </web-protection>"#,
+        "",
+    );
+    let client = ip("203.0.113.5");
+    let with = |name: &'static str, value: &'static str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(name, value.parse().unwrap());
+        guard
+            .check(client, client, "GET", "/git/code.git/info/refs", &headers)
+            .map_or_else(|refused| refused.response.status().as_u16(), |()| 200)
+    };
+    assert_eq!(status(&guard, "203.0.113.5", "GET", "/git/code.git/info/refs"), 200);
+    assert_eq!(status(&guard, "203.0.113.5", "GET", "/moqui/mr-moqui/info/refs"), 200);
+    assert_eq!(
+        status(&guard, "203.0.113.5", "POST", "/git/code.git/git-upload-pack"),
+        429
+    );
+    // the same client with credentials is not counted, whatever kind they are
+    for _ in 0..3 {
+        assert_eq!(with("authorization", "Basic am9objpzZWNyZXQ="), 200);
+    }
+    assert_eq!(with("api_key", "k"), 200);
+    assert_eq!(with("login_key", "k"), 200);
+    // and its requests took no token: it is still refused without them, and other paths are not limited
+    assert_eq!(status(&guard, "203.0.113.5", "GET", "/git/code.git/info/refs"), 429);
+    assert_eq!(status(&guard, "203.0.113.5", "GET", "/apps"), 200);
+}
+
+/// A path rule is asked again for the path a request is served at when that is not the path it came with (git at a
+/// page's URL, served under `/git/`): an operator's deny of `/git/**` stops it too.
+#[test]
+fn a_path_rule_denies_the_path_a_request_is_served_at() {
+    let guard = guard(
+        r#"<web-protection enabled="true">
+                <path-rule name="no-git" action="deny" path="/git/**"/>
+                <client-rule name="office" action="exempt" cidr="198.51.100.0/24"/>
+            </web-protection>"#,
+        "",
+    );
+    let served = |client: &str, path: &str| {
+        guard
+            .check_served_path(ip(client), path)
+            .map_or_else(|refused| refused.response.status().as_u16(), |()| 200)
+    };
+    // the page's URL passes the rules by its own path
+    assert_eq!(status(&guard, "203.0.113.5", "GET", "/moqui/mr-moqui/info/refs"), 200);
+    assert_eq!(served("203.0.113.5", "/git/moqui/mr-moqui/info/refs"), 404);
+    assert_eq!(served("203.0.113.5", "/%67it/moqui/mr-moqui/info/refs"), 404);
+    assert_eq!(served("203.0.113.5", "/moqui/mr-moqui"), 200);
+    assert_eq!(served("198.51.100.7", "/git/moqui/mr-moqui/info/refs"), 200);
+    assert_eq!(guard.counts.denied.load(std::sync::atomic::Ordering::Relaxed), 2);
+}
+
 #[test]
 fn rules_deny_by_client_method_path_and_agent_and_exempt_skips_them() {
     let guard = guard(
@@ -215,7 +276,20 @@ fn the_default_conf_is_off_until_there_are_trusted_proxies() {
     let on = GuardConf::from_node(node.as_ref(), behind);
     assert!(on.enabled);
     let names: Vec<&str> = on.rate_limits.iter().map(|limit| limit.name.as_str()).collect();
-    assert_eq!(names, ["all", "login"]);
+    assert_eq!(names, ["all", "login", "git-anonymous"]);
+    // git with no credentials, under /git/ and at a page's URL; a page is not counted
+    let git = &on.rate_limits[2];
+    assert!(git.anonymous);
+    for path in [
+        "/git/moqui/mr-moqui.git/info/refs",
+        "/moqui/mr-moqui/info/refs",
+        "/moqui/mr-moqui.git/git-upload-pack",
+        "/moqui/mr-moqui.git/info/lfs/objects/batch",
+    ] {
+        assert!(git.applies("POST", path, false), "{path}");
+        assert!(!git.applies("POST", path, true), "{path}");
+    }
+    assert!(!git.applies("GET", "/moqui/mr-moqui/-/issues", false));
     assert_eq!(on.bans.len(), 2);
     assert!(on.exempt.iter().any(|range| range.contains(ip("127.0.0.1"))));
     assert!(on.exempt.iter().any(|range| range.contains(ip("::1"))));

@@ -250,7 +250,7 @@ fn boot_registers_components_and_named_resource_errors() {
         temp.path().join("conf/MoquiDevConf.xml"),
     )
     .unwrap();
-    crate::context::layout::link_base_set(&root.join("runtime/components/base"), &temp.path()).unwrap();
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), temp.path()).unwrap();
     // A component whose MoquiConf.xml selects a tool factory this binary does not link, as a dev component's is in a
     // Lite binary: the boot leaves the tool factory out and goes on.
     let unlinked = temp.path().join("components/addon/unlinked-tool");
@@ -439,7 +439,7 @@ fn artifact_stack_allows_and_authz_depth_follows_the_guard() {
         temp.path().join("conf/MoquiDevConf.xml"),
     )
     .unwrap();
-    crate::context::layout::link_base_set(&root.join("runtime/components/base"), &temp.path()).unwrap();
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), temp.path()).unwrap();
     let factory =
         ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/components/base/framework"))
             .unwrap();

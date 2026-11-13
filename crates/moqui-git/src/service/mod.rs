@@ -561,9 +561,9 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
     }
 }
 
-/// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<id>.git`), and `sshUrl` when the SSH
-/// server is on (`ssh-server` `port`, and `enabled` not false), with the current user's username, as the SSH server logs
-/// in Moqui users.
+/// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<path>.git`, the path the repository's
+/// `repositoryPath`, else its id), `sshUrl` when the SSH server is on (`ssh-server` `port`, and `enabled` not false),
+/// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`.
 fn get_clone_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -571,6 +571,7 @@ fn get_clone_urls(
     let Some((_, id)) = viewable(parameters) else {
         return Ok(BTreeMap::new());
     };
+    let id = crate::server::path::path_of(&id);
     let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
     // an `ssh-server` attribute, else its property
     let ssh_setting = |name: &str, property_name: &str| {
@@ -610,6 +611,7 @@ fn get_clone_urls(
     Ok(out([
         ("httpsUrl", Value::string(http)),
         ("sshUrl", ssh.map_or(Value::Null, Value::string)),
+        ("repositoryPath", Value::string(id)),
     ]))
 }
 

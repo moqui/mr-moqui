@@ -344,6 +344,17 @@ pub(crate) fn entity_permitted(name: &str, action: &str, requires_authz: bool) -
 /// own whatever asks, git repositories (`AT_GIT_REPOSITORY`): the git server has no frames below, so the code screens
 /// and services must not grant more than a clone does. A deny of an ancestor frame still keeps an allow from applying.
 pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<(), Error> {
+    authorize_own_as(artifact_type, name, action, /* is_access */ true)
+}
+
+/// [`authorize_own`], asked and not used: a refusal records no `ArtifactAuthzFailure`. For a request with no user,
+/// which the git server asks about before it answers 401: a git client sends its first request without credentials,
+/// so each use of a repository that is not public would write a row (docs/interfaces/Git-Hosting.md, Access).
+pub fn authorize_own_unrecorded(artifact_type: &str, name: &str, action: &str) -> Result<(), Error> {
+    authorize_own_as(artifact_type, name, action, /* is_access */ false)
+}
+
+fn authorize_own_as(artifact_type: &str, name: &str, action: &str, is_access: bool) -> Result<(), Error> {
     if !context_entered() {
         return Ok(());
     }
@@ -360,7 +371,7 @@ pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<()
             requires_authz: true,
             authz_disabled: disabled,
             count_tarpit: false,
-            is_access: true,
+            is_access,
             parameters: None,
         },
         None,

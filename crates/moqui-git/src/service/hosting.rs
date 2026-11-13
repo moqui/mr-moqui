@@ -34,6 +34,7 @@ use moqui_core::rust_service;
 use crate::hosting::{MergeOutcome, RefWrite};
 use crate::merge::{Mergeability, Method};
 use crate::rules::{self, BranchRule};
+use crate::server::path::GIT_PATH_REDIRECT;
 use crate::values::{commit_value, map, opt_text, timestamp};
 use crate::{rows_guard, GitProvider, GIT_REPOSITORY};
 
@@ -53,6 +54,7 @@ const WEBHOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, get_repository_access)?;
     rust_service!(map, find_repositories)?;
+    rust_service!(map, set_repository_path)?;
     rust_service!(map, find_updates)?;
     rust_service!(map, get_tree)?;
     rust_service!(map, create_ref)?;
@@ -252,8 +254,9 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
         if let Some(search) = &search {
             let haystack = format!(
-                "{} {}",
+                "{} {} {}",
                 id.to_lowercase(),
+                field(row, "repositoryPath").unwrap_or_default().to_lowercase(),
                 field(row, "description").unwrap_or_default().to_lowercase()
             );
             if !haystack.contains(search.as_str()) {
@@ -301,6 +304,7 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
             let id = field(row, "repositoryId").unwrap_or_default();
             map([
                 ("repositoryId", Value::string(&id)),
+                ("repositoryPath", field_value(row, "repositoryPath")),
                 ("description", field_value(row, "description")),
                 (
                     "repositoryKind",
@@ -858,6 +862,90 @@ fn update_repository(parameters: &Parameters, facade: &EntityFacade) -> Out {
     none()
 }
 
+/// `set#GitRepositoryPath`: the path git URLs carry for a repository (`moqui/mr-moqui`), or none (then its id is its
+/// address). Needs update. Paths are one path whatever their case (`repositoryPathKey`). The path it had stays a way to
+/// it (`GitRepositoryPathRedirect`), until a repository takes that path. Refused: a path that is not one
+/// ([`crate::server::path::check_path`]), a path of one segment that is not the repository's own id (a one-segment
+/// address is an id's, so no path can stand in front of another repository's id), and another repository's path. Out:
+/// `oldRepositoryPath`.
+fn set_repository_path(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    use crate::server::path::{check_path, path_key};
+    let Some((provider, id)) = allowed(parameters, "update") else {
+        return none();
+    };
+    let new_path = text(parameters, "repositoryPath").map(|path| path.trim().to_string());
+    let Some(row) = repository_row(facade, &id)? else {
+        add_error(format!("repository {id} not found"));
+        return none();
+    };
+    let old_path = field(&row, "repositoryPath");
+    let old_key = field(&row, "repositoryPathKey").or_else(|| old_path.as_deref().map(path_key));
+    let new_key = new_path.as_deref().map(path_key);
+    if new_path == old_path && new_key == field(&row, "repositoryPathKey") {
+        return Ok(out([("oldRepositoryPath", opt(old_path))]));
+    }
+    if let (Some(path), Some(key)) = (&new_path, &new_key) {
+        if let Err(why) = check_path(path) {
+            add_error(format!("{path} is not a repository path: {why}"));
+            return none();
+        }
+        if !path.contains('/') && *path != id {
+            add_error(format!(
+                "{path} is not a repository path for {id}: a path of one segment is the repository's own id"
+            ));
+            return none();
+        }
+        let _rows = rows_guard();
+        let taken = facade
+            .find(GIT_REPOSITORY)?
+            .eq("repositoryPathKey", Value::string(key))
+            .list()?
+            .iter()
+            .any(|other| field(other, "repositoryId").as_deref() != Some(id.as_str()));
+        if taken {
+            add_error(format!("the path {path} is another repository's"));
+            return none();
+        }
+    }
+    let outcome = (|| -> Result<(), LibError> {
+        let _rows = rows_guard();
+        set_row(
+            facade,
+            &id,
+            &[
+                ("repositoryPath", opt(new_path.clone())),
+                ("repositoryPathKey", opt(new_key.clone())),
+            ],
+        )?;
+        // the path is this repository's now, whatever repository had it once
+        if let Some(key) = &new_key {
+            facade
+                .find(GIT_PATH_REDIRECT)?
+                .eq("oldPathKey", Value::string(key))
+                .delete_all()?;
+        }
+        if let (Some(old), Some(key)) = (&old_path, &old_key) {
+            if new_key.as_ref() != Some(key) {
+                let mut redirect = EntityValue::make(facade, GIT_PATH_REDIRECT)?;
+                redirect.set("oldPathKey", Value::string(key));
+                redirect.set("oldPath", Value::string(old));
+                redirect.set("repositoryId", Value::string(&id));
+                redirect.set("createdDate", moqui_core::user::now_value());
+                redirect.create_or_update(facade)?;
+            }
+        }
+        Ok(())
+    })();
+    provider.row_changed(&id);
+    match outcome {
+        Ok(()) => Ok(out([("oldRepositoryPath", opt(old_path))])),
+        Err(err) => {
+            add_error(err.message());
+            none()
+        }
+    }
+}
+
 // ---- branch rules ----
 
 fn rule_value(rule: &BranchRule) -> Value {
@@ -1167,13 +1255,16 @@ fn webhooks_for(facade: &EntityFacade, id: &str, event: &str) -> Result<Vec<Enti
         .collect())
 }
 
-fn repository_json(id: &str, branch: &str) -> serde_json::Value {
+pub(crate) fn repository_json(id: &str, branch: &str) -> serde_json::Value {
     let base = crate::server::public_base_url();
+    // as GitHub: the name is the last segment of the path, the full name the path
+    let path = crate::server::path::path_of(id);
+    let name = path.rsplit('/').next().unwrap_or(&path);
     serde_json::json!({
         "id": id,
-        "name": id,
-        "full_name": id,
-        "clone_url": format!("{base}/git/{id}.git"),
+        "name": name,
+        "full_name": path,
+        "clone_url": format!("{base}/git/{path}.git"),
         "default_branch": branch,
     })
 }

@@ -173,11 +173,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="GitCloneUrls" type="rust" location="moqui_git::service::get_clone_urls">
         <description>The URLs to clone a repository with: HTTPS from the git_public_url property (else the webapp
             host and port properties) and, when the SSH server is on, SSH with the current user's username, from
-            ssh_public_host and ssh_public_port (else the webapp host and ssh_port).</description>
+            ssh_public_host and ssh_public_port (else the webapp host and ssh_port). They carry the repository's
+            repositoryPath, else its id.</description>
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="httpsUrl"/>
             <parameter name="sshUrl"/>
+            <parameter name="repositoryPath"><description>What the URLs carry: the repositoryPath, else the id</description></parameter>
         </out-parameters>
     </service>
     <service verb="commit" noun="GitFiles" type="rust" location="moqui_git::service::commit_files">
@@ -308,7 +310,7 @@ along with this software (see the LICENSE.md file). If not, see
             includeArchived (or archivedOnly).</description>
         <in-parameters>
             <parameter name="repositoryIdList" type="List"><description>Only these (a project's repositories)</description></parameter>
-            <parameter name="text"><description>In the id or description</description></parameter>
+            <parameter name="text"><description>In the id, path or description</description></parameter>
             <parameter name="repositoryKind"/>
             <parameter name="includeArchived" type="Boolean" default="false"/>
             <parameter name="archivedOnly" type="Boolean" default="false"/>
@@ -317,7 +319,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageNoLimit" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="repositoryList" type="List"><description>Maps: repositoryId, description, repositoryKind,
+            <parameter name="repositoryList" type="List"><description>Maps: repositoryId, repositoryPath, description, repositoryKind,
                 branch, headCommitId, lastUpdateDate, archivedDate, defaultMergeMethodEnumId, remoteUrl,
                 openMergeRequestCount</description></parameter>
             <parameter name="repositoryListCount" type="Integer"/>
@@ -457,13 +459,30 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="update" noun="GitRepository" type="rust" location="moqui_git::service::hosting::update_repository">
         <description>A repository's description, default branch (an existing branch) and default merge method (GmmMerge
-            or GmmSquash). Needs delete.</description>
+            or GmmSquash). Needs delete. Its path is set#GitRepositoryPath's.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="description"/>
             <parameter name="branch"/>
             <parameter name="defaultMergeMethodEnumId"/>
         </in-parameters>
+    </service>
+    <service verb="set" noun="GitRepositoryPath" type="rust" location="moqui_git::service::hosting::set_repository_path">
+        <description>Set the path git URLs carry for a repository (moqui/mr-moqui: /git/moqui/mr-moqui.git, SSH
+            moqui/mr-moqui.git, and the page URL on a public-site host), or clear it with an empty repositoryPath (the
+            repository is then addressed by its id, which always works). Needs update: an application that lets fewer
+            users rename or move a repository checks its own rule first. A path is one to eight segments of letters,
+            digits, '.', '_' and '-', none starting with '.' or '-' or ending in .git or .lock. Paths that differ only
+            in case are one path (repositoryPathKey, the path in lower case, is what is unique and looked up); the path
+            is kept as written. Refused: a path of one segment other than the repository's own id (a one-segment
+            address is an id's), and another repository's path. The path the repository had is kept as a
+            GitRepositoryPathRedirect, so clones of the old address keep working, and a redirect from the new path (a
+            repository that once had it) is removed. This service is the only writer of repositoryPath.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="repositoryPath"/>
+        </in-parameters>
+        <out-parameters><parameter name="oldRepositoryPath"/></out-parameters>
     </service>
 
     <!-- Branch rules: moqui.resource.GitBranchRule, enforced by the git server and the ref services -->

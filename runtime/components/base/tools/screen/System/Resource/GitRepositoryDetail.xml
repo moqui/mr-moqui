@@ -25,6 +25,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="updateGitRepository">
         <actions>
             <set field="updateMap" from="Object.assign({}, ec.web.parameters)"/>
+            <!-- the path is set#GitRepositoryPath's alone: it keeps the key, the checks and the redirect -->
+            <script>delete updateMap.repositoryPath; delete updateMap.repositoryPathKey</script>
             <if condition="!accessToken"><script>delete updateMap.accessToken</script></if>
             <if condition="clearAccessToken == 'Y'"><set field="updateMap.accessToken" from="null"/></if>
             <service-call name="update#moqui.resource.GitRepository" in-map="updateMap"/>

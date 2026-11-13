@@ -663,7 +663,7 @@ fn prepare_runtime(runtime: &Path, fixtures: &Template, extra_conf: &str) {
     .unwrap();
     let base =
         std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
-    moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
+    moqui_core::context::layout::link_base_set(&base, runtime).unwrap();
     // The example dev component (its gallery, the Example entity, the token route screen) loads from component/ here, so
     // the gates have it on their production purpose; in the repository runtime it loads only on a dev instance.
     let example = std::fs::canonicalize(repo_root().join("runtime/components/dev/example")).unwrap();

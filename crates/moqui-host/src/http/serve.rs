@@ -41,6 +41,10 @@ use tower::ServiceExt as _;
 use super::{forwarded_https, plain, ClientAddr, HttpsRequest, ListenLimits, TlsConnection};
 use crate::guard::Guard;
 
+/// Whether a `Host` header names a public-site host.
+#[cfg(feature = "git")]
+pub(crate) type SiteHost = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// What a request is served with: the router, and the limits and web protection in front of it. The listeners and the
 /// edge link's down connection share it (plans/archive/Edge-Node.md §5.3).
 #[derive(Clone)]
@@ -50,6 +54,10 @@ pub(crate) struct WebApp {
     pub guard: Arc<Guard>,
     /// On an edge node: the terminate host names, whose requests go down a local node's link.
     pub edge: Option<Arc<crate::edge_link::WebFront>>,
+    /// Whether a `Host` is a public-site host, where git requests at a page's URL go to the git handler
+    /// ([`crate::git_http::page_request`]); `None` serves git only under `/git/`.
+    #[cfg(feature = "git")]
+    pub site_host: Option<SiteHost>,
     /// The gRPC services the HTTPS listener carries over HTTP/2 (the OTLP receiver's and the PASS authority's, those
     /// that are on), which a gRPC call goes to instead of the router.
     #[cfg(feature = "grpc")]
@@ -63,6 +71,8 @@ impl WebApp {
             limits,
             guard,
             edge: None,
+            #[cfg(feature = "git")]
+            site_host: None,
             #[cfg(feature = "grpc")]
             grpc: None,
         }
@@ -457,6 +467,34 @@ fn grpc_routes<B>(web: &WebApp, request: &http::Request<B>) -> Option<tonic::ser
     Some(routes.clone())
 }
 
+/// The URI under `/git/` of a request that is git's at a page's URL ([`crate::git_http::page_request`]), with its
+/// query.
+#[cfg(feature = "git")]
+fn git_page_uri<B>(web: &WebApp, request: &hyper::Request<B>) -> Option<http::Uri> {
+    let is_site_host = web.site_host.as_ref()?;
+    let uri = request.uri();
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| uri.host())
+        .unwrap_or("");
+    let path = crate::git_http::page_request(
+        request.method().as_str(),
+        uri.path(),
+        uri.query(),
+        host,
+        is_site_host.as_ref(),
+    )?;
+    let mut parts = uri.clone().into_parts();
+    let path_and_query = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+    parts.path_and_query = Some(path_and_query.parse().ok()?);
+    http::Uri::from_parts(parts).ok()
+}
+
 /// Serve one request with `web`, from `peer`: the URI length and web protection checks, then on an edge node the
 /// forward of a terminate host down its link, else the router, either under the request deadline. The listeners'
 /// connections and the edge link's down connection call it (plans/archive/Edge-Node.md §5.3).
@@ -515,6 +553,24 @@ where
         request.uri().path(),
         "/notws" | "/termws" | "/xmpp-websocket" | "/callws"
     );
+    // git at a page's URL on a public-site host is served as the same request under /git/, with its exemption from the
+    // deadline (docs/interfaces/Git-Hosting.md, Clone URLs); web protection has checked it by the path it came with,
+    // and its path rules are asked again for the path it is served at
+    #[cfg(feature = "git")]
+    let refused = match refused {
+        Some(refused) => Some(refused),
+        None => match git_page_uri(web, &request) {
+            // a path rule that denies the path it is served at stops it as it stops a request under /git/
+            Some(uri) => match web.guard.check_served_path(client, uri.path()) {
+                Ok(()) => {
+                    *request.uri_mut() = uri;
+                    None
+                }
+                Err(refused) => Some(*refused.response),
+            },
+            None => None,
+        },
+    };
     let path = request.uri().path();
     let deadline = limits.request.filter(|_| {
         !socket

@@ -247,7 +247,7 @@ fn handle(factory: &Arc<ExecutionContextFactory>, stream: TcpStream) {
     }
     let (path, query) = target.split_once('?').unwrap_or((&target, ""));
     let rest = path.strip_prefix("/git/").unwrap_or("");
-    let (repository, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    let (repository, tail) = super::path::split_request(rest).unwrap_or((rest, ""));
     if let Some(lfs_path) = tail.strip_prefix("info/lfs/") {
         let content_length = headers
             .get("content-length")
@@ -314,6 +314,9 @@ fn handle(factory: &Arc<ExecutionContextFactory>, stream: TcpStream) {
     };
     super::serve_http(&request, &mut body, &mut responder);
     let _ = responder.stream.flush();
+    // what is left of the body (a refused request's, the last chunk's end after a pack) is read, so closing does not
+    // reset the connection before the client has the response
+    let _ = std::io::copy(&mut body, &mut std::io::sink());
 }
 
 /// Serve HTTP on a free port of loopback; the base URL.
@@ -1063,7 +1066,7 @@ fn large_objects_are_content_blobs_streamed_in_and_out() {
 }
 
 /// One HTTP/1.1 request to `base`: the status, the headers by lowercase name, and the body.
-fn http(
+pub(super) fn http(
     base: &str,
     method: &str,
     path: &str,
@@ -1495,6 +1498,7 @@ fn credentials_and_rights_are_checked() {
         !ok && (out.contains("401") || out.contains("Authentication failed")),
         "{out}"
     );
+    // no user may view it, so git is asked for a login it does not have
     let (ok, out) = git_in(&fixture.dir, &home, &["ls-remote", &format!("{base}/git/guarded.git")]);
     assert!(!ok, "{out}");
     let (ok, out) = git_in(&fixture.dir, &home, &["ls-remote", &url_with(&base, WRITER, "nosuch")]);
@@ -1681,6 +1685,11 @@ fn ssh_commands_name_a_service_and_a_repository() {
         parse_ssh_command("git-upload-pack code.git"),
         Some((GitService::UploadPack, "code".to_string()))
     );
+    assert_eq!(
+        parse_ssh_command("git-upload-pack '/moqui/mr-moqui.git'"),
+        Some((GitService::UploadPack, "moqui/mr-moqui".to_string()))
+    );
+    assert_eq!(parse_ssh_command("git-upload-pack '--upload-pack=x/code.git'"), None);
     assert_eq!(parse_ssh_command("git-upload-archive '/code.git'"), None);
     assert_eq!(parse_ssh_command("git-upload-pack '../etc/passwd'"), None);
     assert_eq!(parse_ssh_command("git-upload-packx 'code'"), None);

@@ -12,8 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! git's smart HTTP protocol at `/git/<repositoryId>.git/...`: `GET info/refs?service=git-upload-pack` (or
-//! `git-receive-pack`) and `POST git-upload-pack` / `git-receive-pack`. The dumb protocol is not served. The request
+//! git's smart HTTP protocol at `/git/<path>.git/...` (the repository's path of one or more segments, or its id; the
+//! `.git` may be left out): `GET info/refs?service=git-upload-pack` (or `git-receive-pack`) and `POST git-upload-pack`
+//! / `git-receive-pack`. On a public-site host the same requests at a page's URL (`/<path>/info/refs`) are git too
+//! ([`page_request`]). The dumb protocol is not served. The request
 //! body streams into, and the response streams out of, a job of the git pool that runs
 //! `moqui_git::server::serve_http`, so a clone or push is not held in memory, takes no request worker
 //! from the screens, and is exempt from `webapp_request_timeout` (a gap of `git-server` `idle-timeout`, 120 seconds, in the
@@ -112,6 +114,50 @@ async fn feed(mut body: axum::body::Body, tx: mpsc::Sender<Chunk>, limit: u64, i
     }
 }
 
+/// The `/git/...` path a request at a page's URL on a public-site host is served at, when it is git's (plans/Dogfood.md
+/// D4: the page URL itself clones): `GET <path>/info/refs?service=git-upload-pack` (or `git-receive-pack`), `POST
+/// <path>/git-upload-pack` or `git-receive-pack`, and Git LFS under `<path>.git/info/lfs/`, each with or without
+/// `.git` after the path, where `<path>` is a repository path whose first segment is not `git` or another framework
+/// route. The shape is checked first, with suffix tests only, so a page request costs no more; `is_site_host` is asked
+/// last. The repository itself is looked up by the git server: one that is not there is answered as under `/git/`.
+pub(crate) fn page_request(
+    method: &str,
+    path: &str,
+    query: Option<&str>,
+    host: &str,
+    is_site_host: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let service_query = || {
+        query
+            .unwrap_or("")
+            .split('&')
+            .filter_map(|pair| pair.strip_prefix("service="))
+            .any(|name| GitService::from_name(name).is_some())
+    };
+    let shaped = match method {
+        "GET" if path.ends_with("/info/refs") => service_query(),
+        "POST" if path.ends_with("/git-upload-pack") || path.ends_with("/git-receive-pack") => true,
+        _ => path.contains(".git/info/lfs/"),
+    };
+    if !shaped {
+        return None;
+    }
+    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    if first == "git" || moqui_core::screen::is_public_site_framework_route(first) {
+        return None;
+    }
+    let (repository, _) = server::path::split_request(path)?;
+    server::repository_of(repository)?;
+    is_site_host(host).then(|| format!("/git{path}"))
+}
+
+/// The repository's path for the git server. A path that is not one is passed on as it came: the server finds no
+/// repository for it and answers as for any repository that is not there (401 with no credentials, else 404), so an
+/// answer here would tell the two apart.
+fn repository_name(repository: &str) -> String {
+    server::repository_of(repository).unwrap_or_else(|| repository.to_string())
+}
+
 /// `/git/{*rest}`.
 pub(crate) async fn handle(
     State(state): State<Arc<HttpState>>,
@@ -125,15 +171,10 @@ pub(crate) async fn handle(
         .map_or(peer.ip(), |client| client.0);
     let (parts, body) = request.into_parts();
     let path = parts.uri.path().strip_prefix("/git/").unwrap_or("");
-    let (repository, tail) = path
-        .split_once(".git/")
-        .or_else(|| path.split_once('/'))
-        .unwrap_or((path, ""));
+    let (repository, tail) = server::path::split_request(path).unwrap_or((path, ""));
     let query = parts.uri.query().unwrap_or("");
     if let Some(lfs_path) = tail.strip_prefix("info/lfs/") {
-        let Some(repository) = server::repository_of(repository) else {
-            return plain(404, "not a git repository");
-        };
+        let repository = repository_name(repository);
         let lfs_path = lfs_path.to_string();
         let query = query.to_string();
         let from = Origin { peer, client, over_tls };
@@ -150,9 +191,11 @@ pub(crate) async fn handle(
         ("POST", name) => (GitService::from_name(name), false),
         _ => (None, false),
     };
-    let (Some(service), Some(repository)) = (service, server::repository_of(repository)) else {
+    // whatever the repository: a request that is not the smart protocol's says nothing of one
+    let Some(service) = service else {
         return plain(404, "not a git smart HTTP request (the dumb protocol is not served)");
     };
+    let repository = repository_name(repository);
     let header = |name: &str| {
         parts
             .headers
@@ -308,3 +351,7 @@ async fn handle_lfs(
         .body(axum::body::Body::new(ChannelBody::new(out_rx)))
         .unwrap_or_else(|_| plain(500, "an LFS response header was not valid"))
 }
+
+#[cfg(test)]
+#[path = "git_http_tests.rs"]
+mod tests;

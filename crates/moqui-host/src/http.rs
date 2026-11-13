@@ -386,6 +386,17 @@ pub(crate) async fn listen(
             guard: Arc::clone(&guard),
         }));
     let web = WebApp::new(app, limits, Arc::clone(&guard));
+    // git at a page's URL on a public-site host (docs/interfaces/Git-Hosting.md, Clone URLs)
+    #[cfg(feature = "git")]
+    let web = {
+        let factory = Arc::clone(&link_factory);
+        WebApp {
+            site_host: Some(Arc::new(move |host: &str| {
+                moqui_core::screen::is_public_site_host(&factory, host)
+            })),
+            ..web
+        }
+    };
     // the edge link (plans/archive/Edge-Node.md §5.1, §5.3): on an edge node the HTTPS listener's hand-off and the terminate
     // hosts' forward, and on a paired local node its dialer, whose down connection serves this app
     let down = DownServe {

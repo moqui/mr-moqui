@@ -857,7 +857,7 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     let _example = crate::testing::ExampleOff::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("cluster-cert");
-    crate::context::layout::link_base_set(&root.join("runtime/components/base"), &temp.path()).unwrap();
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), temp.path()).unwrap();
     let framework = root.join("runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let cert = env::get_prop_or_env("cluster_tls_cert");

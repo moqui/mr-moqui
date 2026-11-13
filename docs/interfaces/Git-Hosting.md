@@ -11,12 +11,71 @@ packs.
 
 | | URL |
 |---|---|
-| HTTPS | `https://<host>/git/<repositoryId>.git` (`.git` is optional) |
-| SSH | `ssh://<username>@<host>:<ssh_port>/<repositoryId>.git`, or `<username>@<host>:<repositoryId>.git` on port 22 |
+| HTTPS | `https://<host>/git/<path>.git` (`.git` is optional) |
+| HTTPS, on a public-site host | `https://<host>/<path>` or `https://<host>/<path>.git`: the page's URL |
+| SSH | `ssh://<username>@<host>:<ssh_port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
 
-`org.moqui.git.GitServices.get#GitCloneUrls` gives both, from `git_public_url` (else the webapp host and port
+`<path>` is the repository's `repositoryPath` (`moqui/mr-moqui`), or its `repositoryId`, which always works too and is
+the only address of a repository with no path. `org.moqui.git.GitServices.get#GitCloneUrls` gives the HTTPS and SSH
+URLs with the path (and the path itself, `repositoryPath`), from `git_public_url` (else the webapp host and port
 properties), and `ssh_public_host` and `ssh_public_port` (else the webapp host and `ssh_port`). The SSH username is
-the Moqui username. The kinds of repository behave as they do for `git://` locations:
+the Moqui username.
+
+### Repository paths
+
+`repositoryId` stays the key of every row that names a repository; the path is what URLs carry, so a rename or a move
+changes one field.
+
+- **A path** is one to eight segments of letters, digits, `.`, `_` and `-`, at most 255 characters. No segment starts
+  with `.` or `-` (so never `.` or `..`, and never the `-` that comes before a section in a page's URL) or ends in
+  `.git` or `.lock`. A request whose path is not one names no repository, and is answered as one that is not there.
+- **Case.** Paths that differ only in case are one path. `repositoryPath` is kept as it was written, for URLs and
+  pages; `repositoryPathKey`, the path in lower case, is what is unique and what a request is looked up by, so
+  `git clone https://host/moqui/PopCommerce` finds `moqui/popcommerce`, and no repository can take `Moqui/mr-moqui`
+  beside `moqui/mr-moqui`. Ids are exact.
+- **`set#GitRepositoryPath(repositoryId, repositoryPath)`** sets it, or clears it with an empty path, and is the only
+  writer of the two fields (the Git Repositories tools screen does not write them; a data file that sets
+  `repositoryPath` sets `repositoryPathKey`, its lower case, too). It needs the update right. Refused: a path that is
+  not one, another repository's path in any case, and a path of one segment other than the repository's own id.
+  `find#GitRepositories` gives each `repositoryPath` and searches it; webhook payloads carry it as `full_name` (its
+  last segment as `name`) and in `clone_url`.
+- **One segment is an id's.** A request of one segment is first the repository with exactly that id. As no repository
+  has a one-segment path other than its own id, no path can stand in front of an id, of a repository there now or
+  made later (a drive's `DRIVE_<driveId>`, say). An application's paths have two or more segments.
+- **Looking a path up**, over HTTP, SSH and LFS alike: for one segment, the repository with exactly that id; else the
+  repository whose `repositoryPathKey` is the path in lower case; else the repository that had that path before
+  (`moqui.resource.GitRepositoryPathRedirect`, by `oldPathKey`). Each is one indexed read per request, with no cache,
+  so a rename shows on every node at once.
+- **After a rename** the old path still reaches the repository: `set#GitRepositoryPath` keeps it as a redirect row
+  (`oldPathKey`, `oldPath`, `repositoryId`, `createdDate`). The server answers a request at an old path with the
+  repository itself, not an HTTP redirect: git follows a redirect only on its first request, and SSH has none. The
+  repository's own rights decide, so an old path of a repository the caller may not view answers as a path that names
+  nothing. **A redirect ends when another repository takes the old path**: the path is that repository's from then
+  on, and clones that still use it reach the new repository. Rows are not removed by time.
+- **No namespaces here.** The framework knows paths, not groups or owners: any user with the update right on a
+  repository may give it any free path, under any first segment, and a path is free the moment its repository leaves
+  it. Who may rename or move a repository, which first segments an account may use, and whether or when a path that
+  was left may be taken again are the application's rules (Mantle's and Smithy's), checked before it calls the
+  service.
+- **A request under `/git/`** is split at the first `.git/`; without `.git`, before `/info/refs`, `/git-upload-pack`,
+  `/git-receive-pack` or `/info/lfs/`.
+- **At a page's URL.** On a host of a `<public-site>` route (mr-pass's sites), a request is git's, and is served as
+  the same request under `/git/`, when its path is `<path>/info/refs` with `?service=git-upload-pack` or
+  `git-receive-pack` (a GET), `<path>/git-upload-pack` or `<path>/git-receive-pack` (a POST), or has
+  `<path>.git/info/lfs/` (git-lfs adds the `.git`), where `<path>` is a path as above (with or without `.git`) whose
+  first segment is not `git` or another framework route (`apps`, `rest`, `Login` and the rest). So
+  `git clone https://moqui.org/moqui/mr-moqui` works, and every other request of the host is the site's page. A
+  repository that is not there is answered as under `/git/` (401 or 404), not with the site's page. On any other
+  host these paths are not git. A page request pays three suffix tests for this. Web protection checks such a request
+  by the path it came with, and its path rules again by the `/git/...` path it is served at, so a rule that denies
+  `/git/**` stops it too.
+- **Ids that git URLs no longer reach.** An id is reached by its own name only when it is a path of one segment. A
+  repository whose id has another character (a space, `+`, `@`, `:`, a letter outside ASCII), starts with `-` or
+  `.`, or ends in `.git` or `.lock` is not reached by a git URL any more (before, any id without a `/` that did not
+  start with `.` was). Give it a path of two or more segments; the `get#Git*` services and `git://` locations still
+  take its id.
+
+The kinds of repository behave as they do for `git://` locations:
 
 - **`local`**: a bare repository on disk, the one for code. Clones reuse the deltas of its packs.
 - **`db`**: objects in `GitObject` rows, kept with the database backup, compressed and as deltas of each other as a
@@ -36,7 +95,8 @@ first branch pushed) its default branch.
   as the password, which accounts with a second factor need (the password alone cannot complete a login there). `Authorization: Bearer <token>` and
   an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp_https_listen_port` listener, or
   `X-Forwarded-Proto: https` behind the proxy that `webapp_client_ip_header` names), from loopback, or with
-  `git-server` `allow-http="true"`. A request with no credentials gets 401, so git asks for them.
+  `git-server` `allow-http="true"`. A request with no credentials is served what anyone may view
+  ([Access](#access)) and gets 401 for everything else, so git asks for them.
 - **SSH**: a key (`moqui.security.UserSshKey`, matched by its SHA-256 fingerprint) or the password. The user needs the
   `SSH_GIT` permission (granted to ADMIN; grant it to the groups of developers). A user whose only SSH permission is
   `SSH_GIT` logs in by key unless `ssh-server` `git-password-auth="true"`. `git -c protocol.version=2` sends `GIT_PROTOCOL`,
@@ -73,6 +133,49 @@ service that asks (an app root's ALLOW for its users) is not taken, so the code 
 a clone does. The server
 refuses to serve at all when `<artifact-execution type="AT_GIT_REPOSITORY" authz-enabled="true"/>` is not in the conf,
 as every check would pass then. Reading and writing `git://` locations is not checked against this type.
+
+### No credentials
+
+An HTTP request with no credentials (no `Authorization`, `api_key` or `login_key` header) is not refused before the
+repository is looked at: it is checked as no user, against the same records.
+
+- **What is asked.** With no user the only group is `ALL_USERS`, so only its `ArtifactAuthz` records apply. One with an
+  `authzServiceName` has its service called as for a user, with `userId` empty, `authzActionEnumId`,
+  `artifactTypeEnumId` (`AT_GIT_REPOSITORY`) and `artifactName` (the `repositoryId`); the `authzTypeEnumId` it answers
+  takes the place of the record's (`AUTHZT_ALLOW` to grant, `AUTHZT_NONE` to say nothing, `AUTHZT_DENY`). The service
+  runs with authorization off and no user, so it needs no `authenticate` attribute. This is how an application makes a
+  repository public: Mantle's `check#GitRepositoryAuthz`, on the ALLOW ALL record for `ALL_USERS` above, answers
+  `AUTHZT_ALLOW` for `AUTHZA_VIEW` on a public repository whoever asks. The framework's own data grants `ALL_USERS`
+  nothing, so without such a record no request without credentials views anything. A drive's rule is by member, so it
+  gives no user nothing.
+- **What is served.** A repository the request may view: `info/refs` and `git-upload-pack` (clone, fetch), and LFS
+  downloads (the batch answers actions with no token; each download is checked the same way).
+- **What is not.** Everything else is `401` with `WWW-Authenticate: Basic` (LFS: `LFS-Authenticate` too), so git asks
+  for a login and sends the request again: a repository the request may not view, a path that names none or is not a
+  path, and every write and every answer that names users, even on a public repository: `git-receive-pack`, an LFS
+  upload, verify, and every locks request (listing them too). The server refuses a push with no user itself, before
+  any record is asked, so a record that lets everyone do everything still lets nobody push without a login. The answer
+  is the same for a repository that is there and one that is not, status, headers and body alike, so it says nothing
+  of what exists. With credentials the answers are as before: 404 for a repository the user may not view, 403 for a
+  push the user may not make.
+- **Not a failure.** A 401 for no credentials is not an `auth-failure` event (git sends every first request without
+  credentials), and records no `ArtifactAuthzFailure`. Credentials that are wrong are both, as before.
+- **A header that is not credentials** is not "no credentials". An `Authorization` header that is neither Bearer nor
+  Basic that decodes to `user:password` (another scheme, an empty one), an empty `api_key`, and an LFS token that is
+  not good are answered 401 and count as an `auth-failure`, on a public repository too. The anonymous rate limit below
+  goes by the headers alone, so a made-up header buys nothing: it reads nothing and counts toward the ban.
+- **Caps, by client.** With web protection's per-client parts on ([Run and Deploy](../Run-Deploy.md#behind-a-proxy-or-load-balancer)),
+  the `git-anonymous` rate limit counts each client's git requests that carry no credentials: 120 a minute sustained,
+  240 at once (a clone is three or more requests), under `/git/` and at a page's URL; past it the answer is 429 with
+  `Retry-After`. It is a `<rate-limit>` with `anonymous="true"`, which counts only requests with no `Authorization`,
+  `api_key` or `login_key` header; the headers are not checked there, and a session cookie is not looked at (git has
+  none). A component changes it by its name (`<rate-limit name="git-anonymous" requests="..."/>`, or
+  `enabled="false"`). A signed-in client is not counted by it.
+- **Caps, in all.** Requests with no credentials run at most `git-server` `anonymous-max-concurrent` git jobs at once
+  (half of `max-concurrent` when it is empty, at least 1: 2 of the default 4), so they cannot hold the whole git pool
+  and signed-in users always have workers left. One more is `503` with `Retry-After: 5`. Only a request that is about
+  to be served counts: one that is answered 401, as every signed-in client's first request is, takes no slot.
+- SSH always has a user: the SSH server logs one in before git runs.
 
 The default branch cannot be deleted. Only `refs/heads/` and `refs/tags/` can be pushed. Branch rules
 ([below](#branch-rules)) protect refs further, and an [archived](#archive) repository takes no push.
@@ -404,12 +507,14 @@ ends it.
 
 ## Large files (Git LFS)
 
-git-lfs clients push and fetch large files at `/git/<repositoryId>.git/info/lfs` (the Batch API with the basic
+git-lfs clients push and fetch large files at `/git/<path>.git/info/lfs` (the Batch API with the basic
 transfer, and the locks API): `git lfs install`, `git lfs track "*.psd"`, then push and clone as usual. Over SSH,
 git-lfs runs `git-lfs-authenticate`, which gives it that HTTPS endpoint and a token for an hour (`git-lfs-transfer` is
 refused, so it does). An object is the content blob of its SHA-256, so the same file in many repositories is stored once, but a
 repository has an object (`moqui.resource.GitLfsObject`) only once it was uploaded to it: knowing an oid does not reach
-another repository's file. Uploads need the push rights of the repository, downloads view; a lock needs push rights,
+another repository's file. Uploads need the push rights of the repository, downloads view (with no credentials, on a
+repository anyone may view: [No credentials](#no-credentials)); a lock needs push rights (and listing locks a
+login),
 and force unlocking another user's lock `delete`. The batch's actions carry a token signed with `git_lfs_token_key`
 (generated into `runtime/.env`; `git_lfs_token_key_previous` still reads while it is changed) that says who the user
 is, for 15 minutes, and each request is authorized again. Objects are at most `git-server` `lfs-max-object-size` (5 GiB).
@@ -424,6 +529,12 @@ one commit) can so live in a `db` repository, with their history, in the databas
 
 ## Limits
 
+- Anonymous read is over HTTP only, and is fetch and LFS download only; the `get#Git*` services and an application's
+  pages decide for themselves what a visitor with no account sees (they ask the same check).
+- A repository's id must itself be a path of one segment to be reached by a git URL
+  ([Repository paths](#repository-paths)); one that is not needs a `repositoryPath`.
+- Paths have no owners in the framework: the application decides who may rename and when a left path may be taken.
+- `anonymous-max-concurrent` is per node, as the git pool is, and is read when the node first serves such a request.
 - Merges are of branches of one repository: no forks. A merge reads no `.gitattributes` (no merge drivers, every file
   merged as text unless it is binary); revisions are names and ids, not `main~1`.
 - The framework's rules make a `GitUpdate` of every `git://` write (a wiki save), to keep merge requests and webhooks

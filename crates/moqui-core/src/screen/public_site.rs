@@ -80,6 +80,25 @@ pub fn hosts(factory: &ExecutionContextFactory) -> Vec<String> {
     hosts
 }
 
+/// Whether `host` (a `Host` header, with or without a port) is the host of a `public-site` route.
+pub fn is_site_host(factory: &ExecutionContextFactory, host: &str) -> bool {
+    let host = normalize_host(host.rsplit_once(':').map_or(host, |(name, port)| {
+        // an IPv6 literal's last colon is not a port's
+        if port.bytes().all(|byte| byte.is_ascii_digit()) {
+            name
+        } else {
+            host
+        }
+    }));
+    !host.is_empty() && hosts(factory).contains(&host)
+}
+
+/// Whether `first`, the first segment of a request path, always belongs to the framework ([`FRAMEWORK_ROUTES`]) and
+/// never to a public site's pages.
+pub fn is_framework_route(first: &str) -> bool {
+    FRAMEWORK_ROUTES.contains(&first)
+}
+
 /// Whether a request for a framework route (a [`FRAMEWORK_ROUTES`] path that is not one of the [`STATIC_ROUTES`], or a
 /// path a servlet other than the screens' takes, `servlet_route`) is refused on its host: a `<public-site>` of the host
 /// names a `host-check-service`, which is called with the site, host and path and answers `restricted` true (a site's

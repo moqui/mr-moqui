@@ -25,6 +25,7 @@
 //! `docs/interfaces/Git-Hosting.md`, Large files.
 
 use std::io::Read;
+use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -34,9 +35,10 @@ use serde_json::{json, Value as Json};
 use sha2::Sha256;
 
 use super::{
-    authenticate_with, may_push, open, property, provider, public_base_url, GitService, HttpResponder, Refusal,
+    anonymous_slot, authenticate_with, current_user, may_push, open_path, path, property, provider, public_base_url,
+    AnonymousSlot, GitService, HttpResponder, Refusal,
 };
-use crate::RepositoryKind;
+use crate::{Repo, RepositoryKind};
 use moqui_core::context::Error;
 use moqui_core::entity::EntityValue;
 use moqui_core::resource::blob::{is_blob_id, BlobStore, Expected};
@@ -56,6 +58,7 @@ const DEFAULT_MAX_OBJECT: u64 = 5 * 1024 * 1024 * 1024;
 /// One request to the LFS endpoint of a repository.
 #[derive(Clone, Debug, Default)]
 pub struct LfsHttpRequest {
+    /// The repository's path, as [`super::repository_of`] gives it.
     pub repository: String,
     pub method: String,
     /// The path after `info/lfs/`.
@@ -226,16 +229,27 @@ fn text(value: Option<&Value>) -> Option<String> {
 /// A JSON response.
 fn send(out: &mut dyn HttpResponder, status: u16, body: &Json) {
     let text = body.to_string();
-    let headers = [
+    let mut headers = vec![
         ("Content-Type", LFS_TYPE.to_string()),
         ("Cache-Control", "no-store".to_string()),
         ("Content-Length", text.len().to_string()),
     ];
+    if status == 401 {
+        headers.extend(login_headers());
+    }
     if out.head(status, &headers).is_ok() {
         let writer = out.body();
         let _ = writer.write_all(text.as_bytes());
         let _ = writer.flush();
     }
+}
+
+/// What a 401 carries, so git-lfs asks git's credential helper for a login.
+fn login_headers() -> [(&'static str, String); 2] {
+    [
+        ("LFS-Authenticate", "Basic realm=\"Moqui Git\"".to_string()),
+        ("WWW-Authenticate", "Basic realm=\"Moqui Git\"".to_string()),
+    ]
 }
 
 fn message(status: u16, text: &str) -> (u16, Json) {
@@ -247,7 +261,7 @@ fn refuse(out: &mut dyn HttpResponder, refusal: &Refusal) {
         Refusal::Unauthenticated(_) => 401,
         Refusal::Forbidden(_) => 403,
         Refusal::NotFound(_) => 404,
-        Refusal::Unavailable(_) => 503,
+        Refusal::Unavailable(_) | Refusal::Busy(_) => 503,
     };
     let text = json!({ "message": refusal.message() }).to_string();
     let mut headers = vec![
@@ -255,8 +269,10 @@ fn refuse(out: &mut dyn HttpResponder, refusal: &Refusal) {
         ("Content-Length", text.len().to_string()),
     ];
     if status == 401 {
-        headers.push(("LFS-Authenticate", "Basic realm=\"Moqui Git\"".to_string()));
-        headers.push(("WWW-Authenticate", "Basic realm=\"Moqui Git\"".to_string()));
+        headers.extend(login_headers());
+    }
+    if matches!(refusal, Refusal::Busy(_)) {
+        headers.push(("Retry-After", super::BUSY_RETRY_SECONDS.to_string()));
     }
     if out.head(status, &headers).is_ok() {
         let writer = out.body();
@@ -280,58 +296,64 @@ fn read_json(body: &mut dyn Read) -> Result<Json, (u16, Json)> {
     serde_json::from_slice(&bytes).map_err(|err| message(422, &format!("the request body is not JSON: {err}")))
 }
 
+/// A request that may go on: the operation of its token, its repository, and its slot when it has no user.
+struct Started {
+    token: Option<Operation>,
+    repo: Arc<Repo>,
+    _anonymous: Option<AnonymousSlot>,
+}
+
 /// Serve one request to a repository's LFS endpoint, in an entered context (a job of the git [`super::pool`]).
 pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn HttpResponder) {
-    let started = (|| -> Result<Option<Operation>, Refusal> {
-        let _provider = provider()?;
+    let started = (|| -> Result<Started, Refusal> {
+        let provider = provider()?;
         let has_credentials = request.authorization.is_some() || request.api_key.is_some();
         if has_credentials && !request.secure {
             return Err(Refusal::Forbidden(
                 "credentials over plain HTTP are refused; use HTTPS".into(),
             ));
         }
-        match request.authorization.as_deref().and_then(read_token) {
+        let (token, logged_in) = match request.authorization.as_deref().and_then(read_token) {
             Some(token) => {
-                let token = token?;
-                if token.repository != request.repository {
+                // a token that is not good is credentials that are not valid, as a wrong password is
+                let token = token.inspect_err(|_| moqui_core::web::note_auth_failure())?;
+                // a token names its repository by id, a request by a path
+                if path::resolve(&request.repository).as_deref() != Some(token.repository.as_str()) {
                     return Err(Refusal::Unauthenticated(
                         "the LFS token is for another repository".into(),
                     ));
                 }
                 moqui_core::user::internal_login_user(&token.username)
                     .map_err(|err| Refusal::Unauthenticated(err.message().to_string()))?;
-                Ok(Some(token.operation))
+                (Some(token.operation), true)
             }
-            None => {
-                if !authenticate_with(request.authorization.as_deref(), request.api_key.as_deref())? {
-                    return Err(Refusal::Unauthenticated(format!(
-                        "log in to reach repository {}",
-                        request.repository
-                    )));
-                }
-                Ok(None)
-            }
-        }
+            None => (
+                None,
+                authenticate_with(request.authorization.as_deref(), request.api_key.as_deref())?,
+            ),
+        };
+        let repo = open_path(&provider, &request.repository, GitService::UploadPack, logged_in)?;
+        let slot = if logged_in { None } else { Some(anonymous_slot()?) };
+        Ok(Started {
+            token,
+            repo,
+            _anonymous: slot,
+        })
     })();
-    let token = match started {
-        Ok(token) => token,
-        Err(refusal) => {
-            refuse(out, &refusal);
-            return;
-        }
-    };
-    let Ok(provider) = provider() else {
-        return;
-    };
-    let repo = match open(&provider, &request.repository, GitService::UploadPack) {
-        Ok(repo) => repo,
+    // the slot is held while the request is served
+    let Started {
+        token,
+        repo,
+        _anonymous,
+    } = match started {
+        Ok(started) => started,
         Err(refusal) => {
             refuse(out, &refusal);
             return;
         }
     };
     let lfs = Lfs {
-        repository: request.repository.clone(),
+        repository: repo.definition.id.clone(),
         mirror: repo.definition.kind == RepositoryKind::Remote,
         token,
     };
@@ -364,6 +386,7 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
 
 /// A request's repository and how its user came.
 struct Lfs {
+    /// The repository's id.
     repository: String,
     mirror: bool,
     /// The operation of the token the user came with; `None` for credentials.
@@ -373,8 +396,19 @@ struct Lfs {
 type Reply = Result<(u16, Json), (u16, Json)>;
 
 impl Lfs {
+    /// A user is logged in: what names users (locks) and every write is for one, whatever anyone may view.
+    fn logged_in(&self) -> Result<(), (u16, Json)> {
+        match current_user() {
+            Some(_) => Ok(()),
+            None => Err(message(401, super::LOG_IN)),
+        }
+    }
+
     /// The user may change the repository's LFS objects and locks.
     fn may_write(&self) -> Result<(), (u16, Json)> {
+        // a request with no credentials that reads a public repository: a write asks for a login, before anything
+        // is said of the repository
+        self.logged_in()?;
         if self.token == Some(Operation::Download) {
             return Err(message(403, "this token is for downloads"));
         }
@@ -391,7 +425,11 @@ impl Lfs {
     }
 
     fn base(&self) -> String {
-        format!("{}/git/{}.git/info/lfs", public_base_url(), self.repository)
+        format!(
+            "{}/git/{}.git/info/lfs",
+            public_base_url(),
+            path::path_of(&self.repository)
+        )
     }
 
     fn entity(&self) -> Result<moqui_core::entity::EntityFacade, (u16, Json)> {
@@ -436,9 +474,15 @@ impl Lfs {
         if objects.len() > MAX_BATCH {
             return Err(message(413, &format!("at most {MAX_BATCH} objects in a batch")));
         }
-        let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
-        let header = issue(&username, &self.repository, operation, BATCH_TOKEN_SECONDS)
-            .map_err(|err| message(500, err.message()))?;
+        // a request with no credentials (a download from a repository anyone may view) gets actions with no token:
+        // its downloads come with no credentials too, and are checked and counted as this one was
+        let header = match moqui_core::user::current_username().ok().flatten() {
+            Some(username) if !username.is_empty() => Some(
+                issue(&username, &self.repository, operation, BATCH_TOKEN_SECONDS)
+                    .map_err(|err| message(500, err.message()))?,
+            ),
+            _ => None,
+        };
         let base = self.base();
         let max = max_object_size();
         let mut answered = Vec::with_capacity(objects.len());
@@ -450,7 +494,12 @@ impl Lfs {
                     "error": { "code": 422, "message": "an object needs a SHA-256 oid and a size" } }));
                 continue;
             };
-            let action = |href: String| json!({ "href": href, "header": { "Authorization": header }, "expires_in": BATCH_TOKEN_SECONDS });
+            let action = |href: String| match &header {
+                Some(header) => {
+                    json!({ "href": href, "header": { "Authorization": header }, "expires_in": BATCH_TOKEN_SECONDS })
+                }
+                None => json!({ "href": href }),
+            };
             let stored = self.stored(&oid)?;
             answered.push(match (operation, stored) {
                 (Operation::Download, Some(_)) => json!({ "oid": oid, "size": size, "authenticated": true,
@@ -665,6 +714,8 @@ impl Lfs {
     }
 
     fn list_locks(&self, query: &str) -> Reply {
+        // locks name their owners
+        self.logged_in()?;
         let pairs = moqui_core::web::form_pairs(query);
         let param = |name: &str| {
             pairs
@@ -845,10 +896,12 @@ pub(crate) fn ssh_authenticate(username: &str, command: &str) -> Result<String, 
         Operation::Download => GitService::UploadPack,
         Operation::Upload => GitService::ReceivePack,
     };
-    open(&provider, &repository, service).map_err(|refusal| Error::new(refusal.message().to_string()))?;
-    let header = issue(username, &repository, operation, SSH_TOKEN_SECONDS)?;
+    let repo = open_path(&provider, &repository, service, /* logged_in */ true)
+        .map_err(|refusal| Error::new(refusal.message().to_string()))?;
+    let id = &repo.definition.id;
+    let header = issue(username, id, operation, SSH_TOKEN_SECONDS)?;
     Ok(json!({
-        "href": format!("{}/git/{repository}.git/info/lfs", public_base_url()),
+        "href": format!("{}/git/{}.git/info/lfs", public_base_url(), path::path_of(id)),
         "header": { "Authorization": header },
         "expires_in": SSH_TOKEN_SECONDS,
     })

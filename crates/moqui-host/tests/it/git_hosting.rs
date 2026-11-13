@@ -14,8 +14,9 @@
 
 //! The git server through the host on the seeded embedded Postgres: smart HTTP at `/git/<id>.git` (the request
 //! streamed into and the response out of the git pool), and `git-upload-pack` / `git-receive-pack` over the built-in
-//! SSH server with a `UserSshKey`, by the git command line (skipped when git, or for SSH ssh, is not installed). The
-//! protocol itself, over each storage, is `moqui-git/src/server/tests.rs`.
+//! SSH server with a `UserSshKey`, by the git command line (skipped when git, or for SSH ssh, is not installed). A
+//! repository with a path is cloned at `/git/<path>.git`, over SSH by the path, and at its page's URL on a public-site
+//! host. The protocol itself, over each storage, is `moqui-git/src/server/tests.rs`.
 
 #![cfg(all(
     unix,
@@ -44,7 +45,8 @@ fn data(user_key: &PrivateKey) -> String {
     let fingerprint = user_key.public_key().fingerprint(HashAlg::Sha256).to_string();
     format!(
         r#"<entity-facade-xml type="seed">
-    <moqui.resource.GitRepository repositoryId="hosted" repositoryKind="local" description="Hosted on disk"/>
+    <moqui.resource.GitRepository repositoryId="hosted" repositoryKind="local" description="Hosted on disk"
+        repositoryPath="team/hosted" repositoryPathKey="team/hosted"/>
     <moqui.resource.GitRepository repositoryId="hosted-db" repositoryKind="db" description="Hosted in the database"/>
     <moqui.resource.GitRepository repositoryId="mirror-db" repositoryKind="db" description="A push mirror's target"/>
     <moqui.security.UserSshKey sshKeyId="JOHN_GIT_KEY" userId="EX_JOHN_DOE" publicKey="{public}"
@@ -130,9 +132,13 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
     }
     let user_key = PrivateKey::from(Ed25519Keypair::from_seed(&USER_SEED));
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
-    let gate = crate::common::start_with_properties(
+    // code.test is a public-site host: git at a page's URL is served there (its pages are never rendered here)
+    let gate = crate::common::start_with_conf_properties(
         "git-hosting",
         Some(&data(&user_key)),
+        r#"<webapp-list><webapp name="webroot"><public-site host="code.test" site-id="CODE"
+            screen-location="component://example/screen/PublicLink.xml"><mount path="/" screen="Code"/></public-site>
+        </webapp></webapp-list>"#,
         &[("ssh_port", "0"), ("ssh_host_key", &seed)],
     );
     let http = gate.server.address();
@@ -174,6 +180,77 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         &crate::common::http_request("GET", "/git/hosted.git/HEAD", &[], ""),
     );
     assert_eq!(status, 404, "no dumb protocol");
+    // with no credentials a path that is not one, a repository that is not there and one that is are one answer
+    let anonymous = |path: &str| {
+        let (status, headers, body) = crate::common::exchange(
+            http,
+            &crate::common::http_request(
+                "GET",
+                &format!("/git/{path}/info/refs?service=git-upload-pack"),
+                &[],
+                "",
+            ),
+        );
+        let asks = headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("www-authenticate"));
+        (status, asks, body)
+    };
+    let there = anonymous("hosted.git");
+    assert_eq!((there.0, there.1), (401, true), "{}", there.2);
+    for path in ["nosuch.git", "a/-b.git", "a/.b", "a%20b.git", "a/b/c/d/e/f/g/h/i.git"] {
+        assert_eq!(anonymous(path), there, "{path}");
+    }
+    let (status, _, body) = crate::common::exchange(
+        http,
+        &crate::common::http_request("POST", "/git/a/-b.git/info/lfs/objects/batch", &[], "{}"),
+    );
+    assert_eq!(status, 401, "{body}");
+
+    // the repository's path, on the public-site host at its page's URL, with and without `.git` (under /git/ it is
+    // moqui-git's tests'); the same URL on another host is a page's, not git's
+    let page_url = format!("http://john.doe:moqui@127.0.0.1:{}/team/hosted", http.port());
+    let site = ["-c", "http.extraHeader=Host: code.test"];
+    let clone = work.join("page");
+    git_ok(
+        &work,
+        &home,
+        None,
+        &[site[0], site[1], "clone", &page_url, &clone.to_string_lossy()],
+    );
+    assert!(clone.join("large.txt").is_file());
+    let listed = git_ok(
+        &work,
+        &home,
+        None,
+        &[site[0], site[1], "ls-remote", &format!("{page_url}.git")],
+    );
+    assert!(listed.contains("refs/heads/main"), "{listed}");
+    let basic = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("john.doe:moqui")
+    );
+    let page = |host: &str, path: &str| {
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: {basic}\r\n\r\n");
+        let (status, _, body) = crate::common::exchange(http, &request);
+        (status, body)
+    };
+    let (status, body) = page("code.test:8080", "/team/hosted/info/refs?service=git-upload-pack");
+    assert!(
+        status == 200 && body.contains("# service=git-upload-pack"),
+        "{status} {body}"
+    );
+    let (status, body) = page("localhost", "/team/hosted/info/refs?service=git-upload-pack");
+    assert!(
+        status != 200 || !body.contains("# service=git-upload-pack"),
+        "{status} {body}"
+    );
+    // a framework route and a path with no git suffix stay what they were on the site host
+    let (_, body) = page("code.test", "/rest/team/hosted/info/refs?service=git-upload-pack");
+    assert!(!body.contains("# service=git-upload-pack"), "{body}");
+    let (_, body) = page("code.test", "/team/hosted/info/refs");
+    assert!(!body.contains("# service=git-upload-pack"), "{body}");
 
     // the read services, as john.doe; a screen's inherited authorization covers AT_SERVICE, AT_GIT_REPOSITORY is
     // checked in the core tests
@@ -208,7 +285,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         assert!(urls
             .get("httpsUrl")
             .and_then(Value::as_str)
-            .is_some_and(|url| url.ends_with("/git/hosted.git")));
+            .is_some_and(|url| url.ends_with("/git/team/hosted.git")));
 
         // a collection of the database repository (nothing is old enough to delete; the rows are repacked), then
         // every row decodes, and it still clones
@@ -366,8 +443,10 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         answer.contains("/git/hosted-db.git/info/lfs") && answer.contains("MoquiLfs"),
         "{answer}"
     );
+    // by the repository's path, as by its id above
     let check = work.join("ssh-check");
-    git_ok(&work, &home, Some(&ssh), &["clone", &url, &check.to_string_lossy()]);
+    let by_path = format!("ssh://john.doe@127.0.0.1:{ssh_port}/team/hosted.git");
+    git_ok(&work, &home, Some(&ssh), &["clone", &by_path, &check.to_string_lossy()]);
     assert!(check.join("ssh-0.txt").is_file() && check.join("ssh-2.txt").is_file());
     let (ok, out) = git(
         &work,
