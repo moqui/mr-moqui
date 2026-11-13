@@ -20,7 +20,7 @@ use std::process::Command;
 
 use super::repo;
 
-/// A runtime under `/tmp` (the Postgres socket path must be short) with the repo's conf, `base-component`, and the
+/// A runtime under `/tmp` (the Postgres socket path must be short) with the repo's conf, `components/base`, and the
 /// given components linked. It uses the repo's shared Postgres install through `MOQUI_INSTALL`. Removed on drop.
 pub(super) struct TestRuntime {
     pub(super) dir: PathBuf,
@@ -44,7 +44,7 @@ pub(super) fn test_runtime(tag: &str, components: &[(&str, &Path)]) -> Option<Te
     }
     let dir = PathBuf::from("/tmp").join(format!("mct-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("component")).unwrap();
+    std::fs::create_dir_all(dir.join("components/addon")).unwrap();
     std::fs::create_dir_all(dir.join("conf")).unwrap();
     std::fs::create_dir_all(dir.join("db")).unwrap();
     for entry in std::fs::read_dir(repo().join("runtime/conf")).unwrap().flatten() {
@@ -52,9 +52,15 @@ pub(super) fn test_runtime(tag: &str, components: &[(&str, &Path)]) -> Option<Te
             std::fs::copy(entry.path(), dir.join("conf").join(entry.file_name())).unwrap();
         }
     }
-    std::os::unix::fs::symlink(repo().join("runtime/base-component"), dir.join("base-component")).unwrap();
+    // the base set and the sets' manifest, which lists what loads
+    std::os::unix::fs::symlink(repo().join("runtime/components/base"), dir.join("components/base")).unwrap();
+    std::fs::copy(
+        repo().join("runtime/components/components.xml"),
+        dir.join("components/components.xml"),
+    )
+    .unwrap();
     for (name, path) in components {
-        std::os::unix::fs::symlink(path, dir.join("component").join(name)).unwrap();
+        std::os::unix::fs::symlink(path, dir.join("components/addon").join(name)).unwrap();
     }
     Some(TestRuntime { dir })
 }
@@ -65,7 +71,7 @@ pub(super) fn moqui_test(runtime: &TestRuntime, args: &[&str]) -> (String, Strin
         .args(args)
         .current_dir(repo())
         .env("MOQUI_RUNTIME", &runtime.dir)
-        .env("MOQUI_FRAMEWORK", repo().join("runtime/base-component/framework"))
+        .env("MOQUI_FRAMEWORK", repo().join("runtime/components/base/framework"))
         .env("MOQUI_INSTALL", repo().join("runtime/install"))
         .output()
         .unwrap();

@@ -22,7 +22,7 @@ use moqui_core::script::standalone::Standalone;
 use sha2::{Digest, Sha256};
 
 fn libs_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/webroot/screen/webroot/libs")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot/libs")
 }
 
 fn hex(bytes: &[u8]) -> String {

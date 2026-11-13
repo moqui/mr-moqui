@@ -18,7 +18,7 @@ One engine, one document type and one client sheet component, in two screens.
 
 ### Tools › Data › Grid: Calc mode
 
-The viewer and editor are built into [`Grid.xml`](../runtime/base-component/tools/screen/Tools/Data/Grid.xml) and `Grid.qvue`, not a screen of their own. The grid gets two modes over the same source:
+The viewer and editor are built into [`Grid.xml`](../runtime/components/base/tools/screen/Tools/Data/Grid.xml) and `Grid.qvue`, not a screen of their own. The grid gets two modes over the same source:
 
 - **Records** (as now): the rows of the source edited in place and saved as records. Nothing changes here, and it stays stateless on the server.
 - **Calc**: the source as the read-only data sheet of a workbook, with the overlay sheets beside it. Switching to Calc keeps the source, its conditions, filter, sort and columns; they become the document's query definition, which is the grid's own source JSON, so the engine fills the sheet with the reader the grid uses (`moqui-tools` `grid.rs`) and its refusals (restricted entities, password fields) hold.
@@ -116,7 +116,7 @@ What it does not have:
 
 ### Tabulator: the grid
 
-The grid stays Tabulator, which is already vendored (6.7.0) and already drives [`Grid.qvue`](../runtime/base-component/tools/screen/Tools/Data/Grid.qvue) with range selection, range copy and paste, undo, frozen columns and remote loading. IronCalc's own web widget is React with a canvas grid and is not used.
+The grid stays Tabulator, which is already vendored (6.7.0) and already drives [`Grid.qvue`](../runtime/components/base/tools/screen/Tools/Data/Grid.qvue) with range selection, range copy and paste, undo, frozen columns and remote loading. IronCalc's own web widget is React with a canvas grid and is not used.
 
 Tabulator is the view and IronCalc the model: an edit goes to the engine in the server, and a formatter draws each visible cell from the block of cells the server sent. IronCalc reports no list of changed cells, so the visible rows are sent again and redrawn after an edit.
 

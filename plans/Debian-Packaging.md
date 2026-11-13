@@ -7,7 +7,7 @@ Status 2026-11-06: research and plan, nothing built. It covers what Debian's rul
 There are four large pieces of work, and three smaller ones.
 
 1. **Rust crates.** Debian builds Rust programs only from crates packaged in the archive as `librust-*-dev`, never from a vendored `cargo vendor` tree (§3). A Maximal build without the dev tools, on Linux, needs 657 crates from crates.io. Of those, 406 are in sid at the same or a newer semver-compatible version and 100 are in sid at an older version of the same series. 81 are in sid only at a different series, and 70 are not packaged at all. Each missing crate is a source package of its own that goes through NEW. This is the largest piece and is mostly upstream and Rust-team work, not packaging.
-2. **The vendored web libraries.** `runtime/base-component/webroot/screen/webroot/libs` holds 21 MB of minified JavaScript and CSS, esbuild bundles, fonts, and a prebuilt WebAssembly binary (matrix-sdk-crypto). Debian needs the preferred form for modification of every file, and wants Debian's own copy used where one exists (§4).
+2. **The vendored web libraries.** `runtime/components/base/webroot/screen/webroot/libs` holds 21 MB of minified JavaScript and CSS, esbuild bundles, fonts, and a prebuilt WebAssembly binary (matrix-sdk-crypto). Debian needs the preferred form for modification of every file, and wants Debian's own copy used where one exists (§4).
 3. **A system-Postgres build.** It would keep the embedded cluster management but run Debian's `postgresql-18` binaries in place of the theseus archive (§5). The code supports most of this already. It needs a feature split, a major-version upgrade path, and a decision about the cluster that installing `postgresql-18` creates.
 4. **An FHS layout and a real source package.** That means the binary in `/usr`, read-only components in `/usr/share`, configuration in `/etc`, state in `/var/lib`, and a `debian/` directory built with debhelper and dh-cargo. It would reuse `systemd/moqui.service`, `systemd/moqui.sysusers` and the podman entrypoint's symlink layout (§6).
 
@@ -128,8 +128,8 @@ Chromium stays external and optional. It goes in `Suggests: chromium | chromium-
 | Path | What | Notes |
 |---|---|---|
 | `/usr/bin/moqui` | the binary | |
-| `/usr/share/moqui/base-component/` | the base components, read-only | the web libraries from §4 replaced by symlinks |
-| `/usr/share/moqui/component/` | components from other packages (mr-mantle and the rest) | one package each, later |
+| `/usr/share/moqui/components/base/` | the base components, read-only | the web libraries from §4 replaced by symlinks |
+| `/usr/share/moqui/components/addon/` | components from other packages (mr-mantle and the rest) | one package each, later |
 | `/etc/moqui/MoquiConf.xml` | the runtime conf, a conffile | from `conf/MoquiProductionConf.xml` |
 | `/etc/moqui/environment` | optional environment for the unit | already in `systemd/moqui.service` |
 | `/var/lib/moqui/` | the runtime directory: `db/`, `cert/`, `txlog/`, `install/` (unused), `.env` with the generated secrets (0600) | owned by `moqui` |
@@ -137,7 +137,7 @@ Chromium stays external and optional. It goes in `Suggests: chromium | chromium-
 | `/usr/lib/systemd/system/moqui.service` | the unit | `dh_installsystemd` |
 | `/usr/lib/sysusers.d/moqui.conf` | the `moqui` system user | `systemd/moqui.sysusers` with home `/var/lib/moqui` |
 
-The binary expects one writable runtime directory with `base-component/` in it. The podman entrypoint solves the same problem with symlinks from the image's runtime into the volume. The Debian package can do the reverse, with `/var/lib/moqui/base-component -> /usr/share/moqui/base-component` and the conf linked from `/etc`, made in the postinst or shipped as symlinks. That works with no code change. A cleaner way, later, is separate settings for the read-only component roots and the writable state (`MOQUI_RUNTIME` for state, plus a component path list), so `/usr` stays read-only without symlinks.
+The binary expects one writable runtime directory with `components/base/` in it. The podman entrypoint solves the same problem with symlinks from the image's runtime into the volume. The Debian package can do the reverse, with `/var/lib/moqui/components/base -> /usr/share/moqui/components/base` and the conf linked from `/etc`, made in the postinst or shipped as symlinks. That works with no code change. A cleaner way, later, is separate settings for the read-only component roots and the writable state (`MOQUI_RUNTIME` for state, plus a component path list), so `/usr` stays read-only without symlinks.
 
 The `.env` file is generated state, not configuration, so it stays in `/var/lib` and is not a conffile. A purge removes `/var/lib/moqui` only after asking or with `dpkg --purge`, and README.Debian says that `.env` holds the key of the encrypted fields.
 
@@ -148,7 +148,7 @@ The `.env` file is generated state, not configuration, so it stays in `/var/lib`
 ### 6.3 Binary packages
 
 - `moqui` (Architecture: any): the binary, the unit, the sysusers file, the man page. Depends: `${shlibs:Depends}`, `${misc:Depends}`, `postgresql-18`, `moqui-common (= ${source:Version})`. Recommends: `postgresql-18-pgvector`, `ca-certificates`. Suggests: `chromium | chromium-headless-shell`.
-- `moqui-common` (Architecture: all): `/usr/share/moqui/base-component` and the symlinks into the Debian JavaScript and font packages.
+- `moqui-common` (Architecture: all): `/usr/share/moqui/components/base` and the symlinks into the Debian JavaScript and font packages.
 - Later: `moqui-mantle`, `moqui-marble`, `moqui-boss` and `moqui-pass`, each Architecture: all, unless a component has native crates. Components with Rust crates are linked into the binary today, which a split package cannot do. Those need to be built into `moqui` itself, or wait for a plugin mechanism.
 
 ### 6.4 Privacy and downloads

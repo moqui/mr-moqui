@@ -77,7 +77,7 @@ fn tx_cache_speed() {
     std::fs::create_dir_all(&runtime).expect("runtime dir");
     let (cluster, driver) = speed::SpeedDb::start(&cluster_dir, 20);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     // Async work (the data feed's receive of each pending row, a chat message's indexing) runs on this thread after
     // each row, outside its time, so a row times only its own calls and its statements are only its own.
     let options = BootOptions {

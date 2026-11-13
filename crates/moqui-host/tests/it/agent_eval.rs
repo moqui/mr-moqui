@@ -162,7 +162,7 @@ fn tools_specs(dir: &std::path::Path) -> Vec<AgentSpecFile> {
 /// The committed recordings of the tools component pass with no model: every task of both specs, each a transcript;
 /// then the JSON tool mode set, whose tasks without a recording are skipped.
 fn replayed(factory: &Arc<ExecutionContextFactory>, out: &std::path::Path) {
-    let dir = repo().join("runtime/base-component/tools/test/agent");
+    let dir = repo().join("runtime/components/base/tools/test/agent");
     let specs = tools_specs(&dir);
     let mode = Mode::Replay {
         dir: dir.join("replay"),

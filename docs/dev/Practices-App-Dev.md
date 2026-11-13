@@ -5,7 +5,7 @@ and those that follow) over Mantle, and apps like them. It covers how the artifa
 that keep an app's code and screens good. The reference guides for each tool (entities, services, screens, forms, the
 facades) are separate; they are being ported from the Moqui Java documentation and extended.
 
-Most of these practices come from reviews of the Products app (`runtime/component/mr-boss/plan/impl-products.md`,
+Most of these practices come from reviews of the Products app (`runtime/components/addon/mr-boss/plan/impl-products.md`,
 section "R — Review" and findings F43–F46), of Accounting P0–P3 (`impl-accounting.md` "R — Review", F61 on) and of
 Accounting P4–P5 (`impl-accounting.md` "R2 — Review"),
 measured against the Projects app, which is the reference implementation of the screen archetypes. They cover code
@@ -22,9 +22,9 @@ Contents: [1 tools and artifacts](#1-tools-and-artifacts) · [2 references](#2-r
 
 | Layer | Repository and directory | What belongs there |
 | --- | --- | --- |
-| Framework | mr-moqui: `crates/*`, `runtime/base-component/{framework,webroot,tools}`, `runtime/dev-component/{example,dev-aide,template}` | The facades, the screen renderers (`framework/template/screen/Screen*.js`), the browser client (`webroot/screen/webroot/js/WebrootVue.qvt*.js`), the XSDs (`framework/xsd`). No business data model. |
-| Mantle | mr-mantle: `runtime/component/mr-mantle` | The business data model (entities, seed data) and the business services. It stands alone: no Mantle service, script, data file or spec names a BOSS group, service, screen or setting. It checks Moqui permissions itself (for example `PRODUCT_CATALOG_EDIT`, `PRICE_VIEW`). |
-| Apps | mr-boss: `runtime/component/mr-boss` | The apps: screens, the app's access check, screen context (options, names, capabilities), settings forms, app-specific services. |
+| Framework | mr-moqui: `crates/*`, `runtime/components/base/{framework,webroot,tools}`, `runtime/components/dev/{example,dev-aide,template}` | The facades, the screen renderers (`framework/template/screen/Screen*.js`), the browser client (`webroot/screen/webroot/js/WebrootVue.qvt*.js`), the XSDs (`framework/xsd`). No business data model. |
+| Mantle | mr-mantle: `runtime/components/addon/mr-mantle` | The business data model (entities, seed data) and the business services. It stands alone: no Mantle service, script, data file or spec names a BOSS group, service, screen or setting. It checks Moqui permissions itself (for example `PRODUCT_CATALOG_EDIT`, `PRICE_VIEW`). |
+| Apps | mr-boss: `runtime/components/addon/mr-boss` | The apps: screens, the app's access check, screen context (options, names, capabilities), settings forms, app-specific services. |
 
 Each component is its own git repository. Commit in each repository that a change touches, with its own message.
 
@@ -82,24 +82,24 @@ Each component is its own git repository. Commit in each repository that a chang
 
 ## 2. References
 
-- **Style guide:** `runtime/component/mr-boss/plan/style-guide.md`. The shell (§2), the screen archetypes (§3: landing,
+- **Style guide:** `runtime/components/addon/mr-boss/plan/style-guide.md`. The shell (§2), the screen archetypes (§3: landing,
   list, detail, 360, task, board, wizard, report, settings and more), the widget guide (§4), color and status display
   (§5), states and feedback (§6), devices and breakpoints (§7), and the checklist for a new XML element (§8.1).
-- **Archetype gallery:** `runtime/dev-component/example/screen/Gallery*.xml` and its `.qvue` files, at
+- **Archetype gallery:** `runtime/components/dev/example/screen/Gallery*.xml` and its `.qvue` files, at
   `/qapps/gallery` once signed in on a dev instance. One screen per archetype; its README lists them.
-- **Reference implementation:** the Projects app, `runtime/component/mr-boss/screen/Projects/`. For record headers
+- **Reference implementation:** the Projects app, `runtime/components/addon/mr-boss/screen/Projects/`. For record headers
   and actions see `Projects/Projects/ProjectDetail.xml` (the `m-record-header` block); for a landing see
   `Projects/Home.xml`.
 - **Design documents:** `plan/design-doc-guide.md` (what a design contains), `plan/design-crosscut.md` (shared
   screens, cross-app contracts, posting rules), and the per-app `design-*.md`, `impl-*.md` and `research-*.md`.
   `plan/initial-design.md` holds the decided app set.
-- **Products notes:** `runtime/component/mr-boss/docs/ProductsSharedScreens.md` (shared mounts and the shared
+- **Products notes:** `runtime/components/addon/mr-boss/docs/ProductsSharedScreens.md` (shared mounts and the shared
   context) and `ProductsImplementation.md`.
 - **Framework guides in `docs/`:** [Services](../logic/Services.md) (errors, transactions, probe calls), [Testing](../Build-Test.md#component-specs),
   [JS-Test-Client](JS-Test-Client.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
   deliberate differences listed in [Parity-Diffs](../../plans/Parity-Diffs.md)), [Native-Components](Native-Components.md),
   [Web-Scripts](../interfaces/Web-Scripts.md).
-- **Schemas:** `runtime/base-component/framework/xsd/xml-screen-3.xsd`, `xml-form-3.xsd`, `service-definition-3.xsd`,
+- **Schemas:** `runtime/components/base/framework/xsd/xml-screen-3.xsd`, `xml-form-3.xsd`, `service-definition-3.xsd`,
   `entity-definition-3.xsd`. Their documentation elements describe MR Moqui's behavior where it differs.
 - **Building:** [.agents/skills/building/SKILL.md](../../.agents/skills/building/SKILL.md), and the rules in
   [AGENTS.md](../../AGENTS.md) (failure tolerance, no Node dependency).
@@ -107,7 +107,7 @@ Each component is its own git repository. Commit in each repository that a chang
 ## 3. Where logic goes
 
 - **Use Mantle before adding to it.** Mantle was ported from Moqui Java's mantle-usl, much of it used in production
-  for years (`/moqui/runtime/component/mantle-usl` in a Java checkout is the original). Before writing a service, find
+  for years (`/moqui/runtime/components/addon/mantle-usl` in a Java checkout is the original). Before writing a service, find
   the one that already does it and use it, or extend it with a parameter: payments are created, changed and posted
   through `create#`/`update#Payment` and `post#Payment` (so their SECAs run), applied through the `apply#*` services,
   refunded through `create#RefundPayment`; gateway operations go through the `*#SinglePayment` services and their
@@ -266,7 +266,7 @@ settings index (and in an app that shows those screens, such as IronStone Admin)
 entities, read by `org.moqui.admin.ReadinessServices`
 ([JS-Framework-Services](JS-Framework-Services.md#administration-orgmoquiadmin); the rules a hand-made request meets
 are in [Attack-Surface](../security/Attack-Surface.md)). The fields are described in
-`runtime/base-component/framework/entity/ServerEntities.xml`; the framework's own rows are in
+`runtime/components/base/framework/entity/ServerEntities.xml`; the framework's own rows are in
 `framework/data/AdminConfigurationData.xml`.
 
 - **A readiness provider** (`moqui.server.ReadinessProvider`): a key, an owner, a title, a group, the permission a
@@ -280,7 +280,7 @@ are in [Attack-Surface](../security/Attack-Surface.md)). The fields are describe
   an organization's or a store's check: Health shows it, the System home does not.
 - **A place is a key, never a path.** A row's `fixRoute` and `fixId`, a check's own `fixRoute`, `fixId` and
   `fixParameters`, and a settings entry's `destinationRoute` name a route the application showing them resolves
-  ([Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)):
+  ([Mounting the administration screens](../../runtime/components/base/tools/README.md#mounting-the-administration-screens)):
   the framework's keys are in `tools/template/AdminMount.js`, an app's own are in its mount (mr-boss `Admin.js`
   `mountRoutes`). A key with no route where it is shown is no link.
 - **A refresh operation** (`moqui.server.RefreshOperation`): a key, the permission that runs it, the provider whose
@@ -359,7 +359,7 @@ References: [JS-Screen-Scripts](JS-Screen-Scripts.md) (actions, transitions and 
 
 An app shows a framework screen (System's administration screens, the Dashboards screens) under its own root instead
 of copying it, as IronStone Admin and Insights do. The two contracts are
-[Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)
+[Mounting the administration screens](../../runtime/components/base/tools/README.md#mounting-the-administration-screens)
 and [Mounting the report screens](../tools/Monitoring.md#mounting-the-report-screens); the record of the two moves,
 with the findings behind these rules, is [plans/archive/Admin-Screens-Down.md](../../plans/archive/Admin-Screens-Down.md).
 
@@ -481,7 +481,7 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - Use the `m-*` inputs and the shell's feedback (`moqui.notifyMessages`, a `$q.dialog` confirm) so it looks and
   behaves like the XML screens: one primary button at a time, a count in the confirmation of a bulk action, result
   boxes only when there are results.
-- The gallery's `Board.qvue`, `Calendar.qvue` and `QuickTask.qvue` (`runtime/dev-component/example/screen/Gallery/`)
+- The gallery's `Board.qvue`, `Calendar.qvue` and `QuickTask.qvue` (`runtime/components/dev/example/screen/Gallery/`)
   are the patterns.
 
 ## 7. Tests

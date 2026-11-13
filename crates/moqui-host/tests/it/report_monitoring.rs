@@ -173,11 +173,11 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
         &[],
         &[
             (
-                "component/report-fixture/component.xml",
+                "components/addon/report-fixture/component.xml",
                 "<component name=\"report-fixture\"/>",
             ),
             (
-                "component/report-fixture/service/report/fixture/PolicyServices.xml",
+                "components/addon/report-fixture/service/report/fixture/PolicyServices.xml",
                 policy_services,
             ),
         ],

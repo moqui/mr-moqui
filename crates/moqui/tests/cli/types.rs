@@ -26,7 +26,7 @@ fn types_writes_the_declarations_into_out() {
         .args(["types", "--out", &out.display().to_string()])
         .current_dir(repo())
         .env("MOQUI_RUNTIME", repo().join("runtime"))
-        .env("MOQUI_FRAMEWORK", repo().join("runtime/base-component/framework"))
+        .env("MOQUI_FRAMEWORK", repo().join("runtime/components/base/framework"))
         .output()
         .unwrap();
     let names: Vec<String> = std::fs::read_dir(&out)

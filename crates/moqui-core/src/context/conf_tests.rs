@@ -251,7 +251,7 @@ fn the_edge_conf_merges_each_child_by_its_key() {
 #[test]
 fn the_dev_conf_datasource_overrides_keep_the_default_jdbc_child() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-    let base = MNode::parse_file(root.join("base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
+    let base = MNode::parse_file(root.join("components/base/framework/conf/MoquiDefaultConf.xml")).unwrap();
     let over = MNode::parse_file(root.join("conf/MoquiDevConf.xml")).unwrap();
     let default_content = crate::entity::datasource::datasource_nodes(&base)
         .into_iter()

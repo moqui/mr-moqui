@@ -33,11 +33,11 @@ The code:
   - `targets.rs`: what a run may reach, and the limits;
   - `results.rs`, `compare.rs`: the result files, import and compare;
   - `server.rs`: the server samples and Monitor annotations.
-- Services: `runtime/base-component/framework/service/org/moqui/dev/LoadServices.xml`. Screens:
-  `runtime/base-component/tools/screen/Tools/Load.xml` and `Load/`.
-- Scripts: `runtime/base-component/tools/test/load/ServiceCall.load.js` (one service called again and again, what the
-  Java screen did), `runtime/base-component/tools/test/load/AgentApps.load.js` (the apps over SSH as an agent drives
-  them, each step an `agent-apps` command) and `runtime/component/mr-marble/test/load/OrderToCash.load.js` (a sales
+- Services: `runtime/components/base/framework/service/org/moqui/dev/LoadServices.xml`. Screens:
+  `runtime/components/base/tools/screen/Tools/Load.xml` and `Load/`.
+- Scripts: `runtime/components/base/tools/test/load/ServiceCall.load.js` (one service called again and again, what the
+  Java screen did), `runtime/components/base/tools/test/load/AgentApps.load.js` (the apps over SSH as an agent drives
+  them, each step an `agent-apps` command) and `runtime/components/addon/mr-marble/test/load/OrderToCash.load.js` (a sales
   order through the Marble ERP screens, on MR Moqui or a Java MarbleERP).
 
 ## Writing a script
@@ -137,7 +137,7 @@ on this machine or another.
 ./moq test-load mr-marble                                   # list the component's scripts and their params
 ./moq test-load mr-marble --script OrderToCash -p 8090 --param pdf=false --label "MR"
 moqui test-load mr-marble --script OrderToCash --users 50 --duration 300 --ramp-up 30 --out /tmp/otc
-moqui test-load runtime/component/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
+moqui test-load runtime/components/addon/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
 moqui test-load --compare /tmp/otc/java/result.json /tmp/otc/mr/result.json
 ```
 

@@ -232,13 +232,13 @@ fn agent_screen_sessions_hold_writes_sync_in_and_follow() {
         return;
     }
     let files = [
-        ("component/agentscreens/component.xml", COMPONENT),
-        ("component/agentscreens/screen/AgentScreens.xml", SCREEN),
-        ("component/agentscreens/screen/AgentScreens/Edit.xml", EDIT),
-        ("component/agentscreens/screen/AgentScreens/Other.xml", OTHER),
-        ("component/agentscreens/screen/AgentScreens/Decide.xml", DECIDE),
+        ("components/addon/agentscreens/component.xml", COMPONENT),
+        ("components/addon/agentscreens/screen/AgentScreens.xml", SCREEN),
+        ("components/addon/agentscreens/screen/AgentScreens/Edit.xml", EDIT),
+        ("components/addon/agentscreens/screen/AgentScreens/Other.xml", OTHER),
+        ("components/addon/agentscreens/screen/AgentScreens/Decide.xml", DECIDE),
         (
-            "component/agentscreens/service/agentscreens/AgentScreensServices.xml",
+            "components/addon/agentscreens/service/agentscreens/AgentScreensServices.xml",
             SERVICES,
         ),
     ];

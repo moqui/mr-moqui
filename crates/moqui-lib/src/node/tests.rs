@@ -188,7 +188,7 @@ fn merge_children_by_key_and_single_child() {
 
 #[test]
 fn component_version_attribute_is_not_expanded() {
-    let path = workspace_root().join("runtime/base-component/framework/component.xml");
+    let path = workspace_root().join("runtime/components/base/framework/component.xml");
     let root = MNode::parse_file(&path).unwrap();
     assert_eq!(root.attribute("name").as_deref(), Some("framework"));
     assert_eq!(root.attribute("version").as_deref(), Some("${moqui_version}"));
@@ -218,7 +218,7 @@ fn corpus_parses_and_catalog_doctype_is_rejected() {
 #[test]
 fn dev_conf_overlay_changes_the_sections_it_names() {
     let root = workspace_root();
-    let base = MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
+    let base = MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).unwrap();
     let over = MNode::parse_file(root.join("runtime/conf/MoquiDevConf.xml")).unwrap();
     merge_dev_conf(&base, &over);
 
@@ -253,7 +253,7 @@ fn dev_conf_overlay_changes_the_sections_it_names() {
 
 #[test]
 fn mantle_udm_parses_when_the_sibling_tree_is_present() {
-    let path = workspace_root().join("../moqui/runtime/component/mantle-udm");
+    let path = workspace_root().join("../moqui/runtime/components/addon/mantle-udm");
     if !path.is_dir() {
         eprintln!("skipping: the Java tree {} is not present", path.display());
         return;
@@ -309,7 +309,7 @@ fn collect_xml(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.ends_with("dev-component/template") {
+            if path.ends_with("components/dev/template") {
                 continue;
             }
             collect_xml(&path, out);

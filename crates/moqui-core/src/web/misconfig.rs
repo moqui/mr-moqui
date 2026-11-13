@@ -120,7 +120,7 @@ fn default_conf_declares_the_hmac_replay_cache_distributed() {
 fn demo_data_has_the_all_screens_tarpit_row() {
     let path = crate::testing::framework_dir()
         .parent()
-        .expect("base-component")
+        .expect("components/base")
         .join("webroot/data/WebrootSecurityDemoData.xml");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
     assert!(text.contains("artifactGroupId=\"ALL_SCREENS\""), "{}", path.display());

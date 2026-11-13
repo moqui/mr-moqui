@@ -32,6 +32,9 @@ use crate::common::{
     exchange, http_request, merge_cookies, session_token, sign_in, start_with_conf_files, start_with_conf_properties,
 };
 
+/// A Java Moqui checkout's add-on component directory (`context::layout::JAVA_DIRS`).
+const JAVA_COMPONENT: &str = moqui_core::context::layout::JAVA_DIRS[2];
+
 const CONF: &str = r#"<llm-facade><mcp server-enabled="true" approval-wait="2" tools-ttl-ms="60000"/></llm-facade>
     <screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
         <subscreens-item name="mcpscreens" menu-title="MCP Screens" location="component://mcpscreens/screen/McpScreens.xml"/>
@@ -40,16 +43,16 @@ const CONF: &str = r#"<llm-facade><mcp server-enabled="true" approval-wait="2" t
 /// A component with one form that saves an `EnumerationType`, for `screen` writes through MCP.
 const FILES: [(&str, &str); 3] = [
     (
-        "component/mcpscreens/component.xml",
+        "components/addon/mcpscreens/component.xml",
         r#"<component name="mcpscreens"/>"#,
     ),
     (
-        "component/mcpscreens/screen/McpScreens.xml",
+        "components/addon/mcpscreens/screen/McpScreens.xml",
         r#"<screen require-authentication="true" default-menu-title="MCP Screens">
     <subscreens default-item="Edit"/><widgets><subscreens-active/></widgets></screen>"#,
     ),
     (
-        "component/mcpscreens/screen/McpScreens/Edit.xml",
+        "components/addon/mcpscreens/screen/McpScreens/Edit.xml",
         r#"<screen require-authentication="true" default-menu-title="Edit">
     <transition name="updateEnumType"><service-call name="update#moqui.basic.EnumerationType"/>
         <default-response url="."/></transition>
@@ -763,14 +766,14 @@ fn the_dev_tools_over_mcp() {
     if !crate::common::own_process() {
         return;
     }
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"<moqui.security.UserGroupMember userGroupId="DEV_AIDE_USERS" userId="MCP_ANN" fromDate="1265184000000"/>
 </entity-facade-xml>"#,
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     // the dev-aide's seed records inside the test's own data file
@@ -785,7 +788,7 @@ fn the_dev_tools_over_mcp() {
         CONF,
         &[("instance_purpose", "dev")],
         &FILES,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();
@@ -866,7 +869,7 @@ fn the_dev_tools_over_mcp() {
         std::env::remove_var("MOQUI_LOGIN_KEY");
         let file = std::fs::canonicalize(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../runtime/dev-component/example/entity/ExampleEntities.xml"
+            "/../../runtime/components/dev/example/entity/ExampleEntities.xml"
         ))
         .unwrap();
         let text = std::fs::read_to_string(&file).unwrap().replacen(
@@ -907,11 +910,11 @@ fn java_checkout_at(dir: &std::path::Path) {
         r#"<entities><entity entity-name="JavaOnlyFact" package="moqui.olap"><field name="factId" type="id" is-pk="true"/></entity></entities>"#,
     );
     write(
-        "runtime/component/fp-core/component.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/component.xml"),
         r#"<component name="fp-core"/>"#,
     );
     write(
-        "runtime/component/fp-core/entity/PicklistEntities.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/entity/PicklistEntities.xml"),
         r#"<entities>
     <entity entity-name="PicklistBatch" package="fp.picklist">
         <field name="batchId" type="id" is-pk="true"/><field name="statusId" type="id"/>
@@ -922,7 +925,7 @@ fn java_checkout_at(dir: &std::path::Path) {
 </entities>"#,
     );
     write(
-        "runtime/component/fp-core/service/fp/BatchServices.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/service/fp/BatchServices.xml"),
         r#"<services>
     <service verb="close" noun="Batch">
         <in-parameters><parameter name="batchId" required="true"/></in-parameters>
@@ -932,7 +935,7 @@ fn java_checkout_at(dir: &std::path::Path) {
 </services>"#,
     );
     write(
-        "runtime/component/fp-core/screen/Batch/BatchDetails.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/screen/Batch/BatchDetails.xml"),
         &batch_screen("update#fp.picklist.PicklistBatch"),
     );
 }
@@ -962,7 +965,9 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     java_checkout_at(&dir);
     let dir = std::fs::canonicalize(&dir).unwrap();
     let project = dir.display().to_string();
-    let screen = dir.join("runtime/component/fp-core/screen/Batch/BatchDetails.xml");
+    let screen = dir.join(&format!(
+        "runtime/{JAVA_COMPONENT}/fp-core/screen/Batch/BatchDetails.xml"
+    ));
     let answer = |arguments: Json| -> Json {
         let result = ann.call("artifact", arguments, json!({}));
         serde_json::from_str(&text(&result)).unwrap_or_else(|_| panic!("{result}"))
@@ -1085,7 +1090,7 @@ fn another_project(ann: &Caller, address: SocketAddr) {
         let found = remote.find("PicklistBatch", &["entity".to_string()], 5);
         assert_eq!(
             found[0].path,
-            dir.join("runtime/component/fp-core/entity/PicklistEntities.xml"),
+            dir.join(&format!("runtime/{JAVA_COMPONENT}/fp-core/entity/PicklistEntities.xml")),
             "{found:?}"
         );
         // --java goes to the server too

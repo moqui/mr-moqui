@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn framework_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 struct FakeDriver;

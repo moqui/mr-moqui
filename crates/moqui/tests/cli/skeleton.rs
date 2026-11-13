@@ -180,11 +180,13 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     assert!(load.status.success(), "{load_log}");
     assert!(load_log.contains("wrote a skeleton runtime of"), "{load_log}");
     assert!(load_log.contains("match the ones built into this binary"), "{load_log}");
-    assert!(runtime.join("base-component/framework/component.xml").is_file());
-    assert!(runtime.join("base-component/tools/service/moqui.rest.xml").is_file());
+    assert!(runtime.join("components/base/framework/component.xml").is_file());
+    assert!(runtime.join("components/base/tools/service/moqui.rest.xml").is_file());
     assert!(runtime
-        .join("base-component/webroot/screen/webroot/qapps.xml")
+        .join("components/base/webroot/screen/webroot/qapps.xml")
         .is_file());
+    // only the sets the manifest lists load, so the skeleton writes it (plans/Components-Dir.md)
+    assert!(runtime.join("components/components.xml").is_file());
 
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let mut child = moqui(&scratch.0)

@@ -105,10 +105,11 @@ else
 fi
 # The runtime's component sets, relative to the runtime, in load order (plans/Components-Dir.md; the Rust side is
 # crates/moqui-core/src/context/layout.rs). Each task names a set by these, so a change of layout is made here.
-BASE_SET=base-component
-ADDON_SET=component
-DEV_SET=dev-component
-COMPONENT_SETS=("$BASE_SET" "$ADDON_SET" "$DEV_SET")
+BASE_SET=components/base
+ADDON_SET=components/addon
+DEV_SET=components/dev
+TEST_SET=components/test
+COMPONENT_SETS=("$BASE_SET" "$ADDON_SET" "$DEV_SET" "$TEST_SET")
 if [ -n "${MOQUI_FRAMEWORK:-}" ]; then
     MOQUI_FRAMEWORK=$(abs_path "$MOQUI_FRAMEWORK")
     export MOQUI_FRAMEWORK
@@ -140,8 +141,8 @@ load-production|Run|[types] [name=value] [opts]|Load data with the production co
 test|Run|[component...] [test opts]|Run component tests (moqui test) with the dev conf
 test-client|Run|[component...] [-p N] [opts]|Run component client tests (moqui test-client) against a running server
 test-load|Run|[component] [--script Name] [-p N] [opts]|Run a component load script (moqui test-load) against a running server
-test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/component
-test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of base-component and dev-component
+test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/components/addon
+test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of components/base and components/dev
 test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps
 accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (test/acceptance/) of the components, or of all
 accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of test/acceptance/ and the Rust opt-in and ignored tests
@@ -161,9 +162,9 @@ git|Git|<git args...>|Run a git command in the root repo and each component repo
 git-status|Git|[-s]|Branch, tracking, ahead/behind, and changes in each repo
 git-pull|Git|[git pull args...]|Pull each repo and list the new commits
 component-get|Components|[name...] [-t type] [-r repo]|Get components or component-sets and the components they depend on
-component-depends|Components|[-t type] [-r repo]|Get missing depends-on components for runtime/component
+component-depends|Components|[-t type] [-r repo]|Get missing depends-on components for runtime/components/addon
 component-create|Components|<name> [opts]|Create a component from the component template
-component-zip|Components|[name...]|Zip components in runtime/component
+component-zip|Components|[name...]|Zip components in runtime/components/addon
 archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml (mr-moqui-YYYYMMDD.zip)
 desktop|Package|[dev or build] [--release] [cargo args...]|Run or bundle the desktop app: the node in a Tauri window (crates/moqui-desktop)
 android|Package|[emulator, init, dev or build] [--release] [--window] [args...]|Run or build the Android app, or start its emulator (crates/moqui-mobile)
@@ -610,10 +611,10 @@ dev tools by default, or Lite, Debug or Enterprise. Each has its own cargo profi
 Other words go to cargo as they are. The tasks that run moqui (run, load, test, save-db, ...) build
 the binary they need first, so it is never stale; --nobuild skips that when the binary is there.
 
-A component in runtime/component with a Cargo.toml beside its component.xml is a Rust crate: the
+A component in runtime/components/addon with a Cargo.toml beside its component.xml is a Rust crate: the
 build generates target/moqui-app, a crate that links those crates with the framework, and builds
-it to the same binary path. See runtime/component/README.md. A crate of a dev component in
-runtime/dev-component is linked only into the packages with the dev tools (Maximal and Debug).
+it to the same binary path. See runtime/components/addon/README.md. A crate of a dev component in
+runtime/components/dev is linked only into the packages with the dev tools (Maximal and Debug).
   ./moq build
   ./moq build --lite
   ./moq build --enterprise -- --timings
@@ -738,20 +739,20 @@ EOF
 help_test_framework() {
     cat <<EOF
 Runs the framework's regression tests in turn, each whatever the ones before it did, then lists which
-passed and exits 1 when any failed. For work on the framework: crates/, runtime/base-component,
-runtime/dev-component, moq or the scripts.
+passed and exits 1 when any failed. For work on the framework: crates/, runtime/components/base,
+runtime/components/dev, moq or the scripts.
   cargo test --workspace            the unit and integration tests of every crate
   scripts/moq-test.sh               the tests of this script
   moqui test <components> --workers 4
-                                    the specs of base-component and dev-component (test/*.spec.js),
+                                    the specs of components/base and components/dev (test/*.spec.js),
                                     on 4 workers (MOQ_TEST_WORKERS)
   moqui test demo                   the demo component's specs, with -D demo_disabled=false (it is off
                                     by default)
   moqui test-client webroot --offline
-  moqui test-client runtime/dev-component/dev-aide --offline
+  moqui test-client runtime/components/dev/dev-aide --offline
                                     the offline client specs: pages at https://moqui.test, no server
   moqui test-client --serve <components>
-                                    the client specs of base-component and dev-component whose
+                                    the client specs of components/base and components/dev whose
                                     test/client/suite.js declares a server, each against it
 None of them runs an acceptance test (docs/Build-Test.md#the-two-suites). The Chromium is the one PDF
 and moqui test-client use: moqui_chromium_path, else runtime/chromium (./moq chromium-download), else an
@@ -767,16 +768,16 @@ EOF
 
 help_test_apps() {
     cat <<EOF
-Runs the application tests, the regression suite of the components under runtime/component, then lists
+Runs the application tests, the regression suite of the components under runtime/components/addon, then lists
 which passed and exits 1 when any failed. The command for application work, before a commit:
   moqui test <components> --workers 4
                                     the specs (test/*.spec.js) of each component under
-                                    runtime/component that has them, on 4 workers
+                                    runtime/components/addon that has them, on 4 workers
                                     (MOQ_TEST_WORKERS)
   moqui test-client --serve <components>
                                     their client specs, each against the server its
                                     test/client/suite.js declares
-No cargo build or test, no moq-test.sh, and no base-component or dev-component spec. The binary is
+No cargo build or test, no moq-test.sh, and no components/base or components/dev spec. The binary is
 built only when it is missing (as --nobuild).
 
 Options:
@@ -864,7 +865,7 @@ Loads data into the configured database with the dev conf. With no data
 types it loads all of them, like gradle load.
   ./moq load
   ./moq load seed seed-initial install
-  ./moq load -l runtime/component/mr-mantle/data/SomeData.xml
+  ./moq load -l runtime/components/addon/mr-mantle/data/SomeData.xml
   ./moq load seed components=mr-mantle
 
 $LOAD_HELP
@@ -1101,7 +1102,7 @@ EOF
 help_git() {
     cat <<'EOF'
 Runs git with these arguments in the root repo, runtime/ when it is its own repo, and each
-repo in runtime/base-component and runtime/component, under a header for each. It keeps going
+repo in runtime/components/base and runtime/components/addon, under a header for each. It keeps going
 when one fails, and exits non-zero if any failed. The Gradle git tasks become:
   ./moq git checkout mr-moqui             gitCheckoutAll -Pbranch=mr-moqui
   ./moq git checkout -b new-branch        gitCheckoutAll -Pbranch=new-branch -Pcreate=true
@@ -1141,7 +1142,7 @@ COMPONENT_REPO_HELP='  -r, --repo REPO      Repository from myaddons.xml or addo
 
 help_component_get() {
     cat <<EOF
-Gets each named component into runtime/component from the location in myaddons.xml or
+Gets each named component into runtime/components/addon from the location in myaddons.xml or
 addons.xml, then gets any component it depends on (component.xml depends-on) that is not
 there yet. A component already present is not changed, but its dependencies are checked.
 A name that is a component-set, and not a component, gets the components of the set,
@@ -1152,9 +1153,9 @@ root element.
   ./moq component-get apps
 
 Options:
-      --dev            Get the named components into runtime/dev-component, the components that load
+      --dev            Get the named components into runtime/components/dev, the components that load
                        only when instance_purpose is dev; what they depend on still goes in
-                       runtime/component
+                       runtime/components/addon
 $COMPONENT_TYPE_HELP
 $COMPONENT_REPO_HELP
 EOF
@@ -1162,7 +1163,7 @@ EOF
 
 help_component_depends() {
     cat <<EOF
-Checks every component in runtime/component and gets the depends-on components that are missing.
+Checks every component in runtime/components/addon and gets the depends-on components that are missing.
 
 Options:
 $COMPONENT_TYPE_HELP
@@ -1172,7 +1173,7 @@ EOF
 
 help_component_create() {
     cat <<EOF
-Creates runtime/component/<name> from the component template, runtime/dev-component/template:
+Creates runtime/components/addon/<name> from the component template, runtime/components/dev/template:
 copies it, fills in the placeholders in its file names and contents, and takes out the
 template's disabled="true". For the name my-shop the placeholders are @component@ my-shop,
 @Title@ My Shop, @Class@ MyShop, @package@ myshop and @ID@ MY_SHOP. A name starts with a letter
@@ -1181,8 +1182,8 @@ and has letters, digits, '-' and '_'. The new component loads at the next start.
   ./moq component-create my-api --rest --git-remote git@github.com:me/my-api.git --myaddons me
 
 Options:
-      --dev            Create it in runtime/dev-component, loaded only when instance_purpose is dev
-      --from NAME      Another template, in runtime/dev-component or runtime/component (a component.xml
+      --dev            Create it in runtime/components/dev, loaded only when instance_purpose is dev
+      --from NAME      Another template, in runtime/components/dev or runtime/components/addon (a component.xml
                        named @component@)
       --rest           REST API only: no screen/, MoquiConf.xml, or screen security data and spec
       --screens        Screens only: no REST API (service/<name>.rest.xml) or its security data and spec
@@ -1194,8 +1195,8 @@ EOF
 
 help_component_zip() {
     cat <<'EOF'
-Writes runtime/component/<name>-<version>.zip for each named component, or for every directory
-in runtime/component with a component.xml. It leaves out .git, build/, src/, librepo/, and
+Writes runtime/components/addon/<name>-<version>.zip for each named component, or for every directory
+in runtime/components/addon with a component.xml. It leaves out .git, build/, src/, librepo/, and
 build.gradle. Needs zip.
 EOF
 }
@@ -1210,10 +1211,10 @@ without .zip or .tgz. That directory is a runtime directory with the binary in i
                   conf/MoquiProductionConf.xml, or the --conf file
   README.txt      how to run it, the package, and what went in
   LICENSE.md
-  and all of runtime/ (.env, base-component, conf, db, ...) except log/, tmp/, save/ and
+  and all of runtime/ (.env, components, conf, db, ...) except log/, tmp/, save/ and
   install/, with Chromium, OpenSearch and the embedded database when they are there
 Started in that directory (cd <dir> && ./moqui), the binary uses it as the runtime, since it
-has base-component/, and merges the MoquiConf.xml there; the runtime is found from the working
+has components/base/, and merges the MoquiConf.xml there; the runtime is found from the working
 directory, never from the binary. On its first start it unpacks the embedded Postgres into
 <dir>/install.
 
@@ -1427,7 +1428,7 @@ binary_path() {
 }
 
 # cargo build for a package ($1: lite, debug, release, or enterprise), with any more cargo arguments after it. With
-# component crates in runtime/component (a Cargo.toml beside a component.xml) the binary is the generated crate in
+# component crates in runtime/components/addon (a Cargo.toml beside a component.xml) the binary is the generated crate in
 # target/moqui-app, which links them with the framework; without, it is crates/moqui. Either way it lands at
 # binary_path.
 build_binary() {
@@ -1441,7 +1442,7 @@ build_binary() {
     local -a addons
     local addon
     while IFS= read -r addon; do addons+=("$addon"); done \
-        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/ecomponent")
+        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/$TEST_SET")
     # A dev component crate other than the framework's own (which crates/moqui links) needs the generated crate too.
     while IFS= read -r addon; do
         framework_dev_crate "$addon" || { addons+=("$addon"); }
@@ -1515,8 +1516,8 @@ write_if_changed() {
     printf '%s\n' "$2" >"$1" || die "could not write $1"
 }
 
-# Generate the crate in $1 that links the component crates in $2... with the framework: the base-component crates that
-# crates/moqui links, then the add-on ones. The crates of runtime/dev-component (in $2... too, or the framework's own)
+# Generate the crate in $1 that links the component crates in $2... with the framework: the components/base crates that
+# crates/moqui links, then the add-on ones. The crates of runtime/components/dev (in $2... too, or the framework's own)
 # are optional dependencies that the devtools feature turns on. Its Cargo.lock starts from the repository's, so the
 # reviewed versions stay and only the component crates' own dependencies are added.
 write_app_crate() {
@@ -1735,7 +1736,7 @@ task_desktop() {
     local addon
     addons=()
     while IFS= read -r addon; do addons+=("$addon"); done \
-        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/ecomponent")
+        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/$TEST_SET")
     while IFS= read -r addon; do
         framework_dev_crate "$addon" || { addons+=("$addon"); }
     done < <(component_crate_dirs "$ROOT/runtime/$DEV_SET")
@@ -2215,8 +2216,8 @@ stage_desktop_runtime() {
     local stage=$1 name
     need_tool rsync
     run_cmd mkdir -p "$stage" || die "could not create $(rel "$stage")"
-    # dev-component: the Dev AIDE and the example, which load only on a dev instance (the tray's Developer tools)
-    for name in base-component component ecomponent dev-component conf; do
+    # components/dev: the Dev AIDE and the example, which load only on a dev instance (the tray's Developer tools)
+    for name in components conf; do
         if [ -d "$RUNTIME_DIR/$name" ]; then
             run_cmd rsync -a --delete --exclude .git --exclude target --exclude '.DS_Store' \
                 "$RUNTIME_DIR/$name/" "$stage/$name/" || die "could not stage runtime/$name"
@@ -2408,8 +2409,8 @@ parse_suite_opts() {
     done
 }
 
-# The framework's suites: cargo test, the tests of this script, and the specs and client specs of base-component and
-# dev-component.
+# The framework's suites: cargo test, the tests of this script, and the specs and client specs of components/base and
+# components/dev.
 framework_suites() {
     local name
     local -a server client
@@ -2438,7 +2439,7 @@ framework_suites() {
     fi
 }
 
-# The applications' suites: the specs and client specs of the components under runtime/component. No cargo; the
+# The applications' suites: the specs and client specs of the components under runtime/components/addon. No cargo; the
 # binary is built only when it is missing.
 apps_suites() {
     local name
@@ -2447,12 +2448,12 @@ apps_suites() {
     client=()
     while IFS= read -r name; do
         server+=("$name")
-    done < <(spec_components test "$ADDON_SET")
+    done < <(spec_components test "$ADDON_SET" "$TEST_SET")
     while IFS= read -r name; do
         client+=("$name")
-    done < <(served_components test/client "$ADDON_SET")
+    done < <(served_components test/client "$ADDON_SET" "$TEST_SET")
     if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ]; then
-        info "No application component under runtime/component has specs."
+        info "No application component under runtime/components/addon has specs."
         return 0
     fi
     if [ ${#server[@]} -gt 0 ]; then
@@ -3763,7 +3764,7 @@ task_reload_save() {
 
 # ========== git ==========
 
-# The root repo, runtime/ when it is its own repo, then component repos (base-component, component and dev-component),
+# The root repo, runtime/ when it is its own repo, then component repos (components/base, component and components/dev),
 # one per line.
 git_repos() {
     local dir
@@ -4114,7 +4115,7 @@ component_name_of() {
     printf '%s\n' "${name:-$(basename "$1")}"
 }
 
-# The directory in runtime/component of the component a depends-on of $1 means: the directory of that name, else the
+# The directory in runtime/components/addon of the component a depends-on of $1 means: the directory of that name, else the
 # one whose component.xml has that name.
 component_dir_named() {
     local dir
@@ -4131,8 +4132,8 @@ component_dir_named() {
     return 1
 }
 
-# $1 the component, $2 the location type, $3 the component directory it goes in (runtime/component unless --dev; the
-# components it depends on always go in runtime/component).
+# $1 the component, $2 the location type, $3 the component directory it goes in (runtime/components/addon unless --dev; the
+# components it depends on always go in runtime/components/addon).
 component_get_one() {
     local name type=$2 element target base=${3:-$RUNTIME_DIR/$ADDON_SET}
     name=$(addons_name_for "$1")
@@ -4181,8 +4182,8 @@ components_checked_summary() {
     [ -z "$list" ] || info "Checked: $list"
 }
 
-# Sets REPOSITORY and LOCATION_TYPE from -r and -t, COMPONENT_BASE from --dev (runtime/dev-component, else
-# runtime/component), and COMPONENT_ARGS from the other words.
+# Sets REPOSITORY and LOCATION_TYPE from -r and -t, COMPONENT_BASE from --dev (runtime/components/dev, else
+# runtime/components/addon), and COMPONENT_ARGS from the other words.
 parse_component_args() {
     LOCATION_TYPE=$(default_location_type)
     REPOSITORY=
@@ -4277,7 +4278,7 @@ task_component_depends() {
     components_checked_summary
 }
 
-# The forms of the component name $1 that the template placeholders stand for (runtime/dev-component/README.md):
+# The forms of the component name $1 that the template placeholders stand for (runtime/components/dev/README.md):
 # @component@ my-shop, @Title@ My Shop, @Class@ MyShop, @package@ myshop, @ID@ MY_SHOP. The Dev AIDE makes the same
 # (dev-aide src/template.rs).
 name_title() {
@@ -4304,7 +4305,7 @@ template_name() {
     return 0
 }
 
-# The directory of the template $1: one in runtime/dev-component or runtime/component whose component.xml is named
+# The directory of the template $1: one in runtime/components/dev or runtime/components/addon whose component.xml is named
 # @component@.
 component_template() {
     local dir
@@ -4370,7 +4371,7 @@ task_component_create() {
     template_name "$name" || die "component name '$name' starts with a letter and has letters, digits, '-' and '_'"
     [ -z "$remote" ] || [ -z "$no_git" ] || die "--git-remote and --no-git do not go together"
     template=$(component_template "$from") \
-        || die "no template $from in runtime/dev-component or runtime/component (a component.xml named @component@)"
+        || die "no template $from in runtime/components/dev or runtime/components/addon (a component.xml named @component@)"
     target=$component_base/$name
     [ ! -e "$target" ] || die "$(rel "$target") already exists"
     # The template's contents, so a template reached through a link is copied and not the link.
@@ -4662,7 +4663,7 @@ task_archive() {
         entries+=("$name/$base")
     done
     excludes=("$name/db/install" "$name/db/install/*" "$name/opensearch/logs/*" "$name/opensearch/pid"
-        "*/postmaster.pid" "*/.git" "*/.git/*" "$name/$ADDON_SET/*/target/*" "$name/ecomponent/*/target/*" "*/.venv/*"
+        "*/postmaster.pid" "*/.git" "*/.git/*" "$name/components/*/*/target/*" "*/.venv/*"
         "*/__pycache__/*" "*/.DS_Store" "*~")
     [ -z "$no_data" ] || excludes+=("$name/opensearch/data/*")
 
@@ -4886,8 +4887,8 @@ save_names() {
 }
 
 # Names (from component.xml) of the components that have test/*.spec.js files, in test or a subdirectory of it.
-# Components with server specs, in runtime/base-component, runtime/component and runtime/dev-component; not a template,
-# whose name is a placeholder (runtime/dev-component/template).
+# Components with server specs, in runtime/components/base, runtime/components/addon and runtime/components/dev; not a template,
+# whose name is a placeholder (runtime/components/dev/template).
 test_components() {
     spec_components test "${COMPONENT_SETS[@]}"
 }
@@ -4954,7 +4955,7 @@ git_refs() {
     git -C "$ROOT" for-each-ref --format='%(refname:short)' refs/heads refs/tags refs/remotes 2>/dev/null
 }
 
-# Components with client specs, in runtime/base-component, runtime/component and runtime/dev-component.
+# Components with client specs, in runtime/components/base, runtime/components/addon and runtime/components/dev.
 client_test_components() {
     spec_components test/client "${COMPONENT_SETS[@]}"
 }

@@ -33,12 +33,12 @@ edge = ["moqui-host/edge"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Maximal (the `./moq build` default) and Debug packages: the framework's file watcher and the
-# dev-component crates kept in runtime/dev-component.
+# components/dev crates kept in runtime/components/dev.
 devtools = ["moqui-host/devtools", "dep:dev-aide", "dep:example"]
 
 [dependencies]
 moqui-host = { workspace = true }
-# The framework's dev components in runtime/dev-component, in the packages with the dev tools; each adds nothing unless
+# The framework's dev components in runtime/components/dev, in the packages with the dev tools; each adds nothing unless
 # its component loads.
 dev-aide = { workspace = true, optional = true }
 example = { workspace = true, optional = true }

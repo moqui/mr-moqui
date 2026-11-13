@@ -120,7 +120,7 @@ fn open_empty() -> EntityFacade {
 }
 
 fn framework_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 struct DirGuard(PathBuf);

@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The component template (`runtime/dev-component/template`, its README): a component that `./moq component-create`
+//! The component template (`runtime/components/dev/template`, its README): a component that `./moq component-create`
 //! makes from it passes its own specs under `moqui test`, whole (its screens in qvt and tui, its services, its REST API)
-//! and REST API only. The template itself, beside them in `dev-component`, never loads.
+//! and REST API only. The template itself, beside them in `components/dev`, never loads.
 
 use std::path::Path;
 use std::process::Command;
@@ -40,10 +40,10 @@ fn a_component_from_the_template_passes_its_specs() {
     let Some(runtime) = test_runtime("template", &[]) else {
         return;
     };
-    std::fs::create_dir_all(runtime.dir.join("dev-component")).unwrap();
+    std::fs::create_dir_all(runtime.dir.join("components/dev")).unwrap();
     std::os::unix::fs::symlink(
-        repo().join("runtime/dev-component/template"),
-        runtime.dir.join("dev-component/template"),
+        repo().join("runtime/components/dev/template"),
+        runtime.dir.join("components/dev/template"),
     )
     .unwrap();
     component_create(&runtime.dir, &["tpl-shop"]);

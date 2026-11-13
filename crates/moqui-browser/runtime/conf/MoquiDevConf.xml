@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Browser runtime conf, merged over runtime/base-component/framework/conf/MoquiDefaultConf.xml (plans/archive/Wasm.md).
+<!-- Browser runtime conf, merged over runtime/components/base/framework/conf/MoquiDefaultConf.xml (plans/archive/Wasm.md).
      The entity facade is opened by moqui-browser on the sqlite profile; no datasource is configured here. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">

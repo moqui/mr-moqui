@@ -329,7 +329,7 @@ fn a_new_changeme_secret_is_generated_on_apply() {
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("conf-reload-secret");
     let factory =
-        ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/base-component/framework"))
+        ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/components/base/framework"))
             .unwrap();
     let name = format!("conf_reload_new_pass_{}", std::process::id());
     let disk = disk(&factory);
@@ -363,7 +363,7 @@ fn a_new_changeme_secret_is_generated_on_apply() {
 fn every_top_level_element_of_the_default_conf_has_a_unit() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"
+        "/../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"
     );
     let conf = MNode::parse_file(path).unwrap();
     for node in conf.children() {

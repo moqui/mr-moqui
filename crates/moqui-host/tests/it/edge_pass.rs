@@ -140,8 +140,14 @@ fn checksum(text: &str) -> i64 {
 
 fn files<'a>(big: &'a str, extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
     let mut files = vec![
-        ("component/passtest/component.xml", r#"<component name="passtest"/>"#),
-        ("component/passtest/service/passtest/PassTestServices.xml", SERVICES),
+        (
+            "components/addon/passtest/component.xml",
+            r#"<component name="passtest"/>"#,
+        ),
+        (
+            "components/addon/passtest/service/passtest/PassTestServices.xml",
+            SERVICES,
+        ),
         ("pass-test/big.bin", big),
     ];
     files.extend_from_slice(extra);

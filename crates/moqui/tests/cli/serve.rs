@@ -35,7 +35,7 @@ fn client_command(runtime: &TestRuntime, args: &[&str]) -> Command {
         .args(args)
         .current_dir(repo())
         .env("MOQUI_RUNTIME", &runtime.dir)
-        .env("MOQUI_FRAMEWORK", repo().join("runtime/base-component/framework"))
+        .env("MOQUI_FRAMEWORK", repo().join("runtime/components/base/framework"))
         .env("MOQUI_INSTALL", repo().join("runtime/install"))
         .env_remove("MOQUI_TEST_SERVER")
         .env_remove("MOQUI_CONF");

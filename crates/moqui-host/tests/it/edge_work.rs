@@ -100,10 +100,10 @@ const HANDLER_SERVICES: &str = r#"<services>
 
 fn component_files<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
     let mut files = vec![
-        ("component/edgetest/component.xml", COMPONENT),
-        ("component/edgetest/entity/EdgeTestEntities.xml", ENTITIES),
+        ("components/addon/edgetest/component.xml", COMPONENT),
+        ("components/addon/edgetest/entity/EdgeTestEntities.xml", ENTITIES),
         (
-            "component/edgetest/service/edgetest/EdgeTestServices.xml",
+            "components/addon/edgetest/service/edgetest/EdgeTestServices.xml",
             HANDLER_SERVICES,
         ),
     ];

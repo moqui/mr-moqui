@@ -4,9 +4,9 @@ Named HTTP proofs for this repository. They record what is tested. They are not 
 
 - **Where:** [Attack-Surface.md](Attack-Surface.md)
 - **What:** [OWASP Top 10:2025](https://owasp.org/Top10/) (plus WSTG / ASVS L1 ideas, and API Top 10 for `/rest`)
-- **Public tests** are the client specs under `runtime/base-component/framework/test/client/`. Each feature name starts with the OWASP id, and a comment names the Moqui Java pytest it ports.
+- **Public tests** are the client specs under `runtime/components/base/framework/test/client/`. Each feature name starts with the OWASP id, and a comment names the Moqui Java pytest it ports.
 
-The line-by-line map of all 143 Java HTTP tests is [Java-Port-Catalog.md](../../runtime/base-component/framework/test/client/Java-Port-Catalog.md): 125 ported, 0 pending, 18 not applicable. This file is the control catalog and the notes on what a green run does and does not prove. Application components (Mantle, Marble, IronStone) are out of scope, as are the Java Selenium smokes and the A2A interop script.
+The line-by-line map of all 143 Java HTTP tests is [Java-Port-Catalog.md](../../runtime/components/base/framework/test/client/Java-Port-Catalog.md): 125 ported, 0 pending, 18 not applicable. This file is the control catalog and the notes on what a green run does and does not prove. Application components (Mantle, Marble, IronStone) are out of scope, as are the Java Selenium smokes and the A2A interop script.
 
 Java's Spock suite (`Security*.groovy`) was not ported. A row below that names only a Spock class is not a claim that a Rust unit test covers it.
 
@@ -20,7 +20,7 @@ Java's Spock suite (`Security*.groovy`) was not ported. A row below that names o
 
 `SecurityCors` fails its spec when the server allows every origin (the dev conf, `webapp_allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
 
-Fixture users come from `runtime/base-component/framework/test/ClientFixtures.spec.js`. They are not demo seed. `sec.ip.v4`, `sec.ip.loop`, and `sec.mfa.totp` are rows only. Against a server `--serve` did not start:
+Fixture users come from `runtime/components/base/framework/test/ClientFixtures.spec.js`. They are not demo seed. `sec.ip.v4`, `sec.ip.loop`, and `sec.mfa.totp` are rows only. Against a server `--serve` did not start:
 
 ```sh
 moqui test framework --spec ClientFixtures --db existing

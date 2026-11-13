@@ -8,7 +8,7 @@ built.
 
 ## The document
 
-`runtime/base-component/framework/docs/Constitution.json` is the shipped default: English, Spanish and Simplified
+`runtime/components/base/framework/docs/Constitution.json` is the shipped default: English, Spanish and Simplified
 Chinese, rules C01 to C13, 37 references. A document is one object:
 
 | Key | What it holds |
@@ -56,7 +56,7 @@ grants nothing here. An application that edits (IronStone Admin) adds its own sc
 
 ## Services
 
-`org.moqui.admin.ConstitutionServices` (`runtime/base-component/framework/service/org/moqui/admin/`, bodies in
+`org.moqui.admin.ConstitutionServices` (`runtime/components/base/framework/service/org/moqui/admin/`, bodies in
 `crates/moqui-llm/src/constitution/services.rs`):
 
 | Service | What it does |
@@ -89,7 +89,7 @@ the section a new run would get.
 
 ## Reading and references
 
-- **System › Constitution** (`runtime/base-component/tools/screen/System/Constitution/`): Rules (read, Customize,
+- **System › Constitution** (`runtime/components/base/tools/screen/System/Constitution/`): Rules (read, Customize,
   Reset), Edit (per language: the document's texts, rules, a rule's references, the languages), Agent Prompt, JSON
   (download, check, save) and Origins. Its parts are `tools/template/ConstitutionParts.xml`.
 - **The Assist drawer** has Constitution / Rules in its header menu: the rules of the active run, labeled as such,

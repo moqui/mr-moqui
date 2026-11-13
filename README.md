@@ -32,15 +32,15 @@ The `moq` script replaces our old Gradle tasks, and getting components is simila
 
 ## Repositories
 
-MR Moqui spans five repositories in the [moqui](https://github.com/moqui) organization on GitHub. Component repositories use matching repository, `runtime/component` directory and component.xml names.
+MR Moqui spans five repositories in the [moqui](https://github.com/moqui) organization on GitHub. Component repositories use matching repository, `runtime/components/addon` directory and component.xml names.
 
 | Repository | What it is | Where it came from |
 |---|---|---|
-| [mr-moqui](https://github.com/moqui/mr-moqui) | The framework, the `moq` script, the base components (`runtime/base-component`: framework, tools, webroot), and the dev components (`runtime/dev-component`: dev-aide, example, the demo lock-down, and the component template) | A Rust rebuild of Moqui Java ([moqui-framework](https://github.com/moqui/moqui-framework) and [moqui-runtime](https://github.com/moqui/moqui-runtime)), started 2026-10-09 |
+| [mr-moqui](https://github.com/moqui/mr-moqui) | The framework, the `moq` script, the base components (`runtime/components/base`: framework, tools, webroot), and the dev components (`runtime/components/dev`: dev-aide, example, the demo lock-down, and the component template) | A Rust rebuild of Moqui Java ([moqui-framework](https://github.com/moqui/moqui-framework) and [moqui-runtime](https://github.com/moqui/moqui-runtime)), started 2026-10-09 |
 | [mr-mantle](https://github.com/moqui/mr-mantle) | Mantle Business Artifacts: the data model (entities and data) and the services | The Java components [mantle-udm](https://github.com/moqui/mantle-udm) and [mantle-usl](https://github.com/moqui/mantle-usl). They were forked as `mr-mantle-udm` and `mr-mantle-usl` and converted from Groovy to JavaScript. Then `mr-mantle-usl` was renamed and `mr-mantle-udm` was merged into it |
 | [mr-marble](https://github.com/moqui/mr-marble) | Marble ERP and the Simple Screens library it is built from, with My Account | The Java components [SimpleScreens](https://github.com/moqui/SimpleScreens) and [MarbleERP](https://github.com/moqui/MarbleERP). They were forked as `MrSimpleScreens` and `MrMarbleERP` for the port. Then `MrSimpleScreens` was renamed and `MrMarbleERP` was merged into it |
 | [mr-boss](https://github.com/moqui/mr-boss) | IronStone BOSS: Commons & Comms (groupware and communication), Projects, and the other BOSS applications | New for MR Moqui. The repository was named `ironstone-boss` until 2026-10-25 |
-| [mr-pass](https://github.com/moqui/mr-pass) | IronStone PASS: the public-facing companion suite for Forum, Shop and Blog/Publishing | New for MR Moqui; Shop is specified in [its design](runtime/component/mr-pass/plan/design-shop.md) |
+| [mr-pass](https://github.com/moqui/mr-pass) | IronStone PASS: the public-facing companion suite for Forum, Shop and Blog/Publishing | New for MR Moqui; Shop is specified in [its design](runtime/components/addon/mr-pass/plan/design-shop.md) |
 
 The merges into `mr-mantle` and `mr-marble` kept the commit history of both repositories. On GitHub the renamed repositories redirect from their old names. A Java component that depends on `mantle-udm`, `mantle-usl`, `SimpleScreens` or `MarbleERP` now depends on `mr-mantle` or `mr-marble`, and its `component://` locations change the same way. See [Moqui Java migration notes](docs/dev/Moqui-Java-Migration.md).
 
@@ -73,7 +73,7 @@ as a Gradle build did for a Java Moqui component: a `Cargo.toml` and `src/` besi
 `./moq build` links into the binary. Service XML still defines services; component configuration selects
 implementations, and scripts get tools with `ec.factory.getTool("Name")`. See
 [Native component usage](docs/dev/Native-Components.md), the [plan](plans/archive/Native-Components.md), and
-`runtime/dev-component/example`, which also holds the screen archetype gallery (`/qapps/gallery`); it loads on a dev
+`runtime/components/dev/example`, which also holds the screen archetype gallery (`/qapps/gallery`); it loads on a dev
 instance, and `./moq run -D example_disabled=true` leaves it out.
 
 ## Documentation

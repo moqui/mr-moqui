@@ -36,13 +36,18 @@ members = [
     # The client of a remote server for the desktop app's client mode (plans/Mobile-Desktop.md, MD3); no Tauri.
     "crates/moqui-client",
     # The framework's dev components, linked by crates/moqui under devtools; see crates/moqui/src/main.rs.
-    "runtime/dev-component/dev-aide",
-    "runtime/dev-component/example",
+    "runtime/components/dev/dev-aide",
+    "runtime/components/dev/example",
 ]
 # Add-on component crates are linked by `./moq build` through a generated crate in target/moqui-app, not by this
 # workspace. Excluded so cargo run inside one of them treats it as its own root.
-# runtime/dev-component holds a user's own dev components beside the framework's, which are members above.
-exclude = ["runtime/component", "runtime/ecomponent", "runtime/dev-component", "crates/moqui-desktop"]
+# runtime/components/dev holds a user's own dev components beside the framework's, which are members above.
+exclude = [
+    "runtime/components/addon",
+    "runtime/components/test",
+    "runtime/components/dev",
+    "crates/moqui-desktop",
+]
 
 [workspace.package]
 edition = "2021"
@@ -114,9 +119,9 @@ moqui-embedded = { path = "crates/moqui-embedded" }
 moqui-drivers = { path = "crates/moqui-drivers" }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
-# The framework's dev component crates, kept in runtime/dev-component, linked by crates/moqui under devtools.
-dev-aide = { path = "runtime/dev-component/dev-aide" }
-example = { path = "runtime/dev-component/example" }
+# The framework's dev component crates, kept in runtime/components/dev, linked by crates/moqui under devtools.
+dev-aide = { path = "runtime/components/dev/dev-aide" }
+example = { path = "runtime/components/dev/example" }
 # default-features off so a model-only user (moqui-core tests) does not compile Revue.
 moqui-tui = { path = "crates/moqui-tui", default-features = false }
 # Exact pin. default-features off so `async` (tokio) and `config` stay out.

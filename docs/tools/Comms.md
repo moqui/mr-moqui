@@ -8,7 +8,7 @@ order of work are in [plans/archive/Comms-Framework.md](../../plans/archive/Comm
 (V1), voicemail (V2), call handling, ring groups and the dialer (V3), the IVR, queues, transfer and merge (V5); chat
 bridges come later.
 
-The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
+The code: `runtime/components/base/basic-comms` (screens, services, data, specs); the data model is in
 `framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
 `org.moqui.mail.EmailClientServices` and `moqui-mail`; chat is `org.moqui.chat.ChatServices`; calls are
 `org.moqui.call.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
@@ -260,7 +260,7 @@ A provider runs with the app's authorization and entity filters; a read that fai
 user without that provider is not offered it. Calls, Voicemail's slot is `voicemail-actions`, whose item is
 `{voicemailId, fromNumber, callSessionId}`, for actions such as Create from and Add to contacts.
 
-IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xml` (the mounts and providers) and
+IronStone BOSS is the worked example: `runtime/components/addon/mr-boss/screen/Comms.xml` (the mounts and providers) and
 `screen-extend/basic-comms/`.
 
 ## Tests

@@ -137,9 +137,12 @@ fn steps_run_in_one_sim_each_under_its_own_savepoint() {
         return;
     }
     let files = [
-        ("component/sim-steps/component.xml", COMPONENT),
-        ("component/sim-steps/entity/SimStepsEntities.xml", ENTITIES),
-        ("component/sim-steps/service/simsteps/WidgetServices.xml", SERVICES),
+        ("components/addon/sim-steps/component.xml", COMPONENT),
+        ("components/addon/sim-steps/entity/SimStepsEntities.xml", ENTITIES),
+        (
+            "components/addon/sim-steps/service/simsteps/WidgetServices.xml",
+            SERVICES,
+        ),
     ];
     let gate = start_with_files("sim-steps", Some(DATA), &[], &files);
     let factory = Arc::clone(gate.server.factory());

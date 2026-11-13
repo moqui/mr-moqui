@@ -19,18 +19,15 @@ use std::path::{Path, PathBuf};
 
 use super::{data_hash, prune_snapshots, scratch_runtime, USED_MARK};
 
-/// A runtime with the framework, `component/plain` and the dev component `dev-component/devonly`.
+/// A runtime with the framework, `components/addon/plain` and the dev component `components/dev/devonly`.
 fn runtime() -> PathBuf {
     let root = std::env::temp_dir().join(format!("moqui-fixture-key-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
     std::fs::create_dir_all(root.join("conf")).unwrap();
-    std::os::unix::fs::symlink(
-        std::fs::canonicalize(repo.join("base-component")).unwrap(),
-        root.join("base-component"),
-    )
-    .unwrap();
-    for (dir, component) in [("component", "plain"), ("dev-component", "devonly")] {
+    moqui_core::context::layout::link_base_set(&std::fs::canonicalize(repo.join("components/base")).unwrap(), &root)
+        .unwrap();
+    for (dir, component) in [("components/addon", "plain"), ("components/dev", "devonly")] {
         let location = root.join(dir).join(component);
         std::fs::create_dir_all(location.join("entity")).unwrap();
         std::fs::write(
@@ -53,7 +50,8 @@ fn set_purpose(runtime: &Path, purpose: &str) {
 }
 
 fn framework() -> PathBuf {
-    std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")).unwrap()
+    std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework"))
+        .unwrap()
 }
 
 /// The same component directories give another snapshot on a dev instance, which loads the dev component, than on a
@@ -83,7 +81,7 @@ fn the_scratch_runtime_links_the_downloaded_chromium() {
     let root = std::env::temp_dir().join(format!("moqui-fixture-chromium-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("conf")).unwrap();
-    std::fs::create_dir_all(root.join("base-component")).unwrap();
+    std::fs::create_dir_all(root.join("components/base")).unwrap();
     std::fs::create_dir_all(root.join("chromium")).unwrap();
     std::fs::write(root.join("chromium/chrome"), "").unwrap();
     let runtime = std::fs::canonicalize(&root).unwrap();

@@ -127,7 +127,7 @@ nothing falls back to its `webapp_*` property and then to the built-in default, 
 - Merging (`crates/moqui-core/src/context/conf.rs` `merge_web_protection`): `web-protection` and its single children
   merge attributes; `rate-limit`, `ban` and a rule with a `name` merge by `name`; a rule without one is added. Any of
   them takes `enabled="false"`, so a component can turn off a default, such as the loopback exemption.
-- XSD: `trusted-proxies` and `web-protection` in `runtime/base-component/framework/xsd/moqui-conf-3.xsd`, "No Java
+- XSD: `trusted-proxies` and `web-protection` in `runtime/components/base/framework/xsd/moqui-conf-3.xsd`, "No Java
   counterpart" as `token-route` is.
 - A bad entry (CIDR, number, event, action) logs an error naming it and is left out, and the rest apply.
 

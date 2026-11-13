@@ -944,11 +944,11 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
         &[("scheduled_job_check_time", "0")],
         &[
             (
-                "component/m6_wire/component.xml",
+                "components/addon/m6_wire/component.xml",
                 r#"<component name="m6_wire" version="1.0"/>"#,
             ),
             (
-                "component/m6_wire/screen/AlertEmail.xml",
+                "components/addon/m6_wire/screen/AlertEmail.xml",
                 r#"<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"><parameter name="title"/><parameter name="ruleId"/><widgets><render-mode><text type="html,html-print"><![CDATA[<html><body><p>Alert ${html(title)} / ${html(ruleId)}</p></body></html>]]></text><text type="text"><![CDATA[Alert ${title} / ${ruleId}]]></text></render-mode></widgets></screen>"#,
             ),
         ],

@@ -29,7 +29,7 @@ fn render_root() -> String {
 
 fn framework_screen(name: &str) -> String {
     format!(
-        "{}/../../runtime/base-component/framework/screen/{name}.xml",
+        "{}/../../runtime/components/base/framework/screen/{name}.xml",
         env!("CARGO_MANIFEST_DIR")
     )
 }

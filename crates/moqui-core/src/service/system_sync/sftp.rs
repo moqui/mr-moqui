@@ -118,7 +118,7 @@ pub(super) fn send(
 
 /// `poll#SystemMessageSftp`: receive each file in the expanded `receivePath` that matches `receiveFilePattern`, in name
 /// order up to `fileCountLimit`, then delete or move it as `receiveResponseEnumId` says. Each file is on its own
-/// (runtime/component/mr-mantle/plan/payments-shipping-edi.md section 2): a file that cannot be read, received or
+/// (runtime/components/addon/mr-mantle/plan/payments-shipping-edi.md section 2): a file that cannot be read, received or
 /// removed is logged by name, stays on the server and is in `failedFileList`, and the poll goes on with the others. A
 /// file is deleted or moved only after its receipt is durable (the receive service committed a message, or answered
 /// that one already holds it); a file whose text a message already holds was received before its cleanup failed, so it

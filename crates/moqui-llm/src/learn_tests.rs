@@ -55,9 +55,9 @@ impl Drop for Bed {
 fn bed(name: &str) -> Bed {
     let dir = std::env::temp_dir().join(format!("moqui-agent-learn-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("component/skill")).unwrap();
+    std::fs::create_dir_all(dir.join("components/addon/skill")).unwrap();
     std::fs::write(
-        dir.join("component/skill/widget-board.md"),
+        dir.join("components/addon/skill/widget-board.md"),
         "---\nname: widget-board\ntitle: Arranging the widget board\ndescription: Use when the user moves widgets on the board.\nkind: procedure\n---\nOpen the board, then drag.\n",
     )
     .unwrap();
@@ -73,7 +73,7 @@ fn bed(name: &str) -> Bed {
     let component = ComponentInfo {
         name: "learntest".to_string(),
         version: String::new(),
-        location: dir.join("component"),
+        location: dir.join("components/addon"),
         depends_on: Vec::new(),
         purposes: Vec::new(),
     };

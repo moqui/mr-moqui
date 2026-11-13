@@ -1331,7 +1331,7 @@ fn feed_indexes_and_deletes_through_search() {
     let _guards = (DirGuard(runtime.clone()), DirGuard(cluster_dir.clone()));
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&cluster_dir).unwrap();
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     moqui_host::load_data(&runtime, &framework, &cluster_dir, &moqui_host::LoadFlags::default()).unwrap();
 
     let (cluster, driver) = EmbeddedCluster::start(&cluster_dir, 30).unwrap();
@@ -1372,7 +1372,7 @@ fn a_non_postgres_entity_database_gets_a_dedicated_search_cluster() {
     std::fs::create_dir_all(&runtime).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&cluster_dir, 30).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(&runtime, &framework).unwrap();
     let facade = moqui_host::db::entity_facade::open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
     moqui_host::db::entity_facade::attach(&factory, facade.clone());

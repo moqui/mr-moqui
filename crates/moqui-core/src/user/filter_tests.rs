@@ -99,7 +99,7 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     session::reset_session();
     clear_context_stack();
     let runtime = temp_dir("filter-runtime");
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")
@@ -244,7 +244,7 @@ fn a_profile_frame_gives_its_filters_to_finds_below_whatever_else_the_user_holds
     session::reset_session();
     clear_context_stack();
     let runtime = temp_dir("filter-profile-runtime");
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")
@@ -381,7 +381,7 @@ fn a_remote_invalidation_and_a_whole_clear_read_the_filter_sets_again() {
     session::reset_session();
     clear_context_stack();
     let runtime = temp_dir("filter-remote-runtime");
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")
@@ -585,7 +585,7 @@ fn product_facade() -> (EntityFacade, TempDir) {
     let conf_dir = root.path().join("conf");
     std::fs::create_dir_all(&entity_dir).unwrap();
     std::fs::create_dir_all(&conf_dir).unwrap();
-    let real = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let real = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     std::os::unix::fs::symlink(
         real.join("conf/MoquiDefaultConf.xml"),
         conf_dir.join("MoquiDefaultConf.xml"),

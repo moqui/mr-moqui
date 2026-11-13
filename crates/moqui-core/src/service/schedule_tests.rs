@@ -839,7 +839,7 @@ impl Drop for Hold {
 }
 
 fn framework_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 // ---- queued tx rules and job locks (HL-025, HL-026) ---------------------------------------

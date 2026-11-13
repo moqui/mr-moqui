@@ -1,0 +1,627 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The git of a root (plans/design-dev-aide.md 4.2, 4.5 to 4.7), through the developer's own git command, implemented
+    in the dev-aide crate (src/vcs.rs, src/repo.rs, src/repos.rs): reads, staging by file and by hunk, commit with the task
+    trailer and the user as author, fetch, pull (fast-forward only) and push, Publish of the site component's changes;
+    branches, tags, stashes, revert and cherry-pick, conflicts, remotes, blame, clone; and the Repositories list. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="Status" type="rust" location="dev_aide::vcs::get_status" allow-remote="false" read-only="true">
+        <description>Branch, upstream, ahead and behind, the changed files, branches, remotes, the author and committer identities and the current task.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="branch"/>
+            <parameter name="upstream"/>
+            <parameter name="ahead" type="Integer"/>
+            <parameter name="behind" type="Integer"/>
+            <parameter name="entries" type="List"/>
+            <parameter name="branches" type="List"/>
+            <parameter name="remotes" type="List"/>
+            <parameter name="authorName"/>
+            <parameter name="authorEmail"/>
+            <parameter name="committerName"/>
+            <parameter name="committerEmail"/>
+            <parameter name="currentTask"/>
+            <parameter name="operation"><description>merge, cherry-pick, revert, rebase or stash when one stopped at a conflict</description></parameter>
+            <parameter name="writeQueued" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Diff" type="rust" location="dev_aide::vcs::get_diff" allow-remote="false" read-only="true">
+        <description>The two sides of a file's change: the work tree against the index, the index against HEAD (staged), or a commit against its parent (commitId).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="staged" type="Boolean"/>
+            <parameter name="commitId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="original"/>
+            <parameter name="modified"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Log" type="rust" location="dev_aide::vcs::get_log" allow-remote="false" read-only="true">
+        <description>A page of the branch's commits, or a path's.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commits" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Commit" type="rust" location="dev_aide::vcs::get_commit" allow-remote="false" read-only="true">
+        <description>A commit's message and the files it changed.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="commitId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commit" type="Map"/>
+            <parameter name="message"/>
+            <parameter name="files" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="stage" noun="Files" type="rust" location="dev_aide::vcs::stage_files" allow-remote="false">
+        <description>Stage whole files.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="paths" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="unstage" noun="Files" type="rust" location="dev_aide::vcs::unstage_files" allow-remote="false">
+        <description>Unstage whole files.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="paths" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="discard" noun="Files" type="rust" location="dev_aide::vcs::discard_files" allow-remote="false">
+        <description>Throw away the work tree's changes of files (an untracked file is deleted).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="paths" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="reload" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="commit" noun="Changes" type="rust" location="dev_aide::vcs::commit_changes" allow-remote="false">
+        <description>Commit what is staged, the user as author, the root's current task as a trailer; the hooks run unless skipHooks.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="summary"/>
+            <parameter name="body"/>
+            <parameter name="task"/>
+            <parameter name="amend" type="Boolean"/>
+            <parameter name="signOff" type="Boolean"/>
+            <parameter name="skipHooks" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"/>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="fetch" noun="Remote" type="rust" location="dev_aide::vcs::fetch_remote" allow-remote="false">
+        <description>git fetch --prune.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="pull" noun="Remote" type="rust" location="dev_aide::vcs::pull_remote" allow-remote="false">
+        <description>git pull --ff-only; the changed files reloaded at once, and the site's extensions whose targets the pull
+            removed (the upgrade checklist).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="reload" type="Map"/>
+            <parameter name="extensionsAffected" type="Integer"/>
+            <parameter name="brokenExtensions" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="push" noun="Remote" type="rust" location="dev_aide::vcs::push_remote" allow-remote="false">
+        <description>Push the current branch to its upstream, set on the first push; refused when the root requires its publish branch.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+            <parameter name="forceWithLease" type="Boolean"/>
+            <parameter name="confirmRef"><description>The remote branch (origin/main), typed back to confirm a force push.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="switch" noun="Branch" type="rust" location="dev_aide::vcs::switch_branch" allow-remote="false">
+        <description>Switch to a branch; refused with git's message when local changes conflict.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="branch" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Branch" type="rust" location="dev_aide::vcs::create_branch" allow-remote="false">
+        <description>A branch from the current commit, switched to unless switch is false.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="branch" required="true"/>
+            <parameter name="startPoint"><description>A commit or ref to branch from, the current commit by default.</description></parameter>
+            <parameter name="switch" type="Boolean" default-value="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="init" noun="Repository" type="rust" location="dev_aide::vcs::init_repository" allow-remote="false">
+        <description>git init in a plain root.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="publish" noun="Site" type="rust" location="dev_aide::vcs::publish_site" allow-remote="false">
+        <description>Stage the site component's changes in the root, commit them (summary, or Customize: the files) with the task trailer, and push: to the publish branch when one is set for the root or the user, else to the current branch.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+            <parameter name="summary"/>
+            <parameter name="body"/>
+            <parameter name="task"/>
+            <parameter name="amend" type="Boolean"/>
+            <parameter name="signOff" type="Boolean"/>
+            <parameter name="skipHooks" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="published" type="Boolean"/>
+            <parameter name="commitId"/>
+            <parameter name="pushedBranch"/>
+            <parameter name="message"/>
+            <parameter name="files" type="List"/>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Hunks" type="rust" location="dev_aide::repo::get_hunks" allow-remote="false" read-only="true">
+        <description>A file's hunks with their ranges: the work tree against the index, or the index against HEAD (staged).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="staged" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="hunks" type="List"/>
+            <parameter name="diffHash"/>
+        </out-parameters>
+    </service>
+    <service verb="stage" noun="Hunks" type="rust" location="dev_aide::repo::stage_hunks" allow-remote="false">
+        <description>Stage some hunks of a file (git apply --cached).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="hunks" type="List" required="true"><description>Indexes into get#Hunks.</description></parameter>
+            <parameter name="diffHash"><description>The diff get#Hunks read; refused when it changed.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="unstage" noun="Hunks" type="rust" location="dev_aide::repo::unstage_hunks" allow-remote="false">
+        <description>Unstage some staged hunks of a file (git apply --cached -R).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="hunks" type="List" required="true"><description>Indexes into get#Hunks.</description></parameter>
+            <parameter name="diffHash"><description>The diff get#Hunks read; refused when it changed.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="discard" noun="Hunks" type="rust" location="dev_aide::repo::discard_hunks" allow-remote="false">
+        <description>Throw away some hunks of a file's work tree changes (git apply -R).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="hunks" type="List" required="true"><description>Indexes into get#Hunks.</description></parameter>
+            <parameter name="diffHash"><description>The diff get#Hunks read; refused when it changed.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Branches" type="rust" location="dev_aide::repo::get_branches" allow-remote="false" read-only="true">
+        <description>The local branches with upstream, ahead and behind and last commit, and the remote branches.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="local" type="List"/>
+            <parameter name="remote" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="rename" noun="Branch" type="rust" location="dev_aide::repo::rename_branch" allow-remote="false">
+        <description>Rename a local branch.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="branch" required="true"/>
+            <parameter name="newName" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="delete" noun="Branch" type="rust" location="dev_aide::repo::delete_branch" allow-remote="false">
+        <description>Delete a local branch: a merged one, or any with force.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="branch" required="true"/>
+            <parameter name="force" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="merge" noun="Branch" type="rust" location="dev_aide::repo::merge_branch" allow-remote="false">
+        <description>Merge a branch into the current one, fast-forward only unless mergeCommit; a conflict is answered as one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="branch" required="true"/>
+            <parameter name="mergeCommit" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="conflict" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="compare" noun="Refs" type="rust" location="dev_aide::repo::compare_refs" allow-remote="false" read-only="true">
+        <description>The commits on head that base has not, and the files that differ since their common ancestor.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="base" required="true"/>
+            <parameter name="head" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commits" type="List"/>
+            <parameter name="files" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Tags" type="rust" location="dev_aide::repo::get_tags" allow-remote="false" read-only="true">
+        <description>The tags, newest first.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="tags" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Tag" type="rust" location="dev_aide::repo::create_tag" allow-remote="false">
+        <description>A tag at commitId or HEAD, annotated when there is a message.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="message"/>
+            <parameter name="commitId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="delete" noun="Tag" type="rust" location="dev_aide::repo::delete_tag" allow-remote="false">
+        <description>Delete a local tag.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="tag" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="push" noun="Tag" type="rust" location="dev_aide::repo::push_tag" allow-remote="false">
+        <description>Push a tag to the current branch's remote, or remote.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="remote"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Stashes" type="rust" location="dev_aide::repo::get_stashes" allow-remote="false" read-only="true">
+        <description>The stashes, newest first.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="stashes" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Stash" type="rust" location="dev_aide::repo::create_stash" allow-remote="false">
+        <description>Stash the work tree's changes, untracked files too with untracked.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="message"/>
+            <parameter name="untracked" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="apply" noun="Stash" type="rust" location="dev_aide::repo::apply_stash" allow-remote="false">
+        <description>Apply a stash and keep it; a conflict is answered as one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="index" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="conflict" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="pop" noun="Stash" type="rust" location="dev_aide::repo::pop_stash" allow-remote="false">
+        <description>Apply a stash and drop it; on a conflict git keeps it.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="index" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="conflict" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="drop" noun="Stash" type="rust" location="dev_aide::repo::drop_stash" allow-remote="false">
+        <description>Drop a stash.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="index" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="revert" noun="Commit" type="rust" location="dev_aide::repo::revert_commit" allow-remote="false">
+        <description>A commit that undoes commitId on the current branch; a conflict is answered as one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="commitId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="conflict" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="cherryPick" noun="Commit" type="rust" location="dev_aide::repo::cherry_pick_commit" allow-remote="false">
+        <description>commitId applied on the current branch; a conflict is answered as one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="commitId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="conflict" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Tree" type="rust" location="dev_aide::repo::get_tree" allow-remote="false" read-only="true">
+        <description>A directory's entries at a commit.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="rev" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="entries" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="FileAt" type="rust" location="dev_aide::repo::get_file_at" allow-remote="false" read-only="true">
+        <description>A file's text at a commit.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="rev" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="text"/>
+            <parameter name="binary" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Blame" type="rust" location="dev_aide::repo::get_blame" allow-remote="false" read-only="true">
+        <description>Who last changed each run of a file's lines.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="rev"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ranges" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="ConflictSides" type="rust" location="dev_aide::repo::get_conflict_sides" allow-remote="false" read-only="true">
+        <description>A conflicted file's base, ours, theirs and its work tree text with the markers.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="base"/>
+            <parameter name="ours"/>
+            <parameter name="theirs"/>
+            <parameter name="result"/>
+            <parameter name="hash"/>
+            <parameter name="operation"/>
+        </out-parameters>
+    </service>
+    <service verb="resolve" noun="Conflict" type="rust" location="dev_aide::repo::resolve_conflict" allow-remote="false">
+        <description>Save a conflicted file's resolved text through the save pipeline and stage it.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="baseHash"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="hash"/>
+            <parameter name="reload" type="Map"/>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="abort" noun="Operation" type="rust" location="dev_aide::repo::abort_operation" allow-remote="false">
+        <description>Abort the merge, cherry-pick or revert in progress.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="add" noun="Remote" type="rust" location="dev_aide::repo::add_remote" allow-remote="false">
+        <description>Add a remote.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="name" required="true"/>
+            <parameter name="url" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="set" noun="RemoteUrl" type="rust" location="dev_aide::repo::set_remote_url" allow-remote="false">
+        <description>Set a remote's URL.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="name" required="true"/>
+            <parameter name="url" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="remove" noun="Remote" type="rust" location="dev_aide::repo::remove_remote" allow-remote="false">
+        <description>Remove a remote.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="name" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="prune" noun="Remote" type="rust" location="dev_aide::repo::prune_remote" allow-remote="false">
+        <description>Drop the remote-tracking branches whose branch the remote no longer has.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="name" required="true"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+    <service verb="clone" noun="Repository" type="rust" location="dev_aide::repo::clone_repository" allow-remote="false">
+        <description>Clone a URL into runtime/components/addon/name, or runtime/components/dev/name with dev; it can be loaded now
+            when nothing in it waits for a restart (loadable), or it loads after a restart.</description>
+        <in-parameters>
+            <parameter name="url" required="true"/>
+            <parameter name="name"/>
+            <parameter name="dev" type="Boolean"/>
+            <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="location"/>
+            <parameter name="restart" type="Boolean"><description>True when it loads only after a restart; restartReasons says why.</description></parameter>
+            <parameter name="loadable" type="Boolean"><description>True when it can be loaded now (load#Component on componentName).</description></parameter>
+            <parameter name="componentName"/>
+            <parameter name="restartReasons" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="cancel" noun="GitOperation" type="rust" location="dev_aide::repo::cancel_git_operation" allow-remote="false">
+        <description>Stop the network command running as operationId.</description>
+        <in-parameters>
+            <parameter name="operationId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="cancelled" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="set" noun="CurrentTask" type="rust" location="dev_aide::vcs::set_current_task" allow-remote="false">
+        <description>The task whose trailer this root's commits get; empty clears it.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="task"/>
+        </in-parameters>
+    </service>
+    <service verb="list" noun="Repositories" type="rust" location="dev_aide::repos::list_repositories" allow-remote="false" read-only="true">
+        <description>Every root with its kind, components, branch, upstream, ahead and behind, changes and last fetch.</description>
+        <out-parameters>
+            <parameter name="repositories" type="List"/>
+            <parameter name="gitAvailable" type="Boolean"/>
+            <parameter name="moqAvailable" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="fetch" noun="All" type="rust" location="dev_aide::repos::fetch_all" allow-remote="false">
+        <description>Fetch every git root, one by one; a failure is reported in its row and the others go on.</description>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="failed" type="Integer"/>
+            <parameter name="extensionsAffected" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="pull" noun="All" type="rust" location="dev_aide::repos::pull_all" allow-remote="false">
+        <description>Pull every git root, fast-forward only, one by one, each with its reload; a failure is reported in its row and the others go on.</description>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="failed" type="Integer"/>
+            <parameter name="extensionsAffected" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Addons" type="rust" location="dev_aide::repos::get_addons" allow-remote="false" read-only="true">
+        <description>The components addons.xml and myaddons.xml name, each with whether it is here already.</description>
+        <out-parameters><parameter name="addons" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="Component" type="rust" location="dev_aide::repos::get_component" allow-remote="false">
+        <description>./moq component-get name (--dev for runtime/components/dev): the component and those it depends on; it can
+            be loaded now when nothing in it waits for a restart (loadable), or it loads after a restart.</description>
+        <in-parameters>
+            <parameter name="name" required="true"/>
+            <parameter name="dev" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="restart" type="Boolean"><description>True when it loads only after a restart; restartReasons says why.</description></parameter>
+            <parameter name="loadable" type="Boolean"><description>True when it can be loaded now (load#Component on componentName).</description></parameter>
+            <parameter name="componentName"/>
+            <parameter name="restartReasons" type="List"/>
+        </out-parameters>
+    </service>
+</services>

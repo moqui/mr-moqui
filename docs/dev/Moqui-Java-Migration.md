@@ -21,7 +21,7 @@ locations. The rest is documented elsewhere:
 
 The Java components that MR Moqui has ported were first forked under `mr-`/`Mr` names and kept their Java
 component.xml names. On 2026-10-25 they were renamed and merged so that each repository, its directory under
-`runtime/component`, and its component.xml name are the same:
+`runtime/components/addon`, and its component.xml name are the same:
 
 | Moqui Java component(s) | Fork repositories (until 2026-10-25) | MR Moqui component and repository |
 |---|---|---|

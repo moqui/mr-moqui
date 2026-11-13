@@ -78,7 +78,7 @@ impl Drop for Bed {
 fn tree(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("moqui-agent-tools-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    for path in ["Root", "Apps/ToolTest", "service/test", "component/skill"] {
+    for path in ["Root", "Apps/ToolTest", "service/test", "components/addon/skill"] {
         std::fs::create_dir_all(dir.join(path)).unwrap();
     }
     let base = dir.to_string_lossy().into_owned();
@@ -160,10 +160,10 @@ fn tree(name: &str) -> PathBuf {
     );
     write("service/test/AgentTools.xml", SERVICES);
     write(
-        "component/skill/widget-board.md",
+        "components/addon/skill/widget-board.md",
         "---\nname: widget-board\ntitle: Arranging the widget board\ndescription: Use when the user moves widgets on the board.\nkind: procedure\n---\nOpen the board, then drag.\n",
     );
-    write("component/skill/aliases.json", r#"{"thing": ["gadget"]}"#);
+    write("components/addon/skill/aliases.json", r#"{"thing": ["gadget"]}"#);
     dir
 }
 
@@ -192,7 +192,7 @@ fn bed_with_cap(name: &str, cap: usize) -> Bed {
     let component = ComponentInfo {
         name: "tooltest".to_string(),
         version: String::new(),
-        location: dir.join("component"),
+        location: dir.join("components/addon"),
         depends_on: Vec::new(),
         purposes: Vec::new(),
     };

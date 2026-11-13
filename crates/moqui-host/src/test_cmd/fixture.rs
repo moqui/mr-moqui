@@ -14,7 +14,7 @@
 
 //! The database and booted factory a test run uses.
 //!
-//! - `fresh`: a scratch runtime (the runtime's `conf` copied, `base-component` and each component linked) with its own
+//! - `fresh`: a scratch runtime (the runtime's `conf` copied, `components/base` and each component linked) with its own
 //!   embedded Postgres, loaded with every data type. Removed when the run ends, unless kept.
 //! - `snapshot`: the same, but the loaded database is dumped to `runtime/save/test-<hash>/moqui.dump`, by a hash of the
 //!   components the load reads, their entity and data files and the day; a later run that day that loads the same
@@ -168,8 +168,8 @@ fn io(context: &str) -> impl Fn(std::io::Error) -> Error + '_ {
 }
 
 /// A scratch runtime under `/tmp` (the Postgres socket path must stay under 108 bytes): `conf` copied, and the component
-/// sets (`context::layout`; the add-on set component by component), the instance `MoquiConf.xml`, the shared Postgres
-/// install and the downloaded Chromium linked.
+/// sets (`context::layout`; the add-on set component by component) with their `components.xml`, the instance
+/// `MoquiConf.xml`, the shared Postgres install and the downloaded Chromium linked.
 fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
     use moqui_core::context::layout::{self, Set};
     let nanos = SystemTime::now()
@@ -192,6 +192,9 @@ fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
         } else if dir.is_dir() {
             link(&dir, &layout::set_dir(&scratch, set))?;
         }
+    }
+    if layout::manifest(runtime).is_file() {
+        link(&layout::manifest(runtime), &layout::manifest(&scratch))?;
     }
     // The real runtime's install, after any move from where an earlier build put it.
     let install = crate::db::embedded::shared_install_dir(runtime, &runtime.join("db/embedded"));

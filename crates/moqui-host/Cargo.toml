@@ -113,7 +113,7 @@ grpc = [
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
-# dev-component crates. In the Maximal (default) and Debug packages; not in Lite or Enterprise.
+# components/dev crates. In the Maximal (default) and Debug packages; not in Lite or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]
 # The terminal client (`moqui tui`, plans/archive/Screen-TUI-Impl.md 4.6): in every package, so it compiles Revue; lite has it
 # for a quick terminal loop while developing and testing.
@@ -247,7 +247,7 @@ dev-aide = { workspace = true }
 indexmap = { workspace = true }
 # The entity model the definition_speed test builds.
 moqui-db = { workspace = true }
-# The example component (runtime/dev-component/example) loads on a dev instance and in the gate runtimes
+# The example component (runtime/components/dev/example) loads on a dev instance and in the gate runtimes
 # (tests/common), and its MoquiConf.xml selects a tool factory, so a test that boots it (tests/it, gate3,
 # gate3_browser, search_logs_postgres) links the crate as the default (Maximal) binary does.
 example = { workspace = true }

@@ -14,7 +14,7 @@
 
 //! Deploy a component from a git URL and branch (plans/archive/Component-Deploy.md, Phase 3). Three storages, chosen per
 //! component:
-//! - database: a `db` GitRepository imports the branch; its files are written to `runtime/deployed-component/<name>`;
+//! - database: a `db` GitRepository imports the branch; its files are written to `runtime/components/addon/<name>`;
 //! - bare: a `remote` GitRepository mirror under `runtime/git`; its files are written there too;
 //! - clone: a working clone, by the `git` command, in a component directory, which a developer can edit and commit in.
 //!
@@ -41,8 +41,9 @@ use crate::reload;
 
 const DEPLOYED: &str = "moqui.server.DeployedComponent";
 const GIT_REPOSITORY: &str = "moqui.resource.GitRepository";
-/// The component directory the database and bare storages write to, under the runtime.
-const DEPLOYED_DIR: &str = "deployed-component";
+/// The component directory the database and bare storages write to, under the runtime: the add-on set, where a clone
+/// goes too, so every add-on is in one place whatever its storage.
+const DEPLOYED_DIR: &str = "components/addon";
 
 /// Where a deployed component's repository and files are kept.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -977,11 +978,12 @@ fn keep_repository(
     }
 }
 
-/// The component directory a clone goes in: `component`, or the one named, which must be a `component-dir` of the
-/// conf's `component-list` (`dirs`), so the boot finds the clone there.
+/// The component directory a clone goes in: the add-on set, or the one named, which must be one of `dirs` (a
+/// `component-dir` of the conf's `component-list`, or a set its sets' `components.xml` lists), so the boot finds the
+/// clone there.
 fn clone_directory(runtime: &Path, named: &str, dirs: &[String]) -> Result<PathBuf, String> {
     let named = named.trim().trim_end_matches('/');
-    let named = if named.is_empty() { "component" } else { named };
+    let named = if named.is_empty() { DEPLOYED_DIR } else { named };
     if !dirs.iter().any(|dir| dir.trim_end_matches('/') == named) {
         return Err(format!(
             "{named} is not a component directory of the conf's component-list ({})",
@@ -991,19 +993,43 @@ fn clone_directory(runtime: &Path, named: &str, dirs: &[String]) -> Result<PathB
     Ok(runtime.join(named))
 }
 
-/// The `component-dir` locations of the conf's `component-list`.
+/// The `component-dir` locations of the conf's `component-list`, each followed by the sets its `components.xml` lists
+/// (`components/addon` and the rest), relative to the runtime.
 fn component_dirs(factory: &ExecutionContextFactory) -> Vec<String> {
     let Ok(conf) = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text()) else {
         return Vec::new();
     };
-    conf.first_named("component-list")
+    let locations: Vec<String> = conf
+        .first_named("component-list")
         .map(|list| {
             list.children_named("component-dir")
                 .iter()
                 .filter_map(|dir| dir.attribute("location"))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    with_listed_sets(factory.runtime_dir(), locations)
+}
+
+/// `locations`, each followed by the `component-dir` locations of its `components.xml` under `runtime`, if it has one.
+fn with_listed_sets(runtime: &Path, locations: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for location in locations {
+        let base = location.trim_end_matches('/').to_string();
+        let manifest = runtime.join(&base).join("components.xml");
+        let listed: Vec<String> = moqui_lib::node::MNode::parse_file(&manifest)
+            .map(|list| {
+                list.children_named("component-dir")
+                    .iter()
+                    .filter_map(|dir| dir.attribute("location"))
+                    .map(|set| format!("{base}/{}", set.trim_end_matches('/')))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(base);
+        out.extend(listed);
+    }
+    out
 }
 
 /// Where the files staged at `staged` (`.staging-<name>`) go: beside it, as `<name>`.

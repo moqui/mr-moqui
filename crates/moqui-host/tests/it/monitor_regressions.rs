@@ -88,11 +88,11 @@ fn regressions_open_incidents_with_ranked_causes_and_settle() {
         &[],
         &[
             (
-                "component/regression-fixture/component.xml",
+                "components/addon/regression-fixture/component.xml",
                 r#"<component name="regression-fixture"/>"#,
             ),
             (
-                "component/regression-fixture/MoquiConf.xml",
+                "components/addon/regression-fixture/MoquiConf.xml",
                 r#"<moqui-conf><telemetry><regressions lookback-hours="1" window-minutes="30" resolve-minutes="20"/></telemetry></moqui-conf>"#,
             ),
         ],

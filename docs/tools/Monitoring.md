@@ -12,7 +12,7 @@ and retention), `crates/moqui-report/src/` (datasets, queries, frames, transform
 annotations, the scheduled reports in `schedule.rs` and the ingest keys in `monitor.rs`),
 `crates/moqui-core/src/search/telemetry.rs` (the index mappings), and the host side in `crates/moqui-host/src/http.rs`
 (request spans) and `crates/moqui-host/src/monitor/` (the OTLP receiver: `receiver.rs` over HTTP, `grpc.rs` over gRPC). Screens:
-`runtime/base-component/tools/screen/System/Monitor/` and `Dashboards/`; widgets in
+`runtime/components/base/tools/screen/System/Monitor/` and `Dashboards/`; widgets in
 `webroot/screen/webroot/js/WebrootReport.js` with TUI twins in `crates/moqui-tui/src/components/report.rs`.
 
 ## What is recorded
@@ -1242,19 +1242,19 @@ take the index refresh interval to appear.
   you customized with the same ids, then load only the new seed files:
 
   ```sh
-  moqui load location=runtime/base-component/framework/data/TelemetryData.xml
-  moqui load location=runtime/base-component/framework/data/ReportSetupData.xml
-  moqui load location=runtime/base-component/framework/data/ReportEmailData.xml
-  moqui load location=runtime/base-component/tools/data/MonitoringSecurityData.xml
+  moqui load location=runtime/components/base/framework/data/TelemetryData.xml
+  moqui load location=runtime/components/base/framework/data/ReportSetupData.xml
+  moqui load location=runtime/components/base/framework/data/ReportEmailData.xml
+  moqui load location=runtime/components/base/tools/data/MonitoringSecurityData.xml
   # Only when mr-mantle is installed:
-  moqui load location=runtime/component/mr-mantle/data/MonitoringSalesSecurityData.xml
+  moqui load location=runtime/components/addon/mr-mantle/data/MonitoringSalesSecurityData.xml
   ```
 
   Then set the report email template's SMTP server.
 - **Monitor in System.** Monitor's routes are `/apps/system/Monitor/<Screen>` (`/apps/monitor` is gone, with no
   alias), Evals is `/apps/system/Llm/Evals`, and the `MONITOR_APP` artifact group is no longer shipped: its datasets,
   services and entities are members of `SYSTEM_APP`. On an existing database load
-  `runtime/base-component/tools/data/ToolsSecurityData.xml` for those members. The database keeps its `MONITOR_APP`
+  `runtime/components/base/tools/data/ToolsSecurityData.xml` for those members. The database keeps its `MONITOR_APP`
   rows, which name a screen that is gone: they still grant the telemetry datasets and Monitor's services, and no
   longer any screen. A user group that was granted only `MONITOR_APP` needs `SYSTEM_APP` to open Monitor, which also
   opens the rest of System to it. The `MONITOR_*` permissions are unchanged. The old routes answer 404.

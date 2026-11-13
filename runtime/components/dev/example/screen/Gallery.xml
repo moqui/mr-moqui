@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The screen archetype gallery of the IronStone BOSS style guide
+    (runtime/components/addon/mr-boss/plan/style-guide.md, sections 3, 4 and 10): one screen per archetype, rendered
+    with the real qvt widgets over framework data, so a style decision is checked against the actual render mode in
+    light and dark. Mounted under the apps root by this component's MoquiConf.xml. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true" default-menu-title="Gallery" menu-image="sym_o_apps" menu-image-type="icon">
+
+    <subscreens default-item="Landing">
+        <subscreens-item name="Landing" menu-title="Landing" menu-index="1" location="component://example/screen/Gallery/Landing.xml"/>
+        <subscreens-item name="List" menu-title="List" menu-index="2" location="component://example/screen/Gallery/List.xml"/>
+        <subscreens-item name="Detail" menu-title="Detail" menu-index="3" location="component://example/screen/Gallery/Detail.xml"/>
+        <subscreens-item name="Record360" menu-title="360" menu-index="4" location="component://example/screen/Gallery/Record360.xml"/>
+        <subscreens-item name="Task" menu-title="Task" menu-index="5" location="component://example/screen/Gallery/Task.xml"/>
+        <subscreens-item name="Board" menu-title="Board" menu-index="6" location="component://example/screen/Gallery/Board.xml"/>
+        <subscreens-item name="Calendar" menu-title="Calendar" menu-index="7" location="component://example/screen/Gallery/Calendar.xml"/>
+        <subscreens-item name="Split" menu-title="Split" menu-index="8" location="component://example/screen/Gallery/Split.xml"/>
+        <subscreens-item name="Settings" menu-title="Settings" menu-index="9" location="component://example/screen/Gallery/Settings.xml"/>
+        <subscreens-item name="Wizard" menu-title="Wizard" menu-index="10" location="component://example/screen/Gallery/Wizard.xml"/>
+        <subscreens-item name="Dialog" menu-title="Dialog" menu-index="11" location="component://example/screen/Gallery/Dialog.xml"/>
+        <subscreens-item name="Report" menu-title="Report" menu-index="12" location="component://example/screen/Gallery/Report.xml"/>
+        <subscreens-item name="Panel" menu-title="Panel" menu-index="13" location="component://example/screen/Gallery/Panel.xml"/>
+        <subscreens-item name="Widgets" menu-title="Widgets" menu-index="14" location="component://example/screen/Gallery/Widgets.xml"/>
+        <subscreens-item name="Editor" menu-title="Editor" menu-index="15" location="component://example/screen/Gallery/Editor.xml"/>
+        <subscreens-item name="Message" menu-title="Message" menu-index="16" location="component://example/screen/Gallery/Message.xml"/>
+        <subscreens-item name="Views" menu-title="Views" menu-index="17" location="component://example/screen/Gallery/Views.xml"/>
+        <!-- density="handheld" and the scan-input element (style guide 8.2) -->
+        <subscreens-item name="Handheld" menu-title="Handheld" menu-index="18" location="component://example/screen/Gallery/Handheld.xml"/>
+        <!-- the nav-card element in both sizes, with and without child links -->
+        <subscreens-item name="NavCards" menu-title="Nav cards" menu-index="19" location="component://example/screen/Gallery/NavCards.xml"/>
+        <subscreens-item name="QuickNote" menu-include="false" location="component://example/screen/Gallery/QuickNote.xml"/>
+        <subscreens-item name="QuickTask" menu-include="false" location="component://example/screen/Gallery/QuickTask.xml"/>
+        <!-- an edit form whose save is refused with validation errors: what Assist's Edit in screen hands to the user -->
+        <subscreens-item name="Contact" menu-include="false" location="component://example/screen/Gallery/Contact.xml"/>
+        <!-- a search, a dependent drop-down in a dialog and a create through a dialog that opens an edit screen: what the
+            scripted TUI gate drives -->
+        <subscreens-item name="Search" menu-include="false" location="component://example/screen/Gallery/Search.xml"/>
+        <subscreens-item name="EditExample" menu-include="false" location="component://example/screen/Gallery/EditExample.xml"/>
+        <!-- a text-area with editor-type="code": the code editor in a form (the browser gate) -->
+        <subscreens-item name="CodeField" menu-include="false" location="component://example/screen/Gallery/CodeField.xml"/>
+        <!-- the detail the Views list's peek pane loads (form-list peek-url) -->
+        <subscreens-item name="ExampleDetail" menu-include="false" location="component://example/screen/Gallery/ExampleDetail.xml"/>
+        <!-- the record panels the chatter and record-files elements load under the current app root, by the names the theme
+            values STRT_CHATTER_SCREEN and STRT_RECORD_FILES_SCREEN give (BOSS seeds Chatter and RecordFiles), as a BOSS app
+            root mounts Shared/Chatter.xml and Shared/RecordFiles.xml -->
+        <subscreens-item name="Chatter" menu-include="false" location="component://example/screen/Gallery/Chatter.xml"/>
+        <subscreens-item name="RecordFiles" menu-include="false" location="component://example/screen/Gallery/RecordFiles.xml"/>
+    </subscreens>
+
+    <!-- What the gallery offers the suite shell (the shellData and shellSearch transitions of webroot.xml): a quick-create kind,
+        a palette action, a palette group over enumerations and a key. Screen paths are under the apps root. -->
+    <shell-providers>
+        <quick-create kind="galleryNote" label="Gallery note" icon="sym_o_note_add" screen="gallery/QuickNote" sequence="90"/>
+        <!-- a .qvue screen: named without .qvue, loaded in its render mode; with a condition-service, offered only where that
+            service says so for the user (example.ExampleServices.offer#GalleryQuickCreate: unless they turned it off) -->
+        <quick-create kind="galleryTask" label="Gallery task" icon="sym_o_add_task" screen="gallery/QuickTask" sequence="91"
+                condition-service="example.ExampleServices.offer#GalleryQuickCreate"/>
+        <palette-action label="Open the widget gallery" icon="sym_o_widgets" screen="gallery/Widgets" sequence="90"/>
+        <palette-source group="GalleryEnumerations" label="Enumerations" icon="sym_o_label" prefix="~" sequence="90"
+                service="example.ExampleServices.search#GalleryEnumerations"/>
+        <keymap scope="gallery"><key keys="g w" label="Go to the widgets" screen="gallery/Widgets"/></keymap>
+        <!-- who a phone caller is (V5): an example that answers, and one that fails for one number (service/example/ExampleServices.xml) -->
+        <call-context name="gallery.callContext" service="example.ExampleServices.get#GalleryCallContext" sequence="90"/>
+        <call-context name="gallery.callContextFailing" service="example.ExampleServices.get#GalleryCallContextFailing" sequence="91"/>
+        <!-- who may be called, transferred to or added (the hardening pass): an example refusing the users named *.offlimits -->
+        <call-target name="gallery.callTarget" service="example.ExampleServices.get#GalleryCallTarget" sequence="90"/>
+        <!-- a box on Comms Home and a provider failing on purpose, and the contact card of the gallery's addresses
+            (plans/archive/Comms-Framework.md §3.3) -->
+        <home-source name="gallery.home" service="example.ExampleServices.get#GalleryHomeSource" sequence="90"/>
+        <home-source name="gallery.homeFailing" service="example.ExampleServices.get#GalleryHomeSourceFailing" sequence="91"/>
+        <contact-card name="gallery.contactCard" service="example.ExampleServices.get#GalleryContactCard" sequence="90"/>
+    </shell-providers>
+
+    <widgets><subscreens-panel id="gallery-panel" type="popup"/></widgets>
+</screen>

@@ -37,7 +37,7 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         for relative in [
-            "runtime/base-component/framework/conf/MoquiDefaultConf.xml",
+            "runtime/components/base/framework/conf/MoquiDefaultConf.xml",
             "runtime/conf/MoquiDevConf.xml",
         ] {
             let Ok(node) = MNode::parse_file(self.root.join(relative)) else {
@@ -90,7 +90,7 @@ pub(super) fn repo_env_stamp(root: &Path) -> Option<(u64, SystemTime)> {
 fn component_conf_mounts_and_runtime_conf_wins() {
     let root = workspace_root();
     let runtime = TempRuntime::new("component-conf");
-    let component = runtime.path().join("component/app");
+    let component = runtime.path().join("components/addon/app");
     std::fs::create_dir_all(&component).unwrap();
     std::fs::write(
         component.join("MoquiConf.xml"),
@@ -105,9 +105,9 @@ fn component_conf_mounts_and_runtime_conf_wins() {
     )
     .unwrap();
     let none = super::merge_component_confs(
-        &root.join("runtime/base-component/framework"),
+        &root.join("runtime/components/base/framework"),
         runtime.path(),
-        &[root.join("runtime/base-component/framework")],
+        &[root.join("runtime/components/base/framework")],
         true,
     );
     assert!(none.unwrap().is_none());
@@ -123,7 +123,7 @@ fn component_conf_mounts_and_runtime_conf_wins() {
             .and_then(|node| node.attribute("value"))
     };
     let plain = super::merge_component_confs(
-        &root.join("runtime/base-component/framework"),
+        &root.join("runtime/components/base/framework"),
         runtime.path(),
         std::slice::from_ref(&component),
         false,
@@ -132,7 +132,7 @@ fn component_conf_mounts_and_runtime_conf_wins() {
     .expect("a component conf");
     assert_eq!(overlay(&plain), None);
     let conf = super::merge_component_confs(
-        &root.join("runtime/base-component/framework"),
+        &root.join("runtime/components/base/framework"),
         runtime.path(),
         &[component],
         true,
@@ -218,7 +218,7 @@ fn runtime_conf_property_wins_over_the_environment() {
 #[test]
 fn dev_conf_merge_sets_purpose_and_entity_definition_idle() {
     let root = workspace_root();
-    let base = MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
+    let base = MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).unwrap();
     let over = MNode::parse_file(root.join("runtime/conf/MoquiDevConf.xml")).unwrap();
     super::merge_conf(&base, &over);
     let purpose = base
@@ -250,10 +250,10 @@ fn boot_registers_components_and_named_resource_errors() {
         temp.path().join("conf/MoquiDevConf.xml"),
     )
     .unwrap();
-    std::os::unix::fs::symlink(root.join("runtime/base-component"), temp.path().join("base-component")).unwrap();
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), &temp.path()).unwrap();
     // A component whose MoquiConf.xml selects a tool factory this binary does not link, as a dev component's is in a
     // Lite binary: the boot leaves the tool factory out and goes on.
-    let unlinked = temp.path().join("component/unlinked-tool");
+    let unlinked = temp.path().join("components/addon/unlinked-tool");
     std::fs::create_dir_all(&unlinked).unwrap();
     std::fs::write(
         unlinked.join("component.xml"),
@@ -266,7 +266,7 @@ fn boot_registers_components_and_named_resource_errors() {
     )
     .unwrap();
     env::set_property("moqui_version", "phase2-test");
-    let framework = root.join("runtime/base-component/framework");
+    let framework = root.join("runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let components = factory.components();
     let names: Vec<&str> = components.iter().map(|info| info.name.as_str()).collect();
@@ -310,7 +310,7 @@ fn generated_secret_is_stable_and_unwritable_env_fails() {
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("secret");
     write_probe_conf(temp.path(), "phase2_probe_secret", "probe-secret-CHANGEME");
-    let framework = root.join("runtime/base-component/framework");
+    let framework = root.join("runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let first = env::get_prop_or_env("phase2_probe_secret");
     assert_eq!(first.len(), 44);
@@ -378,7 +378,7 @@ fn generated_secret_starts_its_own_line_in_env_without_final_newline() {
     write_probe_conf(temp.path(), "phase2_probe_newline", "probe-secret-CHANGEME");
     // Host settings written before the first start (docs/Run-Deploy.md), the last line with no newline
     std::fs::write(temp.path().join(".env"), "phase2_probe_host=erp.example.com").unwrap();
-    let framework = root.join("runtime/base-component/framework");
+    let framework = root.join("runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
     let lines: Vec<&str> = env_text.lines().collect();
@@ -439,9 +439,9 @@ fn artifact_stack_allows_and_authz_depth_follows_the_guard() {
         temp.path().join("conf/MoquiDevConf.xml"),
     )
     .unwrap();
-    std::os::unix::fs::symlink(root.join("runtime/base-component"), temp.path().join("base-component")).unwrap();
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), &temp.path()).unwrap();
     let factory =
-        ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/base-component/framework"))
+        ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/components/base/framework"))
             .unwrap();
     let context = factory.new_context();
     assert!(!context.authz_disabled());

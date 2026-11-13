@@ -32,7 +32,7 @@ impl Site {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let messages = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/base-component/webroot/screen/includes/Messages.html.fancy");
+            .join("../../runtime/components/base/webroot/screen/includes/Messages.html.fancy");
         let screen = r#"<screen require-authentication="false">
     <transition name="save">
         <actions><script><![CDATA[
@@ -483,7 +483,7 @@ fn shell_root(name: &str) -> Site {
     let dir = std::env::temp_dir().join(format!("moqui-shell-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let webroot = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/webroot/screen");
+    let webroot = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen");
     let webroot = webroot.canonicalize().unwrap();
     let screen = r#"<screen require-authentication="false">
     <always-actions>

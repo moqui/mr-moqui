@@ -22,7 +22,7 @@ fn runtime() -> PathBuf {
 
 /// The framework's and the tools component's skills, as the sync reads them.
 fn shipped() -> SkillIndex {
-    let base = runtime().join("base-component");
+    let base = runtime().join("components/base");
     let read = sync::read_dirs(&[
         ("framework".to_string(), base.join("framework/skill")),
         ("tools".to_string(), base.join("tools/skill")),
@@ -36,7 +36,7 @@ fn shipped() -> SkillIndex {
 
 #[test]
 fn the_committed_retrieval_set_reaches_its_recall() {
-    let text = std::fs::read_to_string(runtime().join("base-component/tools/test/skill-retrieval.json")).unwrap();
+    let text = std::fs::read_to_string(runtime().join("components/base/tools/test/skill-retrieval.json")).unwrap();
     let cases = retrieval::read_cases(&text).unwrap();
     let report = retrieval::evaluate(&shipped(), &cases);
     println!("{}", report.text("tools"));

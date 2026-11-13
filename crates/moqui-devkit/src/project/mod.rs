@@ -33,7 +33,7 @@ use serde::Serialize;
 pub enum Layout {
     /// Java Moqui: `framework/` (Java and Groovy sources, no conf of MR Moqui's) beside `runtime/`.
     Java,
-    /// MR Moqui: a runtime with `base-component/framework`.
+    /// MR Moqui: a runtime with `components/base/framework`.
     Mr,
 }
 
@@ -85,7 +85,7 @@ impl Project {
                 let framework = mr_framework().ok_or_else(|| {
                     Error::new(format!(
                         "{} is a Java Moqui checkout; its artifacts are read with MR Moqui's framework conf, which was \
-                         not found: set MOQUI_FRAMEWORK to an MR Moqui runtime/base-component/framework",
+                         not found: set MOQUI_FRAMEWORK to an MR Moqui runtime/components/base/framework",
                         self.root.display()
                     ))
                 })?;
@@ -104,7 +104,7 @@ impl Project {
 /// - Java Moqui: `framework/src/main/java` or `framework/src/main/groovy`, or `framework/build.gradle` with a `.java`
 ///   or `.groovy` file under `framework/src`; it needs `runtime/` beside `framework/`. `dir` may also be such a
 ///   checkout's `runtime`.
-/// - MR Moqui: `runtime/base-component/framework/component.xml` (a clone), or `base-component/framework/component.xml`
+/// - MR Moqui: `runtime/components/base/framework/component.xml` (a clone), or `components/base/framework/component.xml`
 ///   (a runtime directory).
 ///
 /// # Errors
@@ -130,14 +130,14 @@ pub fn detect(dir: &Path) -> Result<Project, Error> {
     }
     if dir.join("crates").is_dir() {
         return Err(Error::new(format!(
-            "{} looks like an MR Moqui clone (crates/) but has no runtime/base-component/framework/component.xml",
+            "{} looks like an MR Moqui clone (crates/) but has no runtime/components/base/framework/component.xml",
             dir.display()
         )));
     }
     Err(Error::new(format!(
         "{} is not a Moqui project: a Java Moqui checkout has framework/src/main/java or framework/src/main/groovy (or \
          framework/build.gradle with Java or Groovy sources) beside runtime/, and an MR Moqui clone or runtime has \
-         runtime/base-component/framework or base-component/framework",
+         runtime/components/base/framework or components/base/framework",
         dir.display()
     )))
 }
@@ -165,7 +165,7 @@ pub fn detect_java(dir: &Path) -> Result<Project, Error> {
     };
     if checkout.join(layout::REPO_FRAMEWORK).join("component.xml").is_file() {
         return Err(Error::new(format!(
-            "{} is an MR Moqui clone (runtime/base-component/framework), not a Java Moqui checkout",
+            "{} is an MR Moqui clone (runtime/components/base/framework), not a Java Moqui checkout",
             checkout.display()
         )));
     }

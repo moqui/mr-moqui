@@ -29,7 +29,7 @@ suffix, read that version, as Java's `getLocationText` does. A suffix on storage
 in `<del>` and `<ins>`, and every text escaped (with `{` written as `&#123;`, so a qvt screen's Vue compile reads no
 interpolation in it). The `moqui-diff` rules in the webroot CSS style it in light and dark. Put it in a screen with
 `<render-mode><text type="html,qvt"><![CDATA[${diff.html}]]></text></render-mode>`; the gallery's Editor screen
-(`runtime/dev-component/example/screen/Gallery/Editor.xml`) and mr-marble's `WikiCompare` do. The diff is
+(`runtime/components/dev/example/screen/Gallery/Editor.xml`) and mr-marble's `WikiCompare` do. The diff is
 Patience over lines, with three lines of context ([`similar`](https://crates.io/crates/similar)); Rust code calls
 `ResourceFacade::version_diff` or `crate::resource::textdiff`.
 
@@ -125,7 +125,7 @@ Each repository is a `moqui.resource.GitRepository` row, edited under System, Re
 
 ### Services
 
-`org.moqui.git.GitServices` (`runtime/base-component/framework/service/org/moqui/git/GitServices.xml`). A failure is
+`org.moqui.git.GitServices` (`runtime/components/base/framework/service/org/moqui/git/GitServices.xml`). A failure is
 an error in the message facade, as for any service.
 
 | Service | |
@@ -232,7 +232,7 @@ before the field existed is sized from its data until its next write or `migrate
 ## Drives
 
 Files run on drives (`moqui.resource.ResourceDrive` and the entities beside it in `ResourceEntities.xml`), served by
-`org.moqui.resource.FileServices` (`runtime/base-component/framework/service/org/moqui/resource/FileServices.xml`). A drive is a
+`org.moqui.resource.FileServices` (`runtime/components/base/framework/service/org/moqui/resource/FileServices.xml`). A drive is a
 root location with an owner, members and a quota:
 
 | Kind | Root | Versions |
@@ -339,7 +339,7 @@ held there, as an Elastic term query does. Extracted text is later.
 
 ## Wiki pages
 
-`org.moqui.resource.WikiServices` (`runtime/base-component/framework/service/org/moqui/resource/WikiServices.xml`) keeps
+`org.moqui.resource.WikiServices` (`runtime/components/base/framework/service/org/moqui/resource/WikiServices.xml`) keeps
 knowledge spaces and each user's notes (`ensure#UserNotesSpace`, a private space on database files) over this API.
 `WikiSpace` and `WikiPage` are `moqui.*` entities, which entity filters never apply to, so the services check the wiki's
 own rules: `get#WikiPageAccess` (view, update, admin, and the storage of a space or page; a space with `restrictView`
@@ -427,7 +427,7 @@ screen, loaded as `/<name>/<token>.qvt` (or `.qvue`, `.qjs`, by the screen's ren
 under `/<name>/<token>/`. The screen's context has `token` and `tokenRoute` (`{name, token, basePath, title,
 context}`); a request parameter of either name is replaced. A route named as a framework path (`apps`, `qapps`, `rest`,
 ...) is left out, and a component's route of the same name replaces an earlier one. The services a public screen calls
-check the token again. `runtime/dev-component/example/screen/PublicLink.xml` is a minimal route screen.
+check the token again. `runtime/components/dev/example/screen/PublicLink.xml` is a minimal route screen.
 
 A `POST` to `/<name>/<token>` itself is the shell page, as a `GET` is, unless the route has a `post-transition`: then,
 after the token check, it runs that transition of the route's screen, as a `POST` to `/<name>/<token>/<transition>`

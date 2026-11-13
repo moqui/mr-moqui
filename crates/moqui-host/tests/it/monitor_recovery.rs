@@ -152,11 +152,11 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
         &[],
         &[
             (
-                "component/recovery-fixture/component.xml",
+                "components/addon/recovery-fixture/component.xml",
                 r#"<component name="recovery-fixture"/>"#,
             ),
             (
-                "component/recovery-fixture/MoquiConf.xml",
+                "components/addon/recovery-fixture/MoquiConf.xml",
                 r#"<moqui-conf><telemetry><regressions lookback-hours="1" window-minutes="30"/><recovery allow-automatic="true"/></telemetry></moqui-conf>"#,
             ),
         ],

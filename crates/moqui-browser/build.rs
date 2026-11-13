@@ -55,7 +55,7 @@ fn main() {
         return;
     }
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let framework = manifest.join("../../runtime/base-component/framework");
+    let framework = manifest.join("../../runtime/components/base/framework");
     let runtime = manifest.join("runtime");
     println!("cargo:rerun-if-changed={}", runtime.display());
     let exported: Vec<String> = EXPORTS.iter().map(|name| format!("_{name}")).collect();

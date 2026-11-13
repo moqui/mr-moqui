@@ -21,7 +21,7 @@ use super::edit::{self, Direction, Edit};
 use super::{locale, origins, render};
 
 fn shipped_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/docs/Constitution.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework/docs/Constitution.json")
 }
 
 fn shipped() -> Value {

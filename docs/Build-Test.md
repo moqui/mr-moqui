@@ -24,7 +24,7 @@ links GPL readline); `./moq build` runs that when the archive is missing. Node i
 
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
-                                       # --enterprise for the others; links any component crates in runtime/component
+                                       # --enterprise for the others; links any component crates in runtime/components/addon
 scripts/pg-payload.sh strip            # once: the Postgres archive the binary embeds, without psql
 cargo build -p moqui                   # Debug, every feature: target/debug/moqui
 cargo build --profile lite --no-default-features -F lite -p moqui     # Lite: target/lite/moqui
@@ -154,7 +154,7 @@ build, with no features of its own.
 | `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too | | yes | yes |
 | `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster_protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/archive/Edge-Node.md) §5.5) | yes | yes | yes |
 | `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/archive/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
-| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Maximal (the default) and Debug | | | yes |
+| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.git.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
@@ -238,13 +238,13 @@ mr-moqui-20261019/
   MoquiConf.xml    runtime/conf/MoquiProductionConf.xml, or the --conf file
   README.txt       how to run it, the package, the commit, and what went in
   LICENSE.md
-  .env, base-component/, component/, conf/, db/, opensearch/, ...
+  .env, components/, conf/, db/, opensearch/, ...
                    runtime/ without log/, tmp/, save/ (--with-save adds it), install/, db/install, .git,
                    component target/
   install/         not in the archive: the first start unpacks the embedded Postgres into install/postgres/
 ```
 
-The binary takes `runtime` in the working directory when it has `base-component/`, else the working directory itself
+The binary takes `runtime` in the working directory when it has `components/base/`, else the working directory itself
 when it has one, so the unpacked directory runs as `cd <dir> && ./moqui`; it never looks beside the binary, so one
 binary runs several instances ([Runtime directory](Run-Deploy.md#runtime-directory-and-conf)). The binary also
 carries the framework and tools components and a webroot stub (`crates/moqui-embedded`, about 2.2 MB compressed): it
@@ -346,7 +346,7 @@ cargo install tauri-cli --version 3.0.0-alpha.5 --locked
 A bundle carries the `moqui` binary for the sidecar node: `./moq desktop build` builds the Maximal release binary (the
 package the app links), stages it as `target/desktop-bin/moqui-<host triple>` and passes it as `bundle.externalBin`,
 which puts it beside the app's executable as `moqui`. A development run uses `target/release/moqui` or
-`target/debug/moqui` from `./moq build`. The bundle's runtime has `dev-component` (the Dev AIDE and the example), which
+`target/debug/moqui` from `./moq build`. The bundle's runtime has `components/dev` (the Dev AIDE and the example), which
 load only when the tray's Developer tools makes the node a dev instance. The bundle also carries Chromium's notices, CEF's `CREDITS.html` from the
 `tauri-cef` cache, as `notices/chromium-credits.html` (`target/desktop-notices`). The checks on installed bundles are in
 [Mobile-Desktop-Exit-Checks](../plans/Mobile-Desktop-Exit-Checks.md).
@@ -484,7 +484,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 
 ```sh
 ./moq build                    # Maximal with the dev tools, target/release/moqui (--lite, --debug, --enterprise for
-                               # the others), linking any component crates in runtime/component; tasks that
+                               # the others), linking any component crates in runtime/components/addon; tasks that
                                # run moqui build a missing binary themselves
 ./moq run                      # target/release/moqui with runtime/conf/MoquiDevConf.xml; --lite uses target/lite/moqui
 ./moq run -p 8081 -D entity_ds_db_conf=postgres
@@ -493,8 +493,8 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
 ./moq test-client framework    # a component's test/client specs against the running server (docs/dev/JS-Test-Client.md)
 ./moq test-load mr-marble --script OrderToCash   # a load script against the running server (docs/tools/Load-Runner.md)
-./moq test-apps                # the application tests: the specs of runtime/component, no cargo
-./moq test-framework           # the framework tests: cargo, moq, the specs of base-component and dev-component
+./moq test-apps                # the application tests: the specs of runtime/components/addon, no cargo
+./moq test-framework           # the framework tests: cargo, moq, the specs of components/base and components/dev
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
 ./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only when asked
 ./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
@@ -527,10 +527,10 @@ runs the scripted TUI screens, which `cargo test` leaves out. A gate that only o
 there.
 
 `./moq test-framework` runs the framework's suites in turn and lists which passed: `cargo test`,
-`scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for the components of `runtime/base-component` and
-`runtime/dev-component`, the demo component's specs (it is off by default, so the suite turns it on), the offline client
+`scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for the components of `runtime/components/base` and
+`runtime/components/dev`, the demo component's specs (it is off by default, so the suite turns it on), the offline client
 specs of webroot and dev-aide, and the served client specs of those components. `./moq test-apps` runs `moqui test` and
-`moqui test-client --serve` over the components of `runtime/component` only, with no cargo build or test; it builds the
+`moqui test-client --serve` over the components of `runtime/components/addon` only, with no cargo build or test; it builds the
 binary only when it is missing. `./moq test-all` is both in turn. `./moq help <task>` lists each one's suites.
 
 ### The script engine
@@ -620,7 +620,7 @@ the values of their parts, `where` tables, a suite order, data checks, pinned se
 REST renders, and features that run on several threads. This section is how to run them, their files and order; the
 API a spec is written with is in [JS-Testkit](dev/JS-Testkit.md).
 
-The specs of `runtime/component/mr-mantle/test` are the largest set, ported from the Java mantle-usl's Spock specs; its
+The specs of `runtime/components/addon/mr-mantle/test` are the largest set, ported from the Java mantle-usl's Spock specs; its
 `README.md` maps Groovy to spec files line by line. The design record is `plans/archive/TestHarness.md`.
 
 Tests from outside the server, over HTTP, WebSocket and headless Chromium, with a load runner, are the specs of a
@@ -709,8 +709,8 @@ sessions installed as a server has them (`plans/LLM-A2A-Assist.md`, section 9). 
 
 ```sh
 moqui test tools --agents --llm-profile local-qwen --runs 3 --seed 7   # a model of the llm-facade conf
-moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay   # no model
-moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay-small   # a small model in JSON tool mode
+moqui test tools --agents --replay runtime/components/base/tools/test/agent/replay   # no model
+moqui test tools --agents --replay runtime/components/base/tools/test/agent/replay-small   # a small model in JSON tool mode
 moqui test tools --agents --llm-profile local-qwen --feature "approval" --db snapshot
 ```
 
@@ -763,11 +763,11 @@ The tools component's suite (`test/agent/`): `assist.agent.js` (21 tasks in the 
 the `a2a` surface, run through the run engine; the spec lets the assist agent serve that surface while it runs). The
 surface of a spec is `drawer`, `chat`, `tui`, `job`, `a2a` or `mcp`; a headless one sends only the time in the tail.
 
-The dev agent's tasks are in `runtime/dev-component/dev-aide/test/agent/dev.agent.js` (plans/design-dev-aide.md P4): a
+The dev agent's tasks are in `runtime/components/dev/dev-aide/test/agent/dev.agent.js` (plans/design-dev-aide.md P4): a
 field added to an upstream entity and shown on its form from the site component, a list column, where a service is used,
 and a spec written from a Try in the sim. A dev component's agents run on a dev instance; the example component stands in
 for the site component for the run, and the files a task writes are put back after it. With the hand-authored replies:
-`moqui test dev-aide --agents --replay runtime/dev-component/dev-aide/test/agent/replay`. With a model (a key from the
+`moqui test dev-aide --agents --replay runtime/components/dev/dev-aide/test/agent/replay`. With a model (a key from the
 environment, nightly and before a phase closes; the design's `--live` is `--llm-profile`):
 `moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the
 files proposed and written are the expected ones and check clean. Copy a passing run's transcript into the replay set to

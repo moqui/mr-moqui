@@ -63,15 +63,18 @@ fn the_language_server_answers_on_the_example_component() {
         return;
     }
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/entity/MySiteEntities.xml", ENTITIES),
-        ("component/my-site/service/mysite/Widgets.xml", SERVICES),
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/entity/MySiteEntities.xml", ENTITIES),
+        ("components/addon/my-site/service/mysite/Widgets.xml", SERVICES),
     ];
     let gate = start_with_files("lsp", None, &[("instance_purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
     let index = Box::new(MemoryIndex::build(&factory));
     let mut server = Server::new(Backend::Local { factory, index });
-    let site = std::fs::canonicalize(gate.runtime.join("component/my-site")).unwrap();
+    let site = std::fs::canonicalize(gate.runtime.join("components/addon/my-site")).unwrap();
     let services = site.join("service/mysite/Widgets.xml");
     let uri = moqui_host::lsp::uri_of(&services);
 

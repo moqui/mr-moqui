@@ -37,51 +37,52 @@ use super::statics::{Eligibility, StaticTemplate};
 use crate::context::{Error, ExecutionContextFactory};
 use crate::script::walker::{self, Resolve};
 
-const TEMPLATE_SUPPORT: &str = include_str!("../../../../runtime/base-component/framework/template/TemplateSupport.js");
+const TEMPLATE_SUPPORT: &str =
+    include_str!("../../../../runtime/components/base/framework/template/TemplateSupport.js");
 const SCREEN_SUPPORT: &str =
-    include_str!("../../../../runtime/base-component/framework/template/screen/ScreenSupport.js");
+    include_str!("../../../../runtime/components/base/framework/template/screen/ScreenSupport.js");
 
 /// The mode modules built into the binary, by file name.
 const MODE_MODULES: [(&str, &str); 10] = [
     (
         "ScreenText.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenText.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenText.js"),
     ),
     (
         "ScreenCsv.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenCsv.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenCsv.js"),
     ),
     (
         "ScreenXml.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenXml.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenXml.js"),
     ),
     (
         "ScreenHtmlPrint.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenHtmlPrint.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenHtmlPrint.js"),
     ),
     (
         "ScreenHtml.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenHtml.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenHtml.js"),
     ),
     (
         "ScreenQvt.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenQvt.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenQvt.js"),
     ),
     (
         "ScreenQvtStatic.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenQvtStatic.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenQvtStatic.js"),
     ),
     (
         "ScreenPlain.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenPlain.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenPlain.js"),
     ),
     (
         "ScreenXlsx.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenXlsx.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenXlsx.js"),
     ),
     (
         "ScreenTui.js",
-        include_str!("../../../../runtime/base-component/framework/template/screen/ScreenTui.js"),
+        include_str!("../../../../runtime/components/base/framework/template/screen/ScreenTui.js"),
     ),
 ];
 

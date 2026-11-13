@@ -90,12 +90,12 @@ fn a_component_location_names_its_file_before_it_is_registered() {
     let component = ComponentInfo {
         name: "c".to_string(),
         version: String::new(),
-        location: PathBuf::from("/srv/runtime/component/c"),
+        location: PathBuf::from("/srv/runtime/components/addon/c"),
         depends_on: Vec::new(),
         purposes: Vec::new(),
     };
     assert_eq!(
         file_of(&component, "component://c/data/CSeedData.xml"),
-        PathBuf::from("/srv/runtime/component/c/data/CSeedData.xml")
+        PathBuf::from("/srv/runtime/components/addon/c/data/CSeedData.xml")
     );
 }

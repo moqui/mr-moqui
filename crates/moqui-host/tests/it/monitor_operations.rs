@@ -100,14 +100,17 @@ fn operations_count_their_outcomes_from_the_transaction() {
         &[],
         &[
             (
-                "component/ops-fixture/component.xml",
+                "components/addon/ops-fixture/component.xml",
                 r#"<component name="ops-fixture"/>"#,
             ),
             (
-                "component/ops-fixture/MoquiConf.xml",
+                "components/addon/ops-fixture/MoquiConf.xml",
                 r#"<moqui-conf><telemetry sample-ratio="1"/></moqui-conf>"#,
             ),
-            ("component/ops-fixture/service/ops/fixture/OrderServices.xml", SERVICES),
+            (
+                "components/addon/ops-fixture/service/ops/fixture/OrderServices.xml",
+                SERVICES,
+            ),
         ],
     );
     let factory = gate.server.factory();
@@ -167,7 +170,7 @@ fn operations_count_their_outcomes_from_the_transaction() {
     let definition: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../runtime/base-component/tools/report/monitor-operations.json"),
+                .join("../../runtime/components/base/tools/report/monitor-operations.json"),
         )
         .unwrap(),
     )

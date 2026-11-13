@@ -379,7 +379,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     // A new screen without an acceptance case is a failed gate, rather than silently missing coverage.
     let covered: BTreeSet<_> = cases.iter().map(|(name, _)| name.to_string()).collect();
     let mut actual = BTreeSet::new();
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/tools/screen");
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/tools/screen");
     for (directory, folder) in [("Monitor", "System/Monitor"), ("Dashboards", "Dashboards")] {
         for file in std::fs::read_dir(root.join(folder)).unwrap() {
             let file = file.unwrap().path();

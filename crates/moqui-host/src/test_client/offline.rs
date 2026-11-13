@@ -197,7 +197,10 @@ mod tests {
     use super::*;
 
     fn roots() -> (TempDir, Roots) {
-        let dir = std::env::temp_dir().join(format!("moqui-offline-{}", std::process::id()));
+        // one directory per call: the tests run at once
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("moqui-offline-{}-{call}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let webroot = dir.join("webroot");
         let repo = dir.join("repo");

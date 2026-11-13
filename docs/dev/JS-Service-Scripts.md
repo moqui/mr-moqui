@@ -79,7 +79,7 @@ When the body ends, each declared out-parameter is read by name from the body's 
 ```
 
 `number` is an in-parameter and `contactList` and `recordList` are out-parameters, all from the interface the service
-implements; `n` is a local (`runtime/dev-component/example/service/example/ExampleServices.xml`).
+implements; `n` is a local (`runtime/components/dev/example/service/example/ExampleServices.xml`).
 
 - An out-parameter the body did not set is left out of the results.
 - A name the body set that is not a declared out-parameter is not returned. An inline or script service with no

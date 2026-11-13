@@ -52,19 +52,19 @@ fn empty_db_recreates_factory_once_and_existing_db_does_not() {
     let root = std::env::temp_dir().join(format!("moqui-factory-restart-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let runtime = root.join("runtime");
-    let component = runtime.join("component/probe");
+    let component = runtime.join("components/addon/probe");
     std::fs::create_dir_all(&component).unwrap();
     std::fs::create_dir_all(runtime.join("conf")).unwrap();
     std::fs::write(component.join("component.xml"), "<component name=\"restart-probe\"/>").unwrap();
     std::fs::write(
         runtime.join("conf/MoquiDevConf.xml"),
         r#"<moqui-conf>
-        <component-list><component-dir location="component"/></component-list>
+        <component-list><component-dir location="components/addon"/></component-list>
         <tools empty-db-load="seed,seed-initial,install"><tool-factory class="restart::Probe"/></tools>
         </moqui-conf>"#,
     )
     .unwrap();
-    let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     moqui_lib::env::set_property("cluster_https_port", "0");
     moqui_lib::env::set_property("cluster_ssh_port", "0");
     let bind = ([127, 0, 0, 1], 0).into();

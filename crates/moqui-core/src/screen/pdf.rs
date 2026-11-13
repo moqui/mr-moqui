@@ -220,7 +220,7 @@ fn pdf_library() -> Result<Arc<PdfLibrary>, Error> {
         #[cfg(test)]
         let text = text.or_else(|_| {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../runtime/base-component/webroot/screen/webroot")
+                .join("../../runtime/components/base/webroot/screen/webroot")
                 .join(location.trim_start_matches("component://webroot/screen/webroot/"));
             std::fs::read_to_string(path).map_err(|err| Error::new(err.to_string()))
         });

@@ -189,7 +189,7 @@ fn call_future_and_start_future_run_at_once() {
 fn an_inline_boot_starts_no_pool_and_no_deadline_timer() {
     let runtime = std::env::temp_dir().join(format!("moqui-inline-boot-{}", std::process::id()));
     std::fs::create_dir_all(&runtime).unwrap();
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_options(

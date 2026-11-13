@@ -6,7 +6,7 @@ its element. The code of a section's widgets is one function, a **unit**, made o
 with the screen. A request runs the unit, which writes through the global `sri` and reads the request through `sri`,
 `ec` and the context. This is for someone adding a widget macro or a render mode, or reading what a screen runs.
 
-The modules are in `runtime/base-component/framework/template/`: `TemplateSupport.js`, `screen/ScreenSupport.js` and
+The modules are in `runtime/components/base/framework/template/`: `TemplateSupport.js`, `screen/ScreenSupport.js` and
 one module per mode in `screen/`. The Rust side is `crates/moqui-core/src/screen/generate.rs` (units),
 `crates/moqui-core/src/script/walker.rs` and `script/oxide/walker.rs` (the walk), `script/oxide/units.rs` (running a
 unit) and `script/host/sri.rs` with `host/urls.rs` (the `sri` global). Text templates are
@@ -456,7 +456,7 @@ Rules:
 
 | Kind | |
 |---|---|
-| A module's run-time functions | A `database: false` spec reads the module's text and evaluates it with `runInContext(source, sandbox)`, as `runtime/base-component/framework/test/ScreenHtml.spec.js` and `ScreenQvt.spec.js` do ([Testing](../Build-Test.md#component-specs)) |
+| A module's run-time functions | A `database: false` spec reads the module's text and evaluates it with `runInContext(source, sandbox)`, as `runtime/components/base/framework/test/ScreenHtml.spec.js` and `ScreenQvt.spec.js` do ([Testing](../Build-Test.md#component-specs)) |
 | Generated code | The Rust tests in `crates/moqui-core/src/screen/tests/` (`golden.rs`, `modules.rs`) and in `generate.rs` generate a unit from XML with `generate_xml(mode, xml, debug)` and check its text |
 | A screen's output | A spec renders the screen with `screenTest(...)` in the mode and checks the text, once per mode ([Rendering screens in tests](../Build-Test.md#rendering-screens-in-tests)) |
 

@@ -136,7 +136,11 @@ fn a_file_that_does_not_parse_is_in_the_stamp() {
 /// component's files, both ways.
 #[test]
 fn the_ref_table_answers_as_the_memory_index() {
-    let dir = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/dev-component/example")).unwrap();
+    let dir = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/dev/example"
+    ))
+    .unwrap();
     let ctx = moqui_core::context::ExecutionContextFactory::test_context();
     let index = MemoryIndex::of_files(ctx.factory(), &directory_files("example", &dir));
     assert!(index.artifacts.len() > 100, "{}", index.artifacts.len());

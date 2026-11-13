@@ -40,7 +40,7 @@ fn sections(problems: &[Problem]) -> Vec<&'static str> {
 /// The skill file's sections by slug.
 fn skill_sections() -> std::collections::BTreeMap<String, String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/framework/skill/openui-lang.md");
+        .join("../../runtime/components/base/framework/skill/openui-lang.md");
     let text = std::fs::read_to_string(path).unwrap();
     let mut out = std::collections::BTreeMap::new();
     let mut current: Option<String> = None;

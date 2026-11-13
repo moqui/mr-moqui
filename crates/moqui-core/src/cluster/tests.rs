@@ -857,8 +857,8 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     let _example = crate::testing::ExampleOff::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("cluster-cert");
-    std::os::unix::fs::symlink(root.join("runtime/base-component"), temp.path().join("base-component")).unwrap();
-    let framework = root.join("runtime/base-component/framework");
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), &temp.path()).unwrap();
+    let framework = root.join("runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let cert = env::get_prop_or_env("cluster_tls_cert");
     let key = env::get_prop_or_env("cluster_tls_key");
@@ -924,11 +924,7 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     env::clear_dotenv();
 
     let blocked = TempRuntime::new("cluster-half");
-    std::os::unix::fs::symlink(
-        root.join("runtime/base-component"),
-        blocked.path().join("base-component"),
-    )
-    .unwrap();
+    crate::context::layout::link_base_set(&root.join("runtime/components/base"), blocked.path()).unwrap();
     env::set_property("cluster_tls_cert", "configured-cert-value");
     let err = match ExecutionContextFactory::boot_with_framework(blocked.path(), &framework) {
         Ok(_) => panic!("boot succeeded with a certificate and no key"),
@@ -975,7 +971,7 @@ impl ConfGuard {
 impl Drop for ConfGuard {
     fn drop(&mut self) {
         for relative in [
-            "runtime/base-component/framework/conf/MoquiDefaultConf.xml",
+            "runtime/components/base/framework/conf/MoquiDefaultConf.xml",
             "runtime/conf/MoquiDevConf.xml",
         ] {
             let Ok(node) = MNode::parse_file(self.root.join(relative)) else {

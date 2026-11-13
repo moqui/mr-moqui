@@ -17,7 +17,7 @@
 //! the fixture's orders and invoices; party search, the general search, and the universal search run; and a user
 //! limited to their organizations sees nothing owned by another, in results, totals, or facets.
 //!
-//! The test needs `runtime/component/mr-mantle`, which is not part of this repository, and it skips without it. The load takes about half a minute.
+//! The test needs `runtime/components/addon/mr-mantle`, which is not part of this repository, and it skips without it. The load takes about half a minute.
 
 #![cfg(all(unix, feature = "embedded-postgres"))]
 
@@ -103,28 +103,28 @@ fn mantle_search_callers_on_the_search_facade() {
         return;
     }
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let components = repo.join("runtime/component");
+    let components = repo.join("runtime/components/addon");
     if !components.join("mr-mantle").is_dir() {
-        eprintln!("skipping: runtime/component/mr-mantle is not present");
+        eprintln!("skipping: runtime/components/addon/mr-mantle is not present");
         return;
     }
-    let framework = repo.join("runtime/base-component/framework");
+    let framework = repo.join("runtime/components/base/framework");
     // Short paths: the Postgres socket path must stay under 108 bytes.
     let runtime = temp_dir("msr");
     let cluster_dir = runtime.join("db");
     let _guard = DirGuard(runtime.clone());
-    std::fs::create_dir_all(runtime.join("component")).unwrap();
+    std::fs::create_dir_all(runtime.join("components/addon")).unwrap();
     std::fs::create_dir_all(&cluster_dir).unwrap();
     copy_dir(&repo.join("runtime/conf"), &runtime.join("conf"));
-    std::os::unix::fs::symlink(repo.join("runtime/base-component"), runtime.join("base-component")).unwrap();
-    std::os::unix::fs::symlink(components.join("mr-mantle"), runtime.join("component/mr-mantle")).unwrap();
+    moqui_core::context::layout::link_base_set(&repo.join("runtime/components/base"), &runtime).unwrap();
+    std::os::unix::fs::symlink(components.join("mr-mantle"), runtime.join("components/addon/mr-mantle")).unwrap();
 
     // The fixture's dates are days before now at noon, so the weekly periods hold them whatever today is.
     let now = jiff::Zoned::now();
     let noon = now.date().at(12, 0, 0, 0).to_zoned(now.time_zone().clone()).unwrap();
     let at = |days: i64| noon.checked_sub(jiff::Span::new().days(days)).unwrap();
     let day = |days: i64| at(days).strftime("%Y-%m-%d %H:%M:%S").to_string();
-    let fixture_dir = runtime.join("component/zz-search-fixture");
+    let fixture_dir = runtime.join("components/addon/zz-search-fixture");
     std::fs::create_dir_all(fixture_dir.join("data")).unwrap();
     std::fs::write(
         fixture_dir.join("component.xml"),

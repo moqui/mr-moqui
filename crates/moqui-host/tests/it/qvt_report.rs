@@ -29,7 +29,7 @@ fn repo() -> PathBuf {
 fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
     let reports = qvt_static_reports(
         &repo().join("runtime"),
-        &repo().join("runtime/base-component/framework"),
+        &repo().join("runtime/components/base/framework"),
     )
     .unwrap();
     let text = render_reports(&reports);
@@ -102,7 +102,7 @@ fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
     assert!(text.lines().last().unwrap_or("").contains("screens:"), "{text}");
     // Nothing is marked because a report is clean: the fixture screen file does not name server-static (the gate marks it with a screen-extend in its own runtime).
     let source = std::fs::read_to_string(
-        repo().join("runtime/base-component/tools/screen/System/Access/ArtifactGroupDetail.xml"),
+        repo().join("runtime/components/base/tools/screen/System/Access/ArtifactGroupDetail.xml"),
     )
     .unwrap();
     assert!(!source.contains("server-static"));

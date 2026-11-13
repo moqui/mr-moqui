@@ -871,7 +871,8 @@ fn template_specs_run_with_no_entity_facade() {
     let runtime = std::env::temp_dir().join(format!("moqui-template-specs-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&runtime);
     std::fs::create_dir_all(&runtime).unwrap();
-    let framework = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let _lock = moqui_core::user::session::cookie_property_lock();
     let factory = ExecutionContextFactory::boot_with_options(
         &runtime,

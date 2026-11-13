@@ -179,7 +179,7 @@ fn racing_create_or_update_of_a_missing_key_all_succeed_on_mysql() {
 }
 
 fn framework() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 fn pool() -> PoolConfig {

@@ -279,7 +279,7 @@ impl Gate {
             _cluster,
         } = self;
         drop(server);
-        let framework = repo_root().join("runtime/base-component/framework");
+        let framework = repo_root().join("runtime/components/base/framework");
         let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
         let server = moqui_host::start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
         Self {
@@ -545,7 +545,11 @@ fn template_key() -> String {
     let root = repo_root();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (COMPANION, WIDGETS, STATIC_LIST).hash(&mut hasher);
-    for part in ["runtime/base-component", "runtime/dev-component/example", "Cargo.lock"] {
+    for part in [
+        "runtime/components/base",
+        "runtime/components/dev/example",
+        "Cargo.lock",
+    ] {
         stamp_tree(&root.join(part), &mut hasher);
     }
     let mut crates: Vec<PathBuf> = std::fs::read_dir(root.join("crates"))
@@ -658,20 +662,20 @@ fn prepare_runtime(runtime: &Path, fixtures: &Template, extra_conf: &str) {
     )
     .unwrap();
     let base =
-        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(&base, runtime.join("base-component")).unwrap();
+        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
+    moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
     // The example dev component (its gallery, the Example entity, the token route screen) loads from component/ here, so
     // the gates have it on their production purpose; in the repository runtime it loads only on a dev instance.
-    let example = std::fs::canonicalize(repo_root().join("runtime/dev-component/example")).unwrap();
-    std::fs::create_dir_all(runtime.join("component")).unwrap();
-    std::os::unix::fs::symlink(&example, runtime.join("component/example")).unwrap();
+    let example = std::fs::canonicalize(repo_root().join("runtime/components/dev/example")).unwrap();
+    std::fs::create_dir_all(runtime.join("components/addon")).unwrap();
+    std::os::unix::fs::symlink(&example, runtime.join("components/addon/example")).unwrap();
 }
 
 /// Load the seed (the framework files and each component's `data` directory), the demo users, and the grants of the fixture.
 fn seed(runtime: &Path, cluster_dir: &Path, fixtures: &Template, extra_conf: &str) {
     prepare_runtime(runtime, fixtures, extra_conf);
-    let framework = repo_root().join("runtime/base-component/framework");
-    let base = std::fs::canonicalize(repo_root().join("runtime/base-component")).unwrap();
+    let framework = repo_root().join("runtime/components/base/framework");
+    let base = std::fs::canonicalize(repo_root().join("runtime/components/base")).unwrap();
     // The seed load reads the data directory of each component too: the default themes, the pagination text, the access to the
     // applications list (webroot) and the System and Tools app groups (tools).
     let seeded = load_data(runtime, &framework, cluster_dir, &LoadFlags::default()).unwrap();
@@ -806,7 +810,7 @@ pub fn start_member(label: &str, cluster_dir: &Path, properties: &[(&str, &str)]
     let guard = DirGuard(runtime.clone());
     std::fs::create_dir_all(&runtime).unwrap();
     prepare_runtime(&runtime, template(), "");
-    let framework = repo_root().join("runtime/base-component/framework");
+    let framework = repo_root().join("runtime/components/base/framework");
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, cluster_dir, bind).unwrap();
     (server, guard)
@@ -870,7 +874,7 @@ fn start_seeded_under(
     prepare_runtime(&runtime, template, extra_conf);
     copy_dir(&template.cluster, &cluster_dir);
     if static_fixture {
-        let component = runtime.join("component/gate-static");
+        let component = runtime.join("components/addon/gate-static");
         let extend = component.join("screen-extend/tools/screen/System/Access");
         std::fs::create_dir_all(&extend).unwrap();
         std::fs::write(component.join("component.xml"), r#"<component name="gate-static"/>"#).unwrap();
@@ -888,7 +892,7 @@ fn start_seeded_under(
         }
         std::os::unix::fs::symlink(from, &dest).unwrap();
     }
-    let framework = repo_root().join("runtime/base-component/framework");
+    let framework = repo_root().join("runtime/components/base/framework");
     if let Some((data, data_types)) = data {
         let extra = runtime.join("test-data.xml");
         std::fs::write(&extra, data).unwrap();

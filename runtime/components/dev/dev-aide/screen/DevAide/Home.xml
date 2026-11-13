@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Dev AIDE Home (plans/design-dev-aide.md 1, D18): the site's unpublished changes with Publish, each repository and
+    directory with its branch and changes, the reload log (what each save or outside edit reloaded, and its problems), the
+    restart a change needs, "No site component yet. Create one", and New component from the component template. Plain
+    forms and lists, so the terminal reaches it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Home" default-menu-index="1">
+
+    <transition name="publish"><service-call name="org.moqui.devaide.VcsServices.publish#Site" in-map="{rootId: rootId}"/>
+        <actions><message type="${published ? 'success' : 'warning'}">${(message || 'Published')}</message></actions>
+        <default-response url="."/></transition>
+    <transition name="createSite"><service-call name="org.moqui.devaide.WorkspaceServices.create#SiteComponent"/>
+        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <default-response url="."/></transition>
+    <transition name="createComponent"><service-call name="org.moqui.devaide.WorkspaceServices.create#Component"/>
+        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <default-response url="."/></transition>
+    <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
+        <actions><message type="warning">Restarting: the server comes back in a few seconds</message></actions>
+        <default-response url="."/></transition>
+    <transition name="workspace"><default-response url="../Workspace"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.WorkspaceServices.get#Overview" out-map="overview"/>
+        <set field="roots" from="overview.roots"/>
+        <set field="reloads" from="overview.reloads"/>
+        <set field="siteRoots" from="(overview.roots || []).filter(root => root.siteChanges > 0)"/>
+        <set field="custom" from="null"/>
+        <if condition="(overview.siteComponents || []).length">
+            <service-call name="org.moqui.devaide.ArtifactServices.get#Customizations" out-map="custom" ignore-error="true"/></if>
+    </actions>
+    <widgets>
+        <container style="row items-center q-gutter-sm q-ma-sm">
+            <link url="workspace" text="Open workspace" btn-type="primary"/>
+            <link url="../Artifacts/Search" text="Find artifacts"/>
+            <link url="../Repositories" text="Repositories"/>
+        </container>
+        <container id="DevAideRestart"><section name="RestartSection" condition="overview.restartNeeded"><widgets>
+            <container-box><box-header title="A change needs a restart"/><box-body>
+                <label type="p" text="A change that waits for a restart (a part of the conf that is not applied live, a component.xml, a component not loaded live) takes effect when the server restarts. Sessions and the sim overlay are lost."/>
+                <label type="p" text="A Rust change needs a rebuild first: ./moq build" condition="overview.rebuildNeeded"/>
+                <form-single name="RestartForm" transition="restart">
+                    <field name="submitButton"><default-field title="Restart"><submit confirmation="Restart the server now?"/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section></container>
+
+        <container id="DevAideCustomizations"><section name="CustomizationsSection" condition="custom"><widgets>
+            <container-box><box-header title="Site extensions: ${(custom.extensionCount || 0)}, ${(custom.brokenCount || 0)} broken"/><box-body>
+                <label type="p" text="An upgrade of an upstream component removed what ${custom.brokenCount} of them extend." condition="custom.brokenCount"/>
+                <link url="../Artifacts/Customizations" text="Customizations" link-type="anchor"/>
+            </box-body></container-box>
+        </widgets></section></container>
+
+        <container-box id="DevAideRepositories"><box-header title="Workspace roots"/><box-body>
+            <label type="p" text="Open a root to browse its files and review changes. Unpublished site changes: ${(overview.unpublished || 0)}."/>
+        </box-body><box-body-nopad>
+            <form-list name="RootList" list="roots" skip-form="true">
+                <field name="label"><default-field title="Root">
+                    <link url="workspace" text="${label}" parameter-map="{rootId: rootId}" link-type="anchor"/></default-field></field>
+                <field name="kind"><default-field title="Kind"><display text="${kind == 'git' ? 'git' : 'Not a git repository'}${upstream ? ' · upstream' : ' · site'}"/></default-field></field>
+                <field name="branch"><default-field title="Branch"><display text="${(branch || '')}${ahead ? ' ↑' + ahead : ''}${behind ? ' ↓' + behind : ''}"/></default-field></field>
+                <field name="changes"><default-field title="Changes"><display text="${(changes || 0)}"/></default-field></field>
+                <field name="components"><default-field title="Components"><display/></default-field></field>
+                <field name="publish"><default-field title="">
+                    <link url="publish" text="Publish ${siteChanges}" parameter-map="{rootId: rootId}" link-type="hidden-form"
+                            condition="siteChanges" confirmation="Commit and push the site component's ${siteChanges} changed files?"/>
+                </default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+
+        <container-box><box-header title="Create something new"/><box-body>
+            <container-row>
+                <row-col md="6">
+                    <container id="DevAideNoSite"><section name="NoSiteSection" condition="!(overview.siteComponents || []).length"><widgets>
+                        <label type="h6" text="No site component yet"/>
+                        <label type="p" text="Keep this site's entity and screen extensions, seed data and rules in a site component so upstream upgrades stay easy."/>
+                        <container-dialog id="DevAideCreateSite" button-text="Create site component" title="Create site component">
+                            <form-single name="CreateSiteForm" transition="createSite">
+                                <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-site"/></default-field></field>
+                                <field name="dependsOn"><default-field title="Extends (components, comma separated)"><text-line size="40"/></default-field></field>
+                                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                                <field-layout>
+                                    <field-row><field-ref name="componentName"/><field-ref name="dependsOn"/></field-row>
+                                    <field-row-big><field-ref name="submitButton"/></field-row-big>
+                                </field-layout>
+                            </form-single>
+                        </container-dialog>
+                    </widgets></section></container>
+                    <section name="SiteConfigured" condition="(overview.siteComponents || []).length"><widgets>
+                        <label type="h6" text="Site components"/>
+                        <label type="p" text="Edit this site's extensions in the workspace. Settings controls which site component receives new extensions."/>
+                        <link url="../Settings" text="Site settings" link-type="anchor"/>
+                    </widgets></section>
+                </row-col>
+                <row-col md="6">
+                    <container id="DevAideNewComponent">
+                        <label type="h6" text="New component"/>
+                        <label type="p" text="Start an application with entities, services, screens or a REST API, security, demo data and specs."/>
+                        <container-dialog id="DevAideCreateComponent" button-text="Create component" title="Create component">
+                            <form-single name="CreateComponentForm" transition="createComponent">
+                                <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-app"/></default-field></field>
+                                <field name="part"><default-field title="Kind"><drop-down no-current-selected-key="all">
+                                    <option key="all" text="Screens and REST API"/>
+                                    <option key="screens" text="Screens only"/>
+                                    <option key="rest" text="REST API only"/>
+                                </drop-down></default-field></field>
+                                <field name="dev"><default-field title="Dev only (runtime/components/dev)"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                                <field-layout>
+                                    <field-row><field-ref name="componentName"/><field-ref name="part"/></field-row>
+                                    <field-ref name="dev"/>
+                                    <field-row-big><field-ref name="submitButton"/></field-row-big>
+                                </field-layout>
+                            </form-single>
+                        </container-dialog>
+                    </container>
+                </row-col>
+            </container-row>
+        </box-body></container-box>
+
+        <container-box id="DevAideReloads"><box-header title="Reload log"/><box-body>
+            <label type="p" text="No reloads yet. Saved or externally changed files appear here after they are reloaded." condition="!reloads.length"/>
+        </box-body><box-body-nopad>
+            <section name="ReloadEntries" condition="reloads.length"><widgets>
+                <form-list name="ReloadList" list="reloads" skip-form="true">
+                    <field name="at"><default-field title="When"><display text="${ec.l10n.format(new Date(at), 'HH:mm:ss')}"/></default-field></field>
+                    <field name="path"><default-field title="File"><display text="${(path || '').split('/').slice(-3).join('/')}"/></default-field></field>
+                    <field name="summary"><default-field title="What"><display/></default-field></field>
+                    <field name="problem"><default-field title="Problems"><display text="${problems ? problems + ': ' + (problem || '') : ''}"/></default-field></field>
+                </form-list>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

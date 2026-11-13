@@ -4,7 +4,7 @@ Execution-method experiments, correctness gates, metrics and acceptance criteria
 
 ## Scope and verdict
 
-Audited `/home/user/moqui/master/runtime/component/mantle-usl`, commit `8503eeda6bfb7ee8c3207a4fda61487fc42895a7`, tracked working-tree source, 2026-10-13. No tracked modifications were present. Other installed copies have different revisions; this report is not a claim about all versions. Untracked conflict copies and build output were excluded.
+Audited `/home/user/moqui/master/runtime/components/addon/mantle-usl`, commit `8503eeda6bfb7ee8c3207a4fda61487fc42895a7`, tracked working-tree source, 2026-10-13. No tracked modifications were present. Other installed copies have different revisions; this report is not a claim about all versions. Untracked conflict copies and build output were excluded.
 
 Target: **100,000 durable commits / completed reads of transactional business data per second**, not row writes or business processes. The business-process-rate examples below are conditional illustrations; map each process to its actual commits/reads before comparing with the target. Independent business resources are assumed. Business lock contention is excluded. The SQL calls, arithmetic, index changes, WAL, framework policy, and callbacks required even without contention remain in scope.
 

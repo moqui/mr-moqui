@@ -35,10 +35,10 @@ body moved into Rust is named in the service section.
   `web.xml`, and `src/main/resources/org/moqui/impl/{pollEmailServer,sendEmailMessage,sendEmailTemplate}.groovy`.
 - **Screen macros:** `../moqui/runtime/template/screen-macro/*.ftl` and
   `../moqui/framework/template/XmlActions.groovy.ftl`. The Rust copies are
-  `runtime/base-component/framework/template/`.
+  `runtime/components/base/framework/template/`.
 - **Framework service, entity, screen, and conf XML:** `../moqui/framework/{service,entity,screen,data}`
-  and the checked-in `runtime/base-component/framework/` copy.
-- **Absorbed components** (class and service XML, not their screens): `../moqui/runtime/component/moqui-sso`,
+  and the checked-in `runtime/components/base/framework/` copy.
+- **Absorbed components** (class and service XML, not their screens): `../moqui/runtime/components/addon/moqui-sso`,
   `moqui-sftp`, `moqui-image`, `moqui-poi`, `moqui-cups`, `moqui-fop`. Image and CUPS ship service
   XML and a Java library (ImageIO, CUPS4J) rather than Groovy classes. SSO, SFTP, POI, and FOP have
   Groovy under `src/main/groovy`.
@@ -232,7 +232,7 @@ Phase numbers match [EntityService-Parity-Review](archive/EntityService-Parity-R
 
 ## Service
 
-The same phase numbers. Component Groovy that this table used to call missing is under `../moqui/runtime/component/`.
+The same phase numbers. Component Groovy that this table used to call missing is under `../moqui/runtime/components/addon/`.
 
 | Rust file | Primary basis | Phase |
 |---|---|---|
@@ -272,7 +272,7 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 
 | Rust file | Primary basis | Status |
 |---|---|---|
-| `script/actions.rs`, `script/walker.rs`, `script/parse.rs` | `XmlActionsScriptRunner`, `actions/XmlAction.java`, `framework/template/XmlActions.groovy.ftl`. The embedded module is `runtime/base-component/framework/template/XmlActions.js`. | Port |
+| `script/actions.rs`, `script/walker.rs`, `script/parse.rs` | `XmlActionsScriptRunner`, `actions/XmlAction.java`, `framework/template/XmlActions.groovy.ftl`. The embedded module is `runtime/components/base/framework/template/XmlActions.js`. | Port |
 | `script/runtime.rs` | QuickJS evaluation. Replaces the Groovy binding (`ContextBinding`): bare names resolve through a proxy, `ec` is a host object. `plans/archive/ContextObjects.md`. | Redesign |
 | `script/host/entities.rs`, `script/host/conditions.rs` | Entity value, find, list and condition methods scripts call on `ec.entity`; the script `EntityListIterator` of `iterator()` is `script/host/list_iterator.rs`. | Port |
 | `script/host/service.rs` | `ec.service` call shape (`ServiceFacade` from script). | Port |
@@ -609,7 +609,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `util/UserSecurityChecks.groovy` | `service/security_checks.rs` | Port |
 | `util/SimpleSgmlReader.groovy`, `MoquiShiroRealm.groovy`, `MoquiWebSecurityManager.groovy` | — | Excluded |
 | `webapp/MoquiServlet.groovy` | `moqui-host/src/http.rs`, `screen/mod.rs`, `web/servlet.rs` | Port |
-| `webapp/MoquiAuthFilter.groovy` | `screen/mod.rs`, `runtime/base-component/webroot/script/AuthFilter.js` | Port |
+| `webapp/MoquiAuthFilter.groovy` | `screen/mod.rs`, `runtime/components/base/webroot/script/AuthFilter.js` | Port |
 | `webapp/MoquiContextListener.groovy` | `moqui-host/src/lib.rs`, `web/servlet.rs` (servlets, filters, listeners, after-startup and before-shutdown) | Partial |
 | `webapp/NotificationEndpoint.groovy`, `NotificationWebSocketListener.groovy`, `MoquiAbstractEndpoint.groovy` | `moqui-host/src/notws.rs` | Port |
 | `webapp/ElasticRequestLogFilter.groovy` | `moqui-host/src/http.rs` (`log_http`: the request span in `otel_spans`; [Monitoring](archive/Monitoring.md)) | Redesign |

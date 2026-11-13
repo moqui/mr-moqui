@@ -286,7 +286,7 @@ fn a_subscreen_that_does_not_load_is_logged_and_left_out_of_the_menu() {
 #[test]
 fn the_app_list_draws_a_quasar_icon_name_and_keeps_fa_classes() {
     let app_list = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/webroot/screen/webroot/apps/AppList.xml")
+        .join("../../runtime/components/base/webroot/screen/webroot/apps/AppList.xml")
         .to_string_lossy()
         .into_owned();
     let dir = std::env::temp_dir().join(format!("moqui-menu-app-list-{}", std::process::id()));
@@ -357,7 +357,7 @@ fn the_app_list_draws_a_quasar_icon_name_and_keeps_fa_classes() {
 #[test]
 fn a_menu_or_link_check_does_not_inherit_from_the_screen_rendering_it() {
     let app_list = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/webroot/screen/webroot/apps/AppList.xml")
+        .join("../../runtime/components/base/webroot/screen/webroot/apps/AppList.xml")
         .to_string_lossy()
         .into_owned();
     let dir = std::env::temp_dir().join(format!("moqui-menu-app-view-{}", std::process::id()));
@@ -444,7 +444,7 @@ fn a_menu_or_link_check_does_not_inherit_from_the_screen_rendering_it() {
 #[test]
 fn a_suite_from_a_screen_extend_lays_out_the_apps_of_its_component() {
     let app_list = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/webroot/screen/webroot/apps/AppList.xml")
+        .join("../../runtime/components/base/webroot/screen/webroot/apps/AppList.xml")
         .to_string_lossy()
         .into_owned();
     let dir = std::env::temp_dir().join(format!("moqui-menu-app-suite-{}", std::process::id()));

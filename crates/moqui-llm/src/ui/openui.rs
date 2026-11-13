@@ -511,7 +511,7 @@ pub fn sources(factory: &ExecutionContextFactory) -> Result<Sources, Error> {
 #[cfg(test)]
 pub(crate) fn source_path(file: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/webroot/screen/webroot")
+        .join("../../runtime/components/base/webroot/screen/webroot")
         .join(file)
 }
 

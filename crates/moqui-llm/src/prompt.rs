@@ -25,7 +25,7 @@
 //! **The tail** ([`build_tail`]) is the volatile `<context>` block at the end of the newest user message: where the
 //! user is now. It stays in its message once sent (append-only); only the newest message gets a new one.
 //!
-//! Prompt texts are Markdown files in `runtime/base-component/framework/prompt/` ([`PromptTexts`]) with a fixed set of
+//! Prompt texts are Markdown files in `runtime/components/base/framework/prompt/` ([`PromptTexts`]) with a fixed set of
 //! placeholders (`${siteName}`, `${userName}`, `${languageName}`, `${roomName}`); there is no template language, and
 //! the choices are sections chosen here. Text from outside goes in [`untrusted`] wrappers whose markers are elided
 //! inside ([`elide_markers`]), so a payload cannot close one. The sizes are budgets ([`caps`]): the release texts are

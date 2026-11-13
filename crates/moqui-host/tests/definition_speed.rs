@@ -40,7 +40,7 @@ use speed::{env_usize, DirGuard, Rows};
 fn definition_speed() {
     speed::warn_if_debug("definition_speed");
     let batches = env_usize("DEFINITION_SPEED_BATCHES", 5);
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component");
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base");
     let framework = base.join("framework");
     let runtime = speed::temp_dir("definition-speed-rt");
     let _guard = DirGuard(runtime.clone());

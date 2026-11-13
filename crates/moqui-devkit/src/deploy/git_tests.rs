@@ -18,7 +18,7 @@ use moqui_core::context::ExecutionContextFactory;
 
 use super::{
     check_name, check_url, clone_directory, component_name, final_location, git_command, network_allowed,
-    DeployRequest, Storage,
+    with_listed_sets, DeployRequest, Storage,
 };
 
 #[test]
@@ -56,21 +56,25 @@ fn a_component_name_is_one_directory_name() {
 fn a_clone_goes_in_a_component_directory_under_the_runtime() {
     let runtime = Path::new("/srv/moqui/runtime");
     let dirs = [
-        "base-component".to_string(),
-        "component".to_string(),
-        "dev-component".to_string(),
+        "components".to_string(),
+        "components/base".to_string(),
+        "components/addon".to_string(),
+        "components/dev".to_string(),
     ];
-    assert_eq!(clone_directory(runtime, "", &dirs).unwrap(), runtime.join("component"));
     assert_eq!(
-        clone_directory(runtime, "dev-component/", &dirs).unwrap(),
-        runtime.join("dev-component")
+        clone_directory(runtime, "", &dirs).unwrap(),
+        runtime.join("components/addon")
+    );
+    assert_eq!(
+        clone_directory(runtime, "components/dev/", &dirs).unwrap(),
+        runtime.join("components/dev")
     );
     assert!(clone_directory(runtime, "../elsewhere", &dirs).is_err());
     assert!(clone_directory(runtime, "/etc", &dirs).is_err());
     assert!(clone_directory(runtime, "tmp", &dirs).is_err());
     assert_eq!(
-        final_location(&runtime.join("component/.staging-site"), "site"),
-        runtime.join("component/site")
+        final_location(&runtime.join("components/addon/.staging-site"), "site"),
+        runtime.join("components/addon/site")
     );
     assert_eq!(Storage::parse(""), Some(Storage::Database));
     assert_eq!(Storage::parse("clone"), Some(Storage::Clone));
@@ -206,4 +210,20 @@ fn a_working_clone_fetch_is_refused_in_sim_mode() {
     let err = refused.unwrap_err();
     assert!(err.contains("sim mode"), "{err}");
     assert!(!err.contains("secret-token"), "{err}");
+}
+
+#[test]
+fn the_sets_components_xml_lists_are_component_directories_too() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+    assert_eq!(
+        with_listed_sets(&runtime, vec!["components".to_string(), "elsewhere/".to_string()]),
+        [
+            "components",
+            "components/base",
+            "components/addon",
+            "components/dev",
+            "components/test",
+            "elsewhere"
+        ]
+    );
 }

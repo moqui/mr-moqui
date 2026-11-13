@@ -43,13 +43,13 @@ impl Runtime {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let framework = root.join("framework");
-        let probe = root.join("component/probe");
+        let probe = root.join("components/addon/probe");
         std::fs::create_dir_all(framework.join("conf")).unwrap();
         std::fs::create_dir_all(probe.join("service")).unwrap();
         std::fs::write(framework.join("component.xml"), "<component name=\"framework\"/>").unwrap();
         std::fs::write(
             framework.join("conf/MoquiDefaultConf.xml"),
-            format!("<moqui-conf><component-list><component-dir location=\"component\"/></component-list><service-facade><service-file location=\"component://{component}/service/Probe.xml\"/></service-facade></moqui-conf>"),
+            format!("<moqui-conf><component-list><component-dir location=\"components/addon\"/></component-list><service-facade><service-file location=\"component://{component}/service/Probe.xml\"/></service-facade></moqui-conf>"),
         )
         .unwrap();
         std::fs::write(
@@ -75,7 +75,7 @@ impl Runtime {
         )
     }
     fn services(&self, xml: &str) {
-        std::fs::write(self.0.join("component/probe/service/Probe.xml"), xml).unwrap();
+        std::fs::write(self.0.join("components/addon/probe/service/Probe.xml"), xml).unwrap();
     }
 }
 impl Drop for Runtime {
@@ -92,7 +92,7 @@ fn attach(factory: &ExecutionContextFactory) {
         },
     )
     .unwrap();
-    let framework = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = EntityFacade::open(
         &framework,
         "transactional",
@@ -107,7 +107,7 @@ fn attach(factory: &ExecutionContextFactory) {
 #[test]
 fn framework_contact_and_calendar_tools_reach_scripts() {
     let default_conf = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"),
     )
     .unwrap();
     for class in [moqui_dav::pim::VCARD_CLASS, moqui_dav::pim::ICALENDAR_CLASS] {

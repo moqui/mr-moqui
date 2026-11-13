@@ -115,9 +115,9 @@ fn a_trigger_leaves_out_its_own_agents_writes_through_the_data_feed() {
         return;
     }
     let files = [
-        ("component/agentmembers/component.xml", COMPONENT),
+        ("components/addon/agentmembers/component.xml", COMPONENT),
         (
-            "component/agentmembers/service/agentmembers/MembersServices.xml",
+            "components/addon/agentmembers/service/agentmembers/MembersServices.xml",
             SERVICES,
         ),
     ];

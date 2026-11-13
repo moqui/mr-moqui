@@ -24,8 +24,10 @@ use super::runtime::ScriptText;
 use super::run::{DeadlineGuard, DEADLINE};
 use crate::context::Error;
 
-pub(super) const TEMPLATE_SUPPORT: &str = include_str!("../../../../runtime/base-component/framework/template/TemplateSupport.js");
-pub(super) const XML_ACTIONS: &str = include_str!("../../../../runtime/base-component/framework/template/XmlActions.js");
+pub(super) const TEMPLATE_SUPPORT: &str =
+    include_str!("../../../../runtime/components/base/framework/template/TemplateSupport.js");
+pub(super) const XML_ACTIONS: &str =
+    include_str!("../../../../runtime/components/base/framework/template/XmlActions.js");
 
 /// Set this to add a comment naming the XML element before each generated statement. The value `dump` also prints
 /// each generated script to stderr, with line numbers as an error's `eval_script:LINE` has them.

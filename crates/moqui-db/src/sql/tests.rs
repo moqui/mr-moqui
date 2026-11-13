@@ -35,13 +35,13 @@ fn workspace_root() -> std::path::PathBuf {
 fn framework() -> (EntityModel, Dialects) {
     let root = workspace_root();
     let conf =
-        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+        MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).expect("conf");
     // Keep the pre-existing SQL snapshots as explicit legacy-mode coverage.
     conf.first_named("entity-facade")
         .unwrap()
         .set_attribute("sql-name-style", "legacy");
     let model =
-        EntityModel::load_directory(&conf, &root.join("runtime/base-component/framework/entity")).expect("model");
+        EntityModel::load_directory(&conf, &root.join("runtime/components/base/framework/entity")).expect("model");
     let dialects = Dialects::load(&conf).expect("dialects");
     (model, dialects)
 }
@@ -884,7 +884,7 @@ fn sample_postgres() -> Dialect {
 fn sample_model(entities: &str) -> EntityModel {
     let root = workspace_root();
     let conf =
-        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+        MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).expect("conf");
     conf.first_named("entity-facade")
         .unwrap()
         .set_attribute("sql-name-style", "legacy");
@@ -1789,7 +1789,7 @@ fn a_filter_only_view_sub_select_preserves_its_grouping_and_correlation() {
 fn bad_views_are_logged_and_left_out() {
     let root = workspace_root();
     let conf =
-        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+        MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).expect("conf");
     // the problem the view left out was logged with, and the model loads without it
     let load = |name: &str, entities: &str| {
         let doc = MNode::parse_text("entities", &format!("<entities>{ORDERS}{entities}</entities>")).unwrap();
@@ -1829,7 +1829,7 @@ fn bad_views_are_logged_and_left_out() {
 fn unresolved_members_and_relationships_are_left_out() {
     let root = workspace_root();
     let conf =
-        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+        MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).expect("conf");
     let doc = MNode::parse_text(
         "entities",
         &format!(
@@ -1879,15 +1879,15 @@ fn unresolved_members_and_relationships_are_left_out() {
 #[test]
 fn component_views_render_when_the_java_tree_is_present() {
     let root = workspace_root();
-    let components = root.join("../moqui/runtime/component");
+    let components = root.join("../moqui/runtime/components/addon");
     if !components.is_dir() {
         eprintln!("skipping: the Java tree {} is not present", components.display());
         return;
     }
     let conf =
-        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+        MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).expect("conf");
     let mut documents = Vec::new();
-    let mut directories = vec![root.join("runtime/base-component/framework/entity")];
+    let mut directories = vec![root.join("runtime/components/base/framework/entity")];
     // The tool components whose entities are in the framework now would be loaded twice.
     let in_framework = ["moqui-sso", "moqui-sftp", "moqui-poi", "moqui-image", "moqui-cups"];
     let mut entries: Vec<_> = std::fs::read_dir(&components)

@@ -13,7 +13,7 @@
  */
 
 //! The drawer's JSON calls (plans/LLM-A2A-Assist.md 4.5 and 4.11; the contract is docs/ai/Assist.md): the transitions of
-//! the webroot subscreen `assist` (`runtime/base-component/webroot/screen/webroot/assist.xml`) call the one service
+//! the webroot subscreen `assist` (`runtime/components/base/webroot/screen/webroot/assist.xml`) call the one service
 //! `org.moqui.agent.AssistServices.call#Drawer` with the call's name, which reads the request's parameters and answers
 //! the response itself: 200 with the call's JSON, or the error status with `{errorCode, errors, code}`.
 //!

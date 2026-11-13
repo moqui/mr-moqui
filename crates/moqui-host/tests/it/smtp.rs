@@ -183,8 +183,8 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
             ("smtp_authserv_id", "gw.example.com"),
         ],
         &[
-            ("component/gate-smtp/component.xml", COMPONENT),
-            ("component/gate-smtp/service/GateSmtp.emecas.xml", EMECAS),
+            ("components/addon/gate-smtp/component.xml", COMPONENT),
+            ("components/addon/gate-smtp/service/GateSmtp.emecas.xml", EMECAS),
         ],
     );
     let address = gate.server.smtp_address().expect("the SMTP listener listens");

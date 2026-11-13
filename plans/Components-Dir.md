@@ -5,7 +5,7 @@ components: `base` (the framework's, now `runtime/base-component`), `dev` (dev-o
 `test` (new: test-only add-ons) and `addon` (the add-on components of `addons.xml`, now `runtime/component`). With it,
 a component's acceptance suite moves from `<component>/acceptance/` to `<component>/test/acceptance/`, so everything
 that is test sits under `test/`. The idea is aabiabdallah's. Plan, Nov 12, 2026; references reviewed against
-ce6b26ed on Nov 13, 2026, which added the built-in framework files (§3.8); being built.
+ce6b26ed on Nov 13, 2026, which added the built-in framework files (§3.8); built Nov 13, 2026 (§7).
 
 ## 1. Decisions
 
@@ -145,8 +145,8 @@ nests `component-dir` elements, and passes a directory's `purpose` down to what 
 `purpose` replaces the outer one). The framework's same-directory check runs only in the scan branch, which is where
 `base` is read. The additions: a WARN for a child directory of `components/` that the manifest does not list ("not in
 components/components.xml, not loaded"), so a set or a component dropped in the wrong place is noticed rather than
-silently missing; and a WARN, not the INFO of a `component-dir` that is not there, for a set the manifest lists that is
-missing. A site that wants a set of its own lists it: in the tracked
+silently missing. A set the manifest lists that is not there stays the INFO of any missing `component-dir`, not a
+WARN: a production archive leaves the `dev` and `test` sets out (§3.6), and every start would warn. A site that wants a set of its own lists it: in the tracked
 `components.xml` for the framework's sets, or with a `component-dir` of its own (`components/my-set`) in its runtime
 conf's `component-list`.
 
@@ -168,8 +168,9 @@ still may not depend on one in `dev` or `test` (the existing rule).
   write to `components/addon` too, so every add-on is in one place whatever its storage. The docs and fixtures that name
   `deployed-component` follow: `docs/tools/Component-Deploy.md`, `docs/security/Attack-Surface.md`, `ServerEntities.xml`
   (115), `tools/test/ConfReload.spec.js` (77), `moqui-host/tests/it/component_deploy.rs`.
-- The boot WARN (§1.10): a non-empty `runtime/component`, `base-component` or `dev-component` is reported once with
-  where its components go; nothing is moved.
+- The boot WARN (§1.10): a non-empty `runtime/component`, `base-component`, `dev-component`, `ecomponent` or
+  `deployed-component` that no `component-dir` of the conf names is reported with where its components go; nothing is
+  moved (`layout::warn_old_dirs`, called by discovery; built in P4, since before the move those are the live places).
 
 ### 3.4 The archive and packages
 
@@ -309,3 +310,23 @@ Nothing now. Settled Nov 12, 2026: the sets are only what `components.xml` lists
 with the tests (§3.6); `acceptance/` moves under `test/` (§3.7); the dev set leaves the archive by default (§1.9).
 Settled Nov 13, 2026: the database and bare deploy storages write to `components/addon` (§3.3); the runtime marker is
 the `components/base` directory (§3.1); the skeleton writes `components/components.xml` (§3.8).
+
+## 7. As built
+
+Built Nov 13, 2026, in the order of §4, with these differences from the design above:
+
+- **The add-on repositories' `test/acceptance/` moves went with P2**, right after the framework's, so no component was
+  left with a stale `acceptance/`; P6 kept their path and link rewrite, which needs the move.
+- **The stale `acceptance/` check** refuses an acceptance run of the components it runs (`moqui test --acceptance`,
+  `moqui test-client --acceptance`, `./moq accept`), not every run: a component not yet moved blocked every other
+  component's run. A regression run, which never reads the tree, warns on stderr.
+- **Test runtimes.** Since only the sets `components.xml` lists load, a scratch runtime needs the manifest beside its
+  base set: `layout::link_base_set` links the base set and copies the manifest, and the `moqui test` scratch runtime
+  links it.
+- **The git deploy's directory choice** is a `component-dir` of the conf or a set its `components.xml` lists
+  (`components/addon` by default).
+- **Relative Markdown links**: 272 in 43 files gained a `../` (surveyed before the move, applied after); the
+  unresolved links after the move are the 33 there were before.
+- **The guard test** (§5) is `context::layout`'s `the_old_component_directories_are_named_nowhere`; it allows this
+  plan, `plans/archive/` and `layout.rs`, which holds the boot WARN's names.
+

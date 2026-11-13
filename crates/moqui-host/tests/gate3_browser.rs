@@ -3011,17 +3011,17 @@ mod assist {
     /// user can move while the agent's command runs.
     const FILES: &[(&str, &str)] = &[
         (
-            "component/assistgate/component.xml",
+            "components/addon/assistgate/component.xml",
             r#"<component name="assistgate"/>"#,
         ),
         (
-            "component/assistgate/MoquiConf.xml",
+            "components/addon/assistgate/MoquiConf.xml",
             r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
     <subscreens-item name="assistgate" menu-title="Assist Gate" menu-include="false" location="component://assistgate/screen/AssistGate.xml"/>
 </screen></screen-facade></moqui-conf>"#,
         ),
         (
-            "component/assistgate/screen/AssistGate.xml",
+            "components/addon/assistgate/screen/AssistGate.xml",
             r#"<screen require-authentication="true" default-menu-title="Assist Gate">
     <subscreens default-item="Edit">
         <subscreens-item name="Edit" location="component://assistgate/screen/AssistGate/Edit.xml"/>
@@ -3031,7 +3031,7 @@ mod assist {
 </screen>"#,
         ),
         (
-            "component/assistgate/screen/AssistGate/Edit.xml",
+            "components/addon/assistgate/screen/AssistGate/Edit.xml",
             r#"<screen require-authentication="true" default-menu-title="Edit">
     <transition name="updateEnumType"><service-call name="update#moqui.basic.EnumerationType"/>
         <default-response url="."/></transition>
@@ -3047,7 +3047,7 @@ mod assist {
 </screen>"#,
         ),
         (
-            "component/assistgate/screen/AssistGate/Slow.xml",
+            "components/addon/assistgate/screen/AssistGate/Slow.xml",
             r#"<screen require-authentication="true" default-menu-title="Slow">
     <actions><script>const until = Date.now() + 5000; while (Date.now() &lt; until) { }</script></actions>
     <widgets><label text="The slow screen" type="p"/></widgets>
@@ -4445,19 +4445,25 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
     }
     let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n</services>\n";
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/service/mysite/Things.xml", site_services),
         (
-            "component/upstream-app/component.xml",
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/service/mysite/Things.xml", site_services),
+        (
+            "components/addon/upstream-app/component.xml",
             r#"<component name="upstream-app"/>"#,
         ),
-        ("component/upstream-app/service/upapp/Up.xml", "<services/>\n"),
-        ("component/plain-app/component.xml", r#"<component name="plain-app"/>"#),
+        ("components/addon/upstream-app/service/upapp/Up.xml", "<services/>\n"),
+        (
+            "components/addon/plain-app/component.xml",
+            r#"<component name="plain-app"/>"#,
+        ),
     ];
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -4465,7 +4471,7 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
         Some(security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     for (name, home) in [
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -4478,7 +4484,7 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
         std::env::set_var(name, home);
     }
     for component in ["my-site", "upstream-app"] {
-        let dir = gate.runtime.join("component").join(component);
+        let dir = gate.runtime.join("components/addon").join(component);
         for args in [
             &["init", "-q", "-b", "main"][..],
             &["add", "-A"][..],
@@ -4587,7 +4593,7 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
          view.dispatch({changes: {from: 0, insert: '<!-- mine -->\\n'}}); return true; })()",
     );
     std::fs::write(
-        gate.runtime.join("component/my-site/service/mysite/Things.xml"),
+        gate.runtime.join("components/addon/my-site/service/mysite/Things.xml"),
         site_services.replace("first", "outside"),
     )
     .unwrap();
@@ -4611,14 +4617,17 @@ fn a_pull_conflict_is_resolved_in_chromium() {
     }
     let notes = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/notes.txt", notes),
-        ("component/my-site/hunks.txt", notes),
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/notes.txt", notes),
+        ("components/addon/my-site/hunks.txt", notes),
     ];
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -4626,7 +4635,7 @@ fn a_pull_conflict_is_resolved_in_chromium() {
         Some(security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     for (name, value) in [
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -4652,7 +4661,7 @@ fn a_pull_conflict_is_resolved_in_chromium() {
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     let remote = gate.runtime.join("site-remote.git");
     let other = gate.runtime.join("other-clone");
     git(&site, &["init", "-q", "-b", "main"]);
@@ -4811,15 +4820,18 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
     let screen = r#"<screen><transition name="show"><service-call name="mysite.Widgets.show#Widget"/><default-response url="."/></transition>
     <widgets><label text="Widgets"/></widgets></screen>"#;
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/entity/MySiteEntities.xml", entities),
-        ("component/my-site/service/mysite/Widgets.xml", services),
-        ("component/my-site/screen/MySite/WidgetPage.xml", screen),
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/entity/MySiteEntities.xml", entities),
+        ("components/addon/my-site/service/mysite/Widgets.xml", services),
+        ("components/addon/my-site/screen/MySite/WidgetPage.xml", screen),
     ];
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -4827,7 +4839,7 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
         Some(security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -4950,13 +4962,16 @@ fn a_qvue_screen_is_designed_in_chromium() {
 "#;
     let qvue = "<template>\n<div class=\"q-pa-md\" id=\"BoardPage\">\n    <q-btn label=\"Saved one\" id=\"BoardSaved\"></q-btn>\n</div>\n</template>\n<script>module.exports = {};</script>\n";
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/MoquiConf.xml", site_conf),
-        ("component/my-site/screen/MySite/Board.xml", screen),
-        ("component/my-site/screen/MySite/Board.qvue", qvue),
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/MoquiConf.xml", site_conf),
+        ("components/addon/my-site/screen/MySite/Board.xml", screen),
+        ("components/addon/my-site/screen/MySite/Board.qvue", qvue),
     ];
     // the app's screen for admins, as an app's seed data grants it
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"    <moqui.security.ArtifactGroup artifactGroupId="BOARD_APP" description="Board"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="BOARD_APP" artifactTypeEnumId="AT_XML_SCREEN"
@@ -4967,7 +4982,7 @@ fn a_qvue_screen_is_designed_in_chromium() {
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -4975,7 +4990,7 @@ fn a_qvue_screen_is_designed_in_chromium() {
         Some(&security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -5017,7 +5032,8 @@ fn a_qvue_screen_is_designed_in_chromium() {
         &in_frame("doc.querySelectorAll('[data-m-src*=\"Board.qvue:\"]').length >= 3 && doc.body.innerText.indexOf('Button') >= 0"),
         WAIT,
     );
-    let on_disk = std::fs::read_to_string(gate.runtime.join("component/my-site/screen/MySite/Board.qvue")).unwrap();
+    let on_disk =
+        std::fs::read_to_string(gate.runtime.join("components/addon/my-site/screen/MySite/Board.qvue")).unwrap();
     assert!(!on_disk.contains("label=\"Button\""), "nothing saved yet: {on_disk}");
     browser.click("Save", "document.getElementById('DevSave')");
     browser.wait_for(
@@ -5025,7 +5041,8 @@ fn a_qvue_screen_is_designed_in_chromium() {
         "!document.querySelector('.m-dev-editor-tab .m-dev-dirty')",
         WAIT,
     );
-    let saved = std::fs::read_to_string(gate.runtime.join("component/my-site/screen/MySite/Board.qvue")).unwrap();
+    let saved =
+        std::fs::read_to_string(gate.runtime.join("components/addon/my-site/screen/MySite/Board.qvue")).unwrap();
     assert!(saved.contains("<q-btn label=\"Saved one\" id=\"BoardSaved\"></q-btn>\n    <q-btn unelevated no-caps color=\"primary\" label=\"Button\"></q-btn>"), "{saved}");
     assert_clean(&mut browser, "the qvue design");
 }
@@ -5054,17 +5071,20 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     </widgets>
 </screen>"#;
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/MoquiConf.xml", site_conf),
-        ("component/my-site/screen/MySite.xml", site_screen),
         (
-            "component/upstream-app/component.xml",
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/MoquiConf.xml", site_conf),
+        ("components/addon/my-site/screen/MySite.xml", site_screen),
+        (
+            "components/addon/upstream-app/component.xml",
             r#"<component name="upstream-app"/>"#,
         ),
-        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+        ("components/addon/upstream-app/entity/UpEntities.xml", upstream_entities),
     ];
     // the site's screen, for ADMIN
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"    <moqui.security.ArtifactGroup artifactGroupId="MY_SITE_APP" description="My site"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="MY_SITE_APP" artifactName="component://my-site/screen/MySite.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
@@ -5073,7 +5093,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -5081,7 +5101,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         Some(&security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     for (name, value) in [
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -5094,7 +5114,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         std::env::set_var(name, value);
     }
     for component in ["my-site", "upstream-app"] {
-        let dir = gate.runtime.join("component").join(component);
+        let dir = gate.runtime.join("components/addon").join(component);
         for args in [
             &["init", "-q", "-b", "main"][..],
             &["add", "-A"][..],
@@ -5173,7 +5193,8 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
          && document.querySelector('#DevEntityView [data-field=dueDate]').innerText.indexOf('my-site') >= 0",
         WAIT,
     );
-    let site_file = std::fs::read_to_string(gate.runtime.join("component/my-site/entity/MySiteEntities.xml")).unwrap();
+    let site_file =
+        std::fs::read_to_string(gate.runtime.join("components/addon/my-site/entity/MySiteEntities.xml")).unwrap();
     assert!(
         site_file.contains("<extend-entity entity-name=\"Widget\" package=\"upapp\">"),
         "{site_file}"
@@ -5187,7 +5208,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         "the column without a restart"
     );
     assert!(
-        std::fs::read_to_string(gate.runtime.join("component/upstream-app/entity/UpEntities.xml")).unwrap()
+        std::fs::read_to_string(gate.runtime.join("components/addon/upstream-app/entity/UpEntities.xml")).unwrap()
             == upstream_entities
     );
 
@@ -5208,7 +5229,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     );
     browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
     browser.click("Save", "document.getElementById('DevSave')");
-    let seed = gate.runtime.join("component/my-site/data/MySiteSeedData.xml");
+    let seed = gate.runtime.join("components/addon/my-site/data/MySiteSeedData.xml");
     browser.wait_for(
         "the picklist saved",
         "!!document.querySelector('#DevEntityView [data-field=priorityEnumId]') && document.querySelector('#DevEntityView [data-field=priorityEnumId]').innerText.indexOf('unsaved') < 0",
@@ -5218,7 +5239,8 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     assert!(seed_text.contains("enumTypeId=\"WidgetPriority\""), "{seed_text}");
     assert!(seed_text.contains("description=\"High\""), "{seed_text}");
     assert!(columns(&facade).contains(&"priority_enum_id".to_string()));
-    let site_file = std::fs::read_to_string(gate.runtime.join("component/my-site/entity/MySiteEntities.xml")).unwrap();
+    let site_file =
+        std::fs::read_to_string(gate.runtime.join("components/addon/my-site/entity/MySiteEntities.xml")).unwrap();
     assert!(site_file.contains("related=\"moqui.basic.Enumeration\""), "{site_file}");
     let loaded = || {
         let context = gate.server.factory().new_context();
@@ -5313,16 +5335,19 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     </widgets>
 </screen>"#;
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
         (
-            "component/upstream-app/component.xml",
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        (
+            "components/addon/upstream-app/component.xml",
             r#"<component name="upstream-app"/>"#,
         ),
-        ("component/upstream-app/MoquiConf.xml", upstream_conf),
-        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
-        ("component/upstream-app/screen/UpApp.xml", upstream_screen),
+        ("components/addon/upstream-app/MoquiConf.xml", upstream_conf),
+        ("components/addon/upstream-app/entity/UpEntities.xml", upstream_entities),
+        ("components/addon/upstream-app/screen/UpApp.xml", upstream_screen),
     ];
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"    <moqui.security.ArtifactGroup artifactGroupId="UP_APP" description="Up app"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="UP_APP" artifactName="component://upstream-app/screen/UpApp.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
@@ -5332,7 +5357,7 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -5340,7 +5365,7 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
         Some(&security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     for (name, value) in [
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -5353,7 +5378,7 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
         std::env::set_var(name, value);
     }
     for component in ["my-site", "upstream-app"] {
-        let dir = gate.runtime.join("component").join(component);
+        let dir = gate.runtime.join("components/addon").join(component);
         for args in [
             &["init", "-q", "-b", "main"][..],
             &["add", "-A"][..],
@@ -5422,7 +5447,7 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     );
     let extend = gate
         .runtime
-        .join("component/my-site/screen-extend/upstream-app/screen/UpApp.xml");
+        .join("components/addon/my-site/screen-extend/upstream-app/screen/UpApp.xml");
     assert!(!extend.exists(), "nothing written before Save");
     browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
     browser.click("Save", "document.getElementById('DevSave')");
@@ -5607,11 +5632,14 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
         <field name=\"thingName\" type=\"text-medium\"/></entity></entities>\n";
     let site_services = "<services>\n    <service verb=\"make\" noun=\"Thing\">\n        <in-parameters><parameter name=\"thingId\" required=\"true\"/><parameter name=\"thingName\"/></in-parameters>\n        <out-parameters><parameter name=\"thingId\"/></out-parameters>\n        <actions>\n            <set field=\"thingName\" from=\"thingName || 'unnamed'\"/>\n            <service-call name=\"create#mysite.Thing\" in-map=\"context\" out-map=\"context\"/>\n        </actions>\n    </service>\n</services>\n";
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/entity/MySiteEntities.xml", site_entities),
-        ("component/my-site/service/mysite/Things.xml", site_services),
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/entity/MySiteEntities.xml", site_entities),
+        ("components/addon/my-site/service/mysite/Things.xml", site_services),
     ];
-    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+    let security = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"    <moqui.security.ArtifactGroup artifactGroupId="MY_THINGS" description="Things"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="mysite\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
@@ -5622,7 +5650,7 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -5630,7 +5658,7 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
         Some(&security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     for (name, value) in [
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -5642,7 +5670,7 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
     ] {
         std::env::set_var(name, value);
     }
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     for args in [
         &["init", "-q", "-b", "main"][..],
         &["add", "-A"][..],
@@ -5868,24 +5896,27 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     use moqui_llm::provider::fake::{self, Reply, Step};
     let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n\n    <service verb=\"get\" noun=\"Other\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"other\"/></actions>\n    </service>\n</services>\n";
     let files = [
-        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
-        ("component/my-site/service/mysite/Things.xml", site_services),
-        ("component/upapp/component.xml", r#"<component name="upapp"/>"#),
         (
-            "component/upapp/MoquiConf.xml",
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/service/mysite/Things.xml", site_services),
+        ("components/addon/upapp/component.xml", r#"<component name="upapp"/>"#),
+        (
+            "components/addon/upapp/MoquiConf.xml",
             r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
     <subscreens-item name="upapp" menu-title="Up App" location="component://upapp/screen/UpApp.xml"/>
 </screen></screen-facade></moqui-conf>"#,
         ),
         (
-            "component/upapp/screen/UpApp.xml",
+            "components/addon/upapp/screen/UpApp.xml",
             r#"<screen require-authentication="true" default-menu-title="Up App">
     <subscreens default-item="Edit"/>
     <widgets><subscreens-active/></widgets>
 </screen>"#,
         ),
         (
-            "component/upapp/screen/UpApp/Edit.xml",
+            "components/addon/upapp/screen/UpApp/Edit.xml",
             r#"<screen require-authentication="true" default-menu-title="Edit">
     <actions><entity-find-one entity-name="moqui.basic.EnumerationType" value-field="enumType">
         <field-map field-name="enumTypeId" value="UP_GATE"/></entity-find-one></actions>
@@ -5916,15 +5947,15 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         {}{}</entity-facade-xml>"#,
         records(include_str!(
-            "../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+            "../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml"
         )),
         records(include_str!(
-            "../../../runtime/dev-component/dev-aide/data/DevAideAgentData.xml"
+            "../../../runtime/components/dev/dev-aide/data/DevAideAgentData.xml"
         )),
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = common::start_with_files_and_links(
@@ -5932,7 +5963,7 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
         Some(&data),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     fake::clear("gate-dev");
     let base = format!("http://{}", gate.server.address());
@@ -6015,7 +6046,7 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     );
     assert!(!gate
         .runtime
-        .join("component/my-site/screen-extend/upapp/screen/UpApp/Edit.xml")
+        .join("components/addon/my-site/screen-extend/upapp/screen/UpApp/Edit.xml")
         .exists());
     // Review: the Workspace with each file as a merge, one change of the service rejected, the rest saved
     browser.click("Review", "document.querySelector('[data-assist-action=edit]')");
@@ -6069,7 +6100,7 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
         "!document.getElementById('DevReview')",
         WAIT,
     );
-    let things = gate.runtime.join("component/my-site/service/mysite/Things.xml");
+    let things = gate.runtime.join("components/addon/my-site/service/mysite/Things.xml");
     let deadline = std::time::Instant::now() + WAIT;
     while std::time::Instant::now() < deadline
         && !std::fs::read_to_string(&things).unwrap_or_default().contains("another")
@@ -6083,7 +6114,7 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     );
     assert!(gate
         .runtime
-        .join("component/my-site/screen-extend/upapp/screen/UpApp/Edit.xml")
+        .join("components/addon/my-site/screen-extend/upapp/screen/UpApp/Edit.xml")
         .exists());
     // the approval resolved with what the user did
     let factory = std::sync::Arc::clone(gate.server.factory());

@@ -26,7 +26,7 @@ use crate::transaction::TransactionAttribute;
 const TEST: &str = "moqui.test.TestEntity";
 
 fn framework_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 fn foo_text(facade: &EntityFacade, id: &str) -> Option<Value> {

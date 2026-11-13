@@ -25,9 +25,13 @@ fn a_skeleton_is_written_only_for_the_runtime_s_own_missing_framework() {
     let framework = moqui_core::context::default_framework_dir(&runtime);
     ensure_runtime(&runtime, &framework).unwrap();
     assert!(framework.join("component.xml").is_file());
-    assert!(runtime.join("base-component/tools/service/moqui.rest.xml").is_file());
-    assert!(runtime.join("base-component/webroot/screen/webroot/rest.xml").is_file());
-    assert!(runtime.join("base-component/webroot/screen/webroot/apps.xml").is_file());
+    assert!(runtime.join("components/base/tools/service/moqui.rest.xml").is_file());
+    assert!(runtime
+        .join("components/base/webroot/screen/webroot/rest.xml")
+        .is_file());
+    assert!(runtime
+        .join("components/base/webroot/screen/webroot/apps.xml")
+        .is_file());
     // A framework that is there is left alone.
     std::fs::remove_file(framework.join("conf/MoquiDefaultConf.xml")).unwrap();
     ensure_runtime(&runtime, &framework).unwrap();

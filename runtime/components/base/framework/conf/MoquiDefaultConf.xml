@@ -1,0 +1,1874 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+
+    <!-- Settings in this file can be overridden in a component (MoquiConf.xml) and/or runtime conf file that has
+        any of the desired sub-elements. -->
+
+    <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
+
+    <!-- recommended values: production, dev, test; any code may look at these Java System properties to vary behavior (System.getProperty("instance_purpose")) -->
+    <default-property name="instance_purpose" value="production"/>
+    <!-- The browser terminal's command line and host sessions (the terminal element): dev for a dev instance only, false off,
+        empty on; and from anywhere but this machine, terminal_remote=true (plans/Terminal-Fancy.md D6, D7). -->
+    <default-property name="terminal_command_line" value="dev"/>
+    <default-property name="terminal_host_sessions" value="dev"/>
+    <default-property name="terminal_remote" value="false"/>
+    <!-- Deploying a component from a git URL (System > Components) runs its code and loads its data: it needs the
+        sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
+        (docs/tools/Component-Deploy.md). -->
+    <default-property name="component_deploy_enabled" value=""/>
+
+    <!-- Locale and Time Zone Properties -->
+    <default-property name="default_locale" value="en_US"/>
+    <default-property name="default_time_zone" value="UTC"/>
+    <default-property name="database_time_zone" value="UTC"/>
+
+    <!-- Web App Properties -->
+    <default-property name="webapp_http_host" value=""/>
+    <!-- The address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev instance with the
+        dev-aide gives code execution to its users: plans/design-dev-aide.md 15). -->
+    <default-property name="webapp_http_bind" value=""/>
+    <default-property name="webapp_http_port" value=""/>
+    <default-property name="webapp_https_port" value=""/>
+    <default-property name="webapp_https_enabled" value="false"/>
+    <default-property name="telemetry_enabled" value="true"/>
+    <!-- The dashboard the System home shows as its Activity strip, by its definition id, in place of the shipped
+        system-home; empty for that one. It gets the period of the home and, as its instance variable, this server. -->
+    <default-property name="system_home_dashboard" value=""/>
+    <!-- The share of traces whose spans below the request or job root are kept, decided from the trace id. At 0 every
+        root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->
+    <default-property name="telemetry_sample_ratio" value="0"/>
+    <!-- The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, "off" none.
+        webapp_https_port above is the port clients see in generated URLs, which differs behind a reverse proxy. -->
+    <default-property name="webapp_https_listen_port" value=""/>
+    <!-- HTTP/2 on the HTTPS listener, chosen by ALPN with HTTP/1.1 beside it: true, or false for HTTP/1.1 only. Over
+        HTTP/2 WebSockets use extended CONNECT, and the OTLP receiver's and PASS authority's gRPC, when they are on, are
+        served on this port too. The plain HTTP listener is HTTP/1.1. -->
+    <default-property name="webapp_http2" value="true"/>
+    <default-property name="webapp_allow_origins" value=""/>
+    <default-property name="webapp_handle_cors" value="true"/>
+    <default-property name="webapp_status_ips" value="127.0.0.1"/>
+    <!-- The color of the dev/test instance marker of the Quasar shell (a small square in the corner of the window; the shell
+        only draws it for a dev or test instance_purpose): a CSS color, empty turns it off. It never overrides the theme's colors. -->
+    <default-property name="webapp_dev_marker_color" value="#2196f3"/>
+    <default-property name="webapp_require_session_token" value="true"/>
+    <default-property name="webapp_upload_executable_allow" value="false"/>
+    <!-- Largest multipart/form-data request body, in bytes or with a k, m or g suffix (other request bodies stop at
+        webapp_max_body). An upload is read as it arrives, a file over 256 KiB into a file in runtime/tmp/upload, and is
+        cut off when nothing arrives for webapp_upload_idle_timeout seconds. -->
+    <default-property name="webapp_max_upload" value="2147483648"/>
+    <default-property name="webapp_upload_idle_timeout" value="60"/>
+
+    <!--
+        webapp_client_ip_header is how Moqui reads the client IP from a trusted proxy (X-Real-IP, CF-Connecting-IP,
+        CloudFront-Viewer-Address, or X-Forwarded-For if the outer-most proxy overwrites rather than appends).
+        Embedded Jetty still uses ForwardedRequestCustomizer for X-Forwarded-Proto / X-Proxied-Https so it knows
+        if a proxied request was HTTPS; it does not take the client address from X-Forwarded-For or Forwarded
+        (see MoquiStart.java).
+
+        nginx-proxy: X-Real-IP (see https://github.com/nginx-proxy/nginx-proxy/blob/main/nginx.tmpl)
+        Cloudflare: CF-Connecting-IP (or True-Client-IP if that feature is enabled)
+        AWS Cloudfront: CloudFront-Viewer-Address (requires config in Cloudfront origin request policy)
+    -->
+    <default-property name="webapp_client_ip_header" value=""/>
+    <!--
+        webapp_trusted_proxies: comma separated address ranges (10.0.0.0/8, fd00::/8, or one address) of the reverse
+        proxies in front. With it, webapp_client_ip_header and X-Forwarded-Proto are believed only from those proxies, the
+        client address is the rightmost one in the header that is not a trusted proxy (so an appended X-Forwarded-For is
+        safe), and the per-client web-protection below is on by default. Empty, the header is believed from any peer.
+        webapp_web_protection: true or false turns the per-client web-protection on or off whatever the proxies.
+    -->
+    <default-property name="webapp_trusted_proxies" value=""/>
+    <default-property name="webapp_web_protection" value=""/>
+
+    <!--
+        Sign-in with Google or Microsoft for mail accounts (OAuth 2.0 with PKCE, XOAUTH2 for IMAP and SMTP;
+        docs/interfaces/Mail-OAuth.md). Each provider (moqui.basic.email.EmailOAuthProvider) needs the deployment's own OAuth client,
+        registered at the provider with the redirect URI below: its client id and secret here or in the environment
+        (EMAIL_OAUTH_GOOGLE_CLIENT_ID and so on); a provider without both is not offered. The secret is never written to
+        a log or answered by a service. email_oauth_microsoft_tenant: common (the default; work, school and personal
+        accounts), organizations, consumers or a tenant id.
+        email_oauth_redirect_uri (email-client oauth-redirect-uri): the callback the provider sends the browser back to,
+        exactly as registered there; empty for the webroot webapp's URL from this conf (webapp_http_host,
+        webapp_https_enabled and the ports) and /emailOAuth/callback. It is never taken from a request.
+    -->
+    <default-property name="email_oauth_redirect_uri" value=""/>
+    <default-property name="email_oauth_google_client_id" value=""/>
+    <default-property name="email_oauth_google_client_secret" value="" is-secret="true"/>
+    <default-property name="email_oauth_microsoft_client_id" value=""/>
+    <default-property name="email_oauth_microsoft_client_secret" value="" is-secret="true"/>
+    <default-property name="email_oauth_microsoft_tenant" value=""/>
+
+    <!--
+        Chromium for PDF and the browser tests (PDF is the html-print render through headless Chromium).
+        moqui_chromium_path names the executable; empty, or a path that names no file, looks in runtime/chromium (from
+        ./moq chromium-download), then for an installed Chromium, then Google Chrome or Microsoft Edge, on the PATH and
+        where this OS installs them (/usr/bin, /snap/bin, /opt; /Applications; Program Files). Startup logs each one
+        found and the one used. With none the server starts and PDF reports it is not available. The limits are on
+        screen-facade pdf.
+    -->
+    <default-property name="moqui_chromium_path" value=""/>
+
+    <!--
+        Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its https
+        URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
+        and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
+        allows that origin, https://example.com/app/ only under that path); a dev instance may reach any URL. Plain
+        http to another machine needs its prefix here, since a login crosses in the clear. load_runner_max_runs is how
+        many loads may run at once on this instance, load_runner_max_users the most users a run may have.
+    -->
+    <default-property name="load_runner_targets" value=""/>
+    <default-property name="load_runner_max_runs" value="1"/>
+    <default-property name="load_runner_max_users" value="1000"/>
+
+    <!--
+        The built-in SSH server (ssh-server below). Off while ssh_port is empty or ssh-server enabled is false; 0 binds an
+        ephemeral port.
+        ssh_host_key is the base64 of a 32-byte Ed25519 seed (generated into runtime/.env) or an OpenSSH private key.
+        ssh_public_host and ssh_public_port are the SSH host and port git clone URLs show; webapp_http_host and ssh_port
+        when empty.
+    -->
+    <default-property name="ssh_port" value=""/>
+    <default-property name="ssh_host" value="127.0.0.1"/>
+    <default-property name="ssh_host_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="ssh_public_host" value=""/>
+    <default-property name="ssh_public_port" value=""/>
+
+    <!--
+        The git server (git-server below): git_public_url is the base URL clone URLs show; from the webapp host and port
+        when empty. The tokens of Git LFS actions (and of git-lfs-authenticate over SSH) are signed with
+        git_lfs_token_key (generated into runtime/.env), and git_lfs_token_key_previous still reads while a key is
+        changed.
+    -->
+    <default-property name="git_public_url" value=""/>
+    <default-property name="git_lfs_token_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="git_lfs_token_key_previous" value="" is-secret="true"/>
+
+    <!--
+        The inbound SMTP listener for hosted and shared mail accounts (smtp-server below). Off while smtp_listen_port is
+        empty; 0 binds an ephemeral port. smtp_allowed_addresses: the gateway's IPs and CIDRs, comma-separated
+        (127.0.0.1 for a gateway on this host); every other address is refused at connect, and an empty list does not
+        start the listener. smtp_hostname: the name in the greeting and the Received field; empty for webapp_http_host.
+        smtp_authserv_id: the authserv-id of the gateway's Authentication-Results; only those are kept (the verdict is
+        trusted, not verified again). smtp_tls_cert_file and smtp_tls_key_file: the certificate (with its chain) and key
+        PEM files of STARTTLS (smtp-server starttls), absolute or under the runtime directory; empty for runtime/cert.
+    -->
+    <default-property name="smtp_listen_port" value=""/>
+    <default-property name="smtp_listen_host" value="127.0.0.1"/>
+    <default-property name="smtp_allowed_addresses" value=""/>
+    <default-property name="smtp_hostname" value=""/>
+    <default-property name="smtp_authserv_id" value=""/>
+    <default-property name="smtp_tls_cert_file" value=""/>
+    <default-property name="smtp_tls_key_file" value=""/>
+    <!--
+        Mail authentication and the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b). smtp_internet: true takes mail from the
+        internet (smtp-server internet; port 25 on an edge node): any address, STARTTLS, per-address limits, SPF, DKIM,
+        DMARC and ARC checked with an Authentication-Results of its own (DMARC is RFC 9989's: t=y lowers the policy, and
+        there is no pct). mail_arc_trusted_sealers: the domains whose passing ARC seal overrides a DMARC reject or
+        quarantine (forwarders and lists this node trusts); empty for no ARC exception. mail_rspamd_url: Rspamd's HTTP
+        API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached fails open
+        (logged, not spam); checks that do not finish in 45 seconds answer 451. mail_dkim_key: the node's DKIM private
+        key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it; an edge node
+        signs what it delivers with it, and a send by SMTP is signed only when it is set or goes to this node's own
+        listener. mail_dkim_selector: its selector (the TXT record to publish at selector._domainkey.domain is
+        org.moqui.mail.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
+        for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
+        MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
+        time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
+        mail_mx_override (testing and staging only): domain=host:port pairs, * for any, in place of the MX.
+        mail_dns_offline (testing only): true makes no DNS query.
+    -->
+    <default-property name="smtp_internet" value=""/>
+    <default-property name="mail_rspamd_url" value=""/>
+    <default-property name="mail_dkim_key" value="" is-secret="true"/>
+    <default-property name="mail_dkim_selector" value="moqui"/>
+    <default-property name="mail_dkim_domains" value=""/>
+    <default-property name="edge_mail_mta" value=""/>
+    <default-property name="mail_arc_trusted_sealers" value=""/>
+    <default-property name="mail_delivery_retry_seconds" value="300"/>
+    <default-property name="mail_delivery_days" value="5"/>
+    <default-property name="mail_mx_override" value=""/>
+    <default-property name="mail_dns_offline" value=""/>
+
+    <!-- A client that keeps data offline (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): mail_change_keep_days, how
+        long a user's mail change log is kept (an older cursor, or one not read for that long, reads its folders again);
+        client_request_keep_days, how long a request made by its clientRef is answered as a duplicate when sent again;
+        client_upload_expire_hours, how long a file sent in chunks waits for its next chunk or to be taken;
+        client_upload_min_chunk_bytes, the smallest chunk but the last; client_upload_max_count and client_upload_max_mb, the
+        uploads a user may have open at once. -->
+    <default-property name="mail_change_keep_days" value="30"/>
+    <default-property name="client_request_keep_days" value="30"/>
+    <default-property name="client_upload_expire_hours" value="24"/>
+    <default-property name="client_upload_min_chunk_bytes" value="262144"/>
+    <default-property name="client_upload_max_count" value="20"/>
+    <default-property name="client_upload_max_mb" value="100"/>
+
+    <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
+        user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
+        new (the Matrix client API, C6a, needs it to be the domain). chat_to_device_retention_days: how long a to-device
+        message waits for a device that does not acknowledge it. chat_store_key_secret: the platform secret each device's
+        browser-store key is derived under (HMAC of userId|deviceId|revision), so no table holds the keys; generated when
+        unset. A new value makes every browser's store unreadable (each makes a new device; older messages then need the
+        key backup). -->
+    <default-property name="chat_server_name" value="localhost"/>
+    <default-property name="chat_to_device_retention_days" value="30"/>
+    <default-property name="chat_store_key_secret" value="CHANGEME" is-secret="true"/>
+
+    <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
+        of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
+        rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
+        IP or IP:port, for a server behind 1:1 NAT (the bound address by default; required when rtc_media_host binds every
+        address). call_ring_seconds: how long a call rings before it is missed. -->
+    <default-property name="rtc_media_port" value=""/>
+    <default-property name="rtc_media_host" value="127.0.0.1"/>
+    <default-property name="rtc_public_address" value=""/>
+    <default-property name="call_ring_seconds" value="45"/>
+    <!-- Live captions (W6; docs/interfaces/WebRTC.md, Captions): off unless call_captions_enabled is true. Someone in a call
+        turns them on; its media node sends each speaker's audio, in chunks of at most call_captions_chunk_seconds, to the
+        speech provider (the model bound to the transcribe feature; call_captions_provider local is speech-local, not built
+        yet), at most call_captions_workers at once, each within call_captions_timeout_seconds; past call_captions_queue
+        waiting chunks the oldest is dropped. call_captions_language: an ISO 639-1 code, empty to let the model tell.
+        call_captions_store true keeps each caption as a CallTranscript (by default nothing is kept).
+        call_captions_prompt_audio: a WAV file a phone leg hears after the captions tones (docs/interfaces/SIP.md, Notices). -->
+    <default-property name="call_captions_enabled" value="false"/>
+    <default-property name="call_captions_provider" value="llm"/>
+    <default-property name="call_captions_chunk_seconds" value="5"/>
+    <default-property name="call_captions_queue" value="6"/>
+    <default-property name="call_captions_workers" value="2"/>
+    <default-property name="call_captions_timeout_seconds" value="20"/>
+    <default-property name="call_captions_language" value=""/>
+    <default-property name="call_captions_store" value="false"/>
+    <default-property name="call_captions_prompt_audio" value=""/>
+    <!-- ICE-TCP (W4): a TCP port on rtc_media_host for browsers that cannot reach the UDP one; off while empty. -->
+    <default-property name="rtc_media_tcp_port" value=""/>
+    <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
+        block UDP: turn_port (UDP and TCP, 3478 by convention) and turn_tls_port (TLS, 5349), off while empty; turn_tls443_host
+        an address of its own for TLS on 443 (the HTTPS listener does not share it); turn_host the address they bind
+        (rtc_media_host by default) and turn_public_host the name or address in the URLs browsers get (the media node's
+        public address by default); turn_relay_ports the UDP range of the relays. turn_auth_secret signs the short-lived
+        credentials (generated when unset; every media node and any coturn take the same one); turn_credential_hours how
+        long one lasts; turn_external_urls TURN servers elsewhere (coturn with use-auth-secret), comma separated turn: URLs.
+        turn_max_allocations, turn_max_kbps: the quotas; turn_allowed_peers addresses besides the media node a relay may reach. -->
+    <default-property name="turn_port" value=""/>
+    <default-property name="turn_tls_port" value=""/>
+    <default-property name="turn_tls443_host" value=""/>
+    <default-property name="turn_host" value=""/>
+    <default-property name="turn_public_host" value=""/>
+    <default-property name="turn_relay_ports" value="49152-65535"/>
+    <default-property name="turn_auth_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="turn_credential_hours" value="4"/>
+    <default-property name="turn_external_urls" value=""/>
+    <default-property name="turn_max_allocations" value="1000"/>
+    <default-property name="turn_max_kbps" value="4000"/>
+    <default-property name="turn_allowed_peers" value=""/>
+    <!-- Call recording (W5; docs/interfaces/Call-Recording.md, D-V5): off by default. call_recording_enabled lets a call's
+        host record it; every leg gets the notice, logged per leg. call_recording_ack_required: each leg must acknowledge it,
+        and the recording pauses while a current leg has not (or after one withdraws). call_recording_policy_revision is
+        logged with each notice; change it when the policy's wording changes. call_recording_retention_days: recordings are
+        deleted this long after they start (0 keeps them). The recorder's limits: call_recording_queue_frames, the frames
+        queued from the media thread (a recorder further behind fails); call_recording_segment_mb and
+        call_recording_segment_minutes, when a file is cut into the next segment; call_recording_max_mb, a recording's
+        total, where it stops. call_recording_prompt_audio: a WAV file (any resource location) a phone leg hears after the
+        recording tone; under the ack policy it should ask the caller to press 1 (docs/interfaces/SIP.md, Notices). -->
+    <default-property name="call_recording_enabled" value="false"/>
+    <default-property name="call_recording_ack_required" value="false"/>
+    <default-property name="call_recording_policy_revision" value="1"/>
+    <default-property name="call_recording_retention_days" value="90"/>
+    <default-property name="call_recording_queue_frames" value="4096"/>
+    <default-property name="call_recording_segment_mb" value="64"/>
+    <default-property name="call_recording_segment_minutes" value="30"/>
+    <default-property name="call_recording_max_mb" value="2048"/>
+    <default-property name="call_recording_prompt_audio" value=""/>
+    <!-- Phone calls over SIP trunks (the sip feature, V1; plans/archive/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
+        server with call media: sip_port (UDP and TCP, 5060 by convention) and sip_tls_port (TLS, 5061, the certificate from
+        runtime/cert), off while both are empty; sip_host and sip_tls_host the addresses they bind (loopback by default),
+        sip_rtp_ports the UDP range of the phone legs' RTP (one port a leg) on sip_rtp_host (sip_host by default);
+        sip_public_address the address in Contact headers and SDP when the bound one is not what trunks reach (required when
+        a host binds every address); sip_tls_ca_file the CA certificates for TLS to trunks (the system bundle by default).
+        Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
+        (0 turns one off): sip_request_rate new requests a second from one source, sip_request_burst of them at once;
+        sip_max_transactions, past which new requests are dropped; sip_max_connections, TCP and TLS connections at once,
+        and sip_max_connections_per_source of them from one source. -->
+    <default-property name="sip_port" value=""/>
+    <default-property name="sip_host" value="127.0.0.1"/>
+    <default-property name="sip_tls_port" value=""/>
+    <default-property name="sip_tls_host" value=""/>
+    <default-property name="sip_rtp_ports" value="20000-20999"/>
+    <default-property name="sip_rtp_host" value=""/>
+    <default-property name="sip_public_address" value=""/>
+    <default-property name="sip_tls_ca_file" value=""/>
+    <default-property name="sip_request_rate" value="20"/>
+    <default-property name="sip_request_burst" value="100"/>
+    <default-property name="sip_max_transactions" value="2000"/>
+    <default-property name="sip_max_connections" value="500"/>
+    <default-property name="sip_max_connections_per_source" value="100"/>
+    <!-- Texts (C4-SMS; plans/archive/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its messaging
+        bridge, a ChatBridge of type SMS (System, Chat Bridges; its provider settings in its configuration), with or without the
+        SIP engine. channels_webhooks_enabled turns on the routes a provider calls: POST /channels/{chatBridgeId}/webhook (its
+        signature checked over the raw body, at most channels_webhook_max_bytes) and GET /channels/{chatBridgeId}/media/{token}
+        (a picture of an MMS that goes out, which the provider fetches). channels_public_url is the https base the provider
+        reaches this server at, for those files; without it an MMS goes out refused (mediaUnreachable). channels_media_key signs
+        the files' addresses (generated when unset), each good for channels_media_minutes. -->
+    <default-property name="channels_webhooks_enabled" value="false"/>
+    <default-property name="channels_webhook_max_bytes" value="262144"/>
+    <default-property name="channels_public_url" value=""/>
+    <default-property name="channels_media_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="channels_media_minutes" value="60"/>
+    <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
+        true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
+        to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's
+        expiry is held between sip_registrar_min_expires and sip_registrar_max_expires seconds (sip_registrar_default_expires
+        when the phone asks none), and to sip_registrar_nat_expires for a phone behind a NAT without Outbound (RFC 5626). -->
+    <default-property name="sip_registrar_enabled" value="false"/>
+    <default-property name="sip_domain" value=""/>
+    <default-property name="sip_registrar_min_expires" value="60"/>
+    <default-property name="sip_registrar_max_expires" value="3600"/>
+    <default-property name="sip_registrar_default_expires" value="600"/>
+    <default-property name="sip_registrar_nat_expires" value="60"/>
+    <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
+        xmpp_domain is empty. xmpp_domain is the domain of the users' JIDs (user@domain), with the rooms on
+        rooms.<domain> and uploads on upload.<domain> (xmpp_rooms_domain, xmpp_upload_domain to name others); xmpp_port
+        (STARTTLS, 5222 by convention) on xmpp_host and xmpp_tls_port (direct TLS with ALPN xmpp-client, 5223) on
+        xmpp_tls_host, each off while empty; the certificates from runtime/cert by name (the domain, rooms.<domain> and
+        upload.<domain>, else default). xmpp_websocket_enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
+        xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
+        largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
+        long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts.
+        xmpp_upload_seconds is the longest a PUT to an upload slot may take. xmpp_turn_enabled true lets external services
+        (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
+        xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
+        of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
+        xmpp_s2s_port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
+        behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (node_role=edge) no XMPP
+        server starts: its edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node. An all-in-one node
+        (node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge_xmpp_port and
+        edge_xmpp_tls_port, which must differ from them (a tunnel port on the same port is off, logged). -->
+    <default-property name="xmpp_domain" value=""/>
+    <default-property name="xmpp_rooms_domain" value=""/>
+    <default-property name="xmpp_upload_domain" value=""/>
+    <default-property name="xmpp_port" value=""/>
+    <default-property name="xmpp_host" value="0.0.0.0"/>
+    <default-property name="xmpp_tls_port" value=""/>
+    <default-property name="xmpp_tls_host" value=""/>
+    <default-property name="xmpp_websocket_enabled" value="false"/>
+    <default-property name="xmpp_upload_url" value=""/>
+    <default-property name="xmpp_upload_max_bytes" value="20971520"/>
+    <default-property name="xmpp_upload_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="xmpp_resume_seconds" value="300"/>
+    <default-property name="xmpp_fast_token_days" value="14"/>
+    <default-property name="xmpp_upload_seconds" value="300"/>
+    <default-property name="xmpp_turn_enabled" value="false"/>
+    <default-property name="xmpp_turn_per_hour" value="30"/>
+    <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="xmpp_s2s_port" value=""/>
+
+    <!-- Voicemail (V2; plans/archive/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
+        box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
+        voicemail_max_seconds: the longest message (10 to 600). voicemail_prompt_location: a folder (any resource location)
+        with the recorded speech played after the prompts' tones: greeting.wav (the default greeting), enter-box.wav,
+        enter-pin.wav, pin-refused.wav, menu.wav, no-messages.wav, goodbye.wav (16-bit PCM WAV); empty plays tones only.
+        voicemail_trash_days: messages in a trash are deleted after this many days (0 keeps them).
+        voicemail_transcribe: true sends each message to the speech provider (the model bound to transcribe) for a
+        transcript; off by default, as the deployment's recording and transcription policy decides it.
+        voicemail_transcribe_language: an ISO 639-1 code, empty to let the model tell. voicemail_pin_min_digits: the fewest
+        digits a new phone-access PIN has (4 to 12; at the box's limit of about 240 guesses a day four digits fall in weeks). -->
+    <default-property name="voicemail_max_seconds" value="120"/>
+    <default-property name="voicemail_prompt_location" value=""/>
+    <default-property name="voicemail_trash_days" value="30"/>
+    <default-property name="voicemail_transcribe" value="false"/>
+    <default-property name="voicemail_transcribe_language" value=""/>
+    <default-property name="voicemail_pin_min_digits" value="6"/>
+
+    <!-- The IVR, queues and transfer (V5; docs/interfaces/SIP.md "Queues", "Transfer and merge"): call_queue_tick_seconds,
+        how often the SIP engine checks each call waiting in a queue (1 to 30); call_transfer_ring_seconds, how long a blind
+        transfer's target rings before the caller goes to their voicemail (10 to 120); call_hold_music_location, hold music
+        for calls on hold and in queues without their own (WAV or Ogg Opus, any resource location; empty: a tone pattern;
+        use only audio the deployment may use); call_queue_prompt_location, a folder with 0.wav to 9.wav that speaks a
+        queue caller's place (empty: pips). -->
+    <default-property name="call_queue_tick_seconds" value="5"/>
+    <default-property name="call_transfer_ring_seconds" value="30"/>
+    <default-property name="call_hold_music_location" value=""/>
+    <default-property name="call_queue_prompt_location" value=""/>
+
+    <!-- Properties for the primary (transactional group) datasource -->
+    <default-property name="entity_ds_db_conf" value="h2"/>
+    <default-property name="entity_ds_host" value="127.0.0.1"/>
+    <default-property name="entity_ds_port" value=""/>
+    <default-property name="entity_ds_database" value="moqui"/>
+    <default-property name="entity_ds_url" value="jdbc:h2:${moqui_runtime}/db/h2/${entity_ds_database};lock_timeout=30000"/>
+    <default-property name="entity_ds_schema" value=""/>
+    <default-property name="entity_ds_user" value="sa"/>
+    <default-property name="entity_ds_password" value="sa" is-secret="true"/>
+    <!-- An external postgres or mysql server is reached over TLS. "disable" connects without it, for a local dev server.
+        Postgres: empty and "verify-full" check the certificate's authority and name, "verify-ca" the authority only,
+        "require" encrypts without checking (libpq and pgjdbc), and none falls back to a connection without TLS.
+        entity_ds_sslrootcert is a PEM file of the authorities to trust in place of the public ones, such as a managed
+        database's own (with it "require" checks as "verify-ca", as in libpq). -->
+    <default-property name="entity_ds_sslmode" value=""/>
+    <default-property name="entity_ds_sslrootcert" value=""/>
+    <default-property name="entity_ds_crypt_pass" value="MoquiDefaultPassword:CHANGEME" is-secret="true"/>
+    <default-property name="entity_ds_crypt_pass_old" value="MoquiDefaultPassword:CHANGEME" is-secret="true"/>
+    <!-- The content datasource: the stored bytes of the resource schemes (DbResource*, ContentBlob*, and the objects,
+        refs and LFS objects of db kind git repositories; the content group of ResourceEntities.xml), in a database of
+        their own (docs/Run-Deploy.md "Content database"). With content_ds_db_conf empty it is the database
+        content_ds_database in the embedded cluster when the transactional datasource is embedded, and the
+        transactional database itself when that is an external server. postgres, mysql or mysql8 name a server for it:
+        content_ds_host, _port, _user, _password, _sslmode and _sslrootcert, each empty for the entity_ds_ one, so
+        setting only content_ds_db_conf puts it in the database content_ds_database on the transactional server. -->
+    <default-property name="content_ds_db_conf" value=""/>
+    <default-property name="content_ds_host" value=""/>
+    <default-property name="content_ds_port" value=""/>
+    <default-property name="content_ds_database" value="moqui_content"/>
+    <default-property name="content_ds_schema" value=""/>
+    <default-property name="content_ds_user" value=""/>
+    <default-property name="content_ds_password" value="" is-secret="true"/>
+    <default-property name="content_ds_sslmode" value=""/>
+    <default-property name="content_ds_sslrootcert" value=""/>
+    <!-- Phase 7 signs the session cookie with this key. Phase 2 generates it. -->
+    <default-property name="session_cookie_key" value="CHANGEME" is-secret="true"/>
+    <!-- Web Push (VAPID, RFC 8292): the server's P-256 private key, 32 random bytes in base64, generated when unset and
+        shared by the cluster's members (a new key makes every browser subscribe again). The public key is derived from it
+        and given to the browser. web_push_subject is the contact the push services see: a mailto: or https: URL, which a
+        production instance should set to its operator's address. -->
+    <default-property name="web_push_vapid_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="web_push_subject" value="mailto:admin@localhost"/>
+    <!-- Native push to the mobile apps (FCM's HTTP v1 API; plans/Mobile-Desktop.md §5): fcm_service_account is a Firebase
+        project's service account key, its JSON file's path or the JSON itself, kept like the other secrets (an environment
+        variable or runtime/.env; not generated). fcm_project_id is the Firebase project, by default the key's project_id.
+        Unset, nothing goes to FCM and the log says so once. fcm_base_url replaces https://fcm.googleapis.com, for a test
+        stand-in only. -->
+    <default-property name="fcm_service_account" value="" is-secret="true"/>
+    <default-property name="fcm_project_id" value=""/>
+    <default-property name="fcm_base_url" value=""/>
+    <!-- Cluster TLS material is base64 DER on one line, shared by provisioning, distinct from session_cookie_key. -->
+    <default-property name="cluster_tls_cert" value="CHANGEME" is-secret="true"/>
+    <default-property name="cluster_tls_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="cluster_https_port" value=""/>
+    <default-property name="cluster_base_url" value=""/>
+    <!-- How peers reach this member: empty is its cluster port at cluster_base_url (TLS with the cluster certificate),
+        "ssh" its SSH server (ssh_port), "notify" Postgres NOTIFY on the shared entity database, for members that cannot
+        open a connection to each other. -->
+    <default-property name="cluster_transport" value=""/>
+    <!-- What this member speaks on its cluster port, as listener and as sender: empty or "grpc" for gRPC on HTTP/2 where
+        TLS chooses h2, with the HTTP/1.1 POST /cluster/{topic} for a peer that does not; "rest" for HTTP/1.1 only. -->
+    <default-property name="cluster_protocol" value=""/>
+    <!-- The address the cluster listener binds; empty for every interface, as a member on another host must reach it. -->
+    <default-property name="cluster_bind_address" value=""/>
+    <default-property name="instance_id" value=""/>
+    <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, edge for an edge node,
+        which then takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1), or all-in-one for a
+        full server that also takes the link of a paired local node (§10, runtime/conf/MoquiAllInOneConf.xml): its own
+        names, mail, webhooks and calls stay its own, and the paired node's go over the link. A local node needs no
+        role: it dials its edge node when edge_node_url is set. Pairing (System › Edge Node) writes edge_node_url,
+        edge_node_key (this node's private key, base64 PKCS#8; a secret) and edge_node_pin (the SHA-256 of the edge node's
+        link key, below) to runtime/.env, and unpairing removes them; they are not generated at startup. -->
+    <default-property name="node_role" value=""/>
+    <default-property name="edge_node_url" value=""/>
+    <default-property name="edge_node_key" value="" is-secret="true"/>
+    <default-property name="edge_node_pin" value=""/>
+    <!-- An edge node's link key: its up and down connections present a certificate made from it instead of the web
+        certificate, so certificate renewal never breaks a link; local nodes pin it at pairing. Generated into
+        runtime/.env; a new one means each local node pairs again. -->
+    <default-property name="edge_link_key" value="CHANGEME" is-secret="true"/>
+    <!-- An edge node's web access (plans/archive/Edge-Node.md §5.3). The paired nodes' host names and their modes are
+        moqui.edge.EdgeHost rows (System › Edge Clients). edge_offline_page is the location of the page a terminate host
+        shows while its node's link is down (503 with Retry-After); empty for the built-in one. edge_ssh_tunnel_port, when
+        set, is a TCP port on edge_ssh_tunnel_host (empty for every address) whose connections go down the link to the
+        local node's SSH server; edge_ssh_tunnel_node names the paired node, empty for the only one linked. edge_xmpp_port
+        (STARTTLS, 5222) and edge_xmpp_tls_port (direct TLS, 5223), when set, are TCP ports on edge_xmpp_host (empty for
+        every address) whose connections go down the link to the local node's XMPP server, which ends their TLS;
+        edge_xmpp_node names the paired node, empty for the only one linked. -->
+    <default-property name="edge_offline_page" value=""/>
+    <default-property name="edge_ssh_tunnel_port" value=""/>
+    <default-property name="edge_ssh_tunnel_host" value=""/>
+    <default-property name="edge_ssh_tunnel_node" value=""/>
+    <default-property name="edge_xmpp_port" value=""/>
+    <default-property name="edge_xmpp_tls_port" value=""/>
+    <default-property name="edge_xmpp_host" value=""/>
+    <default-property name="edge_xmpp_node" value=""/>
+    <default-property name="entity_add_missing_runtime" value="false"/>
+    <default-property name="entity_add_missing_startup" value="true"/>
+    <default-property name="entity_lock_track" value="false"/>
+    <default-property name="entity_statement_timeout" value="false"/>
+    <!-- The transaction cache (services marked transaction="cache" or "force-cache" hold their writes to the commit):
+        false turns it off everywhere, those services running as transaction="use" does. -->
+    <default-property name="entity_tx_cache" value="true"/>
+    <!-- A screen transition's transaction (and a screen's with begin-transaction) holds its writes in the transaction
+        cache, as a service marked transaction="cache" does; false begins it as transaction="use". -->
+    <default-property name="screen_tx_cache" value="true"/>
+    <!-- A service whose definition has no transaction attribute begins its transaction (when it begins one) with the
+        transaction cache, as one marked transaction="cache" does: a service of XML actions or a script, called with no
+        new transaction asked for (a Rust, native or entity-auto service does not); false begins it as
+        transaction="use" (plans/Profiling3.md S1, D3). -->
+    <default-property name="service_tx_cache" value="true"/>
+    <!-- A module ec.resource.script loads whose top level only declares (functions, constants, other modules) gives the
+        same value for the rest of the outermost script run, made once; false makes it again at each load. -->
+    <default-property name="script_module_cache" value="true"/>
+    <default-property name="entity_empty_db_load" value="seed,seed-initial,install"/>
+    <default-property name="entity_on_start_load_types" value="none"/>
+    <default-property name="entity_on_start_load_components" value=""/>
+
+    <!-- Properties for a database clone; note that without overriding the transactional#clone1 datasource the default works only
+        with MySQL and Postgres because of different properties on XADataSource classes of other JDBC drivers -->
+    <default-property name="entity_ds_c1_disabled" value="true"/>
+    <default-property name="entity_ds_c1_db_conf" value="mysql"/>
+    <default-property name="entity_ds_c1_schema" value=""/>
+    <default-property name="entity_ds_c1_host" value=""/>
+    <default-property name="entity_ds_c1_port" value=""/>
+    <default-property name="entity_ds_c1_database" value=""/>
+    <default-property name="entity_ds_c1_user" value=""/>
+    <default-property name="entity_ds_c1_password" value="" is-secret="true"/>
+
+    <!-- How often (in seconds) to check for scheduled jobs to run, set to 0 to not run scheduled jobs -->
+    <default-property name="scheduled_job_check_time" value="60"/>
+
+    <!-- SearchFacade backend: postgres (the default, tables in the search schema of the entity Postgres, or a dedicated
+        embedded cluster when the entity database is not Postgres) or opensearch (the cluster settings below) -->
+    <default-property name="search_backend" value="postgres"/>
+    <!-- OpenSearch (or ElasticSearch 7+) cluster for the opensearch backend, and the Proxy Servlet settings -->
+    <default-property name="elasticsearch_url" value="http://127.0.0.1:9200"/>
+    <default-property name="elasticsearch_user" value=""/>
+    <default-property name="elasticsearch_password" value="" is-secret="true"/>
+    <default-property name="elasticsearch_index_prefix" value=""/>
+    <!-- On the opensearch backend, when elasticsearch_url is this host and nothing answers there, the server starts the install in
+        runtime/opensearch (unless it has a pid file, a node run outside the server) and stops it on shutdown. "false" never starts it. -->
+    <default-property name="opensearch_run" value="true"/>
+    <!-- Server log output on stderr: trace, debug, info, warn, or error -->
+    <default-property name="moqui_log_level" value="info"/>
+    <!-- stderr header color: auto (a terminal, and not NO_COLOR), always, or never. Files stay plain. -->
+    <default-property name="moqui_log_color" value="auto"/>
+    <!-- Log files: moqui.log (all events) and moqui-error.log (warn and error) in moqui_log_dir (logging dir), a path or
+        runtime:// location; empty writes no files. -->
+    <default-property name="moqui_log_dir" value="runtime://log"/>
+
+    <!-- The default model endpoint of the llm-facade (env vars or properties): an OpenAI-compatible server (Chat
+         Completions) at llm_openai_url, its key (blank sends no auth header: Ollama, LM Studio) and the model name
+         (empty until set). llm_log_content keeps the content of calls in LlmCall, redacted. -->
+    <default-property name="llm_openai_url" value="https://api.openai.com"/>
+    <default-property name="llm_openai_api_key" value="" is-secret="true"/>
+    <default-property name="llm_openai_model" value=""/>
+    <default-property name="llm_log_content" value="false"/>
+    <!-- The agent protocols, all off by default: the A2A server (its public URL for the agent card, the issuer and
+         audience of the OIDC tokens it takes), the MCP server and the OpenAI-compatible gateway. -->
+    <default-property name="a2a_enabled" value="false"/>
+    <default-property name="a2a_public_url" value=""/>
+    <default-property name="a2a_oidc_issuer" value=""/>
+    <default-property name="a2a_oidc_audience" value=""/>
+    <default-property name="mcp_enabled" value="false"/>
+    <default-property name="mcp_public_url" value=""/>
+    <default-property name="mcp_request_state_key" value="" is-secret="true"/>
+    <default-property name="llm_gateway_enabled" value="false"/>
+
+    <!-- The OpenSearch Dashboards behind the /dashboard proxy (the DashboardProxy servlet); an empty host turns it off -->
+    <default-property name="kibana_host" value="127.0.0.1"/>
+    <default-property name="kibana_port" value="5601"/>
+
+    <!-- worker-pool-max and request-pool-max size the connection pools: (16 + 22) * 2 connections for their
+        transactions (each can hold a suspended one), one for an agent worker and the webroot webapp's 4
+        transfer-workers make 81, within the 82 ordinary connections of a pool of 90 less 8 reserve
+        (moqui_core::service::check_serve_caps). -->
+    <tools worker-queue="65535" worker-pool-core="16" worker-pool-max="22" worker-pool-alive="60"
+            request-pool-max="16" request-queue="64"
+            empty-db-load="${entity_empty_db_load}"
+            on-start-load-types="${entity_on_start_load_types}" on-start-load-components="${entity_on_start_load_components}">
+        <!-- Native components select linked ToolFactory implementations here.
+             The cache facade is built in; Java H2/JCR/SMTP factories do not run in MR. -->
+        <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->
+        <tool-factory class="moqui_core::pim::VCardToolFactory" init-priority="5"/>
+        <tool-factory class="moqui_core::pim::ICalendarToolFactory" init-priority="5"/>
+        <!-- The mail capture for specs: with mail_capture_sends=true, or ec.factory.getTool('MailCapture').enable() in a
+             spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Build-Test.md) -->
+        <tool-factory class="moqui_core::service::mail_capture::MailCaptureToolFactory" init-priority="5"/>
+        <!-- The HTTP fixtures for specs: while ec.factory.getTool('HttpFixtures') is enabled, outbound HTTP is answered by
+             the spec's fixtures and recorded, and nothing goes to the network (docs/dev/JS-Testkit.md) -->
+        <tool-factory class="moqui_core::service::http_fixtures::HttpFixturesToolFactory" init-priority="5"/>
+        <!-- The notification capture for specs: ec.factory.getTool('NotificationCapture').enable() listens on the
+             notification topic as the host's socket does, so the shell counts are sent, and keeps the messages -->
+        <tool-factory class="moqui_core::notify::capture::NotificationCaptureToolFactory" init-priority="5"/>
+    </tools>
+
+    <cache-list warm-on-start="true" local-factory="MCache" distributed-factory="MCache">
+        <!-- Entity Database Record Caches (and cache clear assist data) -->
+        <!-- set type="distributed" to use the distributed cache -->
+        <cache name="entity.record.one." max-elements="20000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="EntityValueBase"/>
+        <cache name="entity.record.list." max-elements="10000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="EntityListImpl"/>
+        <cache name="entity.record.count." max-elements="10000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="Long"/>
+
+        <cache name="entity.record.one_ra." max-elements="40000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="Set"/>
+        <cache name="entity.record.one_view_ra." max-elements="40000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="Set"/>
+        <cache name="entity.record.one_bf" max-elements="1000" eviction-strategy="least-frequently-used"
+                value-type="Set"/>
+
+        <cache name="entity.record.list_ra." max-elements="20000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="Set"/>
+        <cache name="entity.record.list_view_ra." max-elements="20000" eviction-strategy="least-frequently-used"
+                key-type="EntityCondition" value-type="Set"/>
+
+        <!-- Framework configuration and artifact caches -->
+        <!-- NOTE: Production mode by default - No expiration of conf and impl artifacts. -->
+
+        <cache name="entity.definition" value-type="EntityDefinition"/>
+        <cache name="entity.location" value-type="Map"/>
+        <cache name="entity.sequence.bank" value-type="long[]"/>
+        <!-- this is info for each entity for real-time push DataFeeds; expires every 15 min to get DataFeed and DataDocument updates -->
+        <cache name="entity.data.feed.info" expire-time-live="900" value-type="ArrayList"/>
+
+        <cache name="service.location" value-type="ServiceDefinition"/>
+        <cache name="service.rest.api" value-type="ResourceNode"/>
+        <cache name="kie.component.releaseId" value-type="ReleaseId"/>
+        <cache name="kie.session.component" value-type="String"/>
+
+        <cache name="screen.location" value-type="ScreenDefinition"/>
+        <cache name="screen.location.perm" value-type="ScreenDefinition"/>
+        <cache name="screen.url" value-type="ScreenUrlInfo"/>
+        <cache name="screen.info" value-type="List"/>
+        <cache name="screen.info.ref.rev" value-type="Set"/>
+        <cache name="widget.template.location" value-type="MNode"/>
+        <cache name="screen.find.path" value-type="ArrayList"/>
+        <cache name="screen.form.db.node" value-type="MNode"/>
+
+        <cache name="resource.xml-actions.location" value-type="XmlAction"/>
+        <cache name="resource.groovy.location" value-type="Class"/>
+        <cache name="resource.javascript.location" value-type="Class"/>
+
+        <!-- These caches must be local caches (use additional methods on MCache not in the JCache Cache interface) -->
+        <cache name="resource.wiki.location" value-type="String" type="local" max-elements="10000" expire-time-live="3600"/>
+        <cache name="resource.markdown.location" value-type="String" type="local" max-elements="10000" expire-time-live="3600"/>
+        <cache name="resource.text.location" value-type="String" type="local" max-elements="10000" expire-time-live="3600"/>
+
+        <cache name="resource.reference.location" value-type="ResourceReference"/>
+
+        <cache name="l10n.message" expire-time-live="3600" max-elements="50000" value-type="String"/>
+
+        <!-- this is a count of all artifact hits, expire once idle for over 15 minutes -->
+        <cache name="artifact.tarpit.hits" expire-time-idle="900" max-elements="10000" value-type="ArrayList"/>
+        <!-- type=distributed shares replay keys when a real distributed factory is configured; default factory is local MCache. -->
+        <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
+        <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
+        <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
+    </cache-list>
+    <telemetry enabled="${telemetry_enabled}" sample-ratio="${telemetry_sample_ratio}" interval-seconds="60"
+            queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"
+            span-retention-days="7" log-retention-days="7" error-retention-days="90"
+            minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"
+            replay-retention-days="7">
+        <!-- Business operations: each service call that owns its transaction counts as moqui.operation.runs by name and
+             outcome (commit, rollback, retry, pending). The framework's own services are left out. -->
+        <!-- The filesystem gauges are one series per filesystem, by where it is mounted. -->
+        <metric name="system.filesystem.utilization" attributes="system.filesystem.mountpoint"/>
+        <metric name="moqui.system.filesystem.available" attributes="system.filesystem.mountpoint"/>
+        <operations record="default" max-names="500">
+            <operation service="org\.moqui\..*" record="false"/>
+        </operations>
+    </telemetry>
+    <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
+         spans are written inside a trace, so a scheduler poll or a data load writes none; so are transaction spans
+         (AT_TRANSACTION: outcome, cache mode, waited round trips and the transaction cache's counts), with the
+         moqui.transaction.duration metric by outcome and cache mode. Override per type using
+         telemetry/artifact, whose sample-ratio overrides telemetry_sample_ratio above for that type's spans.
+         telemetry/metric name="..." attributes="..." narrows or widens one instrument's attributes. -->
+    <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day. -->
+    <report week-start="1" fiscal-start-month="1" fiscal-start-day="1"/>
+    <!-- Resource watch: when a reading of the machine or the process is a warning or critical, in percent (the status
+         map's Resources, the System home and its attention list). A filesystem is also critical with less than
+         disk-free-critical bytes left to write. memory is the process's share of the memory it may use (a container's
+         limit, else the machine's), memory-available the share of the machine's memory still available, cpu-load the
+         5-minute load over the processors. An empty value turns that level off. -->
+    <resource-watch disk-warning="80" disk-critical="90" disk-free-critical="1073741824"
+            inodes-warning="80" inodes-critical="90" memory-warning="80" memory-critical="90"
+            memory-available-warning="10" memory-available-critical="5" cpu-load-warning="80" cpu-load-critical="100"
+            open-files-warning="80" open-files-critical="95" swap-warning="50" swap-critical=""
+            certificate-days-warning="30" certificate-days-critical="7"/>
+    <server-stats visit-enabled="true" visit-ip-info-on-login="true" visitor-enabled="true"/>
+
+    <webapp-list>
+        <!-- The webapp.@name is looked up based on the value of the 'moqui-name' context-param in the web.xml file -->
+        <webapp name="webroot" http-port="${webapp_http_port}" http-host="${webapp_http_host}"
+                https-port="${webapp_https_port}" https-host="${webapp_http_host}" https-enabled="${webapp_https_enabled}"
+                handle-cors="${webapp_handle_cors}" allow-origins="${webapp_allow_origins}"
+                require-session-token="${webapp_require_session_token}" upload-executable-allow="${webapp_upload_executable_allow}"
+                websocket-timeout="600000" client-ip-header="${webapp_client_ip_header}"
+                trusted-proxies="${webapp_trusted_proxies}" status-ips="${webapp_status_ips}" transfer-workers="4">
+            <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
+            <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
+            <error-screen error="unauthorized" screen-path="error/Unauthorized"/>
+            <error-screen error="forbidden" screen-path="error/Forbidden"/>
+            <error-screen error="not-found" screen-path="error/NotFound"/>
+            <error-screen error="too-many" screen-path="error/TooMany"/>
+            <error-screen error="internal-error" screen-path="error/InternalError"/>
+            <!-- Lifecycle actions, none by default. Each runs as Java's does (docs/interfaces/Web-Scripts.md): before-request once the
+                user is known, after-request however the request ended, after-login and before-logout for a web sign in and
+                sign out, first-hit-in-visit when a request starts a visit, after-startup and before-shutdown with the server.
+            <first-hit-in-visit><actions><log level="info" message="========================== first-hit-in-visit actions"/></actions></first-hit-in-visit>
+            <before-request><actions><log level="info" message="========================== before-request actions"/></actions></before-request>
+            <after-request><actions><log level="info" message="========================== after-request actions"/></actions></after-request>
+            <after-login><actions><log level="info" message="========================== after-login actions"/></actions></after-login>
+            <before-logout><actions><log level="info" message="========================== before-logout actions"/></actions></before-logout>
+            <after-startup><actions><log level="info" message="========================== after-startup actions"/></actions></after-startup>
+            <before-shutdown><actions><log level="info" message="========================== before-shutdown actions"/></actions></before-shutdown>
+            -->
+
+            <!-- Servlets, filters and listeners (docs/interfaces/Web-Scripts.md): a script at location whose value is a handler object
+                with the Servlet API's methods, or one of the Java classes this server has natively: MoquiServlet (the
+                screens), MoquiFopServlet (a screen as PDF), MoquiAuthFilter (webroot/script/AuthFilter.js),
+                MoquiSessionListener (the server's session expiry). Another class is logged and left out. A url-pattern maps as the Servlet spec
+                has it; filters run in priority order, then as declared. -->
+            <!-- OpenSearch and OpenSearch Dashboards: a signed in user with the permission, then the proxies below -->
+            <filter name="SearchAuthFilter" location="component://webroot/script/AuthFilter.js">
+                <init-param name="permission" value="SearchRemote"/>
+                <url-pattern>/search/*</url-pattern>
+            </filter>
+            <filter name="DashboardAuthFilter" location="component://webroot/script/AuthFilter.js">
+                <init-param name="permission" value="DashboardRemote"/>
+                <url-pattern>/dashboard/*</url-pattern>
+            </filter>
+
+            <listener class="org.moqui.impl.webapp.MoquiSessionListener"/>
+
+            <servlet name="MoquiServlet" class="org.moqui.impl.webapp.MoquiServlet">
+                <url-pattern>/*</url-pattern>
+            </servlet>
+            <servlet name="MoquiFopServlet" class="org.moqui.impl.webapp.MoquiFopServlet">
+                <url-pattern>/fop/*</url-pattern>
+            </servlet>
+
+            <!-- The search store at elasticsearch_url, signed in as elasticsearch_user, and OpenSearch Dashboards (in
+                opensearch_dashboards.yml set server.basePath: "/dashboard"). Both are there only when the search backend is
+                OpenSearch, the Dashboards one only with a kibana_host. The bodies stream through; a bulk load may be 100 MB.
+                The proxies run on the request pool (tools request-pool-max), so a busy Dashboards page shares it. -->
+            <servlet name="SearchProxy" location="component://webroot/script/ProxyServlet.js" max-body="100m">
+                <init-param name="proxyTo" value="${elasticsearch_url ?: 'http://127.0.0.1:9200'}"/>
+                <init-param name="prefix" value="/search"/>
+                <init-param name="user" value="${elasticsearch_user}"/>
+                <init-param name="password" value="${elasticsearch_password}"/>
+                <init-param name="requireElasticApi" value="true"/>
+                <url-pattern>/search/*</url-pattern>
+            </servlet>
+            <servlet name="DashboardProxy" location="component://webroot/script/ProxyServlet.js" max-body="100m">
+                <init-param name="proxyTo" value="http://${kibana_host}:${kibana_port ?: '5601'}"/>
+                <init-param name="prefix" value="/dashboard"/>
+                <init-param name="requireElasticApi" value="true"/>
+                <url-pattern>/dashboard/*</url-pattern>
+            </servlet>
+
+            <!-- timeout: minutes without a request before a web session expires, 0 never. max: the most web sessions kept in
+                memory; over it the sessions used longest ago are written and dropped, and reload from HttpSession when
+                they come back; 0 keeps every session. flush: eventual, or guarantee to write a changed session before
+                the response. -->
+            <session-config timeout="60" flush="eventual" max="10000"/>
+
+            <!-- Notification Message Endpoint: the html and qvt clients of a signed in user connect to it; enabled="false"
+                turns it off. timeout: milliseconds with nothing from the client before the socket closes. -->
+            <endpoint path="/notws" class="org.moqui.impl.webapp.NotificationEndpoint" timeout="3600000" enabled="true"/>
+            <!-- The browser terminal: the terminal client on the /termws WebSocket, opened from the account menu's Terminal
+                UI (/qapps/Terminal) by any signed in user; enabled="false" turns the socket and the menu item off. -->
+            <endpoint path="/termws" enabled="true"/>
+
+            <!-- Default response headers, for override keyed on type+name -->
+            <response-header type="web-resource-inline" name="Cache-Control" value="max-age=86400, must-revalidate, public"/>
+            <response-header type="screen-resource-binary" name="Cache-Control" value="max-age=86400, must-revalidate, public"/>
+            <response-header type="screen-resource-text" name="Cache-Control" value="max-age=86400, must-revalidate, public"/>
+            <response-header type="screen-resource-template" name="Cache-Control" value="no-cache, no-store, must-revalidate, private"/>
+            <response-header type="screen-server-static" name="Cache-Control" value="max-age=86400, must-revalidate, public"/>
+            <response-header type="screen-secure" name="Strict-Transport-Security" value="max-age=31536000"/>
+            <response-header type="screen-render" name="Cache-Control" value="no-cache, no-store, must-revalidate, private"/>
+            <!--
+            Content-Security-Policy by default to not allow use in iframe or allow form actions on different host
+            see https://content-security-policy.com/
+            consider "child-src 'self';", leaving out as default because 3rd party hosts needed for payment processing hosted forms, etc
+            consider "connect-src 'self';" Applies to XMLHttpRequest (AJAX), WebSocket or EventSource
+            CSP more secure, should work for back office (internal) but may not for ecommerce or custom apps depending on external resources used and their domain names:
+                see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/default-src
+                value="frame-ancestors 'none'; form-action 'self'; default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
+            -->
+            <response-header type="screen-render" name="Content-Security-Policy" value="frame-ancestors 'none'; form-action 'self';"/>
+            <response-header type="screen-render" name="X-Frame-Options" add="true" value="sameorigin"/>
+            <!-- X-XSS-Protection: this is largely useless with the Content-Security-Policy but here because some web security scanners look for it -->
+            <response-header type="screen-render" name="X-XSS-Protection" value="1; mode=block"/>
+            <!-- X-Content-Type-Options: this could cause problems as much as help but here because some web security scanners look for it -->
+            <response-header type="screen-render" name="X-Content-Type-Options" add="true" value="nosniff"/>
+            <!-- CORS actual and preflight headers -->
+            <!-- NOTE: Access-Control-Allow-Origin is set dynamically by MoquiServlet if Origin request header value is in the value of the webapp.@allow-origins attribute -->
+            <!-- Access-Control-Allow-Credentials - always true so cookies, authc, etc always allowed -->
+            <response-header type="cors-actual" name="Vary" value="Origin"/>
+            <response-header type="cors-actual" name="Access-Control-Allow-Credentials" value="true"/>
+            <response-header type="cors-actual" name="Access-Control-Expose-Headers" add="true"
+                    value="Access-Control-Allow-Origin,Access-Control-Allow-Credentials,X-CSRF-Token,moquiSessionToken"/>
+            <response-header type="cors-preflight" name="Vary" value="Origin"/>
+            <response-header type="cors-preflight" name="Access-Control-Allow-Credentials" value="true"/>
+            <!-- doesn't seem these are needed, allowed by default: ,Authorization,Referrer,User-Agent -->
+            <response-header type="cors-preflight" name="Access-Control-Allow-Headers" add="true"
+                    value="Accept,Accept-Encoding,Content-Type,Content-Encoding,Origin,X-Requested-With,Access-Control-Request-Method,Access-Control-Request-Headers,api_key,login_key,X-HTTP-Method-Override,moquiSessionToken,SessionToken,X-CSRF-Token,Authorization,A2A-Version,MCP-Protocol-Version,Mcp-Method,Mcp-Name"/>
+            <!-- TODO: would be nice to handle this differently, ie dynamically based on preflight request path -->
+            <response-header type="cors-preflight" name="Access-Control-Allow-Methods" add="true" value="GET,PUT,POST,PATCH,DELETE,OPTIONS"/>
+            <response-header type="cors-preflight" name="Access-Control-Max-Age" value="3600"/>
+
+            <!--
+                Load handling and basic WAF at the edge, before a session, a request worker or the database is spent; in
+                memory per server. connections, requests and overload always apply. The per-client parts (max-per-client,
+                methods, rate-limit, ban and the rules) are on when trusted-proxies is set, or with enabled="true" (for a
+                server with no proxy in front); without trusted proxies a server behind a proxy would see every client as
+                the proxy. This is not the ArtifactTarpit, which counts a user's use of screens and services for business
+                quotas; both apply, this first. See plans/proposals/Web-Protection.md.
+            -->
+            <web-protection enabled="${webapp_web_protection}" client-ipv6-prefix="64" max-tracked-clients="100000">
+                <connections max="${webapp_max_connections}" max-per-client="64"
+                        header-timeout="${webapp_header_timeout}" write-timeout="${webapp_write_timeout}"
+                        shutdown-timeout="${webapp_shutdown_timeout}"
+                        http2-max-streams="${webapp_http2_max_streams}"/>
+                <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" max-uri-length="8192"
+                        max-header-bytes="65536" max-headers="100" max-body="${webapp_max_body}"
+                        max-upload="${webapp_max_upload}" body-timeout="${webapp_body_timeout}"
+                        upload-idle-timeout="${webapp_upload_idle_timeout}" request-timeout="${webapp_request_timeout}"/>
+                <overload queue-timeout="10" retry-after="5"/>
+
+                <rate-limit name="all" requests="50" seconds="1" burst="500"/>
+                <rate-limit name="login" path="/Login/**,/rest/login,/rest/login/**,/SecondFactor/**" methods="POST"
+                        requests="10" seconds="60" burst="10"/>
+
+                <ban name="auth-failure" events="auth-failure" threshold="20" seconds="600" duration="900"/>
+                <ban name="abuse" events="rate-limited,denied" threshold="300" seconds="60" duration="300"/>
+
+                <!-- a rule with a name merges by it, so a component can change it or turn it off with enabled="false" -->
+                <client-rule name="loopback" action="exempt" cidr="127.0.0.0/8,::1"/>
+                <path-rule name="scanners" action="deny"
+                        path="/.env,/.git/**,/wp-admin/**,/wp-login.php,**/*.php,**/*.asp,**/*.aspx"/>
+                <user-agent-rule name="scanners" action="deny" contains="sqlmap,nikto,masscan,zgrab"/>
+            </web-protection>
+        </webapp>
+    </webapp-list>
+
+    <artifact-execution-facade>
+        <artifact-execution type="AT_XML_SCREEN" authz-enabled="true" tarpit-enabled="true"/>
+        <artifact-execution type="AT_XML_SCREEN_TRANS" authz-enabled="true" tarpit-enabled="true"/>
+        <artifact-execution type="AT_SERVICE" authz-enabled="true" tarpit-enabled="true"/>
+        <!-- NOTE: entity tarpit disabled by default for performance and tracking overhead reasons -->
+        <artifact-execution type="AT_ENTITY" authz-enabled="true" tarpit-enabled="false"/>
+        <artifact-execution type="AT_LLM" authz-enabled="true" tarpit-enabled="true"/>
+        <!-- Clone, fetch and push of git repositories (GitRepository.repositoryId), and the get#Git* services. The git
+            server refuses to serve when this is not enabled. -->
+        <artifact-execution type="AT_GIT_REPOSITORY" authz-enabled="true" tarpit-enabled="false"/>
+        <!-- The Java enabled a type with no entry here; this one is listed because a missing entry is disabled here.
+            The service REST API checks the path of each request (MOQUI_API for /moqui). -->
+        <artifact-execution type="AT_REST_PATH" authz-enabled="true" tarpit-enabled="true"/>
+        <!-- Enabled with no entry in Java too: the startup data load frame (loadDataEmptyDb) is one. -->
+        <artifact-execution type="AT_OTHER" authz-enabled="true" tarpit-enabled="true"/>
+    </artifact-execution-facade>
+    <user-facade>
+        <password encrypt-hash-type="SHA-256" min-length="8" min-digits="1" min-others="1"
+                  history-limit="5" change-weeks="104" email-require-change="false" email-expire-hours="48"/>
+        <login-key encrypt-hash-type="SHA-256" expire-hours="144" device-expire-hours="2160"/><!-- default expire 6 days, 144 hours; a device's key 90 days -->
+        <login max-failures="3" disable-minutes="5" history-store="true"/>
+        <!-- privileged-groups: UserGroupMember create/update/delete for these groups is allowed only if the caller is
+            already a member (seed/install and disableAuthz skip the check). SYSMSG_RECEIVE is one: its members may call
+            receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
+            create/update/delete for these IDs is allowed only if the caller already has that permission. A component adds
+            to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
+            attribute, which would replace these defaults. -->
+        <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
+    </user-facade>
+
+    <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
+        <!-- Use this for the internal transaction manager (not through JNDI) -->
+        <transaction-internal class="org.moqui.impl.context.TransactionInternalBitronix"/>
+
+        <!-- If this is not present the default JNDI server will be used -->
+        <!-- <server-jndi context-provider-url="rmi://127.0.0.1:1099"
+                     initial-context-factory="com.sun.jndi.rmi.registry.RegistryContextFactory"
+                     url-pkg-prefixes="java.naming.rmi.security.manager"
+                     security-principal="" security-credentials=""/> -->
+
+        <!-- Use this for getting JTA objects from JNDI -->
+        <!-- <transaction-jndi transaction-manager-jndi-name="java:comp/UserTransaction"
+                             user-transaction-jndi-name="java:comp/UserTransaction"/> -->
+        <!-- UserTransaction JNDI name for most servers: java:comp/UserTransaction (Resin, Orion, OC4J, etc);
+            JBoss (separate objects): "java:comp/UserTransaction" and "java:comp/TransactionManager" -->
+    </transaction-facade>
+
+    <!-- blob-chunk-size: bytes per ContentBlobChunk row of a content blob (moqui.resource.ContentBlob);
+        blob-gc-prune-days: how many days a blob nothing refers to is kept (gc#ContentBlobs). dbresource-blob-threshold:
+        a dbresource file over this many bytes is a content blob (stored once, streamed), not fileData.
+        image-max-concurrent: image conversions (convert#Image) that may run at once; a decoded image may take hundreds
+        of MB. script-timeout: seconds a script may run when no transaction limits it (a widget condition, a
+        transaction="ignore" service), on every thread; a transaction's own timeout replaces it, and 0 is no limit.
+        Empty, a script on a request worker is limited to the webapp's request-timeout (300 seconds by default), and
+        one on a service, job or scheduler thread is not limited, as in Java. -->
+    <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
+            blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
+            image-max-concurrent="2" script-timeout="">
+        <!-- resource reference class needs to implement the ResourceReference interface -->
+        <resource-reference scheme="http" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="https" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="file" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="ftp" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="jar" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="bundleresource" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="wsjar" class="org.moqui.resource.UrlResourceReference"/>
+        <resource-reference scheme="runtime" class="org.moqui.resource.UrlResourceReference"/>
+
+        <resource-reference scheme="classpath" class="org.moqui.resource.ClasspathResourceReference"/>
+        <resource-reference scheme="component" class="org.moqui.impl.context.reference.ComponentResourceReference"/>
+        <resource-reference scheme="content" class="org.moqui.impl.context.reference.ContentResourceReference"/>
+        <resource-reference scheme="dbresource" class="org.moqui.impl.context.reference.DbResourceReference"/>
+        <!-- git://repositoryId/path: files on a branch of a moqui.resource.GitRepository, versions are commits (no Java
+            counterpart; crates/moqui-git) -->
+        <resource-reference scheme="git" class="org.moqui.impl.context.reference.GitResourceReference"/>
+
+        <!-- renderer class needs to implement the TemplateRenderer interface -->
+
+        <!-- fancy templates: if, list and assign tags plus ${expr}, compiled to a cached JavaScript function. The
+            -locked renderers see only the plain snapshot of the map passed in. See Templating in plans/archive/Architecture-Proposal.md -->
+        <template-renderer extension="fancy" class="fancy"/>
+        <template-renderer extension="html.fancy" class="fancy-html"/>
+        <template-renderer extension="fancy-locked" class="fancy-locked"/>
+        <template-renderer extension="html.fancy-locked" class="fancy-locked-html"/>
+
+        <!-- markdown: CommonMark with tables, raw HTML passed through. md.fancy is the port of md.ftl: markdown to HTML,
+            then a trusted fancy template with HTML escaped ${} output -->
+        <template-renderer extension="md" class="markdown"/>
+        <template-renderer extension="markdown" class="markdown"/>
+        <template-renderer extension="md.fancy" class="markdown-fancy"/>
+        <template-renderer extension="markdown.fancy" class="markdown-fancy"/>
+
+        <!-- a renderer for .html isn't necessary because the default is to write the text as-is, however this is useful
+            so that the extension becomes a default extension and doesn't have to be in the URL -->
+        <template-renderer extension="html" class="org.moqui.impl.context.renderer.NoTemplateRenderer"/>
+
+        <!-- the theme composition adapter's budgets (ec.resource.theme, docs/ui/Themes.md); an operator may lower
+            any of them here, e.g. <theme-limits max-sections="50" page-time-ms="2000"/> -->
+
+        <script-runner extension=".xml" class="org.moqui.impl.context.runner.XmlActionsScriptRunner"/>
+        <script-runner extension=".js" engine="javascript"/>
+    </resource-facade>
+
+    <!-- check-interval-ms: how often a screen file is checked for changes; empty is never in production and two
+        seconds otherwise. stream-threshold: the bytes of an html or text render kept before the response is sent as
+        it is written (a smaller page is sent whole); 0 keeps every response whole. -->
+    <screen-facade boundary-comments="false" default-autocomplete-rows="20" default-paginate-rows="20"
+            check-interval-ms="" stream-threshold="65536">
+        <!-- PDF, the html-print render through headless Chromium. chromium-path names the executable (see
+            moqui_chromium_path); page-limit is the pages that print (or preview) at once; timeout is the seconds one
+            document may take; preview-max-size is the largest PDF, in bytes, that Files previews. -->
+        <pdf chromium-path="${moqui_chromium_path}" page-limit="4" timeout="60" preview-max-size="26214400"/>
+        <!-- Each type is written by a JavaScript macro module, see framework/template/screen/. These are the only render
+            modes: there are none built in. output-kind is how a failed section is written (text, html, vue or json);
+            without it the mime type decides: application/json is json, text/html is html, anything else text. -->
+        <screen-text-output type="csv" mime-type="text/csv" always-standalone="true"
+                macro-template-location="framework/template/screen/ScreenCsv.js"/>
+        <screen-text-output type="html" mime-type="text/html"
+                macro-template-location="framework/template/screen/ScreenHtml.js"/>
+        <screen-text-output type="text" mime-type="text/plain"
+                macro-template-location="framework/template/screen/ScreenText.js"/>
+        <screen-text-output type="xml" mime-type="text/xml"
+                macro-template-location="framework/template/screen/ScreenXml.js"/>
+        <!-- html-print is the print document. xsl-fo is its alias and is rewritten to html-print -->
+        <screen-text-output type="html-print" mime-type="text/html" always-standalone="true"
+                macro-template-location="framework/template/screen/ScreenHtmlPrint.js"/>
+        <screen-text-output type="xsl-fo" mime-type="text/html" always-standalone="true"
+                macro-template-location="framework/template/screen/ScreenHtmlPrint.js"/>
+
+        <!-- qvt is a custom extension for Quasar & Vue JS component templates (extended HTML) -->
+        <screen-text-output type="qvt" mime-type="text/html" always-standalone="true" output-kind="vue"
+                macro-template-location="framework/template/screen/ScreenQvt.js"/>
+        <screen-text-output type="qjs" mime-type="application/javascript" always-standalone="true"
+                macro-template-location="framework/template/screen/ScreenPlain.js"/>
+        <screen-text-output type="qvue" mime-type="text/html" always-standalone="true" output-kind="text"
+                macro-template-location="framework/template/screen/ScreenPlain.js"/>
+        <!-- tui is the terminal document: one JSON screen model -->
+        <screen-text-output type="tui" mime-type="application/json" always-standalone="true"
+                macro-template-location="framework/template/screen/ScreenTui.js"/>
+
+        <!-- xlsx is a binary mode (the moqui-poi port): the module fills a workbook with a sheet for each form-list -->
+        <screen-output type="xlsx" mime-type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                always-standalone="true" macro-template-location="framework/template/screen/ScreenXlsx.js"/>
+    </screen-facade>
+
+    <service-facade distributed-factory="" scheduled-job-check-time="${scheduled_job_check_time}"
+            job-queue-max="0" job-pool-core="2" job-pool-max="8" job-pool-alive="120">
+        <!-- runner-class needs to implement the ServiceRunner interface -->
+        <service-type name="inline" runner-class="org.moqui.impl.service.runner.InlineServiceRunner"/>
+        <service-type name="entity-auto" runner-class="org.moqui.impl.service.runner.EntityAutoServiceRunner"/>
+        <service-type name="script" runner-class="org.moqui.impl.service.runner.ScriptServiceRunner"/>
+        <service-type name="java" runner-class="org.moqui.impl.service.runner.JavaServiceRunner"/>
+        <service-type name="remote-rest" runner-class="org.moqui.impl.service.runner.RemoteRestServiceRunner"/>
+
+        <!-- These are not needed for running classpath services, are for service reference (known services) -->
+        <service-file location="component://framework/service/org/moqui/EmailServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/EntityServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/ImageServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/SmsServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/BasicServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/resource/ElFinderServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/mail/EmailServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/EntityServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/EntitySyncServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/ext/GoogleServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/ImageServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/dev/InstanceServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/PrintServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/ScreenServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/ServerServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/ServiceServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/resource/SpreadsheetServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/SystemMessageServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/impl/UserServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/resource/WikiServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/search/SearchServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/sftp/SftpMessageServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/sso/AuthServices.xml"/>
+    </service-facade>
+
+    <!-- One search backend. With no postgres element the postgres backend uses the search schema of the entity Postgres;
+        a postgres element with a url points it at another Postgres. The cluster element is used only by the opensearch backend. -->
+    <search-facade backend="${search_backend}">
+        <!-- run: start the install in runtime/opensearch when the url is this host and nothing answers (opensearch_run);
+            start-wait: how many seconds startup waits for that node to answer. -->
+        <cluster url="${elasticsearch_url}" user="${elasticsearch_user}" password="${elasticsearch_password}"
+                index-prefix="${elasticsearch_index_prefix}" run="${opensearch_run}" start-wait="120"/>
+    </search-facade>
+
+    <!-- The models of the agents and the LLM services (crates/moqui-core/src/llm, plans/LLM-A2A-Assist.md section 6).
+        LlmEndpoint, LlmModel and LlmFeatureBinding rows (System > LLM > Models) override these entries by id. The default
+        model has no name until llm_openai_model is set; a feature bound to it answers that the model is not configured.
+        A2A, the MCP server and the gateway are off by default. -->
+    <llm-facade enabled="true">
+        <endpoint id="default" protocol="chat-completions" url="${llm_openai_url}" api-key="${llm_openai_api_key}"/>
+        <model id="default" endpoint="default" name="${llm_openai_model}" tier="balanced"/>
+        <bind feature="assist" model="default" reasoning="low"/>
+        <bind feature="title" model="default" reasoning="none"/>
+        <bind feature="summarize" model="default" reasoning="none"/>
+        <bind feature="classify" model="default" reasoning="none"/>
+        <bind feature="ai-field" model="default" reasoning="low"/>
+        <limits max-concurrent-runs="8" run-queue="64" max-steps="40" max-run-seconds="900" user-daily-tokens="2000000"
+                user-daily-cost="20" approval-ttl-minutes="30" lease-seconds="60" heartbeat-seconds="15" event-text-flush-ms="300"/>
+        <content-log enabled="${llm_log_content}" redact="true" retention-days="14"/>
+        <screen-sessions max="64" max-per-user="4" idle-minutes="30"/>
+        <!-- the entities the data tool reads directly with authorization off (the agent's other reads go through screen
+            lists): a package and an entity regular expression; readable="false" turns one off. Every user of an agent
+            reads every row of these: list only entities fit for everyone. Encrypted fields are never read, fields named
+            like secrets only with secret-fields="true", but any other plaintext secret is. -->
+        <data-entity package="moqui.basic"/>
+        <!-- a component adds facts about the user to new conversations (the active organization, say) with a service
+            implementing org.moqui.agent.AgentServices.get#UserFacts, in its MoquiConf.xml:
+        <user-facts service="mycomponent.MyServices.get#AgentUserFacts"/> -->
+        <a2a enabled="${a2a_enabled}" public-url="${a2a_public_url}" default-agent="assist" blocking-wait="120"
+                max-part-bytes="65536" max-parts="32" trust-forwarded-headers="false">
+            <push allow-http="false" allow-hosts="" timeout="15" max-attempts="6"/>
+            <security api-key="true" bearer="true" oidc-issuer="${a2a_oidc_issuer}" oidc-audience="${a2a_oidc_audience}"/>
+        </a2a>
+        <!-- The MCP server (docs/ai/MCP.md): agent names the AgentDefinition whose tool policy and role group bound its
+            tools; request-state-key (standard base64, 32 bytes or more) signs the requestState of a write waiting for
+            its approval, else a key derived from session_cookie_key does; approval-wait is the seconds a retry waits
+            for the owner's decision. -->
+        <mcp server-enabled="${mcp_enabled}" protocol-version="2026-07-28" tools-ttl-ms="300000" call-timeout="60"
+                client-enabled="true" max-result-bytes="1000000" agent="mcp" public-url="${mcp_public_url}"
+                trust-forwarded-headers="false" request-state-key="${mcp_request_state_key}" approval-wait="20"
+                max-direct-tools="40"/>
+        <!-- the OpenAI-compatible gateway at /llm/v1 (docs/ai/Gateway.md): each alias names a model or a feature; callers
+            use a login key or app password that an LlmApiClient with the gateway scope names
+        <gateway enabled="true" require-client="true" timeout="300">
+            <alias name="fast" model="local-qwen"/>
+            <alias name="default" feature="assist"/>
+        </gateway> -->
+        <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300"/>
+        <!-- The Assist drawer's composer extras and memory (docs/ai/Assist.md "The calls of 13.14"): the files a message may
+            carry, the audio of a dictation (through a model bound to the transcribe feature), the browser's speech API
+            when no model is bound (off: it sends the audio to the browser's vendor), the longest inline text action, and
+            whether a user who never chose lets the agent make memories. -->
+        <assist max-attachment-bytes="10485760" max-attachments="5" max-audio-bytes="10485760" browser-dictation="false"
+                max-text-action-chars="8000" memory-default="true"/>
+
+        <!-- Examples, not active. Copy an endpoint and model into a runtime conf, set its key property, and bind a feature
+            to the model. Each reasoning element is a JSON patch deep-merged onto the request body at that level (nested
+            objects combine, scalars and arrays replace, null removes a key); api-config applies to every request first.
+            Prices are per million tokens. -->
+        <!-- OpenAI Responses. Chat Completions cannot call tools with reasoning on for gpt-5.4 and later. store is sent
+            false; replayed reasoning items are tied to the deployment that made them. Temperature is left out when the
+            reasoning effort is not none.
+        <endpoint id="openai" protocol="responses" url="https://api.openai.com" api-key="${llm_openai_api_key}"/>
+        <model id="openai-gpt" endpoint="openai" name="gpt-5.4" tier="thorough" context-window="400000" max-output="32000">
+            <reasoning level="low">{"reasoning":{"effort":"low"}}</reasoning>
+            <reasoning level="medium">{"reasoning":{"effort":"medium"}}</reasoning>
+            <reasoning level="high">{"reasoning":{"effort":"high"}}</reasoning>
+        </model>
+        -->
+        <!-- xAI Responses: the same protocol as OpenAI. No off switch; grok-4.6 and later also take xhigh for max.
+        <endpoint id="xai" protocol="responses" url="https://api.x.ai" api-key="${llm_xai_api_key}"/>
+        <model id="xai-grok" endpoint="xai" name="grok-4.7" tier="thorough">
+            <reasoning level="low">{"reasoning":{"effort":"low"}}</reasoning>
+            <reasoning level="medium">{"reasoning":{"effort":"medium"}}</reasoning>
+            <reasoning level="high">{"reasoning":{"effort":"high"}}</reasoning>
+            <reasoning level="max">{"reasoning":{"effort":"xhigh"}}</reasoning>
+        </model>
+        -->
+        <!-- Anthropic, native Messages: output_config.effort (low, medium, high; some models also xhigh and max). Its
+            OpenAI-compatible endpoint ignores reasoning_effort, so use this protocol.
+        <endpoint id="anthropic" protocol="anthropic-messages" url="https://api.anthropic.com" api-key="${llm_anthropic_api_key}">
+            <header name="anthropic-version" value="2023-06-01"/></endpoint>
+        <model id="anthropic-sonnet" endpoint="anthropic" name="claude-sonnet-5" tier="balanced" context-window="200000" max-output="16000">
+            <reasoning level="low">{"output_config":{"effort":"low"}}</reasoning>
+            <reasoning level="medium">{"output_config":{"effort":"medium"}}</reasoning>
+            <reasoning level="high">{"output_config":{"effort":"high"}}</reasoning>
+        </model>
+        -->
+        <!-- Gemini, OpenAI-compatible: reasoning_effort maps to thinking_level; gemini-3.8-flash rejects minimal and
+            thinking cannot be turned off. The path is /chat/completions, not /v1/chat/completions.
+        <endpoint id="gemini" protocol="chat-completions" url="https://generativelanguage.googleapis.com/v1beta/openai"
+                path="/chat/completions" api-key="${llm_gemini_api_key}"/>
+        <model id="gemini-flash" endpoint="gemini" name="gemini-3.8-flash" tier="fast">
+            <reasoning level="low">{"reasoning_effort":"low"}</reasoning>
+            <reasoning level="medium">{"reasoning_effort":"medium"}</reasoning>
+            <reasoning level="high">{"reasoning_effort":"high"}</reasoning>
+        </model>
+        -->
+        <!-- Qwen 3.8 in LM Studio: high is xhigh, the top of low, medium, xhigh; low also turns thinking off. LM Studio MLX
+            may drop these fields on /v1/chat/completions. One request at a time keeps its prompt cache slot. It is the
+            profile the agent evaluation of moqui test runs on with the llm-profile option local-qwen
+            (docs/Build-Test.md, Agent evaluation); the evaluation is skipped while nothing answers at the endpoint's
+            URL.
+        <endpoint id="lmstudio" protocol="chat-completions" url="http://127.0.0.1:1234" local="true" max-concurrent="1"/>
+        <model id="local-qwen" endpoint="lmstudio" name="qwen3.8-27b" tier="balanced" context-window="32768"
+                max-output="6144" tool-mode="native" prompt-variant="small" result-cap-chars="4000" list-limit="10"
+                screen-size="100x30" reasoning-replay="none" max-concurrency="1" temperature="0.3" max-tool-calls="12">
+            <api-config>{"chat_template_kwargs":{"preserve_thinking":true}}</api-config>
+            <reasoning level="low">{"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":false}}</reasoning>
+            <reasoning level="medium">{"reasoning_effort":"medium","chat_template_kwargs":{"enable_thinking":true}}</reasoning>
+            <reasoning level="high">{"reasoning_effort":"xhigh","chat_template_kwargs":{"enable_thinking":true}}</reasoning>
+        </model>
+        -->
+        <!-- An 8B model on the same LM Studio endpoint in JSON tool mode (plans/LLM-A2A-Assist.md 7.9): no native tool
+            calls, the tools as signatures in the prompt and one JSON object a reply; a 16k window with an 80x24 screen and
+            a 3k result cap, and the intent hint. The profile local-small of the agent evaluation in JSON mode.
+        <model id="local-small" endpoint="lmstudio" name="qwen3-8b" tier="fast" context-window="16384" max-output="2048"
+                tool-mode="json" prompt-variant="small" result-cap-chars="3000" list-limit="10" screen-size="80x24"
+                reasoning-replay="none" max-concurrency="1" temperature="0.2" max-tool-calls="12" intent-prefilter="hint">
+            <reasoning level="low">{"chat_template_kwargs":{"enable_thinking":false}}</reasoning>
+        </model>
+        -->
+        <!-- GLM: glm-5.2 can turn thinking off, glm-5.3 cannot. High is max.
+        <endpoint id="glm" protocol="chat-completions" url="https://api.z.ai/api/paas/v4" path="/chat/completions"
+                api-key="${llm_glm_api_key}"/>
+        <model id="glm" endpoint="glm" name="glm-5.2" tier="balanced">
+            <reasoning level="low">{"thinking":{"type":"disabled"}}</reasoning>
+            <reasoning level="medium">{"thinking":{"type":"enabled"},"reasoning_effort":"high"}</reasoning>
+            <reasoning level="high">{"thinking":{"type":"enabled"},"reasoning_effort":"max"}</reasoning>
+        </model>
+        -->
+        <!-- DeepSeek: thinking is on by default, so low turns it off; max is the step above high. Thinking-mode tool turns
+            echo reasoning_content, kept in the replay of the message.
+        <endpoint id="deepseek" protocol="chat-completions" url="https://api.deepseek.com" path="/chat/completions"
+                api-key="${llm_deepseek_api_key}"/>
+        <model id="deepseek" endpoint="deepseek" name="deepseek-flash" tier="fast" reasoning-replay="all">
+            <reasoning level="low">{"thinking":{"type":"disabled"}}</reasoning>
+            <reasoning level="medium">{"thinking":{"type":"enabled"},"reasoning_effort":"low"}</reasoning>
+            <reasoning level="high">{"thinking":{"type":"enabled"},"reasoning_effort":"high"}</reasoning>
+            <reasoning level="max">{"thinking":{"type":"enabled"},"reasoning_effort":"max"}</reasoning>
+        </model>
+        -->
+    </llm-facade>
+
+    <!--
+        The mail client (org.moqui.mail.EmailClientServices).
+        allowed-hosts: comma-separated hostnames and IPs poll#EmailServer and send#Email may connect to; empty allows
+        any host. smtp.example.com matches example.com; notexample.com does not. EmailServer.allowedToDomains is a
+        separate recipient-domain filter.
+        idle-enabled: IMAP IDLE on the Inbox of each active account, so new mail shows at once; false relies on the sync
+        job only (tests, small deployments). idle-max: the most IDLE connections (a thread each) in a server.
+        sync-interval: minutes between syncs of an account by the job sync_EmailAccounts_frequent, for an account with
+        no syncIntervalMinutes. sync-batch: the most new messages a folder brings in one sync. flag-scan: minutes
+        between reading every message's flags, on a server without CONDSTORE. sync-push-now: make a local change (read,
+        move, delete) on the server right after it commits; false waits for the next sync.
+        autoconfig-urls: discover#EmailServer's Thunderbird autoconfig URLs, comma-separated, with {domain} and
+        {email}; empty for autoconfig.{domain}, the domain's .well-known URL and the Thunderbird ISPDB. dns-server: the
+        DNS server (host:port) for its SRV lookups; empty for the first in /etc/resolv.conf. tls-ca-file: a PEM file of
+        more certificate authorities to trust, for a mail server with its own.
+        oauth-redirect-uri: see email_oauth_redirect_uri.
+    -->
+    <email-client allowed-hosts="" idle-enabled="true" idle-max="8" sync-interval="5" sync-batch="500" flag-scan="15"
+            sync-push-now="true" autoconfig-urls="" dns-server="" tls-ca-file=""
+            oauth-redirect-uri="${email_oauth_redirect_uri}"/>
+
+    <!--
+        The built-in SSH server: the terminal client for every user, SFTP, git and the admin shell. enabled: false keeps
+        it off whatever the port (the demo component sets it). port, host, host-key, public-host and public-port: see the
+        ssh_ properties. sftp-root: the resource location SFTP serves
+        (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
+        most connections at once. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
+        password; by key only when false. login-dialog: a client with no key is let in with no user and gets the
+        terminal client's login dialog (keyboard-interactive with no questions); when false, such a client logs in by
+        password at the SSH level or not at all.
+    -->
+    <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
+            public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
+            git-password-auth="false" login-dialog="true"/>
+    <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
+        command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
+        the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
+        host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
+        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, empty on for any
+        purpose) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
+        operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
+        TERMINAL_HOST. From anywhere but this machine those need terminal_remote=true, HTTPS and a sign-in within
+        remote-reauth-minutes (docs/ui/Terminal.md). -->
+    <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
+            command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
+            remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
+            host-directory="">
+        <host-profile name="shell" title="Shell" integration="true"/>
+        <host-profile name="bash" title="bash" command="bash" login="true" integration="true"/>
+        <host-profile name="zsh" title="zsh" command="zsh" login="true" integration="true"/>
+    </terminal>
+
+    <!--
+        The git server: clone, fetch and push of GitRepository repositories at <public-url>/git/<repositoryId>.git
+        (smart HTTP) and over the SSH server (SSH_GIT), checked against AT_GIT_REPOSITORY (docs/interfaces/Git-Hosting.md).
+        public-url, lfs-token-key and lfs-token-key-previous: see the git_ properties.
+        max-concurrent clones and pushes run at once, on threads of their own, with max-queued waiting. max-request
+        bytes of an upload-pack request, max-push-size bytes of a push, max-object-size bytes of one pushed object;
+        idle-timeout seconds of silence in a request body end it. pack-threads (all cores when empty) compress and index
+        packs. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
+        object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
+        events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
+        webhook-private-network="true".
+        The storage of db kind repositories (docs/interfaces/Git-Hosting.md, Storage): objects are rows of zlib streams, or of
+        deltas against another object, as a pack has them: db-delta-depth deltas at most from an object to a whole
+        one, and objects up to db-delta-max-size bytes as deltas; an object over db-large-object bytes is a content
+        blob, read and sent a window at a time. db-write-format="raw" writes new rows uncompressed, as versions before
+        this format read them. db-cache-bytes of decoded objects are kept in memory for all repositories.
+        gc#GitRepositories deletes unreachable objects not written or referenced in the last gc-prune-days days (at
+        least 1), keeps the commits of the last gc-reflog-days days of changes (a force push can be undone), and passes
+        over a repository of more than gc-max-objects objects.
+    -->
+    <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
+            lfs-token-key-previous="${git_lfs_token_key_previous}"
+            max-concurrent="4" max-queued="16" max-request="67108864" max-push-size="2147483648"
+            max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
+            lfs-max-object-size="5368709120" eca-max-commits="10000" webhook-private-network="false"
+            db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
+            db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"/>
+
+    <!--
+        The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
+        inbound-smtp feature; docs/interfaces/Mail-Inbound.md). listen-port, listen-host, allowed-addresses, hostname and
+        authserv-id: see the smtp_ properties. proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
+        the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
+        of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none
+        turns it off. max-message-size is bytes; the timeouts are seconds (each command or data chunk, and a whole
+        session). protocol: smtp, or lmtp (LHLO, and a reply per recipient after the data). starttls: offer STARTTLS,
+        with the tls-cert-file and tls-key-file pair (see the smtp_tls_ properties) or else runtime/cert by the name the
+        gateway asks for or hostname; with no certificate the listener does not start. require-tls: refuse MAIL before
+        STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports.
+    -->
+    <smtp-server listen-port="${smtp_listen_port}" listen-host="${smtp_listen_host}"
+            allowed-addresses="${smtp_allowed_addresses}" hostname="${smtp_hostname}" authserv-id="${smtp_authserv_id}"
+            proxy-protocol="false" spam-headers="X-Spam-Flag,X-Spam-Status,X-Spam" plus-separator="+"
+            max-message-size="26214400" max-recipients="100" max-connections="20" command-timeout="300"
+            session-timeout="1800" protocol="smtp" starttls="false" require-tls="false"
+            tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"/>
+
+    <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
+        failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
+        the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
+        items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
+        64 MiB, counted in the cap) is the item's content, sent over the link before it. A receiver's refusal
+        is tried again after queue-retry-seconds, doubling up to 10 minutes, and fails the item after
+        queue-max-attempts. Children, each merged by its key: delegate (service, allow-anonymous) lists the services an
+        edge node runs on its local node for a synchronous call, and a local node runs only those; queue-kind (name)
+        names the service that applies an item of that kind on its receiver, and a node queues only the kinds it lists;
+        replicate (set) names the entities and fields a local node copies to its edge node, read-only there. A local
+        node runs each delegated call and queued item as the user _EDGE_, whose grants (the EDGE_DELEGATE artifact
+        group) must cover the service too. The comms phases add their entries here, since both ends need them.
+        Mail (E5a, plans/archive/Edge-Node.md §5.4): an edge node's listener queues what it takes as mail for the local node,
+        answering RCPT TO from the replicated mailRecipients; a local node's EmailServer with smtpHost edge: queues its
+        sends as mailOut, and the edge node answers each with a mailStatus (from its relay, or a later bounce to its
+        VERP address); a mailOut that fails for good puts its message back in the Outbox. With the MTA in moqui (E5b) the
+        edge node answers from its MX delivery: bounced for the recipients refused, accepted once all are delivered. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5">
+        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
+        <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
+                failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>
+        <queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/>
+        <replicate set="mailRecipients">
+            <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,accountKindEnumId,statusId,emailServerId"/>
+            <entity name="moqui.basic.email.EmailIdentity" fields="emailAddress,emailAccountId"/>
+            <entity name="moqui.basic.email.EmailServer" fields="storeHost"/>
+        </replicate>
+        <!-- chat bridges and SMS (E6): webhooks checked on the edge node and applied on the local node; the files of
+            messages sent by address (MMS) served by the edge node; the bridges' webhook keys, not their configJson -->
+        <queue-kind name="chatWebhook" service="org.moqui.chat.ChatBridgeServices.apply#EdgeWebhook"/>
+        <queue-kind name="chatMedia" service="org.moqui.chat.ChatBridgeServices.store#EdgeMedia"/>
+        <replicate set="chatBridges">
+            <entity name="moqui.chat.ChatBridge" fields="typeEnumId,adapterName,statusId,webhookPublicKey,webhookToleranceSeconds"/>
+        </replicate>
+        <!-- attaching a local node (E10): the round trips of the Edge Node wizard's Test step, which the edge node
+            answers back on the queue -->
+        <queue-kind name="edgeEcho" service="org.moqui.edge.EdgeServices.receive#EdgeEcho"/>
+        <!-- calls with the edge node as media node (E7): its media events and its captions' reads, writes and
+            transcription run on the local node, which has the call state and the agent runtime's quota; its recordings'
+            segments and their end go through the queue, in the recording's order. The signaling goes over the link
+            itself (Link.Signal), not one of these. -->
+        <delegate service="org.moqui.call.CallServices.note#MediaEvent"/>
+        <delegate service="org.moqui.call.CallCaptionServices.get#CaptionSpeaker"/>
+        <delegate service="org.moqui.call.CallCaptionServices.store#CallTranscript"/>
+        <delegate service="org.moqui.call.CallCaptionServices.transcribe#CaptionAudio"/>
+        <queue-kind name="callRecording" service="org.moqui.call.CallRecordingServices.receive#EdgeRecording"/>
+        <!-- SIP on the edge node (E8): its engine's routing, registrar, IVR and voicemail decisions run on the local
+            node, which has the numbers, the users and the boxes. Routing waits less than the user agent does for a
+            call it rings (10 s), so a local node that does not answer still leaves time for the fallback. The phones'
+            digest verifiers stay here: the registrar sends their answers to check#SipDeviceDigest instead. -->
+        <delegate service="org.moqui.call.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
+        <delegate service="org.moqui.call.VoiceServices.note#PhoneLeg"/>
+        <delegate service="org.moqui.call.VoiceServices.note#TrunkStatus"/>
+        <delegate service="org.moqui.call.VoiceServices.record#AuthFailure"/>
+        <delegate service="org.moqui.call.VoiceServices.get#CallAudio" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.SipDeviceServices.check#SipDeviceDigest" timeout-seconds="5"/>
+        <delegate service="org.moqui.call.SipDeviceServices.store#SipRegistration"/>
+        <delegate service="org.moqui.call.SipDeviceServices.receive#DeviceCall" timeout-seconds="7"/>
+        <delegate service="org.moqui.call.IvrServices.route#IvrCall" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.CallQueueServices.tick#QueueCall" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.CallTransferServices.expire#CallTransfer"/>
+        <delegate service="org.moqui.call.CallTransferServices.refer#Call" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoicemailServices.begin#Voicemail" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoicemailServices.check#VoicemailPin" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoicemailServices.act#PhoneVoicemail"/>
+        <delegate service="org.moqui.call.VoicemailServices.get#PhoneVoicemailAudio" timeout-seconds="10"/>
+        <!-- the messages its engine records (edge to local; the local node finds the box and tells its owner), and the
+            boxes' greetings, which its fallback plays while the local node is away (local to edge) -->
+        <queue-kind name="voicemail" service="org.moqui.call.VoicemailServices.receive#EdgeVoicemail"/>
+        <queue-kind name="callAudio" service="org.moqui.call.VoiceServices.store#EdgeCallAudio"/>
+        <!-- its engine's trunks and policy (get#EngineConfig on the edge node reads the copy, so the trunks register
+            and take calls while the local node is away), and each number's fallback for that time -->
+        <replicate set="voiceTrunks">
+            <entity name="moqui.call.VoiceTrunk" fields="name,host,port,transportEnumId,mediaEncryptionEnumId,providerProfileEnumId,authJson,registerFlag,emergencyCapable,inboundAddresses,fromDomain,disabled"/>
+            <entity name="moqui.call.VoicePolicy" fields="internationalEnabled,premiumEnabled,maxConcurrentCalls,authFailureLimit,authFailureWindowSeconds,authBlockSeconds,homeCountryCode,emergencyNumbers,premiumPrefixes"/>
+        </replicate>
+        <replicate set="voiceFallbacks">
+            <entity name="moqui.call.PhoneNumberFallback" fields="voiceTrunkId,voicemailFlag,greetingLocation,forwardNumber,forwardSeconds,forwardMaxConcurrent,forwardMaxPerDay"/>
+        </replicate>
+    </edge>
+
+    <!-- Log files: dir (moqui_log_dir). A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at max-size-mb or when the day
+        changes, and only the newest max-files rolled files of each kind are kept. -->
+    <logging dir="${moqui_log_dir}" max-size-mb="100" max-files="30"/>
+
+    <!-- The desktop and mobile apps as clients of a server (plans/Mobile-Desktop.md §6, MD4): what they keep of an
+        account's data for offline use. A build embeds its own in its runtime conf (device-mode personal for a person's
+        own device, shared for a hot desk or point of sale); choose has the sign-in ask. The server does not read it. -->
+    <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+
+    <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
+    <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"
+            default-group-name="transactional" entity-eca-enabled="true" sequenced-id-prefix=""
+            distributed-cache-invalidate="false" dci-topic-factory="" query-stats="false"
+            database-locale="${default_locale}" database-time-zone="${database_time_zone ?: default_time_zone}"
+            rest-max-page-size="1000"
+            crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128" crypt-pass="${entity_ds_crypt_pass}">
+
+        <!-- alternate decrypt using original algo (PBEWithMD5AndDES), etc for decrypting old values, all new values will encrypt using the 4 attributes on entity-facade element -->
+        <decrypt-alt crypt-salt="SkcorIuqom" crypt-iter="10" crypt-algo="PBEWithMD5AndDES" crypt-pass="${entity_ds_crypt_pass}"/>
+        <!-- alternate decrypts for crypt pass migration with both DES and AES -->
+        <decrypt-alt crypt-salt="SkcorIuqom" crypt-iter="10" crypt-algo="PBEWithMD5AndDES" crypt-pass="${entity_ds_crypt_pass_old}"/>
+        <decrypt-alt crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128" crypt-pass="${entity_ds_crypt_pass_old}"/>
+
+        <!-- The entity-facade.@default-group-name=transactional, so if other entity groups do not have a data source
+            the transactional group's datasource will be used. -->
+
+        <!-- If this is not present the default JNDI server will be used:
+        <server-jndi context-provider-url="rmi://127.0.0.1:1099"
+                 initial-context-factory="com.sun.jndi.rmi.registry.RegistryContextFactory"
+                 url-pkg-prefixes="java.naming.rmi.security.manager"
+                 security-principal="" security-credentials=""/>
+         -->
+
+        <!--
+            The configurations below will use the XADataSource directly to connect, which is required for proper
+            transaction handling with multiple data sources.
+
+            To use the non-XA variety just specify the normal JDBC parameters (like jdbc-uri, etc) and leave out the
+            xa-properties element. If the xa-properties element is present the normal JDBC parameters will be ignored.
+
+            To use a DataSource from JNDI use something the jndi-jdbc element under the datasource element:
+                <jndi-jdbc jndi-name="java:/MoquiDataSource"/>
+
+            NOTE: for production usage there is one connection pool per datasource so use as few datasources as possible.
+
+            The main datasource should have a max size large enough for all servlet container threads plus a few for
+            the worker pool (see tools.@worker-pool-max). Note that Bitronix has a 30 second timeout waiting for a
+            connection from the pool, and currently connections are NOT shared between transactions (only released when
+            a tx is closed).
+
+            Good numbers for a decent sized server are 100 servlet container (Jetty) threads, 16 worker threads, plus a
+            few extra so 120 connections in the main pool.
+        -->
+        <!-- pg-stat-statements: on Postgres, load pg_stat_statements (the embedded cluster preloads it; an external
+            server must have it in shared_preload_libraries) and create the extension; ignored on MySQL. Turned on for
+            development in runtime/conf/MoquiDevConf.xml.
+            The embedded cluster's shared-buffers, work-mem, maintenance-work-mem and effective-cache-size (sizes such as
+            64MB) may be set on the transactional datasource; when not set the defaults from code apply (shared_buffers
+            128MB, Postgres's own default), and a change applies when the server starts the cluster. -->
+        <datasource group-name="transactional" database-conf-name="${entity_ds_db_conf}" schema-name="${entity_ds_schema}"
+                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
+                pg-stat-statements="false">
+            <!-- by default no inline-jdbc or jndi-jdbc elements, use default from database conf -->
+        </datasource>
+
+        <!-- The content group's database (the content_ds_* properties above). One transaction spans it and the
+            transactional database, which commits after it, without two-phase commit. pool-maxsize is the
+            transactional pool's, 90: a transaction can hold a connection of each, and the 82 ordinary connections
+            hold the workers' 76, an agent worker and the webroot webapp's 4 transfer-workers, each reading a window
+            of a streamed download (81), as the transactional pool does when the content shares it. -->
+        <datasource group-name="content" database-conf-name="${content_ds_db_conf}" schema-name="${content_ds_schema}"
+                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
+                pg-stat-statements="false">
+            <inline-jdbc pool-maxsize="90"><xa-properties serverName="${content_ds_host ?: entity_ds_host}"
+                    port="${content_ds_port ?: entity_ds_port}" databaseName="${content_ds_database}"
+                    user="${content_ds_user ?: entity_ds_user}" password="${content_ds_password ?: entity_ds_password}"
+                    sslmode="${content_ds_sslmode ?: entity_ds_sslmode}"
+                    sslrootcert="${content_ds_sslrootcert ?: entity_ds_sslrootcert}"/></inline-jdbc>
+        </datasource>
+
+        <!-- H2 clone for testing, use same URL as just for testing
+        <datasource group-name="transactional#clone1" database-conf-name="h2" schema-name=""
+                runtime-add-missing="false" startup-add-missing="false">
+            <inline-jdbc><xa-properties url="${entity_ds_url}" user="${entity_ds_user}" password="${entity_ds_password}"/></inline-jdbc>
+        </datasource>
+        -->
+
+        <!--
+            MySQL clone server example configuration, for reporting/etc queries to run against a read-only clone.
+            NOTE: this is only for MySQL, adjust or override for other databases as the xa-properties attributes differ.
+            This will also work for Postgres but you will get warnings about errors setting invalid properties on the XADataSource.
+        -->
+        <datasource group-name="transactional#clone1" database-conf-name="${entity_ds_c1_db_conf}" schema-name="${entity_ds_c1_schema}"
+                runtime-add-missing="false" startup-add-missing="false" disabled="${entity_ds_c1_disabled}">
+            <!-- NOTE: isolation-level="None" not supported (by Bitronix?), use most lenient instead: ReadUncommitted -->
+            <inline-jdbc pool-maxsize="40" isolation-level="ReadUncommitted">
+                <xa-properties serverName="${entity_ds_c1_host}" port="${entity_ds_c1_port?:'3306'}"
+                        databaseName="${entity_ds_c1_database}" user="${entity_ds_c1_user}" password="${entity_ds_c1_password}"
+                        pinGlobalTxToPhysicalConnection="true" autoReconnectForPools="true" useUnicode="true" encoding="UTF-8"/>
+            </inline-jdbc>
+        </datasource>
+
+        <!-- The logging group and datasource uses the elastic-facade.cluster configuration to talk to Elastic/OpenSearch -->
+        <datasource group-name="logging" runtime-add-missing="true" startup-add-missing="false"
+                object-factory="org.moqui.impl.entity.elastic.ElasticDatasourceFactory">
+            <inline-other index-prefix="logging-" cluster-name="default"/>
+        </datasource>
+
+        <!-- The nontransactional group is in the transactional db by default. To use OrientDB use the datasource below.
+            NOTE: startup-add-missing=true is required because OrientDB doesn't allow class create in a TX
+            NOTE: adding more entities to the nontransactional group is a work in progress, this will not currently run,
+                but you can use a similar configuration for your own entity groups
+            NOTE: to test on an entity that is not used in general in view entities (can't join across DBs) try adding
+                group="nontransactional" to a component entity that has no cross-group views
+        -->
+        <!--
+        <datasource group-name="nontransactional" startup-add-missing="true"
+                object-factory="org.moqui.impl.entity.orientdb.OrientDatasourceFactory">
+            <inline-other uri="plocal:${ORIENTDB_HOME}/databases/MoquiNoSql" username="admin" password="admin"/>
+        </datasource>
+        -->
+
+        <!-- Refer to these explicitly instead of by directory name convention as is done in components.
+             There is no reliable way to search within directories on the classpath (if in a file or jar is fine, but
+             not in a war/ear file or from special ClassLoaders) -->
+        <!-- in framework/entity -->
+        <load-entity location="component://framework/entity/BasicEntities.xml"/>
+        <load-entity location="component://framework/entity/EntityEntities.xml"/>
+        <load-entity location="component://framework/entity/OlapEntities.xml"/>
+        <load-entity location="component://framework/entity/ResourceEntities.xml"/>
+        <load-entity location="component://framework/entity/ScreenEntities.xml"/>
+        <load-entity location="component://framework/entity/Screen.eecas.xml"/>
+        <load-entity location="component://framework/entity/SecurityEntities.xml"/>
+        <load-entity location="component://framework/entity/Security.eecas.xml"/>
+        <load-entity location="component://framework/entity/ServerEntities.xml"/>
+        <load-entity location="component://framework/entity/ServiceEntities.xml"/>
+        <load-entity location="component://framework/entity/TestEntities.xml"/>
+        <load-entity location="component://framework/entity/LlmEntities.xml"/>
+        <load-entity location="component://framework/entity/AgentEntities.xml"/>
+        <load-entity location="component://framework/entity/AgentEvalEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatEntities.xml"/>
+        <load-entity location="component://framework/entity/CallEntities.xml"/>
+        <load-entity location="component://framework/entity/VoiceEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
+        <load-entity location="component://framework/entity/TerminalEntities.xml"/>
+        <!-- in framework/data -->
+        <load-data location="component://framework/data/CommonL10nData.xml"/>
+        <load-data location="component://framework/data/CurrencyData.xml"/>
+        <load-data location="component://framework/data/EntityTypeData.xml"/>
+        <load-data location="component://framework/data/GeoCountryData.xml"/>
+        <load-data location="component://framework/data/SecurityTypeData.xml"/>
+        <load-data location="component://framework/data/AgentTypeData.xml"/>
+        <load-data location="component://framework/data/AgentEvalData.xml"/>
+        <load-data location="component://framework/data/DevToolsSecurityData.xml"/>
+        <load-data location="component://framework/data/UnitData.xml"/>
+        <load-data location="component://framework/data/MoquiSetupData.xml"/>
+        <load-data location="component://framework/data/TelemetryData.xml"/>
+        <load-data location="component://framework/data/RecoverySetupData.xml"/>
+        <load-data location="component://framework/data/ReportSetupData.xml"/>
+        <load-data location="component://framework/data/ReportEmailData.xml"/>
+        <load-data location="component://framework/data/MailSearchData.xml"/>
+        <load-data location="component://framework/data/ChatSetupData.xml"/>
+        <load-data location="component://framework/data/ChatBridgeSetupData.xml"/>
+        <load-data location="component://framework/data/CallSetupData.xml"/>
+        <load-data location="component://framework/data/VoiceSetupData.xml"/>
+        <load-data location="component://framework/data/ChatKeySetupData.xml"/>
+        <load-data location="component://framework/data/XmppSetupData.xml"/>
+        <load-data location="component://framework/data/XmppSecurityData.xml"/>
+        <load-data location="component://framework/data/EdgeSetupData.xml"/>
+        <load-data location="component://framework/data/DatabaseSetupData.xml"/>
+        <load-data location="component://framework/data/SftpDemoData.xml"/>
+        <load-data location="component://framework/data/AdminConfigurationData.xml"/>
+        <load-data location="component://framework/data/AdminAuditData.xml"/>
+        <load-data location="component://framework/data/TerminalTypeData.xml"/>
+        <load-data location="component://framework/data/TerminalSetupData.xml"/>
+    </entity-facade>
+    <database-list>
+        <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
+        <dictionary-type type="id-long" java-type="String" default-sql-type="VARCHAR(255)"/>
+
+        <dictionary-type type="date" java-type="Date" default-sql-type="DATE"/>
+        <dictionary-type type="time" java-type="Time" default-sql-type="TIME"/>
+        <dictionary-type type="date-time" java-type="Timestamp" default-sql-type="TIMESTAMP"/>
+
+        <dictionary-type type="number-integer" java-type="Long" default-sql-type="NUMERIC(20,0)"/>
+        <dictionary-type type="number-decimal" java-type="BigDecimal" default-sql-type="NUMERIC(26,6)"/>
+        <dictionary-type type="number-float" java-type="Double" default-sql-type="DOUBLE"/>
+
+        <dictionary-type type="currency-amount" java-type="BigDecimal" default-sql-type="NUMERIC(24,4)"/>
+        <dictionary-type type="currency-precise" java-type="BigDecimal" default-sql-type="NUMERIC(25,5)"/>
+
+        <dictionary-type type="text-indicator" java-type="String" default-sql-type="CHAR(1)"/>
+        <dictionary-type type="text-short" java-type="String" default-sql-type="VARCHAR(63)"/>
+        <dictionary-type type="text-medium" java-type="String" default-sql-type="VARCHAR(255)"/>
+        <dictionary-type type="text-intermediate" java-type="String" default-sql-type="VARCHAR(1023)"/>
+        <!-- text-long was 32000, but changed to 4095 because MySQL max size is 21K or so for a VARCHAR, and 64K for a
+            row (not including text-very-long), and it seems that the limit is bytes, not characters, so 4K characters
+            is 12K bytes... just like the old annoying column size which is now in characters, but the row size still
+            in bytes -->
+        <dictionary-type type="text-long" java-type="String" default-sql-type="VARCHAR(4095)"/>
+        <dictionary-type type="text-very-long" java-type="String" default-sql-type="CLOB"/>
+        <!-- text-fts is a string column whose LIKE / NOT LIKE use the database fts-style. Storage matches text-very-long per database. -->
+        <dictionary-type type="text-fts" java-type="String" default-sql-type="CLOB"/>
+
+        <dictionary-type type="binary-very-long" java-type="Blob" default-sql-type="BLOB"/>
+
+        <!--
+        * DB2:
+        * to support LIMIT and OFFSET: "db2set DB2_COMPATIBILITY_VECTOR=MYS" (and if already running: db2stop then db2start)
+        * default page size of 4k not adequate, use something like: "create database moqui pagesize 32 k"
+        * the database name in the example is 'moqui', note that in DB2 database names are limits to 8 bytes
+
+        <datasource group-name="transactional" database-conf-name="db2" schema-name="DB2INST1" startup-add-missing="true" runtime-add-missing="false">
+            <inline-jdbc><xa-properties user="db2inst1" password="db2inst1" serverName="localhost" portNumber="50000"
+                    driverType="4" databaseName="moqui"/></inline-jdbc>
+        </datasource>
+        <datasource group-name="transactional" database-conf-name="db2" schema-name="" startup-add-missing="true" runtime-add-missing="false">
+            <inline-jdbc jdbc-uri="jdbc:db2://localhost:50000/moqui" jdbc-username="moqui" jdbc-password="moqui"/>
+        </datasource>
+        -->
+        <database name="db2" fts-style="none" join-style="ansi" offset-style="limit" from-lateral-style="lateral" never-nulls="true"
+                default-isolation-level="ReadCommitted" for-update="FOR UPDATE WITH RS"
+                use-schema-for-all="true" use-indexes-unique="false" use-pk-constraint-names="false" fk-style="name_fk"
+                default-test-query="SELECT 1 FROM SYSIBM.SYSDUMMY1"
+                default-jdbc-driver="com.ibm.db2.jcc.DB2Driver"
+                default-xa-ds-class="com.ibm.db2.jcc.DB2XADataSource"
+                default-startup-add-missing="true" default-runtime-add-missing="false">
+            <database-type type="number-integer" sql-type="DECIMAL(20,0)"/>
+            <database-type type="number-decimal" sql-type="DECIMAL(26,6)"/>
+            <database-type type="number-float" sql-type="DECIMAL(30,12)"/>
+            <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
+            <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
+
+            <inline-jdbc><xa-properties driverType="4" serverName="${entity_ds_host}" portNumber="${entity_ds_port?:'50000'}"
+                    databaseName="${entity_ds_database}" user="${entity_ds_user}" password="${entity_ds_password}"/></inline-jdbc>
+        </database>
+        <database name="db2i" fts-style="none" lb-name="db2" join-style="ansi" offset-style="limit" from-lateral-style="lateral" never-nulls="true"
+                default-isolation-level="ReadCommitted"  for-update="FOR UPDATE WITH RS"
+                use-schema-for-all="true" use-indexes-unique-where-not-null="true"
+                default-test-query="SELECT 1 FROM SYSIBM.SYSDUMMY1"
+                default-jdbc-driver="com.ibm.as400.access.AS400JDBCDriver"
+                default-xa-ds-class="com.ibm.as400.access.AS400JDBCXADataSource"
+                default-startup-add-missing="true" default-runtime-add-missing="false">
+            <database-type type="number-integer" sql-type="DECIMAL(20,0)"/>
+            <database-type type="number-decimal" sql-type="DECIMAL(26,6)"/>
+            <database-type type="number-float" sql-type="DECIMAL(30,12)"/>
+            <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
+            <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
+
+            <inline-jdbc><xa-properties serverName="${entity_ds_host}" databaseName="${entity_ds_database}" dateFormat="iso"
+                    user="${entity_ds_user}" password="${entity_ds_password}" cursorHold="false" threadUsed="false"/></inline-jdbc>
+        </database>
+        <!--
+        * MS SQL Server:
+        <datasource group-name="transactional" database-conf-name="mssql" schema-name="">
+            <inline-jdbc><xa-properties user="moqui" password="moqui" serverName="localhost" portNumber="1433"
+                    databaseName="moqui" selectMethod="Cursor"/></inline-jdbc>
+        </datasource>
+        <datasource group-name="transactional" database-conf-name="mssql" schema-name="">
+            <inline-jdbc jdbc-uri="jdbc:sqlserver://localhost:1433;databaseName=moqui;SelectMethod=Cursor" jdbc-username="moqui" jdbc-password="moqui"/>
+        </datasource>
+
+        NOTE: for MS SQL Server 2012 and later can use offset-style=fetch for better performance and consistent behavior
+        -->
+        <database name="mssql" fts-style="mssql-contains" fts-config="english" join-style="ansi" default-isolation-level="ReadCommitted" offset-style="fetch" from-lateral-style="apply"
+                default-test-query="SELECT 1" default-jdbc-driver="com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                default-xa-ds-class="com.microsoft.sqlserver.jdbc.SQLServerXADataSource"
+                default-startup-add-missing="true" default-runtime-add-missing="false" never-nulls="true">
+            <database-type type="id" sql-type="NVARCHAR(40)"/>
+            <database-type type="id-long" sql-type="NVARCHAR(255)"/>
+
+            <database-type type="date" sql-type="DATETIME"/>
+            <database-type type="time" sql-type="DATETIME"/>
+            <database-type type="date-time" sql-type="DATETIME"/>
+
+            <database-type type="number-integer" sql-type="DECIMAL(20,0)"/>
+            <database-type type="number-decimal" sql-type="DECIMAL(26,6)"/>
+            <database-type type="number-float" sql-type="DECIMAL(32,12)"/>
+
+            <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
+            <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
+
+            <database-type type="text-indicator" sql-type="CHAR(1)"/>
+            <database-type type="text-short" sql-type="NVARCHAR(63)"/>
+            <database-type type="text-medium" sql-type="NVARCHAR(255)"/>
+            <database-type type="text-intermediate" sql-type="NVARCHAR(1023)"/>
+            <database-type type="text-long" sql-type="NVARCHAR(4000)"/>
+            <database-type type="text-very-long" sql-type="TEXT"/>
+            <database-type type="text-fts" sql-type="TEXT"/>
+
+            <database-type type="binary-very-long" sql-type="IMAGE"/>
+
+            <inline-jdbc><xa-properties serverName="${entity_ds_host}" portNumber="${entity_ds_port?:'1433'}"
+                    databaseName="${entity_ds_database}" user="${entity_ds_user}" password="${entity_ds_password}"
+                    selectMethod="Cursor"/></inline-jdbc>
+        </database>
+        <!--
+        * MySQL (similar for Percona Server, MariaDB, AWS Aurora):
+        <datasource group-name="transactional" database-conf-name="mysql" schema-name="">
+            <inline-jdbc><xa-properties user="moqui" password="moqui" pinGlobalTxToPhysicalConnection="true"
+                    serverName="127.0.0.1" port="3306" databaseName="moqui" autoReconnectForPools="true"
+                    useUnicode="true" encoding="UTF-8"/></inline-jdbc>
+        </datasource>
+        <datasource group-name="transactional" database-conf-name="mysql" schema-name="">
+            <inline-jdbc jdbc-uri="jdbc:mysql://127.0.0.1:3306/moqui?autoReconnect=true&amp;useUnicode=true&amp;characterEncoding=UTF-8"
+                    jdbc-username="moqui" jdbc-password="moqui"/>
+        </datasource>
+        -->
+        <database name="mysql" fts-style="mysql-fulltext" join-style="ansi-no-parenthesis" offset-style="limit" never-nulls="true"
+                table-engine="InnoDB" character-set="utf8mb4" collate="utf8mb4_unicode_ci" fk-style="name_fk"
+                constraint-name-clip-length="60"
+                default-isolation-level="ReadCommitted" default-test-query="SELECT 1"
+                default-jdbc-driver="com.mysql.jdbc.Driver"
+                default-xa-ds-class="com.mysql.jdbc.jdbc2.optional.MysqlXADataSource">
+            <!--
+                Tables are 4-byte utf8mb4, so any character (an emoji) can be stored. Create the database with the same
+                character set and collation; an existing 3-byte utf8 database needs its tables converted
+                (ALTER TABLE ... CONVERT TO CHARACTER SET utf8mb4) or a fresh load. text-intermediate and text-long are TEXT,
+                as on Postgres: stored off the row, so long text fields do not put a row over MySQL's 65,535 byte limit.
+                text-medium stays VARCHAR(255) as it is used in keys (at 4 bytes a character a key is at most 768).
+            -->
+
+            <!-- use DATETIME instead of TIMESTAMP so can be null and gets no default value; issue with newer MySQL versions -->
+            <!-- NOTE: DATETIME(3) is supported, and needed, on MySQL 5.7; for earlier versions removed the '(3)' as it has millisecond precision by default -->
+            <database-type type="date-time" sql-type="DATETIME(3)"/>
+
+            <database-type type="number-integer" sql-type="DECIMAL(20,0)"/>
+            <database-type type="number-decimal" sql-type="DECIMAL(26,6)"/>
+            <database-type type="number-float" sql-type="DECIMAL(32,12)"/>
+
+            <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
+            <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
+
+            <database-type type="text-intermediate" sql-type="TEXT"/>
+            <database-type type="text-long" sql-type="TEXT"/>
+            <database-type type="text-very-long" sql-type="LONGTEXT"/>
+            <database-type type="text-fts" sql-type="LONGTEXT"/>
+            <database-type type="binary-very-long" sql-type="LONGBLOB"/>
+
+            <name-replace original="CONDITION" replace="THE_CONDITION"/>
+
+            <!-- default max connections for MySQL is 151 -->
+            <inline-jdbc pool-maxsize="140"><xa-properties serverName="${entity_ds_host}" port="${entity_ds_port?:'3306'}"
+                    pinGlobalTxToPhysicalConnection="true" autoReconnectForPools="true" useUnicode="true" encoding="UTF-8" useCursorFetch="true"
+                    databaseName="${entity_ds_database}" user="${entity_ds_user}" password="${entity_ds_password}"
+                    sslMode="${entity_ds_sslmode}"/></inline-jdbc>
+        </database>
+        <database name="mysql8" fts-style="mysql-fulltext" lb-name="mysql" join-style="ansi-no-parenthesis" offset-style="limit" from-lateral-style="lateral"
+                never-nulls="true" table-engine="InnoDB" character-set="utf8mb4" collate="utf8mb4_0900_ai_ci" fk-style="name_fk"
+                constraint-name-clip-length="60"
+                default-isolation-level="ReadCommitted" default-test-query="SELECT 1"
+                default-startup-add-missing="true" default-runtime-add-missing="false"
+                default-jdbc-driver="com.mysql.cj.jdbc.Driver"
+                default-xa-ds-class="com.mysql.cj.jdbc.MysqlXADataSource">
+            <!-- NOTE that from-lateral-style=lateral requires MySQL 8.0.14 or later -->
+            <!-- utf8mb4 tables, and text-intermediate and text-long as TEXT: see the note on the mysql database above -->
+            <!--
+                When Bitronix starts it attempts to recover transactions, this may result in an error like:
+                bitronix.tm.recovery.RecoveryException: failed recovering resource transactional_DS
+
+                See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_xa-recover-admin
+
+                The MySQL user Moqui uses to access the database must have 'XA_RECOVER_ADMIN' privilege, if not the 'root' user:
+                GRANT XA_RECOVER_ADMIN ON *.* TO 'username'@'%'; FLUSH PRIVILEGES;
+            -->
+            <database-type type="date-time" sql-type="DATETIME(3)"/>
+
+            <database-type type="number-integer" sql-type="DECIMAL(20,0)"/>
+            <database-type type="number-decimal" sql-type="DECIMAL(26,6)"/>
+            <database-type type="number-float" sql-type="DECIMAL(32,12)"/>
+
+            <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
+            <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
+
+            <database-type type="text-intermediate" sql-type="TEXT"/>
+            <database-type type="text-long" sql-type="TEXT"/>
+            <database-type type="text-very-long" sql-type="LONGTEXT"/>
+            <database-type type="text-fts" sql-type="LONGTEXT"/>
+            <database-type type="binary-very-long" sql-type="LONGBLOB"/>
+
+            <name-replace original="CONDITION" replace="THE_CONDITION"/>
+
+            <!-- default max connections for MySQL is 151 -->
+            <inline-jdbc pool-maxsize="140"><xa-properties serverName="${entity_ds_host}" port="${entity_ds_port?:'3306'}"
+                    pinGlobalTxToPhysicalConnection="true" autoReconnectForPools="true" useCursorFetch="true"
+                    serverTimezone="${database_time_zone ?: default_time_zone}" allowPublicKeyRetrieval="true"
+                    databaseName="${entity_ds_database}" user="${entity_ds_user}" password="${entity_ds_password}"
+                    sslMode="${entity_ds_sslmode}"/></inline-jdbc>
+        </database>
+        <!--
+        * Oracle:
+        <datasource group-name="transactional" database-conf-name="oracle" schema-name="MOQUI">
+            <inline-jdbc><xa-properties user="moqui" password="moqui" URL="jdbc:oracle:thin:@127.0.0.1:1521:moqui"/></inline-jdbc>
+        </datasource>
+        <datasource group-name="transactional" database-conf-name="oracle" schema-name="MOQUI">
+            <inline-jdbc jdbc-uri="jdbc:oracle:thin:@127.0.0.1:1521:moqui" jdbc-username="moqui" jdbc-password="moqui"/>
+        </datasource>
+        -->
+        <database name="oracle" fts-style="oracle-text" fts-config="english" add-unique-as="true" join-style="ansi" from-lateral-style="apply" default-isolation-level="ReadCommitted"
+                default-test-query="SELECT 1 FROM DUAL" default-jdbc-driver="oracle.jdbc.driver.OracleDriver"
+                default-xa-ds-class="oracle.jdbc.xa.client.OracleXADataSource"
+                default-startup-add-missing="true" default-runtime-add-missing="false">
+            <database-type type="id" sql-type="VARCHAR2(40)"/>
+            <database-type type="id-long" sql-type="VARCHAR2(255)"/>
+
+            <database-type type="time" sql-type="DATE"/>
+
+            <database-type type="number-integer" sql-type="NUMBER(20,0)"/>
+            <database-type type="number-decimal" sql-type="NUMBER(26,6)"/>
+            <database-type type="number-float" sql-type="NUMBER(32,12)"/>
+
+            <database-type type="currency-amount" sql-type="NUMBER(24,4)"/>
+            <database-type type="currency-precise" sql-type="NUMBER(25,5)"/>
+
+            <database-type type="text-short" sql-type="VARCHAR2(63)"/>
+            <database-type type="text-medium" sql-type="VARCHAR2(255)"/>
+            <database-type type="text-intermediate" sql-type="VARCHAR2(1023)"/>
+            <database-type type="text-long" sql-type="VARCHAR2(4000)"/>
+            <database-type type="text-very-long" sql-type="CLOB"/>
+            <database-type type="text-fts" sql-type="CLOB"/>
+
+            <inline-jdbc><xa-properties user="${entity_ds_user}" password="${entity_ds_password}"
+                    URL="jdbc:oracle:thin:@${entity_ds_host}:${entity_ds_port?:'1521'}:${entity_ds_database}"/></inline-jdbc>
+        </database>
+
+        <!-- for future reference (OrientDB with JDBC driver): <database name="orientdb"
+                use-pk-constraint-names="false" default-isolation-level="ReadCommitted"
+                default-jdbc-driver="com.orientechnologies.orient.jdbc.OrientJdbcDriver"
+                default-xa-ds-class="">
+        </database> -->
+
+        <!--
+        * PostgreSQL:
+        <datasource group-name="transactional" database-conf-name="postgres" schema-name="public" startup-add-missing="true" runtime-add-missing="false">
+            <inline-jdbc><xa-properties user="moqui" password="moqui" serverName="localhost" portNumber="5432"
+                    databaseName="moqui"/></inline-jdbc>
+        </datasource>
+        <datasource group-name="transactional" database-conf-name="postgres" schema-name="public" startup-add-missing="true" runtime-add-missing="false">
+            <inline-jdbc jdbc-uri="jdbc:postgresql://127.0.0.1/moqui" jdbc-username="moqui" jdbc-password="moqui"/>
+        </datasource>
+        -->
+        <database name="postgres" fts-style="postgres-tsvector" fts-config="english" lb-name="postgresql" join-style="ansi" from-lateral-style="lateral" result-fetch-size="50"
+                never-try-insert="true" default-isolation-level="ReadCommitted" use-tm-join="true" default-test-query="SELECT 1"
+                constraint-name-clip-length="60" for-no-key-update="FOR NO KEY UPDATE"
+                default-jdbc-driver="org.postgresql.Driver" default-xa-ds-class="org.postgresql.xa.PGXADataSource"
+                default-startup-add-missing="true" default-runtime-add-missing="false" use-binary-type-for-blob="true">
+            <!-- NOTE: when Postgres JDBC driver updated can set use-tm-join="true" -->
+            <database-type type="number-float" sql-type="FLOAT8"/>
+
+            <database-type type="text-medium" sql-type="TEXT"/>
+            <database-type type="text-intermediate" sql-type="TEXT"/>
+            <database-type type="text-long" sql-type="TEXT"/>
+            <database-type type="text-very-long" sql-type="TEXT"/>
+            <database-type type="text-fts" sql-type="TEXT"/>
+
+            <database-type type="binary-very-long" sql-type="BYTEA"/>
+
+            <!-- default max connections for PostgreSQL is 100: 90 leaves a few for other clients (the content database
+                shares this server's pool when it is the transactional database). The embedded database takes this
+                size too, and makes room for its content database's pool beside it. -->
+            <inline-jdbc pool-maxsize="90"><xa-properties serverName="${entity_ds_host}" portNumber="${entity_ds_port?:'5432'}"
+                    databaseName="${entity_ds_database}" user="${entity_ds_user}" password="${entity_ds_password}"
+                    sslmode="${entity_ds_sslmode}" sslrootcert="${entity_ds_sslrootcert}"/></inline-jdbc>
+        </database>
+        <!--
+        * SQLite: the browser build's local database (crates/moqui-browser, plans/archive/Wasm.md). Not a server datasource.
+        * Column types pick SQLite affinities. Date, time, and date-time are TEXT in a fixed UTC format the driver writes,
+          so they sort and compare as text. Decimals have NUMERIC affinity, exact to about 15 significant digits.
+        * for-update is empty: SQLite has no row locks; a write transaction holds the database.
+        * Foreign keys are not created (SQLite cannot add one to an existing table).
+        -->
+        <database name="sqlite" fts-style="none" join-style="ansi-no-parenthesis" offset-style="limit" for-update=""
+                default-test-query="SELECT 1">
+            <database-type type="id" sql-type="TEXT"/>
+            <database-type type="id-long" sql-type="TEXT"/>
+
+            <database-type type="date" sql-type="TEXT"/>
+            <database-type type="time" sql-type="TEXT"/>
+            <database-type type="date-time" sql-type="TEXT"/>
+
+            <database-type type="number-integer" sql-type="INTEGER"/>
+            <database-type type="number-decimal" sql-type="NUMERIC"/>
+            <database-type type="number-float" sql-type="REAL"/>
+
+            <database-type type="currency-amount" sql-type="NUMERIC"/>
+            <database-type type="currency-precise" sql-type="NUMERIC"/>
+
+            <database-type type="text-indicator" sql-type="TEXT"/>
+            <database-type type="text-short" sql-type="TEXT"/>
+            <database-type type="text-medium" sql-type="TEXT"/>
+            <database-type type="text-intermediate" sql-type="TEXT"/>
+            <database-type type="text-long" sql-type="TEXT"/>
+            <database-type type="text-very-long" sql-type="TEXT"/>
+            <database-type type="text-fts" sql-type="TEXT"/>
+
+            <database-type type="binary-very-long" sql-type="BLOB"/>
+        </database>
+    </database-list>
+
+    <repository-list>
+        <!-- No JCR repo by default, but here are some examples: -->
+        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr-rmi' in the classpath:
+        <repository name="main" workspace="default" username="admin" password="admin">
+            <init-param name="org.apache.jackrabbit.repository.uri" value="http://localhost:8081/rmi"/></repository> -->
+        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr2dav' in the classpath:
+        <repository name="main" workspace="default" username="admin" password="admin">
+            <init-param name="org.apache.jackrabbit.spi2davex.uri" value="http://localhost:8081/server"/></repository> -->
+    </repository-list>
+
+    <component-list>
+        <!-- runtime/components: the sets of components that its components.xml lists, in load order: base, addon, dev
+            (loaded only when instance_purpose is dev) and test (dev and test); plans/Components-Dir.md. -->
+        <component-dir location="components"/>
+        <!-- Here are some examples of explicitly loading the example component in different ways: -->
+        <!-- <component name="example" location="components/addon/example"/> -->
+        <!-- <component name="example" location="content://main/component/example"/> -->
+    </component-list>
+</moqui-conf>

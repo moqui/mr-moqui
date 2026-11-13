@@ -72,7 +72,7 @@ fn comments_attach_to_the_element_after_them_or_on_its_line() {
 #[test]
 fn every_comment_of_the_default_conf_attaches_to_an_element() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/framework/conf/MoquiDefaultConf.xml");
+        .join("../../runtime/components/base/framework/conf/MoquiDefaultConf.xml");
     let text = std::fs::read_to_string(path).unwrap();
     let found = element_comments(&text).unwrap();
     let attached: usize = found

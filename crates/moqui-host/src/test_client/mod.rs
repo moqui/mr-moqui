@@ -1773,9 +1773,13 @@ mod tests {
     #[test]
     fn process_specs_run_only_by_name() {
         let runtime = std::env::temp_dir().join(format!("moqui-test-client-process-{}", std::process::id()));
-        let process = runtime.join("component/pv/test/client/process");
+        let process = runtime.join("components/addon/pv/test/client/process");
         std::fs::create_dir_all(&process).unwrap();
-        std::fs::write(runtime.join("component/pv/component.xml"), "<component name=\"pv\"/>").unwrap();
+        std::fs::write(
+            runtime.join("components/addon/pv/component.xml"),
+            "<component name=\"pv\"/>",
+        )
+        .unwrap();
         std::fs::write(process.join("Greeting.spec.js"), "spec({})").unwrap();
         let names = |components: &[TestComponent]| -> Vec<String> {
             components
@@ -1925,21 +1929,24 @@ mod tests {
             std::fs::write(path, text).unwrap();
         };
         let layout = |orders_depend: &str| {
-            write("component/boss/component.xml", r#"<component name="boss"/>"#);
+            write("components/addon/boss/component.xml", r#"<component name="boss"/>"#);
             write(
-                "component/pass/component.xml",
+                "components/addon/pass/component.xml",
                 r#"<component name="pass"><depends-on name="boss"/></component>"#,
             );
             write(
-                "component/boss/test/client/suite.js",
+                "components/addon/boss/test/client/suite.js",
                 r#"suite(["Walk", "CommerceOrders", "After"])"#,
             );
-            write("component/boss/test/client/Walk.spec.js", "spec({})");
-            write("component/boss/test/client/CommerceOrders.spec.js", orders_depend);
-            write("component/boss/test/client/After.spec.js", "spec({})");
-            write("component/boss/test/client/Other.spec.js", "spec({})");
-            write("component/pass/test/client/ShopOrders.spec.js", "spec({})");
-            write("component/pass/test/client/Theme.spec.js", "spec({})");
+            write("components/addon/boss/test/client/Walk.spec.js", "spec({})");
+            write(
+                "components/addon/boss/test/client/CommerceOrders.spec.js",
+                orders_depend,
+            );
+            write("components/addon/boss/test/client/After.spec.js", "spec({})");
+            write("components/addon/boss/test/client/Other.spec.js", "spec({})");
+            write("components/addon/pass/test/client/ShopOrders.spec.js", "spec({})");
+            write("components/addon/pass/test/client/Theme.spec.js", "spec({})");
         };
         let ordered = || -> Vec<String> {
             let components = select(&runtime, &ClientArgs::default()).unwrap();
@@ -1974,7 +1981,7 @@ mod tests {
             ]
         );
         write(
-            "component/pass/test/client/ShopOrders.spec.js",
+            "components/addon/pass/test/client/ShopOrders.spec.js",
             "spec({ dependsOn: ['CommerceOrders'] })",
         );
         let components = select(&runtime, &ClientArgs::default()).unwrap();

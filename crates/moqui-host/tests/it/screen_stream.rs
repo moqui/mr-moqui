@@ -168,11 +168,11 @@ fn a_screen_streams_past_the_threshold_and_a_small_one_comes_whole() {
         return;
     }
     let files = [
-        ("component/streamtest/component.xml", COMPONENT),
-        ("component/streamtest/screen/StreamTest.xml", ROOT),
-        ("component/streamtest/screen/StreamTest/Slow.xml", SLOW),
-        ("component/streamtest/screen/StreamTest/Fails.xml", FAILS),
-        ("component/streamtest/screen/StreamTest/Small.xml", SMALL),
+        ("components/addon/streamtest/component.xml", COMPONENT),
+        ("components/addon/streamtest/screen/StreamTest.xml", ROOT),
+        ("components/addon/streamtest/screen/StreamTest/Slow.xml", SLOW),
+        ("components/addon/streamtest/screen/StreamTest/Fails.xml", FAILS),
+        ("components/addon/streamtest/screen/StreamTest/Small.xml", SMALL),
     ];
     let gate = start_with_conf_files("screen-stream", None, CONF, &[], &files);
     let address = gate.server.address();

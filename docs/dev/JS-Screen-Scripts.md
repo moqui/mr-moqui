@@ -206,7 +206,7 @@ field reads:
 ```
 
 Here `optionIndicator`, `parentEnumId` and `sequenceNum` are the row's fields, and `state` is a name the
-`row-actions` set for the row (`runtime/dev-component/example/screen/Gallery/List.xml`).
+`row-actions` set for the row (`runtime/components/dev/example/screen/Gallery/List.xml`).
 
 `row-actions` run once for each row of the page, so a find or a service call there runs that many times. Read the
 related rows for the whole list in the screen's `actions`.

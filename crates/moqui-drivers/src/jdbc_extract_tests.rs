@@ -67,7 +67,7 @@ fn jdbc_extract_loads_entities_and_find_extracts() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         Arc::clone(&driver),

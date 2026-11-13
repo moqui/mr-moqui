@@ -411,12 +411,12 @@ mod tests {
     #[test]
     fn the_corpus_scans_byte_exact() {
         let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-        let template = runtime.join("dev-component/template");
+        let template = runtime.join("components/dev/template");
         let mut files = Vec::new();
         let mut stack = vec![
-            runtime.join("base-component"),
-            runtime.join("component"),
-            runtime.join("dev-component"),
+            runtime.join("components/base"),
+            runtime.join("components/addon"),
+            runtime.join("components/dev"),
         ];
         while let Some(dir) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {

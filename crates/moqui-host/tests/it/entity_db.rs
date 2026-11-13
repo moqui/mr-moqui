@@ -68,7 +68,7 @@ fn an_external_postgres_from_the_conf_is_loaded_and_no_postmaster_starts() {
     ] {
         moqui_lib::env::set_property(name, value.to_string());
     }
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let report = load_data(&runtime, &framework, &cluster_dir, &LoadFlags::default()).unwrap();
     assert!(report.enumeration > 0, "enumeration {}", report.enumeration);
     assert!(
@@ -98,7 +98,7 @@ fn a_foreign_key_under_another_name_is_not_added_again() {
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let pool = || PoolConfig {
         min: 0,
         max: 4,
@@ -155,7 +155,7 @@ fn like_on_a_text_fts_field_finds_by_word_on_postgres() {
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         Arc::clone(&driver),
@@ -217,7 +217,7 @@ fn a_text_fts_row_written_in_a_sim_is_found_by_both_tokens_and_not_on_production
     let (overlay_cluster, overlay_driver) = EmbeddedCluster::start(&overlay_dir, 20).unwrap();
     let main_driver: Arc<dyn DbDriver> = Arc::new(main_driver);
     let overlay_driver: Arc<dyn DbDriver> = Arc::new(overlay_driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&main_driver), pool()).unwrap();
     facade.set_sim_transactions(Some(TransactionManager::new(overlay_driver, pool()).unwrap()));
     facade.check_tables(&["moqui.test.TestFts"]).unwrap();
@@ -262,7 +262,7 @@ fn a_short_or_wildcard_like_on_a_text_fts_field_matches_without_regard_to_case()
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, driver, pool()).unwrap();
     facade.check_tables(&["moqui.test.TestFts"]).unwrap();
     let mut row = facade.make_value("moqui.test.TestFts").unwrap();
@@ -299,7 +299,7 @@ fn epoch_zero_date_time_and_timestamp_round_trip_in_the_session_zone() {
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, driver, pool()).unwrap();
     facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
 
@@ -354,7 +354,7 @@ fn a_cache_frames_batch_goes_with_its_commit_on_postgres() {
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
     let entity = "moqui.test.TestFts";
     facade.check_tables(&[entity]).unwrap();
@@ -434,7 +434,7 @@ fn a_held_row_reads_in_its_frame_as_the_database_gives_it() {
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
     let entity = "moqui.test.TestEntity";
     facade.check_tables(&[entity]).unwrap();
@@ -537,7 +537,7 @@ fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
     std::fs::create_dir_all(&dir).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
     let (kind, enumeration, queue) = (
         "moqui.basic.EnumerationType",

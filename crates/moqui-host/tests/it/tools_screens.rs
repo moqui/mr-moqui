@@ -303,7 +303,7 @@ fn tools_screens_render_and_the_sql_runners_run() {
 }
 
 fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/tools/screen");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/tools/screen");
     let mut paths = Vec::new();
     for app in ["System", "Tools"] {
         paths.push((format!("/{app}"), true));

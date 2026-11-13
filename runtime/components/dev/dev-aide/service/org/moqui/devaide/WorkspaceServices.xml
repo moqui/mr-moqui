@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Workspace's roots, directories and files (plans/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
+    (src/workspace.rs). Each checks the instance purpose (dev) and the user's tier first: DEV_AIDE_VIEW reads,
+    DEV_AIDE_EXTEND writes in site components, DEV_AIDE does everything; paths are confined to their root. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="Roots" type="rust" location="dev_aide::workspace::get_roots" allow-remote="false" read-only="true">
+        <description>The roots (repositories and plain directories) with their components and whether each is upstream; whether git runs; the user's tier; the site components.</description>
+        <out-parameters>
+            <parameter name="roots" type="List"/>
+            <parameter name="gitAvailable" type="Boolean"/>
+            <parameter name="tier"/>
+            <parameter name="siteComponents" type="List"/>
+            <parameter name="upstreamEdits" type="Boolean"/>
+            <parameter name="shared" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Overview" type="rust" location="dev_aide::workspace::get_overview" allow-remote="false" read-only="true">
+        <description>What Home shows: each root with its branch and changes, the reload log, whether a restart is pending, the
+            unpublished changes of the site components.</description>
+        <out-parameters>
+            <parameter name="roots" type="List"/><parameter name="reloads" type="List"/>
+            <parameter name="restartNeeded" type="Boolean"/><parameter name="rebuildNeeded" type="Boolean"/>
+            <parameter name="unpublished" type="Integer"/><parameter name="siteComponents" type="List"/>
+            <parameter name="gitAvailable" type="Boolean"/><parameter name="tier"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="Directory" type="rust" location="dev_aide::workspace::list_directory" allow-remote="false" read-only="true">
+        <description>The entries of a directory, folders first, with their git status (a folder's rolled up) and whether git ignores them.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="entries" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="File" type="rust" location="dev_aide::workspace::get_file" allow-remote="false" read-only="true">
+        <description>A file's text with its hash, line ending, byte order mark, git status, component, and whether and why it is read only.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="missingOk" type="Boolean"><description>A file that is not there answers missing (and
+                whether it may be made) rather than an error: a view's companion file, made on its first save.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="path"/>
+            <parameter name="missing" type="Boolean"/>
+            <parameter name="text"/>
+            <parameter name="hash"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="lineEnding"/>
+            <parameter name="bom" type="Boolean"/>
+            <parameter name="binary" type="Boolean"/>
+            <parameter name="status"/>
+            <parameter name="readOnly" type="Boolean"/>
+            <parameter name="readOnlyReason"/>
+            <parameter name="component"/>
+        </out-parameters>
+    </service>
+    <service verb="save" noun="File" type="rust" location="dev_aide::workspace::save_file" allow-remote="false">
+        <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="text" allow-html="any"/>
+            <parameter name="baseHash"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="diskText"/>
+            <parameter name="diskHash"/>
+            <parameter name="hash"/>
+            <parameter name="status"/>
+            <parameter name="restart" type="Boolean"/>
+            <parameter name="rebuild" type="Boolean"/>
+            <parameter name="reload" type="Map"/>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="File" type="rust" location="dev_aide::workspace::create_file" allow-remote="false">
+        <description>A new file, with text when given; refused when one is there.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="text" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="path"/>
+            <parameter name="hash"/>
+            <parameter name="status"/>
+            <parameter name="restart" type="Boolean"/>
+            <parameter name="rebuild" type="Boolean"/>
+            <parameter name="reload" type="Map"/>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Directory" type="rust" location="dev_aide::workspace::create_directory" allow-remote="false">
+        <description>A new directory.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="path"/>
+        </out-parameters>
+    </service>
+    <service verb="rename" noun="Path" type="rust" location="dev_aide::workspace::rename_path" allow-remote="false">
+        <description>Rename or move a file or directory within its root (git mv when tracked).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="to" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="path"/>
+            <parameter name="reload" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="delete" noun="Path" type="rust" location="dev_aide::workspace::delete_path" allow-remote="false">
+        <description>Delete a file, or a directory with what is in it.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reload" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="search" noun="Files" type="rust" location="dev_aide::workspace::search_files" allow-remote="false" read-only="true">
+        <description>Lines matching a text or a regular expression (git grep in a repository, a walk of a plain root), at most 500.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="query" required="true"/>
+            <parameter name="regex" type="Boolean"/>
+            <parameter name="caseSensitive" type="Boolean"/>
+            <parameter name="pathFilter"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="truncated" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="Files" type="rust" location="dev_aide::workspace::find_files" allow-remote="false" read-only="true">
+        <description>Every file of a root, for Go to file.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="files" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="File" type="rust" location="dev_aide::workspace::check_file" allow-remote="false" read-only="true">
+        <description>The problems of a file's text (the editor's buffer), as a save would find them.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="text" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="set" noun="UpstreamEdits" type="rust" location="dev_aide::workspace::set_upstream_edits" allow-remote="false">
+        <description>A full-tier user's Allow editing upstream components (D17).</description>
+        <in-parameters>
+            <parameter name="enabled" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="upstreamEdits" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="SiteComponent" type="rust" location="dev_aide::workspace::create_site_component" allow-remote="false">
+        <description>A component the site owns from the Site template, in runtime/components/addon with a git repository; the site component when none is set. It loads after a restart.</description>
+        <in-parameters>
+            <parameter name="componentName" required="true"/>
+            <parameter name="dependsOn"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Component" type="rust" location="dev_aide::workspace::create_component" allow-remote="false">
+        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, or runtime/components/dev with dev, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
+        <in-parameters>
+            <parameter name="componentName" required="true"/>
+            <parameter name="part" default-value="all"><description>all, screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="dev" type="Boolean"><description>In runtime/components/dev, loaded only on a dev instance</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="set" noun="Presence" type="rust" location="dev_aide::workspace::set_presence" allow-remote="false">
+        <description>The files of a root this user has open, on a shared dev server told to the other users; answers the root's other editors.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="paths" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="editors" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="Credentials" type="rust" location="dev_aide::workspace::get_credentials" allow-remote="false" read-only="true">
+        <description>The shared server's stored git tokens, without the tokens. An admin's.</description>
+        <out-parameters><parameter name="credentials" type="List"/></out-parameters>
+    </service>
+    <service verb="store" noun="Credential" type="rust" location="dev_aide::workspace::store_credential" allow-remote="false">
+        <description>A root's deploy token (no userId) or a user's HTTPS token for it, kept encrypted; replaces the one stored before. An admin's.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="userId"/>
+            <parameter name="username"/>
+            <parameter name="token" required="true"/>
+            <parameter name="remoteUrl"><description>The https remote the token is for; empty for the root's origin</description></parameter>
+        </in-parameters>
+    </service>
+    <service verb="delete" noun="Credential" type="rust" location="dev_aide::workspace::delete_credential" allow-remote="false">
+        <in-parameters><parameter name="credentialId" required="true"/></in-parameters>
+    </service>
+    <service verb="set" noun="Setting" type="rust" location="dev_aide::workspace::set_setting" allow-remote="false">
+        <description>An instance-wide setting of Settings over the conf: siteComponents (a comma list), or networkGit (Y,
+            an admin's, on a shared dev server). The full tier.</description>
+        <in-parameters><parameter name="settingName" required="true"/><parameter name="settingValue"/></in-parameters>
+    </service>
+    <service verb="store" noun="Root" type="rust" location="dev_aide::workspace::store_root" allow-remote="false">
+        <description>A root of Settings by its location: a directory to add, or a discovered root's label, read only
+            flag and publish branch. The full tier.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/><parameter name="label"/>
+            <parameter name="readOnly" type="Boolean"/><parameter name="publishBranch"/>
+            <parameter name="publishBranchRequired" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="rootId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="Root" type="rust" location="dev_aide::workspace::delete_root" allow-remote="false">
+        <description>The Settings row of a root; a discovered root stays with its defaults.</description>
+        <in-parameters><parameter name="location" required="true"/></in-parameters>
+    </service>
+</services>

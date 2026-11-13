@@ -125,10 +125,10 @@ fn notws_push_and_one_cluster_invalidation() {
     let _cluster_guard = DirGuard(cluster_dir.clone());
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&cluster_dir).unwrap();
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let base =
-        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(&base, runtime.join("base-component")).unwrap();
+        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
+    moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
 
     load_data(&runtime, &framework, &cluster_dir, &LoadFlags::default()).unwrap();
     let demo = base.join("webroot/data/WebrootSecurityDemoData.xml");

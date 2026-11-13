@@ -4,7 +4,7 @@
 # data/WebrootThemeData.xml, the libraries framework/template/screen/ScreenHtml.js and js/moqui-html.js load). Fonts,
 # icons, /qapps and the qvt client's JavaScript libraries are left out; their links are broken in a skeleton runtime.
 # The files are compared with the ones on disk at startup and written into a skeleton runtime. One path per line,
-# relative to runtime/base-component/webroot; a directory takes everything under it. A path that is not there fails
+# relative to runtime/components/base/webroot; a directory takes everything under it. A path that is not there fails
 # the build.
 component.xml
 data

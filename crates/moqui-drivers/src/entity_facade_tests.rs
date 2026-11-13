@@ -37,7 +37,7 @@ fn empty_database_check_create_view_matches_and_stream() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,
@@ -224,7 +224,7 @@ fn java_physical_names_crud_and_legacy_schema_guard() {
     let _guard = DirGuard(dir.clone());
     let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         Arc::clone(&driver),
@@ -308,7 +308,7 @@ fn failed_ddl_statement_is_skipped_and_the_check_goes_on() {
     let _guard = DirGuard(dir.clone());
     let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         Arc::clone(&driver),
@@ -356,7 +356,7 @@ fn every_framework_view_selects_and_counts_on_postgres() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let transactions = moqui_core::transaction::TransactionManager::new(
         driver,
         PoolConfig {
@@ -421,7 +421,7 @@ fn missing_tables_find_nothing_and_runtime_add_missing_creates_them_on_first_use
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,
@@ -493,7 +493,7 @@ fn a_held_update_of_a_locked_row_does_not_block_an_inner_force_new_on_postgres()
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,
@@ -565,7 +565,7 @@ fn a_held_update_commits_in_one_round_trip_and_fails_for_a_row_gone_on_postgres(
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,
@@ -646,7 +646,7 @@ fn a_no_key_lock_does_not_block_a_child_insert_and_a_for_update_lock_does_on_pos
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,
@@ -732,7 +732,7 @@ fn a_held_quiet_create_of_a_row_made_meanwhile_commits_on_postgres() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,
@@ -781,7 +781,7 @@ fn a_pipelined_data_file_commits_whole_or_fails_with_the_write_that_failed() {
     let _guard = DirGuard(dir.clone());
     let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, driver, PoolConfig::default()).unwrap();
     facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
     let file = |prefix: &str, count: usize, bad: Option<usize>| {
@@ -842,7 +842,7 @@ fn the_content_group_has_its_own_database_in_one_transaction() {
     };
     let main = TransactionManager::new(Arc::new(driver.clone()), pool()).unwrap();
     let content = TransactionManager::new(Arc::new(content_driver.clone()), pool()).unwrap();
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = EntityFacade::open(
         &framework,
         "transactional",

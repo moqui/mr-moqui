@@ -40,7 +40,7 @@ fn a_java_checkout_with_groovy_only() {
     let root = tree(
         "groovy",
         &["framework/src/main/groovy/org/moqui/Moqui.groovy"],
-        &["runtime/component"],
+        &[format!("runtime/{}", moqui_core::context::layout::JAVA_DIRS[2]).as_str()],
     );
     let project = detect(&root).unwrap();
     assert_eq!(project.layout, Layout::Java);
@@ -89,7 +89,7 @@ fn a_java_framework_needs_its_runtime() {
 fn an_mr_clone() {
     let root = tree(
         "mr-clone",
-        &["runtime/base-component/framework/component.xml"],
+        &["runtime/components/base/framework/component.xml"],
         &["crates/moqui"],
     );
     let project = detect(&root).unwrap();
@@ -103,7 +103,7 @@ fn an_mr_clone() {
 fn an_mr_runtime_dir() {
     let root = tree(
         "mr-runtime",
-        &["base-component/framework/component.xml"],
+        &["components/base/framework/component.xml"],
         &["component"],
     );
     let project = detect(&root).unwrap();
@@ -118,11 +118,11 @@ fn neither_is_a_clear_error() {
     let err = detect(&root).unwrap_err().to_string();
     assert!(err.contains("is not a Moqui project"), "{err}");
     assert!(err.contains("framework/src/main/groovy"), "{err}");
-    assert!(err.contains("base-component/framework"), "{err}");
+    assert!(err.contains("components/base/framework"), "{err}");
     // crates/ without a runtime framework says what it lacks.
     let crates = tree("crates-only", &[], &["crates/moqui"]);
     let err = detect(&crates).unwrap_err().to_string();
-    assert!(err.contains("runtime/base-component/framework"), "{err}");
+    assert!(err.contains("runtime/components/base/framework"), "{err}");
     clean(&root);
     clean(&crates);
 }
@@ -133,7 +133,7 @@ fn forced_java_takes_any_framework_but_not_an_mr_clone() {
     assert_eq!(detect_java(&root).unwrap().layout, Layout::Java);
     let clone = tree(
         "forced-mr",
-        &["runtime/base-component/framework/component.xml"],
+        &["runtime/components/base/framework/component.xml"],
         &["framework"],
     );
     assert!(detect_java(&clone).is_err());

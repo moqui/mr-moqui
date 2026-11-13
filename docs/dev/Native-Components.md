@@ -4,7 +4,7 @@ A component is still a directory with `component.xml`, optional `MoquiConf.xml`,
 
 ## Building
 
-**With `./moq build` (the usual way).** Put the component in `runtime/component/<name>`. `./moq build` finds each crate there (a `Cargo.toml` beside a `component.xml`) and generates `target/moqui-app`, a binary crate that names every component crate (`use my_component as _;`) and calls `moqui_host::main()`. The binary is the package's as before (`target/release/moqui` by default, `target/lite/moqui` with `--lite`, `target/debug/moqui` with `--debug`,
+**With `./moq build` (the usual way).** Put the component in `runtime/components/addon/<name>`. `./moq build` finds each crate there (a `Cargo.toml` beside a `component.xml`) and generates `target/moqui-app`, a binary crate that names every component crate (`use my_component as _;`) and calls `moqui_host::main()`. The binary is the package's as before (`target/release/moqui` by default, `target/lite/moqui` with `--lite`, `target/debug/moqui` with `--debug`,
 `target/release/moqui` with `--release`, `target/enterprise/moqui` with `--enterprise`; [`Build-Test.md`](../Build-Test.md#packages)),
 and the generated crate takes the same package features as `crates/moqui`. Its `Cargo.lock` starts from the repository's. Run `./moq build` again after adding or removing a crate. The crate depends on the framework by path:
 
@@ -24,7 +24,7 @@ fn main() {
 }
 ```
 
-The framework's dev components, `runtime/dev-component/example` and `runtime/dev-component/dev-aide`, are workspace members that `crates/moqui` links the same way, under its `devtools` feature (the Dev and Debug packages).
+The framework's dev components, `runtime/components/dev/example` and `runtime/components/dev/dev-aide`, are workspace members that `crates/moqui` links the same way, under its `devtools` feature (the Dev and Debug packages).
 
 A `component.xml` with `disabled="true"`, which can be a property (`disabled="${my_component_disabled ?: 'true'}"`), is skipped when a component directory is scanned, unless a conf `component-list` names it. A linked crate whose component is not loaded contributes nothing.
 
@@ -113,4 +113,4 @@ The framework selects two tools of its own in `MoquiDefaultConf.xml` (`moqui_dav
 
 Existing built-in XLSX/image/SFTP/IPP support is unchanged. This API does not load JARs, Java tool classes, Java widget renderers, servlet filters, FOP, Hazelcast or Drools. Port component code and explicitly select its Rust implementation identifiers. Rebuild the application whenever native code/dependencies change.
 
-Executable public-API examples and tests: `crates/moqui-core/tests/native_components.rs`. A worked component, loaded on a dev instance, with specs: `runtime/dev-component/example` (`./moq test example`; `-D example_disabled=true` leaves it out).
+Executable public-API examples and tests: `crates/moqui-core/tests/native_components.rs`. A worked component, loaded on a dev instance, with specs: `runtime/components/dev/example` (`./moq test example`; `-D example_disabled=true` leaves it out).

@@ -374,11 +374,11 @@ fn component_dirs() -> HashMap<String, PathBuf> {
     component_dirs_in(&crate::runtime_framework_dirs().0)
 }
 
-/// The components of the runtime `runtime` by name.
+/// The components of the runtime `runtime` by name: those of its component sets, or of a Java Moqui checkout's runtime
+/// (`layout::JAVA_DIRS`), whichever it has.
 fn component_dirs_in(runtime: &Path) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
-    let sets = &moqui_core::context::layout::Set::ALL;
-    for (_, dir) in moqui_core::context::layout::component_dirs(runtime, sets) {
+    for dir in moqui_core::context::layout::component_dirs_any_layout(runtime) {
         if dir.join("component.xml").is_file() {
             out.insert(component_name(&dir), dir);
         }

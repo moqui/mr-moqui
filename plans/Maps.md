@@ -2,13 +2,13 @@
 
 November 1, 2026 — initial design, not implemented. The selected browser renderer is OpenLayers. This plan owns
 the framework Maps app, reusable map interface, configuration, resource delivery and geographic lookup work.
-[BOSS shared maps](../runtime/component/mr-boss/plan/design-crosscut.md#332-maps-and-record-location-dialogs)
-and [HOME Maps](../runtime/component/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)
+[BOSS shared maps](../runtime/components/addon/mr-boss/plan/design-crosscut.md#332-maps-and-record-location-dialogs)
+and [HOME Maps](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)
 own their application contexts. No pre-release data migration plan is required.
 
 ## 1. Decisions and scope
 
-- Add **Maps** to `runtime/base-component/tools`, alongside Monitor and Dashboards: one framework-owned app
+- Add **Maps** to `runtime/components/base/tools`, alongside Monitor and Dashboards: one framework-owned app
   available without BOSS, HOME, PASS or Mantle. Those components reuse and contribute to it rather than fork it.
 - Use **OpenLayers** for browser rendering, its geographic format readers, coordinate systems and editing
   interactions. Its broader GIS support is useful for business applications and the expected HOME audience.
@@ -37,11 +37,11 @@ Verified starting points, rather than claims that Maps already exists:
 
 | Foundation | Reuse and required extension |
 | --- | --- |
-| Tools app registration | `runtime/base-component/tools/MoquiConf.xml` mounts Monitor and Dashboards under the apps screen; their XML roots and separate security data show the registration pattern. Maps receives its own grants, not Monitor's administrator-only policy. |
+| Tools app registration | `runtime/components/base/tools/MoquiConf.xml` mounts Monitor and Dashboards under the apps screen; their XML roots and separate security data show the registration pattern. Maps receives its own grants, not Monitor's administrator-only policy. |
 | XML screens and browser widgets | Follow the [app practices](../docs/dev/Practices-App-Dev.md): XML owns parameters/transitions/access; a `.qvue` can own the browsing layout. Repeated map use becomes a shared widget, with TUI and print fallbacks. |
 | Geographic reference data | `moqui.basic.Geo` already has `GEOT_POSTAL_CODE`, localized names, codes and `wellKnownText`; `GeoAssoc` records geographic relationships. `GeoPoint` stores coordinates, type and `dataSourceId`. Geo-to-point and country/postal-code lookup metadata need extensions (§6). |
 | Domain locations | Mantle `PostalAddress` has `postalCodeGeoId` and `geoPointId`; `Facility`, `FacilityLocation`, `Asset` and `PartyGeoPoint` already reference GeoPoint. Mantle owns their access and location updates; Maps knows no business entity names. |
-| Resource delivery | [Revision management](../docs/data/Revision-Management.md) and [Git hosting](../docs/interfaces/Git-Hosting.md) describe resource providers, streamed file responses, ranges and validators. Consistent efficient random access across providers remains work; share that work with [HOME Media](../runtime/component/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks). |
+| Resource delivery | [Revision management](../docs/data/Revision-Management.md) and [Git hosting](../docs/interfaces/Git-Hosting.md) describe resource providers, streamed file responses, ranges and validators. Consistent efficient random access across providers remains work; share that work with [HOME Media](../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks). |
 | Dashboard geomap | The [existing geomap](../docs/tools/Monitoring.md) uses Natural Earth country outlines and point summaries. Keep its current reporting behavior; an optional detailed Maps drill-down is a later consumer of this interface. |
 
 Ownership is explicit:

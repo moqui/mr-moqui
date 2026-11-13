@@ -185,7 +185,7 @@ fn entity_use_in(text: &str, script: bool) -> Option<String> {
 fn no_service_screen_or_script_uses_the_content_entities() {
     let runtime = root().join("runtime");
     let mut sources = Vec::new();
-    for dir in ["base-component", "component", "dev-component"] {
+    for dir in ["components/base", "component", "components/dev"] {
         files(
             &runtime.join(dir),
             &["xml", "js", "mjs", "qvue", "ftl"],

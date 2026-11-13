@@ -106,7 +106,7 @@ whose artifacts they answer about instead of the server's own runtime (the same 
 artifact services, and `moqui check`, `refs` and `lsp` send it with `--server URL --project DIR`). Its layout is told
 from marker paths: Java Moqui when it has `framework/src/main/java` or `framework/src/main/groovy` (or
 `framework/build.gradle` with `.java` or `.groovy` files under `framework/src`) beside `runtime/`, else MR Moqui when
-it has `runtime/base-component/framework` (a clone) or `base-component/framework` (a runtime); a relative path, a `.`
+it has `runtime/components/base/framework` (a clone) or `components/base/framework` (a runtime); a relative path, a `.`
 or `..` part, or a directory that is neither is refused with why. `projectLayout: "java"` reads it as a Java checkout
 whatever its sources (`--java DIR` sends it). A production instance (`instance_purpose` production) reads no other
 project: any `project` but its own runtime gets one error that does not say whether the path is there. The project is booted inside the server for its

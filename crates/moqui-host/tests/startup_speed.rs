@@ -17,7 +17,7 @@
 //! factory boot alone (conf merge, components, the parts with no database).
 //!
 //! The runtime is a temporary directory with the repository's `runtime/conf/MoquiDevConf.xml` and links to its
-//! `base-component` and, unless `STARTUP_SPEED_COMPONENTS=base`, its `component` directory (mr-mantle, mr-marble,
+//! `components/base` and, unless `STARTUP_SPEED_COMPONENTS=base`, its `component` directory (mr-mantle, mr-marble,
 //! mr-boss), on an embedded cluster of its own. The SSH, cluster and HTTP ports are ephemeral.
 //!
 //! Out of the default `cargo test` link, and ignored so naming the binary does not start a postmaster.
@@ -69,11 +69,20 @@ fn startup_speed() {
         runtime.join("conf/MoquiDevConf.xml"),
     )
     .expect("dev conf");
-    link(&repo_runtime.join("base-component"), &runtime.join("base-component"));
+    std::fs::create_dir_all(runtime.join("components")).expect("runtime components");
+    link(&repo_runtime.join("components/base"), &runtime.join("components/base"));
+    std::fs::copy(
+        repo_runtime.join("components/components.xml"),
+        runtime.join("components/components.xml"),
+    )
+    .expect("components.xml");
     if components != "base" {
-        link(&repo_runtime.join("component"), &runtime.join("component"));
+        link(
+            &repo_runtime.join("components/addon"),
+            &runtime.join("components/addon"),
+        );
     }
-    let framework = runtime.join("base-component/framework");
+    let framework = runtime.join("components/base/framework");
     for (name, value) in [
         ("entity_empty_db_load", load.as_str()),
         ("ssh_port", "0"),

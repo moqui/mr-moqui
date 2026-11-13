@@ -10,25 +10,28 @@
 /runtime/types
 /runtime/opensearch*
 /runtime/chromium*
-/runtime/component/
 /runtime/save
 /myaddons.xml
 /runtime/install
 /runtime/MoquiConf.xml
-/runtime/ecomponent/
 # ./moq autodoc run at the root
 /autodoc
-# The framework's own dev components are tracked here, as base-component's are; a user's sit beside them in
-# repositories of their own.
-/runtime/dev-component/*
-!/runtime/dev-component/README.md
-!/runtime/dev-component/demo/
-!/runtime/dev-component/dev-aide/
-!/runtime/dev-component/example/
-!/runtime/dev-component/template/
+# runtime/components (plans/Components-Dir.md): components.xml and the base set are tracked; the add-on and test sets
+# hold components in repositories of their own, beside their READMEs; the framework's own dev components are tracked
+# in the dev set, and a user's sit beside them in repositories of their own.
+/runtime/components/addon/*
+!/runtime/components/addon/README.md
+/runtime/components/test/*
+!/runtime/components/test/README.md
+/runtime/components/dev/*
+!/runtime/components/dev/README.md
+!/runtime/components/dev/demo/
+!/runtime/components/dev/dev-aide/
+!/runtime/components/dev/example/
+!/runtime/components/dev/template/
 
 # Python HTTP security tests
-/runtime/base-component/framework/test/.venv/
+/runtime/components/base/framework/test/.venv/
 **/__pycache__/
 .pytest_cache/
 

@@ -161,7 +161,8 @@ mod tests {
     }
     #[test]
     fn email_template_seeds_keep_java_classpath_uris() {
-        let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+        let framework =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
         let seed = moqui_lib::node::MNode::parse_file(framework.join("data/MoquiSetupData.xml")).unwrap();
         let templates = seed.children_named("moqui.basic.email.EmailTemplate");
         let expected = [

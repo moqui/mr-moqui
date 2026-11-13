@@ -22,12 +22,12 @@ The code:
   - batches and transactions of a load: `EtlLoader` in `crates/moqui-entity/src/entity/etl.rs`;
   - the extract-transform-load core: `crates/moqui-lib/src/etl.rs`.
 - Services:
-  - `runtime/base-component/framework/service/org/moqui/dev/DatabaseServices.xml`;
+  - `runtime/components/base/framework/service/org/moqui/dev/DatabaseServices.xml`;
   - `EtlServices.xml`, beside it.
-- Entities: `runtime/base-component/framework/entity/DatabaseEntities.xml` (packages `moqui.database` and
+- Entities: `runtime/components/base/framework/entity/DatabaseEntities.xml` (packages `moqui.database` and
   `moqui.etl`).
-- Screens: `runtime/base-component/tools/screen/Tools/` (Data, `Sql.xml`, Schema, `Etl.xml` and `Etl/`, Database),
-  listed in the [tools README](../../runtime/base-component/tools/README.md).
+- Screens: `runtime/components/base/tools/screen/Tools/` (Data, `Sql.xml`, Schema, `Etl.xml` and `Etl/`, Database),
+  listed in the [tools README](../../runtime/components/base/tools/README.md).
 
 ## The database selector
 
@@ -570,7 +570,7 @@ cancel, table maintenance or entity sources.
 | Cancel or end a session, run DDL and maintenance jobs, reset stats, cancel another user's SQL, wider export and ETL locations, other users' runs | `DATABASE_ADMIN` (`ADMIN_ADV`) |
 | External databases | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance |
 
-`DATABASE_ADMIN` and `DATABASE_EXTERNAL` are seeded in `runtime/base-component/tools/data/ToolsSecurityData.xml`. They
+`DATABASE_ADMIN` and `DATABASE_EXTERNAL` are seeded in `runtime/components/base/tools/data/ToolsSecurityData.xml`. They
 are sealed permissions, beside `SQL_RUNNER_WEB` and `GROOVY_SHELL_WEB`: a `UserGroupPermission` row for one can be
 written only by a caller who has it.
 
@@ -579,7 +579,7 @@ ciphertext. On the embedded cluster they run as the database superuser. That is 
 permissions.
 
 The public demo replaces SQL, Data Load, Export and Snapshots, Activity, Queries, Connections and Speed Test with a
-disabled screen (`runtime/dev-component/demo/MoquiConf.xml`).
+disabled screen (`runtime/components/dev/demo/MoquiConf.xml`).
 
 ## The audit
 

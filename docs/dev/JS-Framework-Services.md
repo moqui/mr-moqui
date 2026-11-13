@@ -96,10 +96,10 @@ A Rust service whose crate or feature is left out of a build still loads, so its
 ### The complete list
 
 - `moqui types` writes `services.d.ts`: every loaded service with its typed input and output map, so an editor completes names and parameters ([JS-Types-Tooling](JS-Types-Tooling.md)).
-- The Tools app: Tools › Service lists the services, shows one service's parameters and runs it (`runtime/base-component/tools/screen/Tools/Service/`).
+- The Tools app: Tools › Service lists the services, shows one service's parameters and runs it (`runtime/components/base/tools/screen/Tools/Service/`).
 - `moqui autodoc` writes Markdown pages of the services, entities and screens ([Autodoc](Autodoc.md)).
 - `moqui refs <service name>` lists what calls a service.
-- The definitions: `runtime/base-component/framework/service/`, `runtime/base-component/basic-comms/service/` and `runtime/base-component/tools/service/`.
+- The definitions: `runtime/components/base/framework/service/`, `runtime/components/base/basic-comms/service/` and `runtime/components/base/tools/service/`.
 
 A file named `*.rest.xml` in a service directory (`tools/service/moqui.rest.xml`) is not a service file. It maps REST paths and methods to services for `/rest/s1`.
 
@@ -278,7 +278,7 @@ The files directly under `org/moqui` hold the interfaces that have kept their Ja
 | `EmailClientServices.import#EmailMessages` | `emailFolderId*`, `file`, `fileList`, `location` or `messageText` → `importedCount`, `duplicateCount`, `failedCount` (`.eml` and `.mbox`) |
 | `EmailClientServices.run#EmailRules` | `emailAccountId`, `emailFolderId`, `emailRuleId`, `dryRun` → `matchedCount`, `actionCount`, `matchList` |
 
-`EmailClientServices` has about ninety services: folders and labels, identities, rules, out of office, text blocks, saved searches, OAuth sign-in of accounts ([Mail-OAuth](../interfaces/Mail-OAuth.md)), scheduled send and snooze jobs, and the change log the clients sync from. Read `runtime/base-component/framework/service/org/moqui/mail/EmailClientServices.xml`.
+`EmailClientServices` has about ninety services: folders and labels, identities, rules, out of office, text blocks, saved searches, OAuth sign-in of accounts ([Mail-OAuth](../interfaces/Mail-OAuth.md)), scheduled send and snooze jobs, and the change log the clients sync from. Read `runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml`.
 
 ## Chat: `org.moqui.chat`
 
@@ -499,7 +499,7 @@ A screen reads through `AdminCalls.js` beside them: `ec.resource.script('compone
 | `ReadinessServices.find#Settings` | The settings index: `text`, `ownerApp`, `settingsGroupEnumId` → `entries` (the registered `SettingsEntry` rows whose screen opens to the caller's own groups, each with `destinationRoute` and `providerKey`), `appOptions`, `groupOptions`. A signed-in user |
 | `ReadinessServices.check#InstanceSetup` | One of the framework's own checks, by its provider's key: `providerKey*` → `checks`. `ADMIN_OVERVIEW_VIEW` |
 
-`IdentityServices` and `OperationServices` also define the interfaces an application implements so its records show in administration: `define#OwnedResourceLookup`, `define#OwnedResourceTransfer`, `define#OwnedResourcePause`. `DataTransferServices` defines those of a transfer target's owner (`define#ImportStep`, `validate#TargetRow`, `apply#TargetRow`, `find#TargetScopes`, `find#TargetRuns`, `run#TargetExport`); a target's `ownerRoute` is a key the screen showing it resolves by its mount's routes ([Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)), never a URL. A readiness provider, a refresh operation and a settings entry are seed rows too, with a service answering the readiness contract: [Practices-App-Dev](Practices-App-Dev.md#readiness-refresh-and-settings-registrations).
+`IdentityServices` and `OperationServices` also define the interfaces an application implements so its records show in administration: `define#OwnedResourceLookup`, `define#OwnedResourceTransfer`, `define#OwnedResourcePause`. `DataTransferServices` defines those of a transfer target's owner (`define#ImportStep`, `validate#TargetRow`, `apply#TargetRow`, `find#TargetScopes`, `find#TargetRuns`, `run#TargetExport`); a target's `ownerRoute` is a key the screen showing it resolves by its mount's routes ([Mounting the administration screens](../../runtime/components/base/tools/README.md#mounting-the-administration-screens)), never a URL. A readiness provider, a refresh operation and a settings entry are seed rows too, with a service answering the readiness contract: [Practices-App-Dev](Practices-App-Dev.md#readiness-refresh-and-settings-registrations).
 
 ## Git: `org.moqui.git`
 
@@ -578,7 +578,7 @@ What the Tools and System apps call. Their reach is wide (SQL, conf files, resta
 
 ## Comms screens: `basic-comms`
 
-`runtime/base-component/basic-comms/service/org/moqui/comms/` holds the services of the Comms app's screens. They are wrappers over the mail, chat and file services that answer in the shape a screen wants, so server code usually calls the framework service and a screen or a client calls these. Inline actions. See [Comms](../tools/Comms.md).
+`runtime/components/base/basic-comms/service/org/moqui/comms/` holds the services of the Comms app's screens. They are wrappers over the mail, chat and file services that answer in the shape a screen wants, so server code usually calls the framework service and a screen or a client calls these. Inline actions. See [Comms](../tools/Comms.md).
 
 | Service | |
 |---|---|
@@ -600,4 +600,4 @@ What the Tools and System apps call. Their reach is wide (SQL, conf files, resta
 
 ## Tools: `tools`
 
-`runtime/base-component/tools/service/moqui/tools/` has only a few services of the Tools and System home screens: `SystemHomeServices.get#SystemAttention` (→ `items`: what needs an administrator, the readiness checks of `org.moqui.admin.ReadinessServices.get#Readiness` that are not ready among them), `SystemHomeServices.get#CounterSeries`, `ToolsHomeServices.get#ScreenCount` and `DatabaseLoadServices.run#LoadWrap`. Their names start `moqui.tools.`. The services behind the Tools screens are the [`org.moqui.dev`](#development-and-operations-orgmoquidev) group. `tools/service/moqui.rest.xml` is the REST mapping of the framework's services.
+`runtime/components/base/tools/service/moqui/tools/` has only a few services of the Tools and System home screens: `SystemHomeServices.get#SystemAttention` (→ `items`: what needs an administrator, the readiness checks of `org.moqui.admin.ReadinessServices.get#Readiness` that are not ready among them), `SystemHomeServices.get#CounterSeries`, `ToolsHomeServices.get#ScreenCount` and `DatabaseLoadServices.run#LoadWrap`. Their names start `moqui.tools.`. The services behind the Tools screens are the [`org.moqui.dev`](#development-and-operations-orgmoquidev) group. `tools/service/moqui.rest.xml` is the REST mapping of the framework's services.

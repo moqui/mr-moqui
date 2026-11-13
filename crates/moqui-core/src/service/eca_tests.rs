@@ -583,7 +583,7 @@ fn boot_security_with_conf(conf: Option<&str>) -> (EntityFacade, crate::context:
     if let Some(conf) = conf {
         std::fs::write(runtime.path().join("MoquiConf.xml"), conf).unwrap();
     }
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")

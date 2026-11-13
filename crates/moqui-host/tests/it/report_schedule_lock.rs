@@ -135,11 +135,11 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
         &properties,
         &[
             (
-                "component/report_lock_fixture/component.xml",
+                "components/addon/report_lock_fixture/component.xml",
                 r#"<component name="report_lock_fixture" version="1.0"/>"#,
             ),
             (
-                "component/report_lock_fixture/service/fixture/ReportLock.xml",
+                "components/addon/report_lock_fixture/service/fixture/ReportLock.xml",
                 r#"<services><service verb="rows" noun="Fixture" type="rust" transaction="ignore" location="report_lock_fixture::rows"><out-parameters><parameter name="rows" type="List"/></out-parameters></service></services>"#,
             ),
         ],

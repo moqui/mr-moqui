@@ -306,7 +306,7 @@ fn the_watcher_reloads_a_service_file_changed_on_disk() {
 fn each_check_rule_is_in_its_skill_section() {
     let skill = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework/skill/moqui-coding-agent.md"
+        "/../../runtime/components/base/framework/skill/moqui-coding-agent.md"
     ))
     .unwrap();
     for (rule, section, sentence) in crate::check::RULES {

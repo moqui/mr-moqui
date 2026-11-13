@@ -183,7 +183,7 @@ fn wait_finds_a_late_server_and_the_runtime_files_are_untouched() {
     let specs = component(&dir.0).join("test/client");
     // A runtime the client must not touch, as when it runs beside ./moq run.
     let runtime = dir.0.join("runtime");
-    std::fs::create_dir_all(runtime.join("base-component")).unwrap();
+    std::fs::create_dir_all(runtime.join("components/base")).unwrap();
     std::fs::create_dir_all(runtime.join("log")).unwrap();
     std::fs::create_dir_all(runtime.join("db/embedded/data")).unwrap();
     let kept = [
@@ -265,7 +265,7 @@ fn wait_finds_a_late_server_and_the_runtime_files_are_untouched() {
     entries.sort();
     assert_eq!(
         entries,
-        vec![".env", "base-component", "db", "log", "tmp"],
+        vec![".env", "components", "db", "log", "tmp"],
         "nothing else is made in the runtime"
     );
     assert_eq!(

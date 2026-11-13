@@ -55,7 +55,7 @@ fn encrypt_audit_and_localized_reads() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     moqui_lib::env::set_property("entity_ds_crypt_pass", "MoquiDefaultPassword:CHANGEME");
     let _crypt_pass = CryptPassGuard;
     let facade = open_entity_facade(
@@ -188,7 +188,7 @@ fn two_threads_refill_one_sequence_bank() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(
         &framework,
         driver,

@@ -24,12 +24,18 @@ fn mr_clone(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&root);
     let framework = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework"
+        "/../../runtime/components/base/framework"
     ))
     .unwrap();
-    std::fs::create_dir_all(root.join("runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(framework, root.join("runtime/base-component/framework")).unwrap();
-    let component = root.join("runtime/component/proj-a");
+    std::fs::create_dir_all(root.join("runtime/components/base")).unwrap();
+    std::os::unix::fs::symlink(framework, root.join("runtime/components/base/framework")).unwrap();
+    // only the sets the manifest lists load
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/components/components.xml"),
+        root.join("runtime/components/components.xml"),
+    )
+    .unwrap();
+    let component = root.join("runtime/components/addon/proj-a");
     std::fs::create_dir_all(component.join("entity")).unwrap();
     std::fs::write(component.join("component.xml"), r#"<component name="proj-a"/>"#).unwrap();
     std::fs::write(component.join("MoquiConf.xml"), "<moqui-conf/>").unwrap();
@@ -86,7 +92,7 @@ fn a_failed_boot_again_keeps_the_index_read_before() {
         "{summary:?}"
     );
 
-    let conf = root.join("runtime/component/proj-a/MoquiConf.xml");
+    let conf = root.join("runtime/components/addon/proj-a/MoquiConf.xml");
     std::fs::write(&conf, "<moqui-conf><unclosed").unwrap();
     std::thread::sleep(RECHECK + Duration::from_millis(100));
     let kept = open(project.clone(), dirs.clone(), false).unwrap();
@@ -119,7 +125,7 @@ fn an_allowed_project_is_read_anywhere_and_its_stamp_follows_its_files() {
     );
     assert_eq!(project.stamp(), first);
 
-    let entities = root.join("runtime/component/proj-a/entity/ProjEntities.xml");
+    let entities = root.join("runtime/components/addon/proj-a/entity/ProjEntities.xml");
     std::fs::write(
         &entities,
         r#"<entities><entity entity-name="ProjOther" package="proj"><field name="otherId" type="id" is-pk="true"/></entity></entities>"#,
@@ -148,7 +154,7 @@ fn an_allowed_project_is_read_anywhere_and_its_stamp_follows_its_files() {
 #[test]
 fn a_projects_nested_record_is_of_the_related_entity_by_its_full_name() {
     let root = mr_clone("records");
-    let component = root.join("runtime/component/proj-a");
+    let component = root.join("runtime/components/addon/proj-a");
     std::fs::write(
         component.join("entity/HolderEntities.xml"),
         r#"<entities>

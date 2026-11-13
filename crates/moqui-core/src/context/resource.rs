@@ -1241,7 +1241,7 @@ mod tests {
         )
         .unwrap();
         let entity = EntityFacade::open(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework"),
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework"),
             "transactional",
             vec![EntityGroup::new("transactional", "postgres", transactions)],
         )

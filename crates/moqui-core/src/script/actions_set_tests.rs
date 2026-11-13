@@ -285,7 +285,7 @@ fn the_plans_globals_are_the_runtimes() {
 #[test]
 fn echo_data_returns_its_timestamp_as_one() {
     let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/framework/service/org/moqui/impl/BasicServices.xml");
+        .join("../../runtime/components/base/framework/service/org/moqui/impl/BasicServices.xml");
     let root = moqui_lib::node::MNode::parse_file(&file).unwrap();
     let service = root
         .child_iter()

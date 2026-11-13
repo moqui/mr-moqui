@@ -152,7 +152,7 @@ fn collect_xml(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.ends_with("dev-component/template") {
+            if path.ends_with("components/dev/template") {
                 continue;
             }
             collect_xml(&path, out);

@@ -102,7 +102,7 @@ const FILES: &[(&str, &str)] = &[
 
 fn place(runtime: &std::path::Path, component: &str, files: &[(&str, &str)]) {
     for (path, text) in files {
-        let path = runtime.join("component").join(component).join(path);
+        let path = runtime.join("components/addon").join(component).join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
@@ -308,7 +308,7 @@ fn a_working_clone_with_changes_is_removed_only_when_confirmed() {
     }
     let gate = crate::common::start("component-remove-clone");
     let factory = Arc::clone(gate.server.factory());
-    let location = gate.runtime.join("deployed-component/hotclone");
+    let location = gate.runtime.join("components/addon/hotclone");
     std::fs::create_dir_all(&location).unwrap();
     std::fs::write(location.join("component.xml"), r#"<component name="hotclone"/>"#).unwrap();
     let git = |args: &[&str]| {
@@ -388,7 +388,7 @@ fn a_working_clone_with_changes_is_removed_only_when_confirmed() {
     );
 }
 
-/// The files a git deploy's preview staged move into `deployed-component` and load; without COMPONENT_DEPLOY the deploy
+/// The files a git deploy's preview staged move into `components/addon` and load; without COMPONENT_DEPLOY the deploy
 /// is refused. The fetch is not here: it needs a remote.
 #[cfg(feature = "git")]
 #[test]
@@ -404,7 +404,7 @@ fn a_staged_git_deploy_moves_into_place_and_loads() {
         &[("component_deploy_enabled", "true")],
     );
     let factory = Arc::clone(gate.server.factory());
-    let deployed = gate.runtime.join("deployed-component");
+    let deployed = gate.runtime.join("components/addon");
     let staged = deployed.join(".staging-hotgit");
     for (path, text) in [
         ("component.xml", r#"<component name="hotgit" version="1.0"/>"#),
@@ -502,7 +502,7 @@ fn a_component_kept_in_the_database_is_written_out_when_its_files_are_missing() 
         commit
     });
     assert!(!commit.is_empty());
-    let location = gate.runtime.join("deployed-component/hotdb");
+    let location = gate.runtime.join("components/addon/hotdb");
     assert!(!location.exists());
     assert_eq!(moqui_devkit::deploy::git::restore(&factory), 1);
     assert_eq!(
@@ -524,5 +524,5 @@ fn a_component_kept_in_the_database_is_written_out_when_its_files_are_missing() 
     });
     assert_eq!(moqui_devkit::deploy::git::restore(&factory), 1);
     assert!(!location.exists());
-    assert!(gate.runtime.join("deployed-component/.removed").is_dir());
+    assert!(gate.runtime.join("components/addon/.removed").is_dir());
 }

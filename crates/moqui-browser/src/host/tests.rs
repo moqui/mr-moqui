@@ -24,7 +24,7 @@ fn crate_dir() -> PathBuf {
 }
 
 fn framework() -> PathBuf {
-    crate_dir().join("../../runtime/base-component/framework")
+    crate_dir().join("../../runtime/components/base/framework")
 }
 
 /// A copy of `crates/moqui-browser/runtime` in a temp dir. The factory writes `.env` there.
@@ -256,7 +256,7 @@ fn a_suspended_write_transaction_and_a_new_one_both_write() {
 fn custom_runtime_loads_component_entities_extensions_and_merged_configuration() {
     use moqui_core::driver::DbDriver;
     let runtime = TempRuntime::new("component-model");
-    let component = runtime.0.join("component/custom-model");
+    let component = runtime.0.join("components/addon/custom-model");
     for dir in ["entity", "extra", "service/test/browser"] {
         std::fs::create_dir_all(component.join(dir)).unwrap();
     }

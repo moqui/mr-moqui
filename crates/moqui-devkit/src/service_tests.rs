@@ -202,11 +202,11 @@ fn matched(patterns: &[String], service: &str) -> bool {
 /// only in the dev-aide's `DEV_AIDE_APP`, which is not on other instances, and no service is in both.
 #[test]
 fn the_seed_splits_the_read_services_from_the_dev_only_ones() {
-    let framework = seed("base-component/framework/data/DevToolsSecurityData.xml");
-    let dev_aide = seed("dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let framework = seed("components/base/framework/data/DevToolsSecurityData.xml");
+    let dev_aide = seed("components/dev/dev-aide/data/DevAideSecurityData.xml");
     let read = service_patterns(&framework, "AIDE_READ_API");
     let dev_only = service_patterns(&dev_aide, "DEV_AIDE_APP");
-    let services = seed("base-component/framework/service/org/moqui/dev/DevToolsServices.xml");
+    let services = seed("components/base/framework/service/org/moqui/dev/DevToolsServices.xml");
     let doc = MNode::parse_text("services", &services).unwrap();
     let names: Vec<String> = doc
         .children()

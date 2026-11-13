@@ -1,11 +1,11 @@
 # The .qvue screens bundled with the desktop client's shell, precompiled into js/bundled-screens.js (a name, then the
 # file, relative to the repository). After a change here or to one of the files:
 #   UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled
-BasicComms/Panel/Chat runtime/base-component/basic-comms/screen/BasicComms/Panel/ChatPanel.qvue
+BasicComms/Panel/Chat runtime/components/base/basic-comms/screen/BasicComms/Panel/ChatPanel.qvue
 Shell/Root crates/moqui-desktop/shell/screens/Root.qvue
 Shell/SignIn crates/moqui-desktop/shell/screens/SignIn.qvue
-BasicComms/Chat runtime/base-component/basic-comms/screen/BasicComms/Chat.qvue
-BasicComms/Inbox/Mail runtime/base-component/basic-comms/screen/BasicComms/Inbox/Mail.qvue
-BasicComms/Inbox/Compose runtime/base-component/basic-comms/screen/BasicComms/Inbox/Compose.qvue
-BasicComms/Calls/Call runtime/base-component/basic-comms/screen/BasicComms/Calls/Call.qvue
-BasicComms/Calls/Dialer runtime/base-component/basic-comms/screen/BasicComms/Calls/Dialer.qvue
+BasicComms/Chat runtime/components/base/basic-comms/screen/BasicComms/Chat.qvue
+BasicComms/Inbox/Mail runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue
+BasicComms/Inbox/Compose runtime/components/base/basic-comms/screen/BasicComms/Inbox/Compose.qvue
+BasicComms/Calls/Call runtime/components/base/basic-comms/screen/BasicComms/Calls/Call.qvue
+BasicComms/Calls/Dialer runtime/components/base/basic-comms/screen/BasicComms/Calls/Dialer.qvue

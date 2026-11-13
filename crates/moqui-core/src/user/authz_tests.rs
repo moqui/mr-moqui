@@ -56,7 +56,7 @@ fn world() -> World {
 /// [`world`] over `facade`, such as one that records its SQL.
 fn world_with(facade: EntityFacade) -> World {
     let runtime = temp_dir("authz-runtime");
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")

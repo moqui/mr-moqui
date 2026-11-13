@@ -135,18 +135,18 @@ fn the_workspace_saves_checks_commits_and_publishes() {
     <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
 </entity-facade-xml>"#;
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml")
         .replace("</entity-facade-xml>", users);
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/service/mysite/Things.xml", SITE_SERVICES),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/service/mysite/Things.xml", SITE_SERVICES),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
     ];
     let gate = start_with_files_and_links(
         "dev-aide",
@@ -157,11 +157,11 @@ fn the_workspace_saves_checks_commits_and_publishes() {
             ("dev_aide_shared", "false"),
         ],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
-    let site = gate.runtime.join("component/my-site");
-    let upstream = gate.runtime.join("component/upstream-app");
+    let site = gate.runtime.join("components/addon/my-site");
+    let upstream = gate.runtime.join("components/addon/upstream-app");
     isolate_git(&gate.runtime);
     repository(&site, &gate.runtime.join("site-remote.git"));
     repository(&upstream, &gate.runtime.join("upstream-remote.git"));
@@ -640,43 +640,43 @@ fn the_index_follows_reloads_and_extensions() {
     if !crate::common::own_process() {
         return;
     }
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/service/mysite/Things.xml", SITE_CALLS),
-        ("component/my-site/entity/SiteEntities.xml", SITE_ENTITIES),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/service/mysite/Things.xml", SITE_CALLS),
+        ("components/addon/my-site/entity/SiteEntities.xml", SITE_ENTITIES),
         (
-            "component/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+            "components/addon/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
             SITE_EXTEND_SCREEN,
         ),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/entity/UpEntities.xml", UPSTREAM_ENTITIES),
-        ("component/upstream-app/screen/UpApp/Detail.xml", UPSTREAM_SCREEN),
-        ("component/upstream-app/screen/UpApp.xml", UP_APP),
-        ("component/upstream-app/screen/UpApp/Links.xml", UP_LINKS),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/entity/UpEntities.xml", UPSTREAM_ENTITIES),
+        ("components/addon/upstream-app/screen/UpApp/Detail.xml", UPSTREAM_SCREEN),
+        ("components/addon/upstream-app/screen/UpApp.xml", UP_APP),
+        ("components/addon/upstream-app/screen/UpApp/Links.xml", UP_LINKS),
         (
-            "component/upstream-app/screen/Elsewhere/Other.xml",
+            "components/addon/upstream-app/screen/Elsewhere/Other.xml",
             &up_save("mysite.Things.get#Thing"),
         ),
         (
-            "component/upstream-app/screen/Elsewhere/Two.xml",
+            "components/addon/upstream-app/screen/Elsewhere/Two.xml",
             &up_save("mysite.Things.get#Outer"),
         ),
-        ("component/my-site/MoquiConf.xml", SITE_MOUNTS),
-        ("component/upstream-app/screen/Elsewhere/Apps.xml", APPS_LINKS),
-        ("component/upstream-app/screen/Elsewhere/Deep.xml", DEEP_LINKS),
+        ("components/addon/my-site/MoquiConf.xml", SITE_MOUNTS),
+        ("components/addon/upstream-app/screen/Elsewhere/Apps.xml", APPS_LINKS),
+        ("components/addon/upstream-app/screen/Elsewhere/Deep.xml", DEEP_LINKS),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-index",
         Some(security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
     const DT: &str = "org.moqui.dev.DevToolsServices.";
@@ -753,7 +753,9 @@ fn the_index_follows_reloads_and_extensions() {
 
     // the upstream screen renames its form: the reload replaces that file's rows, and the site's extension of the old
     // name is broken
-    let detail = gate.runtime.join("component/upstream-app/screen/UpApp/Detail.xml");
+    let detail = gate
+        .runtime
+        .join("components/addon/upstream-app/screen/UpApp/Detail.xml");
     std::fs::write(&detail, UPSTREAM_SCREEN.replace("name=\"Facts\"", "name=\"Facts2\"")).unwrap();
     let started = std::time::Instant::now();
     moqui_devkit::reload_paths(&factory, std::slice::from_ref(&detail));
@@ -856,7 +858,7 @@ fn the_index_follows_reloads_and_extensions() {
         save
     };
     assert_eq!(bound(), ["parameter:service:mysite.Things.get#Thing@in.thingId"]);
-    let up_app = gate.runtime.join("component/upstream-app/screen/UpApp.xml");
+    let up_app = gate.runtime.join("components/addon/upstream-app/screen/UpApp.xml");
     // the item moved, and an item over the directory subscreen Detail
     std::fs::write(
         &up_app,
@@ -996,7 +998,7 @@ fn the_index_follows_reloads_and_extensions() {
     );
     let builds = moqui_devkit::index::builds(&factory);
     std::fs::write(
-        gate.runtime.join("component/my-site/MoquiConf.xml"),
+        gate.runtime.join("components/addon/my-site/MoquiConf.xml"),
         SITE_MOUNTS.replace(
             "</screen-facade>",
             r#"<screen location="component://webroot/screen/webroot/apps.xml">
@@ -1100,7 +1102,7 @@ fn the_index_follows_reloads_and_extensions() {
     assert_eq!(edit_bound(), ["parameter:service:mysite.Things.get#Thing@in.thingId"]);
     let beside = gate
         .runtime
-        .join("component/upstream-app/screen/Elsewhere/Other/save.xml");
+        .join("components/addon/upstream-app/screen/Elsewhere/Other/save.xml");
     std::fs::create_dir_all(beside.parent().unwrap()).unwrap();
     std::fs::write(&beside, "<screen/>").unwrap();
     moqui_devkit::reload_paths(&factory, std::slice::from_ref(&beside));
@@ -1152,15 +1154,18 @@ fn the_index_rows_derive_entity_auto_services() {
         return;
     }
     let files = [
-        ("component/acme-site/component.xml", r#"<component name="acme-site"/>"#),
-        ("component/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
-        ("component/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
-        ("component/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
-        ("component/acme-site/screen/Widgets.xml", AUTO_SCREEN),
+        (
+            "components/addon/acme-site/component.xml",
+            r#"<component name="acme-site"/>"#,
+        ),
+        ("components/addon/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+        ("components/addon/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
+        ("components/addon/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
+        ("components/addon/acme-site/screen/Widgets.xml", AUTO_SCREEN),
     ];
     let gate = crate::common::start_with_files("dev-aide-derived", None, &[("instance_purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
-    let site = std::fs::canonicalize(gate.runtime.join("component/acme-site")).unwrap();
+    let site = std::fs::canonicalize(gate.runtime.join("components/addon/acme-site")).unwrap();
     let entered = factory.new_context();
     let _enter = entered.enter();
     let _authz = entered.disable_authz();
@@ -1332,12 +1337,15 @@ fn the_index_writes_nothing_once_the_shutdown_began() {
         return;
     }
     let files = [
-        ("component/acme-site/component.xml", r#"<component name="acme-site"/>"#),
-        ("component/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+        (
+            "components/addon/acme-site/component.xml",
+            r#"<component name="acme-site"/>"#,
+        ),
+        ("components/addon/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
     ];
     let gate = crate::common::start_with_files("dev-aide-shutdown", None, &[("instance_purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
-    let site = std::fs::canonicalize(gate.runtime.join("component/acme-site")).unwrap();
+    let site = std::fs::canonicalize(gate.runtime.join("components/addon/acme-site")).unwrap();
     let late = site.join("service/acme/LateServices.xml");
     std::fs::create_dir_all(late.parent().unwrap()).unwrap();
     std::fs::write(&late, AUTO_CALLS).unwrap();
@@ -1364,7 +1372,7 @@ fn the_index_writes_nothing_once_the_shutdown_began() {
     );
 }
 
-/// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (base-component and
+/// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (components/base and
 /// component) and a synthetic corpus ten times their size, each built into the rows, with a per-file update and a find
 /// timed. Run once by hand and the numbers recorded in the design:
 /// `cargo test -p moqui-host --features dev --test it devaide::the_index_scales -- --ignored --nocapture`.
@@ -1374,10 +1382,10 @@ fn the_index_scales() {
     if !crate::common::own_process() {
         return;
     }
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let gate = start_with_files_and_links(
@@ -1385,12 +1393,12 @@ fn the_index_scales() {
         Some(security),
         &[("instance_purpose", "dev")],
         &[],
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
     let repository_runtime = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime"));
     let mut corpus = Vec::new();
-    for parent in ["base-component", "component"] {
+    for parent in ["components/base", "component"] {
         let Ok(entries) = std::fs::read_dir(repository_runtime.join(parent)) else {
             continue;
         };
@@ -1472,9 +1480,9 @@ fn a_screen_renders_with_proposed_text_in_an_overlay() {
 </screen>
 "#;
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/screen/UpApp/Detail.xml", screen),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/screen/UpApp/Detail.xml", screen),
     ];
     let gate = start_with_files_and_links("dev-aide-overlay", None, &[("instance_purpose", "dev")], &files, &[]);
     let factory = Arc::clone(gate.server.factory());
@@ -1500,7 +1508,7 @@ fn a_screen_renders_with_proposed_text_in_an_overlay() {
     let previewed = moqui_core::screen::overlay::with(overlay, render);
     assert!(text(&previewed).contains("Extra Note"), "{}", text(&previewed));
     // nothing was written, and the next render is as saved
-    assert!(!gate.runtime.join("component/my-site/screen-extend").exists());
+    assert!(!gate.runtime.join("components/addon/my-site/screen-extend").exists());
     assert!(!text(&render()).contains("Extra Note"));
 }
 
@@ -1516,22 +1524,22 @@ fn a_stamped_render_names_each_widgets_file() {
     let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
         (
-            "component/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+            "components/addon/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
             extend,
         ),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/screen/UpApp/Detail.xml", screen),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/screen/UpApp/Detail.xml", screen),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-stamps",
         // a DbForm for the user's group that adds a field to the form
-        Some(&include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        Some(&include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
             "</entity-facade-xml>",
             r#"    <moqui.screen.form.DbForm formId="DBF_FACTS" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
     <moqui.screen.form.DbFormField formId="DBF_FACTS" fieldName="dbNote" title="Db Note" fieldTypeEnumId="DBFFT_display"/>
@@ -1540,7 +1548,7 @@ fn a_stamped_render_names_each_widgets_file() {
         )),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
     let context = factory.new_context();
@@ -1595,28 +1603,31 @@ fn the_screen_tree_orders_moves_and_removes() {
     let leaf = "<screen><widgets><label text=\"leaf\"/></widgets></screen>\n";
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/screen/Site.xml", parent),
-        ("component/my-site/screen/Site/Child.xml", leaf),
-        ("component/my-site/screen/Site/Other.xml", leaf),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/screen/Up.xml", "<screen><widgets/></screen>\n"),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/screen/Site.xml", parent),
+        ("components/addon/my-site/screen/Site/Child.xml", leaf),
+        ("components/addon/my-site/screen/Site/Other.xml", leaf),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        (
+            "components/addon/upstream-app/screen/Up.xml",
+            "<screen><widgets/></screen>\n",
+        ),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-tree",
         Some(include_str!(
-            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+            "../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml"
         )),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     let read = |path: &str| std::fs::read_to_string(site.join(path)).unwrap_or_default();
     let update =
         |parameters: &[(&str, &str)]| call(&factory, "john.doe", &format!("{SCREENS}update#Subscreen"), parameters);
@@ -1708,7 +1719,7 @@ fn the_screen_tree_orders_moves_and_removes() {
         "{extend}"
     );
     assert_eq!(
-        std::fs::read_to_string(gate.runtime.join("component/upstream-app/screen/Up.xml")).unwrap(),
+        std::fs::read_to_string(gate.runtime.join("components/addon/upstream-app/screen/Up.xml")).unwrap(),
         "<screen><widgets/></screen>\n"
     );
 }
@@ -1720,7 +1731,7 @@ fn writer_gate(label: &str) -> crate::common::Gate {
     let entities = "<entities><entity entity-name=\"Widget\" package=\"upapp\"><field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\
         <field name=\"widgetName\" type=\"text-medium\"/></entity></entities>\n";
     let services = "<services>\n    <service verb=\"make\" noun=\"Widget\">\n        <in-parameters><parameter name=\"widgetId\" required=\"true\"/><parameter name=\"widgetName\"/></in-parameters>\n        <out-parameters><parameter name=\"widgetId\"/></out-parameters>\n        <actions>\n            <service-call name=\"create#upapp.Widget\" in-map=\"context\" out-map=\"context\"/>\n        </actions>\n    </service>\n</services>\n";
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"    <moqui.security.ArtifactGroup artifactGroupId="UP_WIDGETS" description="Widgets"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="UP_WIDGETS" artifactName="upapp\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
@@ -1731,21 +1742,24 @@ fn writer_gate(label: &str) -> crate::common::Gate {
     );
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/entity/UpEntities.xml", entities),
-        ("component/upstream-app/service/upapp/WidgetServices.xml", services),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/entity/UpEntities.xml", entities),
+        (
+            "components/addon/upstream-app/service/upapp/WidgetServices.xml",
+            services,
+        ),
     ];
     start_with_files_and_links(
         label,
         Some(&security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     )
 }
 
@@ -1809,7 +1823,11 @@ fn a_try_saved_as_a_spec_passes() {
     .unwrap();
     assert_eq!(text(&saved, "rootId"), "my-site");
     assert_eq!(text(&saved, "path"), "test/WidgetServices.spec.js");
-    let spec = std::fs::read_to_string(gate.runtime.join("component/my-site/test/WidgetServices.spec.js")).unwrap();
+    let spec = std::fs::read_to_string(
+        gate.runtime
+            .join("components/addon/my-site/test/WidgetServices.spec.js"),
+    )
+    .unwrap();
     assert!(
         spec.contains("spec({})") && spec.contains("call(\"upapp.WidgetServices.make#Widget\""),
         "{spec}"
@@ -1887,7 +1905,7 @@ fn a_site_seca_runs_after_its_save() {
 }
 
 /// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
-/// (`runtime/dev-component/template`) in runtime/component, or with dev in runtime/dev-component, of the part asked for,
+/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part asked for,
 /// with a git repository of its own; a name taken, a name that is not one or an unknown part is refused, and the extend
 /// tier may not make one.
 #[test]
@@ -1899,7 +1917,7 @@ fn new_components_come_from_the_component_template() {
     <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
 </entity-facade-xml>"#;
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml")
         .replace("</entity-facade-xml>", users);
     let repo_dir = |path: &str| {
         std::fs::canonicalize(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR")))
@@ -1908,8 +1926,8 @@ fn new_components_come_from_the_component_template() {
             .to_string()
     };
     let (dev_aide, template) = (
-        repo_dir("runtime/dev-component/dev-aide"),
-        repo_dir("runtime/dev-component/template"),
+        repo_dir("runtime/components/dev/dev-aide"),
+        repo_dir("runtime/components/dev/template"),
     );
     let gate = start_with_files_and_links(
         "dev-aide-create",
@@ -1917,8 +1935,8 @@ fn new_components_come_from_the_component_template() {
         &[("instance_purpose", "dev")],
         &[],
         &[
-            (dev_aide.as_str(), "dev-component/dev-aide"),
-            (template.as_str(), "dev-component/template"),
+            (dev_aide.as_str(), "components/dev/dev-aide"),
+            (template.as_str(), "components/dev/template"),
         ],
     );
     let factory = Arc::clone(gate.server.factory());
@@ -1927,7 +1945,7 @@ fn new_components_come_from_the_component_template() {
         |user: &str, parameters: &[(&str, &str)]| call(&factory, user, &format!("{WS}create#Component"), parameters);
 
     let made = create("john.doe", &[("componentName", "demo-shop")]).unwrap();
-    let shop = gate.runtime.join("component/demo-shop");
+    let shop = gate.runtime.join("components/addon/demo-shop");
     assert_eq!(
         text(&made, "location"),
         shop.canonicalize().unwrap().display().to_string()
@@ -1948,7 +1966,7 @@ fn new_components_come_from_the_component_template() {
         &[("componentName", "demo-api"), ("part", "rest"), ("dev", "true")],
     )
     .unwrap();
-    let api = gate.runtime.join("dev-component/demo-api");
+    let api = gate.runtime.join("components/dev/demo-api");
     assert!(api.join("service/demo-api.rest.xml").is_file());
     assert!(!api.join("screen").exists() && !api.join("MoquiConf.xml").exists());
 
@@ -1957,7 +1975,7 @@ fn new_components_come_from_the_component_template() {
     assert!(create("john.doe", &[("componentName", "9lives")]).is_err());
     assert!(create("john.doe", &[("componentName", "other"), ("part", "both")]).is_err());
     assert!(create("ext.user", &[("componentName", "ext-shop")]).is_err());
-    assert!(!gate.runtime.join("component/ext-shop").exists());
+    assert!(!gate.runtime.join("components/addon/ext-shop").exists());
     // the template stays a template
     let template_manifest = std::fs::read_to_string(Path::new(&template).join("component.xml")).unwrap();
     assert!(template_manifest.contains(r#"name="@component@""#));
@@ -1985,23 +2003,23 @@ fn an_entity_save_relinks_and_adds_its_column() {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n</entities>\n";
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/entity/MySiteEntities.xml", site_entities),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/entity/MySiteEntities.xml", site_entities),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/entity/UpEntities.xml", upstream_entities),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-entity",
         Some(include_str!(
-            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+            "../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml"
         )),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
     let facade = factory.entity().unwrap();
@@ -2162,7 +2180,7 @@ fn an_entity_save_relinks_and_adds_its_column() {
 
     // Load the changed records: only those added or changed since the last commit
     isolate_git(&gate.runtime);
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     git(&site, &["init", "-q", "-b", "main"]);
     git(&site, &["add", "-A"]);
     git(&site, &["commit", "-q", "-m", "Start"]);
@@ -2224,16 +2242,16 @@ fn the_git_depth_writes_on_scratch_repositories() {
     <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
 </entity-facade-xml>"#;
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml")
         .replace("</entity-facade-xml>", users);
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/notes.txt", NOTES),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/notes.txt", NOTES),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-git",
@@ -2244,10 +2262,10 @@ fn the_git_depth_writes_on_scratch_repositories() {
             ("dev_aide_shared", "false"),
         ],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     let remote = gate.runtime.join("site-remote.git");
     isolate_git(&gate.runtime);
     repository(&site, &remote);
@@ -2500,7 +2518,7 @@ fn the_git_depth_writes_on_scratch_repositories() {
     .unwrap();
     assert_eq!(text(&cloned, "restart"), "true");
     assert!(
-        gate.runtime.join("component/cloned-site/notes.txt").exists(),
+        gate.runtime.join("components/addon/cloned-site/notes.txt").exists(),
         "{cloned:?} {}",
         gate.runtime.display()
     );
@@ -2514,7 +2532,7 @@ fn the_git_depth_writes_on_scratch_repositories() {
     // a clone of a component that can be loaded now is offered for System › Components' load; one with Rust code waits
     // for a build and a restart, with the reason
     // (the clone above is a second my-site, which a load refuses as the directories no longer match what is loaded)
-    std::fs::remove_dir_all(gate.runtime.join("component/cloned-site")).unwrap();
+    std::fs::remove_dir_all(gate.runtime.join("components/addon/cloned-site")).unwrap();
     let source = |name: &str, files: &[(&str, &str)]| {
         let dir = gate.runtime.join(format!("{name}-source"));
         for (path, text) in files {
@@ -2654,27 +2672,30 @@ fn tasks_from_mantle_and_rest() {
     <moqui.security.ArtifactAuthz artifactAuthzId="MANTLE_API_ADMIN" artifactGroupId="MANTLE_API" userGroupId="ADMIN"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>"#;
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml")
         .replace("</entity-facade-xml>", api);
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/notes.txt", "notes\n"),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/notes.txt", "notes\n"),
         (
-            "component/fake-mantle/component.xml",
+            "components/addon/fake-mantle/component.xml",
             r#"<component name="fake-mantle"/>"#,
         ),
-        ("component/fake-mantle/entity/WorkEffortEntities.xml", TASK_ENTITIES),
         (
-            "component/fake-mantle/service/mantle/work/TaskServices.xml",
+            "components/addon/fake-mantle/entity/WorkEffortEntities.xml",
+            TASK_ENTITIES,
+        ),
+        (
+            "components/addon/fake-mantle/service/mantle/work/TaskServices.xml",
             TASK_SERVICES,
         ),
         (
-            "component/fake-mantle/service/mantle.rest.xml",
+            "components/addon/fake-mantle/service/mantle.rest.xml",
             r#"<resource name="mantle"><resource name="my"><resource name="tasks"><method type="get">
                 <service name="mantle.work.TaskServices.get#MyTasks"/></method></resource></resource></resource>"#,
         ),
@@ -2684,10 +2705,10 @@ fn tasks_from_mantle_and_rest() {
         Some(&security),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     isolate_git(&gate.runtime);
     repository(&site, &gate.runtime.join("site-remote.git"));
     {
@@ -2872,22 +2893,22 @@ fn a_qvue_screen_renders_from_its_buffer() {
     let qvue = "<template><div class=\"board\">\n    <q-btn label=\"Saved\"/>\n</div></template>\n<script>module.exports = {};</script>\n";
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/screen/MySite/Board.xml", screen),
-        ("component/my-site/screen/MySite/Board.qvue", qvue),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/screen/MySite/Board.xml", screen),
+        ("components/addon/my-site/screen/MySite/Board.qvue", qvue),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-qvue",
         Some(include_str!(
-            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+            "../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml"
         )),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
     let context = factory.new_context();
@@ -2930,10 +2951,16 @@ fn a_qvue_screen_renders_from_its_buffer() {
 fn aide_project(name: &str) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("moqui-aide-project-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    let framework = std::fs::canonicalize(crate::common::repo_runtime().join("base-component/framework")).unwrap();
-    std::fs::create_dir_all(root.join("runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(framework, root.join("runtime/base-component/framework")).unwrap();
-    let component = root.join("runtime/component/proj-a");
+    let framework = std::fs::canonicalize(crate::common::repo_runtime().join("components/base/framework")).unwrap();
+    std::fs::create_dir_all(root.join("runtime/components/base")).unwrap();
+    std::os::unix::fs::symlink(framework, root.join("runtime/components/base/framework")).unwrap();
+    // only the sets the manifest lists load
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/components/components.xml"),
+        root.join("runtime/components/components.xml"),
+    )
+    .unwrap();
+    let component = root.join("runtime/components/addon/proj-a");
     std::fs::create_dir_all(component.join("entity")).unwrap();
     std::fs::write(component.join("component.xml"), r#"<component name="proj-a"/>"#).unwrap();
     std::fs::write(component.join("MoquiConf.xml"), "<moqui-conf/>").unwrap();
@@ -3143,11 +3170,11 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
     <moqui.security.UserAccount userId="DEV_VIEW" username="view.user" userFullName="View User" emailAddress="view@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_VIEWERS" userId="DEV_VIEW" fromDate="0"/>
 </entity-facade-xml>"#;
-    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+    let security = include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml")
         .replace("</entity-facade-xml>", users);
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/dev-component/dev-aide"
+        "/../../runtime/components/dev/dev-aide"
     ))
     .unwrap();
     let entities = r#"<entities>
@@ -3160,11 +3187,11 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
 </entities>
 "#;
     let files = [
-        ("component/my-site/component.xml", SITE_COMPONENT),
-        ("component/my-site/entity/MySiteEntities.xml", entities),
-        ("component/my-site/service/mysite/Things.xml", SITE_SERVICES),
-        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
-        ("component/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        ("components/addon/my-site/entity/MySiteEntities.xml", entities),
+        ("components/addon/my-site/service/mysite/Things.xml", SITE_SERVICES),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-autodoc",
@@ -3175,10 +3202,10 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
             ("dev_aide_shared", "false"),
         ],
         &files,
-        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
-    let site = gate.runtime.join("component/my-site");
+    let site = gate.runtime.join("components/addon/my-site");
     const DOCS: &str = "org.moqui.devaide.DocServices.";
 
     // the view tier reads a doc, made from the server's index
@@ -3278,5 +3305,5 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
     )
     .unwrap_err();
     assert!(upstream.contains("is upstream"), "{upstream}");
-    assert!(!gate.runtime.join("component/upstream-app/autodoc").exists());
+    assert!(!gate.runtime.join("components/addon/upstream-app/autodoc").exists());
 }

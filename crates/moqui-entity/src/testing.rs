@@ -31,7 +31,7 @@ use crate::entity::{EntityFacade, EntityGroup};
 use crate::transaction::{PoolConfig, TransactionManager};
 
 /// Leaves the example component out of a boot of the repository runtime. It loads on a dev instance
-/// (`runtime/dev-component/example`) and its `MoquiConf.xml` selects a tool factory that only a binary linking the
+/// (`runtime/components/dev/example`) and its `MoquiConf.xml` selects a tool factory that only a binary linking the
 /// `example` crate has (the Dev `moqui` binary and the host integration tests); this crate's own tests cannot link it,
 /// since `example` depends on this crate. Clears the property when dropped.
 pub struct ExampleOff;
@@ -240,7 +240,7 @@ pub fn open_groups_with_components(second: &str, dirs: &[PathBuf]) -> EntityFaca
 }
 
 pub fn framework_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 /// A log subscriber that keeps each event's fields as one line, for a test that checks what was logged.

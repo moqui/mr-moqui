@@ -103,8 +103,28 @@ fn discover_for(
     purpose: String,
 ) -> Result<Vec<ComponentInfo>, Error> {
     let discovery = Discovery { framework_dir, purpose };
+    let listed: Vec<String> = conf
+        .first_named("component-list")
+        .map(|list| {
+            list.children_named("component-dir")
+                .iter()
+                .filter_map(|dir| dir.attribute("location"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let java = super::layout::is_java_framework(framework_dir);
+    if !java {
+        super::layout::warn_old_dirs(runtime_dir, &listed);
+    }
     let mut found = ComponentSet::default();
     found.insert(component_from_dir(framework_dir, None)?)?;
+    // A Java Moqui checkout read with this framework's conf: its runtime keeps its components in its own directories.
+    if java {
+        for dir in super::layout::JAVA_DIRS {
+            let node = MNode::parse_text("component-dir", &format!(r#"<component-dir location="{dir}"/>"#))?;
+            add_component_dir(&mut found, runtime_dir, &node, &discovery, &[])?;
+        }
+    }
     if let Some(list) = conf.first_named("component-list") {
         for child in list.child_iter() {
             match &*child.name_rc() {
@@ -332,7 +352,7 @@ fn add_component_dir(
                 continue;
             }
         }
-        // The framework component is registered from the boot directory before this scan. base-component
+        // The framework component is registered from the boot directory before this scan. components/base
         // contains that directory, and a symlink in a test runtime is the same place with another path.
         // Keep the boot directory so MOQUI_FRAMEWORK is not replaced by the copy inside the runtime.
         if found
@@ -637,16 +657,16 @@ mod tests {
         .unwrap();
     }
 
-    /// A runtime with a framework, `component` (every purpose) and `dev-component` (dev only) directories.
+    /// A runtime with a framework, `component` (every purpose) and `components/dev` (dev only) directories.
     fn runtime(label: &str) -> (Scratch, MNode) {
         let root = scratch(label);
         component(&root.0, "framework", "", &[]);
-        std::fs::create_dir_all(root.0.join("component")).unwrap();
-        std::fs::create_dir_all(root.0.join("dev-component")).unwrap();
+        std::fs::create_dir_all(root.0.join("components/addon")).unwrap();
+        std::fs::create_dir_all(root.0.join("components/dev")).unwrap();
         let conf = MNode::parse_text(
             "conf",
-            r#"<moqui-conf><component-list><component-dir location="component"/>
-                <component-dir location="dev-component" purpose="dev"/></component-list></moqui-conf>"#,
+            r#"<moqui-conf><component-list><component-dir location="components/addon"/>
+                <component-dir location="components/dev" purpose="dev"/></component-list></moqui-conf>"#,
         )
         .unwrap();
         (root, conf)
@@ -663,8 +683,8 @@ mod tests {
     #[test]
     fn a_dev_directory_loads_only_on_dev() {
         let (root, conf) = runtime("dir");
-        component(&root.0.join("component"), "app", "", &[]);
-        component(&root.0.join("dev-component"), "tools-dev", "", &[]);
+        component(&root.0.join("components/addon"), "app", "", &[]);
+        component(&root.0.join("components/dev"), "tools-dev", "", &[]);
         assert_eq!(names(&root.0, &conf, "dev"), ["framework", "app", "tools-dev"]);
         assert_eq!(names(&root.0, &conf, "production"), ["framework", "app"]);
         let restricted = discover_for(&root.0, &root.0.join("framework"), &conf, "dev".into()).unwrap();
@@ -678,8 +698,13 @@ mod tests {
     #[test]
     fn a_component_xml_purpose_holds_in_any_directory() {
         let (root, conf) = runtime("manifest");
-        component(&root.0.join("component"), "copied-dev", r#"purpose="dev""#, &[]);
-        component(&root.0.join("component"), "either", r#"purpose="dev, test""#, &[]);
+        component(&root.0.join("components/addon"), "copied-dev", r#"purpose="dev""#, &[]);
+        component(
+            &root.0.join("components/addon"),
+            "either",
+            r#"purpose="dev, test""#,
+            &[],
+        );
         assert_eq!(names(&root.0, &conf, "production"), ["framework"]);
         assert_eq!(names(&root.0, &conf, "test"), ["framework", "either"]);
         assert_eq!(names(&root.0, &conf, "dev"), ["framework", "copied-dev", "either"]);
@@ -701,12 +726,12 @@ mod tests {
     #[test]
     fn unmet_dependencies_leave_out_the_dependent_and_the_rest_load() {
         let (root, conf) = runtime("depends");
-        component(&root.0.join("dev-component"), "dev-lib", "", &[]);
-        component(&root.0.join("component"), "uses-dev", "", &["dev-lib"]);
-        component(&root.0.join("component"), "uses-missing", "", &["nowhere"]);
-        component(&root.0.join("component"), "uses-dropped", "", &["uses-missing"]);
-        component(&root.0.join("component"), "plain", "", &[]);
-        component(&root.0.join("dev-component"), "dev-uses-app", "", &["plain"]);
+        component(&root.0.join("components/dev"), "dev-lib", "", &[]);
+        component(&root.0.join("components/addon"), "uses-dev", "", &["dev-lib"]);
+        component(&root.0.join("components/addon"), "uses-missing", "", &["nowhere"]);
+        component(&root.0.join("components/addon"), "uses-dropped", "", &["uses-missing"]);
+        component(&root.0.join("components/addon"), "plain", "", &[]);
+        component(&root.0.join("components/dev"), "dev-uses-app", "", &["plain"]);
         // On dev the dev library loads, but a component for every purpose may not depend on it.
         assert_eq!(
             names(&root.0, &conf, "dev"),

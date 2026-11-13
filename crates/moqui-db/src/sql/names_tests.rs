@@ -10,7 +10,7 @@ use crate::{
 };
 
 fn fixture(style: &str) -> (EntityModel, Dialects) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let conf = MNode::parse_file(root.join("conf/MoquiDefaultConf.xml")).unwrap();
     conf.first_named("entity-facade")
         .unwrap()

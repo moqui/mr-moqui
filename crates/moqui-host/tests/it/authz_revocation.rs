@@ -153,7 +153,7 @@ fn group_id(group: usize) -> String {
 }
 
 fn framework() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework")
 }
 
 fn pool() -> PoolConfig {

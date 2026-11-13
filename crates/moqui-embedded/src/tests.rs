@@ -35,7 +35,7 @@ impl Drop for Scratch {
 }
 
 fn repo_base() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")
 }
 
 /// The component directories under `base`, as [`compare`] takes them.
@@ -69,7 +69,8 @@ fn the_sets_hold_framework_and_tools_without_their_tests_and_the_webroot_stub() 
         Set::Webroot,
         "screen/webroot/libs/tom-select/tom-select.complete.min.js"
     ));
-    assert!(has(Set::Skeleton, "webroot/screen/webroot/qapps.xml"));
+    assert!(has(Set::Skeleton, "components/base/webroot/screen/webroot/qapps.xml"));
+    assert!(has(Set::Skeleton, "components/components.xml"));
     assert!(!has(Set::Webroot, "screen/webroot/qapps.xml"));
     assert!(!entries.iter().any(|entry| entry.set == Set::Webroot
         && (entry.path.contains("/libs/fontawesome/")
@@ -89,7 +90,7 @@ fn the_repository_runtime_matches_what_was_packed() {
 fn a_skeleton_compares_clean_and_each_kind_of_change_is_reported() {
     let scratch = Scratch::new("kinds");
     let written = write_skeleton(&scratch.0).unwrap();
-    let base = scratch.0.join("base-component");
+    let base = scratch.0.join("components/base");
     let framework = base.join("framework");
     let tools = base.join("tools");
     let webroot = base.join("webroot");
@@ -98,6 +99,10 @@ fn a_skeleton_compares_clean_and_each_kind_of_change_is_reported() {
     assert!(
         webroot.join("screen/webroot/qapps.xml").is_file(),
         "the placeholder page is written"
+    );
+    assert!(
+        written.contains(&scratch.0.join("components/components.xml")),
+        "the sets' manifest is written"
     );
     assert_eq!(compare_all(&base), Vec::<Difference>::new());
 
@@ -165,11 +170,11 @@ fn a_skeleton_compares_clean_and_each_kind_of_change_is_reported() {
 #[test]
 fn a_skeleton_keeps_existing_files_and_an_existing_webroot_or_tools() {
     let scratch = Scratch::new("keep");
-    let framework = scratch.0.join("base-component/framework");
+    let framework = scratch.0.join("components/base/framework");
     std::fs::create_dir_all(framework.join("conf")).unwrap();
     std::fs::write(framework.join("conf/MoquiDefaultConf.xml"), "mine").unwrap();
-    std::fs::create_dir_all(scratch.0.join("base-component/webroot")).unwrap();
-    std::fs::create_dir_all(scratch.0.join("base-component/tools")).unwrap();
+    std::fs::create_dir_all(scratch.0.join("components/base/webroot")).unwrap();
+    std::fs::create_dir_all(scratch.0.join("components/base/tools")).unwrap();
     let written = write_skeleton(&scratch.0).unwrap();
     assert_eq!(
         std::fs::read_to_string(framework.join("conf/MoquiDefaultConf.xml")).unwrap(),
@@ -177,7 +182,9 @@ fn a_skeleton_keeps_existing_files_and_an_existing_webroot_or_tools() {
     );
     assert!(framework.join("component.xml").is_file());
     assert!(
-        written.iter().all(|path| path.starts_with(&framework)),
+        written
+            .iter()
+            .all(|path| path.starts_with(&framework) || path.ends_with("components/components.xml")),
         "nothing written into a webroot or tools that is there"
     );
 }

@@ -164,7 +164,7 @@ fn every_call_of_the_contract_is_dispatched() {
     for call in super::CALLS {
         assert!(source.contains(&format!("\"{call}\"")), "{call}");
     }
-    let screen = include_str!("../../../../runtime/base-component/webroot/screen/webroot/assist.xml");
+    let screen = include_str!("../../../../runtime/components/base/webroot/screen/webroot/assist.xml");
     for call in super::CALLS {
         assert!(
             screen.contains(&format!("<transition name=\"{call}\"")),

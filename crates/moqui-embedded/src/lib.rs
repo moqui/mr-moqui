@@ -57,7 +57,8 @@ pub enum Set {
     Tools,
     /// The webroot stub, relative to the webroot component's directory.
     Webroot,
-    /// Files only a skeleton runtime gets, relative to `base-component`; never compared.
+    /// Files only a skeleton runtime gets, relative to the runtime directory: the sets' manifest
+    /// (`components/components.xml`) and the placeholder page; never compared.
     Skeleton,
 }
 
@@ -187,15 +188,20 @@ pub fn entries() -> io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Write a skeleton runtime into `runtime_dir`: the framework set into `base-component/framework`; the tools set into
-/// `base-component/tools` when that is not there; and the webroot and skeleton sets into `base-component/webroot` when
-/// that is not there. A file already there is left as it is. Returns the files written.
+/// The sets' manifest in the Skeleton set, written into a runtime that has none.
+const SETS_MANIFEST: &str = "components/components.xml";
+
+/// Write a skeleton runtime into `runtime_dir`: the framework set into `components/base/framework`; the tools set into
+/// `components/base/tools` when that is not there; the webroot set and the placeholder page into
+/// `components/base/webroot` when that is not there; and the sets' manifest, `components/components.xml`, when it is not
+/// there. A file already there is left as it is. Returns the files written.
 ///
 /// # Errors
 ///
 /// Returns an error naming the path when a directory or file cannot be written, or when the archive cannot be read.
 pub fn write_skeleton(runtime_dir: &Path) -> io::Result<Vec<PathBuf>> {
-    let base = runtime_dir.join("base-component");
+    // the base set of moqui_core::context::layout, which this crate does not depend on
+    let base = runtime_dir.join("components/base");
     let with_tools = !base.join("tools").exists();
     let with_webroot = !base.join("webroot").exists();
     let mut written = Vec::new();
@@ -204,7 +210,7 @@ pub fn write_skeleton(runtime_dir: &Path) -> io::Result<Vec<PathBuf>> {
             Set::Framework => base.join("framework").join(&entry.path),
             Set::Tools if with_tools => base.join("tools").join(&entry.path),
             Set::Webroot if with_webroot => base.join("webroot").join(&entry.path),
-            Set::Skeleton if with_webroot => base.join(&entry.path),
+            Set::Skeleton if with_webroot || entry.path == SETS_MANIFEST => runtime_dir.join(&entry.path),
             Set::Tools | Set::Webroot | Set::Skeleton => continue,
         };
         if target.exists() {

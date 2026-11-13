@@ -14,6 +14,10 @@
 
 use super::*;
 
+/// A Java Moqui checkout's component directories (`context::layout::JAVA_DIRS`): its base and add-on ones.
+const JAVA_BASE: &str = moqui_core::context::layout::JAVA_DIRS[0];
+const JAVA_COMPONENT: &str = moqui_core::context::layout::JAVA_DIRS[2];
+
 #[test]
 fn refs_with_a_flag_without_its_value_is_the_usage_error() {
     for flag in ["--server", "--java", "--project"] {
@@ -77,15 +81,15 @@ fn java_checkout_at(dir: &Path) {
 </entities>"#,
     );
     write(
-        "runtime/base-component/tools/component.xml",
+        &format!("runtime/{JAVA_BASE}/tools/component.xml"),
         r#"<component name="tools"/>"#,
     );
     write(
-        "runtime/component/fp-core/component.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/component.xml"),
         r#"<component name="fp-core"/>"#,
     );
     write(
-        "runtime/component/fp-core/entity/PicklistEntities.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/entity/PicklistEntities.xml"),
         r#"<entities>
     <entity entity-name="PicklistBatch" package="fp.picklist">
         <field name="batchId" type="id" is-pk="true"/><field name="statusId" type="id"/>
@@ -99,7 +103,7 @@ fn java_checkout_at(dir: &Path) {
 </entities>"#,
     );
     write(
-        "runtime/component/fp-core/screen/Batch/BatchDetails.xml",
+        &format!("runtime/{JAVA_COMPONENT}/fp-core/screen/Batch/BatchDetails.xml"),
         r#"<screen>
     <transition name="updateBatch">
         <actions><service-call name="update#fp.picklist.PicklistBatch" in-map="[batchId:batchId]"/></actions>
@@ -110,7 +114,7 @@ fn java_checkout_at(dir: &Path) {
     );
 }
 
-/// `moqui refs` on a Java Moqui checkout (no runtime/base-component/framework): found as one, booted with this
+/// `moqui refs` on a Java Moqui checkout (no runtime/components/base/framework): found as one, booted with this
 /// repository's framework conf, its framework's own entities indexed, and a view or relationship that does not
 /// resolve left out of the model with the rest loaded.
 #[test]
@@ -128,7 +132,7 @@ fn a_java_checkout_is_read_directly() {
     let repo_runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
     assert!(java_checkout(&repo_runtime).is_none());
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let framework = repo.join("runtime/base-component/framework");
+    let framework = repo.join("runtime/components/base/framework");
     assert_eq!(
         mr_framework_for(None, Some(&repo.join("target/release/moqui"))).map(|dir| std::fs::canonicalize(dir).unwrap()),
         Some(std::fs::canonicalize(&framework).unwrap())

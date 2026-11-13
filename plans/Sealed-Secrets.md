@@ -239,7 +239,7 @@ path verifies its credential ─► canonical identity ─► one check:
 ### 3.7 Code and data apart
 
 - The server writes only under a data directory: `/var/lib/moqui` (database, uploads, tmp, logs, exports, Git, DAV,
-  `seal.json`). The binary, `base-component`, components and conf are read-only at runtime.
+  `seal.json`). The binary, `components/base`, components and conf are read-only at runtime.
 - The unit sets `ReadWritePaths=/var/lib/moqui` in place of `/opt/moqui`, and adds `CapabilityBoundingSet=`,
   `LockPersonality=yes`, `RestrictSUIDSGID=yes`, `SystemCallFilter=@system-service` and `LimitCORE=0`. Check headless
   Chromium (the `pdf` feature) under each setting before you add it.

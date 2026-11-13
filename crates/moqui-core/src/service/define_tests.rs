@@ -17,7 +17,7 @@ use std::path::PathBuf;
 #[test]
 fn email_services_resolve_rust_locations() {
     let service_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/service/org/moqui");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework/service/org/moqui");
     let paths = [
         service_dir.join("EmailServices.xml"),
         service_dir.join("mail/EmailServices.xml"),

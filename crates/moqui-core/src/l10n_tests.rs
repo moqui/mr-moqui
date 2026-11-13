@@ -302,7 +302,7 @@ fn spanish_catalog_files_match_the_message_keys() {
 
     use moqui_lib::node::MNode;
 
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/component/mr-l10n/data/es");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/addon/mr-l10n/data/es");
     if !l10n_component_present(&root) {
         return;
     }
@@ -492,7 +492,7 @@ fn chinese_catalog_files_match_the_message_keys() {
 
     use moqui_lib::node::MNode;
 
-    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/component/mr-l10n/data");
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/addon/mr-l10n/data");
     if !l10n_component_present(&data) {
         return;
     }

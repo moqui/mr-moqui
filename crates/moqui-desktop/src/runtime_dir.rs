@@ -21,14 +21,7 @@
 use std::path::{Path, PathBuf};
 
 /// The parts of a bundled runtime that come with the app: what `./moq archive --no-data` puts in, less the binary.
-pub(crate) const READ_ONLY: [&str; 6] = [
-    "base-component",
-    "component",
-    "ecomponent",
-    "dev-component",
-    "conf",
-    "MoquiConf.xml",
-];
+pub(crate) const READ_ONLY: [&str; 3] = ["components", "conf", "MoquiConf.xml"];
 
 /// Where the runtime is, before any of it is made.
 #[derive(Debug, PartialEq, Eq)]
@@ -96,7 +89,7 @@ pub(crate) fn find_existing() -> Option<PathBuf> {
 }
 
 /// Link each read-only part in `resources` from `runtime`, replacing a link that points elsewhere (the app moved or
-/// was upgraded). A part the bundle does not have (no `ecomponent`) is skipped.
+/// was upgraded). A part the bundle does not have is skipped.
 fn link_bundled(resources: &Path, runtime: &Path) -> Result<(), String> {
     std::fs::create_dir_all(runtime).map_err(|err| format!("could not create {}: {err}", runtime.display()))?;
     for name in READ_ONLY {

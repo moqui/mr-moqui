@@ -24,14 +24,14 @@ fn runtime_is_found_from_the_start_directory_not_the_executable() {
     std::fs::create_dir_all(&local).unwrap();
     assert_eq!(super::runtime_dir_in(&start), local);
     // The archive layout started in its own directory: the start directory is the runtime.
-    std::fs::create_dir_all(start.join("base-component")).unwrap();
+    std::fs::create_dir_all(start.join("components/base")).unwrap();
     assert_eq!(super::runtime_dir_in(&start), start);
     // runtime in the start directory comes first.
-    std::fs::create_dir_all(local.join("base-component")).unwrap();
+    std::fs::create_dir_all(local.join("components/base")).unwrap();
     assert_eq!(super::runtime_dir_in(&start), local);
     // The desktop app's search still looks beside the executable.
     let archive = root.join("archive");
-    std::fs::create_dir_all(archive.join("base-component")).unwrap();
+    std::fs::create_dir_all(archive.join("components/base")).unwrap();
     assert_eq!(
         super::find_runtime_dir(&root.join("elsewhere/runtime"), Some(&archive.join("moqui"))),
         Some(archive.clone())

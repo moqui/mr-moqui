@@ -30,8 +30,7 @@ COPY entrypoint.sh /usr/local/bin/moqui-entrypoint
 COPY LICENSE.md /opt/moqui/LICENSE.md
 COPY MoquiConf.xml /opt/moqui/MoquiConf.xml
 COPY conf /opt/moqui/conf
-COPY base-component /opt/moqui/base-component
-COPY component /opt/moqui/component
+COPY components /opt/moqui/components
 COPY moqui /opt/moqui/moqui
 
 RUN chmod 755 /opt/moqui/moqui /usr/local/bin/moqui-entrypoint \

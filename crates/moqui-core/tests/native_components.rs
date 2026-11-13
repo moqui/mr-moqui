@@ -274,13 +274,13 @@ impl Runtime {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let framework = root.join("framework");
-        let probe = root.join("component/probe");
+        let probe = root.join("components/addon/probe");
         std::fs::create_dir_all(framework.join("conf")).unwrap();
         std::fs::create_dir_all(probe.join("service")).unwrap();
         std::fs::write(framework.join("component.xml"), "<component name=\"framework\"/>").unwrap();
         std::fs::write(
             framework.join("conf/MoquiDefaultConf.xml"),
-            format!("<moqui-conf><component-list><component-dir location=\"component\"/></component-list><service-facade><service-file location=\"component://{component}/service/Probe.xml\"/></service-facade></moqui-conf>"),
+            format!("<moqui-conf><component-list><component-dir location=\"components/addon\"/></component-list><service-facade><service-file location=\"component://{component}/service/Probe.xml\"/></service-facade></moqui-conf>"),
         )
         .unwrap();
         std::fs::write(
@@ -306,7 +306,7 @@ impl Runtime {
         )
     }
     fn services(&self, xml: &str) {
-        std::fs::write(self.0.join("component/probe/service/Probe.xml"), xml).unwrap();
+        std::fs::write(self.0.join("components/addon/probe/service/Probe.xml"), xml).unwrap();
     }
 }
 impl Drop for Runtime {
@@ -323,7 +323,7 @@ fn attach(factory: &ExecutionContextFactory) {
         },
     )
     .unwrap();
-    let framework = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = EntityFacade::open(
         &framework,
         "transactional",
@@ -678,7 +678,7 @@ fn component_conf_service_files_are_used_for_discovery() {
     );
     runtime.services("<services/>");
     std::fs::write(
-        runtime.0.join("component/probe/service/Extra.xml"),
+        runtime.0.join("components/addon/probe/service/Extra.xml"),
         r#"<services>
         <service verb="echo" type="rust" location="probe::echo" authenticate="false" transaction="ignore"/>
     </services>"#,

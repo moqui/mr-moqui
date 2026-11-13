@@ -65,7 +65,7 @@ fn assert_tsc(dir: &Path, what: &str) {
 fn declarations_for_framework_and_tools_pass_tsc() {
     let files = generate_types(
         &repo().join("runtime"),
-        &repo().join("runtime/base-component/framework"),
+        &repo().join("runtime/components/base/framework"),
     )
     .unwrap();
     let get = |name: &str| files.get(name).unwrap_or_else(|| panic!("no {name}"));

@@ -136,7 +136,7 @@ A `default-property` follows the boot rules:
 
 ## Loading a component
 
-A component placed in a component directory (`runtime/component`, by `./moq component-get` or a git clone) loads at
+A component placed in a component directory (`runtime/components/addon`, by `./moq component-get` or a git clone) loads at
 the next start. System › Components can also load it without a restart.
 
 **Found in a Component Directory** lists the components that discovery finds, as boot finds them, and that are not
@@ -194,8 +194,8 @@ component:
 
 | Storage | Repository | The files the server loads |
 |---|---|---|
-| Database (the default) | a `db` GitRepository, `component-<name>`, that imports the branch | written to `runtime/deployed-component/<name>` |
-| Bare repository on disk | a `remote` GitRepository mirror in `runtime/git/component-<name>` | written to `runtime/deployed-component/<name>` |
+| Database (the default) | a `db` GitRepository, `component-<name>`, that imports the branch | written to `runtime/components/addon/<name>` |
+| Bare repository on disk | a `remote` GitRepository mirror in `runtime/git/component-<name>` | written to `runtime/components/addon/<name>` |
 | Working clone | a normal clone made by the `git` command, which must be installed | the clone, in a component directory (`component` unless named) |
 
 A developer can edit and commit in a working clone. The written files of the other two are output: an update replaces
@@ -245,7 +245,7 @@ A component deployed with the **database** storage reaches every member of a clu
 database. Deploy and Update publish on the `component-deploy` cluster topic, and each other member then works from the
 shared repository:
 
-- it writes the commit's files to its own `runtime/deployed-component`;
+- it writes the commit's files to its own `runtime/components/addon`;
 - it loads the component, or applies the update, as the deploying member did;
 - it does not load the data, which is in the shared database already.
 

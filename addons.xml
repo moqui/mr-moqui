@@ -3,7 +3,7 @@
     Components known to work with MR Moqui, for the ./moq component-get and component-depends tasks; component-get
     also takes a component-set name. To add or override repository, component, and component-set elements, and to set
     the default="a,b" components that component-get gets with no names, use a myaddons.xml file (not in git).
-    ./moq component-create makes a new component from runtime/dev-component/template, not from here.
+    ./moq component-create makes a new component from runtime/components/dev/template, not from here.
 
     Location urls fill in ${group}, ${name}, ${branch}, ${version}, and ${token} from the component element. The Java
     Moqui form ${component.'@group'} also works, so a Java myaddons.xml can be copied as it is.

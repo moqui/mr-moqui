@@ -48,7 +48,7 @@ pub fn server_static_cache_control() -> String {
 }
 const COMPILER_LOCATION: &str = "component://webroot/screen/webroot/libs/vue/compiler-dom.cjs.js";
 const STATIC_MODULE_SOURCE: &str =
-    include_str!("../../../../runtime/base-component/framework/template/screen/ScreenQvtStatic.js");
+    include_str!("../../../../runtime/components/base/framework/template/screen/ScreenQvtStatic.js");
 /// The keys the renderer sets for a paginated list, after the list name.
 pub const PAGE_SUFFIXES: [&str; 6] = [
     "Count",
@@ -266,7 +266,7 @@ fn read_compiler_source(factory: &ExecutionContextFactory) -> Result<String, Err
     #[cfg(test)]
     if found.is_err() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/base-component/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
+            .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
         return std::fs::read_to_string(path).map_err(|err| Error::new(err.to_string()));
     }
     found.map_err(|err| {

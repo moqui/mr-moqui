@@ -689,7 +689,7 @@ fn static_files_are_served_with_validators_compression_and_no_way_out() {
 fn vue_compiler() -> String {
     std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/base-component/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
+            .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
     )
     .unwrap()
 }

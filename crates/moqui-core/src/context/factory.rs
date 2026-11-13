@@ -2127,7 +2127,7 @@ impl ExecutionContextFactory {
 fn with_default_screen_outputs(conf: &MNode) {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"
+        "/../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"
     );
     let defaults = match MNode::parse_file(path) {
         Ok(root) => root.first_named("screen-facade"),

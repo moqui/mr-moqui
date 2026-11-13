@@ -12,7 +12,7 @@ and acceptance walks before adding coverage.
 
 Use a disposable runtime and database with representative demo data. For framework-only review, link only individually tracked base and
 dev component directories into the runtime and leave its addon directory empty: installed addons can extend or hide framework
-screens. Do not symlink the parent `dev-component` directory: component-creation fixtures must create their files only in the disposable runtime. Never link a mutable database, source-editing workspace or external integration configuration into the
+screens. Do not symlink the parent `components/dev` directory: component-creation fixtures must create their files only in the disposable runtime. Never link a mutable database, source-editing workspace or external integration configuration into the
 review runtime. Use the existing binary for screen, CSS and most JavaScript changes. Built-in screen generator modules, including ScreenQvt and ScreenCsv, are embedded
 in the core binary; rebuild when their source changes so the live server actually uses the new generator. Use an
 incremental debug binary for iteration and retain the existing release binary until the final release build.
@@ -28,7 +28,7 @@ A repeatable bootstrap, run from the repository root with the existing release b
 import os, pathlib, shutil, subprocess, tempfile
 repo = pathlib.Path.cwd()
 review = pathlib.Path(tempfile.mkdtemp(prefix="mui-review-", dir="/tmp"))
-for group in ("base-component", "dev-component"):
+for group in ("components/base", "components/dev"):
     (review / group).mkdir()
     tracked = subprocess.check_output(
         ["git", "ls-files", f"runtime/{group}/*/component.xml"], text=True).splitlines()
@@ -41,7 +41,7 @@ for name in ("install", "chromium"):
         (review / name).symlink_to(repo / "runtime" / name, target_is_directory=True)
 (review / "component").mkdir()
 env = dict(os.environ, MOQUI_RUNTIME=str(review),
-    MOQUI_FRAMEWORK=str(review / "base-component/framework"),
+    MOQUI_FRAMEWORK=str(review / "components/base/framework"),
     MOQUI_CONF="conf/MoquiLoadTestConf.xml", instance_purpose="dev", mail_capture_sends="true")
 subprocess.run([str(repo / "target/release/moqui"), "test", "framework", "--spec", "ClientFixtures",
     "--db", "fresh", "--serve", "127.0.0.1:8090", "--log-level", "warn"], env=env, check=True)
@@ -68,8 +68,8 @@ Git activities. Capture mail locally; use fake media and local participants for 
   coordinating agent decides which review agents share an instance and which get their own, and when (major data
   staging or a conflicting setup), and starts further instances as needed on free non-default ports, each with its
   own hostnames. Record each instance's paths, components, loaded data, ports and hostnames.
-- **Components:** the framework-only bootstrap leaves `component/` empty. An application review links Mantle and each
-  application component individually into the review runtime's `component/`, never the parent directory. A linked
+- **Components:** the framework-only bootstrap leaves `components/addon/` empty. An application review links Mantle and each
+  application component individually into the review runtime's `components/addon/`, never the parent directory. A linked
   component is source: uploads, issued files and exports must land in the disposable runtime.
 - **Prerequisites:** check these before the first batch and record which apply. Embedded Postgres can need host
   (unsandboxed) shared memory, with every runner at one process-visibility level. A delegated agent may have no

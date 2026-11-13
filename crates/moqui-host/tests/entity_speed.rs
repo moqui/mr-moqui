@@ -81,7 +81,7 @@ fn entity_facade_speed() {
     let _guard = DirGuard(dir.clone());
     let (cluster, driver) = speed::SpeedDb::start(&dir, 20);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).expect("open entity facade");
     facade
         .check_tables(&[ENUM_TYPE, ENUM, TEST, "moqui.entity.SequenceValueItem"])

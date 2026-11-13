@@ -124,7 +124,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Load every data type | `./moq load` | `./gradlew load` |
 | Load some types | `./moq load seed seed-initial install` | `./gradlew load -Ptypes=seed,seed-initial,install` |
 | Load one component's data | `./moq load seed components=mr-mantle` | `java -jar moqui.war load components=...` |
-| Load one file | `./moq load -l runtime/component/mr-mantle/data/SomeData.xml` | `java -jar moqui.war load location=...` |
+| Load one file | `./moq load -l runtime/components/addon/mr-mantle/data/SomeData.xml` | `java -jar moqui.war load location=...` |
 | Start over with an empty database | `./moq clean-db && ./moq load` | `./gradlew cleanDb load` |
 | Load once, then save a snapshot | `./moq load-save` | `./gradlew loadSave` |
 | Save a snapshot / restore it | `./moq save-db before-upgrade`, `./moq reload-save before-upgrade` | `./gradlew reloadSave` |
@@ -182,8 +182,8 @@ The runtime directory holds everything that varies per instance: components, con
 and secrets ([runtime/README.md](../runtime/README.md)). The binary takes the first of:
 
 1. `MOQUI_RUNTIME`;
-2. `runtime` in the working directory, when it has a `base-component/` directory;
-3. the working directory itself, when it has a `base-component/` directory: an unpacked archive, or `/opt/moqui`,
+2. `runtime` in the working directory, when it has a `components/base/` directory;
+3. the working directory itself, when it has a `components/base/` directory: an unpacked archive, or `/opt/moqui`,
    started in its own directory (`cd /opt/moqui && ./moqui`; the systemd unit and the container set that directory);
 4. a new `runtime` in the working directory.
 
@@ -194,7 +194,7 @@ component with a skeleton runtime written from the files built into the binary (
 
 ### Built-in framework files
 
-The binary carries a copy of the framework and tools components (less their `test/` and `test/acceptance/`) and of a
+The binary carries a copy of the framework and tools components (less their `test/`, which holds both suites) and of a
 webroot stub, listed in `crates/moqui-embedded/webroot-files.txt`: the REST, login, error and html `/apps` screens, and
 the html render mode's style sheet and scripts with the two libraries it loads (Tom Select, SortableJS). Fonts, icons,
 `/qapps` and the web client's JavaScript libraries are not in it. It uses the copy two ways:
@@ -206,9 +206,10 @@ the html render mode's style sheet and scripts with the two libraries it loads (
   file may no longer fit the binary. A file the binary has compiled in (`template/XmlActions.js` and three others) is
   marked as ignored, since its disk copy is never read. `moqui embedded diff [<component>/<path>]` prints the diffs
   and `moqui embedded list` the built-in files.
-- **Skeleton runtime.** A runtime with no `base-component/framework/component.xml`, and no `MOQUI_FRAMEWORK`, gets
-  the framework, and tools and the webroot stub when `base-component/tools` and `base-component/webroot` are not
-  there, with a placeholder page at `/` in place of the web client. It boots, loads the seed data, answers `/rest`
+- **Skeleton runtime.** A runtime with no `components/base/framework/component.xml`, and no `MOQUI_FRAMEWORK`, gets
+  the framework, and tools and the webroot stub when `components/base/tools` and `components/base/webroot` are not
+  there, with a placeholder page at `/` in place of the web client, and the sets' manifest `components/components.xml`
+  when it has none (only the sets it lists load). It boots, loads the seed data, answers `/rest`
   (with the tools `moqui` API), `/Login`, `/status` and the html `/apps` (System, Tools, Dashboards), and runs
   `moqui tui`; links to fonts, icons and the web client are broken until the full webroot is installed, and the
   application components are not there. `moqui embedded extract <dir>` writes the same files into a directory. Files
@@ -219,7 +220,7 @@ bytes, or the start fails with "postgres socket path is N bytes".
 
 The conf is merged in this order:
 
-1. `base-component/framework/conf/MoquiDefaultConf.xml`;
+1. `components/base/framework/conf/MoquiDefaultConf.xml`;
 2. each component's `MoquiConf.xml`, in component order;
 3. the runtime conf, on top.
 
@@ -233,7 +234,7 @@ The runtime conf is the first of these that is found:
 `./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. A running server takes
 a changed conf file without a restart where what reads the setting allows it (System › Conf, `systemctl reload moqui`
 or SIGHUP, and the file watcher on a dev instance), and lists the rest as waiting for a restart
-([Component-Deploy](tools/Component-Deploy.md)). Conf merges add components but never remove one. To leave a component out, keep it out of `runtime/component`. The example dev
+([Component-Deploy](tools/Component-Deploy.md)). Conf merges add components but never remove one. To leave a component out, keep it out of `runtime/components/addon`. The example dev
 component is the exception: `example_disabled=true` leaves it out. The demo dev component is off until
 `demo_disabled=false` or a conf names it ([Public demo server](#public-demo-server)).
 
@@ -736,7 +737,7 @@ with the binary in it.
 ### Podman and Quadlet
 
 `podman/build.sh` builds the Maximal package and the image `localhost/moqui:latest`, with whatever components are in
-`runtime/component`. One volume at `/var/lib/moqui` holds the database, logs, certificates and generated secrets.
+`runtime/components/addon`. One volume at `/var/lib/moqui` holds the database, logs, certificates and generated secrets.
 There are compose stacks for embedded Postgres, an external Postgres, Postgres with OpenSearch, and MySQL with
 OpenSearch, and `podman/quadlet/` runs the single container as a systemd service. Everything is in
 [podman/README.md](../podman/README.md).
@@ -753,11 +754,11 @@ OpenSearch, and `podman/quadlet/` runs the single container as a systemd service
 
    For an external database, use its own backup.
 2. On the build machine, run `./moq git-pull`, then `./moq archive --release --no-data`.
-3. On the server, remove the old `moqui` binary, `base-component/` and `component/`, so files deleted upstream do not
-   linger, and unpack the new archive over `/opt/moqui`:
+3. On the server, remove the old `moqui` binary and `components/`, so files deleted upstream do not linger, and unpack
+   the new archive over `/opt/moqui`:
 
    ```sh
-   sudo rm -rf /opt/moqui/moqui /opt/moqui/base-component /opt/moqui/component
+   sudo rm -rf /opt/moqui/moqui /opt/moqui/components
    sudo cp -a mr-moqui-20261105/. /opt/moqui/ && sudo chown -R moqui:moqui /opt/moqui
    ```
 
@@ -782,7 +783,7 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 ## Public demo server
 
 A server where anyone can try the apps with the `john.doe` / `moqui` login. It runs on the production purpose with
-`conf/MoquiDemoConf.xml`, which loads the demo component (`runtime/dev-component/demo`) and loads all data, demo users
+`conf/MoquiDemoConf.xml`, which loads the demo component (`runtime/components/dev/demo`) and loads all data, demo users
 included, on the first start:
 
 ```sh
@@ -793,7 +794,7 @@ included, on the first start:
 
 The component keeps the apps writable and takes away running code or SQL, bulk import and export, the file manager,
 writes in Tools and System, SSH, WebDAV, MCP, A2A, the LLM gateway, mail to other hosts, and changes that would lock
-visitors out of the shared login ([its README](../runtime/dev-component/demo/README.md)). Restore the saved database on
+visitors out of the shared login ([its README](../runtime/components/dev/demo/README.md)). Restore the saved database on
 a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `instance_purpose=dev`:
 the Dev AIDE loads there.
 
@@ -1157,7 +1158,7 @@ business database. The public machines keep only sessions and their own conf.
 
 In local mode, mr-pass runs in the same runtime as Mantle and makes in-process calls; that is the default when
 `pass_backend_url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
-[docs/Deployment.md](../runtime/component/mr-pass/docs/Deployment.md). This section covers the remote layout.
+[docs/Deployment.md](../runtime/components/addon/mr-pass/docs/Deployment.md). This section covers the remote layout.
 
 The remote calls go over REST, which every package has and which is Lite's default, or over gRPC where the package has
 it (Maximal, Enterprise): direct to the authority's gRPC listener, or from an
@@ -1199,7 +1200,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
 ### A PASS server
 
 1. Make a checkout that has no Mantle. mr-pass declares no `depends-on`, and a conf cannot remove a component that is
-   in `runtime/component`:
+   in `runtime/components/addon`:
 
    ```sh
    git clone https://github.com/moqui/mr-moqui.git pass && cd pass
@@ -1369,7 +1370,7 @@ hand a database to someone else, send a `./moq save-db` save and the matching `e
 
 ## Components
 
-Components live in `runtime/component`, and dev-only ones in `runtime/dev-component`. Each is its own git repository.
+Components live in `runtime/components/addon`, and dev-only ones in `runtime/components/dev`. Each is its own git repository.
 `addons.xml` lists the known components and repositories. A `myaddons.xml` beside it, which is not in git, adds or
 overrides `repository`, `component` and `component-set` elements. It can set `default="a,b"` (what `component-get` gets
 with no names) and `default-repository` on its root.
@@ -1377,13 +1378,13 @@ with no names) and `default-repository` on its root.
 | Task | What it does |
 |---|---|
 | `./moq component-get <name...>` | Get components and the components they depend on (`depends-on` in `component.xml`); a `component-set` name gets the components of the set (`apps`: mr-marble and mr-boss) |
-| `./moq component-depends` | Get missing dependencies of what is in `runtime/component` |
-| `./moq component-create <name>` | Make a component from the component template, `runtime/dev-component/template`: an entity, services, a REST API, screens, data and specs; `--rest` or `--screens` for one part |
+| `./moq component-depends` | Get missing dependencies of what is in `runtime/components/addon` |
+| `./moq component-create <name>` | Make a component from the component template, `runtime/components/dev/template`: an entity, services, a REST API, screens, data and specs; `--rest` or `--screens` for one part |
 | `./moq component-zip [name...]` | Zip components |
 | `./moq git <args>`, `git-status`, `git-pull` | Run git in the root repository and every component repository |
 
 The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev` puts the named components in
-`runtime/dev-component`. A component with a `Cargo.toml` is linked into the binary on the next build
+`runtime/components/dev`. A component with a `Cargo.toml` is linked into the binary on the next build
 ([Native-Components](dev/Native-Components.md)). A new component loads at the next start. System › Components can also
 load it on a running server, with its data, when it has no Rust code
 ([Component-Deploy](tools/Component-Deploy.md#loading-a-component)).
@@ -1415,10 +1416,12 @@ mr-moqui/
   crates/             the Rust workspace: moqui (the binary), moqui-host, moqui-core, moqui-lib, moqui-llm, moqui-db,
                       moqui-tui, moqui-browser
   runtime/            the runtime directory (runtime/README.md)
-    base-component/   framework, tools, webroot
-    component/        components from ./moq component-get (not in git)
-    dev-component/    components that load only on a dev instance: dev-aide, example, demo (off until a conf names
+    components/       the component sets; components.xml lists those that load, in order
+      base/           framework, tools, webroot, basic-comms
+      addon/          components from ./moq component-get or System > Components (not in git)
+      dev/            components that load only on a dev instance: dev-aide, example, demo (off until a conf names
                       it); template for component-create
+      test/           test-only add-on components, loaded on a dev or test instance (not in git)
     conf/             MoquiDevConf.xml, MoquiProductionConf.xml, MoquiDemoConf.xml, MoquiEdgeConf.xml
     cert/ db/ log/ .env   per-instance files (not in git)
   podman/             the image, compose stacks and Quadlet units

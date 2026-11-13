@@ -85,8 +85,8 @@ run_on_tty() {
 # ========== fixture ==========
 
 R=$FIX/root
-mkdir -p "$R/target/release" "$R/runtime/base-component/framework/data" "$R/runtime/base-component/framework/conf" \
-    "$R/runtime/conf" "$R/runtime/component" \
+mkdir -p "$R/target/release" "$R/runtime/components/base/framework/data" "$R/runtime/components/base/framework/conf" \
+    "$R/runtime/conf" "$R/runtime/components/addon" \
     "$R/runtime/install/postgres/18.6.0" "$R/runtime/db/install/18.6.0" "$R/runtime/log" "$R/runtime/tmp" "$R/runtime/opensearch/data/nodes" "$R/runtime/opensearch/logs"
 cp "$SRC/moq" "$R/moq"
 chmod +x "$R/moq"
@@ -123,9 +123,9 @@ export PATH="$R/bin:$PATH"
 echo '<moqui-conf/>' >"$R/runtime/conf/MoquiDevConf.xml"
 echo '<moqui-conf/>' >"$R/runtime/conf/MoquiProductionConf.xml"
 echo '<moqui-conf><default-property name="webapp_http_port" value=""/><default-property name="entity_ds_db_conf" value=""/></moqui-conf>' \
-    >"$R/runtime/base-component/framework/conf/MoquiDefaultConf.xml"
-echo '<entity-facade-xml type="seed">' >"$R/runtime/base-component/framework/data/A.xml"
-echo '<entity-facade-xml type="seed-initial,demo">' >"$R/runtime/base-component/framework/data/B.xml"
+    >"$R/runtime/components/base/framework/conf/MoquiDefaultConf.xml"
+echo '<entity-facade-xml type="seed">' >"$R/runtime/components/base/framework/data/A.xml"
+echo '<entity-facade-xml type="seed-initial,demo">' >"$R/runtime/components/base/framework/data/B.xml"
 echo 'log' >"$R/runtime/log/moqui.log"
 echo 'index' >"$R/runtime/opensearch/data/nodes/x"
 echo 'gc' >"$R/runtime/opensearch/logs/gc.log"
@@ -479,7 +479,7 @@ fi
 check "help chromium-download" 0 'AppArmor profile' -- "$M" help chromium-download
 check "help test-all" 0 'whole regression suite' -- "$M" help test-all
 check "test-all dry run offline webroot" 0 'moqui test-client webroot --offline$' -- dry "$M" test-all
-check "test-all dry run offline dev-aide" 0 'moqui test-client runtime/dev-component/dev-aide --offline$' -- dry "$M" test-all
+check "test-all dry run offline dev-aide" 0 'moqui test-client runtime/components/dev/dev-aide --offline$' -- dry "$M" test-all
 check "test-all dry run turns the demo component on" 0 'moq test --nobuild -D demo_disabled=false demo$' -- dry "$M" test-all
 check "test-all dry run runs cargo test" 0 'cargo test --workspace$' -- dry "$M" test-all
 lacks "test-all dry run has no node suite" 'node --test' -- dry "$M" test-all
@@ -487,23 +487,23 @@ lacks "test-all dry run runs no acceptance test" 'gate3|client_browser|tui_scree
 check "test-all has no --slow" 1 'unknown option --slow' -- "$M" test-all --slow
 check "test-all passes the package on" 0 'moq test-client --debug --nobuild -- webroot --offline' -- dry "$M" test-all --debug
 check "test-all unknown option" 1 'unknown option --fast' -- "$M" test-all --fast
-check "help test-apps" 0 'runtime/component' -- "$M" help test-apps
-check "help test-framework" 0 'base-component and dev-component' -- "$M" help test-framework
+check "help test-apps" 0 'runtime/components/addon' -- "$M" help test-apps
+check "help test-framework" 0 'components/base and components/dev' -- "$M" help test-framework
 check "test-apps with no app component" 0 'No application component' -- dry "$M" test-apps
 lacks "test-apps runs no cargo" 'cargo|moq-test.sh' -- dry "$M" test-apps
 lacks "test-framework runs no app suite" '\(apps\)' -- dry "$M" test-framework
 # an app component and a framework component with specs, a served client suite and an offline one
-mkdir -p "$R/runtime/component/app-x/test/client" "$R/runtime/base-component/fw-x/test/client" \
-    "$R/runtime/component/app-y/test/client"
-printf '<component name="app-x"/>\n' >"$R/runtime/component/app-x/component.xml"
-printf '<component name="app-y"/>\n' >"$R/runtime/component/app-y/component.xml"
-printf '<component name="fw-x"/>\n' >"$R/runtime/base-component/fw-x/component.xml"
-: >"$R/runtime/component/app-x/test/Rule.spec.js"
-: >"$R/runtime/component/app-x/test/client/Walk.spec.js"
-printf 'suite(["Walk"], { server: { components: ["app-x"] } })\n' >"$R/runtime/component/app-x/test/client/suite.js"
-: >"$R/runtime/component/app-y/test/client/Page.spec.js"
-printf '// No server: offline\nsuite(["Page"])\n' >"$R/runtime/component/app-y/test/client/suite.js"
-: >"$R/runtime/base-component/fw-x/test/Fw.spec.js"
+mkdir -p "$R/runtime/components/addon/app-x/test/client" "$R/runtime/components/base/fw-x/test/client" \
+    "$R/runtime/components/addon/app-y/test/client"
+printf '<component name="app-x"/>\n' >"$R/runtime/components/addon/app-x/component.xml"
+printf '<component name="app-y"/>\n' >"$R/runtime/components/addon/app-y/component.xml"
+printf '<component name="fw-x"/>\n' >"$R/runtime/components/base/fw-x/component.xml"
+: >"$R/runtime/components/addon/app-x/test/Rule.spec.js"
+: >"$R/runtime/components/addon/app-x/test/client/Walk.spec.js"
+printf 'suite(["Walk"], { server: { components: ["app-x"] } })\n' >"$R/runtime/components/addon/app-x/test/client/suite.js"
+: >"$R/runtime/components/addon/app-y/test/client/Page.spec.js"
+printf '// No server: offline\nsuite(["Page"])\n' >"$R/runtime/components/addon/app-y/test/client/suite.js"
+: >"$R/runtime/components/base/fw-x/test/Fw.spec.js"
 check "test-apps runs the app specs" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-apps
 check "test-apps serves the app client specs" 0 'moq test-client --nobuild -- --serve app-x$' -- dry "$M" test-apps
 check "test-framework runs the framework specs" 0 'moq test -- fw-x --workers 4$' -- dry "$M" test-framework
@@ -511,32 +511,32 @@ lacks "test-framework leaves the app specs out" 'app-x' -- dry "$M" test-framewo
 check "test-all runs both" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-all
 check "MOQ_TEST_WORKERS sets the workers" 0 'moq test --nobuild -- app-x --workers 2$' -- env MOQ_TEST_WORKERS=2 MOQ_DRY_RUN=1 "$M" test-apps
 # acceptance: its own tree, run only by accept and accept-all
-mkdir -p "$R/runtime/component/app-x/test/acceptance/client"
-: >"$R/runtime/component/app-x/test/acceptance/Sweep.spec.js"
-: >"$R/runtime/component/app-x/test/acceptance/client/Scenario.spec.js"
-printf 'suite(["Scenario"], { server: { components: ["app-x"] } })\n' >"$R/runtime/component/app-x/test/acceptance/client/suite.js"
+mkdir -p "$R/runtime/components/addon/app-x/test/acceptance/client"
+: >"$R/runtime/components/addon/app-x/test/acceptance/Sweep.spec.js"
+: >"$R/runtime/components/addon/app-x/test/acceptance/client/Scenario.spec.js"
+printf 'suite(["Scenario"], { server: { components: ["app-x"] } })\n' >"$R/runtime/components/addon/app-x/test/acceptance/client/suite.js"
 lacks "test-apps runs no acceptance spec" '--acceptance' -- dry "$M" test-apps
-mkdir -p "$R/runtime/component/app-y/test/acceptance"
-: >"$R/runtime/component/app-y/test/acceptance/Only.spec.js"
+mkdir -p "$R/runtime/components/addon/app-y/test/acceptance"
+: >"$R/runtime/components/addon/app-y/test/acceptance/Only.spec.js"
 check "test-apps leaves out test/acceptance" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-apps
-rm -r "$R/runtime/component/app-y/test/acceptance"
+rm -r "$R/runtime/components/addon/app-y/test/acceptance"
 check "accept runs the acceptance specs" 0 'moq test -- app-x --acceptance$' -- dry "$M" accept
 check "accept serves the acceptance client specs" 0 'moq test-client --nobuild -- --serve --acceptance app-x$' -- dry "$M" accept app-x
 check "accept --spec picks the tree of the spec" 0 'moq test-client --nobuild -- --serve --acceptance app-x --spec Scenario$' -- \
     dry "$M" accept --spec Scenario
 lacks "accept --spec leaves out the other tree" 'moq test --' -- dry "$M" accept --spec Scenario
 check "accept of a component with none" 0 'No acceptance specs' -- dry "$M" accept fw-x
-mkdir -p "$R/runtime/component/app-y/acceptance"
+mkdir -p "$R/runtime/components/addon/app-y/acceptance"
 check "accept refuses a top-level acceptance/" 1 'move acceptance/ there .*app-y' -- dry "$M" accept
 check "accept of another component ignores it" 0 'moq test -- app-x --acceptance$' -- dry "$M" accept app-x
-rmdir "$R/runtime/component/app-y/acceptance"
+rmdir "$R/runtime/components/addon/app-y/acceptance"
 check "accept-all runs the Rust acceptance tests" 0 'cargo test-slow$' -- dry "$M" accept-all
 check "accept-all runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens$' -- \
     dry "$M" accept-all
 check "accept-all runs gate3_browser" 0 'cargo test -p moqui-host --test gate3_browser$' -- dry "$M" accept-all
 check "accept-all writes a dated junit directory" 0 '--junit .*/junit/[0-9]{8}-[0-9]{6}$' -- dry "$M" accept-all --junit junit
 check "accept-all takes no component" 1 'unknown argument' -- "$M" accept-all app-x
-rm -rf "$R/runtime/component/app-x" "$R/runtime/component/app-y" "$R/runtime/base-component/fw-x"
+rm -rf "$R/runtime/components/addon/app-x" "$R/runtime/components/addon/app-y" "$R/runtime/components/base/fw-x"
 check "test still resolves to test" 0 'moqui test$' -- dry "$M" test
 check "chromium-download unknown option" 1 'unknown option --full' -- "$M" chromium-download --full
 check "chromium-download bad revision" 1 'snapshot number' -- "$M" chromium-download 12x
@@ -603,27 +603,27 @@ EOF
     check "complete component names" 0 '^comp-a$' -- "$M" __complete 2 component-get comp
     check "complete set names" 0 '^outer$' -- "$M" __complete 2 component-get ''
     check "component-get with depends" 0 'Checked: comp-a, comp-b' -- "$M" component-get comp-a
-    check "component-get cloned dependency" 0 '' -- test -f "$R/runtime/component/comp-b/component.xml"
+    check "component-get cloned dependency" 0 '' -- test -f "$R/runtime/components/addon/comp-b/component.xml"
     check "component-get present" 0 'comp-a is already in' -- "$M" component-get comp-a
     check "component-get skip-get" 0 'Skipping comp-skip' -- "$M" component-get comp-skip
     check "component-get unknown" 1 'not a component or component-set' -- "$M" component-get nope
     check "component-get defaults" 0 'Getting comp-c' -- "$M" component-get
-    rm -rf "$R/runtime/component/comp-c"
+    rm -rf "$R/runtime/components/addon/comp-c"
     check "component-get nested set" 0 'Getting comp-c' -- "$M" component-get outer
-    rm -rf "$R/runtime/component/comp-b"
+    rm -rf "$R/runtime/components/addon/comp-b"
     check "component-depends" 0 'comp-a depends on comp-b' -- "$M" component-depends
     check "component-get bad type" 1 'not git, current' -- "$M" component-get -t svn comp-a
     check "a depends-on names a fork by its component name" 0 'Getting mr-comp-d' -- "$M" component-get comp-e
-    check "the fork goes in its own directory" 0 '' -- test -f "$R/runtime/component/mr-comp-d/component.xml"
+    check "the fork goes in its own directory" 0 '' -- test -f "$R/runtime/components/addon/mr-comp-d/component.xml"
     check "component-depends finds the fork by its component name" 0 'Checked: .*comp-e, mr-comp-d' -- \
         "$M" component-depends
     lacks "component-depends gets no fork that is there" 'Getting' -- "$M" component-depends
     check "component-get by component name" 0 'mr-comp-d is already in' -- "$M" component-get comp-d
-    rm -rf "$R/runtime/component/mr-comp-d" "$R/runtime/component/comp-e"
+    rm -rf "$R/runtime/components/addon/mr-comp-d" "$R/runtime/components/addon/comp-e"
     check "component-get --dev" 0 'Checked: comp-a' -- "$M" component-get --dev comp-a
-    check "component-get --dev clones into dev-component" 0 '' -- test -f "$R/runtime/dev-component/comp-a/component.xml"
-    check "git includes dev-component repos" 0 '== runtime/dev-component/comp-a' -- "$M" git rev-parse HEAD
-    rm -rf "$R/runtime/dev-component"
+    check "component-get --dev clones into components/dev" 0 '' -- test -f "$R/runtime/components/dev/comp-a/component.xml"
+    check "git includes components/dev repos" 0 '== runtime/components/dev/comp-a' -- "$M" git rev-parse HEAD
+    rm -rf "$R/runtime/components/dev"
     check "complete --dev on create" 0 '^--dev$' -- "$M" __complete 2 component-create --de
 
     # Repository: -r, then the component's repository attribute, then default-repository, then how the root
@@ -631,7 +631,7 @@ EOF
     check "complete -r option" 0 '^--repo$' -- "$M" __complete 2 component-get --r
     check "complete -r repositories" 0 '^github-ssh$' -- "$M" __complete 3 component-get -r git
     cp "$R/myaddons.xml" "$FIX/myaddons.xml.bak"
-    rm -rf "$R/runtime/component/comp-c" "$R/runtime/component/comp-b"
+    rm -rf "$R/runtime/components/addon/comp-c" "$R/runtime/components/addon/comp-b"
     sed 's/ default-repository="local"//' "$R/myaddons.xml" >"$R/myaddons.xml.moq-tmp" &&
         cat "$R/myaddons.xml.moq-tmp" >"$R/myaddons.xml"
     rm -f "$R/myaddons.xml.moq-tmp"
@@ -655,9 +655,9 @@ EOF
     # Back to the fixture defaults, with the components the later checks expect in place again.
     "$M" component-get comp-b comp-c >/dev/null
 
-    check "git in each repo" 0 '== runtime/component/comp-a \(master\)' -- "$M" git rev-parse --abbrev-ref HEAD
+    check "git in each repo" 0 '== runtime/components/addon/comp-a \(master\)' -- "$M" git rev-parse --abbrev-ref HEAD
     check "git failure exit" 1 'git failed in:' -- "$M" git rev-parse --verify nope
-    echo change >>"$R/runtime/component/comp-a/component.xml"
+    echo change >>"$R/runtime/components/addon/comp-a/component.xml"
     check "git-status shows change" 0 ' M component.xml' -- "$M" git-status
     lacks "git-status -s hides clean repos" 'comp-b' -- "$M" git-status -s
     echo '<!-- new -->' >>"$FIX/src/comp-b/component.xml"
@@ -688,17 +688,17 @@ EOF
     check "complete git refs" 0 '^master$' -- "$M" __complete 3 git checkout ma
     check "complete git-checkout-all alias refs" 0 '^master$' -- "$M" __complete 2 gitCheckoutAll ma
 
-    # component-create from a copy of the component template (runtime/dev-component/template).
-    mkdir -p "$R/runtime/dev-component"
-    cp -R "$SRC/runtime/dev-component/template" "$R/runtime/dev-component/"
+    # component-create from a copy of the component template (runtime/components/dev/template).
+    mkdir -p "$R/runtime/components/dev"
+    cp -R "$SRC/runtime/components/dev/template" "$R/runtime/components/dev/"
     files_of() { (cd "$1" && find . -type f ! -path './.git/*' | LC_ALL=C sort); }
     check "complete --from templates" 0 '^template$' -- "$M" __complete 3 component-create --from t
-    check "create dry run" 0 'cp -R .*/template/\. .*/component/dry-shop' -- dry "$M" component-create dry-shop
-    check "create dry run writes nothing" 1 '' -- test -e "$R/runtime/component/dry-shop"
-    check "component-create" 0 'Created runtime/component/my-shop from template' -- \
+    check "create dry run" 0 'cp -R .*/template/\. .*/components/addon/dry-shop' -- dry "$M" component-create dry-shop
+    check "create dry run writes nothing" 1 '' -- test -e "$R/runtime/components/addon/dry-shop"
+    check "component-create" 0 'Created runtime/components/addon/my-shop from template' -- \
         "$M" component-create my-shop --myaddons me --git-remote https://example.com/my-shop.git
-    S=$R/runtime/component/my-shop
-    check "create names every file" 0 '' -- test "$(files_of "$S")" = "$(files_of "$R/runtime/dev-component/template" \
+    S=$R/runtime/components/addon/my-shop
+    check "create names every file" 0 '' -- test "$(files_of "$S")" = "$(files_of "$R/runtime/components/dev/template" \
         | sed -e 's/@component@/my-shop/g' -e 's/@Class@/MyShop/g' -e 's/@package@/myshop/g' | LC_ALL=C sort)"
     check "create directories" 0 '' -- test -f "$S/service/myshop/MyShopServices.xml" -a -f "$S/screen/MyShop/FindItem.xml"
     check "create leaves no placeholder" 1 '' -- grep -rE --exclude-dir=.git '@(component|Title|Class|package|ID)@' "$S"
@@ -708,7 +708,7 @@ EOF
     check "create class and package" 0 'entity-name="MyShopItem" package="myshop"' -- cat "$S/entity/MyShopEntities.xml"
     check "create id" 0 'artifactGroupId="MY_SHOP_APP"' -- cat "$S/data/MyShopSecurityData.xml"
     check "create leaves the template as it is" 0 'name="@component@"' -- \
-        cat "$R/runtime/dev-component/template/component.xml"
+        cat "$R/runtime/components/dev/template/component.xml"
     check "create new git repo" 0 'example.com/my-shop.git' -- git -C "$S" remote -v
     check "create myaddons line" 0 'name="my-shop" group="me"' -- cat "$R/myaddons.xml"
     check "create myaddons still closed" 0 '</addons>' -- tail -n 1 "$R/myaddons.xml"
@@ -717,22 +717,22 @@ EOF
     check "create name has no dot" 1 'starts with a letter' -- "$M" component-create my.shop --no-git
     check "create unknown template" 1 'no template nope' -- "$M" component-create other --from nope --no-git
     check "create --rest" 0 'REST API only' -- "$M" component-create my_api --rest --no-git
-    check "create --rest has no screens" 1 '' -- test -e "$R/runtime/component/my_api/screen" -o \
-        -e "$R/runtime/component/my_api/MoquiConf.xml" -o -e "$R/runtime/component/my_api/test/MyApiScreens.spec.js"
-    check "create --rest has no screen sweep" 1 '' -- test -e "$R/runtime/component/my_api/test/acceptance"
+    check "create --rest has no screens" 1 '' -- test -e "$R/runtime/components/addon/my_api/screen" -o \
+        -e "$R/runtime/components/addon/my_api/MoquiConf.xml" -o -e "$R/runtime/components/addon/my_api/test/MyApiScreens.spec.js"
+    check "create --rest has no screen sweep" 1 '' -- test -e "$R/runtime/components/addon/my_api/test/acceptance"
     check "create has the screen sweep in acceptance" 0 '' -- test -f "$S/test/acceptance/MyShopScreenSweep.spec.js"
-    check "create --rest keeps the REST API" 0 '' -- test -f "$R/runtime/component/my_api/service/my_api.rest.xml"
+    check "create --rest keeps the REST API" 0 '' -- test -f "$R/runtime/components/addon/my_api/service/my_api.rest.xml"
     check "create --screens --dev" 0 'Screens only' -- "$M" component-create shop --screens --dev --no-git
-    check "create --screens has no REST API" 1 '' -- test -e "$R/runtime/dev-component/shop/service/shop.rest.xml" -o \
-        -e "$R/runtime/dev-component/shop/data/ShopApiSecurityData.xml"
-    check "create --screens keeps the screens" 0 '' -- test -f "$R/runtime/dev-component/shop/screen/Shop.xml"
+    check "create --screens has no REST API" 1 '' -- test -e "$R/runtime/components/dev/shop/service/shop.rest.xml" -o \
+        -e "$R/runtime/components/dev/shop/data/ShopApiSecurityData.xml"
+    check "create --screens keeps the screens" 0 '' -- test -f "$R/runtime/components/dev/shop/screen/Shop.xml"
     # A template reached through a link: its contents are copied, so filling them in leaves the template as it is.
-    ln -s "$R/runtime/dev-component/template" "$R/runtime/component/linked-template"
+    ln -s "$R/runtime/components/dev/template" "$R/runtime/components/addon/linked-template"
     check "create from a linked template" 0 'Created' -- "$M" component-create via-link --from linked-template --no-git
-    check "a linked template is copied, not linked" 1 '' -- test -L "$R/runtime/component/via-link"
+    check "a linked template is copied, not linked" 1 '' -- test -L "$R/runtime/components/addon/via-link"
     check "a linked template stays a template" 0 'name="@component@"' -- \
-        cat "$R/runtime/dev-component/template/component.xml"
-    rm -rf "$R/runtime/component/linked-template" "$R/runtime/component/via-link" "$R/runtime/dev-component/shop"
+        cat "$R/runtime/components/dev/template/component.xml"
+    rm -rf "$R/runtime/components/addon/linked-template" "$R/runtime/components/addon/via-link" "$R/runtime/components/dev/shop"
 else
     skipped="$skipped git"
 fi
@@ -740,11 +740,11 @@ fi
 if have git && have zip && have unzip && have curl; then
     mkdir -p "$FIX/zips"
     (cd "$FIX/src" && cp -R comp-c comp-c-master && rm -rf comp-c-master/.git && zip -qr "$FIX/zips/comp-c-master.zip" comp-c-master)
-    rm -rf "$R/runtime/component/comp-c"
+    rm -rf "$R/runtime/components/addon/comp-c"
     check "component-get current (zip)" 0 'Downloaded comp-c' -- "$M" component-get -t current comp-c
-    check "zip unpacked one level up" 0 '' -- test -f "$R/runtime/component/comp-c/component.xml"
-    check "component-zip" 0 'Created runtime/component/comp-a-1.0.zip' -- "$M" component-zip comp-a
-    lacks "component-zip leaves out .git" '\.git/' -- unzip -l "$R/runtime/component/comp-a-1.0.zip"
+    check "zip unpacked one level up" 0 '' -- test -f "$R/runtime/components/addon/comp-c/component.xml"
+    check "component-zip" 0 'Created runtime/components/addon/comp-a-1.0.zip' -- "$M" component-zip comp-a
+    lacks "component-zip leaves out .git" '\.git/' -- unzip -l "$R/runtime/components/addon/comp-a-1.0.zip"
     check "complete component-zip" 0 '^comp-a$' -- "$M" __complete 2 component-zip comp-a
 else
     skipped="$skipped zip"
@@ -780,7 +780,7 @@ if have zip && have unzip && have tar && have gzip; then
     for kind in $kinds; do
         if [ "$kind" = zip ]; then list=$zip_list top=$today; else list=$tgz_list top=$tgz_today; fi
         for want in "$top/moqui" "$top/MoquiConf.xml" "$top/README.txt" "$top/conf/MoquiDevConf.xml" \
-            "$top/base-component/" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
+            "$top/components/base/" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
             check "$kind has $want" 0 '' -- grep -qF " $want" <<<"$list"
         done
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \

@@ -242,7 +242,7 @@ on the rows' allocations and instructions, and on M3's rows. Targets: noop#Inlin
 | W11 | A form-list row is copied out of the list, copied again for `_formMap`, and the list's `info` object is converted on every `startFormListRow` | `screen/sri/forms.rs:214`, `596`; `script/host/sri.rs:242` |
 | W12 | A screen unit found without formatting a key and locking, per section per render | `screen/generate.rs:254` |
 | W13 | Wake one worker, the most recently idle, in both pools. Work then stays on few threads, their runtimes stay warm, and the others' idle release can fire | `service/request_pool.rs:142`; `service/pool.rs:596`, `671`, `731`, `1079` |
-| W14 | A `<set value>` with no `${` as a literal, and one with it through `ec.resource.expandNoL10n`: the macro always emits `ec.resource.expand(..)`, a crossing that localizes first, where Java's is a GString that does not (§9 D1) | `runtime/base-component/framework/template/XmlActions.js:46`; `script/oxide/resource.rs:56` |
+| W14 | A `<set value>` with no `${` as a literal, and one with it through `ec.resource.expandNoL10n`: the macro always emits `ec.resource.expand(..)`, a crossing that localizes first, where Java's is a GString that does not (§9 D1) | `runtime/components/base/framework/template/XmlActions.js:46`; `script/oxide/resource.rs:56` |
 | W15 | An in-script `expression` or `condition` formats and hashes its text on each call; `localize` formats a cache key on each call | `script/oxide/resource.rs:242`; `l10n.rs:173` |
 | W16 | `$esc` of the fancy templates: a test before the replace, as `e` of ScreenHtml.js has | `script/template.rs:638` |
 | W17 | `isAnchorLink` copies the whole `UrlInstance` for each link | `script/host/urls.rs:127` |
@@ -327,7 +327,7 @@ the Mantle operations says how much of an operation this is.
   the call site after its first run), the options as bits and the explicit parameters, reads the declared
   in-parameters itself when the in-map is the context (W2), and puts the results where the out-map says. Today the
   result goes host to script to host through `Object.assign`
-  (`runtime/base-component/framework/template/XmlActions.js:336`). The builder stays for scripts people write.
+  (`runtime/components/base/framework/template/XmlActions.js:336`). The builder stays for scripts people write.
 - **S3b. `entity-find-one` and `entity-find` as one crossing,** with the entity's handle, the field map by name and
   the flags, in place of `find().condition().one()`. Target: a cached find from actions 4.45 µs to 1.5 (Rust's is
   0.82).
@@ -482,7 +482,7 @@ Nothing is open as of 2026-11-10. A question that comes up in the work goes here
     through `rounds/r53/profile_table.py`: the phases and host calls; `stacks-B-html.txt`: the `perf` shares;
     `samples3.folded`: the sampler.
 - **The action bodies:** every `actions`, `always-actions`, `pre-actions`, `row-actions` and `condition` element in
-  the XML under `runtime/base-component` and `runtime/component`, counted and sized for this file: 9,125 elements,
+  the XML under `runtime/components/base` and `runtime/components/addon`, counted and sized for this file: 9,125 elements,
   8,743 distinct, 4,516 of them services' `actions`.
 - **The text-keyed lookup:** a std `HashMap<String, _>` of one entry, looked up 200,000 times by a key of 1, 5 and
   16 KB, built with `rustc -O` for this file; not kept.

@@ -84,7 +84,7 @@ fn refs_lists_what_uses_an_entity() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert!(
-        stdout.contains("runtime/dev-component/example/screen/Gallery/ExampleDetail.xml:"),
+        stdout.contains("runtime/components/dev/example/screen/Gallery/ExampleDetail.xml:"),
         "{stdout}"
     );
     let _ = repo();

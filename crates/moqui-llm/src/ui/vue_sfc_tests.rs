@@ -21,7 +21,7 @@ use super::*;
 
 fn compiler() -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
+        .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
     std::fs::read_to_string(path).unwrap()
 }
 
@@ -370,7 +370,7 @@ fn the_reads_block_is_checked_and_decides_what_the_proxy_answers() {
 /// The skill file's sections by slug.
 fn skill_sections() -> std::collections::BTreeMap<String, String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/framework/skill/vue-sfc.md");
+        .join("../../runtime/components/base/framework/skill/vue-sfc.md");
     let text = std::fs::read_to_string(path).unwrap();
     let mut out = std::collections::BTreeMap::new();
     let mut current: Option<String> = None;

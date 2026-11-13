@@ -95,7 +95,7 @@ fn a_component_loads_its_entities_rules_services_and_data() {
     let runtime = temp_dir("moqui-comp-rt");
     let cluster_dir = temp_dir("moqui-comp-pg");
     let _guards = (DirGuard(runtime.clone()), DirGuard(cluster_dir.clone()));
-    let component = runtime.join("component/gate-comp");
+    let component = runtime.join("components/addon/gate-comp");
     for (path, text) in [
         ("component.xml", r#"<component name="gate-comp"/>"#),
         ("entity/GateEntities.xml", ENTITIES),
@@ -107,8 +107,14 @@ fn a_component_loads_its_entities_rules_services_and_data() {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, text).unwrap();
     }
+    // only the sets the manifest lists load
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/components.xml"),
+        runtime.join("components/components.xml"),
+    )
+    .unwrap();
     std::fs::create_dir_all(&cluster_dir).unwrap();
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     load_data(&runtime, &framework, &cluster_dir, &LoadFlags::default()).unwrap();
 
     let (cluster, driver) = EmbeddedCluster::start(&cluster_dir, 10).unwrap();

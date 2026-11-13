@@ -60,7 +60,7 @@ struct Files {
 fn files() -> Files {
     let runtime = TempRuntime::new("conf-view");
     let framework = runtime.path().join("framework");
-    let component = runtime.path().join("component/app");
+    let component = runtime.path().join("components/addon/app");
     std::fs::create_dir_all(framework.join("conf")).unwrap();
     std::fs::create_dir_all(&component).unwrap();
     std::fs::write(framework.join("conf/MoquiDefaultConf.xml"), DEFAULT).unwrap();

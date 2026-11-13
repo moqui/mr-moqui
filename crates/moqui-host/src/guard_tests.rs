@@ -204,7 +204,7 @@ fn a_full_table_serves_new_clients_untracked() {
 fn the_default_conf_is_off_until_there_are_trusted_proxies() {
     let text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"
+        "/../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"
     ))
     .unwrap();
     let node = super::protection_node(&text);

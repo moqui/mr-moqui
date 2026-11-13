@@ -31,7 +31,7 @@ use super::open_entity_facade;
 use super::tests::{temp_cluster_dir, DirGuard};
 
 fn facade_on(driver: Arc<dyn DbDriver>) -> EntityFacade {
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     open_entity_facade(
         &framework,
         driver,
@@ -296,7 +296,7 @@ fn a_statement_that_does_not_prepare_reports_its_own_error() {
 
 /// A pool of one ordinary connection, so each run takes the same session unless one is discarded.
 fn facade_of_one(driver: Arc<dyn DbDriver>) -> EntityFacade {
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     open_entity_facade(
         &framework,
         driver,

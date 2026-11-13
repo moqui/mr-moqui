@@ -66,10 +66,10 @@ The rules of the top level:
 - A script with no `scenario()` cannot run.
 - `moqui test` and `moqui test-client` run only `*.spec.js` files, so neither runs a `.load.js`.
 
-The scripts in the repository: `runtime/base-component/tools/test/load/ServiceCall.load.js` (one service called
-again and again in the server), `runtime/base-component/tools/test/load/AgentApps.load.js` (the apps over SSH as an
-agent drives them, [SSH](#ssh)), `runtime/component/mr-marble/test/load/OrderToCash.load.js` (a sales order through
-the Marble ERP screens), and `runtime/dev-component/example/test/load/ScriptReach.load.js` (a fixture that proves
+The scripts in the repository: `runtime/components/base/tools/test/load/ServiceCall.load.js` (one service called
+again and again in the server), `runtime/components/base/tools/test/load/AgentApps.load.js` (the apps over SSH as an
+agent drives them, [SSH](#ssh)), `runtime/components/addon/mr-marble/test/load/OrderToCash.load.js` (a sales order through
+the Marble ERP screens), and `runtime/components/dev/example/test/load/ScriptReach.load.js` (a fixture that proves
 what a user's engine reaches in a server run).
 
 ## `plan(options)`

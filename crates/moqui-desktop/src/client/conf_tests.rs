@@ -32,14 +32,14 @@ fn write(path: &Path, text: &str) {
 /// A runtime with the framework's default conf (`choose`) and a component directory.
 fn framework(dir: &Path) {
     write(
-        &dir.join("base-component/framework/component.xml"),
+        &dir.join("components/base/framework/component.xml"),
         r#"<component name="moqui-framework"/>"#,
     );
     write(
-        &dir.join("base-component/framework/conf/MoquiDefaultConf.xml"),
+        &dir.join("components/base/framework/conf/MoquiDefaultConf.xml"),
         r#"<moqui-conf>
             <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
-            <component-list><component-dir location="component"/></component-list>
+            <component-list><component-dir location="components/addon"/></component-list>
         </moqui-conf>"#,
     );
 }
@@ -48,9 +48,12 @@ fn framework(dir: &Path) {
 fn the_runtime_conf_wins_over_a_components_and_the_default() {
     let dir = runtime("merged");
     framework(&dir);
-    write(&dir.join("component/app/component.xml"), r#"<component name="app"/>"#);
     write(
-        &dir.join("component/app/MoquiConf.xml"),
+        &dir.join("components/addon/app/component.xml"),
+        r#"<component name="app"/>"#,
+    );
+    write(
+        &dir.join("components/addon/app/MoquiConf.xml"),
         r#"<moqui-conf><client-conf device-mode="shared" prefetch-rooms="5"/></moqui-conf>"#,
     );
     let conf = read(&dir);
@@ -74,17 +77,17 @@ fn no_element_or_no_framework_gives_the_defaults() {
     let dir = runtime("defaults");
     assert_eq!(read(&dir), ClientConf::default());
     write(
-        &dir.join("base-component/framework/component.xml"),
+        &dir.join("components/base/framework/component.xml"),
         r#"<component name="moqui-framework"/>"#,
     );
     write(
-        &dir.join("base-component/framework/conf/MoquiDefaultConf.xml"),
+        &dir.join("components/base/framework/conf/MoquiDefaultConf.xml"),
         "<moqui-conf/>",
     );
     assert_eq!(read(&dir), ClientConf::default());
     // a conf that does not parse: logged, the defaults
     write(
-        &dir.join("base-component/framework/conf/MoquiDefaultConf.xml"),
+        &dir.join("components/base/framework/conf/MoquiDefaultConf.xml"),
         "<moqui-conf>",
     );
     assert_eq!(read(&dir), ClientConf::default());
@@ -94,6 +97,6 @@ fn no_element_or_no_framework_gives_the_defaults() {
 #[test]
 fn the_repositorys_default_conf_asks() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-    let text = std::fs::read_to_string(repository.join("base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
+    let text = std::fs::read_to_string(repository.join("components/base/framework/conf/MoquiDefaultConf.xml")).unwrap();
     assert!(text.contains(r#"<client-conf device-mode="choose""#));
 }

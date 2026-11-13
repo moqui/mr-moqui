@@ -11,9 +11,9 @@ skill and the composer extras, "The calls of 13.14" below).
 
 The code: `crates/moqui-llm/src/assist/` (the calls: `mod.rs` the dispatcher, errors and parameters, `read.rs`,
 `write.rs`, `state.rs` the page state, tail and follow stamp, `prompts.rs` the suggested-prompt providers, `audit.rs`
-the admin services, `canvas.rs` the canvas calls and the read proxy), the webroot subscreen `runtime/base-component/webroot/screen/webroot/assist.xml` (one transition per
+the admin services, `canvas.rs` the canvas calls and the read proxy), the webroot subscreen `runtime/components/base/webroot/screen/webroot/assist.xml` (one transition per
 call, each calling `org.moqui.agent.AssistServices.call#Drawer`), the event stream in
-`crates/moqui-host/src/llm/sse.rs`, and the admin screens under `runtime/base-component/tools/screen/System/Llm/`
+`crates/moqui-host/src/llm/sse.rs`, and the admin screens under `runtime/components/base/tools/screen/System/Llm/`
 (Conversations, Runs, Approvals). Tests: `crates/moqui-llm/src/assist/tests.rs` (the page state, parameters,
 errors) and `crates/moqui-host/tests/it/assist.rs` (every call over HTTP on embedded Postgres with the scripted fake
 provider, the full run → stream → decide → resume flow, and the audit log).
@@ -628,7 +628,7 @@ conversation's owner), so the agent continues from where the user is.
 
 ## The drawer
 
-`runtime/base-component/webroot/screen/webroot/js/WebrootAssist.js` is `moqui.assist`; its tests are
+`runtime/components/base/webroot/screen/webroot/js/WebrootAssist.js` is `moqui.assist`; its tests are
 `test/client/WebrootAssist.spec.js` (`moqui test-client webroot --offline`). It loads on every `/qapps`
 page after `WebrootChat.js` and before `WebrootVue.qvt.js` (`qapps.xml`), so its components are in `moqui.qvtComponents`,
 which the client registers and `WebrootVue.qvt.render.js` precompiles (a `webapp_qvt_static_only` page runs it too); a part
@@ -900,7 +900,7 @@ control); invented `@` functions and JavaScript calls (`functions`); the Query a
 Query no component shows, a visible filter no Query reads (`verify`); a Link that is not a screen path (`links`); a
 patch that renames a statement (`edit`). A program that does not parse is reported for that alone, at most five
 problems an error (the first in full, the others under `also`). Every rule is quoted verbatim in its section of
-`runtime/base-component/framework/skill/openui-lang.md` (a test checks it, and that every signature of the spec is in the
+`runtime/components/base/framework/skill/openui-lang.md` (a test checks it, and that every signature of the spec is in the
 skill), so the error and the skill say the same thing.
 
 **Stored once** (J5). A conversation has one canvas, an `AgentArtifact` of kind `canvas` updated in place: part 1 the
@@ -989,7 +989,7 @@ the skill `vue-sfc` in its index (the skill of a dialect an agent does not write
 `import`, `export default`, `<script setup>` or TypeScript), an optional `<style>` and an optional `<actions>`, a JSON list
 of `{name, label, path, fields, parameters}`: the writes it may ask for. A patch is a program with only the blocks that
 change; each replaces the canvas's block of its name. The skill is
-`runtime/base-component/framework/skill/vue-sfc.md` (sections `shape`, `sandbox`, `bridge`, `widgets`, `example`; every
+`runtime/components/base/framework/skill/vue-sfc.md` (sections `shape`, `sandbox`, `bridge`, `widgets`, `example`; every
 rule of `llm/ui/vue_sfc.rs` is quoted in its section, and the example checks, which a test asserts).
 
 **Checked on the server** (`crates/moqui-llm/src/ui/vue_sfc.rs`) before anything is shown, each problem naming its

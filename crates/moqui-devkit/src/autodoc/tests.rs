@@ -46,12 +46,18 @@ fn project(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&root);
     let framework = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework"
+        "/../../runtime/components/base/framework"
     ))
     .unwrap();
-    std::fs::create_dir_all(root.join("runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(framework, root.join("runtime/base-component/framework")).unwrap();
-    copy_dir(&testdata().join("project"), &root.join("runtime/component"));
+    std::fs::create_dir_all(root.join("runtime/components/base")).unwrap();
+    std::os::unix::fs::symlink(framework, root.join("runtime/components/base/framework")).unwrap();
+    // only the sets the manifest lists load
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/components/components.xml"),
+        root.join("runtime/components/components.xml"),
+    )
+    .unwrap();
+    copy_dir(&testdata().join("project"), &root.join("runtime/components/addon"));
     std::fs::canonicalize(root).unwrap()
 }
 

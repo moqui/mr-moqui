@@ -31,7 +31,7 @@ const COMPONENT_SKIP: [&str; 1] = ["test"];
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let base = manifest.join("../../runtime/base-component");
+    let base = manifest.join("../../runtime/components/base");
     let webroot = base.join("webroot");
     let list = manifest.join("webroot-files.txt");
     let skeleton = manifest.join("skeleton");
@@ -80,6 +80,10 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", skeleton.display());
     collect(&skeleton, "skeleton", &mut files);
+    // the sets' manifest a skeleton runtime needs, since only the sets it lists load (plans/Components-Dir.md)
+    let sets = manifest.join("../../runtime/components/components.xml");
+    println!("cargo:rerun-if-changed={}", sets.display());
+    files.push(("skeleton/components/components.xml".to_string(), sets));
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files.dedup_by(|a, b| a.0 == b.0);

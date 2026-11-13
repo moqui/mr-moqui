@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Dev AIDE, the assisted IDE (plans/design-dev-aide.md): a workspace of the components' repositories and
+    directories with an editor, git and live reload, at /qapps/dev. It gives its users code execution as the server's OS
+    user, so it loads only when instance_purpose is dev: runtime/components/dev is a dev-only component directory, and this
+    purpose keeps a copy elsewhere out too. -->
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd"
+        name="dev-aide" version="${moqui_version}" purpose="dev"/>

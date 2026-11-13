@@ -1,5 +1,5 @@
 # Run the moqui binary with no container. Unpack an archive (./moq archive) at /opt/moqui so the
-# binary's directory is the runtime: /opt/moqui/moqui, base-component/, and MoquiConf.xml.
+# binary's directory is the runtime: /opt/moqui/moqui, components/, and MoquiConf.xml.
 # Create the user first: systemd-sysusers systemd/moqui.sysusers
 # Then: cp systemd/moqui.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now moqui
 

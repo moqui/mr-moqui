@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- The component sets of runtime/components, in load order (plans/Components-Dir.md). Only what is listed here loads;
+    a directory here that is not listed is reported at startup and not loaded. A site with a set of its own lists it here
+    or names it with a component-dir of its own in its runtime conf's component-list. -->
+<components>
+    <!-- The framework's components: framework, tools, webroot and the rest. -->
+    <component-dir location="base"/>
+    <!-- Add-on components, from addons.xml or your own (./moq component-get, System > Components). -->
+    <component-dir location="addon"/>
+    <!-- Loaded only on a dev instance (./moq run, ./moq test); left out with a WARN on any other purpose.
+        ./moq archive leaves this set out unless --with-dev. -->
+    <component-dir location="dev" purpose="dev"/>
+    <!-- Add-on components for testing: regression and acceptance fixtures, cross-component scenarios, pre-production
+        validation. Loaded on a dev instance (where ./moq test runs) and a test instance (staging), never on
+        production; ./moq archive leaves this set out unless --with-tests. -->
+    <component-dir location="test" purpose="dev, test"/>
+</components>

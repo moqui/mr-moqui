@@ -67,11 +67,11 @@ Server options
 
 Environment
   MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
-                     base-component directory, else the working directory itself when it has one, else
+                     components/base directory, else the working directory itself when it has one, else
                      a new runtime in the working directory; never found from this executable, so one
                      binary runs several instances). A runtime with no framework component gets a
                      skeleton one from the files built into this binary.
-  MOQUI_FRAMEWORK    Framework component (default: <runtime>/base-component/framework)
+  MOQUI_FRAMEWORK    Framework component (default: <runtime>/components/base/framework)
   MOQUI_CONF         Runtime conf merged over MoquiDefaultConf.xml, relative to the runtime
                      directory or absolute. Unset uses MoquiConf.xml in the runtime directory,
                      else conf/MoquiDevConf.xml, when that file exists. runtime/.env is read after
@@ -135,7 +135,7 @@ seed, seed-initial, and install. types= with an empty value, or types=all, loads
   moqui load
   moqui load types=seed,seed-initial
   moqui load types=all components=mr-mantle
-  moqui load location=runtime/component/mr-mantle/data/SomeData.xml
+  moqui load location=runtime/components/addon/mr-mantle/data/SomeData.xml
   moqui load raw=true timeout=600
 
 Flags:
@@ -196,8 +196,8 @@ moqui lint [file | --screens [report-file] | --groovy [--all] <dir> ...]
   moqui lint --screens
   moqui lint --screens /tmp/screen-lint.txt
   moqui lint --screens --qvt-static
-  moqui lint --groovy runtime/component/mr-mantle
-  moqui lint --groovy --all runtime/component/mr-mantle
+  moqui lint --groovy runtime/components/addon/mr-mantle
+  moqui lint --groovy --all runtime/components/addon/mr-mantle
 
 Forms:
   moqui lint [file]
@@ -225,8 +225,8 @@ moqui convert --groovy [--write] <dir> ...
 Rewrites map literals, context + [...], Elvis, and EDI grammar files under the given directories.
 Prints the changes. --write writes them to the files. At least one directory is required.
 
-  moqui convert --groovy runtime/component/mr-mantle
-  moqui convert --groovy --write runtime/component/mr-mantle
+  moqui convert --groovy runtime/components/addon/mr-mantle
+  moqui convert --groovy --write runtime/components/addon/mr-mantle
 ";
 
 const TYPES: &str = "\
@@ -257,7 +257,7 @@ instead (its MCP check tool, with the login key moqui tui --server keeps, or MOQ
 --project DIR reads another Moqui project, its layout told from marker paths (no walk of the tree):
 Java Moqui when DIR has framework/src/main/java or framework/src/main/groovy (or framework/build.gradle
 with .java or .groovy files under framework/src) beside runtime/; else MR Moqui when DIR has
-runtime/base-component/framework (a clone) or base-component/framework (a runtime). Neither is an
+runtime/components/base/framework (a clone) or components/base/framework (a runtime). Neither is an
 error naming these. A Java checkout's framework artifacts come from framework/ and its components from
 runtime/, read with MR Moqui's framework conf (beside this executable, or MOQUI_FRAMEWORK). --java DIR
 reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java checkout is found when
@@ -266,7 +266,7 @@ directory on the server's machine, read there into memory on first use and kept 
 (no restart). A definition that does not resolve is logged and left out.
 
   moqui check
-  moqui check runtime/component/my-site/service/my/MyServices.xml
+  moqui check runtime/components/addon/my-site/service/my/MyServices.xml
   moqui check --extensions --json
 ";
 
@@ -285,7 +285,7 @@ instance's artifact index instead (its MCP artifact tool).
 --project DIR reads another Moqui project, its layout told from marker paths (no walk of the tree):
 Java Moqui when DIR has framework/src/main/java or framework/src/main/groovy (or framework/build.gradle
 with .java or .groovy files under framework/src) beside runtime/; else MR Moqui when DIR has
-runtime/base-component/framework (a clone) or base-component/framework (a runtime). Neither is an
+runtime/components/base/framework (a clone) or components/base/framework (a runtime). Neither is an
 error naming these. A Java checkout's framework artifacts come from framework/ and its components from
 runtime/, read with MR Moqui's framework conf (beside this executable, or MOQUI_FRAMEWORK). --java DIR
 reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java checkout is found when
@@ -298,7 +298,7 @@ directory on the server's machine, read there into memory on first use and kept 
   moqui refs component://example/screen/Gallery/ExampleDetail.xml
   moqui refs --project ~/src/moqui 'update#mantle.order.OrderHeader'
   moqui refs --server http://localhost:8080 --project ~/src/moqui --out \
-      ~/src/moqui/runtime/component/my-site/screen/MySite/Order.xml
+      ~/src/moqui/runtime/components/addon/my-site/screen/MySite/Order.xml
 ";
 
 const AUTODOC: &str = "\
@@ -411,7 +411,7 @@ Options:
 
 Agent evaluation (docs/Build-Test.md, Agent evaluation):
   moqui test tools --agents --llm-profile local-qwen --runs 3 --seed 7
-  moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay
+  moqui test tools --agents --replay runtime/components/base/tools/test/agent/replay
 
   --agents                        Run the tasks of test/agent/*.agent.js instead of the specs.
                                   --spec picks agent spec files, --feature tasks by name.
@@ -462,7 +462,7 @@ output goes to server-<n>.log in the --out directory.
   moqui test-client framework
   moqui test-client framework --serve
   moqui test-client framework --spec SecurityAuthn --param user=john.doe
-  moqui test-client runtime/component/my-site/test/client --server https://test.example.com
+  moqui test-client runtime/components/addon/my-site/test/client --server https://test.example.com
   moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results
   moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
   moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
@@ -530,7 +530,7 @@ a histogram's, within about 1.6%.
   moqui test-load mr-marble
   moqui test-load mr-marble --script OrderToCash --server http://localhost:8080 --param pdf=false --label \"MR\"
   moqui test-load mr-marble --script OrderToCash --users 50 --duration 300 --ramp-up 30 --out /tmp/otc
-  moqui test-load runtime/component/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
+  moqui test-load runtime/components/addon/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
   moqui test-load --compare /tmp/otc/java/result.json /tmp/otc/mr/result.json
 
 Options:

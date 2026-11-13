@@ -117,11 +117,11 @@ fn answer(mut stream: TcpStream) {
     let _ = stream.write_all(&answer);
 }
 
-/// A runtime (it has base-component) with a component of two load scripts.
+/// A runtime (it has components/base) with a component of two load scripts.
 fn runtime(dir: &Path) -> PathBuf {
     let runtime = dir.join("runtime");
-    std::fs::create_dir_all(runtime.join("base-component")).unwrap();
-    let component = runtime.join("component/load-stub");
+    std::fs::create_dir_all(runtime.join("components/base")).unwrap();
+    let component = runtime.join("components/addon/load-stub");
     std::fs::create_dir_all(component.join("test/load")).unwrap();
     std::fs::write(component.join("component.xml"), "<component name=\"load-stub\"/>\n").unwrap();
     std::fs::write(
@@ -316,7 +316,7 @@ fn a_run_writes_its_result_where_tools_finds_it_and_compare_reads_two() {
         &runtime,
         &[
             runtime
-                .join("component/load-stub/test/load/Ping.load.js")
+                .join("components/addon/load-stub/test/load/Ping.load.js")
                 .to_str()
                 .unwrap(),
             "--server",
@@ -449,7 +449,7 @@ fn load_ceiling() {
     let dir = temp("ceiling");
     let runtime = runtime(&dir.0);
     std::fs::write(
-        runtime.join("component/load-stub/test/load/Ceiling.load.js"),
+        runtime.join("components/addon/load-stub/test/load/Ceiling.load.js"),
         "plan({ title: \"Ceiling\" })\nscenario(\"get\", { users: 1, duration: 10, run() { http.get(\"/x\", { name: \"get\" }) } })\n",
     )
     .unwrap();

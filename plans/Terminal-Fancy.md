@@ -32,7 +32,7 @@ on the same machine, over a network, or through an Edge Node. It expands the use
    drawer and the tray panel's tabs undock into them in this version, and other things may later.
 
 Paths: `host/` is `crates/moqui-host/src/`, `tui/` is `crates/moqui-tui/src/`, `fw/` is
-`runtime/base-component/framework/`, `webroot/` is `runtime/base-component/webroot/screen/webroot/`.
+`runtime/components/base/framework/`, `webroot/` is `runtime/components/base/webroot/screen/webroot/`.
 
 Contents: [1 today](#1-what-is-there-today) · [2 server sessions](#2-server-side-sessions-what-it-takes) ·
 [3 reference terminals](#3-the-reference-terminals) · [4 decisions](#4-decisions) ·
@@ -819,7 +819,7 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
   installed bundles, a real phone and the Android app against a remote dev server over HTTPS, and a deployed edge node.
 - **The Desktop app and the dev tools.** Its default build had no `devtools` (`maximal` alone, the server's `maximal,
   devtools`), so its node in process offered only the apps. Decided with the user: the app carries the dev tools and
-  the bundle `dev-component`, and the tray's Developer tools (off by default) makes the node a dev instance, with the
+  the bundle `components/dev`, and the tray's Developer tools (off by default) makes the node a dev instance, with the
   Dev AIDE, the command line and shells (`node-purpose`, `MOQUI_DESKTOP_PURPOSE`).
 - **Open.** Claude Code 2.1 asks `OSC 7501 ; ?` itself: answering as Rex does may let it send its status with no
   hooks (§15). A long press on a phone also opens the terminal's context menu beside the copy.

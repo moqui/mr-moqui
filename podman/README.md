@@ -13,7 +13,7 @@ podman/build.sh            # ./moq build --release, then the image localhost/moq
 podman/build.sh --nobuild  # image only, from an existing target/release/moqui
 ```
 
-The image copies `runtime/base-component` and whatever is checked out under `runtime/component` (no `.git` and no `target/`). Add components before building the image.
+The image copies `runtime/components/base` and whatever is checked out under `runtime/components/addon` (no `.git` and no `target/`). Add components before building the image.
 
 The container starts as root so it can chown a new data volume, then drops to uid 1000 before the binary. Embedded Postgres will not run as root. One volume, mounted at `/var/lib/moqui`, holds `db`, `log`, `cert`, `tmp`, `install`, `txlog`, and the generated secrets file. Those paths are symlinks into `/opt/moqui`, which is the runtime directory.
 
@@ -66,7 +66,7 @@ Switching from the embedded stack to an external database does not move the embe
 
 ## systemd, no container
 
-`systemd/moqui.service` runs `/opt/moqui/moqui`. That directory is an unpacked `./moq archive` (or a checkout laid out the same way): the binary, `base-component/`, and `MoquiConf.xml`. The process notifies systemd when the listener is bound (`READY=1`) and when it is stopping (`STOPPING=1`), so the unit is `Type=notify`. An in-app restart execs the binary in the same PID and sends `RELOADING=1` instead, so the unit stays up. No `NOTIFY_SOCKET` means those messages are skipped, which is how `./moq run` behaves.
+`systemd/moqui.service` runs `/opt/moqui/moqui`. That directory is an unpacked `./moq archive` (or a checkout laid out the same way): the binary, `components/`, and `MoquiConf.xml`. The process notifies systemd when the listener is bound (`READY=1`) and when it is stopping (`STOPPING=1`), so the unit is `Type=notify`. An in-app restart execs the binary in the same PID and sends `RELOADING=1` instead, so the unit stays up. No `NOTIFY_SOCKET` means those messages are skipped, which is how `./moq run` behaves.
 
 ```sh
 sudo systemd-sysusers systemd/moqui.sysusers

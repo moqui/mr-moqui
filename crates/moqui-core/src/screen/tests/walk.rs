@@ -243,7 +243,7 @@ fn text_output_conf_has_the_modes_and_the_print_alias() {
 fn the_default_conf_parses_into_the_factory_conf() {
     let conf = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"
+        "/../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"
     ))
     .unwrap();
     let parsed = super::super::cache::ScreenConf::parse(&conf);

@@ -80,7 +80,7 @@ fn service_facade_speed() {
     std::fs::create_dir_all(&runtime).expect("runtime dir");
     let (cluster, driver) = speed::SpeedDb::start(&cluster_dir, 20);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(&runtime, &framework).expect("boot");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).expect("open entity facade");
     attach(&factory, facade.clone());

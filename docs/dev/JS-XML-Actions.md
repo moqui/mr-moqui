@@ -18,7 +18,7 @@ What a service body sees and returns is in [JS-Service-Scripts](JS-Service-Scrip
 | A `<condition>` element (a section, a transition, a response, a rule) | The condition elements below, joined as an `<and>` |
 | A `<seca>`, `<eeca>`, `<emeca>` or `<giteca>` rule's `<actions>` | [Rule actions](#rule-actions) |
 
-The generator is `runtime/base-component/framework/template/XmlActions.js`: one function for each element, which
+The generator is `runtime/components/base/framework/template/XmlActions.js`: one function for each element, which
 returns the JavaScript text for it. `crates/moqui-core/src/script/actions.rs` walks the XML, calls those functions,
 and keeps the result. The module is built into the binary.
 

@@ -137,7 +137,7 @@ From [EntityService-Parity-Review](archive/EntityService-Parity-Review.md), phas
 
 From [ScreenWeb-Parity-Review](archive/ScreenWeb-Parity-Review.md): the screen and web parts of the framework
 (`crates/moqui-core/src/screen/`, `crates/moqui-core/src/web/`, the screen macro modules under
-`runtime/base-component/framework/template/screen/`, and the HTTP host in `crates/moqui-host/src/`).
+`runtime/components/base/framework/template/screen/`, and the HTTP host in `crates/moqui-host/src/`).
 The review's findings that were fixed (2026-10-20 and 2026-10-21) keep the differences below on purpose, and the
 rest are the rows the review found deliberate or a harmless superset (recorded 2026-10-21), then the eight decided on
 2026-10-21 (P7-11, P7-09, P3-05, P6-04, P8-05, P8-08, P9-02, P9-03). P3-03 is the rule that
@@ -173,7 +173,7 @@ rest are the rows the review found deliberate or a harmless superset (recorded 2
 | P8-19 | credentials | The credential parameter names are stripped at every depth of a JSON value (`strip_credential_parameters`, `web/mod.rs`, also `screen/statics.rs`); Java strips only the top level | A password nested in a JSON body is still a password; documented in the doc comment |
 | P9-06 | OPTIONS | Every `OPTIONS` request answers 204 before the path is resolved (`serve_at`, `screen/mod.rs`); Java renders the screen or answers 200 for an allowed preflight | Browsers accept a 204 preflight; nothing asks a screen for its options |
 | P9-12 | log files | The second log file is `moqui-error.log`, at WARN and above (`logging.rs`, `moqui-host`); Java's is `error.log` at ERROR (`ThresholdFilter`) | The port conf's comment documents the name |
-| P9-14 | search proxy | The `/search` and `/dashboard` proxies forward neither `Authorization` nor `Cookie` (`SKIP`, `runtime/base-component/webroot/script/ProxyServlet.js`); Jetty forwards both | Those carry the user's Moqui login and session, which must not reach the search cluster; the servlet's `user` and `password` init-params are sent instead |
+| P9-14 | search proxy | The `/search` and `/dashboard` proxies forward neither `Authorization` nor `Cookie` (`SKIP`, `runtime/components/base/webroot/script/ProxyServlet.js`); Jetty forwards both | Those carry the user's Moqui login and session, which must not reach the search cluster; the servlet's `user` and `password` init-params are sent instead |
 | P9-15 | search proxy | `AuthFilter.js`'s 401 carries `WWW-Authenticate: Basic realm="Moqui"` and the text "Login required"; Java's `MoquiAuthFilter` sends no challenge and the message-facade text | A browser that opens `/dashboard` gets a login prompt |
 | P7-11 | screen link | A transition looked up with no request method (a link, `UrlInstance`) takes the name's `any` transition, then its `get` one, then the first declared (`ScreenDef::transition`, `screen/definition.rs`); Java's `getTransitionItem(name, "")` finds the `any` one or none | Decided 2026-10-21: a link to a name with several methods gets the read-only one. Shipped cases are `webroot.xml` `richTextImage` and BOSS `Unsubscribe.xml` `oneClick` |
 | P7-09 | conf | `screen-text-output` and `screen-output` have no `skip-actions` (`moqui-conf-3.xsd`); Java reads it for `vuet` | Decided 2026-10-21: no conf sets it and the port has no `vuet` mode |
@@ -204,11 +204,11 @@ Behaviour changes made when the [Code-Quality-Review](archive/Code-Quality-Revie
 
 ## Gallery fixes (2026-10-18)
 
-Defects the screen archetype gallery (`runtime/dev-component/example/screen/Gallery/`) found in the qvt render mode and the script runtime; these fixes differ from Java on purpose. The last three rows are gallery findings F4 and F28, fixed after the gallery commit.
+Defects the screen archetype gallery (`runtime/components/dev/example/screen/Gallery/`) found in the qvt render mode and the script runtime; these fixes differ from Java on purpose. The last three rows are gallery findings F4 and F28, fixed after the gallery commit.
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
-| csv render | A `label` writes nothing in the csv render mode; Java's `DefaultScreenMacros.csv.ftl` wrote the label text with no line break, so a screen's captions ran into the header row | An export is the table; the difference is named in the top comment of `runtime/base-component/framework/template/screen/ScreenCsv.js` |
+| csv render | A `label` writes nothing in the csv render mode; Java's `DefaultScreenMacros.csv.ftl` wrote the label text with no line break, so a screen's captions ran into the header row | An export is the table; the difference is named in the top comment of `runtime/components/base/framework/template/screen/ScreenCsv.js` |
 | entity-find | `limit` and `offset` that expand to an empty or non-numeric text apply no limit or offset and log at debug; Java's `as Integer` threw | Failure tolerance (AGENTS.md); `find_count` in `script/runtime/entities.rs` |
 | menus | F4: a subscreen whose screen does not load or parse, or whose menu title or `disable-when` fails, is logged with its location and left out of `sri.getMenuData` (the qvt shell's `menuData`) and `sri.getMenuItems` (the html menu, the app list); its siblings and the parent still show. Java's `getMenuData` throws, so the whole menu answers 500 | Failure tolerance (AGENTS.md); a security error leaves the item out quietly. Doc comment at `leave_out` in `screen/menu.rs` |
 | qvt render | F28: when a section, form, subscreen or included screen fails in the qvt mode, what it wrote is dropped before the error text is written in its place, and a `{` in that text is `&#123;`; Java and the html mode keep the partial output | A qvt response is a Vue template, which does not compile with the elements the failed part left open, and the text is not an interpolation. Doc comment at `guarded` in `screen/sri/sections.rs` |
@@ -328,7 +328,7 @@ found over SSH).
 
 ## Client test harness (2026-10-24)
 
-What the framework's client specs (`runtime/base-component/framework/test/client/`, [ClientTestHarness](archive/ClientTestHarness.md) 7) found different from the Java pytest proofs they port, and keep. A preflight's 204 is P9-06 above. The account lock on the fourth failed login is Java's too (`successiveFailedLogins > max-failures`); the suite only avoids giving `john.doe` a wrong password.
+What the framework's client specs (`runtime/components/base/framework/test/client/`, [ClientTestHarness](archive/ClientTestHarness.md) 7) found different from the Java pytest proofs they port, and keep. A preflight's 204 is P9-06 above. The account lock on the fourth failed login is Java's too (`successiveFailedLogins > max-failures`); the suite only avoids giving `john.doe` a wrong password.
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -375,7 +375,7 @@ What the framework's client specs (`runtime/base-component/framework/test/client
 
 ## EDI and the SFTP poll (2026-11-02)
 
-From the X12 business services port ([runtime/component/mr-mantle/plan/payments-shipping-edi.md](../runtime/component/mr-mantle/plan/payments-shipping-edi.md) E1).
+From the X12 business services port ([runtime/components/addon/mr-mantle/plan/payments-shipping-edi.md](../runtime/components/addon/mr-mantle/plan/payments-shipping-edi.md) E1).
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -411,7 +411,7 @@ A screen's response sent as it renders, and list rows read from a cursor as they
 | Area | Difference | Rationale / where documented |
 |---|---|---|
 | response buffer | A screen's response commits at the `screen-facade` `stream-threshold` (64 KiB) instead of the servlet container's buffer size; a response that set an `ETag` stays whole so it can be answered 304, and a render error after the commit ends the body abnormally (no last chunk, or a stream reset) after its `Error rendering page` text | The client never takes the part it has for a whole page (`web/stream.rs`, `moqui-host/src/http/stream.rs`) |
-| iterator | `EntityFind.iterator()` is Java's `EntityListIterator` (forward only by default, scrolling with `resultSetType` 1004 or 1005 or for update, as Java's `EntityFindBase`), and `use-iterator` makes one. Differences: a paginated find with a limit under `use-iterator` is still a list; on MySQL the rows are read into memory, since its open result takes no other query; a forward-only iterator keeps its last two rows, so one `previous()` works where JDBC's forward-only result set would throw; a list from `list()` has no iterator methods (they were there while `iterator()` gave a list) but keeps `first()` and `last()` as rows | Bounded memory for long lists (`script/host/list_iterator.rs`, `moqui-entity/src/entity/find.rs`, `runtime/base-component/framework/template/XmlActions.js`) |
+| iterator | `EntityFind.iterator()` is Java's `EntityListIterator` (forward only by default, scrolling with `resultSetType` 1004 or 1005 or for update, as Java's `EntityFindBase`), and `use-iterator` makes one. Differences: a paginated find with a limit under `use-iterator` is still a list; on MySQL the rows are read into memory, since its open result takes no other query; a forward-only iterator keeps its last two rows, so one `previous()` works where JDBC's forward-only result set would throw; a list from `list()` has no iterator methods (they were there while `iterator()` gave a list) but keeps `first()` and `last()` as rows | Bounded memory for long lists (`script/host/list_iterator.rs`, `moqui-entity/src/entity/find.rs`, `runtime/components/base/framework/template/XmlActions.js`) |
 | transactions | A `force-new` (or suspended) transaction may begin while an iterator's cursor is open: the cursor waits on the parked connection and reads again when its frame is back, as a Java cursor waits on its connection; it used to be refused | A `requires-new` service for each row of an iterator (`moqui-entity/src/transaction/manager.rs`) |
 | data writer, entity sync, data documents | Records with dependents (or a master) are written as the cursor reads them, and a DataDocument's rows are merged into documents as they are read, as Java iterates them; on MySQL the writer and sync read the rows first | Bounded memory (`entity/data_writer.rs`, `service/system_sync/entity_sync.rs`, `entity/document.rs`) |
 | form-list | A csv, text or xml form-list makes each row (its `row-actions` and field `from`) as it is written, so a row-action's error comes after the rows before it were written, and `_formListResultCount` is set once the last row is written; Java makes every row before the first is written | One row held at a time (`screen/sri/forms.rs`) |

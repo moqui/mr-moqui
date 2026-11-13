@@ -30,8 +30,8 @@ Most of the hosting core is built already ([§2](#2-what-is-there-today)), so th
 ([§3](#3-gaps)), not of a new system.
 
 Paths: `git/` is `crates/moqui-git/src/`, `host/` is `crates/moqui-host/src/`, `core/` is `crates/moqui-core/src/`,
-`fw/` is `runtime/base-component/framework/`, `mantle/` is `runtime/component/mr-mantle/`, `pass/` is
-`runtime/component/mr-pass/`, `boss/` is `runtime/component/mr-boss/`. Every other path is relative to this
+`fw/` is `runtime/components/base/framework/`, `mantle/` is `runtime/components/addon/mr-mantle/`, `pass/` is
+`runtime/components/addon/mr-pass/`, `boss/` is `runtime/components/addon/mr-boss/`. Every other path is relative to this
 repository.
 
 Contents: [0 decisions](#0-decisions) · [1 what moves](#1-what-moves) · [2 today](#2-what-is-there-today) ·
@@ -688,7 +688,7 @@ them.
 | F6 | `push#GitRepository`: a push client over HTTPS, and over SSH on `russh`; mirror rows; a queue and retries. | `git/`, `fw/service/Git.gitecas.xml` |
 | F7 | The CI engine: `ci.xml` and `git-ci-3.xsd`, the records, the queue, job tokens, the runner's REST, logs and artifacts, `moqui ci-run`. | `git/`, `host/`, `fw/` |
 | F8 | Runner drivers: host type services for a run that ends (start with limits and an environment, remove, clean up); the Docker Engine API on Docker and on Podman, over a socket or TLS; the `moqui-build` image in `podman/`; registered runners. | `fw/service/org/moqui/dev/InstanceServices.xml`, `fw/entity/ServerEntities.xml` |
-| F9 | REST for repositories, merge requests, reviews, threads and pipeline runs, in OpenAPI, for the Dev AIDE and for anyone's tools. | `runtime/base-component/tools/service/moqui.rest.xml` |
+| F9 | REST for repositories, merge requests, reviews, threads and pipeline runs, in OpenAPI, for the Dev AIDE and for anyone's tools. | `runtime/components/base/tools/service/moqui.rest.xml` |
 | F10 | An ACME client, for moqui.org and for a site's own host names; [Edge-Node2](Edge-Node2.md#22-not-built) plans it (E15: from a System screen, never on its own). | `host/tls.rs` |
 | F11 | A file system or S3-like store behind content blobs, for artifacts, caches and LFS. In [Remaining-Work](Remaining-Work.md#git-and-git-hosting) already. moqui.org keeps them in the database (D16), with retention, so this waits until their size asks for it. | `crates/moqui-entity/src/resource/blob.rs` |
 | F12 | Later: code search over default branches. | |

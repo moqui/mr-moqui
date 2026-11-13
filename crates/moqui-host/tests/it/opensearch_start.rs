@@ -65,7 +65,7 @@ fn the_search_store_starts_and_stops_a_local_opensearch() {
     }
     let (cluster, driver) = EmbeddedCluster::start(&cluster_dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let factory = moqui_core::context::ExecutionContextFactory::boot_with_framework(&runtime, &framework).unwrap();
     let pool = PoolConfig {
         min: 0,

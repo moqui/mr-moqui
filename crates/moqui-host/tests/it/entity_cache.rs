@@ -50,7 +50,7 @@ fn one_cache_hits_and_sim_write_stays_off_main() {
     let (overlay_cluster, overlay_driver) = EmbeddedCluster::start(&overlay_dir, 20).unwrap();
     let main_driver: Arc<dyn DbDriver> = Arc::new(main_driver);
     let overlay_driver: Arc<dyn DbDriver> = Arc::new(overlay_driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&main_driver), test_pool()).unwrap();
 
     let err = enter_sim(&facade).unwrap_err();
@@ -78,7 +78,7 @@ fn first_enter_sim_starts_the_overlay_and_stop_removes_it() {
     let _main_guard = DirGuard(main_dir.clone());
     let (main_cluster, main_driver) = EmbeddedCluster::start(&main_dir, 20).unwrap();
     let main_driver: Arc<dyn DbDriver> = Arc::new(main_driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&main_driver), test_pool()).unwrap();
     facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
 
@@ -162,7 +162,7 @@ fn a_rolled_back_sim_step_leaves_the_steps_around_it() {
     let (overlay_cluster, overlay_driver) = EmbeddedCluster::start(&overlay_dir, 20).unwrap();
     let main_driver: Arc<dyn DbDriver> = Arc::new(main_driver);
     let overlay_driver: Arc<dyn DbDriver> = Arc::new(overlay_driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&main_driver), test_pool()).unwrap();
     facade.set_sim_transactions(Some(TransactionManager::new(overlay_driver, test_pool()).unwrap()));
     facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
@@ -248,7 +248,7 @@ fn views_in_a_sim_see_the_sims_rows() {
     let (overlay_cluster, overlay_driver) = EmbeddedCluster::start(&overlay_dir, 20).unwrap();
     let main_driver: Arc<dyn DbDriver> = Arc::new(main_driver);
     let overlay_driver: Arc<dyn DbDriver> = Arc::new(overlay_driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&main_driver), test_pool()).unwrap();
     facade.set_sim_transactions(Some(TransactionManager::new(overlay_driver, test_pool()).unwrap()));
     facade
@@ -805,7 +805,7 @@ fn start_facade(label: &str, tables: &[&str], with_overlay: bool) -> Started {
     let mut guards = vec![DirGuard(main_dir.clone())];
     let (main_cluster, main_driver) = EmbeddedCluster::start(&main_dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(main_driver);
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), test_pool()).unwrap();
     let overlay = if with_overlay {
         let overlay_dir = temp_cluster_dir(&format!("{label}-overlay"));

@@ -67,7 +67,7 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
   ports, as `moqui tui --serve` does, for a browser or another device; the window stays on the scheme.
 - **Developer tools:** the tray's "Developer tools (Dev AIDE)" (`node-purpose` in the config directory, `dev`; or
   `MOQUI_DESKTOP_PURPOSE=dev` for a run) restarts the node as a dev instance (`instance_purpose=dev`, in process or the
-  sidecar): the Dev AIDE (`/qapps/dev`) and the example component load from the bundle's `dev-component`, and the
+  sidecar): the Dev AIDE (`/qapps/dev`) and the example component load from the bundle's `components/dev`, and the
   browser terminal offers the command line and shells, local to this computer. Off by default, when the conf says
   (production for a bundle). The default build carries the dev tools (`devtools`); a build without them has no item.
 - **PDF:** where the node finds no Chromium of its own (`moqui_chromium_path`, `runtime/chromium` or an installed one),
@@ -78,7 +78,7 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
 ## The page bridge
 
 `src/bridge.rs` and `src/bridge.js`: an initialization script defines `window.moquiDesktop` on the node's loopback
-origin (and on a client's, [Client of a server](#client-of-a-server)), and the webroot client calls it where present ([webroot js README](../../runtime/base-component/webroot/screen/webroot/js/README.md)).
+origin (and on a client's, [Client of a server](#client-of-a-server)), and the webroot client calls it where present ([webroot js README](../../runtime/components/base/webroot/screen/webroot/js/README.md)).
 
 - **Commands:** `notify` (a native notification; a click shows the window at its link), `set_counts` (the shell's
   counts on the tray and the dock or launcher badge), `set_presence` (the user's presence on the tray), `open_external`
@@ -219,7 +219,7 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
   (`webapp_http_port`, default 8080). Two nodes would share its Postgres. The client mode has no runtime.
 
 The runtime is, in order: `MOQUI_RUNTIME`; in a development run, this repository's `runtime`; the first one with a
-`base-component` directory of `runtime` in the working directory, `runtime` beside the executable (for an AppImage, the
+`components/base` directory of `runtime` in the working directory, `runtime` beside the executable (for an AppImage, the
 `.AppImage` file) and the executable's own directory (the app looks beside itself, since it is started from anywhere;
 `moqui` looks only in its working directory); else the bundled runtime. So
 `MR-Moqui_0.1.0_amd64.AppImage` run from a checkout's root, or with `MOQUI_RUNTIME` set, runs on that runtime and its

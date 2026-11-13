@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- The browser runtime's component sets (runtime/components/components.xml in a server runtime): its framework is
+    read from /moqui/framework, so only the add-on set is here. -->
+<components>
+    <component-dir location="addon"/>
+</components>

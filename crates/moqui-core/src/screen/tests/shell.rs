@@ -449,7 +449,7 @@ fn world_with(dir: &std::path::Path, conf: &str) -> World {
 
 fn shell_services_xml() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/framework/service/org/moqui/ui/ShellServices.xml")
+        .join("../../runtime/components/base/framework/service/org/moqui/ui/ShellServices.xml")
 }
 
 fn load_services(world: &World, services: &[PathBuf]) {
@@ -1094,7 +1094,7 @@ fn shell_counts_come_from_the_service_of_the_users_qapps_theme_and_a_failing_one
 fn the_shell_counts_transition_answers_the_counts_of_the_current_user() {
     let dir = tree("counts-transition");
     let webroot = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/webroot/screen/webroot.xml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot.xml"),
     )
     .unwrap();
     let start = webroot
@@ -1166,7 +1166,7 @@ fn zoned_user(world: &World, user: &str) {
 fn the_counts_service_runs_for_the_current_user_without_service_authorization_in_the_users_zone() {
     let dir = tree("counts-authz");
     let webroot = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/webroot/screen/webroot.xml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot.xml"),
     )
     .unwrap();
     let start = webroot.find("<transition name=\"shellCounts\"").unwrap();

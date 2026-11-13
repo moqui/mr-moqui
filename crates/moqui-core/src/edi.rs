@@ -25,7 +25,7 @@
 //! written as `{}` objects. The handler runs on the thread's `ExecutionContext`, which is why it
 //! lives in core.
 //!
-//! A parse checks the structure, which Java did not (runtime/component/mr-mantle/plan/payments-shipping-edi.md E1):
+//! A parse checks the structure, which Java did not (runtime/components/addon/mr-mantle/plan/payments-shipping-edi.md E1):
 //! each level's segments in grammar order, `MIN` and `MAX` occurrences, and no segment left after the root. Positions
 //! count from the transaction set's first segment (ST is 1), as X12 AK302 does. Element values are not checked: a
 //! mapping that needs required elements, codes or totals checks them itself.

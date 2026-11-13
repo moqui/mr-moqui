@@ -75,7 +75,7 @@ fn remote_rest_runs_on_the_installed_sender_and_a_failure_rolls_back_the_write()
     outbound::install_http_sender(fake.clone());
     let browser = Browser::open(
         &runtime,
-        &crate_dir.join("../../runtime/base-component/framework"),
+        &crate_dir.join("../../runtime/components/base/framework"),
         ":memory:",
     )
     .unwrap();

@@ -39,7 +39,7 @@ fn moqui(args: &[&str]) -> std::process::Output {
         .args(args)
         .current_dir(repo())
         .env("MOQUI_RUNTIME", repo().join("runtime"))
-        .env("MOQUI_FRAMEWORK", repo().join("runtime/base-component/framework"))
+        .env("MOQUI_FRAMEWORK", repo().join("runtime/components/base/framework"))
         .output()
         .unwrap()
 }

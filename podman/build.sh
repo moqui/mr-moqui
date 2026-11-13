@@ -48,10 +48,11 @@ cp -a "$root/LICENSE.md" "$stage/LICENSE.md"
 cp -a "$root/runtime/conf/MoquiProductionConf.xml" "$stage/MoquiConf.xml"
 mkdir -p "$stage/conf"
 cp -a "$root/runtime/conf/." "$stage/conf/"
-copy_tree "$root/runtime/base-component" "$stage/base-component"
-mkdir -p "$stage/component"
-if [ -d "$root/runtime/component" ] && [ -n "$(ls -A "$root/runtime/component")" ]; then
-    copy_tree "$root/runtime/component" "$stage/component"
+mkdir -p "$stage/components/addon"
+cp -a "$root/runtime/components/components.xml" "$stage/components/components.xml"
+copy_tree "$root/runtime/components/base" "$stage/components/base"
+if [ -d "$root/runtime/components/addon" ] && [ -n "$(ls -A "$root/runtime/components/addon")" ]; then
+    copy_tree "$root/runtime/components/addon" "$stage/components/addon"
 fi
 
 # docker format keeps the image HEALTHCHECK. Podman's default OCI format drops it.

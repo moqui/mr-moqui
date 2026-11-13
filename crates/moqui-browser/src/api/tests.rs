@@ -37,7 +37,7 @@ fn json_requests_boot_load_call_render_and_find() {
     for file in ["conf/MoquiDevConf.xml", "screen/Hello.xml"] {
         std::fs::copy(crate_dir.join("runtime").join(file), runtime.join(file)).unwrap();
     }
-    let framework = crate_dir.join("../../runtime/base-component/framework");
+    let framework = crate_dir.join("../../runtime/components/base/framework");
 
     let before = call(&json!({ "op": "find", "entity": "moqui.basic.Enumeration" }));
     assert_eq!(before["ok"], json!(false));

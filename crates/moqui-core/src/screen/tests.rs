@@ -26,11 +26,11 @@ use crate::entity::EntityFacade;
 use crate::web::WebRequest;
 
 fn webroot() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/webroot/screen/webroot.xml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot.xml")
 }
 
 fn tools_rest() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/tools/service/moqui.rest.xml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/tools/service/moqui.rest.xml")
 }
 
 fn test_cookie_key() -> String {

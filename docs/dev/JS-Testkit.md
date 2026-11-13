@@ -66,9 +66,9 @@ runs, each feature in the order written, and `cleanupSpec`. A file that does not
 wrong (an unknown field, a `then` with no `when`), fails as a whole before any feature runs, with every problem
 listed.
 
-The examples in the repository: `runtime/dev-component/example/test/Example.spec.js` (services and tools),
-`runtime/base-component/framework/test/ScreenHtml.spec.js` (a spec with `database: false`), and
-`runtime/component/mr-mantle/test`, the largest set, ported from the Java mantle-usl's Spock specs; its `README.md`
+The examples in the repository: `runtime/components/dev/example/test/Example.spec.js` (services and tools),
+`runtime/components/base/framework/test/ScreenHtml.spec.js` (a spec with `database: false`), and
+`runtime/components/addon/mr-mantle/test`, the largest set, ported from the Java mantle-usl's Spock specs; its `README.md`
 maps Groovy to spec files line by line.
 
 ### `spec({...})`
@@ -245,7 +245,7 @@ context stack, with Java's `Map` and frame methods (`get`, `put`, `containsKey`,
 A bare name is a service's or a screen's script's, not a spec's: in a spec file a bare name is the file's own
 variable, a helper of this page, or a global of the engine. The stack takes only data, so a function or a stub
 object with methods does not go there: keep it in a variable of the file. The stack is cleared before and after
-each spec. `runtime/base-component/framework/test/EcApi.spec.js` shows the calls.
+each spec. `runtime/components/base/framework/test/EcApi.spec.js` shows the calls.
 
 ### `screenTest`
 

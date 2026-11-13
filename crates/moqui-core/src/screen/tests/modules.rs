@@ -392,7 +392,7 @@ fn every_base_component_screen_generates_in_all_three_modes() {
     let _authz = context.disable_authz();
     let facade = ScreenFacade::of(&factory);
     let mut files = Vec::new();
-    for dir in ["base-component", "dev-component/example"] {
+    for dir in ["components/base", "components/dev/example"] {
         collect(&runtime.join(dir), &mut files);
     }
     assert!(files.len() > 100, "{}", files.len());

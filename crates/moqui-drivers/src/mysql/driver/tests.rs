@@ -496,7 +496,8 @@ fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
         return;
     };
     let mariadb = must(driver.connect_mysql()).mariadb;
-    let framework = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let facade = must(crate::entity_facade::open_entity_facade_dialect(
         &framework,
         Arc::new(driver),

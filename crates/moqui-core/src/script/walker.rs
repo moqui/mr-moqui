@@ -114,7 +114,7 @@ pub(crate) mod test_files {
         }
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
         let mut out = Vec::new();
-        for component in ["base-component", "dev-component"] {
+        for component in ["components/base", "components/dev"] {
             visit(&root.join(component), dir, false, &mut out);
         }
         out.sort();

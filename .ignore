@@ -1,5 +1,7 @@
 # Include component source in searches while keeping Git ownership separate.
-!/runtime/component/
-!/runtime/ecomponent/
-!/runtime/dev-component/
-!/runtime/dev-component/*/
+!/runtime/components/addon/
+!/runtime/components/addon/*/
+!/runtime/components/test/
+!/runtime/components/test/*/
+!/runtime/components/dev/
+!/runtime/components/dev/*/

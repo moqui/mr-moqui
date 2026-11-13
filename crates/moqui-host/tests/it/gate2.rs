@@ -50,8 +50,8 @@ fn empty_db_startup_persists_audit_artifact_stack() {
     )
     .unwrap();
     let base =
-        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(&base, runtime.join("base-component")).unwrap();
+        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
+    moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
     let framework = base.join("framework");
     moqui_lib::env::set_property("cluster_https_port", "0");
 
@@ -103,10 +103,10 @@ fn rest_enum_types_login_and_session_survive_restart() {
     let _cluster_guard = DirGuard(cluster_dir.clone());
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&cluster_dir).unwrap();
-    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     let base =
-        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component")).unwrap();
-    std::os::unix::fs::symlink(&base, runtime.join("base-component")).unwrap();
+        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
+    moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
 
     let seed = load_data(&runtime, &framework, &cluster_dir, &LoadFlags::default()).unwrap();
     assert!(seed.enumeration > 0, "enumeration {}", seed.enumeration);

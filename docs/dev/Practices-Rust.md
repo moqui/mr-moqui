@@ -1,7 +1,7 @@
 # MR Moqui Rust practices
 
 A guide for agents and people writing Rust in MR Moqui: the workspace crates (`crates/*`), the framework's component
-crates (`runtime/dev-component/example`, `runtime/dev-component/dev-aide`) and add-on component crates. It covers where
+crates (`runtime/components/dev/example`, `runtime/components/dev/dev-aide`) and add-on component crates. It covers where
 code goes, how a crate is organized, how tests are kept, and the idioms to use. It follows
 [Google's Rust style guide](https://google.github.io/styleguide/rustguide.html) where that helps this code, and says
 where MR Moqui departs from it on purpose (§8).
