@@ -16,7 +16,10 @@ along with this software (see the LICENSE.md file). If not, see
     Comms/Inbox. The component is Mail.qvue next to this file, served in the qvue render mode; it keeps its view in the URL
     (view, account, folder, label, mailbox, q, thread) and calls the JSON transitions below, each a service of
     org.moqui.comms.InboxServices.run#Operation (InboxServices, or an app's inbox-source) or of the mail services it stands on, which check the user's accounts,
-    messages and mailboxes (R21): what the user may not reach is "not found". It keeps the qvt and html render modes, with a
+    messages and mailboxes (R21): what the user may not reach is "not found". An app adds message actions with ext-action
+    slot="message-actions" (the item: store, emailMessageId, communicationEventId; a mail message has the first two, an
+    internal one the last), shown in both of a message's More menus; an action with hook="create-from" posts the
+    createRecord transition, which hands the message to the apps' create-from providers as Chat's createFrom does. It keeps the qvt and html render modes, with a
     line of text for them, because it is the default subscreen of Inbox, the default of the Comms root: a request for
     /apps/Comms.qvt or /apps/Comms/Inbox.qvt (the shell loading those levels) resolves to this screen as its target, and the
     framework refuses a render mode the target does not name. -->
@@ -173,6 +176,20 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'prepare#CreateFromMessage', parameters: {kind: kind || '',
                 emailMessageId: emailMessageId || null, communicationEventId: communicationEventId || null}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {url: out.url, communicationEventId: out.communicationEventId})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a record made from a message by an app's create-from provider (kind: an app's, such as lead), which answers its link; an
+        app offers it with an ext-action on message-actions (hook="create-from"), as Chat's createFrom on chat-message-actions -->
+    <transition name="createRecord">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
+                parameters: {kind: kind || '', emailMessageId: emailMessageId || null, communicationEventId: communicationEventId || null}}).call()
+            const made = (out?.results || []).find((result) => result.recordId) || {}
+            if (!ec.message.hasError() && out?.unavailable) ec.message.addError(ec.l10n.localize('Nothing here makes records from messages'))
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {recordEntityName: made.recordEntityName, recordId: made.recordId, url: made.url,
+                messageInfos: [{type: 'success', message: made.message || ec.l10n.localize('Made'), link: made.url || null,
+                    linkText: ec.l10n.localize('Open')}]})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
