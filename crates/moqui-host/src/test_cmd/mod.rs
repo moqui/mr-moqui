@@ -99,7 +99,7 @@ pub struct TestArgs {
     pub components: Vec<String>,
     pub specs: Vec<String>,
     pub feature: Option<String>,
-    /// `--acceptance`: run the acceptance suite (`acceptance/*.spec.js`) in place of the regression suite (`test/`);
+    /// `--acceptance`: run the acceptance suite (`test/acceptance/*.spec.js`) in place of the regression suite (`test/`);
     /// `--spec` and `dependsOn` resolve across both.
     pub acceptance: bool,
     /// `--workers N`: run the specs in N child processes, each on its own copy of the `--db snapshot` database.
@@ -288,8 +288,8 @@ pub(crate) struct TestComponent {
 }
 
 /// The components in each of the runtime's component sets (`context::layout`; the dev set loads on a dev instance)
-/// that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`, `acceptance` and
-/// `acceptance/client` for their `--acceptance`. By directory name within each set. Not a template, whose name is a
+/// that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`, `test/acceptance` and
+/// `test/acceptance/client` for their `--acceptance`. By directory name within each set. Not a template, whose name is a
 /// placeholder (the dev set's `template`).
 pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
@@ -352,20 +352,22 @@ pub(crate) fn component_name(dir: &Path) -> String {
 /// `test/agent` (`--agents`) under `test`, `test/client/process` (named process specs) under `test/client`.
 fn reserved_subdirs(sub: &str) -> &'static [&'static str] {
     match sub {
-        "test" | "acceptance" => &["client", "agent"],
-        "test/client" | "acceptance/client" => &["process"],
+        // test/load holds load scripts, another command's (moqui test-load)
+        "test" => &["client", "agent", "acceptance", "load"],
+        "test/acceptance" => &["client", "agent"],
+        "test/client" | "test/acceptance/client" => &["process"],
         _ => &[],
     }
 }
 
-/// The tree of a suite: `test` for the regression suite, `acceptance` for the acceptance suite; with `client`, its
+/// The tree of a suite: `test` for the regression suite, `test/acceptance` for the acceptance suite; with `client`, its
 /// `client` subdirectory.
 pub(crate) fn suite_tree(acceptance: bool, client: bool) -> &'static str {
     match (acceptance, client) {
         (false, false) => "test",
         (false, true) => "test/client",
-        (true, false) => "acceptance",
-        (true, true) => "acceptance/client",
+        (true, false) => "test/acceptance",
+        (true, true) => "test/acceptance/client",
     }
 }
 
@@ -384,7 +386,7 @@ pub(crate) fn discover_suite(runtime: &Path, client: bool, acceptance: bool) -> 
                 for spec in extra.specs {
                     if let Some(other) = known.specs.iter().find(|have| have.name == spec.name) {
                         return Err(Error::new(format!(
-                            "{} and {} are both spec {}; a spec name is unique in its component, across test/ and acceptance/",
+                            "{} and {} are both spec {}; a spec name is unique in its component, across test/ and test/acceptance/",
                             spec.display, other.display, spec.name
                         )));
                     }
@@ -397,9 +399,40 @@ pub(crate) fn discover_suite(runtime: &Path, client: bool, acceptance: bool) -> 
     Ok(components)
 }
 
-/// Whether a spec is in the acceptance suite: its display name is `<component>/acceptance/...`.
+/// Whether a spec is in the acceptance suite: its display name is `<component>/test/acceptance/...`.
 pub(crate) fn is_acceptance(spec: &SpecFile) -> bool {
-    spec.display.split('/').nth(1) == Some("acceptance")
+    is_acceptance_display(&spec.display)
+}
+
+/// Whether a spec's display name, `<component>/<tree>/...`, is in the acceptance suite's tree.
+pub(crate) fn is_acceptance_display(display: &str) -> bool {
+    display
+        .split_once('/')
+        .is_some_and(|(_, tree)| tree.starts_with("test/acceptance/"))
+}
+
+/// The components of `names` (or all, when it is empty) that still have their acceptance suite in a top-level
+/// `acceptance/` directory, which moved to `test/acceptance/` (plans/Components-Dir.md), so its specs are not left out
+/// without a word: an acceptance run is refused, and a regression run, which does not read it, says so on stderr.
+pub(crate) fn check_stale_acceptance(runtime: &Path, acceptance: bool, names: &[String]) -> Result<(), Error> {
+    let stale: Vec<String> = layout::component_dirs(runtime, &layout::Set::ALL)
+        .into_iter()
+        .filter(|(_, dir)| dir.join("acceptance").is_dir())
+        .filter(|(_, dir)| names.is_empty() || names.contains(&component_name(dir)))
+        .map(|(_, dir)| dir.display().to_string())
+        .collect();
+    if stale.is_empty() {
+        return Ok(());
+    }
+    let text = format!(
+        "the acceptance suite is in test/acceptance/ now; move acceptance/ there (git mv acceptance test/acceptance) in {}",
+        stale.join(", ")
+    );
+    if acceptance {
+        return Err(Error::new(text));
+    }
+    eprintln!("Warning: {text}");
+    Ok(())
 }
 
 /// The acceptance specs of `components`, without the regression specs of the pool; components left with none are
@@ -591,11 +624,11 @@ pub(crate) fn qualify_spec_names(
     Ok(out)
 }
 
-/// The specs of a component that its own client suites (`test/client/suite.js`, `acceptance/client/suite.js`) name in
+/// The specs of a component that its own client suites (`test/client/suite.js`, `test/acceptance/client/suite.js`) name in
 /// `server.specs`: fixtures that `moqui test-client --serve` runs on its server.
 fn served_fixture_names(component: &TestComponent) -> Vec<String> {
     let mut names = Vec::new();
-    for tree in ["test/client", "acceptance/client"] {
+    for tree in ["test/client", "test/acceptance/client"] {
         let Ok(text) = std::fs::read_to_string(component.dir.join(tree).join("suite.js")) else {
             continue;
         };
@@ -701,6 +734,7 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
     crate::TEST_CONFS.store(true, std::sync::atomic::Ordering::Relaxed);
     let tree = suite_tree(args.acceptance, false);
+    check_stale_acceptance(&runtime, args.acceptance, &args.components)?;
     let mut components = discover_suite(&runtime, false, args.acceptance)?;
     // The components the run takes: those named, and those an acceptance spec's dependsOn reaches.
     let mut wanted = args.components.clone();
@@ -980,8 +1014,8 @@ fn not_loaded(name: &str) -> Error {
     ))
 }
 
-/// The `suite.js` chains of a component in a run, `test/suite.js` and in an acceptance run `acceptance/suite.js` (with
-/// `client`, those of `test/client` and `acceptance/client`), each as the indexes of the specs it lists that the
+/// The `suite.js` chains of a component in a run, `test/suite.js` and in an acceptance run `test/acceptance/suite.js`
+/// (with `client`, those of `test/client` and `test/acceptance/client`), each as the indexes of the specs it lists that the
 /// component has, in its order. A suite.js that cannot be read lists nothing (discovery has already read it).
 pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool, client: bool) -> Vec<Vec<usize>> {
     let trees: &[&str] = if acceptance {
@@ -1009,7 +1043,7 @@ pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool, client: 
 /// component first, then the others in order); a name not in the run orders nothing. The specs a `suite.js` lists
 /// keep its order among themselves, so a spec that waits holds back the ones after it in its chain, as a chain shares
 /// data (a worker unit, `workers.rs`). A cycle is an error naming its specs. `moqui test-client` orders its run the
-/// same way, with `client` for the suite.js chains of `test/client` (and `acceptance/client`).
+/// same way, with `client` for the suite.js chains of `test/client` (and `test/acceptance/client`).
 pub(crate) fn run_order(
     components: &[TestComponent],
     acceptance: bool,

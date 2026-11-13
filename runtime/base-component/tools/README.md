@@ -209,7 +209,7 @@ area's screen (Security's `UserAccount/`), and `UNGUARDED` a transition that act
 
 ```sh
 ./moq test tools                      # the regression specs in test/ (budget in test/budget)
-./moq accept tools                    # the acceptance specs in acceptance/
+./moq accept tools                    # the acceptance specs in test/acceptance/
 ```
 
 `test/load/` holds the shipped load scripts (`ServiceCall.load.js`: one service called again and again in this

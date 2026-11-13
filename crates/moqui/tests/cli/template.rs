@@ -72,5 +72,5 @@ fn a_component_from_the_template_passes_its_specs() {
         "{out}"
     );
     let (_, err, ok) = moqui_test(&runtime, &["tpl-api", "--acceptance"]);
-    assert!(!ok && err.contains("has no acceptance/*.spec.js files"), "{err}");
+    assert!(!ok && err.contains("has no test/acceptance/*.spec.js files"), "{err}");
 }

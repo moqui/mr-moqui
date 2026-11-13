@@ -194,7 +194,7 @@ component with a skeleton runtime written from the files built into the binary (
 
 ### Built-in framework files
 
-The binary carries a copy of the framework and tools components (less their `test/` and `acceptance/`) and of a
+The binary carries a copy of the framework and tools components (less their `test/` and `test/acceptance/`) and of a
 webroot stub, listed in `crates/moqui-embedded/webroot-files.txt`: the REST, login, error and html `/apps` screens, and
 the html render mode's style sheet and scripts with the two libraries it loads (Tom Select, SortableJS). Fonts, icons,
 `/qapps` and the web client's JavaScript libraries are not in it. It uses the copy two ways:

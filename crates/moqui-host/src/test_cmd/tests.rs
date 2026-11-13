@@ -402,17 +402,19 @@ fn specs_in_subdirectories() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// The acceptance suite is a tree of its own: a regression run never sees it; an acceptance run takes only its specs,
-/// with the regression specs in the pool `--spec` and `dependsOn` resolve against; a name is unique across both.
+/// The acceptance suite is a tree of its own, `test/acceptance`: a regression run never sees it (nor `test/load`); an
+/// acceptance run takes only its specs, with the regression specs in the pool `--spec` and `dependsOn` resolve against;
+/// a name is unique across both; a component with a top-level `acceptance/`, where the suite was, is refused.
 #[test]
 fn the_acceptance_tree() {
     let runtime = std::env::temp_dir().join(format!("moqui-test-acceptance-{}", std::process::id()));
-    let comp = runtime.join("component/comp-a");
+    let comp = moqui_core::context::layout::set_dir(&runtime, moqui_core::context::layout::Set::Addon).join("comp-a");
     for sub in [
         "test/client",
-        "acceptance/client",
-        "acceptance/walks",
-        "acceptance/agent",
+        "test/load",
+        "test/acceptance/client",
+        "test/acceptance/walks",
+        "test/acceptance/agent",
     ] {
         std::fs::create_dir_all(comp.join(sub)).unwrap();
     }
@@ -420,21 +422,22 @@ fn the_acceptance_tree() {
     std::fs::write(comp.join("test/Rule.spec.js"), "spec({})").unwrap();
     std::fs::write(comp.join("test/Fixtures.spec.js"), "spec({})").unwrap();
     std::fs::write(comp.join("test/client/Golden.spec.js"), "spec({})").unwrap();
+    std::fs::write(comp.join("test/load/Busy.spec.js"), "spec({})").unwrap();
     std::fs::write(
-        comp.join("acceptance/Sweep.spec.js"),
+        comp.join("test/acceptance/Sweep.spec.js"),
         "spec({ dependsOn: ['Fixtures'] })",
     )
     .unwrap();
-    std::fs::write(comp.join("acceptance/walks/Scenario.spec.js"), "spec({})").unwrap();
-    std::fs::write(comp.join("acceptance/agent/Task.spec.js"), "spec({})").unwrap();
-    std::fs::write(comp.join("acceptance/client/Walk.spec.js"), "spec({})").unwrap();
+    std::fs::write(comp.join("test/acceptance/walks/Scenario.spec.js"), "spec({})").unwrap();
+    std::fs::write(comp.join("test/acceptance/agent/Task.spec.js"), "spec({})").unwrap();
+    std::fs::write(comp.join("test/acceptance/client/Walk.spec.js"), "spec({})").unwrap();
     let names = |components: &[TestComponent]| -> Vec<String> {
         components
             .iter()
             .flat_map(|component| component.specs.iter().map(|spec| spec.name.clone()))
             .collect()
     };
-    // the regression suite never reads acceptance/
+    // the regression suite never reads test/acceptance or test/load
     let regression = discover_suite(&runtime, false, false).unwrap();
     assert_eq!(names(&regression), vec!["Fixtures", "Rule"]);
     // the acceptance pool: the regression specs, then the acceptance ones; a run takes only these
@@ -442,7 +445,11 @@ fn the_acceptance_tree() {
     assert_eq!(names(&pool), vec!["Fixtures", "Rule", "Scenario", "Sweep"]);
     assert_eq!(names(&acceptance_only(pool.clone())), vec!["Scenario", "Sweep"]);
     assert!(is_acceptance(&pool[0].specs[3]));
-    assert_eq!(pool[0].specs[2].display, "comp-a/acceptance/walks/Scenario.spec.js");
+    assert!(!is_acceptance(&pool[0].specs[0]));
+    assert_eq!(
+        pool[0].specs[2].display,
+        "comp-a/test/acceptance/walks/Scenario.spec.js"
+    );
     // --spec resolves dependsOn into the regression tree
     assert_eq!(
         names(&select_across(&pool, &["Sweep".to_string()]).unwrap()),
@@ -455,12 +462,20 @@ fn the_acceptance_tree() {
         vec!["Walk"]
     );
     // one name in both trees
-    std::fs::write(comp.join("acceptance/Rule.spec.js"), "spec({})").unwrap();
+    std::fs::write(comp.join("test/acceptance/Rule.spec.js"), "spec({})").unwrap();
     let err = discover_suite(&runtime, false, true).unwrap_err().to_string();
     assert!(
-        err.contains("comp-a/acceptance/Rule.spec.js") && err.contains("comp-a/test/Rule.spec.js"),
+        err.contains("comp-a/test/acceptance/Rule.spec.js") && err.contains("comp-a/test/Rule.spec.js"),
         "{err}"
     );
+    std::fs::remove_file(comp.join("test/acceptance/Rule.spec.js")).unwrap();
+    // the suite's old place: an acceptance run of the component is refused, a regression run goes on
+    std::fs::create_dir_all(comp.join("acceptance")).unwrap();
+    let err = check_stale_acceptance(&runtime, true, &[]).unwrap_err().to_string();
+    assert!(err.contains("test/acceptance") && err.contains("comp-a"), "{err}");
+    assert!(check_stale_acceptance(&runtime, true, &["comp-a".to_string()]).is_err());
+    assert!(check_stale_acceptance(&runtime, true, &["comp-b".to_string()]).is_ok());
+    assert!(check_stale_acceptance(&runtime, false, &[]).is_ok());
     let _ = std::fs::remove_dir_all(runtime);
 }
 

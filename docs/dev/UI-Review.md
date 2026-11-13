@@ -195,7 +195,7 @@ Established client patterns to reuse rather than reinvent:
 - **Focus restore:** find controls by a `data-action`, not by a visible or accessible label that may be localized.
 
 Use existing tests when they already cover the behavior. Focused rule/bug regressions belong in `test/`; complete
-activities, responsive/access walks and sweeps belong in `acceptance/`. Follow the testing skill's rendering and
+activities, responsive/access walks and sweeps belong in `test/acceptance/`. Follow the testing skill's rendering and
 budget limits. Measured theme and geometry checks of shared components
 belong in an offline acceptance client suite (a `suite.js` with no server, such as webroot's `ThemeLayout`), which
 `./moq accept` runs with `--offline`. `moqui lint --screens [report-file]` lints every component's screens; its

@@ -496,7 +496,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq test-apps                # the application tests: the specs of runtime/component, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of base-component and dev-component
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
-./moq accept mr-boss           # a component's acceptance suite (acceptance/), only when asked
+./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only when asked
 ./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
 ./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
@@ -551,22 +551,26 @@ The engine is [moqui/quickjs-oxide](https://github.com/moqui/quickjs-oxide), pin
 |---|---|---|
 | Purpose | Catch a regression while developing: does what I changed break a rule? | Validate the system: complete scenarios, access and isolation walks, one screen sweep per app and mode, browser walks, load and media |
 | When | While working (the specs of what you touch) and before every commit | On a schedule, before a release, and when asked |
-| Where | `test/**/*.spec.js`, `test/client/**/*.spec.js` | `acceptance/**/*.spec.js`, `acceptance/client/**/*.spec.js` |
+| Where | `test/**/*.spec.js`, `test/client/**/*.spec.js` (outside `test/acceptance`) | `test/acceptance/**/*.spec.js`, `test/acceptance/client/**/*.spec.js` |
 | Command | `moqui test`, `moqui test-client`, `./moq test-apps`, `./moq test-framework`, `./moq test-all` | `./moq accept [component...]` (`moqui test --acceptance`, `moqui test-client --acceptance`), `./moq accept-all` |
 | Failure | Blocks the commit | Reported; a test that fails on two runs in a row is fixed or deleted |
 
-A spec is in one suite or the other by the directory it is in. No option of the regression commands pulls in an
+A spec is in one suite or the other by the directory it is in. Everything that is a test sits under a component's
+`test/`: the regression specs at its top and the special subdirectories `client` (client specs), `acceptance` (the
+acceptance suite, with its own `client`), `agent` (agent replays) and `load` (load scripts). An acceptance run of a component
+that still has a top-level `acceptance/`, the suite's old place, is refused with the command that moves it (`moqui test
+--acceptance`, `moqui test-client --acceptance`, `./moq accept`); a regression run warns. No option of the regression commands pulls in an
 acceptance test. A regression test checks one rule or a fixed bug: a service's result and refusals, a posting, a state
 change, the one render of a screen with logic of its own, one golden-path walk per app. An acceptance test checks a
 scenario or the system: a plan's "usable when" walk (server side or in a browser), an access or isolation walk over
 every route and group, a sweep of every screen of an app in a mode, a browser walk of a flow, a load or media test.
 Acceptance tests can be deleted freely, since nothing depends on them.
 
-- **Discovery.** `moqui test` and `moqui test-client` never read `acceptance/`. With `--acceptance` they run only the
-  acceptance specs (`acceptance/*.spec.js` and `acceptance/client/*.spec.js`, with `acceptance/suite.js` and
-  `acceptance/client/suite.js` giving the order and the server). `--spec` and `dependsOn` resolve across both trees, so
+- **Discovery.** `moqui test` and `moqui test-client` never read `test/acceptance/`. With `--acceptance` they run only the
+  acceptance specs (`test/acceptance/*.spec.js` and `test/acceptance/client/*.spec.js`, with `test/acceptance/suite.js` and
+  `test/acceptance/client/suite.js` giving the order and the server). `--spec` and `dependsOn` resolve across both trees, so
   an acceptance spec can depend on a regression fixture. A spec's name is unique across both trees of a component.
-- **Fixtures.** Acceptance fixtures live under `acceptance/`, never in `test/`. Helper libraries a spec loads by
+- **Fixtures.** Acceptance fixtures live under `test/acceptance/`, never among the regression specs. Helper libraries a spec loads by
   `component://<component>/test/...` stay in `test/`, for both suites.
 - **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, which runs
   those of the host modules its alias in `.cargo/config.toml` names: `tools_screens`, `gate2`, `tool_components`,
@@ -594,7 +598,7 @@ user's agreement, like any other performance regression; cut duplicates or move 
 
 ### Rendering screens in tests
 
-These rules are the regression suite's. A sweep has one place, `acceptance/`, and one per app per mode.
+These rules are the regression suite's. A sweep has one place, `test/acceptance/`, and one per app per mode.
 
 - No regression test walks every screen of an app or of all apps, or every screen in every render mode. These have been
   deleted before and keep coming back; do not add one. Rendering as such is the framework's (its goldens and `moqui lint
@@ -644,7 +648,7 @@ another) waits for it, with the specs after it in its `suite.js` chain, and the 
 cycle fails the run before any spec runs. So a spec's name need not sort after its fixture's: name the fixture in
 `dependsOn`. `moqui test-client` orders its specs the same way, its components after their `component.xml`
 `depends-on` ([JS-Test-Client](dev/JS-Test-Client.md#files-and-order)). A run with no `--spec` leaves out each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
-`acceptance/client/suite.js`), unless a spec that runs depends on it: `moqui test-client --serve` runs it on its
+`test/acceptance/client/suite.js`), unless a spec that runs depends on it: `moqui test-client --serve` runs it on its
 server, so a plain run would make the same data twice. `./moq test --debug` uses the debug
 binary.
 
@@ -653,7 +657,7 @@ binary.
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js` (`component/Name` for one component's, where two have a spec of the name), with the specs their `dependsOn` names, each run before the spec that names it. With components named, a name is a spec of those components; a `dependsOn` name the spec's own component lacks is found in the other components of the pool, and its component joins the run (`moqui test mr-boss --spec X` brings the mr-pass specs X depends on) |
 | `--feature text` | Only the features whose names contain the text |
 | `--workers N` | Run the specs in N child processes, each on its own copy of the `--db snapshot` database, which the run makes once first. A component's `suite.js` chain and what a spec's `dependsOn` names stay in one worker; every other spec may run in any worker, on a database without the other specs' writes, so a spec that reads another spec's data names it in `dependsOn`. The summary, JUnit files and feature times are of the whole run; each worker's results and log are under `runtime/tmp/test-workers-<pid>`, kept when the run does not pass (or with `--keep`) and removed when it does. Not with `--serve` |
-| `--acceptance` | The acceptance specs (`acceptance/`) in place of the regression specs; `--spec` and `dependsOn` resolve across both ([The two suites](#the-two-suites)) |
+| `--acceptance` | The acceptance specs (`test/acceptance/`) in place of the regression specs; `--spec` and `dependsOn` resolve across both ([The two suites](#the-two-suites)) |
 | `--db fresh` | The default: load every data type into a scratch runtime, removed at the end unless `--keep`. Needs `embedded-postgres` |
 | `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the components the run loads (which the conf and the instance purpose decide: a dev component loads only on a dev instance), their entity and data files and the crate version are unchanged. On a dev instance the snapshot also holds the artifact index (the Dev AIDE's), built after the data, so a spec's server reads only the files changed since rather than every component's. When a run ends it removes the other snapshots no run has used for an hour (superseded by another day or changed files); the one it used stays for the next run. A relink keeps the snapshots; after a change to how the binary loads data, remove `runtime/save/test-*` |
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
@@ -668,7 +672,7 @@ The console has a line per feature, and the failures in full at the end. Any fai
 
 ### Files and order
 
-A regression spec is `<component>/test/<Name>.spec.js`, and an acceptance spec `<component>/acceptance/<Name>.spec.js`, or in a subdirectory of `test/` to group a busy component's specs (mr-mantle
+A regression spec is `<component>/test/<Name>.spec.js`, and an acceptance spec `<component>/test/acceptance/<Name>.spec.js`, or in a subdirectory of `test/` to group a busy component's specs (mr-mantle
 by service directory, `test/order/OrderToCashBasicFlow.spec.js`; mr-boss by screen directory). Its name is the file
 name, wherever it is, so it must be unique in the component. `test/suite.js`, `suite(["SpecA", "SpecB"])`, gives the
 order; the other spec files run after it, by name. Each spec runs in its own execution context, on the one

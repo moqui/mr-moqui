@@ -3,7 +3,7 @@
 // user with no party (users only) uses the mail settings; the user search leaves out disabled and system accounts; the
 // provider hooks answer for the apps the user may open, and a hook nobody declares is unavailable; Settings, Chat apps
 // says which app passwords work with XMPP apps. The every-screen render is not a regression test (one sweep per app per
-// mode belongs in acceptance/).
+// mode belongs in test/acceptance/).
 // Run: ./moq test basic-comms --spec BasicComms
 const root = "component://basic-comms/screen/BasicComms.xml"
 const webroot = "component://webroot/screen/webroot.xml"

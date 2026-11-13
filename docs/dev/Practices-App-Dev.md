@@ -75,7 +75,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
 | `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([JS-Test-Client](JS-Test-Client.md)). |
 | `./moq test-apps` | The regression suite of every app component, before a commit ([The two suites](../Build-Test.md#the-two-suites)). |
-| `./moq accept <component> [--spec S]` | The acceptance suite (`acceptance/`), only when asked or when you add or change an acceptance test. |
+| `./moq accept <component> [--spec S]` | The acceptance suite (`test/acceptance/`), only when asked or when you add or change an acceptance test. |
 | `target/release/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
 | `moqui lint [service-file]`, `moqui lint --groovy <dir>` | Service expression lint; leftover Groovy. |
 | `moqui tui`, `moqui tui --server` | The terminal UI, to see a screen's `tui` rendering. |
@@ -488,7 +488,7 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 
 There are two suites ([The two suites](../Build-Test.md#the-two-suites), the
 [testing skill](../../.agents/skills/testing/SKILL.md)): the **regression suite** (`test/`), small rule tests run while
-working and before every commit, and the **acceptance suite** (`acceptance/`), complete scenarios run on a schedule,
+working and before every commit, and the **acceptance suite** (`test/acceptance/`), complete scenarios run on a schedule,
 before a release or when asked. Say which suite a new test goes in, and why. Regression tests check rules, not pages:
 write one for a business rule you add or change (its result and its refusals) and for a bug you fix.
 
@@ -539,7 +539,7 @@ write one for a business rule you add or change (its result and its refusals) an
   A phone-width (390 px) check is an acceptance test; a theme is checked only where a feature depends on it.
 - Open the browser pages in `setupSpec`, one per user and width. Module variables are not shared between cases.
 - **Walks.** The regression suite has one golden-path client walk per app (`test/client/`), kept current. Every other
-  walk is an acceptance test (`acceptance/client/`): a plan's "usable when" scenario, server side through the screens'
+  walk is an acceptance test (`test/acceptance/client/`): a plan's "usable when" scenario, server side through the screens'
   transitions or in a browser, a phone-width check, an access or isolation walk. A walk has a user with only the
   needed grants, every click a user makes, and an assertion of the result.
 - Click what the user clicks. A menu item that holds a dialog or link is a `q-item` around a button: click the button

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 // The acceptance sweep of @Title@ (screen/@Class@.xml): every screen renders in the browser (qvt) and the terminal
-// (tui) without errors. One sweep per app per mode, in acceptance/ only: a regression spec renders a screen only for
+// (tui) without errors. One sweep per app per mode, in test/acceptance/ only: a regression spec renders a screen only for
 // logic of its own (test/@Class@Screens.spec.js).
 // Run: ./moq accept @component@
 

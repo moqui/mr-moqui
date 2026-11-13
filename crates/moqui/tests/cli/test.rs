@@ -116,7 +116,7 @@ fn the_fixture_suite_passes_in_suite_order_and_writes_junit() {
     assert!(!err.contains("could not remove the scratch runtime"), "{err}");
 }
 
-/// The acceptance suite is a tree of its own: `--acceptance` runs only `acceptance/`, and `slow` is not a field.
+/// The acceptance suite is a tree of its own: `--acceptance` runs only `test/acceptance/`, and `slow` is not a field.
 #[test]
 fn acceptance_runs_only_the_acceptance_tree() {
     let Some(runtime) = test_runtime("accept", &[("moqui-test-fixture", &fixture_component())]) else {

@@ -93,9 +93,9 @@ pub(crate) const SPEC_LIMIT: Duration = Duration::from_secs(15);
 /// A component over its budget by more than this share fails the run; over the budget alone, it is a warning.
 const BUDGET_MARGIN: f64 = 1.5;
 
-/// Whether a spec result is of the acceptance suite: its display name is `<component>/acceptance/...`.
+/// Whether a spec result is of the acceptance suite: its display name is `<component>/test/acceptance/...`.
 pub(crate) fn acceptance_result(spec: &ComponentSpec) -> bool {
-    spec.result.display.split('/').nth(1) == Some("acceptance")
+    super::is_acceptance_display(&spec.result.display)
 }
 
 /// The budget a component's `test/budget` gives `key` (`server` for `moqui test`, `client` for `moqui test-client`),
@@ -122,7 +122,7 @@ pub fn budget_check(specs: &[ComponentSpec], budget: &dyn Fn(&str) -> Option<f64
         .collect();
     if !slow.is_empty() {
         slow.sort_by_key(|spec| std::cmp::Reverse(spec.result.duration));
-        out.push_str("\nFAILED: regression specs over 15 seconds (move each to acceptance/ or delete it):\n");
+        out.push_str("\nFAILED: regression specs over 15 seconds (move each to test/acceptance/ or delete it):\n");
         for spec in slow {
             failures += 1;
             let _ = writeln!(out, "  {} ({})", spec.result.display, seconds(spec.result.duration));
@@ -149,7 +149,7 @@ pub fn budget_check(specs: &[ComponentSpec], budget: &dyn Fn(&str) -> Option<f64
             Some(limit) if *time > limit => {
                 let _ = writeln!(
                     lines,
-                    "  {name}: {time:.1}s, over its budget of {limit:.0}s (test/budget): cut duplicates or move scenarios to acceptance/"
+                    "  {name}: {time:.1}s, over its budget of {limit:.0}s (test/budget): cut duplicates or move scenarios to test/acceptance/"
                 );
             }
             Some(limit) => {
@@ -403,12 +403,12 @@ mod tests {
         long.result.duration = Duration::from_secs(16);
         let mut accepted = sample();
         accepted.result.name = "Walk".to_string();
-        accepted.result.display = "comp-a/acceptance/Walk.spec.js".to_string();
+        accepted.result.display = "comp-a/test/acceptance/Walk.spec.js".to_string();
         accepted.result.duration = Duration::from_secs(50);
         let (text, failures) = budget_check(&[long, accepted], &|_| None);
         assert_eq!(failures, 1, "{text}");
         assert!(
-            text.contains("FAILED: regression specs over 15 seconds (move each to acceptance/ or delete it):\n  comp-a/test/OrderFlow.spec.js (16.00s)\n"),
+            text.contains("FAILED: regression specs over 15 seconds (move each to test/acceptance/ or delete it):\n  comp-a/test/OrderFlow.spec.js (16.00s)\n"),
             "{text}"
         );
         assert!(!text.contains("Walk.spec.js"), "{text}");

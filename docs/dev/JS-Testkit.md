@@ -1,7 +1,7 @@
 # Server specs: the `moqui test` API
 
 `moqui test` (`./moq test`) runs the JavaScript spec files of a component's `test/` directory, and with
-`--acceptance` those of its `acceptance/` directory. A spec runs inside the server's process, in the same script
+`--acceptance` those of its `test/acceptance/` directory. A spec runs inside the server's process, in the same script
 engine as the component's services, in an execution context of its own on the run's database. It has the full
 script `ec`, and Spock's conveniences: spec and feature setup and cleanup, ordered features with shared state,
 `given`/`when`/`then`/`expect` blocks whose conditions fail with the values of their parts, `where` rows, data

@@ -259,7 +259,7 @@ Built 2026-11-13. Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
 - **The document** is a report definition of type `calcgrid`: `dataSheets` (each a name and the grid's spec), `charts`, and `overlay`, the stored form in base64 **in the body**, not in a row beside it as decided: the definition's versions, copy, export and git sync then carry the workbook with no code of their own. At most 8 MB.
 - **A workbook file** opens with the engine's reader, and through calamine as values when the engine refuses it.
 - **Calc mode** in `Grid.xml` (the `calc*` transitions) and `Grid.qvue`, drawn by `moqui.calc.sheet` (`webroot/js/WebrootCalc.js`): its own Tabulator with placeholder rows and a block cache, sheet tabs, the charts with `m-chart`, Refresh, XLSX, Save document and Documents.
-- **Tests:** `cargo test -p moqui-calc` (the fill, the stored form with none of the data's texts, the rooms, the fallback reader), `tools/test/CalcGrid.spec.js` (the transitions: open, cells, export, save, reopen, delete, a file as a workbook), `webroot/test/client/WebrootCalc.spec.js` (the view's helpers) in the regression suite; `tools/acceptance/client/CalcGrid.spec.js`, the browser walk, in the acceptance suite.
+- **Tests:** `cargo test -p moqui-calc` (the fill, the stored form with none of the data's texts, the rooms, the fallback reader), `tools/test/CalcGrid.spec.js` (the transitions: open, cells, export, save, reopen, delete, a file as a workbook), `webroot/test/client/WebrootCalc.spec.js` (the view's helpers) in the regression suite; `tools/test/acceptance/client/CalcGrid.spec.js`, the browser walk, in the acceptance suite.
 
 What differs from the plan, and what is left for later phases:
 
@@ -277,7 +277,7 @@ Built 2026-11-13; what is left is listed at its end. Guide: [CalcGrid and access
 - **Access profiles in the engine** (`moqui-calc` `profile.rs`): each `CalcServices` call takes `profileId`. Without it the call is the Tools app's (Phase 2). With it the caller must hold the profile; the source is an entity or view the profile offers (a view with every member offered), read with the profile artifact entered, so the finds get the entity filters of the profile's grant; under a grant with a filter set an offered entity that no filter applies to is refused; authorization is required whatever the caller disabled; and a room is read only under the profile it was opened under. `get#CalcProfiles` and `find#CalcEntities` are new.
 - **The data:** `CALC_GRID` (the screen and the services) and `CALC_GRID_AUTHOR` (`org.moqui.calc.document`) in tools, `ADMIN`'s; `CALC_PROFILE_SALES` in mr-mantle (`data/CalcGridProfileData.xml`), with no grant; in mr-boss the grant of the profile to `BOSS_SALES_ADMIN` with `MANTLE_USER_ORG`, `MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and of `CALC_GRID_AUTHOR`.
 - **`Dashboards/CalcGrid.xml`**, `CalcGrid.qvue` and `template/CalcGrid.js`: the documents the viewer reads, one opened as a sheet, the profile chosen (or the mount's, `reportPolicy.calcProfile`), a new document over an entity the profile offers, save with a group of the author's own, delete, refresh, XLSX, and a terminal render of the list. BOSS shows it under Insights by location.
-- **Tests:** `mr-mantle/test/order/CalcGridSales.spec.js`, `tools/test/CalcGrid.spec.js` (a feature for the Dashboards screen), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` in the regression suites; a second walk in `tools/acceptance/client/CalcGrid.spec.js`.
+- **Tests:** `mr-mantle/test/order/CalcGridSales.spec.js`, `tools/test/CalcGrid.spec.js` (a feature for the Dashboards screen), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` in the regression suites; a second walk in `tools/test/acceptance/client/CalcGrid.spec.js`.
 
 What differs from the plan:
 
@@ -309,7 +309,7 @@ Built 2026-11-13, for one person at a time; editing together followed the same d
 - **The engine:** `Room::edit` applies a list of edits in order with evaluation paused, then evaluates once: `input`, `paste`, `clear`, `style` (the engine's style paths), `fill` (its autofill), `width`, `height`, `freeze`, rows and columns inserted and deleted, sheets added, renamed and deleted, `charts` (the document's charts, replaced), `undo` and `redo` (the engine's own history). A data sheet's cells, rows, columns and name are refused; its widths, heights and frozen panes are not. `edit#CalcDocument` answers the room's state whether or not an edit was refused; `get#CalcCellContent` answers a cell as typed. Under a profile only an author edits.
 - **The view** (`WebrootCalc.js`, both screens): a toolbar (undo, redo, bold, italic, underline, text and fill colour, alignment, number formats, rows and columns, freeze, fill down, Chart), a formula bar that completes function names and the data sheets' table names, a cell's editor on a double click, Delete, Ctrl+Z and Ctrl+Y, a paste of rows of cells, a column's width by its resize, sheets added, renamed and deleted, and charts added from the selection and removed. After an edit every sheet's cells are asked again, and the table is made again only when its shape changed.
 - **Add to dashboard** (the 2b gap): in Dashboards › CalcGrid the cells selected of a saved document become a panel (table, bars, pie or number) over the dataset `calcgrid` on one of the viewer's own dashboards.
-- **Tests:** `cargo test -p moqui-calc` (the edits, the data sheet's protection, undo, the stored form and a refresh after edits), `tools/test/CalcGrid.spec.js` (the edit transitions; a panel added and read), `webroot/test/client/WebrootCalc.spec.js` (completion, range names, pasted rows) in the regression suite; a third walk in `tools/acceptance/client/CalcGrid.spec.js` (a sheet added, a formula typed in the bar, bold, Undo).
+- **Tests:** `cargo test -p moqui-calc` (the edits, the data sheet's protection, undo, the stored form and a refresh after edits), `tools/test/CalcGrid.spec.js` (the edit transitions; a panel added and read), `webroot/test/client/WebrootCalc.spec.js` (completion, range names, pasted rows) in the regression suite; a third walk in `tools/test/acceptance/client/CalcGrid.spec.js` (a sheet added, a formula typed in the bar, bold, Undo).
 
 Not built, of the plan's Phase 3:
 
@@ -381,7 +381,7 @@ condition text), `-p moqui-report` (the format rule), `-p moqui-tui` (`calc_test
 `rows` and paste), `moqui-host` `notws::calc` and `monitor_tui` (the list, a sheet, a formula typed and undone);
 `tools/test/CalcGrid.spec.js` (the log, undo, peers, discard; a scheduled export read back),
 `mr-mantle/test/order/CalcGridSales.spec.js` (two organizations editing one document, the scope a schedule may go to),
-`webroot/test/client/WebrootCalc.spec.js` (frames, outlines); a fourth walk in `tools/acceptance/client/CalcGrid.spec.js`
+`webroot/test/client/WebrootCalc.spec.js` (frames, outlines); a fourth walk in `tools/test/acceptance/client/CalcGrid.spec.js`
 (two pages on one document: each other's names and places, an edit, Discard).
 
 Not built of these sets:

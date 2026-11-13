@@ -4,7 +4,7 @@ HTTP and WebSocket proofs of the framework's security, run from outside the serv
 ([plans/archive/ClientTestHarness.md](../../../../../plans/archive/ClientTestHarness.md) 7). They port Moqui Java's pytest suite
 (`framework/test/*.py` in the Java checkout, with `SECURITY_TESTS.md` and `SecurityTestSupport.groovy`); the catalog
 below lists each of its tests. They are in the regression suite, run by `./moq test-framework`; the load cases
-(`LoadBasic`, `SecurityTarpit`) are acceptance tests in `../../acceptance/client/`, run by `./moq accept framework`
+(`LoadBasic`, `SecurityTarpit`) are acceptance tests in `../acceptance/client/`, run by `./moq accept framework`
 ([the two suites](../../../../../docs/Build-Test.md#the-two-suites)).
 
 ```sh

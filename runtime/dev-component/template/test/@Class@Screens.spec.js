@@ -13,7 +13,7 @@
  */
 // A rule of @Title@'s screens (screen/@Class@.xml): the item detail shows the item it is given. A regression spec renders
 // a screen once, for logic of its own, with all of its checks on that render; the every-screen sweep is an acceptance
-// test (acceptance/@Class@ScreenSweep.spec.js).
+// test (test/acceptance/@Class@ScreenSweep.spec.js).
 // Run: ./moq test @component@
 
 spec({

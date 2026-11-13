@@ -143,8 +143,8 @@ test-load|Run|[component] [--script Name] [-p N] [opts]|Run a component load scr
 test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/component
 test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of base-component and dev-component
 test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps
-accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (acceptance/) of the components, or of all
-accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of acceptance/ and the Rust opt-in and ignored tests
+accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (test/acceptance/) of the components, or of all
+accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of test/acceptance/ and the Rust opt-in and ignored tests
 autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)
 load-save|Run|[-n name] [load args...]|clean-all, load, then save-db
 save-db|Database|[name]|Save the embedded database and OpenSearch data to runtime/save/<name>
@@ -676,7 +676,7 @@ help_test() {
 Runs moqui test, the JavaScript specs in each component's test/ directory, with the Default
 binary (or the package asked for) and the dev conf. A spec that requires a feature the binary
 leaves out (spec({ requires: [...] })) is reported as skipped. A regression spec over 15 seconds is
-named at the end of a run; --acceptance runs the acceptance suite (acceptance/) instead, only when
+named at the end of a run; --acceptance runs the acceptance suite (test/acceptance/) instead, only when
 asked (./moq accept). Arguments go to moqui test; the moq options below are read first and any other option is
 passed on, so moqui's own options work as they are:
   ./moq test mr-mantle
@@ -706,7 +706,7 @@ and any other option is passed on:
   ./moq test-client framework --serve          start the server its test/client/suite.js declares
                                                (a child moqui test --serve), run, then stop it
   ./moq test-client mr-marble --serve --spec FindScreens --param screen=Order/FindOrder --headed
---acceptance runs the acceptance client specs (acceptance/client/) instead, only when asked
+--acceptance runs the acceptance client specs (test/acceptance/client/) instead, only when asked
 (./moq accept).
 
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
@@ -801,8 +801,8 @@ EOF
 help_accept() {
     cat <<EOF
 Runs the acceptance suite of the components named, or of every component: moqui test --acceptance
-over those with acceptance/*.spec.js, then moqui test-client --serve --acceptance over those whose
-acceptance/client/suite.js declares a server, and moqui test-client --offline --acceptance over those whose suite.js
+over those with test/acceptance/*.spec.js, then moqui test-client --serve --acceptance over those whose
+test/acceptance/client/suite.js declares a server, and moqui test-client --offline --acceptance over those whose suite.js
 declares none. Then it lists which passed and exits 1 when any failed.
 Acceptance tests run on a schedule, before a release, or when asked; an agent runs them only when
 the user asks, or when it adds or changes one (AGENTS.md).
@@ -2528,8 +2528,8 @@ has_spec_file() {
     for set in "${COMPONENT_SETS[@]}"; do for d in "$RUNTIME_DIR/$set"/*/; do
         [ -f "${d}component.xml" ] && [ "$(component_name_of "${d%/}")" = "$name" ] || continue
         for spec in ${ACCEPT_SPECS//,/ }; do
-            if [ "$tree" = acceptance ]; then
-                [ -z "$(find "${d}acceptance" -path "${d}acceptance/client" -prune -o -name "$spec.spec.js" -print -quit)" ] || return 0
+            if [ "$tree" = test/acceptance ]; then
+                [ -z "$(find "${d}$tree" -path "${d}$tree/client" -prune -o -name "$spec.spec.js" -print -quit)" ] || return 0
             else
                 [ -z "$(find "${d}$tree" -name "$spec.spec.js" -print -quit 2>/dev/null)" ] || return 0
             fi
@@ -2538,10 +2538,22 @@ has_spec_file() {
     return 1
 }
 
+# Refuses a component of ACCEPT_NAMES (all when empty) that still has its acceptance suite in a top-level acceptance/,
+# which moved to test/acceptance/ (plans/Components-Dir.md), so its specs are not left out without a word.
+refuse_stale_acceptance() {
+    local set d
+    for set in "${COMPONENT_SETS[@]}"; do for d in "$RUNTIME_DIR/$set"/*/; do
+        [ -d "${d}acceptance" ] && [ -f "${d}component.xml" ] || continue
+        in_names "$(component_name_of "${d%/}")" || continue
+        die "the acceptance suite is in test/acceptance/ now; move acceptance/ there (git mv acceptance test/acceptance) in $(rel "${d%/}")"
+    done; done
+}
+
 # The acceptance suites of the components of ACCEPT_NAMES (all when empty).
 accept_suites() {
     local name
     local -a server client offline spec junit demo
+    refuse_stale_acceptance
     server=()
     client=()
     offline=()
@@ -2552,20 +2564,20 @@ accept_suites() {
     [ -z "$ACCEPT_JUNIT" ] || junit=(--junit "$ACCEPT_JUNIT")
     while IFS= read -r name; do
         in_names "$name" || continue
-        [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance "$name" || continue
+        [ -z "$ACCEPT_SPECS" ] || has_spec_file test/acceptance "$name" || continue
         server+=("$name")
         [ "$name" != demo ] || demo=(-D demo_disabled=false)
-    done < <(spec_components acceptance "${COMPONENT_SETS[@]}")
+    done < <(spec_components test/acceptance "${COMPONENT_SETS[@]}")
     while IFS= read -r name; do
         in_names "$name" || continue
-        [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
+        [ -z "$ACCEPT_SPECS" ] || has_spec_file test/acceptance/client "$name" || continue
         client+=("$name")
-    done < <(served_components acceptance/client "${COMPONENT_SETS[@]}")
+    done < <(served_components test/acceptance/client "${COMPONENT_SETS[@]}")
     while IFS= read -r name; do
         in_names "$name" || continue
-        [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
+        [ -z "$ACCEPT_SPECS" ] || has_spec_file test/acceptance/client "$name" || continue
         offline+=("$name")
-    done < <(offline_components acceptance/client "${COMPONENT_SETS[@]}")
+    done < <(offline_components test/acceptance/client "${COMPONENT_SETS[@]}")
     if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ] && [ ${#offline[@]} -eq 0 ]; then
         info "No acceptance specs${ACCEPT_SPECS:+ named $ACCEPT_SPECS} in ${ACCEPT_NAMES[*]:-any component}."
         return 0
@@ -4317,7 +4329,7 @@ component_template_names() {
 template_part_files() {
     case $1 in
         rest) printf '%s\n' screen MoquiConf.xml data/@Class@SecurityData.xml test/@Class@Screens.spec.js \
-            acceptance ;;
+            test/acceptance ;;
         screens) printf '%s\n' service/@component@.rest.xml data/@Class@ApiSecurityData.xml test/@Class@Api.spec.js ;;
     esac
 }
@@ -4881,13 +4893,15 @@ test_components() {
 }
 
 # spec_component_dirs <tree> <parent...>: the directories under runtime/<parent> of the components with a *.spec.js
-# in <tree> (test, test/client, acceptance or acceptance/client), outside its reserved directories; not the template.
+# in <tree> (test, test/client, test/acceptance or test/acceptance/client), outside its reserved directories; not the
+# template.
 spec_component_dirs() {
     local tree=$1 parent d
     local -a prune
     shift
     case $tree in
         */client) prune=(-path "@/process") ;;
+        test) prune=(-path "@/client" -o -path "@/agent" -o -path "@/acceptance" -o -path "@/load") ;;
         *) prune=(-path "@/client" -o -path "@/agent") ;;
     esac
     for parent in "$@"; do
@@ -5063,7 +5077,7 @@ complete_task() {
         desktop) filter_prefix "$cur" dev build --release ;;
         android) filter_prefix "$cur" emulator init dev build --release --window ;;
         test-all | test-apps | test-framework) filter_prefix "$cur" --lite --debug --release --enterprise --nobuild ;;
-        accept) filter_prefix "$cur" $(spec_components acceptance "${COMPONENT_SETS[@]}") --spec --junit \
+        accept) filter_prefix "$cur" $(spec_components test/acceptance "${COMPONENT_SETS[@]}") --spec --junit \
             --lite --debug --release --enterprise --nobuild ;;
         accept-all) filter_prefix "$cur" --junit --lite --debug --release --enterprise --nobuild ;;
         autodoc)

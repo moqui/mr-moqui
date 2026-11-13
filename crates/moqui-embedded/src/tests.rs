@@ -77,7 +77,7 @@ fn the_sets_hold_framework_and_tools_without_their_tests_and_the_webroot_stub() 
             || entry.path.contains("/libs/vue/")
             || entry.path.contains("/images/"))));
     assert!(!entries.iter().any(|entry| entry.set.is_whole_component()
-        && (entry.path.starts_with("test/") || entry.path.starts_with("acceptance/"))));
+        && entry.path.starts_with("test/")));
 }
 
 #[test]

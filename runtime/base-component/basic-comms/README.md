@@ -30,7 +30,7 @@ connection", the gaps of what is kept) shows only there
 Test ([the two suites](../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,
 the shell's sync states (no server) `./moq test-client basic-comms --offline` and the crypto walk
 `./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks
-(`acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature
+(`test/acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature
 (calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
 [docs/interfaces/Voicemail.md](../../../docs/interfaces/Voicemail.md); the Dialer and Settings/Call handling:
 [docs/interfaces/SIP.md](../../../docs/interfaces/SIP.md#call-handling); Calls/Queues and transfer in the call:

@@ -511,17 +511,25 @@ lacks "test-framework leaves the app specs out" 'app-x' -- dry "$M" test-framewo
 check "test-all runs both" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-all
 check "MOQ_TEST_WORKERS sets the workers" 0 'moq test --nobuild -- app-x --workers 2$' -- env MOQ_TEST_WORKERS=2 MOQ_DRY_RUN=1 "$M" test-apps
 # acceptance: its own tree, run only by accept and accept-all
-mkdir -p "$R/runtime/component/app-x/acceptance/client"
-: >"$R/runtime/component/app-x/acceptance/Sweep.spec.js"
-: >"$R/runtime/component/app-x/acceptance/client/Scenario.spec.js"
-printf 'suite(["Scenario"], { server: { components: ["app-x"] } })\n' >"$R/runtime/component/app-x/acceptance/client/suite.js"
+mkdir -p "$R/runtime/component/app-x/test/acceptance/client"
+: >"$R/runtime/component/app-x/test/acceptance/Sweep.spec.js"
+: >"$R/runtime/component/app-x/test/acceptance/client/Scenario.spec.js"
+printf 'suite(["Scenario"], { server: { components: ["app-x"] } })\n' >"$R/runtime/component/app-x/test/acceptance/client/suite.js"
 lacks "test-apps runs no acceptance spec" '--acceptance' -- dry "$M" test-apps
+mkdir -p "$R/runtime/component/app-y/test/acceptance"
+: >"$R/runtime/component/app-y/test/acceptance/Only.spec.js"
+check "test-apps leaves out test/acceptance" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-apps
+rm -r "$R/runtime/component/app-y/test/acceptance"
 check "accept runs the acceptance specs" 0 'moq test -- app-x --acceptance$' -- dry "$M" accept
 check "accept serves the acceptance client specs" 0 'moq test-client --nobuild -- --serve --acceptance app-x$' -- dry "$M" accept app-x
 check "accept --spec picks the tree of the spec" 0 'moq test-client --nobuild -- --serve --acceptance app-x --spec Scenario$' -- \
     dry "$M" accept --spec Scenario
 lacks "accept --spec leaves out the other tree" 'moq test --' -- dry "$M" accept --spec Scenario
 check "accept of a component with none" 0 'No acceptance specs' -- dry "$M" accept fw-x
+mkdir -p "$R/runtime/component/app-y/acceptance"
+check "accept refuses a top-level acceptance/" 1 'move acceptance/ there .*app-y' -- dry "$M" accept
+check "accept of another component ignores it" 0 'moq test -- app-x --acceptance$' -- dry "$M" accept app-x
+rmdir "$R/runtime/component/app-y/acceptance"
 check "accept-all runs the Rust acceptance tests" 0 'cargo test-slow$' -- dry "$M" accept-all
 check "accept-all runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens$' -- \
     dry "$M" accept-all
@@ -712,7 +720,7 @@ EOF
     check "create --rest has no screens" 1 '' -- test -e "$R/runtime/component/my_api/screen" -o \
         -e "$R/runtime/component/my_api/MoquiConf.xml" -o -e "$R/runtime/component/my_api/test/MyApiScreens.spec.js"
     check "create --rest has no screen sweep" 1 '' -- test -e "$R/runtime/component/my_api/acceptance"
-    check "create has the screen sweep in acceptance" 0 '' -- test -f "$S/acceptance/MyShopScreenSweep.spec.js"
+    check "create has the screen sweep in acceptance" 0 '' -- test -f "$S/test/acceptance/MyShopScreenSweep.spec.js"
     check "create --rest keeps the REST API" 0 '' -- test -f "$R/runtime/component/my_api/service/my_api.rest.xml"
     check "create --screens --dev" 0 'Screens only' -- "$M" component-create shop --screens --dev --no-git
     check "create --screens has no REST API" 1 '' -- test -e "$R/runtime/dev-component/shop/service/shop.rest.xml" -o \

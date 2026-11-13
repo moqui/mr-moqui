@@ -16,7 +16,7 @@ Java's Spock suite (`Security*.groovy`) was not ported. A row below that names o
 ./moq test-client framework --serve
 ```
 
-`--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` on a scratch database, under `conf/MoquiLoadTestConf.xml` (`test/client/suite.js`, and `acceptance/client/suite.js` for the acceptance specs). That file is the production conf with the screen, transition, and service tarpits off, so `LoadBasic` (an acceptance test) is not answered 429. `SecurityTarpit`, an acceptance test too (`./moq accept framework`), skips on that conf. A skip there is the expected result of `--serve`.
+`--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` on a scratch database, under `conf/MoquiLoadTestConf.xml` (`test/client/suite.js`, and `test/acceptance/client/suite.js` for the acceptance specs). That file is the production conf with the screen, transition, and service tarpits off, so `LoadBasic` (an acceptance test) is not answered 429. `SecurityTarpit`, an acceptance test too (`./moq accept framework`), skips on that conf. A skip there is the expected result of `--serve`.
 
 `SecurityCors` fails its spec when the server allows every origin (the dev conf, `webapp_allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
 

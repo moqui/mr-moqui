@@ -58,7 +58,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--offline` | Run only specs with `server: false`. Pages open at `https://moqui.test`. Nothing listens. Not with `--serve` |
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, exactly (no patterns), with the specs their `dependsOn` names |
 | `--feature text` | Only the features whose names contain the text |
-| `--acceptance` | The acceptance client specs (`acceptance/client/`) in place of `test/client/`; with `--serve` the server is the one `acceptance/client/suite.js` declares, and its specs resolve across `test/` and `acceptance/` ([The two suites](../Build-Test.md#the-two-suites)) |
+| `--acceptance` | The acceptance client specs (`test/acceptance/client/`) in place of `test/client/`; with `--serve` the server is the one `test/acceptance/client/suite.js` declares, and its specs resolve across `test/` and `test/acceptance/` ([The two suites](../Build-Test.md#the-two-suites)) |
 | `--param name=value` | Repeatable; `params.name` in specs. `MOQUI_TEST_<NAME>` variables are params too, in camel case (`MOQUI_TEST_LOAD_PASSWORD` is `params.loadPassword`), for a password that should not show in `ps`. A `--param` wins over a variable |
 | `--junit dir` | `TEST-<component>.client.<Spec>.xml` per spec. Files a case attaches are `[[ATTACHMENT\|path]]` lines in its `system-out`, after its load table |
 | `--out dir` | Where saved bodies, screenshots, PDFs, failure files, load results and `--serve` logs go. The default is `runtime/tmp/test-client/<yyyyMMdd-HHmmss>-<pid>`, or `test-client-out/<run>` in the working directory without a runtime. The run prints it at the end when anything was written |
@@ -213,8 +213,8 @@ its component, or by its file path. A whole-component run leaves it out. It can 
 makes an offline spec ([`--offline`](#--offline)), and `allowPageProblems` takes the place of `allowMessageErrors`,
 since there is no `ec.message` to check. `tempSequences` and `database: false` are for server specs: a client spec
 has no `ec` for them. A regression client spec over 15 seconds fails the run: move
-it to `acceptance/client/` or delete it ([The two suites](../Build-Test.md#the-two-suites)). An acceptance client spec
-is `<component>/acceptance/client/<Name>.spec.js`, with `acceptance/client/suite.js` for its order and server. A
+it to `test/acceptance/client/` or delete it ([The two suites](../Build-Test.md#the-two-suites)). An acceptance client spec
+is `<component>/test/acceptance/client/<Name>.spec.js`, with `test/acceptance/client/suite.js` for its order and server. A
 suite.js that declares no server holds offline specs (`server: false`), which `./moq accept` runs with `--offline`
 (webroot's `ThemeLayout`, for one).
 
@@ -702,10 +702,10 @@ The output directory has what the specs wrote and what failures left:
   (`SecurityAccess`, `SecurityHeaders`, `SecurityCors`, `SecurityAuthn`, `SecurityScreens`, `SecurityRest`; each
   feature named with its OWASP id and a comment naming the Python test), and `Java-Port-Catalog.md`, which catalogs
   all 143 Python tests as ported, pending or not applicable; `LoadBasic` and `SecurityTarpit` are in
-  `framework/acceptance/client/`. The fixtures are `framework/test/ClientFixtures.spec.js`.
+  `framework/test/acceptance/client/`. The fixtures are `framework/test/ClientFixtures.spec.js`.
 - `runtime/component/mr-marble/test/client/`: `BrowserSmoke` (pages of the flow data with their text, PrintOrder's
   barcodes and a PDF), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server; and in
-  `acceptance/client/`, `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs
+  `test/acceptance/client/`, `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs
   one).
 - `crates/moqui-host/tests/fixtures/test-component/test/client/`: the harness's own specs (HTTP, sessions and the
   token, raw, WebSocket, load and parallel, skip, and a served spec), and `browser-client/Browser.spec.js` over the

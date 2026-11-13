@@ -21,8 +21,8 @@
 //! ([`write_skeleton`]), which boots, loads the seed data, answers `/rest`, `/Login`, `/status` and the html `/apps`
 //! (System, Tools and Dashboards among them), and runs the terminal client.
 //!
-//! Four sets are packed by build.rs: [`Set::Framework`] and [`Set::Tools`], those components less their `test/` and
-//! `acceptance/`; [`Set::Webroot`], the webroot files `webroot-files.txt` names, a subset of the real ones (no fonts,
+//! Four sets are packed by build.rs: [`Set::Framework`] and [`Set::Tools`], those components less their `test/` (with
+//! the acceptance suite in `test/acceptance/`); [`Set::Webroot`], the webroot files `webroot-files.txt` names, a subset of the real ones (no fonts,
 //! icons, `qapps` or full JavaScript libraries); and [`Set::Skeleton`], files only a new skeleton gets and nothing
 //! compares (the placeholder page at `/`, which the web client's `qapps.xml` replaces).
 //!
@@ -36,8 +36,8 @@ use std::path::{Path, PathBuf};
 static ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.tar.gz"));
 
 /// The top-level directories of a whole component ([`Set::is_whole_component`]) that are not packed and not compared:
-/// what only the tests read.
-pub const COMPONENT_SKIP: [&str; 2] = ["test", "acceptance"];
+/// what only the tests read, the acceptance suite (`test/acceptance/`) among them.
+pub const COMPONENT_SKIP: [&str; 1] = ["test"];
 
 /// The framework files the binary has compiled in with `include_str!` and never reads from disk: an edit to one on
 /// disk changes nothing (`crates/moqui-core/src/script/actions.rs` and `screen/generate.rs`, `screen/statics.rs`).

@@ -14,7 +14,7 @@
 | `data/@Class@ApiSecurityData.xml` | Seed: the REST API for the ADMIN group. |
 | `data/@Class@DemoData.xml` | Demo items. |
 | `test/*.spec.js` | The regression suite: specs of the services' rules and the REST API. |
-| `acceptance/*.spec.js` | The acceptance suite: a sweep of the app's screens. |
+| `test/acceptance/*.spec.js` | The acceptance suite: a sweep of the app's screens. |
 
 A component made with `./moq component-create --rest` has no screens, and one made with `--screens` has no REST API.
 

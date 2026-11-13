@@ -178,7 +178,7 @@ result. A second Ctrl-C ends at once, with no result.
 From a client spec, `load({ script: "test/load/OrderToCash.load.js", params, scenarios: { sales: { users: 2,
 iterations: 1 } } })` runs a script of the spec's component and returns the result
 ([JS-Test-Client](../dev/JS-Test-Client.md#load-and-parallel)), so an acceptance spec checks that a script still walks
-its flow (`mr-marble/acceptance/client/OrderToCash.spec.js`).
+its flow (`mr-marble/test/acceptance/client/OrderToCash.spec.js`).
 
 ## Reading a result
 

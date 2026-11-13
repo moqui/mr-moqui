@@ -33,9 +33,9 @@ out with an error line, so the gallery works and the rust services and tool do n
 | `screen/Gallery.xml`, `screen/Gallery/*.xml`, `*.qvue` | The screen archetype gallery of the IronStone BOSS style guide (`runtime/component/mr-boss/plan/style-guide.md` §3, §4 and §10): one screen per archetype over framework data, mounted at `/qapps/gallery`; `Board`, `Calendar` and `QuickTask` show `.qvue` screens. `NavCards` (`/qapps/gallery/NavCards`) shows the `nav-card` element. |
 | `data/ExampleSecurityData.xml` | Seed authorization: the gallery for the ADMIN group. |
 | `entity/ExampleEntities.xml`, `data/ExampleDemoData.xml` | `moqui.example.Example` (a type, a status flow, a size, a start and end) with seed and demo data, for the gallery's `Views` screen: one form-list as a board, a calendar and a tree. |
-| `acceptance/Gallery.spec.js` | Acceptance: renders every gallery screen in its render mode through `ec.screen.makeTest()` (`./moq accept example`). |
+| `test/acceptance/Gallery.spec.js` | Acceptance: renders every gallery screen in its render mode through `ec.screen.makeTest()` (`./moq accept example`). |
 | `test/client/HandheldScan.spec.js` | The Handheld screen (`density="handheld"`, `scan-input` over `resolve#GalleryScan`) at 390 px: the density over the compact preference, one match, the chooser, no match, and Confirm (`moqui test-client example --serve --spec HandheldScan`). |
-| `acceptance/client/GallerySmoke.spec.js` | Acceptance: loads each gallery screen in the `/qapps` shell at 1280 with a clean console and no render error (`./moq accept example`). |
+| `test/acceptance/client/GallerySmoke.spec.js` | Acceptance: loads each gallery screen in the `/qapps` shell at 1280 with a clean console and no render error (`./moq accept example`). |
 
 ## Rust in your own component
 

@@ -13,8 +13,8 @@
  */
 
 //! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6): the selected components grouped by the server
-//! their `test/client/suite.js` (with `--acceptance`, `acceptance/client/suite.js`) declares (`suite([...], { server: {
-//! components, specs, conf, properties } })`), and for each group this binary started as `moqui test <components>
+//! their `test/client/suite.js` (with `--acceptance`, `test/acceptance/client/suite.js`) declares
+//! (`suite([...], { server: { components, specs, conf, properties } })`), and for each group this binary started as `moqui test <components>
 //! --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file <file>`, with `MOQUI_CONF` set to the declared conf
 //! and the declared properties in its environment. Its standard input is a pipe this process holds, so the child also
 //! stops when the client dies without cleaning up. Once the ready file names the URL the group's specs run against it,
@@ -22,8 +22,8 @@
 //!
 //! The client still opens no database and binds no port: the child does. A child that does not start fails its
 //! group's specs with the last lines of its output, and the other groups still run (D14). The child gets
-//! `--acceptance` when the client has it, so its specs resolve across `test/` and `acceptance/`, and renders PDF with
-//! the browser the client drives when nothing names one for PDF.
+//! `--acceptance` when the client has it, so its specs resolve across `test/` and `test/acceptance/`, and renders PDF
+//! with the browser the client drives when nothing names one for PDF.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -148,7 +148,7 @@ fn merge_server(have: &mut SuiteServer, other: SuiteServer) {
     }
 }
 
-/// The server a component's client `suite.js` declares (`test/client`, or `acceptance/client` with `acceptance`), its
+/// The server a component's client `suite.js` declares (`test/client`, or `test/acceptance/client` with `acceptance`), its
 /// own component when it names none.
 fn declared_server(component: &TestComponent, acceptance: bool) -> Result<SuiteServer, Error> {
     let tree = suite_tree(acceptance, true);
@@ -420,7 +420,7 @@ mod tests {
             child_args(&server, Path::new("/tmp/r.url"), false).join(" "),
             "test mr-mantle mr-marble --spec A,B --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"
         );
-        // --acceptance goes on, so the server's specs resolve across test/ and acceptance/
+        // --acceptance goes on, so the server's specs resolve across test/ and test/acceptance/
         assert_eq!(
             child_args(&server, Path::new("/tmp/r.url"), true).join(" "),
             "test mr-mantle mr-marble --spec A,B --acceptance --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"

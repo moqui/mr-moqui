@@ -13,7 +13,7 @@
  */
 
 //! Packs the files src/lib.rs embeds into `OUT_DIR/embedded.tar.gz`: the framework and tools components less their
-//! top-level `test/` and `acceptance/`, under `framework/` and `tools/`; the webroot files `webroot-files.txt` names,
+//! top-level `test/` (the regression and acceptance suites), under `framework/` and `tools/`; the webroot files `webroot-files.txt` names,
 //! under `webroot/`; and this crate's `skeleton/` tree, under `skeleton/`. The tar is the same for the same files (sorted,
 //! no times or owners).
 //!
@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 const WHOLE_COMPONENTS: [&str; 2] = ["framework", "tools"];
 
 /// The top-level directories of a whole component that are not packed: what only the tests read.
-const COMPONENT_SKIP: [&str; 2] = ["test", "acceptance"];
+const COMPONENT_SKIP: [&str; 1] = ["test"];
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));

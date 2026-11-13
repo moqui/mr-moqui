@@ -279,7 +279,7 @@ items) and say how apps plug into the framework in §1.5. The framework items th
 |---|---|
 | No one runs the acceptance suite on a schedule: there is no CI. Run `./moq accept-all` nightly or weekly on a spare machine and before a release, with a dated `--junit` summary; a test that fails two runs in a row is fixed or deleted | [Test-Reduction, Who runs the acceptance suite](archive/Test-Reduction.md#who-runs-the-acceptance-suite) |
 | Projects and Commons have no golden-path client walk in the regression suite (one per app) | [Test-Reduction, Order of work](archive/Test-Reduction.md#order-of-work) |
-| The sweeps moved to `acceptance/` as they were: the four Products sweeps and the four mr-marble ones are more than one per app per mode; merge them when they next change | [Test-Reduction, Implemented](archive/Test-Reduction.md#implemented) |
+| The sweeps moved to `test/acceptance/` as they were: the four Products sweeps and the four mr-marble ones are more than one per app per mode; merge them when they next change | [Test-Reduction, Implemented](archive/Test-Reduction.md#implemented) |
 | The Java vs MR-Moqui comparison harness and its diff report (a gate artifact) has no code; only search-backend comparison tests exist. The Java runtime must stay runnable | [Implementation-Phases, Tests](archive/Implementation-Phases.md) |
 | The Java Spock security suite (`Security*.groovy`) has not been ported | [Proof-Tests](../docs/security/Proof-Tests.md) |
 | Optional client-test extensions: move suitable `gate3_browser` flows into client specs; screenshot comparison; CDP over a pipe; TypeScript declarations shared with server specs | [ClientTestHarness, Later](archive/ClientTestHarness.md#15-later) |

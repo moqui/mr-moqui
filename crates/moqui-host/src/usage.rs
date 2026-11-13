@@ -355,7 +355,7 @@ dependsOn cycle is an error). --spec adds the specs named in dependsOn, and thei
 spec runs in its own execution context on one database. Any failed feature exits 1. A component's
 test/MoquiConf.xml merges after its MoquiConf.xml, in test runs only. A dependsOn name that the
 spec's component lacks is found in the other components. A regression spec over 15 seconds is
-named at the end of the run: move it to acceptance/ or delete it. A run with no --spec leaves out
+named at the end of the run: move it to test/acceptance/ or delete it. A run with no --spec leaves out
 the fixture specs a served client suite of their component names (test/client/suite.js server.specs)
 unless a spec that runs depends on them: the served run makes them.
 
@@ -370,10 +370,10 @@ Options:
                                   component/Name picks one component's. Specs named in dependsOn
                                   are included, from any component, and run first.
   --feature text                  Run features whose names contain this text.
-  --acceptance                    Run the acceptance suite, the specs of acceptance/ (other than
-                                  client and agent), in place of test/. --spec and dependsOn
+  --acceptance                    Run the acceptance suite, the specs of test/acceptance/ (other
+                                  than client and agent), in place of test/. --spec and dependsOn
                                   resolve across both trees; a regression run never reads
-                                  acceptance/.
+                                  test/acceptance/.
   --workers N                     Run the specs in N child processes, each on its own copy of the
                                   --db snapshot database (made once first). A suite.js chain and
                                   what dependsOn names stay in one worker; a spec that reads another
@@ -476,9 +476,10 @@ Options:
                                   alone is on the server's host), or MOQUI_TEST_SSH; server.ssh.
   --spec Name[,Name]              Specs to run, with the specs named in their dependsOn.
   --feature text                  Run features whose names contain this text.
-  --acceptance                    Run the acceptance client specs of acceptance/client in place of
-                                  test/client; with --serve, against the server acceptance/client/
-                                  suite.js declares, its specs resolved across test/ and acceptance/.
+  --acceptance                    Run the acceptance client specs of test/acceptance/client in place
+                                  of test/client; with --serve, against the server
+                                  test/acceptance/client/suite.js declares, its specs resolved
+                                  across test/ and test/acceptance/.
   --param name=value              Repeatable; params.name in specs. MOQUI_TEST_<NAME> variables
                                   are params too (MOQUI_TEST_LOAD_PASSWORD is params.loadPassword),
                                   for a password that should not show in ps.

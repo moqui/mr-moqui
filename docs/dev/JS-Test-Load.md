@@ -280,7 +280,7 @@ them and turns SSH on at port 2222.
 
 `load({ script: "test/load/Name.load.js", params, scenarios: { name: { users, iterations, ... } } })` runs a script
 of the spec's component and returns the result, so an acceptance spec checks that a script still walks its flow
-(`mr-marble/acceptance/client/OrderToCash.spec.js`). Its settings over the script's are in
+(`mr-marble/test/acceptance/client/OrderToCash.spec.js`). Its settings over the script's are in
 [JS-Test-Client, Load and parallel](JS-Test-Client.md#load-and-parallel).
 
 ## Pitfalls

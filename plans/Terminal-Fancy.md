@@ -839,7 +839,7 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
   a kind's `dock`, shown and closed. `WebrootAssist.spec.js` gains the undocked body (a run, a draft and the scroll kept
   across Undock and Dock; Mod+J and Esc in both forms) and the reach rules of §10.7; a tray spec the same for a tab.
 - **Screens**: `Terminal.xml` keeps its one render per mode in the specs that have it. No sweep.
-- **Acceptance** (`acceptance/client`, run only when asked): one browser walk, from a new host session through a
+- **Acceptance** (`test/acceptance/client`, run only when asked): one browser walk, from a new host session through a
   float, another app, a reload and back.
 - **Docs when built**: a guide, `docs/ui/Terminal.md`; `docs/ui/TUI.md` "In the browser"; `Attack-Surface.md`;
   `Run-Deploy.md` for the conf; `Qvt-Client.md` for the terminal's store and a section on floats (the layer, the
