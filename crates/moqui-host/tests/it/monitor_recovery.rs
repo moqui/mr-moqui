@@ -1,8 +1,10 @@
-//! Recovery on a real seeded PostgreSQL server (plans/Monitoring.md, Later: Recovery): the default policy only
+//! Recovery on a real seeded PostgreSQL server (plans/archive/Monitoring.md, Later: Recovery): the default policy only
 //! escalates; an approval policy proposes isolating the one failing instance and runs nothing until approved, then
 //! drains it and verifies the service recovered; a drained instance answers /health with 503; the emergency stop
 //! blocks everything but escalation; an automatic rollback through a webhook controller is retried with the same
-//! idempotency key, completed by the controller's callback, and found Inconclusive when no telemetry follows it.
+//! idempotency key, completed by the controller's callback, and found Inconclusive when no telemetry follows it; a
+//! manual restart marked done while the service still fails is found Failed and escalated, the incident left
+//! Mitigating, and the rollback decided next is timed out and escalated when no operator marks it by its deadline.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
 use crate::common;
 use moqui_core::entity::document::Document;
@@ -168,7 +170,7 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
     let now = jiff::Timestamp::now().as_millisecond();
     let released = now - 40 * MINUTE;
 
-    // shop 2.0 fails on shop-a only; cart 2.0 fails on both its instances.
+    // shop 2.0 fails on shop-a only; cart 2.0 and pay 2.0 fail on both their instances.
     let mut metrics = Vec::new();
     for step in 1..=60 {
         for (service, instance) in [
@@ -177,6 +179,8 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
             ("shop", "shop-c"),
             ("cart", "cart-a"),
             ("cart", "cart-b"),
+            ("pay", "pay-a"),
+            ("pay", "pay-b"),
         ] {
             metrics.extend(minute(service, "1.0", instance, released - step * MINUTE, 199, 1));
         }
@@ -188,6 +192,8 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
         metrics.extend(minute("shop", "2.0", "shop-c", at, 200, 0));
         metrics.extend(minute("cart", "2.0", "cart-a", at, 150, 50));
         metrics.extend(minute("cart", "2.0", "cart-b", at, 150, 50));
+        metrics.extend(minute("pay", "2.0", "pay-a", at, 150, 50));
+        metrics.extend(minute("pay", "2.0", "pay-b", at, 150, 50));
     }
     search.index_entries("otel_metrics", metrics).unwrap();
     search
@@ -198,11 +204,13 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
                 release("shop", "2.0", released),
                 release("cart", "1.0", released - 5 * 60 * MINUTE),
                 release("cart", "2.0", released),
+                release("pay", "1.0", released - 5 * 60 * MINUTE),
+                release("pay", "2.0", released),
             ],
         )
         .unwrap();
     let pass = call("org.moqui.monitor.MonitorServices.detect#Regressions", json!({}));
-    assert_eq!(pass["incidents"], 2, "{pass}");
+    assert_eq!(pass["incidents"], 3, "{pass}");
     let incidents = call("org.moqui.monitor.MonitorServices.list#Incidents", json!({}))["incidents"].clone();
     let incident_of = |service: &str| {
         incidents
@@ -213,7 +221,7 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
             .unwrap()["incidentId"]
             .clone()
     };
-    let (shop, cart) = (incident_of("shop"), incident_of("cart"));
+    let (shop, cart, pay) = (incident_of("shop"), incident_of("cart"), incident_of("pay"));
 
     // The shipped policy is advisory and only escalates.
     let run = call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
@@ -432,4 +440,72 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
         .find(|row| row["action"] == "rollback")
         .unwrap();
     assert_eq!(action["verificationStatus"], "Inconclusive", "{action}");
+
+    // pay: an automatic policy whose steps an operator carries out (the shipped MANUAL adapter), deadlines of two
+    // minutes. The least disruptive step, a restart, waits for the operator.
+    let start = now + 10 * MINUTE;
+    context.set_effective_time(Some(start));
+    call(
+        "org.moqui.monitor.MonitorServices.store#RecoveryPolicy",
+        json!({"policyId": "PAY", "sequenceNum": 3, "serviceName": "pay", "mode": "automatic", "adapterId": "MANUAL",
+            "ladderJson": r#"[{"action":"restart"},{"action":"rollback"},{"action":"escalate"}]"#,
+            "verifyMinutes": 1, "deadlineMinutes": 2, "cooldownMinutes": 1, "maxActionsPerDay": 5}),
+    );
+    call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
+    let of = |incident: &Json, name: &str| actions(incident).into_iter().find(|row| row["action"] == name);
+    let restart = of(&pay, "restart").expect("a restart");
+    assert_eq!(restart["statusId"], "AwaitingOperator", "{restart}");
+    call(
+        "org.moqui.monitor.MonitorServices.complete#RecoveryAction",
+        json!({"actionId": restart["actionId"], "outcome": "done", "note": "restarted"}),
+    );
+    assert_eq!(of(&pay, "restart").unwrap()["statusId"], "Succeeded");
+
+    // The service fails as before after the restart: Failed, escalated, and the incident is not recovered.
+    let mut failing = Vec::new();
+    for step in 0..4 {
+        for instance in ["pay-a", "pay-b"] {
+            failing.extend(minute("pay", "2.0", instance, start + step * MINUTE, 150, 50));
+        }
+    }
+    search.index_entries("otel_metrics", failing).unwrap();
+    context.set_effective_time(Some(start + 4 * MINUTE));
+    call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
+    let restart = of(&pay, "restart").unwrap();
+    assert_eq!(restart["verificationStatus"], "Failed", "{restart}");
+    let incident = call(
+        "org.moqui.monitor.MonitorServices.get#Incident",
+        json!({"incidentId": pay}),
+    );
+    assert_eq!(incident["incident"]["statusId"], "Mitigating", "{incident}");
+    let evidence = |summary: &str| {
+        call(
+            "org.moqui.monitor.MonitorServices.get#Incident",
+            json!({"incidentId": pay}),
+        )["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["summary"].as_str().is_some_and(|text| text.contains(summary)))
+    };
+    assert!(evidence(": Failed"), "{incident}");
+
+    // The same pass decided the next step past the cooldown, a rollback, which waits for the operator. Nobody marks it:
+    // past its deadline it is timed out and escalated, and holds the scope no longer.
+    let rollback = of(&pay, "rollback").expect("a rollback after the failed restart");
+    assert_eq!(
+        (rollback["statusId"].as_str(), rollback["target"].as_str()),
+        (Some("AwaitingOperator"), Some("1.0")),
+        "{rollback}"
+    );
+    context.set_effective_time(Some(start + 7 * MINUTE));
+    call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
+    let rollback = of(&pay, "rollback").unwrap();
+    assert_eq!(rollback["statusId"], "TimedOut", "{rollback}");
+    assert!(
+        rollback["verificationStatus"].is_null(),
+        "a timed-out action is not verified: {rollback}"
+    );
+    assert!(evidence("rollback 1.0 timed out"));
+    context.set_effective_time(None);
 }
