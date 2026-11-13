@@ -3,7 +3,7 @@
 // names a target's id, a scope the target gives the caller, the registered selection options and registered field names; no
 // entity, field, filter or service of a request is read); a registered field the caller may not read is left out and named,
 // whatever is asked; the file is the service's answer to its caller, never stored or sent, bounded (a larger one refused
-// whole) and, written here, with a formula cell as text; an export keeps one record and one audit row (who, what, how many,
+// whole) and, written here, with a formula cell as text and a plain number as it is; an export keeps one record and one audit row (who, what, how many,
 // never the content), its repeat under an operation key no second record and an audit row of its own; the records are read by who exported and those the target's
 // view permission admits; and what the administration screens read and post of them (find#ExportRuns, get#ExportContext,
 // run#ExportRequest; plans/archive/Admin-Screens-Down.md A5) adds nothing: a wizard's form values are a request of the registration,
@@ -98,8 +98,9 @@ spec({
             })
         )
         const message = (original, locale, localized) => make(MESSAGE, {original, locale, localized})
-        message("Spec export hello", "zz_SP", "Spec export secret words")
-        message("=1+1", "zz_SP", "@SUM(A1)")
+        // a plain negative number is no formula; the same sign before an expression is
+        message("-10.00", "zz_SP", "Spec export secret words")
+        message("-1+1", "zz_SP", "@SUM(A1)")
         for (const index of [1, 2, 3, 4]) message("Spec export many " + index, "zz_SQ", "Many " + index)
     },
     cleanupSpec() {
@@ -203,8 +204,9 @@ feature("an export is dispatched only by a registration, and a field the caller 
                 asked.contentType === "text/csv" &&
                 has(asked.filename, /^specDxTranslations-\d{8}-\d{4}\.csv$/)
         )
-        // a cell a spreadsheet would read as a formula is written as text
-        assert(asked.fileText.includes('"\'=1+1"'), asked.fileText)
+        // a cell a spreadsheet would read as a formula is written as text, a plain number as it is
+        assert(asked.fileText.includes('"\'-1+1"') && asked.fileText.includes('"-10.00"'), asked.fileText)
+        assert(!asked.fileText.includes("'-10.00"), asked.fileText)
         // the defaults leave it out the same way
         assert(out.runner.defaults.exported === true && !out.runner.defaults.fileText.includes("Spec export secret words"))
         // a holder of the field's permission gets it, a formula in it as text too

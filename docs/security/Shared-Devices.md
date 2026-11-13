@@ -1,7 +1,8 @@
 # Shared devices
 
 A shared device is a browser with no person signed in that may open one registered group of screens: a wall display
-that plays dashboards, later a kiosk. An administrator registers it, enters a code on it once, and can revoke it. The
+that plays dashboards (Insights' `INSIGHTS_PLAYLISTS`), or People's clocking kiosk (`PEOPLE_CLOCKING`, where each worker
+proves who they are by badge and PIN). An administrator registers it, enters a code on it once, and can revoke it. The
 code is in `crates/moqui-core/src/user/device.rs` (the credential and the route gate),
 `org.moqui.admin.DeviceServices` (`service/org/moqui/admin/Devices.js`) and the `/Device` page
 (`webroot/screen/webroot/Device.xml`). The design is IronStone's CX-DEVICE (mr-boss `plan/design-crosscut.md` §1.5,

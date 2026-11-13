@@ -436,10 +436,11 @@ function validUtf8(bytes) {
     return true
 }
 // A cell of a file people open in a spreadsheet: one that would be read as a formula (=, +, -, @, a tab or a line start)
-// is written as text.
+// is written as text; a plain number (-10.00, +1, -1,234.50) is written as it is, as the screen CSV writer does
+// (template/screen/ScreenCsv.js).
 function delimitedCell(value) {
     let found = String(value ?? "")
-    if (/^[=+\-@\t\r]/.test(found)) found = "'" + found
+    if (/^[=+\-@\t\r]/.test(found) && !/^[+-]?[\d,]*\.?\d+$/.test(found)) found = "'" + found
     return '"' + found.replace(/"/g, '""') + '"'
 }
 function writeDelimited(headers, records) {
