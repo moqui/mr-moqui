@@ -39,7 +39,7 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
 
   A device with keys needs a sign-in in the last five minutes ([Recent sign-in](../security/Recent-Auth.md);
   `reauthRequired`), since the server cannot tell which browser asks. Not for a device without keys (a browser dropping a
-  device whose first keys were refused), nor for the re-key of a store from before the derived store key.
+  device whose first keys were refused).
 - **Logout and account switch.** Logout and leaving the page close the store. A store belongs to one user and device,
   and a page of another user never opens it. The server refuses a device that is not the session user's ("not found"),
   so a tab left open across an account switch gets nothing; that tab only closes the store (it deletes it only when the
@@ -65,11 +65,6 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   - What it does not protect against: anyone who can sign in as the user (or holds a stolen session) together with the
     browser profile; whoever holds the server's `chat_store_key_secret`; and script running in a page of this origin
     while the user is signed in. It is a lock against a copied or stolen profile, not against the server.
-  - **Stores from before the derived key.** Such a device still has the random key it was given (`ChatDevice.storeKey`,
-    answered once as `legacyStoreKey`). The browser opens the store with it, exports its room keys, cross-signing keys and
-    backup key, makes a new device and imports them there under the derived key. Its own device is signed with the
-    self-signing key when there is one. Only then is the old device revoked (`replacedBy`, which drops its stored key) and
-    its store deleted. A failure part way leaves the old store for the next page. The field goes once no device holds one.
 - **A store that does not open.** It is tried again (three times); a passing IndexedDB failure never deletes it. Only a
   definite one (a wrong key, a store of another device, data that does not decode) stops it, and the store is kept: the
   user is told (`state.problem`, `storeUnreadable`) and Settings, My devices offers "Start over" (after the user confirms
@@ -145,11 +140,10 @@ would otherwise never upload more. A sync's `since` past the last position queue
   `badRequest`, `algorithmChanged`, `wrongVersion` (with `current_version`), `reauthRequired` (no sign-in in the last five
   minutes); in the browser also `busy` (another tab has the store) and `storeUnreadable`.
 
-**Store key.** `storeKey` (`{deviceId}`) answers `{storeKey, legacyStoreKey}`. `storeKey` is the passphrase the browser
+**Store key.** `storeKey` (`{deviceId}`) answers `{storeKey}`, the passphrase the browser
 passes to `OlmMachine.initialize` as `store_passphrase`, so the IndexedDB store is encrypted: 43 characters of URL-safe
 base64, derived (not stored) and the same at each ask. Only the device's own user gets it, so a copied browser profile
-without a signed-in session cannot open the store. A revoked device gets none. `legacyStoreKey` is the random key of a
-device from before (null for others), for its one re-key. Neither is logged or in another answer.
+without a signed-in session cannot open the store. A revoked device gets none. It is not logged or in another answer.
 
 **Recent sign-in.** These need a sign-in in the last five minutes, else `reauthRequired` ([Recent
 sign-in](../security/Recent-Auth.md)): a cross-signing `reset` that replaces the master key, `backupVersionCreate` (a new
@@ -278,8 +272,8 @@ verified (`moqui.callKeys.state.unverified`; the call's keys still go to the ros
 **Verification.** My devices shows each device's verification as this browser's store holds it (trust is the clients'):
 Verify asks another device; the two compare emoji (SAS), or one shows a QR code that the other reads with its camera
 (where the browser has `BarcodeDetector`). The steps travel as to-device events. A verified device of one's own is signed
-with the self-signing key (`keys/signatures/upload`), so the user's other devices trust it too. `ChatDevice.verifiedDate`
-stays unused: the server's flag would establish no trust.
+with the self-signing key (`keys/signatures/upload`), so the user's other devices trust it too. The server keeps no
+verified flag of its own: it would establish no trust.
 
 ## The browser API
 
@@ -337,8 +331,7 @@ policy sets none.
     without keys revoked without one; an account with a second factor confirming with the password and then the code.
 - **Server, trust and backup:** `./moq test framework --spec ChatKeyBackup`. It covers:
   - a store key answered only to its own user, the same at each ask, absent from the device list and its row, another
-    after a revoke; a device from before answered its `legacyStoreKey`, revoked without a recent sign-in only to its
-    replacement;
+    after a revoke;
   - a reset, a new backup, a new backup public key and deleting backed-up keys refused without a recent sign-in (also
     after another user's login in the session), with the same parameters; the versions listed with their public keys;
   - cross-signing keys uploaded once, the same again a no-op, a different master key refused unless reset;
@@ -361,9 +354,7 @@ policy sets none.
   - only verified devices: with the sender's setting, or the room's (set by its owner, refused to a non-member), an
     unverified device cannot read the next message;
   - a store re-made under another key is refused `storeUnreadable` and kept, again on the next try; "Start over" makes
-    a new device and drops the old one;
-  - a store from before the derived store key (its random key put back through Tools) moves to a new device: the room
-    key of a message it sent comes along, the old device is revoked (its key gone) and its store deleted.
+    a new device and drops the old one.
 - **Browser, the chat store:** `./moq test-client webroot --offline --spec WebrootChat`: a closed room's decrypted files
   revoked, another room's kept, and a file decrypted again when opened again.
 - **Browser, encrypted calls:** `EncryptedCallFlow` also checks the warning of unverified devices on the roster.
@@ -377,7 +368,5 @@ policy sets none.
   About 5 seconds.
 
 **Not checked live:** Element or another Matrix client against these endpoints (C6a serves them), and Firefox and
-Safari (the client specs run Chromium). The re-key of a store from before the derived key is built on the SDK's export and
-import but no client spec drives it (the spec server makes no such store), and the dialogs of `moqui.reauth` (a spec page
-has always just signed in). Emoji and QR verification are built on the SDK's flows but no client spec drives
+Safari (the client specs run Chromium), and the dialogs of `moqui.reauth` (a spec page has always just signed in). Emoji and QR verification are built on the SDK's flows but no client spec drives
 them, and reading a QR code needs a camera and `BarcodeDetector` (Chrome on Android, macOS and ChromeOS; not headless).

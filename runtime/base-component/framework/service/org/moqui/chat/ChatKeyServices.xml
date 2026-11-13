@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="ChatDevices">
         <description>The current user's devices, newest seen first, without the revoked ones unless includeRevoked: each
             deviceId, displayName, ed25519Key (to compare with the device itself), hasKeys, userAgent, createdDate,
-            lastSeenDate, verifiedDate, revokedDate and revoked. user_id is the user's Matrix user ID.</description>
+            lastSeenDate, revokedDate and revoked. user_id is the user's Matrix user ID.</description>
         <in-parameters><parameter name="includeRevoked" type="Boolean"/></in-parameters>
         <out-parameters>
             <parameter name="deviceList" type="List"/>
@@ -81,14 +81,11 @@ along with this software (see the LICENSE.md file). If not, see
             cannot be used again (the browser makes a new device the next time it needs one). It does not sign that browser
             out. Again for a revoked one: repeated. A device with identity keys needs a sign-in in the last five minutes
             (check#RecentAuth; reasonCode reauthRequired), as the server cannot tell which browser asks; not needed for a
-            device without keys (nothing is encrypted to it), nor for the one-time re-key of a device that still has a stored
-            store key (from before it was derived) to the newer device replacedBy. The revoke drops that stored key and bumps
-            the revision its derived store key is made from.
+            device without keys (nothing is encrypted to it). The revoke bumps the revision its derived store key is made
+            from.
             reasonCode notFound, reauthRequired.</description>
         <in-parameters>
             <parameter name="deviceId" required="true"/>
-            <parameter name="replacedBy"><description>The re-key of a store from before the derived store key: the new
-                device of this browser that takes its keys</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="deviceId"/>
@@ -102,14 +99,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The passphrase the browser encrypts the crypto store of the current user's device deviceId with
             (OlmMachine.initialize store_passphrase), so a copied browser profile without a signed-in session cannot open the
             store. Derived, not stored (derive#ChatStoreKey): no table or export holds it, and it is the same at each ask
-            until a revoke bumps the device's revision. legacyStoreKey is the random key a device made before the derived key
-            was given (ChatDevice.storeKey), until the browser moves that store's keys to a new device and revokes it. Never
-            logged and in no other answer. reasonCode notFound (another user's device, with the same parameters), revoked,
+            until a revoke bumps the device's revision. Never logged and in no other answer. reasonCode notFound (another user's device, with the same parameters), revoked,
             failed (chat_store_key_secret not set).</description>
         <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="storeKey"/>
-            <parameter name="legacyStoreKey"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('storeKey', context))</script></actions>

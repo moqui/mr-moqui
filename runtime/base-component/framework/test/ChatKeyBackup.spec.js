@@ -168,55 +168,18 @@ feature(
         then({first, again, other, listed, row, rowText, doomedKey, revoked, afterRevoke, doomedRow, rekeyed}) {
             first.errors == ""
             first.storeKey.length == 43
-            first.legacyStoreKey == null
             again.storeKey == first.storeKey
             other.reasonCode == "notFound"
             other.storeKey == null
             listed.indexOf(first.storeKey) < 0
             listed.indexOf("storeKey") < 0
-            row.storeKey == null
             rowText.indexOf(first.storeKey) < 0
             doomedKey.storeKey.length == 43
             doomedKey.storeKey != first.storeKey
             revoked.errors == ""
             afterRevoke.reasonCode == "revoked"
-            doomedRow.storeKey == null
             Number(doomedRow.storeRevision) == 2
             rekeyed.storeKey != doomedKey.storeKey
-        }
-    }
-)
-
-feature(
-    "a device from before the derived store key gets its old key as legacyStoreKey once, and is revoked without a recent sign-in only to the new device that takes its keys",
-    {
-        when() {
-            // a device as made before: its random key stored on its row
-            const old = device(A, "a-legacy")
-            sys(() => {
-                const row = ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: old}).one()
-                row.set("storeKey", "legacy-key-0123456789-0123456789-0123456789")
-                row.update()
-            })
-            const keys = as(A, "get#ChatDeviceStoreKey", {deviceId: old})
-            const next = device(A, "a-next")
-            // the same parameters as the re-key, without the newer device: refused without a recent sign-in
-            ec.user.logoutUser()
-            const plain = as(A, "revoke#ChatDevice", {deviceId: old})
-            const toItself = as(A, "revoke#ChatDevice", {deviceId: old, replacedBy: old})
-            const moved = as(A, "revoke#ChatDevice", {deviceId: old, replacedBy: next})
-            const row = sys(() => ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: old}).one())
-            return {keys, plain, toItself, moved, row}
-        },
-        then({keys, plain, toItself, moved, row}) {
-            keys.legacyStoreKey == "legacy-key-0123456789-0123456789-0123456789"
-            keys.storeKey.length == 43
-            keys.storeKey != keys.legacyStoreKey
-            plain.reasonCode == "reauthRequired"
-            toItself.reasonCode == "reauthRequired"
-            moved.errors == ""
-            row.revokedDate != null
-            row.storeKey == null
         }
     }
 )

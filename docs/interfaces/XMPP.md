@@ -93,8 +93,7 @@ with a second factor signs in with an app password, which is made after it.
   server could not (`y`), where the server binds, is refused as a downgrade.
 - The server keeps no password. `create#UserAppPassword` stores SCRAM verifiers with the password
   (`UserAppPassword.scram*`): salted, 10,000 iterations, one for the password as shown and one without its dashes. A
-  user's app passwords share one salt, so one challenge fits each. App passwords made before C3a have none; PLAIN
-  takes them. `get#UserAppPasswords` says which have them (`xmppReady`), and Chat apps marks the others.
+  user's app passwords share one salt, so one challenge fits each.
 - **Unknown users** go through the SCRAM exchange with a salt derived from their name and `xmpp_scram_decoy_key`
   (is-secret, generated when unset), and fail at its end as a wrong password does: the salt is the same across
   restarts and nodes, and for every spelling of the name the account lookup takes as one (without case, XEP-0106

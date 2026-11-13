@@ -23,8 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     Actors (plans/Comms-Framework.md §4.4, C1): a member, a sender, a mention and a vote are a ChatActor, a local user or an
     external actor of a bridge. The rows of a local actor keep its userId beside the actor (ChatRoomMember.userId,
     ChatEvent.senderUserId, ChatEventMention.userId, ChatPollVote.userId), so the services take and answer userIds for local
-    users and the reads by user stay one find; an external actor's rows have no userId, and no key holds a userId.
-    org.moqui.chat.ChatServices.migrate#ChatActors moves a database from before (docs/Run-Deploy.md "Chat actors"). The
+    users and the reads by user stay one find; an external actor's rows have no userId, and no key holds a userId. The
     bridge layer's entities are at the end: ChatBridge, ChatRoomBridge, ChatExternalUser, ChatEventExternal,
     ChatBridgeInbound and ChatBridgeDelivery (org.moqui.chat.ChatBridgeServices, crates/moqui-core/src/service/chat_bridge.rs). -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">

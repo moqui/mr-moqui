@@ -1024,24 +1024,6 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: wake this node's chat bridge delivery worker once the caller's transaction commits.</description>
     </service>
 
-    <service verb="migrate" noun="ChatActors" type="rust" location="moqui_core::service::chat_migrate::migrate_chat_actors"
-            allow-remote="false" transaction="ignore">
-        <description>Move a database from before chat actors (C1) to them; run once, in a maintenance window, with no server
-            on the old code (docs/Run-Deploy.md "Chat actors"). A local actor for each user the chat rows name (a deleted
-            account's history too), each row given its actor (table by table: one that fails is logged and the rest go on),
-            ChatRoomMember, ChatEventMention and ChatPollVote rebuilt on their new keys with their rows (the old rows kept in
-            CHAT_ROOM_MEMBER_PRE_C1, CHAT_EVENT_MENTION_PRE_C1 and CHAT_POLL_VOTE_PRE_C1; a table with a row lacking an
-            actor is not rebuilt), then the references checked. Running it again changes nothing. ChatBridgeSetupData.xml
-            calls it on a load.</description>
-        <out-parameters>
-            <parameter name="actorCount" type="Long"/>
-            <parameter name="filledCount" type="Long"/>
-            <parameter name="failedCount" type="Long"/>
-            <parameter name="rebuiltList" type="List"/>
-            <parameter name="problemList" type="List"/>
-        </out-parameters>
-    </service>
-
     <service verb="publish" noun="ChatCounts">
         <description>Internal: send these users their shell counts after their chat counts changed. Failure tolerant: an
             error is logged, not returned.</description>

@@ -100,7 +100,6 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::speech::register(&mut map),
         super::chat_link::register(&mut map),
         super::chat_bridge::register(&mut map),
-        super::chat_migrate::register(&mut map),
         super::web_push::register(&mut map),
         super::edge::register(&mut map),
         super::edge_claims::register(&mut map),

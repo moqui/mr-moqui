@@ -255,13 +255,11 @@ pub fn answer(
                     .with_store(&account.id, |store| offline::answer(store, kind, &bare, &query))
                     .flatten(),
                 // the passphrase only to the shell, which runs no server code
-                (None, Some(device)) if origin == SHELL_ORIGIN => {
-                    state.core.keys().chat_store_key(&account.id, device).map(|key| {
-                        serde_json::json!({ "storeKey": key, "legacyStoreKey": null })
-                            .to_string()
-                            .into_bytes()
-                    })
-                }
+                (None, Some(device)) if origin == SHELL_ORIGIN => state
+                    .core
+                    .keys()
+                    .chat_store_key(&account.id, device)
+                    .map(|key| serde_json::json!({ "storeKey": key }).to_string().into_bytes()),
                 _ => None,
             };
             if let Some(body) = offline_body {

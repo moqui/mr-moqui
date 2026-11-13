@@ -32,8 +32,8 @@ along with this software (see the LICENSE.md file). If not, see
             set. listRevision goes up and listChangedDate is set at each change others should see (keys set, renamed,
             revoked): a sync answers the users whose devices changed. lastToDevicePos is the stream position of the newest
             to-device message queued to it (each one queued takes the next). A revoked device (revokedDate) gets no new
-            messages or keys and is left out of queries; it cannot be used again. verifiedDate is what the user's other
-            device said of it (a later C7 pass): trust is held by clients, and this flag establishes none.</description>
+            messages or keys and is left out of queries; it cannot be used again. Whether a device is verified is the
+            clients' to know, from the user's cross-signing: the server holds no such flag.</description>
         <field name="userId" type="id" is-pk="true"/>
         <field name="deviceId" type="id" is-pk="true"/>
         <field name="displayName" type="text-medium"/>
@@ -47,12 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="ackedToDevicePos" type="number-integer" default="0"/>
         <field name="createdDate" type="date-time"/>
         <field name="lastSeenDate" type="date-time"/>
-        <field name="verifiedDate" type="date-time"/>
         <field name="revokedDate" type="date-time"/>
-        <field name="storeKey" type="text-medium" encrypt="true"><description>Legacy: the random passphrase a device made
-            before the store key was derived (get#ChatDeviceStoreKey answers it as legacyStoreKey) encrypted its browser
-            store with. The browser moves that store's keys to a new device under the derived key and revokes this one,
-            which clears it; nothing writes it any more. The field goes once no device holds one.</description></field>
         <field name="storeRevision" type="number-integer" default="1"><description>The revision the device's store key is
             derived from (derive#ChatStoreKey: userId|deviceId|revision under chat_store_key_secret); a revoke bumps
             it.</description></field>

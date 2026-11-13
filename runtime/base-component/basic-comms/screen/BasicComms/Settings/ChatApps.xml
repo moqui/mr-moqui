@@ -13,9 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Chat apps (XMPP for local users, C3a; docs/interfaces/XMPP.md): what the user enters in an XMPP app (Conversations, Monal,
-    Dino, Gajim) to chat in this server's rooms, and the app passwords those apps sign in with. Each app password says whether
-    it works with XMPP: one made before XMPP sign-in has no SCRAM verifiers, so most apps refuse it; NewXmppPassword makes a
-    new one for XMPP (shown once, after the redirect), and Revoke ends one. org.moqui.chat.XmppServices.get#ClientSettings,
+    Dino, Gajim) to chat in this server's rooms, and the app passwords those apps sign in with. NewXmppPassword makes a new
+    one for XMPP (shown once, after the redirect), and Revoke ends one. org.moqui.chat.XmppServices.get#ClientSettings,
     org.moqui.impl.UserServices create# and revoke#UserAppPassword. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat apps" default-menu-index="11" server-static="qvt" menu-image="sym_o_forum" menu-image-type="icon">
@@ -42,14 +41,7 @@ along with this software (see the LICENSE.md file). If not, see
             xmppEnabled = xmpp?.enabled === true
             passwordList = Array.from(xmpp?.appPasswordList || []).map((row) => Object.assign({}, row, {
                 createdText: when(row.createdDate),
-                lastUsedText: row.lastUsedDate ? when(row.lastUsedDate) : L('Not used yet'),
-                xmppText: row.xmppReady === true ? L('Works with XMPP apps') : L('Made before XMPP sign-in: most XMPP apps refuse it; make a new one'),
-                xmppStyle: row.xmppReady === true ? 'text-positive' : 'text-warning'}))
-            const olderCount = passwordList.filter((row) => row.xmppReady !== true).length
-            showOlder = olderCount > 0 && !newXmppPassword
-            olderText = olderCount === 1
-                ? L('One of your app passwords was made before XMPP sign-in: most XMPP apps refuse it. Make a new app password for XMPP.')
-                : ec.resource.expand('${n} of your app passwords were made before XMPP sign-in: most XMPP apps refuse them. Make a new app password for XMPP.', '', {n: olderCount})
+                lastUsedText: row.lastUsedDate ? when(row.lastUsedDate) : L('Not used yet')}))
             xmppJid = xmpp?.jid || ''
             settingRows = [
                 {what: L('Address (JID)'), value: xmpp?.jid || '', use: L('Your chat address, also what the app asks as the account')},
@@ -92,12 +84,6 @@ along with this software (see the LICENSE.md file). If not, see
                 </box-body></container-box>
             </widgets></section>
 
-            <section name="OlderPasswords" condition="showOlder"><widgets>
-                <container-box type="warning"><box-body>
-                    <label type="p" text="${olderText}"/>
-                </box-body></container-box>
-            </widgets></section>
-
             <container-box><box-header title="Settings for the app"/><box-body-nopad>
                 <form-list name="XmppSettings" list="settingRows" skip-form="true" paginate="false">
                     <field name="what"><default-field title=""><display style="text-weight-medium"/></default-field></field>
@@ -109,7 +95,6 @@ along with this software (see the LICENSE.md file). If not, see
             <container-box><box-header title="App passwords"/><box-body-nopad>
                 <form-list name="AppPasswords" list="passwordList" skip-form="true" paginate="false">
                     <field name="name"><default-field title="App or device"><display/></default-field></field>
-                    <field name="xmppText"><default-field title="XMPP"><display style="${xmppStyle}"/></default-field></field>
                     <field name="createdText"><default-field title="Made"><display/></default-field></field>
                     <field name="lastUsedText"><default-field title="Last used"><display/></default-field></field>
                     <field name="revoke" align="right"><default-field title="">
@@ -117,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 confirmation="Revoke the app password of ${name}? Every app using it is signed out until it gets a new one." parameter-map="{appPasswordId:appPasswordId}"/>
                     </default-field></field>
                     <columns type="mobile">
-                        <column><field-ref name="name"/><field-ref name="xmppText"/></column>
+                        <column><field-ref name="name"/><field-ref name="createdText"/></column>
                         <column><field-ref name="lastUsedText"/><field-ref name="revoke"/></column>
                     </columns>
                 </form-list>

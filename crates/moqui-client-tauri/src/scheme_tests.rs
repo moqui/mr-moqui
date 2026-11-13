@@ -94,7 +94,7 @@ fn the_chat_store_key_is_kept_from_the_servers_answer_and_dropped_on_revocation(
     assert_eq!(store_key_device(br#"{"deviceId":""}"#), None);
     assert_eq!(store_key_device(b"deviceId=ABCDEF"), None);
     assert_eq!(
-        store_key_change(br#"{"storeKey":"k-43","legacyStoreKey":null}"#),
+        store_key_change(br#"{"storeKey":"k-43"}"#),
         Some(Some("k-43".to_string()))
     );
     assert_eq!(
@@ -104,7 +104,7 @@ fn the_chat_store_key_is_kept_from_the_servers_answer_and_dropped_on_revocation(
     assert_eq!(store_key_change(br#"{"reasonCode":"notFound"}"#), Some(None));
     // another refusal, or no key: no change
     assert_eq!(store_key_change(br#"{"reasonCode":"failed"}"#), None);
-    assert_eq!(store_key_change(br#"{"storeKey":null,"legacyStoreKey":"old"}"#), None);
+    assert_eq!(store_key_change(br#"{"storeKey":null}"#), None);
 }
 
 #[test]

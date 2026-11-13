@@ -262,7 +262,7 @@ function deviceView(device) {
   return {
     deviceId: device.deviceId, displayName: device.displayName || null, ed25519Key: device.ed25519Key || null,
     hasKeys: !!device.ed25519Key, userAgent: device.userAgent || null, createdDate: ms(device.createdDate),
-    lastSeenDate: ms(device.lastSeenDate), verifiedDate: ms(device.verifiedDate), revokedDate: ms(device.revokedDate),
+    lastSeenDate: ms(device.lastSeenDate), revokedDate: ms(device.revokedDate),
     revoked: !!device.revokedDate,
   }
 }
@@ -305,18 +305,6 @@ function renameDevice(p) {
 }
 
 /**
- * Whether a revoke of device may go without a recent sign-in: a device with no identity keys (nothing is encrypted to it:
- * a browser dropping a device whose first keys were refused), or the one-time re-key of a store made before the store key
- * was derived (it still has a stored key, legacyStoreKey) to a newer device of mine that replaces it (replacedBy).
- */
-function revokeWithoutReauth(me, device, replacedBy) {
-  if (!device.ed25519Key) return true
-  if (blank(device.storeKey) || blank(replacedBy) || String(replacedBy) === device.deviceId) return false
-  const newer = one(DEVICE, { userId: me, deviceId: String(replacedBy) })
-  return !!newer && !newer.revokedDate && blank(newer.storeKey)
-}
-
-/**
  * Revoke one of my devices: no new keys or messages reach it, its keys and queue go, and it drops out of queries. A device
  * with keys needs a sign-in in the last five minutes (reauthRequired), as the server cannot tell which browser asks.
  */
@@ -326,11 +314,10 @@ function revokeDevice(p) {
   const device = blank(p.deviceId) ? null : find(DEVICE).condition({ userId: me, deviceId: String(p.deviceId) }).forUpdate(true).one()
   if (!device) return refuse('notFound', 'Device not found')
   if (device.revokedDate) return { deviceId: device.deviceId, repeated: true }
-  if (!revokeWithoutReauth(me, device, p.replacedBy) && !recentAuth()) return refuseReauth()
+  // a device with no identity keys has nothing encrypted to it (a browser dropping a device whose first keys were refused)
+  if (device.ed25519Key && !recentAuth()) return refuseReauth()
   device.set('revokedDate', ec.user.nowTimestamp)
-  // its store can no longer be opened with a key from here: a stored key (from before the derived one) is dropped, and the
-  // revision the key is derived from goes up
-  device.set('storeKey', null)
+  // its store can no longer be opened with a key from here: the revision the key is derived from goes up
   device.set('storeRevision', Number(device.storeRevision || 1) + 1)
   listChanged(device)
   device.update()
@@ -347,10 +334,8 @@ function revokeDevice(p) {
 /**
  * The passphrase my device's browser store is encrypted with (OlmMachine.initialize store_passphrase): derived, not stored
  * (derive#ChatStoreKey: HMAC-SHA-256 under the platform secret chat_store_key_secret of userId|deviceId|revision, 43
- * characters of URL-safe base64), so no table or export holds it. A device made before the derived key still has the
- * random one it was given (ChatDevice.storeKey): it is answered as legacyStoreKey, so the browser opens its store once with
- * it and moves the keys to a new device under the derived key (the old one is then revoked, which drops it). Only for my
- * own device that is not revoked. Never logged.
+ * characters of URL-safe base64), so no table or export holds it. Only for my own device that is not revoked. Never
+ * logged.
  */
 function storeKey(p) {
   const found = ownDevice(p.deviceId, false)
@@ -364,7 +349,7 @@ function storeKey(p) {
     ec.logger.error(`The store key of device ${device.deviceId} of ${me} was not made: ${err && err.message ? err.message : err}`)
   }
   if (ec.message.hasError() || blank(derived.storeKey)) return refuse('failed', 'This device\'s store key could not be made')
-  return { storeKey: String(derived.storeKey), legacyStoreKey: blank(device.storeKey) ? null : String(device.storeKey) }
+  return { storeKey: String(derived.storeKey) }
 }
 
 // ---- keys/upload, keys/query, keys/claim ----

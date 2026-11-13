@@ -387,17 +387,10 @@ feature("the component calls no Mantle or IronStone service, reads no Mantle ent
     }
 })
 
-feature("Chat apps says which app passwords work with XMPP apps and offers a new one for XMPP, in qvt and tui", {
+feature("Chat apps gives the XMPP settings, lists the app passwords and offers a new one for XMPP, in qvt and tui", {
     when() {
         ec.user.internalLoginUser("basic.comms.spec")
         sys(() => ec.entity.find("moqui.security.UserAppPassword").condition("userId", USER).deleteAll())
-        // an app password from before XMPP sign-in (no SCRAM verifiers), and one made now
-        const older = sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Old tablet"})).appPasswordId
-        sys(() => {
-            const row = ec.entity.find("moqui.security.UserAppPassword").condition("appPasswordId", older).one()
-            row.setFields({scramSalt: null, scramIterations: null, scramStoredKeys: null, scramServerKeys: null}, true, null, null)
-            row.update()
-        })
         sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Phone chat"}))
         const served = withProperty("xmpp_domain", "moqui.local", () => ({
             qvt: render(root, "Settings/ChatApps", "qvt", {}),
@@ -415,14 +408,11 @@ feature("Chat apps says which app passwords work with XMPP apps and offers a new
         !served.qvt.broken
         served.qvt.output.includes("New app password for XMPP")
         served.qvt.output.includes("basic.comms.spec@moqui.local")
-        served.qvt.output.includes("Works with XMPP apps")
-        served.qvt.output.includes("Made before XMPP sign-in")
+        served.qvt.output.includes("Phone chat")
         served.tui.status == 200
         !served.tui.broken
-        served.tui.output.includes("Works with XMPP apps")
-        served.tui.output.includes("Made before XMPP sign-in")
-        served.settings.appPasswordList.length == 2
-        served.settings.readyCount == 1
+        served.tui.output.includes("Phone chat")
+        served.settings.appPasswordList.length == 1
         served.settings.jid == "basic.comms.spec@moqui.local"
         off.status == 200
         off.output.includes("not set up on this server")

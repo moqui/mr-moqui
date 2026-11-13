@@ -11,11 +11,9 @@ of its own: C4-SMS adds the first, `sms` on Telnyx ([SMS](SMS.md)). The user gui
   `ChatRoom.federationEnabled` and `agentsReadExternal`, and the actor keys of `ChatRoomMember`, `ChatEventMention` and
   `ChatPollVote`.
 - **Services:** `org.moqui.chat.ChatBridgeServices` (input, delivery state, retry, administration) and the actor parts of
-  `org.moqui.chat.ChatServices` (`get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
-  `migrate#ChatActors`).
+  `org.moqui.chat.ChatServices` (`get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`).
 - **Rust:** `crates/moqui-core/src/service/chat_bridge.rs` (the adapter contract, the delivery worker, local actors,
-  tokens), `chat_migrate.rs` (the migration) and `EntityFacade::table_primary_key` and `rekey_table` in
-  `crates/moqui-entity/src/entity/meta.rs`.
+  tokens).
 - **Screens:** BasicComms Chat (`Chat.qvue` and its terminal twin `ChatTui.xml`); System, Chat Bridges
   (`basic-comms/screen/System/ChatBridges.xml`).
 
@@ -36,8 +34,6 @@ with a `ChatExternalUser`). Exactly one identity is set, unique within its kind.
 - Agents stay local service-user actors. An external actor's message reaches a room's agents only when the room's
   `agentsReadExternal` is Y. The framework's own agents (`AgentServices.handle#ChatMessage`) never run for one: a run is
   always its local sender's, and they do not act in a room an external actor is in.
-
-Moving a database from before C1 is [Run-Deploy, Chat actors](../Run-Deploy.md#chat-actors).
 
 ## The adapter contract
 
@@ -161,13 +157,6 @@ only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gatewa
 all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the webhook and media routes look for the server's
 own bridge or file first, then the local node's copy; a bridge id both sides have gets 409, naming it.
 
-While the copies the chat actors migration kept are there (`CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1`,
-`CHAT_POLL_VOTE_PRE_C1`), System, Chat Bridges lists them with their rows and the table's (`get#PreC1Backups`) and has
-Drop the old copies (`drop#PreC1Backups`, both `ChatBridgeAdmin`, in `chat_migrate.rs`). Each table is checked again
-first: a copy goes only when its table is on its new key with at least the copy's rows; one whose table has fewer rows
-(a rebuild cut off) stays, named with why, as it may be the only copy of them. A copy that fails to drop is logged and
-the rest go on.
-
 ## Tests
 
 - `crates/moqui-core/src/service/chat_bridge_tests.rs`: an in-memory adapter registered only in the tests, with crash and
@@ -177,8 +166,6 @@ the rest go on.
   admin list and sent again), duplicate batches and echo loops between two networks, reordered edits, a reaction and a
   stale edit, a whole batch refused for security and malformed items rejected by name, an unsupported edit refused before
   the change.
-- `crates/moqui-host/tests/it/chat_actors.rs`: the migration on embedded Postgres (below), then the copies: refused to a
-  user without `ChatBridgeAdmin`, the two whose tables hold their rows dropped, the emptied table's copy kept.
 - `crates/moqui-channels/src/tests.rs`: an unknown and a disabled bridge answering as an unsigned request, the
   disabled one its network 503; a webhook's replay held in the shared replay cache.
 - `crates/moqui-host/tests/it/lock_then_insert.rs`: racing first joins make one actor.

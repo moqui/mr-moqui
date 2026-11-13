@@ -40,7 +40,6 @@ mod agent_screens;
 mod assist;
 mod authz_revocation;
 mod backup;
-mod chat_actors;
 mod cluster_notify;
 mod collab;
 mod component_deploy;

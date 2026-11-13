@@ -30,7 +30,6 @@ mod chat;
 pub mod chat_bridge;
 mod chat_keys;
 mod chat_link;
-mod chat_migrate;
 #[cfg(test)]
 mod chat_tests;
 mod contacts;

@@ -496,9 +496,6 @@ fn get_app_passwords(
             for field in ["appPasswordId", "name", "createdDate", "lastUsedDate", "revokedDate"] {
                 map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
             }
-            // XMPP's SCRAM takes only an app password made with its verifiers (since C3a); an older one works with PLAIN
-            let verifiers = row.get("scramStoredKeys").is_some_and(|keys| !is_empty(keys));
-            map.insert("xmppReady".to_string(), Value::Bool(verifiers));
             Value::Map(map)
         })
         .collect();

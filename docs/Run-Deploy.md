@@ -742,39 +742,6 @@ OpenSearch, and `podman/quadlet/` runs the single container as a systemd service
 
 A deploy marker for the dashboards can be posted from the upgrade script ([Monitoring](tools/Monitoring.md#deploy-markers-and-annotations)).
 
-### Chat actors
-
-The first upgrade past Comms C1 moves chat to actors ([Chat bridges](interfaces/Chat-Bridges.md#actors)): the room
-members, mentions and poll votes are keyed by actor, not by user. The table check never changes a primary key, so a
-one-time migration does it, `ChatServices.migrate#ChatActors`. It runs from `ChatBridgeSetupData.xml`, which a new
-database loads on its own; an existing one loads it once.
-
-1. **Maintenance window.** No server on the old code may write chat while it runs: stop every node of the cluster.
-2. **Back up** the database ([Upgrading](#upgrading) step 1). On MySQL the table changes are not transactional, so the
-   backup is the rollback.
-3. Unpack the new build, then load the file with the server stopped (the table check runs first and adds the new
-   columns and tables):
-
-   ```sh
-   sudo -u moqui /opt/moqui/moqui load location=runtime/base-component/framework/data/ChatBridgeSetupData.xml
-   ```
-
-   The log names each table rebuilt (`chat actors: moqui.chat.ChatRoomMember rebuilt with its new key, N of N rows`) and
-   each problem. It gives every user the chat rows name an actor (deleted accounts' history too), gives each row its
-   actor, rebuilds the three tables on their new keys with every row (all or nothing per table, the counts checked), and
-   checks that every actor a row names exists and is its user's. A table with a row it could not give an actor is not
-   rebuilt; the log says which, and the old shape keeps working for local users until it is fixed and loaded again.
-   A row is given an actor only when its user's actor was made, so a user whose actor failed holds its table back. On
-   MySQL a rebuild cut off after the new table was made leaves it empty beside its `*_PRE_C1` copy; a later load says so
-   (`... is empty and ..._PRE_C1 has N rows`) and leaves the copy for you to restore.
-4. Start the server. The chat search document gains the sender's actor and external name: reload
-   `ChatSetupData.xml` (`types=seed-initial` rows, so `location=` it) to have them in the index.
-5. **Rollback.** The old rows stay in `CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1` and `CHAT_POLL_VOTE_PRE_C1`
-   (on Postgres `chat_room_member_pre_c1` and so on). To go back to the old build, restore the backup; the copies are for
-   checking and for a manual restore. Drop them once the new build has run a while.
-
-Loading the file again does nothing.
-
 ### Optional services
 
 | Service | How |

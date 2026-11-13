@@ -26,8 +26,7 @@
  * secret and does not store (/ChatKeys/storeKey, given only to the device's own signed-in user; a revoke changes it): a
  * copy of the browser profile alone does not open it. It does not protect the store from one who can also sign in as the
  * user (or holds the server's secret), nor from script running in a page of this origin while the user is signed in. A
- * store from before the derived key (the server still answers its random key as legacyStoreKey) moves once to a new
- * device (rekey). A store that fails to open is tried again; one that cannot be read (a wrong key, another device's data,
+ * store that fails to open is tried again; one that cannot be read (a wrong key, another device's data,
  * corruption) is kept, the user is told (state.problem) and offered the backup (startOver), never deleted unasked.
  *
  * Encrypted rooms (C7): Megolm room keys are shared with the room's members' devices over Olm to-device messages before a
@@ -434,8 +433,6 @@
         // another tab holds the store: this one follows it, and takes the store when that tab goes
         if (!release) return follow(user, pointer);
         releaseLock = release;
-        // a store made before the store key was derived: its keys move once to a new device under the derived key
-        if (keys.legacyStoreKey) return rekey(user, pointer, keys, retry);
         try {
             machine = await initializeStore(user, pointer, keys.storeKey);
             wire();
@@ -463,93 +460,6 @@
             if (!machine && !retry) return open(user, true);
             throw err;
         }
-    }
-
-    /**
-     * The one-time re-key of a store made before the store key was derived (the server still answers its random key as
-     * legacyStoreKey): the store opens with that key, its room keys, cross-signing keys and backup key are exported, a new
-     * device is made and its store opened under the derived key, they are imported there (the new device signed with the
-     * self-signing key when there is one, so the user's other devices trust it), and only then is the old device revoked
-     * (replacedBy, which drops its stored key) and its store deleted. A store the legacy key does not open is left as it is
-     * (state.problem: the backup is offered); a passing failure leaves everything for the next page.
-     */
-    async function rekey(user, pointer, keys, retry) {
-        const channelTagOld = channelTag;
-        let old = null;
-        try {
-            old = await initializeStore(user, pointer, keys.legacyStoreKey);
-        } catch (err) {
-            unlock();
-            if (err && err.reasonCode === "storeUnreadable") storeProblem(user, pointer, err);
-            throw err;
-        }
-        let exported;
-        try {
-            const backup = await old.getBackupKeys();
-            exported = { roomKeys: await old.exportRoomKeys(() => true), cross: await old.exportCrossSigningKeys(),
-                backupKey: backup && backup.decryptionKey ? backup.decryptionKey.toBase64() : null, backupVersion: backup ? backup.backupVersion : null };
-        } finally {
-            try { old.close(); } catch (err) { /* closed */ }
-            unlock();
-        }
-        const made = await call("device", { displayName: deviceName() });
-        const next = { deviceId: made.deviceId, user_id: made.user_id };
-        let nextKeys;
-        try {
-            nextKeys = await storeKeysOf(next);
-            const release = await lockStore(storePrefix(user, next.deviceId));
-            releaseLock = release || (() => null);
-            machine = await initializeStore(user, next, nextKeys.storeKey);
-        } catch (err) {
-            // the new device has no keys yet: it goes (no sign-in asked for one without keys), and the old store and its
-            // key stay for the next page to try again
-            console.error("This browser's encryption keys were not moved to a new device", err);
-            unlock();
-            await call("revoke", { deviceId: next.deviceId }).catch(() => null);
-            await deleteStore(storePrefix(user, next.deviceId)).catch(() => null);
-            throw err;
-        }
-        wire();
-        Object.assign(state, { deviceId: next.deviceId, matrixUserId: next.user_id });
-        try {
-            if (exported.roomKeys) await machine.importExportedRoomKeys(exported.roomKeys, () => null);
-            if (exported.backupKey && exported.backupVersion) {
-                await machine.saveBackupDecryptionKey(sdk.BackupDecryptionKey.fromBase64(exported.backupKey), String(exported.backupVersion));
-            }
-            // the new device's keys go up, and the user's own identity comes down, before the cross-signing keys go in
-            await flushNow();
-        } catch (err) {
-            // the old store stays, and its key with the server: the next page tries again from it
-            console.error("This browser's encryption keys were not moved to the new device", err);
-            const m = machine;
-            machine = null;
-            try { m.close(); } catch (closeErr) { /* closed */ }
-            unlock();
-            await call("revoke", { deviceId: next.deviceId }).catch(() => null);
-            await deleteStore(storePrefix(user, next.deviceId));
-            throw err;
-        }
-        // the cross-signing keys, and this device signed with them, so the user's other devices trust it; without them it
-        // is verified again from another device, as a new one is
-        const cross = exported.cross;
-        if (cross && cross.masterKey) {
-            try {
-                await machine.importCrossSigningKeys(cross.masterKey, cross.self_signing_key, cross.userSigningKey);
-                const own = await machine.getDevice(new sdk.UserId(next.user_id), new sdk.DeviceId(next.deviceId), 5);
-                if (own && cross.self_signing_key) await sendRequest(await own.verify());
-            } catch (err) {
-                console.info("The cross-signing keys did not move to the new device", err);
-            }
-        }
-        writePointer(user, next);
-        // the followers of the old device's channel are told it moved, so they ask again for the new one
-        if (root.BroadcastChannel && channelTagOld) {
-            try { const old = new root.BroadcastChannel("moqui-crypto:" + user + ":" + pointer.deviceId + ":" + channelTagOld); old.postMessage({ op: "moved" }); old.close(); } catch (err) { /* none */ }
-        }
-        await call("revoke", { deviceId: pointer.deviceId, replacedBy: next.deviceId }).catch((err) => console.error("The device this browser moved from was not removed", err));
-        await deleteStore(storePrefix(user, pointer.deviceId));
-        channelTag = await tagOf(nextKeys.storeKey);
-        await started(user, next, retry);
     }
 
     function ensureDevice() {
@@ -766,12 +676,12 @@
         return Array.from(digest.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
     }
     /**
-     * The store key of this user's device, {storeKey, legacyStoreKey} (a refusal rejects: notFound, revoked), and the
+     * The store key of this user's device, {storeKey} (a refusal rejects: notFound, revoked), and the
      * channel tag made from the store key.
      */
     async function storeKeysOf(pointer) {
         const answer = await call("storeKey", { deviceId: pointer.deviceId });
-        const keys = { storeKey: answer.storeKey || null, legacyStoreKey: answer.legacyStoreKey || null };
+        const keys = { storeKey: answer.storeKey || null };
         channelTag = await tagOf(keys.storeKey);
         return keys;
     }
@@ -819,8 +729,7 @@
             } else if (msg.op === "leader") {
                 // a new leader: what waited is asked again
                 for (const [id, item] of pending) post({ op: "call", id, tab: tabId, name: item.name, args: item.args });
-            } else if (msg.op === "moved") moved();
-            else if (msg.op === "toDevice") deliver(msg.event);
+            } else if (msg.op === "toDevice") deliver(msg.event);
             else if (msg.op === "roomKeys") noticeRoomKeys(msg.sessions || []);
             else if (msg.op === "verifications") state.verifications = msg.list || [];
         });
@@ -845,8 +754,6 @@
         releaseLock = release;
         await loadSdk();
         const keys = await storeKeysOf(pointer);
-        // the old leader moved the keys of a store from before the derived key; this tab asks for the device again
-        if (keys.legacyStoreKey) { unlock(); moved(); return; }
         try {
             machine = await initializeStore(user, pointer, keys.storeKey);
         } catch (err) {
@@ -863,13 +770,6 @@
         await resumeBackup();
         await flushNow();
         await syncNow();
-    }
-
-    /** The device this tab followed moved to a new one (a re-key): it stops following, and the next call opens the new one. */
-    function moved() {
-        stopRelay();
-        me = null;
-        Object.assign(state, { status: "idle", deviceId: null, matrixUserId: null, error: null });
     }
 
     function stopRelay() {
