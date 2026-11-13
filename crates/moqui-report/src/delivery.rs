@@ -512,6 +512,33 @@ pub(crate) fn scope(ec: &ExecutionContext, definition_id: &str) -> Scope {
             Err(_) => format!("markers {id} unread"),
         });
     }
+    // a CalcGrid document reads its data sheets through the entity facade, under an access profile and its entity
+    // filters, which no dataset names: its scope is the reader's own fingerprint of those reads (crates/moqui-calc
+    // scope.rs), asked by name, as this crate does not depend on moqui-calc
+    if definitions::read(ec, definition_id).is_ok_and(|definition| definition["type"] == schedule::CALCGRID) {
+        if moqui_core::extension::features().any(|feature| feature == "calc") {
+            let asked = moqui_core::service::call::sync_checked(
+                "org.moqui.calc.CalcServices.get#CalcScope",
+                &BTreeMap::from([("definitionId".into(), Value::string(definition_id))]),
+                &moqui_core::service::call::CallOptions::default(),
+            );
+            match asked {
+                Ok(out) => parts.push(format!(
+                    "calc {} {}",
+                    out.get("access").and_then(Value::as_str).unwrap_or(""),
+                    out.get("scope").and_then(Value::as_str).unwrap_or("")
+                )),
+                Err(_) => {
+                    // the error is not the caller's to keep: a recipient's refusal is only a different scope
+                    ec.message().clear_errors();
+                    denied = true;
+                    parts.push("calc unread".to_owned());
+                }
+            }
+        } else {
+            comparable = false;
+        }
+    }
     let mut hash = Sha256::new();
     for part in &parts {
         hash.update(part.as_bytes());
@@ -562,6 +589,10 @@ fn viewer_scoped(body: &Json) -> bool {
 pub(crate) fn reads_business(ec: &ExecutionContext, definition_id: &str) -> bool {
     let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let read = |id: &str| definitions::read_unchecked(ec, id).ok().flatten();
+    // a CalcGrid document's rows are its reader's, through their access profile's entity filters
+    if read(definition_id).is_some_and(|definition| definition["type"] == schedule::CALCGRID) {
+        return true;
+    }
     walk(definition_id, &read, &mut seen, &mut datasets, &mut unread);
     datasets
         .iter()
@@ -698,8 +729,8 @@ pub(crate) struct Audience {
 /// A definition a schedule may name: a dashboard or a report the viewer reads.
 fn schedulable(ec: &ExecutionContext, definition_id: &str) -> Result<Json, Error> {
     let definition = definitions::read(ec, definition_id)?;
-    if !matches!(definition["type"].as_str(), Some("report" | "dashboard")) {
-        return Err(fail("a schedule requires a dashboard or report definition"));
+    if !schedule::schedulable_type(definition["type"].as_str().unwrap_or("")) {
+        return Err(fail("a schedule requires a dashboard, report or CalcGrid document"));
     }
     Ok(definition)
 }
@@ -874,13 +905,13 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         }
     };
     let definition_id = or_existing("definitionId", "reportDefinitionId");
-    schedulable(ec, &definition_id)?;
+    let definition = schedulable(ec, &definition_id)?;
     let cron = or_existing("cronExpression", "cronExpression");
     moqui_lib::cron::Cron::parse(&cron).map_err(fail)?;
     let mode = Some(or_existing("renderMode", "renderMode"))
         .filter(|mode| !mode.is_empty())
-        .unwrap_or_else(|| "pdf".to_owned());
-    schedule::validate_mode(&mode)?;
+        .unwrap_or_else(|| schedule::default_mode(&definition).to_owned());
+    schedule::validate_definition_mode(&definition, &mode)?;
     let (users, groups) = match &existing {
         Some(row) if !given => schedule_recipients(ec, &facade, row)?,
         _ => (ids(p, "recipientUserIds"), ids(p, "recipientGroupIds")),
@@ -1021,7 +1052,7 @@ fn store_owner_timing(
     owner: &Account,
 ) -> Result<Parameters, Error> {
     let definition_id = field(&row, "reportDefinitionId").to_owned();
-    schedulable(ec, &definition_id)?;
+    let definition = schedulable(ec, &definition_id)?;
     let given_or = |name: &str| -> String {
         Some(text(p, name))
             .filter(|given| !given.is_empty())
@@ -1032,8 +1063,8 @@ fn store_owner_timing(
     moqui_lib::cron::Cron::parse(&cron).map_err(fail)?;
     let mode = Some(given_or("renderMode"))
         .filter(|mode| !mode.is_empty())
-        .unwrap_or_else(|| "pdf".to_owned());
-    schedule::validate_mode(&mode)?;
+        .unwrap_or_else(|| schedule::default_mode(&definition).to_owned());
+    schedule::validate_definition_mode(&definition, &mode)?;
     let _authz = ec.disable_authz();
     let next = revision(&row) + 1;
     row.set("cronExpression", Value::string(&cron));

@@ -88,3 +88,31 @@ test("a range is named as a formula names it, and pasted text is rows of cells",
     assert.equal(calc.tableName("Open orders 2026"), "Open_orders_2026");
     assert.equal(calc.tableName("2026"), "T2026");
 });
+test("the socket's frames are the others in the room and when to read it again", () => {
+    let taken = calc.receive([], 4, { type: "joined", peers: [{ client: "c1", userId: "ann", name: "Ann" }] });
+    assert.deepEqual(taken.peers.map((peer) => peer.name), ["Ann"]);
+    taken = calc.receive(taken.peers, 4, { type: "select", client: "c2", userId: "otto", name: "Otto", sheet: 1, area: { row: 2, column: 3, width: 1, height: 1 } });
+    assert.deepEqual(taken.peers.map((peer) => peer.name), ["Ann", "Otto"]);
+    taken = calc.receive(taken.peers, 4, { type: "select", client: "c1", userId: "ann", name: "Ann", sheet: 1, area: { row: 5, column: 1, width: 2, height: 2 } });
+    assert.equal(taken.peers[0].area.row, 5);
+    const peers = calc.receive(taken.peers, 4, { type: "peer", client: "c2", joined: false }).peers;
+    assert.deepEqual(peers.map((peer) => peer.client), ["c1"]);
+    // another's edit past the view's own is read again; the view's own, or an older one, is not; a dropped room opens again
+    assert.equal(calc.receive(peers, 4, { type: "changed", seq: 5, kind: "edit" }).reread, true);
+    assert.equal(calc.receive(peers, 5, { type: "changed", seq: 5, kind: "edit" }).reread, false);
+    assert.equal(calc.receive(peers, 5, { type: "changed", seq: 5, kind: "refresh" }).reread, true);
+    const dropped = calc.receive(peers, 5, { type: "changed", seq: 6, kind: "revert", reopen: true });
+    assert.deepEqual([dropped.reopen, dropped.reread], [true, false]);
+});
+test("the others' places are the cells of the sheet shown, in each one's colour, a large one at its first cell", () => {
+    const cells = calc.peerCells([
+        { client: "c1", sheet: 1, area: { row: 2, column: 2, width: 2, height: 1 } },
+        { client: "c2", sheet: 0, area: { row: 1, column: 1, width: 1, height: 1 } },
+        { client: "c3", sheet: 1, area: { row: 10, column: 1, width: 100, height: 100 } },
+        { client: "c4", sheet: 1 },
+    ], 1);
+    assert.deepEqual(Array.from(cells.keys()), ["2:2", "2:3", "10:1"]);
+    assert.equal(cells.get("2:2"), calc.peerColor(0));
+    assert.equal(cells.get("10:1"), calc.peerColor(2));
+    assert.notEqual(calc.peerColor(0), calc.peerColor(1));
+});

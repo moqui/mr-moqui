@@ -299,12 +299,19 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a rectangle of a sheet's cells: the engine's block, sent as the JSON text the service gives -->
     <transition name="calcCells" method="get" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
+            let selection = null
+            try { selection = context.selectionJson ? JSON.parse(String(context.selectionJson)) : null } catch (e) { selection = null }
             const out = ec.service.sync().name('org.moqui.calc.CalcServices.get#CalcCells').parameters({roomId: context.roomId, sheet: context.sheet,
-                row: context.row, column: context.column, width: context.width, height: context.height}).call() || {}
-            const errors = ec.message.hasError() ? ec.message.errorsString : null
+                row: context.row, column: context.column, width: context.width, height: context.height,
+                since: context.since || null, client: context.client || null, selection}).call() || {}
+            out.errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
-            if (errors || !out.blockJson) ec.web.sendJsonResponse({errors: errors || 'No cells'})
-            else ec.web.sendTextResponse(String(out.blockJson), 'application/json', null)
+            // the block's JSON text with the room's last edit and the others beside its fields (the text is not parsed again), or
+            // only those when nothing changed since the view's edit
+            const head = {seq: out.seq == null ? null : Number(out.seq), peers: out.peers || []}
+            if (out.unchanged) ec.web.sendJsonResponse(Object.assign(head, {unchanged: true}))
+            else if (out.errors || !out.blockJson) ec.web.sendJsonResponse({errors: out.errors || 'No cells'})
+            else ec.web.sendTextResponse(JSON.stringify(head).slice(0, -1) + ',' + String(out.blockJson).slice(1), 'application/json', null)
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -343,6 +350,26 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- the document saved: its sources, charts and workbook without the data -->
+    <!-- the room's state, read again when the notification socket tells of another's edit -->
+    <transition name="calcState" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.get#CalcState').parameters({roomId: context.roomId}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- discard the edits of a saved document since it was saved, everyone's: its room is answered as calcOpen answers -->
+    <transition name="calcRevert" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.calc.CalcServices.revert#CalcDocument').parameters({roomId: context.roomId}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="calcSave" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.calc.CalcServices.save#CalcDocument').parameters({roomId: context.roomId, title: context.title || null,
@@ -359,9 +386,12 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.calc.CalcServices.export#CalcDocument').parameters({roomId: context.roomId}).call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
+            const xlsx = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             if (errors || !out.contentBytes) ec.web.sendJsonError(404, errors || ec.l10n.localize('Export not found'))
-            else ec.web.sendBytesResponse(out.contentBytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', false,
-                String(out.filename || 'Workbook.xlsx').replace(/[\\/"\r\n]/g, '_'))
+            // the terminal saves the file from JSON (moqui-tui's report export)
+            else if (context.json === 'true') ec.web.sendJsonResponse({contentBase64: StringUtilities.base64Encode(out.contentBytes), contentType: xlsx,
+                filename: String(out.filename || 'Workbook.xlsx')})
+            else ec.web.sendBytesResponse(out.contentBytes, xlsx, false, String(out.filename || 'Workbook.xlsx').replace(/[\\/"\r\n]/g, '_'))
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -402,8 +432,21 @@ along with this software (see the LICENSE.md file). If not, see
         <render-mode>
             <text type="qvue" location="component://tools/screen/Tools/Data/Grid.qvue" template="false"/>
             <!-- the terminal: a page of the entity's rows from get#DataGridRows, read only; each row opens the record form -->
+            <!-- the terminal: the entity's records a page at a time, or with mode=calc (or a saved document's definitionId) its
+                workbook as a sheet (the calcgrid component of moqui-tui, over this screen's calc transitions) -->
             <text type="tui"><![CDATA[${JSON.stringify((() => {
                 const name = String(selectedEntity || entityName || '')
+                const here = sri.buildUrl('.').path
+                if (context.mode === 'calc' || context.definitionId) {
+                    const open = context.definitionId ? {definitionId: String(context.definitionId)} : {source: {type: 'entity', entityName: name}}
+                    const room = ec.service.sync().name('org.moqui.calc.CalcServices.open#CalcDocument').parameters(open).call() || {}
+                    const error = ec.message.hasError() ? ec.message.errorsString : (room.roomId ? null : 'The workbook did not open')
+                    ec.message.clearErrors()
+                    if (error) return [{t: 'text', id: 'GridError', style: 'error', text: error}]
+                    return [{t: 'text', id: 'GridTitle', style: 'h5', text: (room.title || name) + ' · Calc'},
+                        {t: 'link', id: 'GridRecords', text: 'Records', url: name ? here + '?entityName=' + encodeURIComponent(name) : here},
+                        {t: 'component', id: 'GridSheet', name: 'calcgrid', props: {room, editable: true}}]
+                }
                 if (!name) return [{t: 'text', id: 'GridChoose', text: 'Name an entity: Data › Grid?entityName=...'}]
                 const pageIndex = Math.max(0, parseInt(context.pageIndex || '0', 10) || 0)
                 const size = 20
@@ -431,6 +474,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const text = (value) => value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)
                 const count = Number(rows.out.last_row || (pageIndex * size + data.length))
                 return [{t: 'text', id: 'GridTitle', style: 'h5', text: name},
+                    {t: 'link', id: 'GridCalc', text: 'Calc: the rows as a workbook', url: here + '?mode=calc&entityName=' + encodeURIComponent(name)},
                     {t: 'formList', id: 'GridRows', name: 'GridRows', columns: shown.map((column) => ({title: column.title || column.name})).concat(editable ? [{title: ''}] : []),
                         rows: data.map((row, index) => ({id: String(index), cells: shown.map((column) => text(row[column.name]))
                             .concat(editable ? [{t: 'link', id: 'GridEdit' + index, text: 'Edit', url: recordUrl(row), kind: 'anchor'}] : [])})),

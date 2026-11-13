@@ -45,7 +45,115 @@ use serde_json::{json, Value as Json};
 
 use crate::fill::{self, CellData, SheetRows};
 use crate::profile::{self, Profile};
-use crate::room::{DataSheet, Opening, Room, Rooms};
+use crate::room::{DataSheet, Opening, Room, Rooms, SharedRoom, REOPEN};
+use crate::together::{self, Presence};
+
+/// The functions a formula being typed completes to, in the browser and the terminal: the engine's list is not public,
+/// so these are the common ones it has.
+pub const FUNCTIONS: &[&str] = &[
+    "ABS",
+    "AND",
+    "AVERAGE",
+    "AVERAGEIF",
+    "AVERAGEIFS",
+    "CEILING",
+    "CHOOSE",
+    "CONCAT",
+    "CONCATENATE",
+    "COUNT",
+    "COUNTA",
+    "COUNTBLANK",
+    "COUNTIF",
+    "COUNTIFS",
+    "DATE",
+    "DATEDIF",
+    "DAY",
+    "DAYS",
+    "EDATE",
+    "EOMONTH",
+    "EXACT",
+    "FILTER",
+    "FIND",
+    "FLOOR",
+    "HLOOKUP",
+    "HOUR",
+    "IF",
+    "IFERROR",
+    "IFNA",
+    "IFS",
+    "INDEX",
+    "INT",
+    "ISBLANK",
+    "ISERROR",
+    "ISNUMBER",
+    "ISTEXT",
+    "LARGE",
+    "LEFT",
+    "LEN",
+    "LOWER",
+    "MATCH",
+    "MAX",
+    "MAXIFS",
+    "MEDIAN",
+    "MID",
+    "MIN",
+    "MINIFS",
+    "MINUTE",
+    "MOD",
+    "MONTH",
+    "NETWORKDAYS",
+    "NOT",
+    "NOW",
+    "OR",
+    "POWER",
+    "PRODUCT",
+    "PROPER",
+    "RAND",
+    "RANDBETWEEN",
+    "RANK",
+    "REPLACE",
+    "RIGHT",
+    "ROUND",
+    "ROUNDDOWN",
+    "ROUNDUP",
+    "ROWS",
+    "SEARCH",
+    "SECOND",
+    "SMALL",
+    "SORT",
+    "SQRT",
+    "STDEV",
+    "SUBSTITUTE",
+    "SUBTOTAL",
+    "SUM",
+    "SUMIF",
+    "SUMIFS",
+    "SUMPRODUCT",
+    "SWITCH",
+    "TEXT",
+    "TEXTJOIN",
+    "TIME",
+    "TODAY",
+    "TRIM",
+    "UNIQUE",
+    "UPPER",
+    "VALUE",
+    "VLOOKUP",
+    "WEEKDAY",
+    "WEEKNUM",
+    "XLOOKUP",
+    "YEAR",
+];
+
+/// What a view gets when it opens a room: the room ([`room_out`]) and the function names it completes.
+fn opened_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<String, Value> {
+    let mut out = room_out(facade, room, user_id);
+    out.insert(
+        "functions".to_string(),
+        Value::List(FUNCTIONS.iter().map(|name| Value::string(*name)).collect()),
+    );
+    out
+}
 
 /// The most data rows one data sheet takes; a source with more is cut and the sheet is marked.
 pub const MAX_DATA_ROWS: usize = 100_000;
@@ -73,6 +181,10 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, set_calc_profile)?;
     rust_service!(map, edit_calc_document)?;
     rust_service!(map, get_calc_cell_content)?;
+    rust_service!(map, get_calc_scope)?;
+    rust_service!(map, render_calc_document)?;
+    rust_service!(map, revert_calc_document)?;
+    rust_service!(map, get_calc_state)?;
     Ok(())
 }
 
@@ -152,7 +264,7 @@ pub(crate) enum Access {
 impl Access {
     /// The access of a call, from its `profileId`. None, with an error added, when the caller has neither the Tools
     /// app (no `profileId`) nor the profile named.
-    fn of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Option<Self> {
+    pub(crate) fn of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Option<Self> {
         let id = text(parameters, "profileId");
         if id.is_empty() {
             return moqui_tools::service::may_view_tools().then_some(Self::Tools);
@@ -166,7 +278,7 @@ impl Access {
         }
     }
 
-    fn profile_id(&self) -> Option<String> {
+    pub(crate) fn profile_id(&self) -> Option<String> {
         match self {
             Self::Tools => None,
             Self::Profile(profile) => Some(profile.id.clone()),
@@ -177,7 +289,7 @@ impl Access {
     /// the caller's current one ([`PROFILE_PREFERENCE`], which the CalcGrid screen sets when a profile is chosen)
     /// while they still hold it, else the Tools app's own access when they have it, else the first profile they hold.
     /// None, with nothing added, when they have none.
-    fn current(facade: &EntityFacade) -> Option<Self> {
+    pub(crate) fn current(facade: &EntityFacade) -> Option<Self> {
         let tools = || {
             let _required = ExecutionContext::with_current(ExecutionContext::require_authz);
             moqui_core::user::permitted_own("AT_XML_SCREEN", "component://tools/screen/Tools.xml", "view")
@@ -213,17 +325,32 @@ const FRAME_DATA_AGE: std::time::Duration = std::time::Duration::from_secs(60);
 /// The most rows of a range a report takes (the report engine's own limit for a service's rows).
 const MAX_FRAME_ROWS: usize = 10_000;
 
-/// The rows of a data sheet, read through the data grid's reader as the caller, a page at a time, up to
-/// [`MAX_DATA_ROWS`]. Under a profile the source is an entity or view the profile offers, read with the profile
-/// entered, so its finds get the entity filters of the profile's grant.
-fn read_sheet(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Result<SheetRows, String> {
+/// What a data sheet reads, checked as the caller ([`sheet_access`]): the source, the columns shown, its sort and
+/// filter, the entity's full name when the source is an entity or view, and the profile entered while it is read.
+pub(crate) struct SheetAccess {
+    pub(crate) source: Source,
+    pub(crate) columns: Vec<String>,
+    pub(crate) entity: Option<String>,
+    sort: Vec<grid::Sort>,
+    filter: Vec<grid::Filter>,
+    _entered: Option<profile::Entered>,
+}
+
+/// Whether the caller may read `sheet` under `access`, and what it reads: every check [`read_sheet`] makes before it
+/// reads a row. Under a profile the source is an entity or view the profile offers, and the profile stays entered
+/// while the answer is held, so finds made meanwhile get the entity filters of the profile's grant.
+pub(crate) fn sheet_access(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Result<SheetAccess, String> {
     let spec = from_json(&sheet.spec);
     let part = |key: &str| match &spec {
         Value::Map(map) => map.get(key).cloned(),
         _ => None,
     };
     let source = Source::parse(part("source").as_ref(), facade).map_err(|refusal| refusal.0)?;
-    let _entered = match access {
+    let entity = match &source {
+        Source::Entity { entity_name, .. } => moqui_core::entity::info::entity_full_name(facade, entity_name),
+        _ => None,
+    };
+    let entered = match access {
         Access::Tools => {
             let allowed = if source.is_sql() {
                 moqui_tools::sql_service::may_run_sql()
@@ -237,10 +364,7 @@ fn read_sheet(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Resu
         }
         Access::Profile(profile) => {
             let not_available = || format!("{}: Not available", sheet.name);
-            let Source::Entity { entity_name, .. } = &source else {
-                return Err(not_available());
-            };
-            let full = moqui_core::entity::info::entity_full_name(facade, entity_name).ok_or_else(not_available)?;
+            let full = entity.clone().ok_or_else(not_available)?;
             if !profile.offers(facade, &full) {
                 tracing::info!(profile = %profile.id, entity = %full, "Refused an entity a CalcGrid profile does not offer");
                 return Err(not_available());
@@ -271,13 +395,29 @@ fn read_sheet(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Resu
     if columns.is_empty() {
         return Err(format!("The source of {} has no column to show", sheet.name));
     }
+    Ok(SheetAccess {
+        source,
+        columns,
+        entity,
+        sort,
+        filter,
+        _entered: entered,
+    })
+}
+
+/// The rows of a data sheet, read through the data grid's reader as the caller, a page at a time, up to
+/// [`MAX_DATA_ROWS`], after the checks of [`sheet_access`].
+fn read_sheet(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Result<SheetRows, String> {
+    let checked = sheet_access(facade, sheet, access)?;
+    let (source, columns, sort, filter) = (&checked.source, &checked.columns, &checked.sort, &checked.filter);
+    let actor = Actor::current();
     let zone = moqui_core::l10n::time_zone();
     let mut rows = Vec::new();
     let mut truncated = false;
     let mut page = 1;
     loop {
         let found =
-            grid::rows(facade, &source, &columns, page, PAGE, &sort, &filter, &actor).map_err(|refusal| refusal.0)?;
+            grid::rows(facade, source, columns, page, PAGE, sort, filter, &actor).map_err(|refusal| refusal.0)?;
         let count = found.data.len();
         for row in found.data {
             let Value::Map(map) = row else { continue };
@@ -300,7 +440,7 @@ fn read_sheet(facade: &EntityFacade, sheet: &DataSheet, access: &Access) -> Resu
     }
     Ok(SheetRows {
         name: sheet.name.clone(),
-        columns,
+        columns: checked.columns.clone(),
         rows,
         truncated,
     })
@@ -402,24 +542,49 @@ fn data_sheets(body: &Json) -> Vec<DataSheet> {
         .collect()
 }
 
-/// The room of the call's `roomId`: the caller's own, opened the way the call is made (the same profile, or none).
-fn room_of(parameters: &BTreeMap<String, Value>, access: &Access) -> Option<crate::room::SharedRoom> {
+const ROOM_GONE: &str = "ROOM_GONE: this document is no longer open on the server; open it again";
+
+/// The room of the call's `roomId`: one the caller has open, opened the way the call is made (the same profile, or
+/// none), and brought up to its document's edit log ([`together::catch_up`]). A room that cannot follow its log is
+/// dropped, and the view opens the document again.
+fn room_of(parameters: &BTreeMap<String, Value>, access: &Access, facade: &EntityFacade) -> Option<SharedRoom> {
     let user_id = moqui_core::user::current_user_id().ok().flatten()?;
     let rooms = ExecutionContext::with_current(|ec| Rooms::of(ec.factory()))?;
+    let id = text(parameters, "roomId");
     let room = rooms
-        .get(&user_id, &text(parameters, "roomId"))
+        .get(&user_id, &id)
         .filter(|room| moqui_lib::sync::lock(room).profile_id == access.profile_id());
-    if room.is_none() {
+    let Some(room) = room else {
         // the view opens the document again on this error
-        add_error("ROOM_GONE: this document is no longer open on the server; open it again");
+        add_error(ROOM_GONE);
+        return None;
+    };
+    let caught = together::catch_up(facade, &mut moqui_lib::sync::lock(&room));
+    if let Err(err) = caught {
+        tracing::info!(room = %id, error = %err, "A CalcGrid room is opened anew");
+        rooms.drop_room(&id);
+        add_error(ROOM_GONE);
+        return None;
     }
-    room
+    Some(room)
 }
 
-/// What a view gets of an open room.
-fn room_out(room: &Room) -> BTreeMap<String, Value> {
+/// The caller's user id, for the rooms and the log.
+fn user_id() -> String {
+    moqui_core::user::current_user_id().ok().flatten().unwrap_or_default()
+}
+
+/// What a view gets of an open room, for `user_id`: its sheets and charts, and their own undo and redo.
+fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     out.insert("roomId".to_string(), Value::string(&room.id));
+    out.insert("shared".to_string(), Value::Bool(room.shared));
+    out.insert("seq".to_string(), Value::I64(room.seq));
+    out.insert("unsaved".to_string(), Value::I64(together::unsaved(facade, room)));
+    out.insert(
+        "members".to_string(),
+        Value::I64(i64::try_from(room.member_ids().len()).unwrap_or(0)),
+    );
     out.insert("title".to_string(), Value::string(&room.title));
     out.insert(
         "definitionId".to_string(),
@@ -436,7 +601,7 @@ fn room_out(room: &Room) -> BTreeMap<String, Value> {
         "truncated".to_string(),
         Value::List(room.truncated.iter().map(Value::string).collect()),
     );
-    let (can_undo, can_redo) = room.undo_state();
+    let (can_undo, can_redo) = together::undo_state(facade, room, user_id);
     out.insert("canUndo".to_string(), Value::Bool(can_undo));
     out.insert("canRedo".to_string(), Value::Bool(can_redo));
     out.insert(
@@ -569,15 +734,34 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         Ok(base) => base,
         Err(err) => return refused(err.message()),
     };
+    let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) else {
+        return refused("no execution context is entered");
+    };
+    // a saved document is open in a room for the readers of one scope: joined when someone of the scope has it open
+    let shared = if definition_id.is_empty() {
+        None
+    } else {
+        let scope = crate::scope::fingerprint(facade, &sheets, &access);
+        let id = crate::room::document_room_id(&definition_id, access.profile_id().as_deref(), &scope);
+        if let Some(room) = rooms.join(&user_id, &id) {
+            let caught = together::catch_up(facade, &mut moqui_lib::sync::lock(&room));
+            if caught.is_ok() {
+                return Ok(opened_out(facade, &moqui_lib::sync::lock(&room), &user_id));
+            }
+            rooms.drop_room(&id);
+        }
+        match together::opening_seq(facade, &definition_id, &user_id, version) {
+            Ok(seq) => Some((id, seq)),
+            Err(err) => return refused(err.message()),
+        }
+    };
     let rows = match read_sheets(facade, &sheets, &access, !definition_id.is_empty()) {
         Ok(rows) => rows,
         Err(message) => return refused(message),
     };
-    let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) else {
-        return refused("no execution context is entered");
-    };
     let opening = Opening {
-        user_id,
+        user_id: user_id.clone(),
+        shared,
         profile_id: access.profile_id(),
         definition_id: Some(definition_id).filter(|id| !id.is_empty()),
         version,
@@ -587,22 +771,60 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         base,
         rows,
     };
-    match rooms.open(opening) {
-        Ok(room) => Ok(room_out(&moqui_lib::sync::lock(&room))),
-        Err(err) => refused(err.message()),
+    let room = match rooms.open(opening) {
+        Ok(room) => room,
+        Err(err) => return refused(err.message()),
+    };
+    let mut held = moqui_lib::sync::lock(&room);
+    if let Err(err) = together::catch_up(facade, &mut held) {
+        let id = held.id.clone();
+        drop(held);
+        rooms.drop_room(&id);
+        return refused(err.message());
     }
+    Ok(opened_out(facade, &held, &user_id))
 }
 
-/// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`).
+/// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`), with the room's
+/// last edit (`seq`). With `since` at that edit the block is left out (`unchanged`): a view that polls asks so. With a
+/// `client`, the view's place (`selection`: `row`, `column`, `width`, `height`) is kept for the others, and the others
+/// are answered (`peers`).
 fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
-    let Some(room) = room_of(parameters, &access) else {
+    let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
     let room = moqui_lib::sync::lock(&room);
     let sheet = u32::try_from(int(parameters, "sheet", 0)).unwrap_or(0);
+    let mut out = BTreeMap::new();
+    out.insert("seq".to_string(), Value::I64(room.seq));
+    let client = text(parameters, "client");
+    if !client.is_empty() {
+        if let Some(presence) = ExecutionContext::with_current(|ec| Presence::of(ec.factory())) {
+            let key = together::presence_key(&room);
+            let user = user_id();
+            let selection = parameters.get("selection").map_or(Json::Null, to_json);
+            presence.set(
+                &key,
+                &client,
+                &user,
+                &together::display_name(facade, &user),
+                Some(sheet),
+                selection,
+            );
+            out.insert(
+                "peers".to_string(),
+                Value::List(presence.peers(&key, &client).iter().map(from_json).collect()),
+            );
+        }
+    }
+    let since = text(parameters, "since");
+    if !since.is_empty() && since.parse::<i64>().ok() == Some(room.seq) {
+        out.insert("unchanged".to_string(), Value::Bool(true));
+        return Ok(out);
+    }
     match room.block(
         sheet,
         int(parameters, "row", 1),
@@ -611,7 +833,6 @@ fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         int(parameters, "height", 1),
     ) {
         Ok(block) => {
-            let mut out = BTreeMap::new();
             out.insert("blockJson".to_string(), Value::String(block));
             Ok(out)
         }
@@ -619,12 +840,13 @@ fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
     }
 }
 
-/// `refresh#CalcDocument`: the data sheets read again as the caller, the workbook evaluated.
+/// `refresh#CalcDocument`: the data sheets read again as the caller, the workbook evaluated. The room's other people
+/// are told: their data is the same rows, read again.
 fn refresh_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
-    let Some(room) = room_of(parameters, &access) else {
+    let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
     let sheets = moqui_lib::sync::lock(&room).data_sheets.clone();
@@ -633,62 +855,43 @@ fn refresh_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFa
         Ok(rows) => rows,
         Err(message) => return refused(message),
     };
+    let user = user_id();
     let mut room = moqui_lib::sync::lock(&room);
     match room.refresh(rows) {
-        Ok(()) => Ok(room_out(&room)),
+        Ok(()) => {
+            if let Some(definition_id) = room.definition_id.as_deref().filter(|_| room.shared) {
+                crate::log::announce(facade, definition_id, room.seq, &user, "refresh");
+            }
+            Ok(room_out(facade, &room, &user))
+        }
         Err(err) => refused(err.message()),
     }
 }
 
-/// `save#CalcDocument`: the room's document saved as a report definition of type `calcgrid`: a new one under
-/// `definitionId` (or an id made from the title), or the one the room was opened from, at the version it was read.
-fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
-    let Some(access) = Access::of(parameters, facade) else {
-        return Ok(BTreeMap::new());
-    };
-    if matches!(access, Access::Profile(_)) && !profile::may_author() {
-        return refused("Not available");
-    }
-    let Some(room) = room_of(parameters, &access) else {
-        return Ok(BTreeMap::new());
-    };
-    let mut room = moqui_lib::sync::lock(&room);
-    let overlay = match room.stored_form() {
-        Ok(overlay) => overlay,
-        Err(err) => return refused(err.message()),
-    };
+/// The room's workbook without its data, as a document stores it, within [`MAX_OVERLAY_BYTES`].
+fn overlay_of(room: &Room) -> Result<Vec<u8>, Error> {
+    let overlay = room.stored_form()?;
     if overlay.len() > MAX_OVERLAY_BYTES {
-        return refused(format!(
+        return Err(Error::new(format!(
             "The workbook without its data is {} MB; a document stores at most {} MB",
             overlay.len() / 1024 / 1024,
             MAX_OVERLAY_BYTES / 1024 / 1024
-        ));
+        )));
     }
-    let title = Some(text(parameters, "title"))
-        .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| room.title.clone());
-    let given = text(parameters, "definitionId");
-    let (id, version) = match (&room.definition_id, given.is_empty()) {
-        (Some(id), true) => (id.clone(), room.version),
-        (Some(id), false) if *id == given => (given, room.version),
-        (_, false) => (given, None),
-        (None, true) => {
-            let slug: String = title
-                .chars()
-                .map(|ch| {
-                    if ch.is_ascii_alphanumeric() {
-                        ch.to_ascii_lowercase()
-                    } else {
-                        '-'
-                    }
-                })
-                .collect();
-            (
-                format!("calc-{}-{}", slug.trim_matches('-'), &room.id[1..room.id.len().min(9)]),
-                None,
-            )
-        }
-    };
+    Ok(overlay)
+}
+
+/// Write the room's document as the definition `id` with `save#Definition`, at `version` when it is one already: the
+/// version saved.
+fn write_document(
+    room: &Room,
+    id: &str,
+    title: &str,
+    version: Option<i64>,
+    group: &str,
+    note: &str,
+) -> Result<Option<i64>, Error> {
+    let overlay = overlay_of(room)?;
     let mut definition = json!({
         "id": id,
         "type": DEFINITION_TYPE,
@@ -702,25 +905,163 @@ fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     if let Some(version) = version {
         definition["version"] = json!(version);
     }
-    let group = text(parameters, "userGroupId");
     if !group.is_empty() {
-        definition["userGroupId"] = Json::String(group);
+        definition["userGroupId"] = Json::String(group.to_string());
     }
     let mut call_parameters = BTreeMap::new();
     call_parameters.insert("definition".to_string(), from_json(&definition));
-    call_parameters.insert("note".to_string(), Value::string(text(parameters, "note")));
-    let saved = match call("org.moqui.report.ReportServices.save#Definition", call_parameters) {
-        Ok(out) => out.get("definition").map(to_json).unwrap_or(Json::Null),
+    call_parameters.insert("note".to_string(), Value::string(note));
+    let saved = call("org.moqui.report.ReportServices.save#Definition", call_parameters)?
+        .get("definition")
+        .map(to_json)
+        .unwrap_or(Json::Null);
+    Ok(saved["version"].as_i64())
+}
+
+/// `save#CalcDocument`: the room's document saved as a report definition of type `calcgrid`. A saved document's room
+/// saves that document, under its edit log's lock, at the version the log last saved. A scratch room saves a new one
+/// under `definitionId` (or an id made from the title), and becomes the new document's room for the saver's scope
+/// (`roomId` is its new id).
+fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    if matches!(access, Access::Profile(_)) && !profile::may_author() {
+        return refused("Not available");
+    }
+    let Some(shared_room) = room_of(parameters, &access, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) else {
+        return refused("no execution context is entered");
+    };
+    let user = user_id();
+    let given = text(parameters, "definitionId");
+    let group = text(parameters, "userGroupId");
+    let note = text(parameters, "note");
+    let mut room = moqui_lib::sync::lock(&shared_room);
+    let title = Some(text(parameters, "title"))
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| room.title.clone());
+    let out = |id: &str, version: Option<i64>, title: &str, room_id: &str| {
+        let mut out = BTreeMap::new();
+        out.insert("definitionId".to_string(), Value::string(id));
+        out.insert("version".to_string(), version.map_or(Value::Null, Value::I64));
+        out.insert("title".to_string(), Value::string(title));
+        out.insert("roomId".to_string(), Value::string(room_id));
+        out
+    };
+    if room.shared {
+        let id = room.definition_id.clone().unwrap_or_default();
+        if !given.is_empty() && given != id {
+            return refused("A document open with others is saved as itself; copy it from the list of documents");
+        }
+        let saved = together::save(facade, &mut room, &user, |room, version| {
+            write_document(room, &id, &title, version, &group, &note)
+        });
+        return match saved {
+            Ok(version) => {
+                room.title = title.clone();
+                Ok(out(&id, version, &title, &room.id))
+            }
+            Err(err) => {
+                if err.message().contains(REOPEN) {
+                    let room_id = room.id.clone();
+                    drop(room);
+                    rooms.drop_room(&room_id);
+                    return refused(ROOM_GONE);
+                }
+                refused(err.message())
+            }
+        };
+    }
+    let id = if given.is_empty() {
+        let slug: String = title
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        format!("calc-{}-{}", slug.trim_matches('-'), &room.id[1..room.id.len().min(9)])
+    } else {
+        given
+    };
+    let version = match write_document(&room, &id, &title, None, &group, &note) {
+        Ok(version) => version,
         Err(err) => return refused(err.message()),
     };
     room.definition_id = Some(id.clone());
-    room.version = saved["version"].as_i64();
-    room.title = title;
-    let mut out = BTreeMap::new();
-    out.insert("definitionId".to_string(), Value::String(id));
-    out.insert("version".to_string(), room.version.map_or(Value::Null, Value::I64));
-    out.insert("title".to_string(), Value::string(&room.title));
-    Ok(out)
+    room.version = version;
+    room.title = title.clone();
+    let (scratch_id, sheets) = (room.id.clone(), room.data_sheets.clone());
+    drop(room);
+    // the room is now the document's for the saver's scope, at the start of its log (one of a document saved over
+    // begins again, and its rooms are opened anew)
+    let scope = crate::scope::fingerprint(facade, &sheets, &access);
+    let shared_id = crate::room::document_room_id(&id, access.profile_id().as_deref(), &scope);
+    match together::begin_again(facade, &id, &user, version) {
+        Ok(seq) => rooms.make_shared(&scratch_id, &shared_id, seq),
+        Err(err) => {
+            tracing::warn!(document = %id, error = %err, "A saved CalcGrid document's log did not begin; its room stays its saver's");
+            return Ok(out(&id, version, &title, &scratch_id));
+        }
+    }
+    Ok(out(&id, version, &title, &shared_id))
+}
+
+/// `get#CalcState`: the room's state as `open#CalcDocument` answers it, brought up to its document's log: what a view
+/// reads when it is told of another's edit.
+fn get_calc_state(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(room) = room_of(parameters, &access, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let held = moqui_lib::sync::lock(&room);
+    Ok(room_out(facade, &held, &user_id()))
+}
+
+/// `revert#CalcDocument`: discard the edits of a saved document since it was saved, everyone's: its log begins again
+/// from the saved version, every room of it is opened anew, and the caller's room is answered as `open#CalcDocument`
+/// answers. An author's to do.
+fn revert_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = Access::of(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    if matches!(access, Access::Profile(_)) && !profile::may_author() {
+        return refused("Not available");
+    }
+    let Some(room) = room_of(parameters, &access, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) else {
+        return refused("no execution context is entered");
+    };
+    let (definition_id, version) = {
+        let held = moqui_lib::sync::lock(&room);
+        match held.definition_id.clone().filter(|_| held.shared) {
+            Some(id) => (id, held.version),
+            None => return refused("Only a saved document has changes to discard"),
+        }
+    };
+    if let Err(err) = together::begin_again(facade, &definition_id, &user_id(), version) {
+        return refused(err.message());
+    }
+    for open in rooms.document_rooms(&definition_id) {
+        let id = moqui_lib::sync::lock(&open).id.clone();
+        rooms.drop_room(&id);
+    }
+    let mut again = BTreeMap::new();
+    again.insert("definitionId".to_string(), Value::string(&definition_id));
+    if let Some(profile_id) = access.profile_id() {
+        again.insert("profileId".to_string(), Value::String(profile_id));
+    }
+    open_document_with(&again, facade, access)
 }
 
 /// `export#CalcDocument`: the workbook as it is in the room, data and calculated values, as an `.xlsx`.
@@ -728,26 +1069,15 @@ fn export_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFac
     let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
-    let Some(room) = room_of(parameters, &access) else {
+    let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
     let room = moqui_lib::sync::lock(&room);
     match workbook::model_xlsx(room.model()) {
         Ok(bytes) => {
-            let name: String = room
-                .title
-                .chars()
-                .map(|ch| {
-                    if ch.is_alphanumeric() || " -_.".contains(ch) {
-                        ch
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
             let mut out = BTreeMap::new();
             out.insert("contentBytes".to_string(), Value::Bytes(bytes));
-            out.insert("filename".to_string(), Value::String(format!("{}.xlsx", name.trim())));
+            out.insert("filename".to_string(), Value::String(file_name(&room.title, "xlsx")));
             Ok(out)
         }
         Err(err) => refused(err.message()),
@@ -821,7 +1151,7 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     if matches!(access, Access::Profile(_)) && !profile::may_author() {
         return refused("Not available");
     }
-    let Some(room) = room_of(parameters, &access) else {
+    let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
     let ops: Vec<Json> = match parameters.get("ops").map(to_json) {
@@ -831,11 +1161,29 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     if ops.len() > MAX_EDIT_OPS {
         return refused(format!("At most {MAX_EDIT_OPS} edits in one call"));
     }
-    let mut room = moqui_lib::sync::lock(&room);
-    if let Err(err) = room.edit(&ops) {
+    let user = user_id();
+    let mut held = moqui_lib::sync::lock(&room);
+    if held.shared {
+        match together::edit(facade, &mut held, &user, &ops) {
+            Ok(edited) => {
+                if let Some(err) = edited.refused {
+                    add_error(err.message());
+                }
+            }
+            Err(err) if err.message().contains(REOPEN) => {
+                let id = held.id.clone();
+                drop(held);
+                if let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) {
+                    rooms.drop_room(&id);
+                }
+                return refused(ROOM_GONE);
+            }
+            Err(err) => add_error(err.message()),
+        }
+    } else if let Err(err) = held.edit(&user, &ops) {
         add_error(err.message());
     }
-    Ok(room_out(&room))
+    Ok(room_out(facade, &held, &user))
 }
 
 /// `get#CalcCellContent`: what was typed into a cell (a formula with its `=`), for the formula bar and a cell's editor.
@@ -843,7 +1191,7 @@ fn get_calc_cell_content(parameters: &BTreeMap<String, Value>, facade: &EntityFa
     let Some(access) = Access::of(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
-    let Some(room) = room_of(parameters, &access) else {
+    let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
     let room = moqui_lib::sync::lock(&room);
@@ -864,16 +1212,8 @@ fn get_calc_cell_content(parameters: &BTreeMap<String, Value>, facade: &EntityFa
 /// they may read it; a room the caller already has for the document is read again, its data read anew when it is
 /// over a minute old.
 fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
-    let access = if text(parameters, "profileId").is_empty() {
-        match Access::current(facade) {
-            Some(access) => access,
-            None => return refused("Not available"),
-        }
-    } else {
-        match Access::of(parameters, facade) {
-            Some(access) => access,
-            None => return Ok(BTreeMap::new()),
-        }
+    let Some(access) = access_or_current(parameters, facade) else {
+        return Ok(BTreeMap::new());
     };
     let definition_id = text(parameters, "definitionId");
     let range = text(parameters, "range");
@@ -927,6 +1267,116 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         Ok(frame) => {
             let mut out = BTreeMap::new();
             out.insert("frame".to_string(), from_json(&frame));
+            Ok(out)
+        }
+        Err(err) => refused(err.message()),
+    }
+}
+
+/// The access of a call that may name a profile and otherwise reads under the caller's current one: a dashboard
+/// panel's, a scheduled report's. None, with an error added, when the caller has none.
+fn access_or_current(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Option<Access> {
+    if text(parameters, "profileId").is_empty() {
+        let access = Access::current(facade);
+        if access.is_none() {
+            add_error("Not available");
+        }
+        access
+    } else {
+        Access::of(parameters, facade)
+    }
+}
+
+/// `get#CalcScope`: the fingerprint of the caller's scope for a saved document ([`crate::scope::fingerprint`]) under
+/// `profileId`, or under their current access: equal for two people only when their data sheets hold the same rows.
+fn get_calc_scope(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = access_or_current(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let definition = match read_definition(&text(parameters, "definitionId")) {
+        Ok(definition) => definition,
+        Err(err) => return refused(err.message()),
+    };
+    let sheets = data_sheets(&definition["body"]);
+    let mut out = BTreeMap::new();
+    out.insert(
+        "scope".to_string(),
+        Value::String(crate::scope::fingerprint(facade, &sheets, &access)),
+    );
+    out.insert(
+        "access".to_string(),
+        Value::String(access.profile_id().unwrap_or_else(|| TOOLS_ACCESS.to_string())),
+    );
+    Ok(out)
+}
+
+/// A file name from a title: letters, digits, space, `-`, `_` and `.`.
+fn file_name(title: &str, extension: &str) -> String {
+    let name: String = title
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || " -_.".contains(ch) {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let name = name.trim();
+    format!("{}.{extension}", if name.is_empty() { "CalcGrid" } else { name })
+}
+
+/// `render#CalcDocument`: a saved document as an `.xlsx` with its data and calculated values, with no room: what a
+/// scheduled report of the document sends. The saved version is read, the data sheets as the caller under `profileId`
+/// or their current access, and every data sheet must read whole: one not available, or with more rows than a sheet
+/// takes, refuses the run, as a report with an incomplete panel is refused.
+fn render_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let Some(access) = access_or_current(parameters, facade) else {
+        return Ok(BTreeMap::new());
+    };
+    let definition = match read_definition(&text(parameters, "definitionId")) {
+        Ok(definition) => definition,
+        Err(err) => return refused(err.message()),
+    };
+    let body = &definition["body"];
+    let base = match body["overlay"].as_str().filter(|overlay| !overlay.is_empty()) {
+        Some(overlay) => match base64::engine::general_purpose::STANDARD.decode(overlay) {
+            Ok(bytes) => fill::open_stored(&bytes),
+            Err(_) => return refused("The document's workbook is not readable"),
+        },
+        None => fill::new_model("Sheet1"),
+    };
+    let base = match base {
+        Ok(base) => base,
+        Err(err) => return refused(err.message()),
+    };
+    let rows = match read_sheets(facade, &data_sheets(body), &access, false) {
+        Ok(rows) => rows,
+        Err(message) => return refused(message),
+    };
+    if let Some(cut) = rows.iter().find(|sheet| sheet.truncated) {
+        return refused(format!(
+            "{} has more than {MAX_DATA_ROWS} rows; a document's export holds every row",
+            cut.name
+        ));
+    }
+    let row_count: usize = rows.iter().map(|sheet| sheet.rows.len()).sum();
+    let mut model = match fill::fill(base, &rows) {
+        Ok(model) => model,
+        Err(err) => return refused(err.message()),
+    };
+    model.evaluate();
+    match workbook::model_xlsx(&model) {
+        Ok(bytes) => {
+            let title = definition["title"].as_str().unwrap_or("CalcGrid").to_string();
+            let mut out = BTreeMap::new();
+            out.insert("contentBytes".to_string(), Value::Bytes(bytes));
+            out.insert("filename".to_string(), Value::String(file_name(&title, "xlsx")));
+            out.insert("title".to_string(), Value::String(title));
+            out.insert(
+                "rowCount".to_string(),
+                Value::I64(i64::try_from(row_count).unwrap_or(i64::MAX)),
+            );
             Ok(out)
         }
         Err(err) => refused(err.message()),

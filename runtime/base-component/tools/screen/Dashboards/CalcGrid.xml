@@ -65,8 +65,12 @@
     <transition name="calcCells" method="get" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             const out = ec.resource.script('component://tools/template/CalcGrid.js').cells()
-            if (out.errors || !out.blockJson) ec.web.sendJsonResponse({errors: out.errors || 'No cells'})
-            else ec.web.sendTextResponse(String(out.blockJson), 'application/json', null)
+            // the block's JSON text with the room's last edit and the others beside its fields (the text is not parsed again), or
+            // only those when nothing changed since the view's edit
+            const head = {seq: out.seq == null ? null : Number(out.seq), peers: out.peers || []}
+            if (out.unchanged) ec.web.sendJsonResponse(Object.assign(head, {unchanged: true}))
+            else if (out.errors || !out.blockJson) ec.web.sendJsonResponse({errors: out.errors || 'No cells'})
+            else ec.web.sendTextResponse(JSON.stringify(head).slice(0, -1) + ',' + String(out.blockJson).slice(1), 'application/json', null)
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -83,6 +87,16 @@
         <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').refresh())</script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the room's state, read again when the notification socket tells of another's edit -->
+    <transition name="calcState" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').state())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- discard the edits of a saved document since it was saved, everyone's (an author's): its room as calcOpen answers it -->
+    <transition name="calcRevert" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').revert())</script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="calcSave" method="post" begin-transaction="false">
         <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').save())</script></actions>
         <default-response type="none"/>
@@ -90,9 +104,12 @@
     <transition name="calcExport" method="get" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             const out = ec.resource.script('component://tools/template/CalcGrid.js').exported()
+            const xlsx = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             if (out.errors || !out.contentBytes) ec.web.sendJsonError(404, out.errors || ec.l10n.localize('Export not found'))
-            else ec.web.sendBytesResponse(out.contentBytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', false,
-                String(out.filename || 'Workbook.xlsx').replace(/[\\/"\r\n]/g, '_'))
+            // the terminal saves the file from JSON (moqui-tui's report export)
+            else if (context.json === 'true') ec.web.sendJsonResponse({contentBase64: StringUtilities.base64Encode(out.contentBytes), contentType: xlsx,
+                filename: String(out.filename || 'Workbook.xlsx')})
+            else ec.web.sendBytesResponse(out.contentBytes, xlsx, false, String(out.filename || 'Workbook.xlsx').replace(/[\\/"\r\n]/g, '_'))
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -109,13 +126,38 @@
         <render-mode>
             <text type="qvue" location="component://tools/screen/Dashboards/CalcGrid.qvue" template="false"/>
             <!-- the terminal: the documents the viewer reads; a sheet is drawn in a browser -->
+            <!-- the terminal: the documents the viewer reads, each a link to its sheet (the calcgrid component of moqui-tui,
+                over this screen's transitions), opened here as the viewer under their current access -->
             <text type="tui"><![CDATA[${JSON.stringify((() => {
-                const found = ec.resource.script('component://tools/template/CalcGrid.js').documents()
+                const lib = ec.resource.script('component://tools/template/CalcGrid.js')
+                const access = lib.access()
+                if (access.errors) return [{t: 'text', id: 'CalcGridError', style: 'error', text: access.errors}]
+                if (!context.profileId && access.current) ec.context.put('profileId', access.current)
+                const here = sri.buildUrl('.').path
+                const choices = [{id: '', label: 'Tools access', offered: access.tools}].concat(access.profiles.map(profile =>
+                    ({id: profile.profileId, label: profile.description || profile.profileId, offered: true}))).filter(choice => choice.offered)
+                const current = choices.find(choice => choice.id === (access.current || '')) || {label: 'none'}
+                const accessLine = [{t: 'text', id: 'CalcGridAccess', style: 'caption', text: 'Reading as: ' + current.label}]
+                    .concat(access.fixedProfile ? [] : choices.filter(choice => choice !== current).map((choice, index) => ({t: 'link', id: 'CalcGridUse' + index,
+                        text: 'Read as ' + choice.label, url: 'calcProfile?profileId=' + encodeURIComponent(choice.id || 'tools'), method: 'post', kind: 'hidden-form-link'})))
+                const definitionId = context.definitionId ? String(context.definitionId) : ''
+                if (definitionId) {
+                    const room = lib.open()
+                    if (room.errors || !room.roomId) return [{t: 'text', id: 'CalcGridError', style: 'error', text: room.errors || 'The document did not open'},
+                        {t: 'link', id: 'CalcGridBack', text: 'All documents', url: here}]
+                    return [{t: 'text', id: 'CalcGridTitle', style: 'h5', text: room.title || definitionId},
+                        {t: 'link', id: 'CalcGridBack', text: 'All documents', url: here}].concat(accessLine).concat([
+                        {t: 'component', id: 'CalcGridSheet', name: 'calcgrid',
+                            props: {room, editable: access.canAuthor, profileId: access.current || ''}}])
+                }
+                const found = lib.documents()
                 if (found.errors) return [{t: 'text', id: 'CalcGridError', style: 'error', text: found.errors}]
-                return [{t: 'text', id: 'CalcGridTitle', style: 'h5', text: 'CalcGrid'},
-                    {t: 'text', id: 'CalcGridNote', text: 'A document opens as a sheet in a browser. The documents you read:'},
+                return [{t: 'text', id: 'CalcGridTitle', style: 'h5', text: 'CalcGrid'}].concat(accessLine).concat([
+                    {t: 'text', id: 'CalcGridNote', text: 'The documents you read; a new one is made in a browser.'},
                     {t: 'formList', id: 'CalcGridDocuments', name: 'CalcGridDocuments', columns: [{title: 'Document'}, {title: 'Owner'}],
-                        rows: found.documents.map((doc, index) => ({id: String(index), cells: [doc.title, doc.ownerId || '']}))}]
+                        rows: found.documents.map((doc, index) => ({id: String(index), cells: [
+                            {t: 'link', id: 'CalcGridDoc' + index, text: doc.title || doc.definitionId, url: here + '?definitionId=' + encodeURIComponent(doc.definitionId), kind: 'anchor'},
+                            doc.ownerId || '']}))}])
             })())}]]></text>
         </render-mode>
     </widgets>

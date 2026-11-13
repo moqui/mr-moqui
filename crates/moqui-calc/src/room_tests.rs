@@ -35,6 +35,7 @@ fn rows(count: usize) -> SheetRows {
 fn opening(user: &str, count: usize) -> Opening {
     Opening {
         user_id: user.to_string(),
+        shared: None,
         profile_id: None,
         definition_id: None,
         version: None,
@@ -150,13 +151,54 @@ fn a_user_holds_a_limited_number_of_rooms_and_a_closed_one_is_gone() {
 }
 
 #[test]
+fn a_saved_documents_room_is_shared_by_its_scope_and_dropped_when_its_last_member_leaves() {
+    let rooms = Rooms::default();
+    let id = document_room_id("doc-1", Some("sales"), "scope-a");
+    assert_eq!(id, document_room_id("doc-1", Some("sales"), "scope-a"));
+    assert_ne!(id, document_room_id("doc-1", Some("sales"), "scope-b"));
+    assert_ne!(id, document_room_id("doc-1", None, "scope-a"));
+    let shared = |user: &str| Opening {
+        shared: Some((id.clone(), 4)),
+        definition_id: Some("doc-1".to_string()),
+        ..opening(user, 3)
+    };
+    let first = rooms.open(shared("alice")).unwrap();
+    assert!(rooms.get("bob", &id).is_none(), "not a member yet");
+    // a second reader of the scope joins the room, or the room built for them is put aside for the open one
+    assert!(rooms.join("bob", &id).is_some());
+    let again = rooms.open(shared("carol")).unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+    assert_eq!(rooms.count(), 1);
+    {
+        let room = lock(&first);
+        assert!(room.shared);
+        assert_eq!(room.seq, 4);
+        assert_eq!(room.member_ids(), ["alice", "bob", "carol"]);
+    }
+    assert_eq!(rooms.document_rooms("doc-1").len(), 1);
+    for user in ["alice", "bob"] {
+        rooms.close(user, &id);
+    }
+    assert!(rooms.get("carol", &id).is_some(), "open while one member has it");
+    rooms.close("carol", &id);
+    assert_eq!(rooms.count(), 0);
+
+    // a scratch room saved becomes the document's room, under its new id
+    let scratch = rooms.open(opening("alice", 2)).unwrap();
+    let scratch_id = lock(&scratch).id.clone();
+    rooms.make_shared(&scratch_id, &id, 0);
+    assert!(rooms.get("alice", &scratch_id).is_none());
+    assert!(lock(&rooms.get("alice", &id).unwrap()).shared);
+}
+
+#[test]
 fn edits_are_applied_in_order_evaluated_once_and_undone_and_a_data_sheet_is_not_edited() {
     let rooms = Rooms::default();
     let room = rooms.open(opening("alice", 5)).unwrap();
     let mut room = lock(&room);
-    assert_eq!(room.undo_state(), (false, false));
+    assert_eq!(room.undo_state("alice"), (false, false));
     // a sheet beside the data, a formula over the data sheet's table, a text, a pasted block, a style and a width
-    room.edit(&[
+    room.edit("alice", &[
         json!({"op": "addSheet"}),
         json!({"op": "renameSheet", "sheet": 1, "name": "Summary"}),
         json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders[amount])"}),
@@ -180,7 +222,8 @@ fn edits_are_applied_in_order_evaluated_once_and_undone_and_a_data_sheet_is_not_
     assert_eq!(layout[1]["frozenRows"], 1);
     let block: serde_json::Value = serde_json::from_str(&room.block(1, 1, 1, 1, 1).unwrap()).unwrap();
     assert_eq!(block["styles"][0]["style"]["font"]["b"], true);
-    assert_eq!(room.undo_state(), (true, false));
+    assert_eq!(room.undo_state("alice"), (true, false));
+    assert_eq!(room.undo_state("bob"), (false, false), "undo is each person's own");
 
     // a data sheet's cells, rows and name are not edited; its widths are
     for op in [
@@ -190,42 +233,57 @@ fn edits_are_applied_in_order_evaluated_once_and_undone_and_a_data_sheet_is_not_
         json!({"op": "renameSheet", "sheet": 0, "name": "Mine"}),
         json!({"op": "deleteSheet", "sheet": 0}),
     ] {
-        let err = room.edit(std::slice::from_ref(&op)).expect_err("a data sheet edit");
+        let err = room
+            .edit("alice", std::slice::from_ref(&op))
+            .expect_err("a data sheet edit");
         assert!(err.message().contains("is a data sheet"), "{op}: {}", err.message());
     }
     assert_eq!(cell(&room, 0, 2, 2), "10");
-    room.edit(&[json!({"op": "width", "sheet": 0, "column": 1, "width": 200})])
-        .unwrap();
+    room.edit(
+        "alice",
+        &[json!({"op": "width", "sheet": 0, "column": 1, "width": 200})],
+    )
+    .unwrap();
 
     // the edits before a refused one stay, and an unknown edit is refused
     let err = room
-        .edit(&[
-            json!({"op": "input", "sheet": 1, "row": 9, "column": 1, "value": "kept"}),
-            json!({"op": "nonsense"}),
-        ])
+        .edit(
+            "alice",
+            &[
+                json!({"op": "input", "sheet": 1, "row": 9, "column": 1, "value": "kept"}),
+                json!({"op": "nonsense"}),
+            ],
+        )
         .expect_err("an unknown edit");
     assert!(err.message().contains("is not an edit"), "{}", err.message());
     assert_eq!(cell(&room, 1, 9, 1), "kept");
 
-    // undo and redo, and a clear
-    room.edit(&[json!({"op": "undo"})]).unwrap();
+    // undo and redo, and a clear; another person has nothing to undo
+    room.edit("alice", &[json!({"op": "undo"})]).unwrap();
     assert_eq!(cell(&room, 1, 9, 1), "");
-    room.edit(&[json!({"op": "redo"})]).unwrap();
+    room.edit("alice", &[json!({"op": "redo"})]).unwrap();
     assert_eq!(cell(&room, 1, 9, 1), "kept");
-    room.edit(&[json!({"op": "clear", "sheet": 1, "row": 9, "column": 1, "width": 1, "height": 1})])
-        .unwrap();
+    assert!(room.edit("bob", &[json!({"op": "undo"})]).is_err());
+    room.edit(
+        "alice",
+        &[json!({"op": "clear", "sheet": 1, "row": 9, "column": 1, "width": 1, "height": 1})],
+    )
+    .unwrap();
     assert_eq!(cell(&room, 1, 9, 1), "");
 
     // the engine's autofill carries a formula down
-    room.edit(&[
-        json!({"op": "input", "sheet": 1, "row": 1, "column": 4, "value": "=Orders!B2*2"}),
-        json!({"op": "fill", "sheet": 1, "row": 1, "column": 4, "width": 1, "height": 1, "toRow": 3}),
-    ])
+    room.edit(
+        "alice",
+        &[
+            json!({"op": "input", "sheet": 1, "row": 1, "column": 4, "value": "=Orders!B2*2"}),
+            json!({"op": "fill", "sheet": 1, "row": 1, "column": 4, "width": 1, "height": 1, "toRow": 3}),
+        ],
+    )
     .unwrap();
     assert_eq!(cell(&room, 1, 3, 4), "60");
 
     // the charts are the document's, replaced as a whole
-    room.edit(&[json!({"op": "charts", "charts": [{"title": "Amounts", "type": "bar", "categories": "Orders!A2:A3", "series": [{"name": "Amount", "values": "Orders!B2:B3"}]}]})])
+    room.edit("alice", &[json!({"op": "charts", "charts": [{"title": "Amounts", "type": "bar", "categories": "Orders!A2:A3", "series": [{"name": "Amount", "values": "Orders!B2:B3"}]}]})])
         .unwrap();
     assert_eq!(room.charts()[0]["series"][0]["data"], json!([10.0, 20.0]));
 
@@ -239,5 +297,82 @@ fn edits_are_applied_in_order_evaluated_once_and_undone_and_a_data_sheet_is_not_
     assert_eq!(stored.get_formatted_cell_value(1, 1, 1).unwrap(), "0.00");
     room.refresh(vec![rows(8)]).unwrap();
     assert_eq!(cell(&room, 1, 1, 1), "360.00");
-    assert_eq!(room.undo_state(), (false, false), "a refresh ends the undo history");
+    assert_eq!(
+        room.undo_state("alice"),
+        (true, false),
+        "a refresh keeps each person's edits to undo"
+    );
+}
+
+/// Each edit applied and taken back leaves the sheet as it was: its cells as typed, their styles, sizes, frozen
+/// panes, and the sheets themselves.
+#[test]
+fn every_edit_is_taken_back_by_what_the_room_took_before_it() {
+    let rooms = Rooms::default();
+    let room = rooms.open(opening("alice", 4)).unwrap();
+    let mut room = lock(&room);
+    room.edit("alice", &[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 1, "name": "Summary"}),
+        json!({"op": "paste", "sheet": 1, "row": 1, "column": 1, "rows": [["a", "1"], ["b", "2"], ["=SUM(Orders[amount])", "=B1+B2"]]}),
+        json!({"op": "style", "sheet": 1, "row": 1, "column": 1, "width": 1, "height": 1, "path": "font.b", "value": "true"}),
+    ])
+    .unwrap();
+    let state = |room: &Room| {
+        let mut cells = Vec::new();
+        for sheet in 0..room.model().workbook.worksheets.len() {
+            let sheet = u32::try_from(sheet).unwrap();
+            for row in 1..=6 {
+                for column in 1..=3 {
+                    cells.push(format!(
+                        "{sheet}:{row}:{column}={}|{}|{}",
+                        room.cell_content(sheet, row, column).unwrap(),
+                        room.model().get_formatted_cell_value(sheet, row, column).unwrap(),
+                        room.model()
+                            .get_style_for_cell(sheet, row, column)
+                            .map(|style| style.font.b)
+                            .unwrap_or(false),
+                    ));
+                }
+                cells.push(format!(
+                    "{sheet}:{row}:h={}",
+                    room.model.get_row_height(sheet, row).unwrap()
+                ));
+            }
+            cells.push(format!("{sheet}:w={}", room.model.get_column_width(sheet, 1).unwrap()));
+            cells.push(format!(
+                "{sheet}:f={}",
+                room.model.get_frozen_rows_count(sheet).unwrap()
+            ));
+        }
+        (room.model().workbook.get_worksheet_names(), cells, room.charts.clone())
+    };
+    let before = state(&room);
+    for op in [
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "changed"}),
+        json!({"op": "input", "sheet": 1, "row": 6, "column": 3, "value": "beyond the used area"}),
+        json!({"op": "paste", "sheet": 1, "row": 2, "column": 2, "rows": [["9", "9"], ["9", "9"]]}),
+        json!({"op": "clear", "sheet": 1, "row": 1, "column": 1, "width": 2, "height": 3}),
+        json!({"op": "clearFormatting", "sheet": 1, "row": 1, "column": 1, "width": 2, "height": 2}),
+        json!({"op": "style", "sheet": 1, "row": 1, "column": 1, "width": 3, "height": 5, "path": "font.b", "value": "true"}),
+        json!({"op": "fill", "sheet": 1, "row": 1, "column": 2, "width": 1, "height": 2, "toRow": 5}),
+        json!({"op": "width", "sheet": 1, "column": 1, "columnEnd": 2, "width": 222}),
+        json!({"op": "height", "sheet": 1, "row": 1, "rowEnd": 3, "height": 44}),
+        json!({"op": "freeze", "sheet": 1, "rows": 2, "columns": 1}),
+        json!({"op": "insertRows", "sheet": 1, "row": 2, "count": 2}),
+        json!({"op": "deleteRows", "sheet": 1, "row": 1, "count": 2}),
+        json!({"op": "insertColumns", "sheet": 1, "column": 1, "count": 1}),
+        json!({"op": "deleteColumns", "sheet": 1, "column": 1, "count": 1}),
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 1, "name": "Other"}),
+        json!({"op": "deleteSheet", "sheet": 1}),
+        json!({"op": "charts", "charts": []}),
+    ] {
+        room.edit("alice", std::slice::from_ref(&op))
+            .unwrap_or_else(|err| panic!("{op}: {}", err.message()));
+        assert_ne!(state(&room), before, "{op} changed nothing");
+        room.edit("alice", &[json!({"op": "undo"})])
+            .unwrap_or_else(|err| panic!("undo of {op}: {}", err.message()));
+        assert_eq!(state(&room), before, "{op} was not taken back");
+    }
 }

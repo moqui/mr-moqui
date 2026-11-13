@@ -462,8 +462,9 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   variables, rendered by the server's Chromium to PDF (`orientation` portrait or landscape, `layout` grid or rows,
   `appendix` for table data, `paper` letter or a4), a PNG inline in the email with a link to the live dashboard, CSV
   or xlsx: one CSV, or one sheet, per table panel (a dashboard with no table panel exports each panel with data), and
-  a preview of several CSVs downloads as a zip. An empty report is skipped. Saving to a server location needs
-  `REPORT_SAVE_LOCATION`. Dashboards › Reports previews and downloads a dashboard or report, opens the composer of a
+  a preview of several CSVs downloads as a zip. A CalcGrid document is scheduled the same way, as its workbook in Excel
+  only (`render#CalcDocument`: the saved version with its data read as the owner, every formula calculated), with no
+  picture inline. An empty report is skipped. Saving to a server location needs `REPORT_SAVE_LOCATION`. Dashboards › Reports previews and downloads a dashboard or report, opens the composer of a
   multi-dashboard report, links the playlists, and schedules a report in owner mode (`create#Schedule`: to one address
   line, a group or a server location, as its owner); the schedules themselves are on the delivery screens.
 - **Analysis** builds an aggregate over a dataset from typed choices and saves it as a library panel
@@ -892,7 +893,11 @@ owner mode, to one address line.
   Two users are owner-equivalent when their fingerprints are equal. A policy that names the viewer's own groups
   (`ReportUserGroups`) gives users of different groups different filters, so different fingerprints; a policy that answers the
   organizations a user works in gives every user of those organizations the same one. A definition over a service source is
-  not comparable (the service decides its scope in its own code), so it goes to its owner alone.
+  not comparable (the service decides its scope in its own code), so it goes to its owner alone. A CalcGrid document
+  reads its data sheets through the entity facade, not a dataset: its part of the fingerprint is the user's CalcGrid
+  scope (`get#CalcScope`: their current access, time zone, and each data sheet's source, columns and the entity
+  filters' condition with its values, [CalcGrid](Database.md#calcgrid-and-access-profiles)), and its schedules are
+  always business ones. Without CalcGrid in the build it is not comparable.
 - **`check#ReportAudience`** answers, for a definition the viewer would own a schedule of, each proposed recipient's result:
   the named users and the members in date of the named groups, each `eligible` or not with a `reasonCode` and a `reason` in
   words: `not-shared` (the definition, or a dashboard or panel it uses, is not theirs to read: its owner shares it),

@@ -109,7 +109,10 @@ const cells = () =>
         row: ec.context.get("row"),
         column: ec.context.get("column"),
         width: ec.context.get("width"),
-        height: ec.context.get("height")
+        height: ec.context.get("height"),
+        since: text(ec.context.get("since")) || null,
+        client: text(ec.context.get("client")) || null,
+        selection: parse("selectionJson", null)
     })
 // Edits to the room's workbook (opsJson: a list of edits, as edit#CalcDocument takes them): the room's new state, with an
 // edit's refusal as errors beside it.
@@ -130,6 +133,10 @@ function content() {
     return {content: found.content || "", errors: found.errors}
 }
 const refresh = () => ask(CALC + ".refresh#CalcDocument", {profileId: profileId(), roomId: ec.context.get("roomId")})
+// The room's state again, when the notification socket tells of another's edit.
+const state = () => ask(CALC + ".get#CalcState", {profileId: profileId(), roomId: ec.context.get("roomId")})
+// Discard everyone's edits since the document was saved (an author's): the room again, as open answers it.
+const revert = () => ask(CALC + ".revert#CalcDocument", {profileId: profileId(), roomId: ec.context.get("roomId")})
 // Save the room's document; a group is named only where the mount's policy lets the viewer share.
 function save() {
     const group = text(ec.context.get("userGroupId"))
@@ -202,4 +209,4 @@ function shareGroups() {
     }
 }
 
-;({access, choose, entities, documents, dashboards, addPanel, open, cells, edit, content, refresh, save, exported, close, remove, shareGroups, profileId})
+;({access, choose, entities, documents, dashboards, addPanel, open, cells, edit, content, refresh, revert, state, save, exported, close, remove, shareGroups, profileId})

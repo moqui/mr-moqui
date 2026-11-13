@@ -31,7 +31,9 @@
     </transition>
     <actions><script><![CDATA[
         const all = ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').call().definitions || []
-        reportDefinitions = all.filter(definition=>(definition.type === 'report' && (definition.body || {}).kind!=='playlist') || definition.type === 'dashboard')
+        // a CalcGrid document is sent as its workbook (moqui-calc render#CalcDocument), in Excel only
+        reportDefinitions = all.filter(definition=>(definition.type === 'report' && (definition.body || {}).kind!=='playlist') || definition.type === 'dashboard' || definition.type === 'calcgrid')
+            .map(definition=>({id:definition.id, title:definition.title, type:definition.type, workbook:definition.type === 'calcgrid'}))
     ]]></script></actions>
     <widgets>
         <label text="Dashboard reports" type="h4"/>
@@ -49,10 +51,10 @@
                     <box-body>
                         <section name="AvailableReportPreviews" condition="reportDefinitions.length"><widgets>
                             <form-list name="ReportPreviews" list="reportDefinitions" skip-form="true">
-                                <field name="title"><default-field title="Dashboard / report"><display/></default-field></field>
-                                <field name="previewPdf"><default-field title="PDF"><link url="preview" text="Preview PDF" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'pdf'}"/></default-field></field>
-                                <field name="previewPng"><default-field title="PNG"><link url="preview" text="Preview PNG" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'png'}"/></default-field></field>
-                                <field name="csv"><default-field title="CSV"><link url="preview" text="CSV" link-type="anchor" parameter-map="{definitionId:id,renderMode:'csv'}"/></default-field></field>
+                                <field name="title"><default-field title="Dashboard / report / CalcGrid"><display/></default-field></field>
+                                <field name="previewPdf"><default-field title="PDF"><link url="preview" text="Preview PDF" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'pdf'}" condition="!workbook"/></default-field></field>
+                                <field name="previewPng"><default-field title="PNG"><link url="preview" text="Preview PNG" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'png'}" condition="!workbook"/></default-field></field>
+                                <field name="csv"><default-field title="CSV"><link url="preview" text="CSV" link-type="anchor" parameter-map="{definitionId:id,renderMode:'csv'}" condition="!workbook"/></default-field></field>
                                 <field name="xlsx"><default-field title="Excel"><link url="preview" text="Excel" link-type="anchor" parameter-map="{definitionId:id,renderMode:'xlsx'}"/></default-field></field>
                                 <columns type="mobile">
                                     <column><field-ref name="title"/></column>
@@ -60,7 +62,7 @@
                                 </columns>
                             </form-list>
                         </widgets><fail-widgets>
-                            <label text="No dashboards or reports are available to preview." type="p"/>
+                            <label text="No dashboards, reports or CalcGrid documents are available to preview." type="p"/>
                         </fail-widgets></section>
                     </box-body>
                 </container-box>
@@ -72,9 +74,9 @@
                         <link url="../Schedules" text="Scheduled reports"/>
                     </box-toolbar>
                     <box-body>
-                        <label text="An owner-mode schedule is rendered as you and delivered to one address line, a group or a server location as set here. A schedule made on Scheduled reports is checked for each recipient instead. Either is paused, resumed and sent there." type="p"/>
+                        <label text="An owner-mode schedule is rendered as you and delivered to one address line, a group or a server location as set here. A schedule made on Scheduled reports is checked for each recipient instead. Either is paused, resumed and sent there. A CalcGrid document is sent as its workbook, in Excel." type="p"/>
                         <form-single name="CreateReportSchedule" transition="createSchedule">
-                            <field name="definitionId"><default-field title="Dashboard / report"><drop-down><list-options list="reportDefinitions" key="${id}" text="${title}"/></drop-down></default-field></field>
+                            <field name="definitionId"><default-field title="Dashboard / report / CalcGrid"><drop-down><list-options list="reportDefinitions" key="${id}" text="${title}"/></drop-down></default-field></field>
                             <field name="cronExpression"><default-field title="Cron schedule"><text-line default-value="0 0 7 * * ?"/></default-field></field>
                             <field name="renderMode"><default-field title="Format"><drop-down><option key="pdf" text="PDF"/><option key="png" text="PNG"/><option key="csv" text="CSV"/><option key="xlsx" text="Excel"/></drop-down></default-field></field>
                             <field name="delivery"><default-field title="Delivery"><drop-down><option key="file" text="Save to file"/><option key="email" text="Email"/><option key="both" text="Email and file"/></drop-down></default-field></field>

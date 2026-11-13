@@ -26,6 +26,8 @@ feature("the terminal shows a page of the entity's rows, each with its record fo
         r.errorMessages.length == 0
         out.includes('"GridRows"')
         out.includes("Record?selectedEntity=moqui.basic.Enumeration")
+        // the rows as a workbook, the calcgrid component (Calc mode)
+        out.includes("mode=calc&entityName=moqui.basic.Enumeration")
     },
 })
 

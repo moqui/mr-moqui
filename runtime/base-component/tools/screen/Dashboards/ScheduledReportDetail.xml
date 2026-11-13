@@ -212,6 +212,7 @@
                         <label type="p" style="text-warning" text="You no longer read this report, so it cannot be delivered." condition="!previewSections.length"/>
                         <section-iterate name="OwnPreviewSections" list="previewSections" entry="previewSection"><widgets>
                             <label text="${previewSection.title}" type="h6" condition="previewSections.length &gt; 1"/>
+                            <label type="p" condition="previewSection.workbook" text="A CalcGrid document is sent as its workbook, an Excel file with every data sheet as the recipient's access reads it. Download it above to see yours."/>
                             <section-iterate name="OwnPreview" list="previewSection.panels" entry="previewPanel"><widgets>
                                 <report-embed definition-id="${previewPanel.definitionId}" panel-id="${previewPanel.panelId}"
                                         from="${previewPanel.from}" thru="${previewPanel.thru}"/>

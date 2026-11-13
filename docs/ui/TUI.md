@@ -432,6 +432,7 @@ The framework's components, with their props documented at the top of each file 
 | --- | --- | --- |
 | `board` | Cards in columns by group from lg, else grouped under headings; `source` answers `{groups, rows}`, or the props hold them (a list's board view) | Up/Down, Left/Right (wide), `m` moves a card through `move`, Enter opens `open` |
 | `calendar` | An agenda by day, with the month grid from lg; `source` answers `{month, events}`, or the props hold the events; an event's `_open` is its screen | Up/Down, PgUp/PgDn months, `t` today |
+| `calcgrid` | A CalcGrid workbook's sheet ([Database](../tools/Database.md#calc-mode)): the formula bar, the column letters, the cells that fit (frozen rows and columns kept, numbers right, a text running on into empty cells, bold and underline), the sheet tabs, and who else has it open and where; `room` is what `open#CalcDocument` answered when the screen drew, and the screen's `calc*` transitions answer the rest | Arrows, PgUp/PgDn, Home/End, Shift to select; Enter or `e` edits a cell, `=` or a digit starts one (Tab takes a completion); Delete; `u`/`U` undo and redo; `b` `i` `_`; `[` `]` sheets; `<` `>` width; `F` freeze; `d` fill down; `c` charts; `z` kiosk; `R` refresh; `m` the rest |
 | `chart` | A table of the datasets (`labels`, `series`) with a bar for the first series | `r` reads again |
 | `timeline` | Entries (`items`) in order, each its time, title and text | Up/Down, Enter |
 
@@ -449,7 +450,11 @@ Mermaid diagram's twin is text (Tools' Status Flows lists its transitions).
 
 A component implements `moqui_tui::Component`: where its data comes from (a transition under the screen's path), its
 lines at a width (spans in theme roles, so it needs no Revue), its keys (moves, and what it asks of the session: reload,
-post, follow, a message), and its help.
+post, follow, a message), and its help. Its state's `rows` is the terminal's rows, for a component that loads what
+fits on screen; `Act::Call` posts to a transition that answers JSON and gives the answer to `receive`, as a read's is
+(a sheet's edit); `paste` takes text pasted while it has the focus; and a `receive` that sets the state's
+`reload_pending` asks for its source again at once (the next read of a component whose `source` changes with what it
+received).
 
 ## Assist
 

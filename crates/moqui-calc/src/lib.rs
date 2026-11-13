@@ -17,18 +17,24 @@
 //! formulas and charts on top. The engine and the workbook are in the server; a view gets the cells on its screen.
 //!
 //! - [`fill`]: the engine work, with no `ExecutionContext`: a data sheet filled with rows, the stored form.
+//! - [`log`]: a saved document's edit log, which every room of it follows, and each person's undo and redo.
 //! - [`profile`]: the access profiles, which say what a person who is not an administrator may read.
 //! - [`room`]: the open documents, each a workbook in memory, read a viewport at a time and dropped when idle.
+//! - [`scope`]: the fingerprint of a reader's scope, which decides who shares a room and who may be sent an export.
 //! - [`service`]: `org.moqui.calc.CalcServices`, which open, read, refresh, save, export and close a document.
+//! - [`together`]: editing together: a document's room for each scope, brought up to its log, and who is where.
 //!
 //! This crate is on moqui-core, which reaches it through the [`moqui_core::extension`] entry below, and on moqui-tools
 //! for the grid's reader. moqui-host links it under its `xlsx` feature; a build without it reports that `xlsx` is not
 //! built in.
 
 pub mod fill;
+pub mod log;
 pub mod profile;
 pub mod room;
+pub mod scope;
 pub mod service;
+pub mod together;
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {

@@ -17,9 +17,14 @@
  *     cells, a column's width, and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
  *     room's new state (emitted as changed, for the holder of room to take); the cells are then asked again. A data
  *     sheet is not edited. It also emits selection (sheet, row, column, lastRow, lastColumn and the range's name).
+ *     A saved document's room (room.shared) is edited together: the sheet joins it on the notification socket
+ *     ($root.notificationClient, frames with calc: join, select, leave; docs/ui/Qvt-Client.md, CalcGrid rooms), shows
+ *     the others' places (a coloured outline and their names), sends its own, and on another's edit reads the room's
+ *     state again (stateUrl) and its cells; with revertUrl an author discards everyone's unsaved edits.
  *   - the pure helpers: columnName(n), cellCss(style, fill, cellType) and applyCss(element, css), blockRows(block),
- *     neededRange(have, first, last, rows, margin), chartConfig(chart), completions(text, caret, tables),
- *     rangeName(range, sheetName), pasteRows(text) and tableName(sheetName).
+ *     neededRange(have, first, last, rows, margin), chartConfig(chart), completions(text, caret, tables, functions),
+ *     rangeName(range, sheetName), pasteRows(text), tableName(sheetName), peerColor(index), receive(peers, seq, frame)
+ *     and peerCells(peers, sheet).
  */
 (function (root) {
     "use strict";
@@ -152,7 +157,7 @@
      * of a name; else {from, prefix, names}: the names (functions, and tables as Name[) that begin with the letters
      * before the caret, and where those letters start.
      */
-    calc.completions = (text, caret, tables) => {
+    calc.completions = (text, caret, tables, functions) => {
         if (!text || text[0] !== "=") return null;
         const before = text.slice(0, caret);
         const match = /[A-Za-z_][A-Za-z0-9_.]*$/.exec(before);
@@ -160,7 +165,7 @@
         const prefix = match[0].toUpperCase();
         // a cell reference (B2, AA10) is not a name to complete
         if (/^[A-Z]{1,3}[0-9]+$/.test(prefix)) return null;
-        const names = calc.FUNCTIONS.filter((name) => name.startsWith(prefix)).map((name) => name + "(")
+        const names = (functions && functions.length ? functions : calc.FUNCTIONS).filter((name) => name.startsWith(prefix)).map((name) => name + "(")
             .concat((tables || []).filter((name) => name.toUpperCase().startsWith(prefix)).map((name) => name + "["));
         return names.length ? { from: match.index, prefix: match[0], names: names.slice(0, 8) } : null;
     };
@@ -180,13 +185,55 @@
     /** The table a sheet gives its formulas, as the server names it: the sheet's name as an identifier. */
     calc.tableName = (sheetName) => { const name = String(sheetName).replace(/[^\p{L}\p{N}]/gu, "_"); return /^\p{L}/u.test(name) ? name : "T" + name; };
 
+    /** The colours the others' places are drawn in, by their order. */
+    calc.PEER_COLORS = ["#e67c00", "#1e88e5", "#8e24aa", "#00897b", "#d81b60", "#6d4c41"];
+    calc.peerColor = (index) => calc.PEER_COLORS[Math.abs(Number(index) || 0) % calc.PEER_COLORS.length];
+    /** The most cells of another's selection drawn; a larger one is drawn at its first cell. */
+    calc.MAX_PEER_CELLS = 400;
+    /**
+     * A frame of the room's socket topic taken into the others in the room (`peers`: client, userId, name, sheet, area)
+     * and the view's last edit (`seq`): the others now, whether to read the room again (another's edit, a refresh, a
+     * save), and whether to open the document again (its room was dropped).
+     */
+    calc.receive = (peers, seq, frame) => {
+        const list = (peers || []).slice();
+        const at = list.findIndex((peer) => peer.client === frame.client);
+        const out = { peers: list, reread: false, reopen: false };
+        if (frame.type === "joined") out.peers = (frame.peers || []).map((peer) => Object.assign({}, peer));
+        else if (frame.type === "peer" && frame.joined === false) { if (at >= 0) list.splice(at, 1); }
+        else if (frame.type === "peer" || frame.type === "select") {
+            const peer = Object.assign(at >= 0 ? list[at] : {}, { client: frame.client, userId: frame.userId, name: frame.name });
+            if (frame.type === "select") { peer.sheet = frame.sheet; peer.area = frame.area; }
+            if (at < 0) list.push(peer); else list[at] = peer;
+        } else if (frame.type === "changed") {
+            out.reopen = frame.reopen === true;
+            out.reread = !out.reopen && (frame.kind === "refresh" || frame.kind === "save" || Number(frame.seq) > Number(seq || 0));
+        }
+        return out;
+    };
+    /** The cells of `sheet` the others are on: "row:column" to the colour of whoever is there. */
+    calc.peerCells = (peers, sheet) => {
+        const cells = new Map();
+        (peers || []).forEach((peer, index) => {
+            const area = peer.area;
+            if (Number(peer.sheet) !== Number(sheet) || !area || !area.row || !area.column) return;
+            const width = Math.max(1, Number(area.width) || 1), height = Math.max(1, Number(area.height) || 1);
+            const whole = width * height <= calc.MAX_PEER_CELLS;
+            for (let r = 0; r < (whole ? height : 1); r++)
+                for (let c = 0; c < (whole ? width : 1); c++) cells.set((area.row + r) + ":" + (area.column + c), calc.peerColor(index));
+        });
+        return cells;
+    };
+
     calc.sheet = {
         name: "CalcSheet",
         props: { room: { type: Object, required: true }, cellsUrl: { type: String, required: true }, height: { type: String, default: "62vh" },
             // what each request carries beside the room and the rectangle (an access profile)
             params: { type: Object, default: () => ({}) },
             // the transitions that edit the workbook and answer a cell's content; with editUrl the sheet is edited
-            editUrl: { type: String, default: "" }, contentUrl: { type: String, default: "" } },
+            editUrl: { type: String, default: "" }, contentUrl: { type: String, default: "" },
+            // the transitions that answer the room's state (read again on another's edit) and discard the unsaved edits
+            stateUrl: { type: String, default: "" }, revertUrl: { type: String, default: "" } },
         emits: ["gone", "sheet", "changed", "selection"],
         template: '<div class="m-calc-sheet">'
             + '<div v-if="editable" class="row items-center q-gutter-xs q-mb-xs m-calc-toolbar">'
@@ -237,7 +284,11 @@
             + '<q-item clickable v-close-popup @click="deleteSheet(sheet)"><q-item-section>Delete</q-item-section></q-item></q-list></q-menu></q-tab>'
             + '</q-tabs>'
             + '<q-btn v-if="editable" flat dense round size="sm" icon="add" aria-label="Add a sheet" @click="addSheet"><q-tooltip>Add a sheet. Right-click a sheet to rename or delete it</q-tooltip></q-btn>'
-            + '<div class="col-auto text-caption q-px-sm" :class="mutedClass">{{status}}</div>'
+            + '<q-chip v-for="(peer, index) in peers" :key="peer.client" dense square size="sm" text-color="white" :style="{backgroundColor: peerColor(index)}">{{peer.name}}'
+            + '<q-tooltip>{{peer.name}}{{peer.area ? " is at " + peerPlace(peer) : " has the document open"}}</q-tooltip></q-chip>'
+            + '<div v-if="room.unsaved" class="col-auto text-caption q-px-xs" :class="mutedClass">{{room.unsaved}} unsaved {{room.unsaved === 1 ? "edit" : "edits"}}</div>'
+            + '<q-btn v-if="editable && revertUrl && room.unsaved" flat dense no-caps size="sm" label="Discard" @click="discard"><q-tooltip>Discard every unsaved edit, everyone\'s, back to the saved document</q-tooltip></q-btn>'
+            + '<div class="col-auto text-caption q-px-sm" :class="mutedClass">{{notice || status}}</div>'
             + '</div>'
             + '<div v-if="charts.length" class="row q-col-gutter-sm q-mt-xs">'
             + '<div v-for="(chart, index) in charts" :key="index" class="col-12 col-md-6">'
@@ -259,8 +310,8 @@
             + '</q-card></q-dialog>'
             + '</div>',
         data() {
-            return { sheetIndex: 0, status: "", active: { row: 1, column: 1, lastRow: 1, lastColumn: 1 }, barText: "", barOriginal: "", suggestions: null, suggestionIndex: 0,
-                chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" } };
+            return { sheetIndex: 0, status: "", notice: "", active: { row: 1, column: 1, lastRow: 1, lastColumn: 1 }, barText: "", barOriginal: "", suggestions: null, suggestionIndex: 0,
+                chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" }, peers: [] };
         },
         computed: {
             sheets() { return (this.room && this.room.sheets) || []; },
@@ -277,23 +328,110 @@
         },
         watch: {
             // another room (a document opened, or opened again after a refresh): every sheet is drawn anew
-            room() { this.cache = new Map(); if (!this.sheets.some((sheet) => sheet.index === this.sheetIndex && !sheet.hidden)) this.sheetIndex = this.firstSheet(); this.build(); }
+            room() {
+                this.cache = new Map(); this.seq = Number(this.room.seq || 0);
+                if (!this.sheets.some((sheet) => sheet.index === this.sheetIndex && !sheet.hidden)) this.sheetIndex = this.firstSheet();
+                this.build(); this.connect();
+            },
+            // a scratch workbook saved is the document's room, under a new id
+            "room.roomId"() { this.connect(); }
         },
-        created() { this.cache = new Map(); this.table = null; this.busy = false; this.again = false; this.sheetIndex = this.firstSheet(); this.contentTimer = null; },
+        created() {
+            this.cache = new Map(); this.table = null; this.busy = false; this.again = false; this.sheetIndex = this.firstSheet(); this.contentTimer = null;
+            this.seq = Number((this.room && this.room.seq) || 0); this.socket = null; this.peerMap = new Map(); this.editingCell = false; this.rereadWaiting = false;
+            this.clientId = "calc-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        },
         mounted() {
             moqui.loadStylesheet("/libs/tabulator/tabulator.min.css");
             moqui.loadStylesheet("/css/DataGrid.css");
             moqui.loadScript("/libs/tabulator/tabulator.min.js", null, () => !!root.Tabulator).then(() => this.build());
+            this.connect();
         },
-        beforeUnmount() { clearTimeout(this.contentTimer); this.destroy(); },
+        beforeUnmount() { clearTimeout(this.contentTimer); clearTimeout(this.selectTimer); clearTimeout(this.noticeTimer); this.disconnect(); this.destroy(); },
         methods: {
             chartConfig(chart) { return calc.chartConfig(chart); },
+            peerColor(index) { return calc.peerColor(index); },
+            peerPlace(peer) {
+                const sheet = this.sheets.find((one) => one.index === Number(peer.sheet));
+                const area = peer.area || {};
+                return calc.rangeName({ row: area.row, column: area.column, lastRow: area.row + Math.max(1, area.height || 1) - 1,
+                    lastColumn: area.column + Math.max(1, area.width || 1) - 1 }, sheet ? sheet.name : "");
+            },
+
+            // ---- editing together: the room on the notification socket ----
+            connect() {
+                const client = this.$root && this.$root.notificationClient, room = this.room;
+                if (this.socket && room && this.socket.roomId === room.roomId) return;
+                this.disconnect();
+                if (!client || !client.registerListener || !room || !room.shared) return;
+                const roomId = room.roomId, join = () => client.send({ calc: "join", room: roomId, client: this.clientId });
+                this.socket = { client, roomId,
+                    off: client.registerListener("calc:" + roomId, (frame) => this.frame(frame)),
+                    // a socket opened again joins again; while it is closed nobody is shown
+                    offState: client.onState ? client.onState((state) => { if (state === "open") join(); else this.peers = []; }) : () => {} };
+                join();
+            },
+            disconnect() {
+                const socket = this.socket;
+                if (!socket) return;
+                this.socket = null; this.peers = []; this.peerMap = new Map();
+                socket.client.send({ calc: "leave", room: socket.roomId, client: this.clientId });
+                socket.off(); socket.offState();
+            },
+            frame(frame) {
+                if (!frame || !frame.type) return;
+                const taken = calc.receive(this.peers, this.seq, frame);
+                if (taken.peers !== this.peers) { this.peers = taken.peers; this.markPeers(); }
+                if (taken.reopen) { this.$emit("gone"); return; }
+                if (taken.reread) {
+                    if (frame.name && frame.userId) this.tell(frame.kind === "save" ? frame.name + " saved the document" : frame.kind === "refresh" ? frame.name + " read the data again" : frame.name + " edited");
+                    this.reread();
+                }
+            },
+            tell(text) { clearTimeout(this.noticeTimer); this.notice = text; this.noticeTimer = setTimeout(() => { this.notice = ""; }, 4000); },
+            // the room's state and cells again, after another's edit; waits for a cell being typed in
+            reread() {
+                if (this.editingCell) { this.rereadWaiting = true; return Promise.resolve(); }
+                if (!this.stateUrl) { this.cache = new Map(); return this.load(); }
+                return moqui.request(this.stateUrl, { params: Object.assign({}, this.params, { roomId: this.room.roomId }) }).then((result) => {
+                    const json = result.json || {};
+                    if (json.errors) { if (String(json.errors).includes("ROOM_GONE")) this.$emit("gone"); return; }
+                    if (json.roomId) this.applied(json);
+                }, () => null);
+            },
+            markPeers() {
+                this.peerMap = calc.peerCells(this.peers, this.sheetIndex);
+                if (!this.table) return;
+                try { for (const row of this.table.getRows("visible")) row.reformat(); } catch (_) { /* rebuilt meanwhile */ }
+            },
+            // the place of this view, for the others, a moment after the selection settles
+            sendSelection() {
+                if (!this.socket) return;
+                clearTimeout(this.selectTimer);
+                this.selectTimer = setTimeout(() => {
+                    const socket = this.socket;
+                    if (!socket) return;
+                    const at = this.selection();
+                    socket.client.send({ calc: "select", room: socket.roomId, client: this.clientId, sheet: this.sheetIndex,
+                        area: { row: at.row, column: at.column, width: at.width, height: at.height } });
+                }, 200);
+            },
+            discard() {
+                if (!this.revertUrl) return;
+                this.$q.dialog({ title: "Discard the unsaved edits", message: "Every edit since the document was saved, everyone's, is discarded.", cancel: true, persistent: true })
+                    .onOk(() => moqui.request(this.revertUrl, { method: "POST", params: Object.assign({}, this.params, { roomId: this.room.roomId }) }).then((result) => {
+                        const json = result.json || {};
+                        if (json.errors) { moqui.notifyMessages(null, json.errors); return; }
+                        if (json.roomId) this.applied(json);
+                    }, (err) => moqui.handleAjaxError(err)));
+            },
             firstSheet() { const first = this.visibleSheets[0]; return first ? first.index : 0; },
             sheet() { return this.activeSheet; },
             showSheet(index) {
                 if (index === this.sheetIndex) return;
                 this.sheetIndex = index; this.active = { row: 1, column: 1, lastRow: 1, lastColumn: 1 };
-                this.$emit("sheet", index); this.build(); this.readContent();
+                this.peerMap = calc.peerCells(this.peers, index);
+                this.$emit("sheet", index); this.build(); this.readContent(); this.sendSelection();
             },
             destroy() { if (this.table) { try { this.table.destroy(); } catch (_) { /* gone */ } this.table = null; } },
             // the loaded rows of the sheet shown: row number to its cells by column
@@ -317,9 +455,14 @@
                 this.columnCount = columnCount; this.rowCount = rowCount;
                 this.built = { frozenRows: Number(sheet.frozenRows || 0), frozenColumns: Number(sheet.frozenColumns || 0), widths: JSON.stringify((sheet.widths || []).slice(0, columnCount)), name: sheet.name };
                 const formatter = (cell) => {
-                    const cells = vm.rows().get(cell.getRow().getData().id);
-                    const found = cells ? cells[cell.getColumn().getDefinition().calcColumn - 1] : null;
-                    calc.applyCss(cell.getElement(), found ? found.css : null);
+                    const row = cell.getRow().getData().id, column = cell.getColumn().getDefinition().calcColumn;
+                    const cells = vm.rows().get(row);
+                    const found = cells ? cells[column - 1] : null;
+                    const element = cell.getElement();
+                    calc.applyCss(element, found ? found.css : null);
+                    // another's place: an outline in their colour
+                    const peer = vm.peerMap.get(row + ":" + column);
+                    element.style.boxShadow = peer ? "inset 0 0 0 2px " + peer : "";
                     return found ? found.text : "";
                 };
                 // a copy takes the texts on screen: the table holds no data of its own
@@ -403,6 +546,7 @@
                 this.active = next;
                 this.$emit("selection", Object.assign({ sheet: this.sheetIndex, name: calc.rangeName(next, (this.sheet() || {}).name) }, next));
                 if (moved) this.readContent();
+                this.sendSelection();
             },
             // what was typed into the active cell, for the bar; asked a moment after the selection settles
             readContent() {
@@ -421,7 +565,7 @@
             },
             barInput(event) {
                 this.barText = event.target.value;
-                this.suggestions = calc.completions(this.barText, event.target.selectionStart, this.tableNames);
+                this.suggestions = calc.completions(this.barText, event.target.selectionStart, this.tableNames, this.room.functions);
                 this.suggestionIndex = 0;
             },
             barKey(event) {
@@ -444,6 +588,8 @@
             commitBar() {
                 this.suggestions = null;
                 if (!this.editable || this.barText === this.barOriginal) return;
+                // committed: no longer what is being typed, so the cell's content as the engine keeps it comes back
+                this.barOriginal = this.barText;
                 this.edit([{ op: "input", sheet: this.sheetIndex, row: this.active.row, column: this.active.column, value: this.barText }]);
             },
 
@@ -465,6 +611,7 @@
             // anywhere may have changed), and the table is made again only when its shape changed
             applied(state) {
                 const top = (this.visible() || [1])[0];
+                if (state.seq != null) this.seq = Math.max(this.seq, Number(state.seq));
                 this.$emit("changed", state);
                 this.cache = new Map();
                 this.$nextTick(() => {
@@ -475,7 +622,9 @@
                         && built.frozenRows === Number(sheet.frozenRows || 0) && built.frozenColumns === Number(sheet.frozenColumns || 0)
                         && built.widths === JSON.stringify((sheet.widths || []).slice(0, this.columnCount));
                     if (same) this.load(); else this.build(top);
-                    this.readContent();
+                    // what is being typed in the bar is left as it is
+                    const typing = this.$refs.bar && root.document && root.document.activeElement === this.$refs.bar && this.barText !== this.barOriginal;
+                    if (!typing) this.readContent();
                 });
             },
             selection() { return { sheet: this.sheetIndex, row: this.active.row, column: this.active.column, width: this.active.lastColumn - this.active.column + 1, height: this.active.lastRow - this.active.row + 1 }; },
@@ -506,15 +655,19 @@
                 input.className = "m-calc-cell-editor"; input.spellcheck = false; input.autocomplete = "off";
                 const shown = (vm.rows().get(at.row) || [])[at.column - 1];
                 let original = shown ? shown.text : "", typed = false, done = false;
+                vm.editingCell = true;
                 input.value = original;
                 vm.content(at).then((text) => { original = text; if (!typed && !done) { input.value = text; input.select(); } });
                 onRendered(() => { input.focus(); input.select(); });
                 const finish = (commit) => {
                     if (done) return;
                     done = true;
+                    vm.editingCell = false;
                     const value = input.value;
                     cancel();
-                    if (commit && value !== original) vm.edit([{ op: "input", sheet: at.sheet, row: at.row, column: at.column, value }]);
+                    const edited = commit && value !== original ? vm.edit([{ op: "input", sheet: at.sheet, row: at.row, column: at.column, value }]) : Promise.resolve();
+                    // another's edit that came while typing is read once this one is in
+                    if (vm.rereadWaiting) { vm.rereadWaiting = false; edited.then(() => vm.reread()); }
                 };
                 input.addEventListener("input", () => { typed = true; });
                 input.addEventListener("blur", () => finish(true));

@@ -25,6 +25,7 @@
 //! link; it holds its state in a [`ComponentState`] the session keeps by node id.
 
 mod board;
+mod calc;
 mod calendar;
 mod chart;
 pub(crate) mod report;
@@ -105,6 +106,8 @@ pub struct ComponentState {
     pub closed: BTreeSet<String>,
     /// Client-only structured widget state; never sent as an authorization context.
     pub local: Value,
+    /// The terminal's rows (0 before it is sized), for a component that loads what fits on screen: a sheet's rows.
+    pub rows: u16,
 }
 
 /// What a key asks of the session.
@@ -124,6 +127,12 @@ pub enum Act {
     Post {
         url: String,
         fields: BTreeMap<String, String>,
+    },
+    /// Post to a transition of the screen that answers JSON (a name under its path, or a path): the answer goes to
+    /// [`Component::receive`], as a read's does. A sheet's edit.
+    Call {
+        url: String,
+        parameters: BTreeMap<String, String>,
     },
     /// Open a screen.
     Follow(String),
@@ -148,6 +157,11 @@ pub trait Component: Sync {
     /// Accept a successful authorized JSON read. Components may merge bounded live data.
     fn receive(&self, _props: &Value, state: &mut ComponentState, value: Value) {
         state.data = Some(value);
+    }
+
+    /// Pasted text while the component has focus. None when it takes no paste.
+    fn paste(&self, _props: &Value, _state: &mut ComponentState, _text: &str) -> Option<Vec<Act>> {
+        None
     }
 
     /// Poll only while the component has explicitly enabled it.
@@ -175,6 +189,7 @@ pub struct Registered(pub &'static dyn Component);
 inventory::collect!(Registered);
 
 inventory::submit! { Registered(&board::Board) }
+inventory::submit! { Registered(&calc::CalcGrid) }
 inventory::submit! { Registered(&calendar::Calendar) }
 inventory::submit! { Registered(&chart::Chart) }
 inventory::submit! { Registered(&report::ReportPanel) }
@@ -281,6 +296,7 @@ mod tests {
             names(),
             [
                 "board",
+                "calcgrid",
                 "calendar",
                 "chart",
                 "log-tail",

@@ -204,14 +204,17 @@ function recipientChoices(p) {
 }
 
 // ===== what may be scheduled =====
-// The dashboards and the reports of dashboards the viewer reads (a playlist and any other kind of report definition
-// renders no report), without those of the components the mount hides.
+// The dashboards, the reports of dashboards and the CalcGrid documents the viewer reads (a playlist and any other kind
+// of report definition renders no report), without those of the components the mount hides. A CalcGrid document is
+// sent as its workbook (moqui-calc render#CalcDocument), so in Excel only.
+const workbookFormats = formats.filter(format => format.value === "xlsx")
 function schedulable(mount) {
     const hidden = mount.mounted ? Array.from(ec.context.get("reportHiddenComponents") || []) : []
     return Array.from(ask("list#Definitions", {}).out?.definitions || []).filter(
         definition =>
             !hidden.includes(definition.component) &&
             (definition.type === "dashboard" ||
+                definition.type === "calcgrid" ||
                 (definition.type === "report" &&
                     definition.body?.kind !== "playlist" &&
                     Array.from(definition.body?.dashboards || []).length > 0))
@@ -223,7 +226,11 @@ const definitionOptions = definitions =>
             value: definition.id,
             label:
                 (definition.title || definition.id) +
-                (definition.type === "report" ? " (" + (text(definition.body?.kind) || "report") + ")" : "")
+                (definition.type === "report"
+                    ? " (" + (text(definition.body?.kind) || "report") + ")"
+                    : definition.type === "calcgrid"
+                      ? " (CalcGrid)"
+                      : "")
         }))
         .sort((a, b) => a.label.localeCompare(b.label))
 
@@ -419,8 +426,11 @@ function list(p) {
 
 // ===== ScheduledReportDetail: one schedule =====
 // The panels of a dashboard, or of each dashboard of a report, to show as the viewer's own preview (each a report-embed,
-// rendered as the viewer); a section the viewer may not read is left out.
+// rendered as the viewer); a section the viewer may not read is left out. A CalcGrid document is one section with no
+// panel, its workbook: the preview is its file (previewFile).
 function sections(definition) {
+    if (definition.type === "calcgrid")
+        return [{definitionId: definition.id, title: definition.title, panels: [], workbook: true}]
     const specs = definition.type === "report" ? Array.from(definition.body?.dashboards || []) : [{dashboardRef: definition.id}]
     return specs
         .map(spec => {
@@ -539,7 +549,7 @@ function detail(screenScheduledId) {
     return Object.assign(none, {
         found: true,
         schedule,
-        options: {formats, cronPresets, groups: groupOptions(found)},
+        options: {formats: definition?.type === "calcgrid" ? workbookFormats : formats, cronPresets, groups: groupOptions(found)},
         recipients: recipientRows,
         audience,
         audienceNote,
@@ -577,10 +587,11 @@ function create(p) {
     const groups = others ? idList(p.recipientGroupIds) : []
     const refusal = unaccepted(mount.policy, users, groups)
     if (refusal) return refuse(refusal)
+    const workbook = schedulable(mount).some(definition => definition.id === definitionId && definition.type === "calcgrid")
     const stored = save(mount.policy, {
         definitionId,
         cronExpression: text(p.cronSelected) || null,
-        renderMode: p.renderMode || null,
+        renderMode: workbook ? "xlsx" : p.renderMode || null,
         noResultsAbort: "Y",
         emailSubject: text(p.emailSubject) || null,
         recipientUserIds: users,

@@ -1306,6 +1306,29 @@ client), `server` (an error answering the join, or a fourth in a row after it), 
 joins again with the state vector, so the edits made meanwhile merge. Unmounting sends leave and destroys the editor, the awareness
 and the Y doc.
 
+## CalcGrid rooms
+
+The CalcGrid sheet (`moqui.calc.sheet`, `js/WebrootCalc.js`; [Database](../tools/Database.md#calc-mode)) reads cells
+and posts edits over its screen's transitions; the notification socket only tells it when to read again and where the
+others are (`crates/moqui-host/src/notws/calc.rs`). A sheet of a saved document's room (`room.shared`) registers a
+listener on `calc:<roomId>` and sends, as JSON frames with `calc`:
+
+| Frame | When |
+| --- | --- |
+| `{calc: "join", room, client}` | On open, and again each time the socket opens. Refused (403) unless the socket's user has the room open, which only an open through a transition makes them |
+| `{calc: "select", room, client, sheet, area: {row, column, width, height}}` | The selection settled (200 ms after it moves) |
+| `{calc: "leave", room, client}` | The sheet is closed or shows another room |
+
+It gets, on its room's topic: `joined` (`peers`: who has the document open, each `client`, `userId`, `name`, `sheet`,
+`area`), `peer` (one came or went, `joined`), `select` (where one is now), and `changed` (`seq`, `userId`, `name`,
+`kind`: `edit`, `undo`, `redo`, `save`, `refresh` or `revert`) after this server's rooms of the document applied an
+edit made on any server. A `changed` past the sheet's own edit (or a save or refresh) reads the room's state
+(`calcState`) and its cells again, after a cell being typed in is set; one with `reopen` means the room could not
+follow and was dropped, and the screen opens the document again. Presence is by document, across the rooms of every
+scope and server (cluster topic `calc-presence`); it carries names and places, never a value. The frames and the
+cluster topic `calc-update` carry no cell. The terminal's `calcgrid` component reads the same with `calcCells`'s
+`since`, `client` and `selection` instead of a socket.
+
 ## Mail sign-in popup
 
 `moqui.oauthPopup(start, status, options)` (`MoquiLib.js`; `docs/interfaces/Mail-OAuth.md`) runs a mail account's sign-in with Google or Microsoft in a

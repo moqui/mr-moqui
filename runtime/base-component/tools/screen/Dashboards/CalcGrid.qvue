@@ -30,7 +30,8 @@
     <div v-if="room && room.truncated && room.truncated.length" class="text-caption q-mb-xs text-warning">
         {{room.truncated.join(', ')}}: only the first {{Number(room.maxDataRows).toLocaleString()}} rows are in the sheet.</div>
     <component v-if="room && calcSheet" :is="calcSheet" :room="room" :cells-url="url('calcCells')" :params="requestParams"
-            :edit-url="canEdit ? url('calcEdit') : ''" :content-url="url('calcContent')" @gone="reopen" @changed="changed" @selection="selected = $event"></component>
+            :edit-url="canEdit ? url('calcEdit') : ''" :content-url="url('calcContent')" :state-url="url('calcState')" :revert-url="canEdit ? url('calcRevert') : ''"
+            @gone="reopen" @changed="changed" @selection="selected = $event"></component>
     <div v-else-if="busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
     <div v-else-if="loaded && !accessOptions.length" class="text-body2 q-pa-md" :class="mutedClass">CalcGrid is not set up for you: no access profile is granted to a group of yours.</div>
     <div v-else-if="loaded" class="text-body2 q-pa-md" :class="mutedClass">
@@ -103,7 +104,8 @@ module.exports = {
         documentOptions() { return this.documents.map((doc) => ({ value: doc.definitionId, label: doc.title })); },
         requestParams() { return this.profileId ? { profileId: this.profileId } : {}; },
         // an author edits a document of their own, or one not saved yet
-        canEdit() { return this.access.canAuthor && !!this.room && (!this.room.definitionId || this.ownsRoom); },
+        // an author edits a document they read with the others who have it open; its owner saves it
+        canEdit() { return this.access.canAuthor && !!this.room; },
         ownsRoom() {
             const doc = this.room && this.documents.find((found) => found.definitionId === this.room.definitionId);
             return !!doc && doc.ownerId === this.access.userId;
@@ -182,7 +184,9 @@ module.exports = {
                 this.busy = false;
                 if (!out || !out.definitionId) return;
                 this.saveOpen = false;
-                this.room = Object.assign({}, this.room, { definitionId: out.definitionId, version: out.version, title: out.title });
+                // a new document's room is its room for the scope now, under the id the save answers
+                this.room = Object.assign({}, this.room, { definitionId: out.definitionId, version: out.version, title: out.title,
+                    roomId: out.roomId || this.room.roomId, shared: true, unsaved: 0 });
                 this.opened = { definitionId: out.definitionId };
                 this.loadDocuments().then(() => { this.documentId = out.definitionId; });
                 moqui.notifyMessages('Document saved');

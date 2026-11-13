@@ -44,11 +44,22 @@ pub const RUNTIME_SETTINGS: &str = "runtime-settings";
 /// writes its files from the shared repository and loads it; its data is in the shared database already.
 pub const COMPONENT_DEPLOY: &str = "component-deploy";
 
+/// A CalcGrid document was edited, saved or reverted on one server (moqui-calc, plans/IronCalc-DB.md), `{"doc", "seq",
+/// "userId", "kind"}`: every server brings its rooms of the document up to `seq` from the document's edit log and tells
+/// their viewers.
+pub const CALC_UPDATE: &str = "calc-update";
+
+/// Where a viewer of a CalcGrid document is, from one server's socket (`{"doc", "client", "userId", "name", "sheet",
+/// "area", "left"}`), for the viewers of the document on the others.
+pub const CALC_PRESENCE: &str = "calc-presence";
+
 /// Every topic of the bus, which are also the topics the cluster carries: the transports' receivers take only these.
 pub const TOPICS: &[&str] = &[
     ENTITY_CACHE_INVALIDATE,
     NOTIFICATION_MESSAGE,
     COLLAB_UPDATE,
+    CALC_UPDATE,
+    CALC_PRESENCE,
     SESSION_END,
     RTC_SIGNAL,
     RUNTIME_SETTINGS,

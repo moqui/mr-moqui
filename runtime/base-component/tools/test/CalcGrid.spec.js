@@ -179,11 +179,11 @@ feature("CalcGrid in Dashboards: an administrator has the Tools app's own access
         const underProfile = dashboards("calcCells", {roomId: opened.json.roomId, profileId: "nosuch", sheet: 0, row: 1, column: 1, width: 3, height: 3})
         const notHeld = dashboards("calcOpen", {profileId: "nosuch", entityName: "moqui.basic.Enumeration"}, "post")
         dashboards("calcClose", {roomId: opened.json.roomId}, "post")
-        const tui = ec.screen.makeTest().rootScreen("component://tools/screen/Dashboards.xml").renderMode("tui").render("CalcGrid", {}, null)
+        // the screen's terminal render, its list and a sheet, is crates/moqui-host's monitor_tui test's
         ec.message.clearErrors()
-        return {access, entityNames, opened, cellTexts, underProfile, notHeld, tui: String(tui.output), tuiStatus: tui.status}
+        return {access, entityNames, opened, cellTexts, underProfile, notHeld}
     },
-    then({access, entityNames, opened, cellTexts, underProfile, notHeld, tui, tuiStatus}) {
+    then({access, entityNames, opened, cellTexts, underProfile, notHeld}) {
         access.status == 200
         access.json.tools === true
         access.json.canAuthor === true
@@ -198,9 +198,6 @@ feature("CalcGrid in Dashboards: an administrator has the Tools app's own access
         String(underProfile.json.errors).includes("Not available")
         String(notHeld.json.errors).includes("Not available")
         !notHeld.json.roomId
-        tuiStatus == 200
-        tui.includes('"CalcGridDocuments"')
-        !tui.includes("Error rendering")
     },
 })
 
@@ -287,6 +284,132 @@ feature("the workbook is edited beside its data sheet: a formula over the data, 
         bold === false
         String(notJson.json.errors).includes("opsJson is not JSON")
         byGet.status == 405
+    },
+})
+
+feature("a saved document is edited together: one room, edits in its log as typed, each person's own undo, the others' places, discarded edits", {
+    when() {
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "description"])}, "post")
+        call("calcEdit", {roomId: opened.json.roomId, opsJson: JSON.stringify([{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Notes"}])}, "post")
+        // saved, the scratch room is the document's room, under a new id
+        const saved = call("calcSave", {roomId: opened.json.roomId, title: "Together", definitionId: "spec-calcgrid-together"}, "post")
+        const roomId = saved.json.roomId
+        const edit = (ops) => call("calcEdit", {roomId, opsJson: JSON.stringify(ops)}, "post")
+        const edited = edit([{op: "input", sheet: 1, row: 1, column: 1, value: "=COUNTA(Enumeration[enumId])"}, {op: "input", sheet: 1, row: 2, column: 1, value: "first"}])
+        const second = edit([{op: "input", sheet: 1, row: 2, column: 1, value: "second"}])
+        // opened again, it is the same room, with the edits
+        const again = call("calcOpen", {definitionId: "spec-calcgrid-together"}, "post")
+        const text = (cells, row) => (Array.from(cells.json.texts || []).find(cell => cell.row === row && cell.column === 1) || {}).text || ""
+        const read = (extra) => call("calcCells", Object.assign({roomId, sheet: 1, row: 1, column: 1, width: 2, height: 3}, extra || {}))
+        const afterEdits = read()
+        ec.artifactExecution.disableAuthz()
+        const rows = Array.from(ec.entity.find("moqui.calc.CalcDocumentEdit").condition("definitionId", "spec-calcgrid-together").orderBy("seq").list())
+            .map(row => ({seq: row.seq, kind: row.kind, ops: String(row.opsJson)}))
+        ec.artifactExecution.enableAuthz()
+        // a view that polls is told nothing changed; two views of the document see each other's place
+        const unchanged = read({since: String(afterEdits.json.seq)})
+        read({client: "spec-view-1", selectionJson: JSON.stringify({row: 2, column: 1, width: 1, height: 1})})
+        const seen = read({client: "spec-view-2"})
+        // undo takes back the caller's own last edit, then the one before; redo applies it again
+        const undone = edit([{op: "undo"}])
+        const afterUndo = read()
+        const redone = edit([{op: "redo"}])
+        const afterRedo = read()
+        // discarded, the document is its saved version again, with nothing unsaved
+        const reverted = call("calcRevert", {roomId}, "post")
+        const afterRevert = call("calcCells", {roomId: reverted.json.roomId, sheet: 1, row: 1, column: 1, width: 2, height: 3})
+        call("calcDelete", {definitionId: "spec-calcgrid-together"}, "post")
+        ec.artifactExecution.disableAuthz()
+        const left = ec.entity.find("moqui.calc.CalcDocumentEdit").condition("definitionId", "spec-calcgrid-together").count()
+        ec.artifactExecution.enableAuthz()
+        ec.message.clearErrors()
+        return {opened, saved, roomId, edited, second, again, afterEdits: text(afterEdits, 2), count: text(afterEdits, 1), rows, unchanged, seen,
+            undone, afterUndo: text(afterUndo, 2), redone, afterRedo: text(afterRedo, 2), reverted, afterRevert: text(afterRevert, 2), left,
+            dataRows: opened.json.sheets[0].dataRows}
+    },
+    then({opened, saved, roomId, edited, second, again, afterEdits, count, rows, unchanged, seen, undone, afterUndo, redone, afterRedo, reverted, afterRevert, left, dataRows}) {
+        !saved.json.errors
+        String(roomId).startsWith("d")
+        roomId != opened.json.roomId
+        !edited.json.errors
+        edited.json.shared === true
+        edited.json.seq == 1
+        second.json.seq == 2
+        second.json.unsaved == 2
+        second.json.canUndo === true
+        again.json.roomId == roomId
+        afterEdits == "second"
+        count == String(dataRows)
+        // the log holds the edits as typed: the table's name, and none of its rows
+        rows.length == 2
+        rows[0].kind == "edit"
+        rows[0].ops.includes("Enumeration[enumId]")
+        !rows[0].ops.includes("AT_ENTITY")
+        unchanged.json.unchanged === true
+        unchanged.json.seq == 2
+        seen.json.peers.length == 1
+        seen.json.peers[0].client == "spec-view-1"
+        seen.json.peers[0].area.row == 2
+        !undone.json.errors
+        undone.json.canRedo === true
+        afterUndo == "first"
+        !redone.json.errors
+        afterRedo == "second"
+        !reverted.json.errors
+        reverted.json.unsaved == 0
+        afterRevert == ""
+        left == 0
+    },
+})
+
+feature("a saved document is scheduled as its workbook: an Excel file with its data and calculated values, in no other format", {
+    when() {
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"])}, "post")
+        const roomId = opened.json.roomId
+        call("calcEdit", {roomId, opsJson: JSON.stringify([{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Summary"},
+            {op: "input", sheet: 1, row: 1, column: 1, value: "=COUNTA(Enumeration[enumId])"}])}, "post")
+        call("calcSave", {roomId, title: "Scheduled types", definitionId: "spec-calcgrid-scheduled"}, "post")
+        call("calcClose", {roomId}, "post")
+        const R = "org.moqui.report.ReportServices."
+        const location = "runtime://tmp/spec-calcgrid-scheduled.xlsx"
+        const schedule = (renderMode) => {
+            const out = ec.service.sync().name(R + "create#Schedule").parameters({definitionId: "spec-calcgrid-scheduled", cronExpression: "0 0 7 * * ?",
+                renderMode, saveToLocation: location}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {id: out.screenScheduledId, errors}
+        }
+        const asPdf = schedule("pdf")
+        const asDefault = schedule(null)
+        const sent = ec.service.sync().name(R + "send#Report").parameters({screenScheduledId: asDefault.id}).call() || {}
+        const sentErrors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+        ec.message.clearErrors()
+        const read = ec.service.sync().name("org.moqui.resource.SpreadsheetServices.calculate#Spreadsheet")
+            .parameters({location, readCells: ["Summary!A1", "Enumeration!A1"]}).disableAuthz().call() || {}
+        const preview = ec.service.sync().name(R + "preview#Report").parameters({definitionId: "spec-calcgrid-scheduled", renderMode: "xlsx"}).call() || {}
+        ec.artifactExecution.disableAuthz()
+        for (const occurrence of ec.entity.find("moqui.report.ReportOccurrence").condition("screenScheduledId", asDefault.id).list())
+            ec.entity.find("moqui.report.ReportRecipientDelivery").condition("occurrenceId", occurrence.occurrenceId).deleteAll()
+        for (const entity of ["moqui.report.ReportOccurrence", "moqui.screen.ScreenScheduledLock", "moqui.screen.ScreenScheduled"])
+            ec.entity.find(entity).condition("screenScheduledId", asDefault.id).deleteAll()
+        ec.resource.getLocationReference(location).delete()
+        ec.artifactExecution.enableAuthz()
+        call("calcDelete", {definitionId: "spec-calcgrid-scheduled"}, "post")
+        ec.message.clearErrors()
+        return {asPdf, asDefault, sent, sentErrors, values: read.valueMap || {}, preview, dataRows: opened.json.sheets[0].dataRows}
+    },
+    then({asPdf, asDefault, sent, sentErrors, values, preview, dataRows}) {
+        asPdf.errors.includes("sent as xlsx")
+        !asPdf.id
+        asDefault.errors == ""
+        !!asDefault.id
+        sentErrors == ""
+        sent.sent === true
+        // the file holds the data and the formula's value over it, calculated as the owner reads the data now
+        values["Enumeration!A1"] == "enumId"
+        values["Summary!A1"] == dataRows
+        preview.contentType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        String(preview.filename).endsWith(".xlsx")
     },
 })
 

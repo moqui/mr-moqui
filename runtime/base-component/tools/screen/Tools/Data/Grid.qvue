@@ -108,7 +108,7 @@ along with this software (see the LICENSE.md file). If not, see
         <div v-if="calc.room && calc.room.truncated && calc.room.truncated.length" class="text-caption q-mb-xs text-warning">
             {{calc.room.truncated.join(', ')}}: only the first {{Number(calc.room.maxDataRows).toLocaleString()}} rows are in the sheet. Filter the source to see the rest.</div>
         <component v-if="calc.room && calcSheet" :is="calcSheet" :room="calc.room" :cells-url="url('calcCells')" :edit-url="url('calcEdit')" :content-url="url('calcContent')"
-                @gone="calcReopen" @changed="calcChanged"></component>
+                :state-url="url('calcState')" :revert-url="url('calcRevert')" @gone="calcReopen" @changed="calcChanged"></component>
         <div v-else-if="calc.busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
         <div v-else class="text-body2 q-pa-md" :class="mutedClass">Choose an entity, open a file, or open a saved document from Documents.</div>
     </div>
@@ -377,7 +377,9 @@ module.exports = {
                 this.calc.busy = false;
                 if (!out || !out.definitionId) return;
                 this.calc.saveOpen = false;
-                this.calc.room = Object.assign({}, this.calc.room, { definitionId: out.definitionId, version: out.version, title: out.title });
+                // a new document's room is its room now, under the id the save answers
+                this.calc.room = Object.assign({}, this.calc.room, { definitionId: out.definitionId, version: out.version, title: out.title,
+                    roomId: out.roomId || this.calc.room.roomId, shared: true, unsaved: 0 });
                 this.calc.opened = { definitionId: out.definitionId };
                 moqui.notifyMessages('Document saved');
             });

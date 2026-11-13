@@ -235,6 +235,7 @@ impl Profile {
     ///
     /// `Not available` when the caller does not hold the profile.
     pub fn enter(&self) -> Result<Entered, Error> {
+        user_organizations();
         let artifact = format!("{PROFILE_PREFIX}{}", self.id);
         let required = ExecutionContext::with_current(ExecutionContext::require_authz);
         let pushed = ExecutionContext::with_current(|ec| {
@@ -284,6 +285,36 @@ impl Profile {
             }
         }
         Ok(false)
+    }
+}
+
+/// The service of an application that puts the user's organizations in the user context (`filterOrgIds`), which the
+/// entity filters of a scoped profile read: Mantle's, as an app's root screen and CalcGrid's call it.
+const USER_ORGANIZATIONS_SERVICE: &str = "mantle.party.PartyServices.setup#UserOrganizationInfo";
+
+/// Put the user's organizations in the user context when nothing has yet and the application has the service: a call
+/// that reaches a profile with no screen before it (a scheduled export, a report's scope check, a dashboard panel)
+/// reads the same rows as the CalcGrid screen. A failure is logged and the filters then match nothing.
+fn user_organizations() {
+    let missing = ExecutionContext::with_current(|ec| !ec.user_context().contains_key("filterOrgIds")).unwrap_or(false);
+    if !missing
+        || moqui_core::user::current_user_id().ok().flatten().is_none()
+        || !moqui_core::service::call::is_service_defined(USER_ORGANIZATIONS_SERVICE, None)
+    {
+        return;
+    }
+    let options = moqui_core::service::call::CallOptions {
+        // the user's own organizations, whatever grants they hold on the service
+        disable_authz: true,
+        ..Default::default()
+    };
+    if let Err(err) = moqui_core::service::call::sync_checked(
+        USER_ORGANIZATIONS_SERVICE,
+        &std::collections::BTreeMap::new(),
+        &options,
+    ) {
+        tracing::warn!(error = %err, "Could not set the user's organizations for a CalcGrid profile");
+        ExecutionContext::with_current(|ec| ec.message().clear_errors());
     }
 }
 

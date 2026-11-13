@@ -41,6 +41,12 @@ use moqui_lib::sync::lock;
 
 use crate::http::{plain, HttpState, HttpsRequest};
 
+// CalcGrid's rooms (moqui-calc), linked under the xlsx feature
+#[cfg(feature = "xlsx")]
+pub(crate) mod calc;
+#[cfg(not(feature = "xlsx"))]
+#[path = "notws/calc_off.rs"]
+pub(crate) mod calc;
 pub(crate) mod collab;
 #[cfg(feature = "rtc")]
 pub(crate) mod rtc;
@@ -473,6 +479,7 @@ async fn run_socket(
     tracing::debug!(session_id = %slot.session_id, user_id = %slot.user_id, "notification socket closed");
     unregister(id);
     collab::socket_closed(&factory, id);
+    calc::socket_closed(&factory, id);
     rtc::socket_closed(&factory, id);
     offline_when_gone(&factory, &slot.user_id);
 }
@@ -497,6 +504,10 @@ async fn handle_incoming(
         Some(Ok(Message::Text(text))) => {
             // a co-editing frame (JSON with `collab`)
             if collab::handle(factory, slot, &text) {
+                return true;
+            }
+            // a CalcGrid frame (JSON with `calc`)
+            if calc::handle(factory, slot, &text) {
                 return true;
             }
             // a call signaling frame (JSON with `rtc`)

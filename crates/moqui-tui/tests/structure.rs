@@ -500,3 +500,42 @@ fn a_wizard_leaves_a_disabled_step_out() {
         "{calls:?}"
     );
 }
+
+/// A component that loads what fits on screen is sized by the terminal, posts with an answer back to it, and takes a
+/// paste: a CalcGrid sheet's reads, edits and pasted rows.
+#[test]
+fn a_sheet_component_reads_what_fits_posts_its_edits_and_takes_a_paste() {
+    let screen = r#"{"v":1,"screen":{"path":"/sheet","title":"Sheet"},"c":[{"t":"component","id":"Sheet","name":"calcgrid","base":"/sheet",
+        "props":{"editable":true,"room":{"roomId":"r1","seq":0,"sheets":[{"index":0,"name":"Notes","rows":1,"columns":1,"widths":[90]}]}}}]}"#;
+    let link = FakeLink::from_json(&[screen]).unwrap();
+    let mut session = Session::start("/sheet");
+    session.resize(100, 40);
+    session.run_now(&link);
+    // the rows asked for follow the terminal's: 40 less the frame and the sheet's own lines
+    let cells = link.calls().into_iter().find_map(|call| match call {
+        LinkCall::Json {
+            url,
+            method,
+            parameters,
+        } if url == "/sheet/calcCells" => Some((method, parameters)),
+        _ => None,
+    });
+    let (method, parameters) = cells.expect("the cells are read");
+    assert_eq!(method, "get");
+    assert_eq!(parameters["height"], "28");
+    assert_eq!(session.component_state("Sheet").unwrap().rows, 40);
+    focus(&mut session, &link, "Sheet");
+    press(&mut session, &link, Key::Char('='));
+    press(&mut session, &link, Key::Char('1'));
+    press(&mut session, &link, Key::Enter);
+    let posted = |link: &FakeLink, what: &str| {
+        link.calls().iter().any(|call| matches!(
+            call,
+            LinkCall::Json { url, method, parameters } if url == "/sheet/calcEdit" && method == "post" && parameters["opsJson"].contains(what)
+        ))
+    };
+    assert!(posted(&link, r#""value":"=1""#), "{:?}", link.calls());
+    session.paste("a\tb");
+    session.run_now(&link);
+    assert!(posted(&link, r#""rows":[["a","b"]]"#), "{:?}", link.calls());
+}

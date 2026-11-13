@@ -4,8 +4,11 @@
 
     <!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md): a workbook on the IronCalc engine whose data
         sheets are filled from the data grid's sources, with a saved overlay of formulas and charts. The bodies are Rust
-        (crates/moqui-calc/src/service.rs). A document is open in a room of the caller's on this server, read a viewport
-        at a time; a call whose room is gone is refused with ROOM_GONE and the view opens the document again. Each needs
+        (crates/moqui-calc/src/service.rs). A saved document is open in a room shared by the readers of one scope (the
+        same access and the same rows: get#CalcScope) on this server, read a viewport at a time; its edits are the next
+        rows of the document's edit log (moqui.calc.CalcDocumentEdit), which every room of it on every server follows,
+        each over its own data, and each person undoes their own. A workbook not saved yet is a scratch room of its
+        opener's. A call whose room is gone is refused with ROOM_GONE and the view opens the document again. Each needs
         the Tools app, and a SQL source needs SQL, whatever calls it; or, with profileId, the access profile named, which
         the caller must hold: only the entities and views the profile offers are read, with the entity filters of the
         profile's grant, no SQL and no file, and a room is read only under the profile it was opened under
@@ -32,6 +35,10 @@
             <parameter name="title"/>
             <parameter name="definitionId"/>
             <parameter name="version" type="Long"/>
+            <parameter name="shared" type="Boolean"><description>A saved document\'s room, shared by the readers of one scope; else a scratch workbook of the caller\'s.</description></parameter>
+            <parameter name="seq" type="Long"><description>The last edit of the document\'s log the room holds.</description></parameter>
+            <parameter name="unsaved" type="Long"><description>The edits of the document not saved yet, everyone\'s.</description></parameter>
+            <parameter name="members" type="Long"/>
             <parameter name="sheets" type="List"><description>Each sheet: index, name, rows and columns (its used area),
                 widths (pixels, by column), frozenRows, frozenColumns, data (a read-only data sheet), dataRows, hidden.</description></parameter>
             <parameter name="charts" type="List"><description>Each chart of the document (title, type, categories, series)
@@ -41,6 +48,7 @@
             <parameter name="maxDataRows" type="Long"/>
             <parameter name="canUndo" type="Boolean"/>
             <parameter name="canRedo" type="Boolean"/>
+            <parameter name="functions" type="List"><description>The function names a formula being typed completes to.</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="CalcCells" type="rust" location="moqui_calc::service::get_calc_cells" transaction="ignore">
@@ -55,8 +63,16 @@
             <parameter name="column" type="Integer" default-value="1"/>
             <parameter name="width" type="Integer" default-value="1"/>
             <parameter name="height" type="Integer" default-value="1"/>
+            <parameter name="since"><description>The last edit the view has: when the room is still at it, no block is answered.</description></parameter>
+            <parameter name="client"><description>The view's id: its place is kept for the others, who are answered as peers.</description></parameter>
+            <parameter name="selection" type="Map"><description>The view's selection: row, column, width, height.</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="blockJson"/></out-parameters>
+        <out-parameters>
+            <parameter name="blockJson"/>
+            <parameter name="seq" type="Long"/>
+            <parameter name="unchanged" type="Boolean"><description>With since at the room's last edit: nothing changed, and no block.</description></parameter>
+            <parameter name="peers" type="List"><description>With a client: the others who have the document open (client, userId, name, sheet, area).</description></parameter>
+        </out-parameters>
     </service>
     <service verb="refresh" noun="CalcDocument" type="rust" location="moqui_calc::service::refresh_calc_document" transaction="ignore">
         <description>Read the room's data sheets again as the caller and evaluate; the overlay stays as it is.</description>
@@ -66,6 +82,10 @@
             <parameter name="title"/>
             <parameter name="definitionId"/>
             <parameter name="version" type="Long"/>
+            <parameter name="shared" type="Boolean"><description>A saved document\'s room, shared by the readers of one scope; else a scratch workbook of the caller\'s.</description></parameter>
+            <parameter name="seq" type="Long"><description>The last edit of the document\'s log the room holds.</description></parameter>
+            <parameter name="unsaved" type="Long"><description>The edits of the document not saved yet, everyone\'s.</description></parameter>
+            <parameter name="members" type="Long"/>
             <parameter name="sheets" type="List"/>
             <parameter name="charts" type="List"/>
             <parameter name="evaluateMs" type="Double"/>
@@ -92,6 +112,7 @@
             <parameter name="definitionId"/>
             <parameter name="version" type="Long"/>
             <parameter name="title"/>
+            <parameter name="roomId"><description>The room's id now: a scratch room saved is the new document's room for the saver's scope.</description></parameter>
         </out-parameters>
     </service>
     <service verb="export" noun="CalcDocument" type="rust" location="moqui_calc::service::export_calc_document" transaction="ignore">
@@ -136,7 +157,11 @@
             bar, column, line, area or pie, categories and series of name and values, ranges), undo and redo. A data
             sheet's cells, rows, columns and name are not edited; its widths, heights and frozen panes are. The first edit
             refused is the call's error, the edits before it stay, and the room's state is answered either way. Under a
-            profile only an author edits. Nothing is saved: save#CalcDocument saves.</description>
+            profile only an author edits. In a saved document's room the edits are the next row of its edit log, which
+            the document's other rooms follow; undo and redo, each alone, take back the caller's own last edit since the
+            document was saved, or their last undo. restore (sheet, row, column, cells: rows of contents as typed,
+            styles: rows of the engine's styles), clearFormatting (a rectangle) and moveSheet (sheet, to) are edits too.
+            Nothing is saved: save#CalcDocument saves.</description>
         <in-parameters>
             <parameter name="roomId" required="true"/>
             <parameter name="profileId"/>
@@ -147,6 +172,10 @@
             <parameter name="title"/>
             <parameter name="definitionId"/>
             <parameter name="version" type="Long"/>
+            <parameter name="shared" type="Boolean"><description>A saved document\'s room, shared by the readers of one scope; else a scratch workbook of the caller\'s.</description></parameter>
+            <parameter name="seq" type="Long"><description>The last edit of the document\'s log the room holds.</description></parameter>
+            <parameter name="unsaved" type="Long"><description>The edits of the document not saved yet, everyone\'s.</description></parameter>
+            <parameter name="members" type="Long"/>
             <parameter name="sheets" type="List"/>
             <parameter name="charts" type="List"/>
             <parameter name="evaluateMs" type="Double"/>
@@ -181,6 +210,83 @@
             <parameter name="profileId"/>
         </in-parameters>
         <out-parameters><parameter name="frame" type="Map"><description>fields, each a name, a type (number or string) and its values.</description></parameter></out-parameters>
+    </service>
+    <service verb="revert" noun="CalcDocument" type="rust" location="moqui_calc::service::revert_calc_document" transaction="ignore">
+        <description>Discard the edits of a saved document since it was saved, everyone's: its edit log begins again from
+            the saved version, every room of it is opened anew, and the caller's room is answered as open#CalcDocument
+            answers. Under a profile only an author discards.</description>
+        <in-parameters><parameter name="roomId" required="true"/><parameter name="profileId"/></in-parameters>
+        <out-parameters>
+            <parameter name="roomId"/>
+            <parameter name="title"/>
+            <parameter name="definitionId"/>
+            <parameter name="version" type="Long"/>
+            <parameter name="shared" type="Boolean"/>
+            <parameter name="seq" type="Long"/>
+            <parameter name="unsaved" type="Long"/>
+            <parameter name="members" type="Long"/>
+            <parameter name="sheets" type="List"/>
+            <parameter name="charts" type="List"/>
+            <parameter name="evaluateMs" type="Double"/>
+            <parameter name="truncated" type="List"/>
+            <parameter name="maxDataRows" type="Long"/>
+            <parameter name="canUndo" type="Boolean"/>
+            <parameter name="canRedo" type="Boolean"/>
+            <parameter name="functions" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="CalcState" type="rust" location="moqui_calc::service::get_calc_state" transaction="ignore">
+        <description>The room's state as open#CalcDocument answers it, brought up to its document's edit log: what a
+            view reads when the notification socket tells it of another's edit.</description>
+        <in-parameters><parameter name="roomId" required="true"/><parameter name="profileId"/></in-parameters>
+        <out-parameters>
+            <parameter name="roomId"/>
+            <parameter name="title"/>
+            <parameter name="definitionId"/>
+            <parameter name="version" type="Long"/>
+            <parameter name="shared" type="Boolean"/>
+            <parameter name="seq" type="Long"/>
+            <parameter name="unsaved" type="Long"/>
+            <parameter name="members" type="Long"/>
+            <parameter name="sheets" type="List"/>
+            <parameter name="charts" type="List"/>
+            <parameter name="evaluateMs" type="Double"/>
+            <parameter name="truncated" type="List"/>
+            <parameter name="maxDataRows" type="Long"/>
+            <parameter name="canUndo" type="Boolean"/>
+            <parameter name="canRedo" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="CalcScope" type="rust" location="moqui_calc::service::get_calc_scope" transaction="ignore">
+        <description>The fingerprint of the caller's scope for a saved document: the access (profileId, or with none the
+            caller's current one), their time zone, and for each data sheet whether they may read it, its source, the
+            columns shown and the condition the entity filters add to its finds with their values. Two people with the
+            same scope read the same rows: they share a room of the document, and a scheduled export's owner may send its
+            file to the other (org.moqui.report.ReportServices, report delivery).</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/>
+            <parameter name="profileId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="scope"/>
+            <parameter name="access"><description>The profile's id, or tools for the Tools app's own access.</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="render" noun="CalcDocument" type="rust" location="moqui_calc::service::render_calc_document" transaction="ignore" allow-remote="false">
+        <description>A saved document as an xlsx with its data and calculated values, opened in no room: what a scheduled
+            report of the document sends (org.moqui.report.ReportServices). The saved version is read; the data sheets are
+            read as the caller under profileId, or with none under their current access, and each must read whole: a sheet
+            not available, or with more than 100,000 rows, refuses the run.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/>
+            <parameter name="profileId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentBytes" type="byte[]"/>
+            <parameter name="filename"/>
+            <parameter name="title"/>
+            <parameter name="rowCount" type="Long"/>
+        </out-parameters>
     </service>
     <service verb="set" noun="CalcProfile" type="rust" location="moqui_calc::service::set_calc_profile">
         <description>Keep the access the caller chose as their current one (the user preference calc.profile): a profile

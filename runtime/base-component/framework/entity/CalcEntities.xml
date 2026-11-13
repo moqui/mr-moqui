@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md; crates/moqui-calc). A document is a report definition
+    of type calcgrid; these hold what its editors changed since it was saved, so every room of the document (one for
+    each scope of its readers, on any server) applies the same edits in the same order. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="CalcDocumentHead" package="moqui.calc" use="transactional" cache="never">
+        <description>The edit log of a CalcGrid document (moqui-calc log.rs). An edit locks this row, so edits of every room
+            and server are numbered in one order (lastSeq). savedSeq is the last edit the saved version holds, at
+            savedVersion: a room is the saved version with every edit after it applied, and an edit at or before it is no
+            longer undone. A saved version other than savedVersion was saved outside CalcGrid, and the log is begun
+            again from it.</description>
+        <field name="definitionId" type="id-long" is-pk="true"/>
+        <field name="lastSeq" type="number-integer"/>
+        <field name="savedSeq" type="number-integer"/>
+        <field name="savedVersion" type="number-integer"/>
+        <field name="lastEditDate" type="date-time"/>
+        <field name="lastEditUserId" type="id"/>
+    </entity>
+    <entity entity-name="CalcDocumentEdit" package="moqui.calc" use="transactional" cache="never">
+        <description>One edit of a CalcGrid document since it was saved, in the order of the document's log. kind is edit
+            (ops: the edits as the view sent them, which each room applies over its own data), undo (targetSeq: the edit
+            or redo it takes back, which each room undoes with what it took of that edit), redo (ops again, targetSeq: the
+            undo it takes back) or revert (the saved version again: each room is opened anew). Only what was typed is
+            here, never a value computed from the data. undoneSeq is the undo or redo that took this one back.</description>
+        <field name="definitionId" type="id-long" is-pk="true"/>
+        <field name="seq" type="number-integer" is-pk="true"/>
+        <field name="kind" type="text-short"/>
+        <field name="opsJson" type="text-very-long"/>
+        <field name="targetSeq" type="number-integer"/>
+        <field name="undoneSeq" type="number-integer"/>
+        <field name="userId" type="id"/>
+        <field name="editDate" type="date-time"/>
+    </entity>
+</entities>

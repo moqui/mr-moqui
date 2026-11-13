@@ -495,7 +495,9 @@ impl Session {
         let Some(component) = crate::components::find(&info.name) else {
             return;
         };
+        let rows = self.terminal_rows;
         let state = self.components.entry(id.to_string()).or_default();
+        state.rows = rows;
         let Some((url, parameters)) = component.source(&info.props, state) else {
             return;
         };
@@ -613,7 +615,9 @@ impl Session {
             )
             .and_then(|key| serde_json::from_str::<serde_json::Value>(self.buffer(&key)).ok());
         let wide = self.columns >= 180;
+        let rows = self.terminal_rows;
         let state = self.components.entry(id.clone()).or_default();
+        state.rows = rows;
         if let Some(bound) = bound {
             if info.name == "report-definition-editor" {
                 match serde_json::from_str::<serde_json::Value>(&bound) {
@@ -645,9 +649,36 @@ impl Session {
         let Some(component) = crate::components::find(&info.name) else {
             return;
         };
+        let rows = self.terminal_rows;
         let state = self.components.entry(id.to_string()).or_default();
+        state.rows = rows;
         let acts = component.tick(&info.props, state);
         self.component_actions(id, acts);
+    }
+
+    /// Pasted text for the focused component, when it takes one.
+    pub(super) fn component_paste(&mut self, text: &str) -> bool {
+        let Some(id) = self
+            .focus()
+            .filter(|item| item.kind == FocusKind::Component)
+            .map(|item| item.key.clone())
+        else {
+            return false;
+        };
+        let Some(info) = self.index.components.get(&id).cloned() else {
+            return false;
+        };
+        let Some(component) = crate::components::find(&info.name) else {
+            return false;
+        };
+        let rows = self.terminal_rows;
+        let state = self.components.entry(id.clone()).or_default();
+        state.rows = rows;
+        let Some(acts) = component.paste(&info.props, state, text) else {
+            return false;
+        };
+        self.component_actions(&id, acts);
+        true
     }
 
     fn component_actions(&mut self, id: &str, acts: Vec<Act>) {
@@ -695,6 +726,17 @@ impl Session {
                     }
                 }
                 Act::Post { url, fields } => self.post_simple(&Self::component_url(&base, &url), fields),
+                Act::Call { url, parameters } => {
+                    self.components.entry(id.to_string()).or_default().loading = true;
+                    self.lanes.push(
+                        Purpose::Component(id.to_string()),
+                        LinkCall::Json {
+                            url: Self::component_url(&base, &url),
+                            method: "post".into(),
+                            parameters,
+                        },
+                    );
+                }
                 Act::Follow(url) => self.follow_url(&Self::component_url(&base, &url)),
                 Act::Message(text) => self.set_message(text, false),
             }

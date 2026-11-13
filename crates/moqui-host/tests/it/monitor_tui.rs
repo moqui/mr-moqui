@@ -48,6 +48,17 @@ const EVAL_FIXTURE: &str = r#"
     if (ec.message.hasError()) throw new Error('Evals fixture: ' + ec.message.getErrorsString())
 "#;
 
+/// A CalcGrid document (crates/moqui-calc), run as john.doe: a data sheet of the artifact types and a sheet `Notes`.
+const CALC_FIXTURE: &str = r#"
+    const C = 'org.moqui.calc.CalcServices.'
+    const call = (name, parameters) => ec.service.sync().name(C + name).parameters(parameters).call() || {}
+    const opened = call('open#CalcDocument', {title: 'TUI workbook',
+        source: {type: 'entity', entityName: 'moqui.basic.Enumeration', conditions: {enumTypeId: 'ArtifactType'}}, columns: ['enumId', 'description']})
+    call('edit#CalcDocument', {roomId: opened.roomId, ops: [{op: 'addSheet'}, {op: 'renameSheet', sheet: 1, name: 'Notes'}]})
+    call('save#CalcDocument', {roomId: opened.roomId, definitionId: 'tui-calc', title: 'TUI workbook'})
+    if (ec.message.hasError()) throw new Error('CalcGrid fixture: ' + ec.message.getErrorsString())
+"#;
+
 fn document(value: Json) -> Document {
     let Value::Map(map) = moqui_lib::json::from_json(&value) else {
         panic!("fixture object")
@@ -234,6 +245,8 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             })
             .unwrap();
         }
+        // a CalcGrid document over the artifact types, with a sheet of its own beside the data
+        moqui_core::script::run_script(CALC_FIXTURE).unwrap();
     }
     let link = HostLink::as_user(factory, "john.doe");
     let cases = [
@@ -360,7 +373,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "Dashboards/Drill",
             "/apps/dashboards/Drill?definitionId=tui-dashboard&panelId=a-total&from=now-1h&thru=now",
         ),
-        // CalcGrid's terminal render is the list of the documents the viewer reads (plans/IronCalc-DB.md)
+        // CalcGrid's terminal render: the documents the viewer reads, each a link to its sheet (plans/IronCalc-DB.md)
         ("Dashboards/CalcGrid", "/apps/dashboards/CalcGrid"),
     ];
     // A new screen without an acceptance case is a failed gate, rather than silently missing coverage.
@@ -423,6 +436,43 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     ] {
         assert!(seen.contains(name), "specialized twin {name} was not reachable");
     }
+    // CalcGrid: the list links the document; its sheet draws the data sheet, moves to the author's sheet, takes a formula
+    // typed in the bar, and the undo takes it back.
+    let list = open(&link, "/apps/dashboards/CalcGrid").screen_text(180, 60);
+    assert!(
+        list.contains("TUI workbook") && list.contains("Reading as: Tools access"),
+        "{list}"
+    );
+    let mut sheet = open(&link, "/apps/dashboards/CalcGrid?definitionId=tui-calc");
+    let id = component(&sheet, "calcgrid");
+    sheet.run_requests();
+    let data = sheet.screen_text(180, 60);
+    assert!(
+        data.contains("enumId") && data.contains("AT_ENTITY") && data.contains("Enumeration (data)"),
+        "{data}"
+    );
+    focus(&mut sheet, &id);
+    press(&mut sheet, Key::Char(']'));
+    sheet.run_requests();
+    for key in [
+        Key::Char('='),
+        Key::Char('6'),
+        Key::Char('*'),
+        Key::Char('7'),
+        Key::Enter,
+    ] {
+        press(&mut sheet, key);
+    }
+    sheet.run_requests();
+    // the first row of the sheet, its value at the end (the screen's text has no trailing spaces)
+    let first_row = |text: &str| text.lines().any(|line| line.contains("│   1 ") && line.trim_end().ends_with(" 42"));
+    let typed = sheet.screen_text(180, 60);
+    assert!(first_row(&typed) && typed.contains("1 unsaved edit"), "{typed}");
+    press(&mut sheet, Key::Char('u'));
+    sheet.run_requests();
+    let undone = sheet.screen_text(180, 60);
+    assert!(!first_row(&undone), "{undone}");
+    assert!(sheet.session().component_state(&id).unwrap().error.is_empty());
     // The dataset screens: the business dataset with its state above Tools' other datasets, and its steward's detail.
     let datasets = open(&link, "/apps/dashboards/Datasets").screen_text(220, 120);
     assert!(

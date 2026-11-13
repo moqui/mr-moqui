@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// The Calc mode walk of plans/IronCalc-DB.md Phase 2, in the browser on the qvt shell (./moq accept tools --spec CalcGrid):
+// The Calc mode walks of plans/IronCalc-DB.md, in the browser on the qvt shell (./moq accept tools --spec CalcGrid):
 // an entity's rows in the grid, then as the data sheet of a workbook drawn from the server's cells; the document saved,
 // listed, exported as XLSX and deleted; and Records again as it was.
 spec({ timeout: 120 })
@@ -174,5 +174,77 @@ feature("in Calc a sheet is added, a formula over the data is typed in the bar, 
         page.waitFor(() => Number(getComputedStyle(document.querySelectorAll(".m-calc-grid .tabulator-row")[0].querySelectorAll(".tabulator-cell")[1]).fontWeight) < 600)
         page.evaluate(() => window.walkTexts()[0][1] == window.walkCount) === true
         page.close()
+    },
+})
+
+// Editing together: a document open in the Tools grid and in Dashboards › CalcGrid is one room. Each page sees the
+// other's name and place, an edit in one shows in the other, and Discard takes everyone's unsaved edits back.
+feature("two pages on one document see each other, an edit in one shows in the other, and Discard takes it back in both", {
+    expect() {
+        const first = gridPage()
+        first.goto("/qapps/tools/Data/Grid?entityName=moqui.basic.Enumeration&enumTypeId=ComparisonOperator").status == 200
+        first.waitFor(() => !!(window.Tabulator && document.querySelector(".m-data-grid.tabulator") && document.querySelectorAll(".m-data-grid .tabulator-row").length >= 3))
+        const helpers = () => {
+            const label = (b) => Array.from(b.querySelectorAll(".block")).map((part) => part.textContent).join("").trim()
+            window.walkButton = (text) => Array.from(document.querySelectorAll("button")).find((b) => label(b).startsWith(text))
+            window.walkTexts = () => Array.from(document.querySelectorAll(".m-calc-grid .tabulator-row")).map((row) => Array.from(row.querySelectorAll(".tabulator-cell")).map((cell) => cell.textContent))
+            window.walkTabs = () => Array.from(document.querySelectorAll(".m-calc-sheet .q-tab"))
+            window.walkChips = () => Array.from(document.querySelectorAll(".m-calc-sheet .q-chip")).map((chip) => chip.textContent.trim())
+            return true
+        }
+        first.evaluate(helpers)
+        first.evaluate(() => { window.walkButton("Calc").click(); return true })
+        first.waitFor(() => { const rows = window.walkTexts(); return rows.length > 2 && rows[0].includes("enumId") })
+        // a sheet of the author's, then the document saved: its room is the document's now
+        first.evaluate(() => { document.querySelector('.m-calc-sheet button[aria-label="Add a sheet"]').click(); return true })
+        first.waitFor(() => window.walkTabs().length == 2 && window.walkTexts().length > 2)
+        first.evaluate(() => { window.walkButton("Save document").click(); return true })
+        first.waitFor(() => Array.from(document.querySelectorAll(".q-dialog .text-h6")).some((title) => title.textContent.includes("Save the document")))
+        first.evaluate(() => {
+            const input = document.querySelector(".q-dialog input")
+            input.value = "Walk together"; input.dispatchEvent(new Event("input", { bubbles: true }))
+            Array.from(document.querySelectorAll(".q-dialog button")).find((b) => b.textContent.includes("Save")).click()
+            return true
+        })
+        first.waitFor(() => !document.querySelector(".q-dialog") && !!document.querySelector(".m-calc-sheet"))
+        const listed = first.evaluate(() => fetch(location.pathname.replace("/qapps/", "/apps/") + "/calcDocuments", { credentials: "same-origin" }).then((response) => response.json()))
+        const definitionId = (listed.documents.find((doc) => doc.title == "Walk together") || {}).definitionId
+        !!definitionId
+        // the second page opens it in Dashboards, on the author's sheet, and each sees the other
+        const second = gridPage()
+        second.goto("/qapps/dashboards/CalcGrid?definitionId=" + encodeURIComponent(definitionId)).status == 200
+        second.waitFor(() => !!document.querySelector(".m-calc-sheet .q-tab"))
+        second.evaluate(helpers)
+        second.evaluate(() => { window.walkTabs()[1].click(); return true })
+        second.waitFor(() => window.walkChips().length == 1)
+        first.waitFor(() => window.walkChips().length == 1)
+        // the first page's place on the author's sheet shows as an outline in the second
+        first.evaluate(() => { window.walkTabs()[1].click(); return true })
+        first.waitFor(() => window.walkTexts().length > 2 && window.walkTexts()[0].every((text, index) => index == 0 || text == ""))
+        first.evaluate(() => {
+            const cell = document.querySelectorAll(".m-calc-grid .tabulator-row")[1].querySelectorAll(".tabulator-cell")[2]
+            for (const type of ["mousedown", "mouseup", "click"]) cell.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0 }))
+            return true
+        })
+        second.waitFor(() => (document.querySelectorAll(".m-calc-grid .tabulator-row")[1].querySelectorAll(".tabulator-cell")[2].style.boxShadow || "").includes("inset"))
+        // an edit in the first shows in the second, with the unsaved count
+        first.evaluate(() => {
+            const bar = document.querySelector(".m-calc-formula")
+            bar.focus(); bar.value = "together"; bar.dispatchEvent(new Event("input", { bubbles: true }))
+            bar.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+            return true
+        })
+        first.waitFor(() => window.walkTexts().some((row) => row.includes("together")))
+        second.waitFor(() => window.walkTexts().some((row) => row.includes("together")) && document.querySelector(".m-calc-sheet").textContent.includes("1 unsaved edit"))
+        // Discard in the second takes it back in both
+        second.evaluate(() => { window.walkButton("Discard").click(); return true })
+        second.waitFor(() => Array.from(document.querySelectorAll(".q-dialog button")).some((b) => b.textContent.includes("OK")))
+        second.evaluate(() => { Array.from(document.querySelectorAll(".q-dialog button")).find((b) => b.textContent.includes("OK")).click(); return true })
+        second.waitFor(() => !window.walkTexts().some((row) => row.includes("together")))
+        first.waitFor(() => !!document.querySelector(".m-calc-sheet") && window.walkTexts().length > 2 && !window.walkTexts().some((row) => row.includes("together")))
+        const deleted = first.evaluate((id) => moqui.request(location.pathname.replace("/qapps/", "/apps/") + "/calcDelete", { method: "POST", params: { definitionId: id } }).then((result) => result.json || {}), definitionId)
+        !deleted.errors
+        second.close()
+        first.close()
     },
 })

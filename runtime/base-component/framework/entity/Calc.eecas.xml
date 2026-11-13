@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+    <!-- A CalcGrid document's edit log goes with the document (CalcEntities.xml): one made again under the same id begins
+        a log of its own. Any definition's id is looked for; only a calcgrid one has a log. -->
+    <eeca id="CalcDocumentLogDelete" entity="moqui.report.Definition" on-delete="true">
+        <actions><script><![CDATA[
+            const alreadyDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                ec.entity.find('moqui.calc.CalcDocumentEdit').condition('definitionId', definitionId).deleteAll()
+                ec.entity.find('moqui.calc.CalcDocumentHead').condition('definitionId', definitionId).deleteAll()
+            } finally {
+                if (!alreadyDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </eeca>
+</eecas>

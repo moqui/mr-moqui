@@ -64,8 +64,8 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
     let owner = viewer()?;
     let id = text(p, "definitionId");
     let definition = crate::definitions::read(ec, id)?;
-    if !matches!(jtext(&definition, "type", ""), "report" | "dashboard") {
-        return Err(fail("a schedule requires a dashboard or report definition"));
+    if !schedulable_type(jtext(&definition, "type", "")) {
+        return Err(fail("a schedule requires a dashboard, report or CalcGrid document"));
     }
     let cron = text(p, "cronExpression");
     moqui_lib::cron::Cron::parse(cron).map_err(fail)?;
@@ -76,11 +76,11 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         require_file_delivery()?;
     }
     let mode = if text(p, "renderMode").is_empty() {
-        "pdf"
+        default_mode(&definition)
     } else {
         text(p, "renderMode")
     };
-    validate_mode(mode)?;
+    validate_definition_mode(&definition, mode)?;
     let facade = entity(ec)?;
     let _metadata = ec.disable_authz();
     let mut row = facade.make_value(SCHEDULE)?;
@@ -196,6 +196,30 @@ pub(crate) fn validate_mode(mode: &str) -> Result<(), Error> {
     }
 }
 
+/// The definition types a schedule may name: a dashboard, a report of dashboards, and a CalcGrid document, whose
+/// export is the whole workbook (crates/moqui-calc, `render#CalcDocument`).
+pub(crate) fn schedulable_type(kind: &str) -> bool {
+    matches!(kind, "report" | "dashboard" | CALCGRID)
+}
+/// The definition type of a CalcGrid document.
+pub(crate) const CALCGRID: &str = "calcgrid";
+/// The format a schedule of `definition` has when none is given: a CalcGrid document is a workbook.
+pub(crate) fn default_mode(definition: &Json) -> &'static str {
+    if definition["type"] == CALCGRID {
+        "xlsx"
+    } else {
+        "pdf"
+    }
+}
+/// [`validate_mode`] for a schedule of `definition`: a CalcGrid document is sent as its workbook only.
+pub(crate) fn validate_definition_mode(definition: &Json, mode: &str) -> Result<(), Error> {
+    validate_mode(mode)?;
+    if definition["type"] == CALCGRID && mode != "xlsx" {
+        return Err(fail("a CalcGrid document is sent as xlsx"));
+    }
+    Ok(())
+}
+
 pub(crate) struct Rendered {
     /// The output files, named: one per table panel for CSV, otherwise one.
     pub(crate) files: Vec<(String, Vec<u8>)>,
@@ -245,6 +269,10 @@ fn render(
 ) -> Result<Rendered, Error> {
     validate_mode(mode)?;
     let definition = crate::definitions::read(ec, id)?;
+    if definition["type"] == CALCGRID {
+        validate_definition_mode(&definition, mode)?;
+        return render_calcgrid(id, &definition, skip_empty);
+    }
     let panel_id = selection.map(|parameters| text(parameters, "panelId")).unwrap_or("");
     if !panel_id.is_empty() && definition["type"] == "report" {
         return Err(fail("panel export requires a dashboard definition"));
@@ -425,19 +453,70 @@ fn render(
         rows,
     })
 }
-fn live_link(id: &str, dashboard: &Json) -> String {
-    fn component(value: &str) -> String {
-        let mut out = String::new();
-        for byte in value.bytes() {
-            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-                out.push(char::from(byte));
-            } else {
-                use std::fmt::Write;
-                let _ = write!(out, "%{byte:02X}");
-            }
-        }
-        out
+/// A CalcGrid document as its workbook, from moqui-calc's `render#CalcDocument` (called by name: this crate does not
+/// depend on it, and a host without it reports that it is not built in). Its data is read as the context's user under
+/// their current access; a data sheet not available or cut refuses the run.
+fn render_calcgrid(id: &str, definition: &Json, skip_empty: bool) -> Result<Rendered, Error> {
+    let out = moqui_core::service::call::sync_checked(
+        "org.moqui.calc.CalcServices.render#CalcDocument",
+        &BTreeMap::from([("definitionId".into(), Value::string(id))]),
+        &moqui_core::service::call::CallOptions::default(),
+    )?;
+    let bytes = match out.get("contentBytes") {
+        Some(Value::Bytes(bytes)) => bytes.clone(),
+        _ => return Err(fail("the CalcGrid document was not exported")),
+    };
+    let rows = out
+        .get("rowCount")
+        .map(moqui_lib::object::to_plain_string)
+        .and_then(|count| count.parse::<usize>().ok())
+        .unwrap_or(0);
+    let title = jtext(definition, "title", "CalcGrid").to_string();
+    let link = format!("/apps/dashboards/CalcGrid?definitionId={}", url_component(id));
+    if rows == 0 && skip_empty {
+        return Ok(Rendered {
+            files: Vec::new(),
+            mime: "application/octet-stream",
+            extension: "",
+            empty: true,
+            html: String::new(),
+            title,
+            link,
+            rows,
+        });
     }
+    let name = out
+        .get("filename")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("CalcGrid.xlsx")
+        .to_string();
+    Ok(Rendered {
+        files: vec![(name, bytes)],
+        mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        extension: "xlsx",
+        empty: rows == 0,
+        html: String::new(),
+        title,
+        link,
+        rows,
+    })
+}
+/// A value as one component of a URL: unreserved characters as they are, every other byte percent-encoded.
+fn url_component(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+fn live_link(id: &str, dashboard: &Json) -> String {
+    let component = url_component;
     let mut link = format!("/apps/dashboards/Dashboard?definitionId={}", component(id));
     for key in ["from", "thru"] {
         if let Some(value) = dashboard["range"][key].as_str() {
@@ -1432,15 +1511,18 @@ pub(crate) fn deliver(
                     if recipients.is_empty() {
                         return Err(fail("report has no deliverable email recipients"));
                     }
+                    // the dashboard's picture inline; a CalcGrid workbook has none, only its file
                     let image = if let Some((_, bytes)) = rendered.files.first().filter(|_| rendered.extension == "png")
                     {
-                        bytes.clone()
+                        Some(bytes.clone())
+                    } else if rendered.html.is_empty() {
+                        None
                     } else {
-                        moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
+                        Some(moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?)
                     };
                     lease.check()?;
                     attempted = true;
-                    let mail = mail(template, &recipients.join(","), &rendered, &schedule, Some(image))?;
+                    let mail = mail(template, &recipients.join(","), &rendered, &schedule, image)?;
                     if mail
                         .get("sendError")
                         .and_then(Value::as_str)
@@ -1709,6 +1791,21 @@ mod tests {
         let mut text = String::new();
         std::io::Read::read_to_string(&mut archive.by_name("b.csv").unwrap(), &mut text).unwrap();
         assert_eq!(text, "2");
+    }
+
+    #[test]
+    fn a_calcgrid_document_is_scheduled_as_its_workbook_only() {
+        let calcgrid = json!({"type": "calcgrid"});
+        let dashboard = json!({"type": "dashboard"});
+        assert!(schedulable_type("calcgrid") && schedulable_type("dashboard") && schedulable_type("report"));
+        assert!(!schedulable_type("dataset") && !schedulable_type("alert"));
+        assert_eq!(default_mode(&calcgrid), "xlsx");
+        assert_eq!(default_mode(&dashboard), "pdf");
+        assert!(validate_definition_mode(&calcgrid, "xlsx").is_ok());
+        assert!(validate_definition_mode(&calcgrid, "pdf").is_err());
+        assert!(validate_definition_mode(&dashboard, "pdf").is_ok());
+        assert!(validate_definition_mode(&dashboard, "doc").is_err());
+        assert_eq!(url_component("a b/c"), "a%20b%2Fc");
     }
 
     #[cfg(feature = "xlsx")]

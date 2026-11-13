@@ -1,6 +1,6 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1 to 3 built but for editing together. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1 to 3 are built but for editing together (the engine is the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, edited by one person at a time, and a range of a document as a report dataset for dashboard panels and scheduled reports). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
+Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1 to 3 built, with editing together, the scheduled export of a whole document and the terminal sheet view ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)). It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1 to 3 are built (the engine is the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, edited together by the people who have a document open, a range of a document as a report dataset for dashboard panels and scheduled reports, a whole document as a scheduled Excel export, and a sheet in the terminal). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
 
 ## The idea
 
@@ -25,7 +25,7 @@ The viewer and editor are built into [`Grid.xml`](../runtime/base-component/tool
 - **Every grid source** can be a data sheet: an entity, a view, a data document, a SQL result (`SQL_RUNNER_WEB`, as now) and an uploaded file. An XLSX opens as a workbook, with its formulas and styles, not only as rows.
 - **A document** is saved and opened from the grid's view list, beside the saved views (`moqui.database.GridView`). It is a report definition of type `calcgrid`, the same documents CalcGrid lists. A document not saved is a scratch workbook that lives as long as its room.
 - **Access** is the Tools app's (`TOOLS_APP`, `ADMIN`): every entity the grid offers, no entity filter, as the grid has now.
-- **The terminal render** stays the paged list; a sheet view in `moqui-tui` is Phase 3, if wanted.
+- **The terminal render** is the paged list, with a link to Calc: the workbook as the `calcgrid` sheet of `moqui-tui` (Phase 3b).
 
 ### Dashboards › CalcGrid
 
@@ -298,13 +298,13 @@ Left of 2b:
 
 - **A sheet or a chart of a document as a panel** (the grid with its styles, a chart as its author drew it): the dataset gives a range's values to the report engine's own panels.
 - **The panel editor's fields for the dataset's parameters** (Add to dashboard, built with Phase 3, writes the panel).
-- **A scheduled export of the whole workbook** as XLSX: a scheduled report over the dataset exports its ranges.
+- ~~**A scheduled export of the whole workbook** as XLSX~~: built in Phase 3b.
 - **In BOSS, the dataset for Insights users:** `org.moqui.report.dataset.calcgrid` is not granted to a BOSS group, and Insights reads admitted business datasets under its mount.
 - **A file as an upload into the overlay** under a profile, and the guide's screenshots.
 
 ### Phase 3: editing
 
-Built 2026-11-13 for one person at a time; editing together is not. Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
+Built 2026-11-13, for one person at a time; editing together followed the same day ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)). Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
 
 - **The engine:** `Room::edit` applies a list of edits in order with evaluation paused, then evaluates once: `input`, `paste`, `clear`, `style` (the engine's style paths), `fill` (its autofill), `width`, `height`, `freeze`, rows and columns inserted and deleted, sheets added, renamed and deleted, `charts` (the document's charts, replaced), `undo` and `redo` (the engine's own history). A data sheet's cells, rows, columns and name are refused; its widths, heights and frozen panes are not. `edit#CalcDocument` answers the room's state whether or not an edit was refused; `get#CalcCellContent` answers a cell as typed. Under a profile only an author edits.
 - **The view** (`WebrootCalc.js`, both screens): a toolbar (undo, redo, bold, italic, underline, text and fill colour, alignment, number formats, rows and columns, freeze, fill down, Chart), a formula bar that completes function names and the data sheets' table names, a cell's editor on a double click, Delete, Ctrl+Z and Ctrl+Y, a paste of rows of cells, a column's width by its resize, sheets added, renamed and deleted, and charts added from the selection and removed. After an edit every sheet's cells are asked again, and the table is made again only when its shape changed.
@@ -313,12 +313,85 @@ Built 2026-11-13 for one person at a time; editing together is not. Guide: [Calc
 
 Not built, of the plan's Phase 3:
 
-- **Editing together.** A room is one user's: no room shared by the people of a scope, no edits pushed to other viewers over the notification WebSocket, no presence or other people's selections, no relay of overlay edits between scopes (Phase 0 showed the diff queue does it), no owning server in a cluster. Two people who edit the same document each have their copy, and the engine's version check refuses the second save. This is the largest piece left, and it is the host's work (a sheet frame on the notification socket) as much as this crate's.
+- ~~**Editing together**~~: built in Phase 3b.
 - **Picking references by clicking** while a formula is typed, and the **fill handle** by dragging (Fill down is in the menu): each needs a Tabulator module, so the ESM build.
 - **The function list** is a fixed list of about a hundred names in the view: the engine's `functions` module is private, so its 500 names and their arguments cannot be asked for. An upstream request.
 - **Conditional formatting, borders and row heights** have no control (they are drawn when a workbook has them); **merged cells** are not drawn as merged.
 - **Evaluation on a thread of its own**, and the budget's warning beyond the time shown.
-- **A terminal view.**
+- ~~**A terminal view**~~: built in Phase 3b.
+
+### Phase 3b: editing together, the scheduled export and the terminal
+
+Built 2026-11-13, the three sets the user asked for after Phase 3, from the plan written that day. The user's answers:
+unsaved edits are kept until a save (not saved as versions on their own); readers see the authors' edits as they are
+made (one room per scope, not a room of saved versions for readers); and the terminal reads the others' edits by
+polling, not by a push to its components. Guides: [Calc mode](../docs/tools/Database.md#calc-mode),
+[CalcGrid rooms](../docs/ui/Qvt-Client.md#calcgrid-rooms), [Report delivery](../docs/tools/Monitoring.md#report-delivery),
+[TUI components](../docs/ui/TUI.md#components).
+
+**The scope** (`moqui-calc` `scope.rs`, `get#CalcScope`): a fingerprint of everything that decides a reader's rows, the
+access, the time zone, and for each data sheet whether it is readable, its source, the columns shown and the condition
+the entity filters add, with its values (in an order that does not depend on how it was made). It decides who shares a
+room and who may be sent a scheduled export. CalcGrid now calls the application's user organization setup itself when
+it enters a profile with no screen before it (a scheduled run, a report's scope check): without it every `sales` reader
+outside a screen read no organization.
+
+**Editing together** (`room.rs`, `log.rs`, `together.rs`; `moqui-host` `notws/calc.rs`; `WebrootCalc.js`):
+
+- **A room for each scope.** A saved document's room id is made from the document, the access and the scope, so the
+  same scope on any server names the same room; a room has members, and a call finds it only for one. A scratch
+  workbook is its opener's, and saved it becomes the document's room for their scope (`roomId` changes).
+- **The edit log**, `moqui.calc.CalcDocumentHead` and `CalcDocumentEdit` (`CalcEntities.xml`; an EECA drops them with
+  the definition). An edit locks the head row, brings its room up to the last row, applies itself and is written as the
+  next row; every room of the document, of every scope and server, applies the rows in that order over its own data.
+  A room is the saved version and the rows after it. A version saved outside CalcGrid begins the log again.
+- **Not the engine's diff queue.** Phase 0 relayed edits between rooms with `flush_send_queue`, but the engine's undo
+  diffs carry the cells they replaced: a formula's value computed from one scope's rows and an index into that room's
+  texts, which holds the data sheet's. Applied to another scope's room it restores the wrong text or the other scope's
+  value, and written to the log it stores computed data. `Diff` is crate-private, so it cannot be cleaned from outside.
+  The log holds the edits as the view sent them (a formula as typed), and undo is ours.
+- **Undo for each person** (Phase 5's, brought forward): before an edit each room takes what it will change (contents
+  as typed and styles, sizes, a sheet, and for a deletion every formula, which it turns into `#REF!`), and an undo row
+  names the edit it takes back, which each room undoes with what it took. Undo goes back to the last save.
+- **No owner in a cluster.** The database's row lock orders the edits, so every server holds its own rooms; a server
+  that dies loses nothing. `calc-update` tells every server to bring its rooms up and its viewers; a room that cannot
+  follow (behind a revert, rows gone) is dropped and its viewers open it again.
+- **Push and presence** on the notification socket: `join` (only into a room the user has open), `select`, `leave`;
+  `joined`, `peer`, `select`, `changed`. Presence is by document across scopes and servers (`calc-presence`), names and
+  places only. The view outlines the others' selections in their colours, names them, reads the room again on another's
+  edit (`get#CalcState`), and leaves a cell being typed in alone until it is set.
+- **Discard** (`revert#CalcDocument`) takes every unsaved edit back, everyone's. Any author edits a document they read;
+  its owner saves it.
+
+**The scheduled export** (`render#CalcDocument`; `moqui-report` `schedule.rs`, `delivery.rs`; `Reports.xml`,
+`ReportDelivery.js`): a calcgrid definition is schedulable, in Excel only, rendered with no room from its saved version
+as the owner, every data sheet whole or the run is refused, with no picture in the email. Its schedules are business
+ones, and its part of the scope fingerprint is `get#CalcScope` as the recipient, so another organization's reader is
+`scope-differs`.
+
+**The terminal** (`moqui-tui` `components/calc.rs`): the `calcgrid` component, opened by the screen's `tui` text (the
+room in its props), reading the cells that fit, a cell's content and the room's state with GETs, posting edits
+(`Act::Call`, new), taking a paste (`Component::paste`, new), sized by the terminal's rows (`ComponentState.rows`,
+new), polling `calcCells` `since` the view's edit every 1.5 s. Dashboards › CalcGrid's terminal list links each
+document; Tools › Data › Grid's links Calc. The export is `calcExport` with `json=true`. The function names a formula
+completes are the server's now (`FUNCTIONS`, sent with the opening answer), and the browser takes them too.
+
+**Tests:** `cargo test -p moqui-calc` (two scopes following one log, every edit taken back, per-person undo, the scope's
+condition text), `-p moqui-report` (the format rule), `-p moqui-tui` (`calc_tests.rs`, and a session test of `Call`,
+`rows` and paste), `moqui-host` `notws::calc` and `monitor_tui` (the list, a sheet, a formula typed and undone);
+`tools/test/CalcGrid.spec.js` (the log, undo, peers, discard; a scheduled export read back),
+`mr-mantle/test/order/CalcGridSales.spec.js` (two organizations editing one document, the scope a schedule may go to),
+`webroot/test/client/WebrootCalc.spec.js` (frames, outlines); a fourth walk in `tools/acceptance/client/CalcGrid.spec.js`
+(two pages on one document: each other's names and places, an edit, Discard).
+
+Not built of these sets:
+
+- **A push to the terminal.** It polls; a component does not get the socket's frames.
+- **Schedule from the document.** A document is scheduled from Reports and Scheduled reports, as a dashboard is; the
+  CalcGrid screen has no menu item for it.
+- **Undo across a save, and of an edit whose data range moved.** An undo of an edit typed before a refresh restores a
+  formula's ranges over the data as they were then.
+- **A sheet's colours in the terminal**, merged cells, and editing a chart there (it shows them).
 
 ### Phase 4: charts and images in XLSX
 
@@ -333,7 +406,7 @@ The first place the engine itself needs to grow.
 ### Phase 5: as needed
 
 - The engine in the browser as WASM, fed by the diff queue, if the round trip is too slow; and offline editing by merge, on IronCalc's CRDT layer when it exists.
-- An undo stack for each user.
+- ~~An undo stack for each user~~: built in Phase 3b.
 - Pivot tables, when upstream has them or the summary sheet proves too little.
 - A report query over a search dataset as a data sheet, under the dataset's policy.
 - More access profiles, in the applications that own the entities.
@@ -423,6 +496,10 @@ Settled 2026-11-13.
 | Editing in CalcGrid | A holder of a profile opens documents shared with the user, with refresh and export; a holder of `CALC_GRID_AUTHOR` also authors documents (overlay, sources from the profile, charts). Data sheets are read only for everyone. (By the profile's grant action as first decided; a group of its own since Phase 2b, as a service call is checked for all actions) |
 | The document's store | A report definition of type `calcgrid` (`moqui.report.Definition`), the overlay bytes in its body (in a row beside it as first decided; changed in Phase 2): sharing with groups, versions, stars, git sync and schedules as dashboards have. The Tools grid lists the same documents |
 | Release | Phases 0 to 3 (through editing, in both screens) are for v0.1.0, if the spike holds; charts and images in XLSX (Phase 4) and Phase 5 after |
+| Unsaved edits (Phase 3b) | Kept in the document's edit log until a save makes a version; Discard takes them all back. Not saved as versions on their own |
+| What readers see (Phase 3b) | The authors' edits as they are made: one room per scope for readers and authors alike |
+| The terminal's live edits (Phase 3b) | Read by polling every 1.5 s; no push to its components |
+| The order of edits in a cluster (Phase 3b) | The database: a row lock on the document's log head, not an owning server |
 
 ## Open questions
 

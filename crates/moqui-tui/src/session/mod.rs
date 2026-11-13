@@ -220,6 +220,8 @@ pub struct Session {
     timers: BTreeMap<Timer, Instant>,
     /// The terminal's columns, for a component's wide layout.
     columns: u16,
+    /// The terminal's rows, for a component that loads what fits on screen ([`ComponentState::rows`]).
+    terminal_rows: u16,
     /// Dialogs that are not in a screen: a quick create's form, the tray, a document, an export as text.
     extras: Vec<Extra>,
     /// The tray's tab while the tray shows.
@@ -298,6 +300,7 @@ impl Session {
             mobile: false,
             timers: BTreeMap::new(),
             columns: 0,
+            terminal_rows: 0,
             extras: Vec::new(),
             tray_tab: 0,
             collapsed: BTreeMap::new(),
@@ -437,6 +440,10 @@ impl Session {
     /// mobile column set is asked for (section 1.3). A change reloads the screen.
     pub fn resize(&mut self, columns: u16, rows: u16) {
         self.columns = columns;
+        self.terminal_rows = rows;
+        for state in self.components.values_mut() {
+            state.rows = rows;
+        }
         let page_rows = usize::from(rows).saturating_sub(14).clamp(PAGE_ROWS, 100);
         let mobile = columns < 80;
         let changed = self.page_rows != Some(page_rows) || self.mobile != mobile;
@@ -1040,6 +1047,9 @@ impl Session {
     /// Pasted text, as one event: into the focused text field through its limits. A newline in a one-line field is a
     /// space, so a paste never submits a form.
     pub fn paste(&mut self, text: &str) {
+        if self.component_paste(text) {
+            return;
+        }
         let Some(item) = self.focus().cloned().filter(|item| item.kind == FocusKind::Text) else {
             return;
         };
