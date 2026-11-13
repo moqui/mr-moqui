@@ -163,6 +163,13 @@ pub enum LinkCall {
         path: String,
         parameters: BTreeMap<String, String>,
     },
+    /// A level above the leaf (`Party.tui`), loaded for the page `page` (the leaf's path, no query): a level the user may
+    /// not open alone answers as that page's frame (docs/security/Attack-Surface.md, "Parent frames").
+    Parent {
+        path: String,
+        page: String,
+        parameters: BTreeMap<String, String>,
+    },
     Transition {
         url: String,
         method: String,
@@ -274,6 +281,12 @@ pub trait ScreenLink: Send + Sync {
         Reply::Level(self.level(path, parameters))
     }
 
+    /// A level above the leaf, loaded for the page `page`: a link that can name the page to the server does
+    /// ([`LinkCall::Parent`]); this one asks for the level alone.
+    fn parent(&self, path: &str, _page: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        self.navigation(path, parameters)
+    }
+
     fn transition(
         &self,
         url: &str,
@@ -335,6 +348,7 @@ pub trait ScreenLink: Send + Sync {
     fn call(&self, call: &LinkCall) -> Reply {
         match call {
             LinkCall::Level { path, parameters } => self.navigation(path, parameters),
+            LinkCall::Parent { path, page, parameters } => self.parent(path, page, parameters),
             LinkCall::Transition { url, method, fields } => self.transition_reply(url, method, fields),
             LinkCall::Options { url, parameters } => Reply::Options(self.options(url, parameters)),
             LinkCall::Shell { path } => Reply::Shell(self.shell(path)),
@@ -366,6 +380,10 @@ impl<L: ScreenLink + ?Sized> ScreenLink for Arc<L> {
 
     fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
         (**self).navigation(path, parameters)
+    }
+
+    fn parent(&self, path: &str, page: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        (**self).parent(path, page, parameters)
     }
 
     fn transition(
@@ -523,12 +541,9 @@ impl FakeLink {
     }
 }
 
-impl ScreenLink for FakeLink {
-    fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
-        self.record(LinkCall::Level {
-            path: path.to_string(),
-            parameters: parameters.clone(),
-        })?;
+impl FakeLink {
+    /// The fixture of the level `path`, with `parameters`.
+    fn level_model(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
         // A level asked for as its own document (`Party.tui`) is the fixture of `Party`.
         let (screen, query) = path.split_once('?').unwrap_or((path, ""));
         let screen = screen.strip_suffix(".tui").unwrap_or(screen);
@@ -543,6 +558,26 @@ impl ScreenLink for FakeLink {
             parameters.entry(name.to_string()).or_insert_with(|| value.to_string());
         }
         Ok(page_model(model, &parameters))
+    }
+}
+
+impl ScreenLink for FakeLink {
+    fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
+        self.record(LinkCall::Level {
+            path: path.to_string(),
+            parameters: parameters.clone(),
+        })?;
+        self.level_model(path, parameters)
+    }
+
+    /// Recorded as a parent; answered from the level's fixture.
+    fn parent(&self, path: &str, page: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        let recorded = self.record(LinkCall::Parent {
+            path: path.to_string(),
+            page: page.to_string(),
+            parameters: parameters.clone(),
+        });
+        Reply::Level(recorded.and_then(|()| self.level_model(path, parameters)))
     }
 
     fn transition(

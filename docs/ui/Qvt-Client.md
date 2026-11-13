@@ -97,7 +97,8 @@ screen) with the extra path and query, and gives `callback` a component. It retu
   when it loads a level above the page's own. A level the user may not open alone, on the path of a page they may open (the same screens,
   the page strictly below it, the page's screens and subscreens items permitted), answers as that page's frame: its placeholders alone
   (`m-subscreens-tabs` for a tab panel or menu, `m-subscreens-active`), `merged-fragment`, `private, no-store`, with none of its actions run
-  and nothing else of it written (`crates/moqui-core/src/screen/frame.rs`). A user whose grants open an area below an app root and not the
+  and nothing else of it written (`crates/moqui-core/src/screen/frame.rs`). The terminal client names the page the same way for its
+  parent levels ([TUI](TUI.md)), and gets the level's tab bar in the frame. A user whose grants open an area below an app root and not the
   root itself (a non-inheritable grant) then opens the area's pages in the shell; the root asked for alone, as a page, or for a page they
   may not open is refused as before ([Attack-Surface](../security/Attack-Surface.md#parent-frames)).
 - **A screen's own path and query: `inject: ["mScreen"]`.** Each `m-dynamic-container` and `m-dynamic-dialog` provides `mScreen` for the screen

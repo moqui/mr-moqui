@@ -220,6 +220,12 @@ impl Transport for Http {
         if ask.json {
             request = request.header("Accept", "application/json");
         }
+        if !ask.page.is_empty() {
+            request = request.header(
+                moqui_core::screen::PAGE_PATH_HEADER,
+                crate::tui::page_path_header(&ask.page),
+            );
+        }
         if let Some(stored) = self.stored() {
             request = request.header("login_key", stored.key);
         }

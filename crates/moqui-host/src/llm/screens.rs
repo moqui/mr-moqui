@@ -35,7 +35,7 @@ use moqui_llm::screen::{
     ScreenCommand, ScreenError, ScreenSessions, ScreenState,
 };
 use moqui_tui::{
-    Agent, AgentAnswer, Choice, LinkError, Messages, PushSink, RawBody, ScreenLink, ScreenModel, ShellInfo,
+    Agent, AgentAnswer, Choice, LinkError, Messages, PushSink, RawBody, Reply, ScreenLink, ScreenModel, ShellInfo,
     Subscription, TransitionOutcome,
 };
 use serde_json::{json, Value as Json};
@@ -136,6 +136,15 @@ impl ScreenLink for AgentLink {
             return Err(LinkError::Remote(self.held_text()));
         }
         result
+    }
+
+    /// A level above the leaf names the leaf, so a level the agent's user may not open alone answers as its frame.
+    fn parent(&self, path: &str, page: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        let reply = self.link.parent(path, page, parameters);
+        if self.note_held(path, "GET", parameters) {
+            return Reply::Level(Err(LinkError::Remote(self.held_text())));
+        }
+        reply
     }
 
     fn transition(

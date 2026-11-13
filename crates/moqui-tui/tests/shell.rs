@@ -689,7 +689,7 @@ fn a_record_header_refreshes_after_a_write_or_f5_and_stays_cached_between_tabs()
     let header_calls = |link: &FakeLink| {
         calls(link)
             .iter()
-            .filter(|call| matches!(call, LinkCall::Level { path, .. } if path == "/apps/app/Project.tui"))
+            .filter(|call| matches!(call, LinkCall::Parent { path, .. } if path == "/apps/app/Project.tui"))
             .count()
     };
     let closed = parent("Closed");

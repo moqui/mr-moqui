@@ -173,8 +173,102 @@ fn a_frame_keeps_the_tabs_of_a_tab_panel_and_never_the_steps_of_a_wizard() {
         def(r#"<subscreens-panel id="w" type="wizard" finish-text="Done"/>"#),
         r#"<div class="m-frame"><m-subscreens-active></m-subscreens-active></div>"#
     );
+    // only the first active level counts: a section's fail-widgets beside its widgets is not a second level
+    assert_eq!(
+        def(
+            r#"<section name="S"><widgets><subscreens-menu/><subscreens-active/></widgets><fail-widgets><subscreens-panel id="f"/></fail-widgets></section>"#
+        ),
+        r#"<div class="m-frame"><m-subscreens-tabs></m-subscreens-tabs><m-subscreens-active></m-subscreens-active></div>"#
+    );
     assert_eq!(
         def(r#"<label text="no placeholder"/>"#),
         r#"<div class="m-frame"><m-subscreens-active></m-subscreens-active></div>"#
     );
+}
+
+/// The terminal client's levels between the app root and the leaf (`.tui`): a self-service user refused an area between
+/// the app and a page granted below it (People's Employees above Grievances) gets the area's level as the page's frame,
+/// a tab bar of the subscreens they may open with the page's active, and nothing of the area's own.
+#[test]
+fn a_tui_parent_level_is_the_frame_of_a_page_below_it_with_the_tabs_the_user_may_open() {
+    let dir = std::env::temp_dir().join(format!("moqui-frame-tui-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/App/Area")).unwrap();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+    write("Root.xml", ROOT);
+    write(
+        "Root/App.xml",
+        r#"<screen default-menu-title="App"><subscreens default-item="Area"/><widgets><subscreens-panel id="app-panel"/></widgets></screen>"#,
+    );
+    write(
+        "Root/App/Area.xml",
+        r#"<screen default-menu-title="Area"><subscreens default-item="Other"/>
+            <always-actions><if condition="frameProbe"><then><script>throw new Error('Area actions ran')</script></then></if></always-actions>
+            <widgets><label text="Area header of its own"/><subscreens-panel id="area-panel"/></widgets></screen>"#,
+    );
+    write(
+        "Root/App/Area/Cases.xml",
+        r#"<screen default-menu-title="Cases" default-menu-index="1"><widgets><label text="My cases"/></widgets></screen>"#,
+    );
+    write(
+        "Root/App/Area/Other.xml",
+        r#"<screen default-menu-title="Other" default-menu-index="2"><widgets><label text="Other"/></widgets></screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open_in_framework(
+        "<moqui-conf><artifact-execution-facade><artifact-execution type=\"AT_XML_SCREEN\" authz-enabled=\"true\"/>\
+         </artifact-execution-facade></moqui-conf>",
+    );
+    world.user("self", Some("SELF"));
+    world.user("staff", Some("STAFF"));
+    let at = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    grant(&world, "APP_STAFF", "STAFF", &at("Root/App.xml"), true);
+    grant(&world, "CASES_SELF", "SELF", &at("Root/App/Area/Cases.xml"), true);
+    let get = |user: &str, path: &str, page: Option<&str>| {
+        let mut get = request("GET", path);
+        get.set_header("authorization", basic(user));
+        if let Some(page) = page {
+            get.set_header("X-Moqui-Page-Path", page);
+        }
+        serve_at(&world.factory, get, &root)
+    };
+
+    // the page, as the client asks for the leaf
+    let leaf = get("self", "/App/Area/Cases?renderMode=tui", None);
+    assert_eq!(leaf.status, 200, "{}", leaf.body_text());
+    assert!(leaf.body_text().contains("My cases"), "{}", leaf.body_text());
+
+    // the area's level for it: the tabs the user may open (Cases, not Other), the page's active, and nothing else
+    let frame = get("self", "/App/Area.tui?frameProbe=1", Some("/App/Area/Cases"));
+    assert_eq!(frame.status, 200, "{}", frame.body_text());
+    assert_eq!(frame.header("Cache-Control"), Some("private, no-store"));
+    let body: serde_json::Value = serde_json::from_str(&frame.body_text()).unwrap();
+    assert_eq!(body["screen"]["path"], "/App/Area", "{body}");
+    assert_eq!(
+        body["c"],
+        serde_json::json!([{ "t": "subscreens", "id": "area-panel", "kind": "tab", "c": [], "items": [
+            { "title": "Cases", "url": "/App/Area/Cases", "active": true, "disabled": false }
+        ] }]),
+        "{body}"
+    );
+    assert!(!frame.body_text().contains("Area header"), "{body}");
+    assert!(body["parameters"].is_object() && body["messages"].is_object(), "{body}");
+
+    // a level the user may open renders as itself; the area alone, or for a page the user may not open, is refused
+    let staff = get("staff", "/App/Area.tui", Some("/App/Area/Cases"));
+    assert_eq!(staff.status, 200, "{}", staff.body_text());
+    assert!(
+        staff.body_text().contains("Area header of its own"),
+        "{}",
+        staff.body_text()
+    );
+    for (path, page) in [
+        ("/App/Area.tui", None),
+        ("/App/Area.tui", Some("/App/Area/Other")),
+        ("/App/Area.tui", Some("/App/Area")),
+    ] {
+        let refused = get("self", path, page);
+        assert_eq!(refused.status, 403, "{path} for {page:?}: {}", refused.body_text());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

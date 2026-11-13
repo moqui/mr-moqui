@@ -228,6 +228,7 @@ fn screen_redirects_keep_session_cookies_in_memory_with_their_scope() {
             json: true,
             tui: false,
             remember: false,
+            page: String::new(),
         })
         .unwrap()
     };

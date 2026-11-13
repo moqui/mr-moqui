@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use moqui_core::context::{Error, ErrorKind, ExecutionContextFactory};
-use moqui_core::screen::{RenderOptions, RenderOrigin, RenderOutput};
+use moqui_core::screen::{RenderOptions, RenderOrigin, RenderOutput, PAGE_PATH_HEADER};
 use moqui_core::user::CodeLogin;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
@@ -47,6 +47,9 @@ pub struct Ask {
     pub tui: bool,
     /// A screen the user goes to, kept in the history; a fragment, options or a file are not.
     pub remember: bool,
+    /// For a level above the leaf, the leaf's path (no query): sent as `X-Moqui-Page-Path`, so a level the user may not
+    /// open alone answers as that page's frame (docs/security/Attack-Surface.md, "Parent frames"). Empty otherwise.
+    pub page: String,
 }
 
 /// How a [`Link`] reaches the server: in this process ([`InProcess`]) or over HTTP ([`crate::tui_remote::Http`]). Every
@@ -147,16 +150,21 @@ impl<T: Transport> Link<T> {
         resolve_url(&base, url)
     }
 
+    /// A level and the redirects it answers. `page` is empty for the leaf, and for a parent the leaf's path: a parent does
+    /// not become the base of relative urls, which stays the leaf's.
     fn navigation_reply(
         &self,
         path: &str,
         parameters: &BTreeMap<String, String>,
+        page: &str,
     ) -> Result<NavigationReply, LinkError> {
         let mut path = self.absolute(path);
         let mut parameters = parameters.clone();
         let mut carried = Messages::default();
         for _ in 0..FRAGMENT_REDIRECTS {
-            let output = self.render_tui(path.clone(), &parameters, true)?;
+            let mut ask = self.tui_ask(path.clone(), &parameters, true);
+            ask.page = page.to_string();
+            let output = self.transport.send(ask)?;
             if !(300..400).contains(&output.status) && is_attachment(&output) {
                 check_status(&output)?;
                 return Ok(NavigationReply::Attachment(raw_body(output)));
@@ -169,7 +177,9 @@ impl<T: Transport> Link<T> {
             let mut model = model_from(&output)?;
             carry(&mut carried, std::mem::take(&mut model.messages));
             model.messages = carried;
-            *lock(&self.last_path) = model.screen.path.clone();
+            if page.is_empty() {
+                *lock(&self.last_path) = model.screen.path.clone();
+            }
             return Ok(NavigationReply::Screen(model));
         }
         Err(LinkError::Remote(format!("{path} redirected too many times")))
@@ -188,14 +198,19 @@ impl<T: Transport> Link<T> {
         parameters: &BTreeMap<String, String>,
         remember: bool,
     ) -> Result<RenderOutput, LinkError> {
-        self.transport.send(Ask {
+        self.transport.send(self.tui_ask(path, parameters, remember))
+    }
+
+    fn tui_ask(&self, path: String, parameters: &BTreeMap<String, String>, remember: bool) -> Ask {
+        Ask {
             path,
             method: "GET".to_string(),
             parameters: parameters.clone(),
             json: false,
             tui: true,
             remember,
-        })
+            page: String::new(),
+        }
     }
 
     /// `url` (a query included) with `parameters` over it, `method` or else `default`.
@@ -215,6 +230,7 @@ impl<T: Transport> Link<T> {
             json,
             tui: false,
             remember: false,
+            page: String::new(),
         }
     }
 }
@@ -228,6 +244,7 @@ impl Ask {
             json: false,
             tui: false,
             remember: false,
+            page: String::new(),
         }
     }
 }
@@ -395,6 +412,9 @@ impl Transport for InProcess {
             if ask.tui {
                 render = render.render_mode("tui").history(ask.remember);
             }
+            if !ask.page.is_empty() {
+                render = render.header(PAGE_PATH_HEADER, page_path_header(&ask.page));
+            }
             let rendered = render.render();
             let after: BTreeMap<String, serde_json::Value> = moqui_core::user::session_attribute_values()
                 .into_iter()
@@ -494,16 +514,27 @@ impl<T: Transport> ScreenLink for Link<T> {
     /// A screen, or a transition a link goes to (an anchor to `runJob`), whose redirect to its screen is followed as the
     /// browser follows it.
     fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
-        match self.navigation_reply(path, parameters)? {
+        match self.navigation_reply(path, parameters, "")? {
             NavigationReply::Screen(model) => Ok(model),
             NavigationReply::Attachment(_) => Err(LinkError::Remote("The server returned a file, not a screen".into())),
         }
     }
 
     fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
-        match self.navigation_reply(path, parameters) {
+        match self.navigation_reply(path, parameters, "") {
             Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(model)),
             Ok(NavigationReply::Attachment(body)) => Reply::Raw(Ok(body)),
+            Err(err) => Reply::Level(Err(err)),
+        }
+    }
+
+    /// A level above the leaf, naming the leaf `page` it is loaded for.
+    fn parent(&self, path: &str, page: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        match self.navigation_reply(path, parameters, page) {
+            Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(model)),
+            Ok(NavigationReply::Attachment(_)) => Reply::Level(Err(LinkError::Remote(
+                "The server returned a file, not a screen".into(),
+            ))),
             Err(err) => Reply::Level(Err(err)),
         }
     }
@@ -679,6 +710,23 @@ fn raw_body(output: RenderOutput) -> RawBody {
         file_name,
         bytes: output.body,
     }
+}
+
+/// A page path as `X-Moqui-Page-Path` carries it: each byte but an unreserved one and `/` percent-encoded, which the
+/// server decodes (`web::percent_decode`), so a header holds visible ASCII alone.
+pub(crate) fn page_path_header(path: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
+            out.push(char::from(byte));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0F)]));
+        }
+    }
+    out
 }
 
 fn link_error(err: Error) -> LinkError {

@@ -77,6 +77,7 @@ pub use definition::{
     Actions, Authentication, Condition, FormDef, Implicit, ParameterDef, ResponseDef, ResponseKind, ScreenDef,
     SectionDef, SectionKind, Subscreens, SubscreensItem, TransitionDef, TreeDef, WebSettings, XmlFragment,
 };
+pub use frame::PAGE_PATH_HEADER;
 pub use gate::{
     agent_render, clear_transition_observer, held_write_hash, install_transition_observer, interactive_request,
     HeldWrite, InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,

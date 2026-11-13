@@ -299,7 +299,10 @@ Leaving a changed form (a link, F3, Ctrl+Q) asks: Stay, Discard or Save. A butto
 No or Yes, starting at No.
 
 A successful write and F5 refresh the current screen and its cached parent screens, so a record's header and actions
-reflect child-screen changes. Moving between child tabs, or resizing the terminal, reuses those parents. Internal
+reflect child-screen changes. Moving between child tabs, or resizing the terminal, reuses those parents. Each parent
+screen is asked for naming the screen below it it is loaded for (`X-Moqui-Page-Path`): one the user may not open alone,
+above a screen they may open (a self-service area under an app's area), answers as that screen's frame, its tab bar of
+the subscreens they may open and nothing else of its own ([Attack-Surface](../security/Attack-Surface.md#parent-frames)). Internal
 links under `/qapps` use the terminal's `/apps` mount, a download reached by following a link included; explicitly
 opening a link in the browser preserves its browser address, as do external links. A form's or transition's own
 JSON request keeps its authored route.

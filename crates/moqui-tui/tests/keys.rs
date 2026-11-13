@@ -185,7 +185,9 @@ fn levels(link: &FakeLink) -> Vec<(String, BTreeMap<String, String>)> {
     link.calls()
         .into_iter()
         .filter_map(|call| match call {
-            LinkCall::Level { path, parameters } => Some((path, parameters)),
+            LinkCall::Level { path, parameters } | LinkCall::Parent { path, parameters, .. } => {
+                Some((path, parameters))
+            }
             _ => None,
         })
         .collect()
@@ -295,6 +297,13 @@ fn a_record_header_level_loads_once_and_stays_for_its_tabs() {
     assert_eq!(session.parameters().get("partyId").map(String::as_str), Some("P1"));
     let asked: Vec<String> = levels(&link).into_iter().map(|(path, _)| path).collect();
     assert_eq!(asked, ["/apps/app/Party/EditParty", "/apps/app/Party.tui"]);
+    // the header is a parent level, asked for naming the page it is loaded for (a level the user may not open alone
+    // answers as that page's frame)
+    assert!(link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::Parent { path, page, .. }
+        if path == "/apps/app/Party.tui" && page == "/apps/app/Party/EditParty")));
     // Alt+2 is the second tab of the header; the header stays and is not asked for again.
     session.press(&KeyPress::with_alt(Key::Char('2')), &link);
     assert_eq!(session.paths(), ["/apps/app/Party", "/apps/app/Party/Roles"]);
