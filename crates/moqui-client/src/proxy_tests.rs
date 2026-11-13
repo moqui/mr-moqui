@@ -51,6 +51,7 @@ fn the_page_cannot_send_credentials_cookies_or_an_origin() {
         ("Content-Type", "application/x-www-form-urlencoded"),
         ("Range", "bytes=0-99"),
         ("X-Moqui-Page-Trace", "t1"),
+        ("X-Moqui-Page-Path", "/apps/People/Time"),
         ("X-Moqui-Edge-Client", "1.2.3.4"),
         ("X-Moqui-Tunnel", "1"),
         ("Cookie", "JSESSIONID=1"),
@@ -61,7 +62,16 @@ fn the_page_cannot_send_credentials_cookies_or_an_origin() {
         ("Referer", ORIGIN),
     ]));
     let names: Vec<&str> = sent.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(names, ["Accept", "Content-Type", "Range", "X-Moqui-Page-Trace"]);
+    assert_eq!(
+        names,
+        [
+            "Accept",
+            "Content-Type",
+            "Range",
+            "X-Moqui-Page-Trace",
+            "X-Moqui-Page-Path"
+        ]
+    );
 }
 
 #[test]

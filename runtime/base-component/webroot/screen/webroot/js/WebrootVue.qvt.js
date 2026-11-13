@@ -545,6 +545,7 @@
         let search;
         let bodyParameters;
         let renderModes;
+        let pagePath;
         if (typeof urlInfo === "string") {
             const questIdx = urlInfo.indexOf("?");
             if (questIdx > 0) {
@@ -557,6 +558,7 @@
             search = urlInfo.search;
             bodyParameters = urlInfo.bodyParameters;
             renderModes = urlInfo.renderModes;
+            pagePath = urlInfo.pagePath;
         }
         // if Quasar says it is mobile then tell the server through the _uiType parameter
         const mobile = root.innerWidth <= 600 || (root.Quasar && root.Quasar.Platform.is.mobile);
@@ -602,6 +604,8 @@
         const hasBody = bodyParameters && !moqui.isEmptyObject(bodyParameters);
         const options = { signal: controller.signal, accept: "text/html,application/javascript,*/*" };
         if (negotiate) options.headers = { "X-Moqui-Client-Modes": moqui.clientModesHeader };
+        // a parent level names the page it is loaded for, so a level the user may not open alone answers as that page's frame
+        if (pagePath) options.headers = Object.assign(options.headers || {}, { "X-Moqui-Page-Path": encodeURI(pagePath) });
         if (hasBody) { options.method = "POST"; options.params = bodyParameters; }
         console.info("loadComponent " + url + (divId ? " id " + divId : ""));
 
@@ -5030,6 +5034,8 @@
                 urlInfo.bodyParameters = rootVm_.bodyParameters;
                 const navMenuItem = rootVm_.navMenuList[pathIndex + rootVm_.basePathSize];
                 if (navMenuItem && navMenuItem.renderModes) urlInfo.renderModes = navMenuItem.renderModes;
+                // a parent of the page: the server answers a level the user may not open alone as the frame of the page below
+                if (!isTarget) urlInfo.pagePath = rootVm_.basePath + "/" + curPathList.join("/");
                 rootVm_.loading++;
                 rootVm_.currentLoadRequest = moqui.loadComponent(urlInfo, (comp) => {
                     rootVm_.currentLoadRequest = null;

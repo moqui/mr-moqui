@@ -824,6 +824,11 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
             format!("render mode {mode} is not supported by {}", rendered.location),
         ));
     }
+    // A parent level the shell or the terminal client loads for a page below it that the user may open, when the level
+    // itself is refused them: its placeholders alone, with nothing of its own run or written (frame.rs).
+    if super::frame::serve_frame(factory, job, &info, &mode) {
+        return Ok(());
+    }
     let (content_type, encoding) = output_type(&facade, &info, &mode);
     let state = Rc::new(RenderState::new(factory, &facade, info, mode, content_type, encoding));
     state
@@ -1121,7 +1126,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
 /// Refuse a path whose screens before `count` include a subscreens item limited to a user group the user is not in
 /// (`SubscreensItem.userGroupId`, `isValidInCurrentContext`): the screens a render starts above or at, and every screen
 /// of a transition's path.
-fn path_items_available(info: &ScreenUrlInfo, count: usize) -> Result<(), Error> {
+pub(super) fn path_items_available(info: &ScreenUrlInfo, count: usize) -> Result<(), Error> {
     let defs = &info.path_defs;
     for index in 1..count.min(defs.len()) {
         let item = info
@@ -1197,7 +1202,7 @@ fn wrap_json_envelope(state: &RenderState) {
 
 /// The `tui` envelope of section 2.3 of the plan. Every string from the request or the screen is stripped of
 /// controls; the nodes were stripped as they were written.
-fn json_envelope(
+pub(super) fn json_envelope(
     info: &ScreenUrlInfo,
     nodes: serde_json::Value,
     parameters: serde_json::Value,
@@ -1250,7 +1255,7 @@ fn screen_path(info: &ScreenUrlInfo) -> String {
     }
 }
 
-fn empty_messages() -> serde_json::Value {
+pub(super) fn empty_messages() -> serde_json::Value {
     serde_json::json!({ "info": [], "errors": [], "validationErrors": [] })
 }
 
@@ -1274,7 +1279,7 @@ fn json_root_array(raw: &[u8], info: &ScreenUrlInfo) -> serde_json::Value {
     }
 }
 
-fn envelope_parameters() -> serde_json::Value {
+pub(super) fn envelope_parameters() -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (name, value) in web::parameters() {
         if matches!(value, Value::Object(_)) {

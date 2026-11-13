@@ -1637,9 +1637,11 @@ impl Session {
             .iter()
             .map(|level| (level.model.screen.path.clone(), level.parameters.clone()))
             .collect();
+        let page = self.path().to_string();
         for (path, parameters) in parents {
-            let call = LinkCall::Level {
+            let call = LinkCall::Parent {
                 path: level_path(&path),
+                page: page.clone(),
                 parameters: parameters.clone(),
             };
             if let Some(id) = self.lanes.push(Purpose::Parent(path), call) {
@@ -1701,9 +1703,12 @@ impl Session {
         let app_changed = app_root(&model.screen.path) != app_root(self.path());
         let path_changed = model.screen.path != self.path();
         let missing = self.nav.set_leaf(model, parameters.clone());
+        // each parent names the page it is loaded for, so one the user may not open alone answers as the page's frame
+        let page = self.path().to_string();
         for path in missing {
-            let call = LinkCall::Level {
+            let call = LinkCall::Parent {
                 path: level_path(&path),
+                page: page.clone(),
                 parameters: parameters.clone(),
             };
             if let Some(id) = self.lanes.push(Purpose::Parent(path), call) {

@@ -181,3 +181,55 @@ fn a_disabled_menu_entry_is_kept_and_marked() {
         .collect();
     assert_eq!(children, [("Open", false), ("Load testing", true)]);
 }
+
+/// A parent level names the page it is loaded for in `X-Moqui-Page-Path` (percent-encoded, visible ASCII alone), and
+/// does not become the base of relative urls; the leaf names none.
+#[test]
+fn a_parent_level_names_its_page_and_leaves_the_base_at_the_leaf() {
+    struct Recording(Arc<Mutex<Vec<(String, String)>>>);
+    impl Transport for Recording {
+        fn send(&self, ask: Ask) -> Result<RenderOutput, LinkError> {
+            let path = ask.path.trim_end_matches(".tui").to_string();
+            lock(&self.0).push((ask.path, ask.page));
+            let body = serde_json::json!({ "v": 1, "screen": { "path": path, "pathList": [] }, "c": [] });
+            Ok(RenderOutput {
+                status: 200,
+                headers: vec![("Content-Type".into(), "application/json".into())],
+                body: body.to_string().into_bytes(),
+            })
+        }
+
+        fn login(&self, _username: &str, _password: &str, _code: &str) -> Result<(), LinkError> {
+            Ok(())
+        }
+
+        fn user(&self) -> Option<String> {
+            Some("fixture".into())
+        }
+    }
+
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let link = Link::over(Recording(Arc::clone(&asked)));
+    let none = BTreeMap::new();
+    assert!(matches!(
+        link.navigation("/apps/People/Employees/Grievances", &none),
+        Reply::Level(Ok(_))
+    ));
+    let parent = link.parent("/apps/People/Employees.tui", "/apps/People/Employees/Grievances", &none);
+    assert!(matches!(parent, Reply::Level(Ok(ref model)) if model.screen.path == "/apps/People/Employees"));
+    assert_eq!(
+        *lock(&asked),
+        [
+            ("/apps/People/Employees/Grievances".to_string(), String::new()),
+            (
+                "/apps/People/Employees.tui".to_string(),
+                "/apps/People/Employees/Grievances".to_string()
+            ),
+        ]
+    );
+    assert_eq!(link.resolve("Detail"), "/apps/People/Employees/Detail");
+    assert_eq!(
+        page_path_header("/apps/x/Leave Requests+é"),
+        "/apps/x/Leave%20Requests%2B%C3%A9"
+    );
+}

@@ -157,6 +157,10 @@ impl ScreenLink for GatedLink {
         self.link.navigation(path, parameters)
     }
 
+    fn parent(&self, path: &str, page: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        self.link.parent(path, page, parameters)
+    }
+
     fn transition_reply(&self, url: &str, method: &str, fields: &BTreeMap<String, String>) -> Reply {
         self.link.transition_reply(url, method, fields)
     }

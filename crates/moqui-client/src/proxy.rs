@@ -34,7 +34,7 @@ const TIMEOUT_MINUTES: u64 = 10;
 
 /// Request headers the page may send on; others are dropped. The `x-moqui-` ones are those the client sends; the edge
 /// link's (`x-moqui-edge-*`, `x-moqui-tunnel`) are not among them.
-const REQUEST_HEADERS: [&str; 14] = [
+const REQUEST_HEADERS: [&str; 15] = [
     "accept",
     "accept-language",
     "content-type",
@@ -45,6 +45,7 @@ const REQUEST_HEADERS: [&str; 14] = [
     "x-requested-with",
     "x-moqui-page-trace",
     "x-moqui-client-modes",
+    "x-moqui-page-path",
     "x-moqui-qvt",
     "x-moqui-preferences",
     "x-moqui-preview",
