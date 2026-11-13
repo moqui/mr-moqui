@@ -8,7 +8,8 @@
 // read of an import (find#ImportRuns, get#ImportDetail; plans/archive/Admin-Screens-Down.md A5) is the same answers put together:
 // the run with its counts as text and its owner's key, the import's rows as text, a retry there only with
 // ADMIN_TRANSFER_RUN. The target is the framework's own, message translations, whose rows are saved by
-// store#LocalizedMessage's rules.
+// store#LocalizedMessage's rules. A column naming a permission is shown only to a holder and cleared from a row's staged values
+// once it is applied (IronStone People P25 review: an employee import's salary), here on a spec-local copy of that target.
 // Run: ./moq test framework --spec AdminDataTransfer
 const T = "org.moqui.admin.DataTransferServices."
 const TARGET = "messageTranslations"
@@ -100,6 +101,21 @@ spec({
             applyRowService: NOOP
         })
         make(MESSAGE, {original: "Spec transfer greeting", locale: "es", localized: "Saludo antiguo"})
+        // the translation target with its translation restricted to a holder of ADMIN_SETTINGS_MANAGE
+        make("moqui.server.TransferTarget", {
+            targetId: "specDtRestricted",
+            direction: "import",
+            targetMode: "rows",
+            title: "Spec restricted translations",
+            columnsJson:
+                '[{"name":"original","label":"Original","required":true},{"name":"locale","label":"Locale","required":true},' +
+                '{"name":"localized","label":"Translation","required":true,"permission":"ADMIN_SETTINGS_MANAGE"}]',
+            keyFields: "original,locale",
+            validateRowService: "org.moqui.admin.ConfigurationServices.validate#MessageTranslationRow",
+            applyRowService: "org.moqui.admin.ConfigurationServices.apply#MessageTranslationRow",
+            importPermission: "ADMIN_TRANSFER_RUN,ADMIN_SETTINGS_MANAGE",
+            viewPermission: "ADMIN_TRANSFER_VIEW,ADMIN_SETTINGS_VIEW"
+        })
     },
     cleanupSpec() {
         ec.message.clearErrors()
@@ -486,5 +502,49 @@ feature("each row is on its own and only failed rows are retried: an applied row
         r.viewDetail.canEdit == false
         has(r.settingsRead.list.error, /ADMIN_TRANSFER_VIEW is required/)
         has(r.settingsRead.detail.error, /ADMIN_TRANSFER_VIEW is required/)
+    }
+})
+
+feature("a restricted column is shown only to a holder of its permission and cleared from a row's staged values once applied", {
+    when() {
+        const restricted = (verb, parameters) => invoke(T + verb, Object.assign({targetId: "specDtRestricted"}, parameters))
+        const content =
+            "original,locale,Translation\nSpec restricted hello,es,Hola secreta\nSpec restricted bad,spanish,Mal secreta"
+        // the other runner (the first lost the run group in the feature before)
+        const out = as(users.other, () => {
+            const staged = restricted("stage#Import", {sourceText: content})
+            const validated = restricted("validate#Import", {
+                operationKey: staged.operationKey,
+                mappingRevision: staged.mappingRevision
+            })
+            const applied = restricted("apply#Import", {
+                operationKey: staged.operationKey,
+                inputFingerprint: validated.inputFingerprint
+            })
+            return {staged, validated, applied, read: restricted("get#Transfer", {operationKey: staged.operationKey})}
+        })
+        out.viewer = as(users.view, () => ({
+            read: restricted("get#Transfer", {operationKey: out.staged.operationKey}),
+            report: restricted("get#ImportReport", {operationKey: out.staged.operationKey})
+        }))
+        out.item = one("moqui.server.TransferItem", {transferId: out.staged.operationKey, itemSeqId: 1})
+        return out
+    },
+    then(out) {
+        // the holder reads the staged translation before the apply; the applied row keeps its outcome, not the value
+        rowOf(out.validated, 1).values.localized == "Hola secreta"
+        out.applied.appliedCount == 1
+        translation("Spec restricted hello", "es") == "Hola secreta"
+        rowOf(out.read, 1).result == "applied"
+        rowOf(out.read, 1).sourceValues.Translation == null
+        rowOf(out.read, 1).values.localized == null
+        !String(out.item.sourceJson).includes("secreta") && !String(out.item.previewJson).includes("secreta")
+        rowOf(out.read, 2).sourceValues.Translation == "Mal secreta"
+        // a reader without the permission sees it masked, in the rows and the report
+        rowOf(out.viewer.read, 2).sourceValues.Translation == "Restricted"
+        rowOf(out.viewer.read, 2).sourceValues.original == "Spec restricted bad"
+        Array.from(out.viewer.read.columns).find(column => column.name === "localized").restricted == true
+        !out.viewer.report.reportCsv.includes("secreta")
+        out.viewer.report.reportCsv.includes("Spec restricted bad")
     }
 })

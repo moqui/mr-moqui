@@ -197,10 +197,16 @@ function checked(row) {
     return Object.assign(target, {
         targetMode: mode,
         fields,
+        // an import column naming a permission (comma separated, every one needed) is shown only to a holder and cleared from
+        // what was staged of a row once it is applied (DataTransferBatch.js, restricted columns); an unknown permission is held
+        // by nobody
         columns: columns.map(column => ({
             name: text(column.name),
             label: lineText(column.label, 60) || text(column.name),
-            required: column.required === true
+            required: column.required === true,
+            permission: names(column.permission)
+                .filter(permission => /^[A-Za-z0-9_.-]{1,60}$/.test(permission))
+                .join(",")
         })),
         options: options.map(option => ({
             name: text(option.name),
