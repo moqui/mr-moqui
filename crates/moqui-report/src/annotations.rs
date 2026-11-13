@@ -229,7 +229,7 @@ pub fn record_release(factory: &moqui_core::context::ExecutionContextFactory) ->
 }
 
 /// A fingerprint of the entity tables, columns and types: two releases with the same one read and write the same
-/// schema, which a recovery rollback between them needs (plans/Monitoring.md, Later: Recovery).
+/// schema, which a recovery rollback between them needs (plans/archive/Monitoring.md, Later: Recovery).
 pub fn schema_hash(entity: &moqui_core::entity::EntityFacade) -> String {
     use sha2::{Digest, Sha256};
     let mut tables: Vec<String> = entity.with_model(|model| {

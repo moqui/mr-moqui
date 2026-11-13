@@ -1,7 +1,7 @@
 //! Browser RUM and session replay on a real seeded PostgreSQL server: the qvt shell loads the RUM script only for a
 //! signed-in user, /rum/traces and /rum/logs take a session's OTLP/JSON under its CSRF token with the session's
 //! identity forced on, and /rum/replay holds a replay to its size cap, readable only with MONITOR_REPLAY
-//! (plans/Monitoring.md, Later: Browser RUM).
+//! (plans/archive/Monitoring.md, Later: Browser RUM).
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
 use crate::common::{self, exchange, http_request, merge_cookies, session_token, sign_in};
 use moqui_lib::object::Value;

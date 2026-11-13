@@ -143,7 +143,7 @@ Found by grep for the screen paths; repeat the grep after the move. The componen
   - `docs/security/Attack-Surface.md:253` (the permission table row for SQL Runner) and `:810` (the tools the demo
     stubs), and the new rows of §14.
   - `docs/security/Proof-Tests.md:57` and `:78` name the SQL Runner proof.
-  - `plans/Monitoring.md:363` and `plans/archive/Profiling.md:12` and `:393` name `Tools/Entity/SpeedTest.xml`.
+  - `plans/Monitoring.md:363` (now `plans/archive/Monitoring.md`) and `plans/archive/Profiling.md:12` and `:393` name `Tools/Entity/SpeedTest.xml`.
   - `plans/archive/UI-Refinement.md`'s screen inventory names the Tools screens.
 
 ## 3. Tools layout

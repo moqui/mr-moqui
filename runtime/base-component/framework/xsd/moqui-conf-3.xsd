@@ -181,7 +181,7 @@ along with this software (see the LICENSE.md file). If not, see
                 routes are redacted as the global list's are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="operations" minOccurs="0"><xs:complexType>
-            <xs:annotation><xs:documentation>Business operations (plans/Monitoring.md, Later: Business operations).
+            <xs:annotation><xs:documentation>Business operations (plans/archive/Monitoring.md, Later: Business operations).
                 A service call that owns its transaction (the outermost or a force-new one) is an operation, named by
                 the service unless the service declares operation or a rule here names it. Each run counts as
                 moqui.operation.runs, and its time as moqui.operation.duration, by moqui.operation.name and outcome:
@@ -218,7 +218,7 @@ along with this software (see the LICENSE.md file). If not, see
                 500.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="regressions" minOccurs="0"><xs:complexType>
-            <xs:annotation><xs:documentation>The regression detector (plans/Monitoring.md, Later: Regressions and
+            <xs:annotation><xs:documentation>The regression detector (plans/archive/Monitoring.md, Later: Regressions and
                 incidents), the detect_Regressions_5min job. Each service version with request metrics in the last
                 window is compared with its baseline: the previous version over lookback-hours before the release while
                 the release is under watch-hours old, else the same version historical-offset-hours earlier. Error rate
@@ -243,7 +243,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="major"/><xs:enumeration value="critical"/></xs:restriction></xs:simpleType></xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="recovery" minOccurs="0"><xs:complexType>
-            <xs:annotation><xs:documentation>Recovery (plans/Monitoring.md, Later: Recovery): for an open incident, the
+            <xs:annotation><xs:documentation>Recovery (plans/archive/Monitoring.md, Later: Recovery): for an open incident, the
                 matching RecoveryPolicy picks the least disruptive allowed action of its ladder, which is recorded as a
                 decision. Advisory by default: an action runs only with approval (MONITOR_RECOVER) or under an automatic
                 policy when allow-automatic is true, through its adapter (in-process, webhook or manual), one active

@@ -312,7 +312,7 @@ box (Load scripts, Runs), shown with the permission, and loses the "Service load
 
 The form of New run is built from the plan and the run's page draws live charts, which the XML widgets do not
 express, so those two have a `.qvue` with a `tui` twin; the lists and Compare are plain XML screens. The run's page
-polls `Load/runStatus` every 2 seconds while the run is running (the pattern [Monitoring](../Monitoring.md) names for
+polls `Load/runStatus` every 2 seconds while the run is running (the pattern [Monitoring](Monitoring.md) names for
 live data) and stops polling when it ends. In `tui` the page shows the numbers as they are when it renders, with
 Refresh, and the charts as the `chart` component the old twin used.
 

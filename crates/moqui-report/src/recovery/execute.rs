@@ -1,9 +1,9 @@
-//! Carrying out a recovery action (plans/Monitoring.md, Later: Recovery). The action row is saved before anything
-//! runs, keyed by an idempotency key, while the action holds its scope's lease, so one action is active per scope and
-//! a retried run reaches the controller with the same key. An in-process action is done at once and keeps what
-//! reverting it restores; a webhook posts a signed request to a deployment controller, which answers at once or reports
-//! back on `/v1/recovery` (or is polled at its `statusUrl`); a manual action waits for an operator. An action past its
-//! deadline is timed out and escalated.
+//! Carrying out a recovery action (plans/archive/Monitoring.md, Later: Recovery). The action row is saved before
+//! anything runs, keyed by an idempotency key, while the action holds its scope's lease, so one action is active per
+//! scope and a retried run reaches the controller with the same key. An in-process action is done at once and keeps
+//! what reverting it restores; a webhook posts a signed request to a deployment controller, which answers at once or
+//! reports back on `/v1/recovery` (or is polled at its `statusUrl`); a manual action waits for an operator. An action
+//! past its deadline is timed out and escalated.
 
 use super::policy::{Action, AdapterKind};
 use super::{fail, Error, ExecutionContext, Value};

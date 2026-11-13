@@ -1,5 +1,5 @@
-//! Recovery (plans/Monitoring.md, Later: Recovery; requirements 6 and 7): a durable policy, decision, execution and
-//! verification state machine. Each pass of `run#Recovery` moves active actions on ([`execute::advance`]), verifies
+//! Recovery (plans/archive/Monitoring.md, Later: Recovery; requirements 6 and 7): a durable policy, decision, execution
+//! and verification state machine. Each pass of `run#Recovery` moves active actions on ([`execute::advance`]), verifies
 //! the actions whose verify time has come ([`verify`]), and for each open incident with a matching `RecoveryPolicy`
 //! records a decision ([`policy::decide`]) when what it would decide has changed. Advisory by default: an action runs
 //! only when approved (`MONITOR_RECOVER`), or under an automatic policy with `telemetry/recovery allow-automatic`, and

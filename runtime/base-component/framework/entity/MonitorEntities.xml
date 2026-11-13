@@ -40,7 +40,7 @@
         <field name="lastMessage" type="text-long"/>
         <field name="lastTraceId" type="text-short"/>
     </entity>
-    <!-- Regressions and incidents (plans/Monitoring.md, Later: Regressions and incidents). -->
+    <!-- Regressions and incidents (plans/archive/Monitoring.md, Later: Regressions and incidents). -->
     <entity entity-name="MonitorScopeLock" package="moqui.monitor" use="nontransactional" cache="never">
         <description>A lease on a scope (the regression detector, an incident's recovery), so one server works on it at a
             time. A claim is a conditional update of claimToken and claimedUntil.</description>
@@ -143,7 +143,7 @@
         <field name="statusId" type="text-short"><description>hypothesis, confirmed or rejected</description></field>
         <relationship type="one" related="moqui.monitor.MonitorIncident"/>
     </entity>
-    <!-- Recovery (plans/Monitoring.md, Later: Recovery). -->
+    <!-- Recovery (plans/archive/Monitoring.md, Later: Recovery). -->
     <entity entity-name="RecoveryPolicy" package="moqui.monitor" use="configuration" cache="never">
         <description>Which incidents a policy applies to, the actions it may take, least disruptive first, and how: advisory
             (the default) records the recommendation, approval waits for a MONITOR_RECOVER approval, automatic runs it

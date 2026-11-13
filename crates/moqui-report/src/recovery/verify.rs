@@ -1,7 +1,7 @@
-//! Verifying a recovery action (plans/Monitoring.md, Later: Recovery; requirement 7). Once the action has been in effect
-//! for its verify time, the service since then is compared with each of the incident's regressions' baselines, the
-//! business operations' rollback rate is held to the policy's limit, and a rollback must show its instances on the
-//! version it went back to. Too few samples or missing telemetry is Inconclusive, never Verified.
+//! Verifying a recovery action (plans/archive/Monitoring.md, Later: Recovery; requirement 7). Once the action has been
+//! in effect for its verify time, the service since then is compared with each of the incident's regressions'
+//! baselines, the business operations' rollback rate is held to the policy's limit, and a rollback must show its
+//! instances on the version it went back to. Too few samples or missing telemetry is Inconclusive, never Verified.
 
 use super::{Error, Value};
 use crate::regression::{self, compare, field, millis, Window};

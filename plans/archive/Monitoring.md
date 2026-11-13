@@ -1,6 +1,8 @@
 # Monitoring
 
-M1–M7 were built Oct 26–27, 2026 (commits 735b3860 and 0df8ad3f). A review pass on Oct 27 fixed the bugs it found and listed the gaps it left in [Remaining-Work](Remaining-Work.md#monitoring); a second pass on Oct 27–28 built them (Prometheus text, protobuf export, outbound trace coverage, shared alert items, per-table exports, the report engine and dashboard gaps, the TUI charts, the Monitor screens and access), leaving the overhead measurements and smaller follow-ups there. A third pass on Oct 28 built the Dashboards later items (repeats; funnel, node graph, flame graph and geomap; log patterns; the agent-traces view; Git sync) and pulling (scrape targets and synthetic checks), and closed those follow-ups: received metrics on `/metrics`, SQL spans following their frame's sampling, gzip and merged OTLP export, shared silences matched by label, definition delete, notifications not sent twice, the TUI time picker, panel menu, suggestions and kiosk scrolling, data links that keep the time range, a signed-in `report-embed` test, a shipped latency heatmap, inline search highlights, Dashboards list links that work under BOSS Insights, decimals in TUI props, localization of the widgets and shipped dashboards, `unitField` amounts, and lookup labels without entity grants. The overhead measurements remain. Of the Later stages, browser RUM with session replay, day partitions, the gRPC receiver, business operations, regressions and incidents, and recovery were built Oct 30; server-JS profiling is not started. The user guide is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md). A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
+> Archived 2026-11-12: built. M1–M7, the review passes and the Later stages (browser RUM and replay, day partitions, the gRPC receiver, business operations, regressions and incidents, recovery) are in the code; the last two gate tests (a verification that Fails, a timed-out action) and the business-operation hooks' cost were done on archiving ([the gate](#implementation-plan)). Not built, and after v0.1.0 in [Future-Plans](../Future-Plans.md#monitoring): server-JS profiling, tenant isolation of the evidence, public links. The open limits of what is built are in [Remaining-Work](../Remaining-Work.md#monitoring). The user guide is [docs/tools/Monitoring.md](../../docs/tools/Monitoring.md). The Starting point section names files the plan removed (`context/hits.rs`, `search/logs.rs`), so its links to them no longer resolve.
+
+M1–M7 were built Oct 26–27, 2026 (commits 735b3860 and 0df8ad3f). A review pass on Oct 27 fixed the bugs it found and listed the gaps it left in [Remaining-Work](../Remaining-Work.md#monitoring); a second pass on Oct 27–28 built them (Prometheus text, protobuf export, outbound trace coverage, shared alert items, per-table exports, the report engine and dashboard gaps, the TUI charts, the Monitor screens and access), leaving the overhead measurements and smaller follow-ups there. A third pass on Oct 28 built the Dashboards later items (repeats; funnel, node graph, flame graph and geomap; log patterns; the agent-traces view; Git sync) and pulling (scrape targets and synthetic checks), and closed those follow-ups: received metrics on `/metrics`, SQL spans following their frame's sampling, gzip and merged OTLP export, shared silences matched by label, definition delete, notifications not sent twice, the TUI time picker, panel menu, suggestions and kiosk scrolling, data links that keep the time range, a signed-in `report-embed` test, a shipped latency heatmap, inline search highlights, Dashboards list links that work under BOSS Insights, decimals in TUI props, localization of the widgets and shipped dashboards, `unitField` amounts, and lookup labels without entity grants. The overhead measurements remain. Of the Later stages, browser RUM with session replay, day partitions, the gRPC receiver, business operations, regressions and incidents, and recovery were built Oct 30; server-JS profiling was not started and went to Future-Plans when the plan was archived. The user guide is [docs/tools/Monitoring.md](../../docs/tools/Monitoring.md). A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
 
 ## Objective and scope
 
@@ -114,29 +116,29 @@ Decisions, Oct 25, 2026:
 
 This is the code as it stood when the plan was written. M1 and M2 replaced the logging, spans and hits described here.
 
-- **Logging.** [`LineSubscriber`](../crates/moqui-host/src/logging.rs) is a hand-written `tracing` subscriber.
+- **Logging.** [`LineSubscriber`](../../crates/moqui-host/src/logging.rs) is a hand-written `tracing` subscriber.
   - It hands out span ids but keeps no span data.
   - Events go to stderr, the TUI and SSH taps, and rolling files.
-  - `ship_to_search` also sends them every 2 s to `moqui_logs`, and the `log_http` middleware ([`http.rs`](../crates/moqui-host/src/http.rs)) sends to `moqui_http_log`. Both go through `SearchFacade::index_log_entries`.
+  - `ship_to_search` also sends them every 2 s to `moqui_logs`, and the `log_http` middleware ([`http.rs`](../../crates/moqui-host/src/http.rs)) sends to `moqui_http_log`. Both go through `SearchFacade::index_log_entries`.
   - There is no `tracing-subscriber`, and no OpenTelemetry, prost or tonic crate in `Cargo.lock`.
 - **Spans.** There are two `tracing` spans:
-  - `artifact`, opened at each artifact-stack push and closed at pop ([`context/artifact.rs`](../crates/moqui-core/src/context/artifact.rs)). Screens, transitions, services, entities, REST and LLM calls all push frames.
-  - `sql`, in [`entity/exec.rs`](../crates/moqui-entity/src/entity/exec.rs).
+  - `artifact`, opened at each artifact-stack push and closed at pop ([`context/artifact.rs`](../../crates/moqui-core/src/context/artifact.rs)). Screens, transitions, services, entities, REST and LLM calls all push frames.
+  - `sql`, in [`entity/exec.rs`](../../crates/moqui-entity/src/entity/exec.rs).
   - There is no request span and no job span.
-- **Hits.** `ExecutionContext::pop` calls `count_artifact_hit` ([`context/factory.rs`](../crates/moqui-core/src/context/factory.rs)).
-  - [`context/hits.rs`](../crates/moqui-core/src/context/hits.rs) queues ArtifactHit rows and 900 s ArtifactHitBin bins, and writes them on the scheduler tick and at shutdown.
+- **Hits.** `ExecutionContext::pop` calls `count_artifact_hit` ([`context/factory.rs`](../../crates/moqui-core/src/context/factory.rs)).
+  - [`context/hits.rs`](../../crates/moqui-core/src/context/hits.rs) queues ArtifactHit rows and 900 s ArtifactHitBin bins, and writes them on the scheduler tick and at shutdown.
   - `clean#ArtifactData` removes old rows.
   - `stats-skip-condition` is configured but never read.
-- **Metrics.** There is a plain-text `/metrics` endpoint (pool, request queue, statements, guards, replica lag), plus `status_map` and `thread_list` in [`context/status.rs`](../crates/moqui-core/src/context/status.rs).
+- **Metrics.** There is a plain-text `/metrics` endpoint (pool, request queue, statements, guards, replica lag), plus `status_map` and `thread_list` in [`context/status.rs`](../../crates/moqui-core/src/context/status.rs).
 - **Identity.**
   - Instance: `cluster::instance_id`.
-  - Version: `CARGO_PKG_VERSION` and [`build_info.rs`](../crates/moqui-core/src/build_info.rs). There is no git revision.
+  - Version: `CARGO_PKG_VERSION` and [`build_info.rs`](../../crates/moqui-core/src/build_info.rs). There is no git revision.
 - **Hand-offs.**
-  - `CallJob` carries `user_name` and `origin` across the service pool ([`service/pool.rs`](../crates/moqui-core/src/service/pool.rs)).
-  - Jobs write `ServiceJobRun` in [`service/jobs.rs`](../crates/moqui-core/src/service/jobs.rs).
-  - Outbound calls go through [`outbound.rs`](../crates/moqui-core/src/outbound.rs).
+  - `CallJob` carries `user_name` and `origin` across the service pool ([`service/pool.rs`](../../crates/moqui-core/src/service/pool.rs)).
+  - Jobs write `ServiceJobRun` in [`service/jobs.rs`](../../crates/moqui-core/src/service/jobs.rs).
+  - Outbound calls go through [`outbound.rs`](../../crates/moqui-core/src/outbound.rs).
 - **SearchFacade.**
-  - Aggregations are `Filter`, `DateHistogram`, `Terms`, `Sum`, `Extreme` and `CountDistinct` ([`search/agg.rs`](../crates/moqui-core/src/search/agg.rs)). Retention is `delete_matching`.
+  - Aggregations are `Filter`, `DateHistogram`, `Terms`, `Sum`, `Extreme` and `CountDistinct` ([`search/agg.rs`](../../crates/moqui-core/src/search/agg.rs)). Retention is `delete_matching`.
   - Gaps:
     - `DateHistogram` takes calendar units only (no `5m`), and fills gaps only between the first and last non-empty bucket.
     - `Terms` has no missing or other bucket.
@@ -151,12 +153,12 @@ This is the code as it stood when the plan was written. M1 and M2 replaced the l
   - Chart.js 4.5.1 through `m-chart`, plus Mermaid, highlight.js through `m-code`, and `m-dynamic-container`.
   - Live data arrives through `/notws` topics (the `publish#ShellCounts` pattern) or by polling JSON transitions (the `Tools/Load/Run.qvue` pattern).
   - Every qvt block needs a `tui` twin. The TUI already has `chart`, `timeline` and `tree` components.
-  - `m-chart` takes a raw Chart.js config, and there is no XML chart element. mr-boss builds configs in `ironstone.projects.ReportServices.get#ChartConfig`, colours included. The TUI `chart` ([`chart.rs`](../crates/moqui-tui/src/components/chart.rs)) draws a table with one bar column.
+  - `m-chart` takes a raw Chart.js config, and there is no XML chart element. mr-boss builds configs in `ironstone.projects.ReportServices.get#ChartConfig`, colours included. The TUI `chart` ([`chart.rs`](../../crates/moqui-tui/src/components/chart.rs)) draws a table with one bar column.
 - **Reports.**
-  - `moqui.screen.ScreenScheduled` and `render#ScheduledScreen` ([`ScreenServices.xml`](../runtime/base-component/framework/service/org/moqui/impl/ScreenServices.xml)) render a screen with a saved find on a cron schedule. The output is csv, xlsx or PDF, emailed to a user or group or saved to a location, and is skipped when empty.
-  - The PDF engine ([`pdf.rs`](../crates/moqui-host/src/pdf.rs)) is one headless Chromium. It loads each document into a blank page with every request failed. `Page.captureScreenshot` is already used by the test client's browser driver.
+  - `moqui.screen.ScreenScheduled` and `render#ScheduledScreen` ([`ScreenServices.xml`](../../runtime/base-component/framework/service/org/moqui/impl/ScreenServices.xml)) render a screen with a saved find on a cron schedule. The output is csv, xlsx or PDF, emailed to a user or group or saved to a location, and is skipped when empty.
+  - The PDF engine ([`pdf.rs`](../../crates/moqui-host/src/pdf.rs)) is one headless Chromium. It loads each document into a blank page with every request failed. `Page.captureScreenshot` is already used by the test client's browser driver.
   - Form-lists have saved finds, aggregates and CSV/xlsx export.
-  - BOSS Insights ([research](../runtime/component/mr-boss/plan/research-insights.md)) has a DataDocument report builder, saved and scheduled reports, and a placeholder Dashboards screen. There is no dashboard, widget or alert record yet.
+  - BOSS Insights ([research](../../runtime/component/mr-boss/plan/research-insights.md)) has a DataDocument report builder, saved and scheduled reports, and a placeholder Dashboards screen. There is no dashboard, widget or alert record yet.
 
 ### Shape
 
@@ -193,7 +195,7 @@ Internal and external sources share the same documents and the same screens, tol
   - tonic or a gRPC transport pulled in by the proto features
   - a second hyper or reqwest
   - a required async runtime (moqui-core has no direct tokio dependency)
-- **Licenses.** These crates are Apache-2.0, which [`deny.toml`](../deny.toml) already allows. Add a row to [License-Review](archive/License-Review.md).
+- **Licenses.** These crates are Apache-2.0, which [`deny.toml`](../../deny.toml) already allows. Add a row to [License-Review](License-Review.md).
 - **Wasm.** Keep them behind a `telemetry` feature that is off in `moqui-browser`.
 
 ### Signals
@@ -240,7 +242,7 @@ Internal and external sources share the same documents and the same screens, tol
 
 ### Indexes
 
-`search/telemetry.rs` generalizes [`search/logs.rs`](../crates/moqui-core/src/search/logs.rs): flat mappings that are not DataDocuments and work on both backends. Field names follow OTel (and SigNoz): `trace_id`, `span_id`, `duration_nano`, `severity_number`, `resource.*`, `attributes.*`.
+`search/telemetry.rs` generalizes [`search/logs.rs`](../../crates/moqui-core/src/search/logs.rs): flat mappings that are not DataDocuments and work on both backends. Field names follow OTel (and SigNoz): `trace_id`, `span_id`, `duration_nano`, `severity_number`, `resource.*`, `attributes.*`.
 
 | Index | Key fields (typed columns; the rest stays in the body) |
 |---|---|
@@ -293,7 +295,7 @@ These go into `Agg` and both backends, with tests on each. The report tool needs
 
 `runtime/base-component/tools/screen/Monitor.xml` is added to `apps.xml` from `tools/MoquiConf.xml` at menu-index 97 (System is 98, Tools is 99). It uses icon `sym_o_monitoring` and a `MONITOR_APP` artifact group in `MonitoringSecurityData.xml`.
 
-Most of its screens are dashboards shipped as files, or Explore presets from the [Dashboards app](#placement). Traces, Errors and Sources stay specialized screens. Settings, timed in-memory overrides of log levels and telemetry settings, was designed and built separately ([Monitor-Settings](archive/Monitor-Settings.md), archived).
+Most of its screens are dashboards shipped as files, or Explore presets from the [Dashboards app](#placement). Traces, Errors and Sources stay specialized screens. Settings, timed in-memory overrides of log levels and telemetry settings, was designed and built separately ([Monitor-Settings](Monitor-Settings.md), archived).
 
 | Screen | Built as | Content | Replaces |
 |---|---|---|---|
@@ -340,8 +342,8 @@ Each is replaced in the same milestone, so no function or data is lost in betwee
 
 **ArtifactHit and ArtifactHitBin (M2)**
 - **Removed:**
-  - Entities: ArtifactHit, ArtifactHitBin and the ArtifactHitReport view (`ServerEntities.xml`), their fence rows ([`entity/fence.rs`](../crates/moqui-entity/src/entity/fence.rs)), and the nontransactional-group note in `MoquiDefaultConf.xml`.
-  - Recording: [`context/hits.rs`](../crates/moqui-core/src/context/hits.rs), `count_artifact_hit`, and the bin flush at shutdown in `moqui-host`.
+  - Entities: ArtifactHit, ArtifactHitBin and the ArtifactHitReport view (`ServerEntities.xml`), their fence rows ([`entity/fence.rs`](../../crates/moqui-entity/src/entity/fence.rs)), and the nontransactional-group note in `MoquiDefaultConf.xml`.
+  - Recording: [`context/hits.rs`](../../crates/moqui-core/src/context/hits.rs), `count_artifact_hit`, and the bin flush at shutdown in `moqui-host`.
   - Screens and REST: the System `ArtifactHitSummary.xml` and `ArtifactHitBins.xml` screens, and their REST list entries in `tools/service/moqui.rest.xml`.
   - Cleanup: `clean#ArtifactData` and its `clean_ArtifactData_daily` job, replaced by the telemetry retention job.
 - **`artifact-stats`.** The defaults move to the telemetry config. An `artifact-stats` left in a site or component conf still applies, with a deprecation warning, the way schema problems stay warnings: `persist-bin` turns the type's metric on or off, and `persist-hit` its spans.
@@ -365,7 +367,7 @@ Each is replaced in the same milestone, so no function or data is lost in betwee
 | System dashboard Usage box | Links to Artifact Hit Summary, Artifact Hit Bins and Log Viewer | Links to Monitor's Artifacts and Logs |
 
 **Log Viewer (M2)**
-- **Removed:** `System/LogViewer.xml`, `ship_to_search`, and the `moqui_logs` and `moqui_http_log` mappings in [`search/logs.rs`](../crates/moqui-core/src/search/logs.rs).
+- **Removed:** `System/LogViewer.xml`, `ship_to_search`, and the `moqui_logs` and `moqui_http_log` mappings in [`search/logs.rs`](../../crates/moqui-core/src/search/logs.rs).
 - **The Monitor Logs screen** is Explore on the `otel_logs` dataset. It covers each Log Viewer function:
   - The free `indexName` box becomes the dataset picker, which covers logs, spans (the old HTTP log) and documents.
   - The query string is the same Lucene subset, with a syntax link. The full query is shown, and a query that does not parse shows its error.
@@ -460,7 +462,7 @@ The pipeline is Grafana's panel model, with OSD's aggregation editor as the quer
 - **Users of the tool:**
   - **Monitor** ships its dashboards as files, and links into Explore with the telemetry datasets.
   - **Business components** ship dashboards on their own datasets, such as mr-mantle on `mantle_sales`.
-  - **BOSS Insights** reuses the screens and widgets under its own menus. This answers the open questions in its [research](../runtime/component/mr-boss/plan/research-insights.md#17-gaps--boss-implications):
+  - **BOSS Insights** reuses the screens and widgets under its own menus. This answers the open questions in its [research](../../runtime/component/mr-boss/plan/research-insights.md#17-gaps--boss-implications):
     - Library panels are the one widget registry for dashboards and landing pages.
     - The renderers are framework code.
     - The report builder is a dataset plus a report query, with grain, pivot and period comparison.
@@ -589,7 +591,7 @@ A panel is queries, then transformations, then a visualization with its options 
 
 - **Layout:** Discover's, on any dataset:
   - dataset and time pickers
-  - a query bar (the Lucene subset in [`parse.rs`](../crates/moqui-core/src/search/parse.rs)) with history, and filter pills
+  - a query bar (the Lucene subset in [`parse.rs`](../../crates/moqui-core/src/search/parse.rs)) with history, and filter pills
   - a field sidebar: fields by kind, top values from a Terms aggregation, and "visualize" for a field
   - a count-over-time histogram
   - a document table: expand to fields and JSON, choose columns, and filter for or out from a cell
@@ -657,7 +659,7 @@ The rule model follows Grafana's.
 
 ## Implementation plan
 
-Light plan. Each milestone ends with tests and an overhead measurement against the [Profiling2](Profiling2.md#2-how-to-measure) speed tests (artifact spans sit on the hottest path).
+Light plan. Each milestone ends with tests and an overhead measurement against the [Profiling2](../Profiling2.md#2-how-to-measure) speed tests (artifact spans sit on the hottest path).
 
 **M1: foundation and traces**
 - Check the crates with `cargo tree`, add the License-Review row, and add the `telemetry` feature.
@@ -792,10 +794,19 @@ As of Oct 30 the gate stands at:
   - tolerance of a telemetry outage: gaps degrade a verdict and lost data leaves a recovery Inconclusive
   - regression detection
   - recovery: a safe approved action verified; a webhook retried under one idempotency key; a refused callback; the emergency stop
-- **Not covered yet:**
+- **Not covered then:**
   - a verification that Fails, and a timed-out action
   - tenant isolation: there is no tenant model
-  - measured overhead: the business-operation hooks run on every call that owns its transaction; this has not been measured against the Profiling speed tests
+  - measured overhead: the business-operation hooks run on every call that owns its transaction; this had not been measured against the Profiling speed tests
+
+On archiving (Nov 12):
+- **A verification that Fails and a timed-out action** are covered in `tests/it/monitor_recovery.rs`:
+  - A third service's automatic policy carries out its steps through the shipped `MANUAL` adapter. Its restart, marked done while the service still fails, is verified Failed and escalated, and the incident stays Mitigating.
+  - The rollback decided in the same pass, left unmarked, is TimedOut and escalated past its deadline.
+- **The business-operation hooks were measured.** `service_speed` was run in release on embedded Postgres, at ratio 0, with `<operations record="none">` against the default `record`; the medians are over 1,000 calls × 5 batches, and the machine was shared.
+  - A call that owns its transaction (an operation) costs 5 allocations and about 70 bytes more. That is about 0.6–2 µs on a 30–38 µs committed call, within the run-to-run spread: create#TestEntity 36.2 → 38.3 µs, update 34.1 → 34.7 µs, delete 29.4 → 30.0 µs, with allocations 186.5/160/138 → 191.5/165/143.
+  - The same calls joining a transaction, and `echo#Data` (an `org.moqui.*` service, left out by the default rule), are unchanged in time and allocations.
+  - Tenant isolation went to Future-Plans with server-JS profiling and public links.
 
 
 ## Implementation verification log
@@ -925,4 +936,4 @@ Counts after the review pass, on Linux: core 2,063 passed (three ignored, as bef
 
 `monitor_tui` failed about one run in five, before this pass too: with focus on the live tail, the tail's lines fell below the 100-row screen whenever the Explore histogram took an extra row. It now draws 160 rows and passed 12 runs in a row.
 
-Upgrade notes and deployment defaults are in [docs/tools/Monitoring.md](../docs/tools/Monitoring.md#upgrading).
+Upgrade notes and deployment defaults are in [docs/tools/Monitoring.md](../../docs/tools/Monitoring.md#upgrading).

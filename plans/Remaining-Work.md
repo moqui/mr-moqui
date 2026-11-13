@@ -43,11 +43,11 @@ Guides [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Mail-OAuth](../docs/
 
 ## Monitoring
 
-Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Not started: the plan's Later stage server-JS profiling (the others were built Oct 30).
+Built; plan archived 2026-11-12 as [Monitoring](archive/Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Server-JS profiling, tenant isolation of the evidence and public links are after v0.1.0 ([Future-Plans](Future-Plans.md#monitoring)).
 
 | Area | Item | Source |
 |---|---|---|
-| Overhead | No per-milestone overhead baselines were captured; production-scale concurrency, cardinality, long retention and rollup load, storage growth and a multi-host soak are not measured. The per-batch export timing (`monitor_performance.rs`, now protobuf with gzip) has not been re-run against a live collector | Monitoring.md "Overhead" |
+| Overhead | No per-milestone overhead baselines were captured; production-scale concurrency, cardinality, long retention and rollup load, storage growth and a multi-host soak are not measured. The per-batch export timing (`monitor_performance.rs`, now protobuf with gzip) has not been re-run against a live collector | [Monitoring, Overhead](archive/Monitoring.md#overhead) |
 | Export | No real collector has received a gzipped request yet (the Docker test `collector_forwards_json_and_raw_protobuf_for_every_signal` would show it); received exponential histograms are not on `/metrics` | `telemetry/otlp.rs`, `telemetry/received.rs` |
 | Dashboards | The flame graph is span self time (no stored profiles); the service map and span flame read the newest 10000 spans of a range, so with head sampling they show mostly the always-kept roots, errors and slow spans; the geomap has no zoom or pan, and the TUI geomap shows a country frame as a list, not a map; TUI and print text panels in a repeat show the dashboard's variable values, not the copy's | `report/graph.rs`, `WebrootReport.js`, `moqui-tui` `components/report/graph.rs` |
 | Git sync | A pull cannot save a definition another user owns; only the repository's default branch syncs; no test runs the gitECA path end to end (a push over HTTP or SSH, including a pull that deletes) | `report/git_sync.rs` |

@@ -68,6 +68,24 @@ the plan's [Later row](Edge-Node2.md#5-phases): a PASS read cache on the edge no
 queued items, media cascading between a local node and the edge node, the voicemail fallback following rules and
 schedules, QUIC and DANE.
 
+## Monitoring
+
+From [Monitoring](archive/Monitoring.md), archived 2026-11-12. M1–M7 and the Later stages (browser RUM and replay,
+day partitions, gRPC, business operations, regressions and incidents, recovery) are built; guide
+[Monitoring](../docs/tools/Monitoring.md). The open limits of what is built are in
+[Remaining-Work](Remaining-Work.md#monitoring). After v0.1.0:
+- **Server-JS profiling** ([Later](archive/Monitoring.md#implementation-plan)): wall-time hooks at the function and
+  selected block boundaries of generated JS, and of handwritten JS through an AST transform, mapped to the JS or XML
+  source and the build and linked to the active trace, gated by script, request and an overhead budget, never
+  capturing arguments or locals. True CPU or line sampling needs a QuickJS engine hook. It overlaps
+  [Profiling3](Profiling3.md) M1, the operation profile (`MOQUI_OP_PROFILE`, built), which already times host calls and
+  the interpreter between them per outermost call; start from that.
+- **Tenant isolation** of monitoring evidence (incidents, regressions, recovery, the AI-assisted search the
+  [3 a.m. incident](archive/Monitoring.md#operator-ux-a-3-am-incident) describes), once there is a tenant model. Today
+  the build and runtime context are kept, with no tenant to record.
+- **Public and anonymous dashboard links**, if they are wanted: deferred because ERP data on a self-hosted server
+  should not get a bearer URL by default ([Sharing](archive/Monitoring.md#scheduled-reports-and-sharing)).
+
 ## Messaging — runtime-reflective FlatBuffers ([Messaging.md](proposals/Messaging.md), 1286 lines)
 Binary request/response and WebSocket document subscriptions using FlatBuffers `.bfbs` schemas generated at runtime from service, screen-transition and Data Document definitions, with a Rust reflective reader, a browser reader/writer on Emscripten WASM, shared message buffers and large-scale fan-out. JSON and other contracts stay. Status: roadmap shows 0 of 6 phases done. Today `moqui-browser` speaks JSON ([`crates/moqui-browser/src/api.rs`](../crates/moqui-browser/src/api.rs)) and cites this plan for the binary forms. Prerequisites in place: Wasm browser build, cached QuickJS service functions, committed-update path. Go/no-go gates are in §19; capacity model in §12–13.
 

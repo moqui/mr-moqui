@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- Recovery (plans/Monitoring.md, Later: Recovery): the emergency stop, the policies (which incidents, which actions least
+<!-- Recovery (plans/archive/Monitoring.md, Later: Recovery): the emergency stop, the policies (which incidents, which actions least
     disruptive first, advisory, approval or automatic), the adapters that carry actions out, and the newest actions.
     Seeing it needs MONITOR_INCIDENT; changing policies, adapters and the stop MONITOR_RECOVER_ADMIN, which the services check. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Recovery" default-menu-index="16" default-menu-group="Health" menu-image="sym_o_healing" menu-image-type="icon">

@@ -4,7 +4,8 @@ Moqui records its own work as OpenTelemetry spans, metrics and logs, takes in OT
 it in SearchFacade indexes on Postgres or OpenSearch. Monitor, a section of the System app, reads those indexes. The
 Dashboards app is a general reporting tool over the same indexes and over business DataDocuments: datasets, report
 queries, panels, dashboards, alerts and scheduled reports. The design and the build record are in
-[plans/Monitoring.md](../../plans/Monitoring.md). As of Oct 27, 2026 (M1–M7 and the review pass built).
+[plans/archive/Monitoring.md](../../plans/archive/Monitoring.md), archived Nov 12, 2026 with everything but server-JS
+profiling built.
 
 The code: `crates/moqui-core/src/telemetry/` (the SDK wiring, sampling, the bounded worker, OTLP in and out, rollups
 and retention), `crates/moqui-report/src/` (datasets, queries, frames, transformations, definitions, alerts,
@@ -1301,4 +1302,5 @@ take the index refresh interval to appear.
 ## Not built
 
 The open items are in [Remaining-Work](../../plans/Remaining-Work.md#monitoring), among them overhead at production scale.
-Server-JS profiling is the Later stage of the plan not yet built.
+Server-JS profiling, tenant isolation of the evidence and public links are in
+[Future-Plans](../../plans/Future-Plans.md#monitoring).

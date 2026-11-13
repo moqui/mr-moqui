@@ -1,5 +1,5 @@
 //! The OTLP/gRPC receiver on a real seeded PostgreSQL server: each signal through the generated collector clients,
-//! the ingest key, the body limit and partial success (plans/Monitoring.md, Ingest).
+//! the ingest key, the body limit and partial success (plans/archive/Monitoring.md, Ingest).
 #![cfg(all(unix, feature = "embedded-postgres", feature = "grpc"))]
 use crate::common;
 use moqui_lib::object::Value;

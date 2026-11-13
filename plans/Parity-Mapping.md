@@ -150,7 +150,7 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 | `moqui-host/src/source_body.rs` | No Java basis: the body of a streamed file response, a window read when the client takes the last. | Native |
 | `moqui-core/src/context/cache.rs` | `CacheFacadeImpl` on one `MCache` per `<cache name>`. | Port |
 | `moqui-core/src/context/artifact.rs` | `ArtifactExecutionFacadeImpl` stack and `ArtifactExecutionInfoImpl`. Push and pop start and end an OpenTelemetry span and record `moqui.artifact.duration` (`telemetry/`). | Partial |
-| `moqui-core/src/telemetry/` | Replaces `countArtifactHit` with its `ArtifactHit` and `ArtifactHitBin` rows, and the `ElasticSearchLogger` shipping: OpenTelemetry spans, metrics and logs, sampling, the bounded export worker, the OTLP receiver's decoding and the OTLP exporter, rollups and retention ([Monitoring](Monitoring.md)). | Native |
+| `moqui-core/src/telemetry/` | Replaces `countArtifactHit` with its `ArtifactHit` and `ArtifactHitBin` rows, and the `ElasticSearchLogger` shipping: OpenTelemetry spans, metrics and logs, sampling, the bounded export worker, the OTLP receiver's decoding and the OTLP exporter, rollups and retention ([Monitoring](archive/Monitoring.md)). | Native |
 | `moqui-core/src/context/message.rs` | `MessageFacadeImpl`, `MessageFacade`, `MessageFacadeException`. | Port |
 | `moqui-core/src/l10n.rs` | `L10nFacadeImpl`, `L10nFacade`. Formatters are `moqui-lib`. | Port |
 | `moqui-core/src/context/status.rs` | `ExecutionContextFactoryImpl.getStatusMap` and `getComponentInfoList`. JVM management beans are process stats (`/proc/self/status`). Disk is not reported. | Partial |
@@ -601,7 +601,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `tools/MCacheToolFactory.java` | `context/cache.rs` | Port |
 | `tools/H2ServerToolFactory.groovy`, `JackrabbitRunToolFactory.groovy`, `JCSCacheToolFactory.groovy`, `SubEthaSmtpToolFactory.groovy` | — | Excluded |
 | `util/EdiHandler.groovy` | `edi.rs` | Port |
-| `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](Monitoring.md)) | Redesign |
+| `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](archive/Monitoring.md)) | Redesign |
 | `util/ElFinderConnector.groovy` | `moqui-dav/src/elfinder.rs` | Port |
 | `util/JdbcExtractor.java` | `moqui-drivers/src/jdbc_extract.rs` | Port |
 | `util/RestSchemaUtil.groovy` | `entity/schema.rs`, `screen/schema.rs` | Partial |
@@ -612,7 +612,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `webapp/MoquiAuthFilter.groovy` | `screen/mod.rs`, `runtime/base-component/webroot/script/AuthFilter.js` | Port |
 | `webapp/MoquiContextListener.groovy` | `moqui-host/src/lib.rs`, `web/servlet.rs` (servlets, filters, listeners, after-startup and before-shutdown) | Partial |
 | `webapp/NotificationEndpoint.groovy`, `NotificationWebSocketListener.groovy`, `MoquiAbstractEndpoint.groovy` | `moqui-host/src/notws.rs` | Port |
-| `webapp/ElasticRequestLogFilter.groovy` | `moqui-host/src/http.rs` (`log_http`: the request span in `otel_spans`; [Monitoring](Monitoring.md)) | Redesign |
+| `webapp/ElasticRequestLogFilter.groovy` | `moqui-host/src/http.rs` (`log_http`: the request span in `otel_spans`; [Monitoring](archive/Monitoring.md)) | Redesign |
 | `webapp/MoquiFopServlet.groovy` | `screen/mod.rs` (`/fop/<path>`: the screen as `html-print`, sent as PDF by `PdfRenderer`; PDF only) | Partial |
 | `webapp/GroovyShellEndpoint.groovy`, `LlmServlet.groovy`, `A2AServlet.groovy`, `A2ACardServlet.groovy` | — (their conf entries are removed) | Excluded |
 | `webapp/MoquiSessionListener.groovy` | `user/session.rs` does not copy session bytes | Excluded |

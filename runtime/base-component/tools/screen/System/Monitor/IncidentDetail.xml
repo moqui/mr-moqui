@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- One incident (plans/Monitoring.md, Later: Regressions and incidents; the 3 a.m. incident): what failed and since when,
+<!-- One incident (plans/archive/Monitoring.md, Later: Regressions and incidents; the 3 a.m. incident): what failed and since when,
     its status and severity, the ranked causes with what supports and contradicts each, one timeline of the changes,
     regressions, errors, failing traces, missing telemetry, decisions and notes, its regressions, and its recovery.
     MONITOR_INCIDENT is checked by the services, and each view is logged. -->

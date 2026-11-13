@@ -1,6 +1,6 @@
 //! Leases on a monitoring scope (`moqui.monitor.MonitorScopeLock`): the regression detector's pass, an incident's
 //! recovery. A claim is a short `force-new` transaction that takes the row for update and sets a token and an expiry on
-//! the wall clock, so a stopped server's lease lapses (plans/Monitoring.md, Later: Regressions and incidents,
+//! the wall clock, so a stopped server's lease lapses (plans/archive/Monitoring.md, Later: Regressions and incidents,
 //! Recovery). The row is made the first time a scope is claimed.
 
 use super::{fail, Error, ExecutionContext, Value};

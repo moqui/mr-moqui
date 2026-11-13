@@ -1,7 +1,7 @@
-//! Deterministic comparison of a candidate's stats against a baseline's (plans/Monitoring.md, Later: Regressions and
-//! incidents; requirement 4). Rates use a one-sided two-proportion test with Wilson intervals; latency compares the
-//! p95 of the merged duration buckets, at the buckets' resolution, with a chi-square test over the bucket counts. Too
-//! few samples is `insufficient` and gaps or lost telemetry `degraded`: neither is ever read as healthy.
+//! Deterministic comparison of a candidate's stats against a baseline's (plans/archive/Monitoring.md, Later:
+//! Regressions and incidents; requirement 4). Rates use a one-sided two-proportion test with Wilson intervals; latency
+//! compares the p95 of the merged duration buckets, at the buckets' resolution, with a chi-square test over the bucket
+//! counts. Too few samples is `insufficient` and gaps or lost telemetry `degraded`: neither is ever read as healthy.
 
 use serde::{Deserialize, Serialize};
 

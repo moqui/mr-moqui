@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Instance draining, the `isolate-instance` recovery action (plans/Monitoring.md, Later: Recovery). A drained
+//! Instance draining, the `isolate-instance` recovery action (plans/archive/Monitoring.md, Later: Recovery). A drained
 //! instance answers `/health` with 503 and `draining`, so a load balancer stops sending it new traffic, while it goes
 //! on serving the requests that reach it, so an operator can still use it. The state is a `moqui.monitor.InstanceDrain`
 //! row per instance id (the telemetry `service.instance.id`), a cached entity, so a change made on any server reaches

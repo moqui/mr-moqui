@@ -1,6 +1,6 @@
 //! Day partitions of the telemetry tables on the Postgres search backend (`partition-telemetry`): rows land in their
 //! day or the default partition, retention drops whole expired days (per metric granularity) before deleting rows, and
-//! a table made unpartitioned is moved into partitions in place (plans/Monitoring.md, Indexes: retention).
+//! a table made unpartitioned is moved into partitions in place (plans/archive/Monitoring.md, Indexes: retention).
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
 use crate::common;
 use moqui_core::{entity::document::Document, search, telemetry::maintenance, transaction::TransactionManager};
@@ -281,8 +281,8 @@ fn day_partitions_take_rows_drop_expired_days_and_move_an_unpartitioned_table() 
 }
 
 /// A telemetry table whose mapping only gained fields gets their columns and keeps its rows, partitioned or not; a
-/// table with a column the mapping no longer has is refused as before, so no history is dropped (plans/Monitoring.md,
-/// Later: Business operations).
+/// table with a column the mapping no longer has is refused as before, so no history is dropped
+/// (plans/archive/Monitoring.md, Later: Business operations).
 #[test]
 fn a_telemetry_mapping_that_gained_fields_adds_columns_and_keeps_rows() {
     if !common::own_process() {

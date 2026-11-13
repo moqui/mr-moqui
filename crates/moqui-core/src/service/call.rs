@@ -50,7 +50,7 @@ pub struct CallOptions {
     /// Opt-in public/protocol boundary: retain typed failures instead of converting them to result messages.
     pub throw_on_error: bool,
     /// A rollback of this call will be retried (a scheduled job's run): its operation's outcome is `retry`, not
-    /// `rollback` (plans/Monitoring.md, Later: Business operations).
+    /// `rollback` (plans/archive/Monitoring.md, Later: Business operations).
     pub operation_retry: bool,
 }
 
@@ -694,7 +694,7 @@ fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttri
     def.transaction
 }
 
-/// A business operation in progress (plans/Monitoring.md, Later: Business operations).
+/// A business operation in progress (plans/archive/Monitoring.md, Later: Business operations).
 struct OperationRun {
     telemetry: Arc<crate::telemetry::Telemetry>,
     operation: Arc<crate::telemetry::operation::Operation>,

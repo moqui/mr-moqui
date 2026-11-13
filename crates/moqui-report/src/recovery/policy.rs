@@ -1,4 +1,4 @@
-//! The recovery decision (plans/Monitoring.md, Later: Recovery; requirement 6): of a policy's ladder, the least
+//! The recovery decision (plans/archive/Monitoring.md, Later: Recovery; requirement 6): of a policy's ladder, the least
 //! disruptive action that the evidence, the incident's locality, the compatibility checks, the cooldown, the reversal
 //! rule, the daily limit, the scope's active action and the emergency stop all allow. Every step considered keeps the
 //! reason it was or was not taken, which is what an operator sees as why automation stopped; when nothing beyond

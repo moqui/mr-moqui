@@ -1389,8 +1389,8 @@ fn evaluate_claimed(
             if let Value::Map(document) = moqui_lib::json::from_json(&annotation) {
                 outcome.annotations.push(document);
             }
-            // A rule labelled incident="true" opens an incident when a series starts firing (plans/Monitoring.md,
-            // Later: Regressions and incidents).
+            // A rule labelled incident="true" opens an incident when a series starts firing
+            // (plans/archive/Monitoring.md, Later: Regressions and incidents).
             let wants_incident = labels["incident"] == "true" || body["labels"]["incident"] == "true";
             if wants_incident && instance.state == State::Firing {
                 super::incident::open_from_alert(ec, id, text(definition, "title", id), &key, &labels, now);

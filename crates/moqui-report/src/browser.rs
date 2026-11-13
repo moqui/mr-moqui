@@ -1,5 +1,5 @@
-//! Browser RUM and session replay (plans/Monitoring.md, Later: Browser RUM). A signed-in page posts OTLP/JSON spans
-//! and logs, and with `replay-enabled` masked rrweb event chunks, to `/rum/traces`, `/rum/logs` and `/rum/replay`
+//! Browser RUM and session replay (plans/archive/Monitoring.md, Later: Browser RUM). A signed-in page posts OTLP/JSON
+//! spans and logs, and with `replay-enabled` masked rrweb event chunks, to `/rum/traces`, `/rum/logs` and `/rum/replay`
 //! (the webroot's `rum.xml`), whose transitions have checked its session and CSRF token. Here each is held to `<telemetry><browser>`:
 //! on, within its body limit and its session's rate; the page's identity is replaced with the session's
 //! (`moqui_core::telemetry::browser::scrub`); a token route's token is left out of every string, records and replay

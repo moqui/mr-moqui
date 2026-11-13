@@ -1,5 +1,5 @@
-//! The OTLP/gRPC receiver (plans/Monitoring.md, Ingest): the trace, logs and metrics collector services on tonic,
-//! on `<telemetry><receiver grpc-port>` (4317 by default), opened only when `grpc-enabled="true"`. It shares the
+//! The OTLP/gRPC receiver (plans/archive/Monitoring.md, Ingest): the trace, logs and metrics collector services on
+//! tonic, on `<telemetry><receiver grpc-port>` (4317 by default), opened only when `grpc-enabled="true"`. It shares the
 //! HTTP receiver's ingest keys, rate limit, concurrency budget, decoder and queue (`receiver.rs`); a refusal is the
 //! matching gRPC status. The services are routes of the host's gRPC listener (`crate::grpc_listen`), which serves TLS
 //! with the HTTPS listener's certificates (ALPN h2), else plain h2c, and admits each connection by the edge guard as

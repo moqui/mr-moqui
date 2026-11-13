@@ -1,10 +1,11 @@
-//! Incidents (plans/Monitoring.md, Later: Regressions and incidents; requirements 5, 7 and 8). An incident opens from
-//! a regression at or over `incident-severity`, from an alert rule that fires with the label `incident="true"`, or by
-//! hand, one open incident per service: later regressions and alerts join it as evidence. Its timeline holds the
-//! regressions, the changes before the onset, new error groups, sample failing traces and missing telemetry, and its
-//! ranked causes stay hypotheses until an operator confirms one. When every regression it holds has resolved it goes to
-//! Monitoring, and after `resolve-minutes` more to Resolved; a regression back in that time reopens it. Viewing and
-//! changing incidents needs `MONITOR_INCIDENT`, and each view and change is logged on the `moqui.monitor.audit` target.
+//! Incidents (plans/archive/Monitoring.md, Later: Regressions and incidents; requirements 5, 7 and 8). An incident
+//! opens from a regression at or over `incident-severity`, from an alert rule that fires with the label
+//! `incident="true"`, or by hand, one open incident per service: later regressions and alerts join it as evidence. Its
+//! timeline holds the regressions, the changes before the onset, new error groups, sample failing traces and missing
+//! telemetry, and its ranked causes stay hypotheses until an operator confirms one. When every regression it holds has
+//! resolved it goes to Monitoring, and after `resolve-minutes` more to Resolved; a regression back in that time reopens
+//! it. Viewing and changing incidents needs `MONITOR_INCIDENT`, and each view and change is logged on the
+//! `moqui.monitor.audit` target.
 
 use super::regression::{self, causes, compare, field, millis, now, require_incident, row_json, stamp};
 use super::{fail, input, output, Error, ExecutionContext, Parameters, ServiceInfo, Value};

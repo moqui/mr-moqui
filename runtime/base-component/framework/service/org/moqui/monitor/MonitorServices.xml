@@ -24,7 +24,7 @@
         <out-parameters><parameter name="events" type="List"/><parameter name="userId"/><parameter name="visitId"/><parameter name="url"/>
             <parameter name="start"/><parameter name="end"/><parameter name="traceIds" type="List"/></out-parameters></service>
     <service verb="revoke" noun="IngestKey" type="rust" location="moqui_core::monitor::revoke_key"><in-parameters><parameter name="keyId" required="true"/></in-parameters></service>
-    <!-- Regressions and incidents (plans/Monitoring.md, Later: Regressions and incidents). The views and changes need
+    <!-- Regressions and incidents (plans/archive/Monitoring.md, Later: Regressions and incidents). The views and changes need
          MONITOR_INCIDENT and are logged on moqui.monitor.audit. -->
     <service verb="detect" noun="Regressions" type="rust" location="moqui_core::monitor::detect_regressions" transaction="ignore">
         <description>One pass of the regression detector (telemetry/regressions), under a lease so one server runs it at a
@@ -67,7 +67,7 @@
     <service verb="add" noun="IncidentNote" type="rust" location="moqui_core::monitor::add_incident_note">
         <in-parameters><parameter name="incidentId" required="true"/><parameter name="text" required="true"/></in-parameters>
         <out-parameters><parameter name="incidentId"/></out-parameters></service>
-    <!-- Recovery (plans/Monitoring.md, Later: Recovery). Approving, refusing, completing, cancelling and reverting need
+    <!-- Recovery (plans/archive/Monitoring.md, Later: Recovery). Approving, refusing, completing, cancelling and reverting need
          MONITOR_RECOVER; policies, adapters and the emergency stop MONITOR_RECOVER_ADMIN. -->
     <service verb="run" noun="Recovery" type="rust" location="moqui_core::monitor::run_recovery" transaction="ignore">
         <description>One pass of the recovery state machine (telemetry/recovery): move active actions on, verify the

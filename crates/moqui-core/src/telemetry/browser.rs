@@ -1,8 +1,8 @@
-//! Browser RUM (plans/Monitoring.md, Later: Browser RUM): what a signed-in page sends is OTLP/JSON, but the page is
-//! not trusted the way an ingest key's sender is. Before it is decoded the resource attributes are replaced with the
-//! server's (the browser service name and the session's user and visit), attributes that name a user, visit, source or
-//! service are dropped from every record, and only CLIENT and INTERNAL spans are kept, so a page cannot pose as a
-//! server or as another user. The host's transition authenticates the session and its CSRF token.
+//! Browser RUM (plans/archive/Monitoring.md, Later: Browser RUM): what a signed-in page sends is OTLP/JSON, but the
+//! page is not trusted the way an ingest key's sender is. Before it is decoded the resource attributes are replaced
+//! with the server's (the browser service name and the session's user and visit), attributes that name a user, visit,
+//! source or service are dropped from every record, and only CLIENT and INTERNAL spans are kept, so a page cannot pose
+//! as a server or as another user. The host's transition authenticates the session and its CSRF token.
 
 use serde_json::{json, Value as Json};
 

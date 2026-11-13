@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Day partitions of the telemetry tables (plans/Monitoring.md, Indexes: retention), with
+//! Day partitions of the telemetry tables (plans/archive/Monitoring.md, Indexes: retention), with
 //! `<search-facade><postgres partition-telemetry="true">`. A new `otel_spans`, `otel_logs` or
 //! `monitor_annotations` table is `PARTITION BY RANGE` on its time column, one partition per UTC day
 //! (`<table>_p<yyyymmdd>`) and a `<table>_default` for rows outside them; `otel_metrics` is first

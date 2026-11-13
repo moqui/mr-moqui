@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * Real-user monitoring of a signed-in qvt page (plans/Monitoring.md, Later: Browser RUM; <telemetry><browser> in the conf):
+ * Real-user monitoring of a signed-in qvt page (plans/archive/Monitoring.md, Later: Browser RUM; <telemetry><browser> in the conf):
  *   - a documentLoad span from Navigation Timing, with its web vitals (FCP, LCP, CLS, INP, TTFB) and a child span for
  *     each slow resource,
  *   - a navigation span for each in-app page change ($root.setUrl), whose requests are its children,

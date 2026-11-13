@@ -1,7 +1,7 @@
-//! Deterministic ranking of a regression's probable causes (plans/Monitoring.md, Later: Regressions and incidents;
-//! requirement 5). Each candidate scores by how close it came before the onset, how well its scope fits the instances
-//! that regressed and those that did not, and how much of the deviation it can explain. Every cause keeps the evidence
-//! for and against it and stays a hypothesis until an operator confirms it.
+//! Deterministic ranking of a regression's probable causes (plans/archive/Monitoring.md, Later: Regressions and
+//! incidents; requirement 5). Each candidate scores by how close it came before the onset, how well its scope fits the
+//! instances that regressed and those that did not, and how much of the deviation it can explain. Every cause keeps the
+//! evidence for and against it and stays a hypothesis until an operator confirms it.
 
 use super::compare::Locality;
 

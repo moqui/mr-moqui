@@ -1,7 +1,7 @@
-//! Regression detection (plans/Monitoring.md, Later: Regressions and incidents; requirements 4 and 5). Each pass of
-//! `detect#Regressions` compares every service version with request metrics in the last window against its baseline:
-//! the previous version's window before the release while the release is new (kept as a `MonitorBaseline`, so it
-//! does not change as raw telemetry ages out), and afterwards the same version a day earlier. A regression is kept
+//! Regression detection (plans/archive/Monitoring.md, Later: Regressions and incidents; requirements 4 and 5). Each
+//! pass of `detect#Regressions` compares every service version with request metrics in the last window against its
+//! baseline: the previous version's window before the release while the release is new (kept as a `MonitorBaseline`, so
+//! it does not change as raw telemetry ages out), and afterwards the same version a day earlier. A regression is kept
 //! open while it lasts and resolved when good data shows it gone; one at or over `incident-severity` opens an incident
 //! with its evidence and ranked causes ([`super::incident`]). Releases come from the release annotations
 //! ([`super::annotations::record_release`]).

@@ -1,4 +1,4 @@
-//! The OTLP/HTTP receiver (plans/Monitoring.md, Ingest), and the steps it shares with the gRPC receiver
+//! The OTLP/HTTP receiver (plans/archive/Monitoring.md, Ingest), and the steps it shares with the gRPC receiver
 //! (`grpc.rs`): the concurrency budget, ingest-key authentication with its rate limit, and the decode and enqueue
 //! as the key's owner. A refusal is an HTTP status and a message; gRPC maps it to a `tonic::Status`.
 use std::sync::Arc;
@@ -170,8 +170,8 @@ async fn ingest(
         return refused(415, "unsupported OTLP content encoding");
     }
     let is_annotation = request.uri().path() == "/v1/annotations";
-    // A deployment controller's report on a recovery action (plans/Monitoring.md, Later: Recovery): the ingest key and
-    // the action's callback token both have to match.
+    // A deployment controller's report on a recovery action (plans/archive/Monitoring.md, Later: Recovery): the ingest
+    // key and the action's callback token both have to match.
     let is_recovery = request.uri().path() == "/v1/recovery";
     let signal = match request.uri().path() {
         "/v1/traces" => Signal::Traces,

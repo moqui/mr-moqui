@@ -1,5 +1,5 @@
-//! Business operations (plans/Monitoring.md, Later: Business operations). An operation is a service call that owns
-//! its transaction frame, the outermost one or a `force-new` one, named by the service unless the service declares
+//! Business operations (plans/archive/Monitoring.md, Later: Business operations). An operation is a service call that
+//! owns its transaction frame, the outermost one or a `force-new` one, named by the service unless the service declares
 //! `operation` or the conf names it. Its outcome comes from the frame's commit and rollback hooks: `commit`,
 //! `rollback`, `retry` (rolled back, and the work will run again) or `pending` (queued for a worker). Runs are the
 //! `moqui.operation.runs` counter and the `moqui.operation.duration` histogram, by operation name and outcome; the

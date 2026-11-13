@@ -2,7 +2,7 @@
 //! version-wide error rise opens one regression and one incident that ranks the release first, a rise on one instance
 //! is an instance fault, gaps degrade a verdict, a second pass adds nothing, a held lease skips the pass, and an
 //! incident goes to Monitoring when its regression resolves and to Resolved after resolve-minutes
-//! (plans/Monitoring.md, Later: Regressions and incidents).
+//! (plans/archive/Monitoring.md, Later: Regressions and incidents).
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
 use crate::common;
 use moqui_core::entity::document::Document;

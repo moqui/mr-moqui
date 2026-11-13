@@ -13,7 +13,8 @@
  */
 
 //! The host's gRPC listener: one port, on tonic, for the gRPC services other programs call, each a set of routes:
-//! - the OTLP/gRPC receiver (`crate::monitor::grpc`, plans/Monitoring.md), when `<telemetry><receiver grpc-enabled>`;
+//! - the OTLP/gRPC receiver (`crate::monitor::grpc`, plans/archive/Monitoring.md), when
+//!   `<telemetry><receiver grpc-enabled>`;
 //! - the PASS authority for direct clients (`crate::pass_authority`, plans/archive/Edge-Node.md §5.5), when
 //!   `pass_authority_grpc_enabled=true` (the `edge` feature; in Maximal and Enterprise).
 //!

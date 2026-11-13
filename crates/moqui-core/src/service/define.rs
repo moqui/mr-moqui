@@ -252,8 +252,8 @@ pub struct ServiceDef {
     pub semaphore_sleep: Duration,
     pub semaphore_ignore: Duration,
     pub semaphore_parameter: Option<String>,
-    /// `operation`: the stable name of the business operation a call that owns its transaction is (plans/Monitoring.md,
-    /// Later: Business operations). MR Moqui only.
+    /// `operation`: the stable name of the business operation a call that owns its transaction is
+    /// (plans/archive/Monitoring.md, Later: Business operations). MR Moqui only.
     pub operation: Option<String>,
     /// `operation-ref`: the in-parameter whose value is the operation's correlation reference. MR Moqui only.
     pub operation_ref: Option<String>,

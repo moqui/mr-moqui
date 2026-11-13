@@ -2,7 +2,7 @@
 
 > Archived 2026-11-04: built, and the live check on a dev server is done. The guide is [Monitoring, "Changing settings for a while"](../../docs/tools/Monitoring.md#changing-settings-for-a-while); the "Not in v1" list at the end is ideas to take up when they are wanted, not open work.
 
-Built 2026-11-03: timed runtime overrides of logging and telemetry settings in Monitor › Settings. It extends [Monitoring](../Monitoring.md).
+Built 2026-11-03: timed runtime overrides of logging and telemetry settings in Monitor › Settings. It extends [Monitoring](Monitoring.md).
 
 ## Context
 

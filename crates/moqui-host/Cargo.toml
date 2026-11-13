@@ -279,8 +279,8 @@ test = false
 name = "search_bench"
 test = false
 
-# Opt-in real-store and transport timings of the monitoring HTTP boundary (plans/Monitoring.md). Not linked by a default
-# `cargo test`. cargo test --profile release -p moqui-host --test monitor_performance -- --ignored --nocapture
+# Opt-in real-store and transport timings of the monitoring HTTP boundary (plans/archive/Monitoring.md). Not linked by a
+# default `cargo test`. cargo test --profile release -p moqui-host --test monitor_performance -- --ignored --nocapture
 [[test]]
 name = "monitor_performance"
 test = false

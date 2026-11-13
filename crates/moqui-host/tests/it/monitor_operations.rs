@@ -1,7 +1,7 @@
 //! Business operations on a real seeded PostgreSQL server: a service call that owns its transaction counts as
 //! moqui.operation.runs by name and outcome, a joined call counts nothing and a force-new one counts its own run, a
 //! scheduled job's failure is a retry and an unscheduled one's a rollback, and an async call is pending and then runs;
-//! the service's span carries the name, outcome and correlation reference (plans/Monitoring.md, Later: Business
+//! the service's span carries the name, outcome and correlation reference (plans/archive/Monitoring.md, Later: Business
 //! operations).
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
 use crate::common;
