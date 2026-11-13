@@ -1,6 +1,6 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); nothing built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); one question is left to the spike ([Open questions](#open-questions)).
+Active plan since 2026-11-13 (a proposal from 2026-11-09); nothing built. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
 
 ## The idea
 
@@ -71,8 +71,8 @@ An access profile is an artifact group, its authorization records and their filt
 
 ### What a scope changes in the design
 
-- **A room is one scope.** A workbook in memory holds rows already read, so viewers who may see different rows cannot share it. A room is keyed by the document, the profile and the scope values the profile's filters read (for `sales`, the organizations), so people with the same scope share a room and co-edit, and others get their own with the same overlay. Overlay edits reach the other rooms of a document through the diff queue ([Thin client](#thin-client)); to verify in Phase 0, and until then a document has one editing room and the others follow it on reload.
-- **Nothing computed is stored.** The stored document is the overlay without the data sheets and without cached values of formulas that read them. Opening fills the data as the viewer and evaluates before a cell is sent, so one viewer's totals are never shown to another.
+- **A room is one scope.** A workbook in memory holds rows already read, so viewers who may see different rows cannot share it. A room is keyed by the document, the profile and the scope values the profile's filters read (for `sales`, the organizations), so people with the same scope share a room and co-edit, and others get their own with the same overlay. Overlay edits reach the other rooms of a document through the diff queue, which Phase 0 showed to work between models with different data.
+- **Nothing computed is stored.** The stored document is the overlay without the data sheets, without cached values of formulas that read them and without the data's texts in the workbook's shared strings ([Phase 0 results](#rooms-the-stored-form-and-scopes)). Opening fills the data as the viewer and evaluates before a cell is sent, so one viewer's totals are never shown to another.
 - **A scheduled export** runs as the schedule's owner under the owner's profile, and is delivered to others only as report delivery allows ([Report delivery](../docs/tools/Monitoring.md#report-delivery)).
 - **A dashboard panel** fills as the dashboard's viewer, as its other panels do.
 - **An exported XLSX** holds the rows its exporter could read; it is a file from then on, as an export of the grid is.
@@ -221,7 +221,7 @@ Each phase leaves something usable. Phases 0 to 3 are for v0.1.0 and need no for
 
 ### Phase 0: spike
 
-Answer the items marked "to verify" and the ones below before committing to the rest.
+Done 2026-11-13: [Phase 0 results](#phase-0-results). The list as it was:
 
 - A profile artifact entered by the engine: finds below it carry its `ArtifactAuthz` record and that record's filters, for a user who also holds another grant on the same entity; an entity outside the group is refused; a view with a filtered member is filtered through its alias.
 - Overlay edits from one room applied to another room of the same document with different data sheets (`flush_send_queue`, `apply_external_diffs`).
@@ -238,7 +238,7 @@ Answer the items marked "to verify" and the ones below before committing to the 
 
 ### Phase 1: the engine in the server
 
-- An `ironcalc` feature beside `xlsx`.
+- An `ironcalc` feature beside `xlsx`, on a pinned git revision until a release has `get_cells_block`.
 - The xlsx render mode, `SpreadsheetServices` and scheduled reports write through the IronCalc model. Sheet protection is the one missing piece: ask upstream for it, and keep rust_xlsxwriter for the protected exports until it lands.
 - A service that opens an XLSX, sets cells, evaluates and returns values or a file: calculation over a template workbook, useful on its own.
 - calamine unchanged.
@@ -246,9 +246,10 @@ Answer the items marked "to verify" and the ones below before committing to the 
 ### Phase 2: the virtual sheet in the Tools grid, read and export
 
 - `moqui-calc`: the document (query definitions in the grid's source JSON, the overlay bytes, chart definitions) and its services: create, open, refresh, save, export.
-- Refresh fills the data sheets through the grid's reader, evaluates, and stores (the overlay only) or exports.
+- Refresh fills the data sheets through the grid's reader (rows inserted between the stored form's two empty data rows, so ranges over the data stretch), evaluates on a blocking thread, measures the evaluation against its budget, and stores (the overlay only, shared strings rebuilt) or exports.
+- An XLSX the engine refuses is opened through calamine: values and formula text into a new model.
 - The sheet room: join with the access check, the workbook loaded and held, viewport requests answered with blocks, dropped when idle.
-- Calc mode in `Grid.xml` and `Grid.qvue`: the sheet component drawing the blocks, sheet tabs, Chart.js charts, the document in the view list, export as XLSX. An uploaded XLSX opens as a workbook. No editing yet.
+- Calc mode in `Grid.xml` and `Grid.qvue`: the sheet component (its own Tabulator instance, placeholder rows and a block cache) drawing the blocks, sheet tabs, Chart.js charts, the document in the view list, export as XLSX. An uploaded XLSX opens as a workbook. No editing yet.
 
 ### Phase 2b: CalcGrid in Dashboards
 
@@ -266,7 +267,7 @@ Both screens get it at once, since the sheet component is one.
 - Styles, number formats, widths, heights, freeze, conditional formatting.
 - Undo and redo, copy and paste, fill handle.
 - Edits applied in the room in the order received, each viewer sent its viewport again; presence and other users' selections from awareness frames.
-- Overlay edits relayed to the other rooms of the document (other scopes), or one editing room at a time, by the outcome of Phase 0.
+- Overlay edits relayed to the other rooms of the document (other scopes) through the diff queue.
 - In a cluster, the owning server for an open workbook.
 - Merged cells shown through an overlay; not editable in the first version.
 - A terminal view in `moqui-tui`, with TironCalc as the reference, if wanted.
@@ -293,6 +294,72 @@ The first place the engine itself needs to grow.
 - Opening xls, xlsb and ods for editing through calamine.
 - Incremental recalculation, if the row and formula limits get in the way.
 
+## Phase 0 results
+
+Run 2026-11-13 against IronCalc's main branch at `87b684bb` (2026-11-12), in release, on the development machine. The engine part is a program outside the workspace (not kept in the repository): 100,000 rows of 20 columns (14 numbers, 6 texts) on a data sheet, formulas on an overlay sheet. The browser part is a page with the vendored Tabulator 6.7.0 in headless Chrome against that program over HTTP on the same machine. The access profile is a test in the workspace. Not exercised: the notification WebSocket as the transport, `Grid.qvue` itself, and the cluster.
+
+**Outcome: it works, with one real limit (full recalculation) and several changes to the design below.**
+
+### The engine
+
+| Measured | Result |
+|---|---|
+| Fill 100,000 rows with `set_row` | 65 ms |
+| The model in memory, as `to_bytes` | 15.8 MB, written in 20 ms |
+| XLSX of it | 9.9 MB in 0.92 s |
+| `get_cells_block`, 60 rows by 30 columns | 0.7 to 0.8 ms on the data sheet (1,200 texts, 70 to 110 KB of JSON before compression), 0.4 ms on the overlay |
+| `formula_completion` | 0.012 ms |
+| `UserModel<'static>` and `Model<'static>` | `Send`; compiled |
+| Evaluation, 300 aggregate formulas over the 100,000 rows | 6.6 s, and the same again for every edit and undo |
+| Evaluation, 20 `SUMIFS` over the 100,000 rows | 0.42 s |
+| Evaluation at 1,000 rows, the same 300 formulas | 21 ms |
+
+One formula over a 100,000-row column costs, each evaluation: `SUM` 8 ms (83 ns a cell), `SUMIF` and `SUMIFS` 15 to 16 ms, `COUNTIF` on text 32 ms, `SUMPRODUCT` of two columns 42 ms, an exact `VLOOKUP` that reaches the last row 56 ms. A formula that reads a few cells costs nothing measurable, and the data alone costs nothing.
+
+- **Full recalculation is the limit, as expected, and it is on every edit.** An edit to a cell nothing depends on still evaluates everything. A sheet of a few thousand rows is instant with hundreds of formulas; at 100,000 rows about ten aggregate formulas fit in a tenth of a second and a hundred do not fit in a second.
+- **What follows for the design:**
+  - Summaries stay in the database, as planned: a grouped view as a second data sheet, and overlay formulas over its few rows.
+  - The data sheet cap is by evaluation time as well as by rows: the room measures each evaluation, shows it, and warns the author past a budget (about 250 ms).
+  - Edits typed in a burst are applied with `pause_evaluation` and evaluated once (50 edits cost one evaluation, measured).
+  - Evaluation runs on a blocking thread and viewports are answered from the last evaluated state, so reading is not held up by it.
+- **Upstream.** 83 ns a cell for `SUM` over plain numbers is slow for a column of `f64`; a faster path for aggregates over numeric ranges and a dependency graph (so an edit evaluates only what reads it) are the two requests that matter most to us, ahead of those in [Working with upstream](#working-with-upstream).
+
+### What the engine does differently from the proposal
+
+- **`get_cells_block` is not in a release.** It is on main after 0.9.1. Until a release has it, the dependency is a pinned git revision, which the license check has to allow.
+- **Bulk loading is below `UserModel`.** `set_row` is on `SheetData`, reached through `Model`'s public `workbook`; `UserModel` gives only a shared reference to its model. So data is filled on a `Model` before it is wrapped: open and refresh build a new `UserModel` from the overlay and the rows, and a refresh ends the undo history. Acceptable; a mutable accessor is a small upstream request.
+- **Structured references are fixed ranges after parsing.** `Orders[amount]` is resolved when the formula is typed and stored as `Data!$J$2:$J$100001`; a table whose range changes later does not move it, and there is no call to add or change a table (only the `workbook.tables` map, read when the model is built). What works instead, measured: the stored form keeps two empty data rows, and open inserts rows between them with the engine's `insert_rows` (and save deletes them), which stretches and shrinks every range over the data as Excel does. `ROWS(Orders[amount])` and the sums were right at 100,000 rows and after a refresh to 50,007. The table is still declared, so the author can type `Orders[amount]` and completion offers it. With fewer than two rows the two empty rows remain, so `ROWS` says 2.
+- **XLSX export drops tables and cell comments** (2 of 268 of upstream's test workbooks differ after a round trip, by those). The exported data sheet is plain cells, and its formulas are plain ranges, which is what Excel needs.
+- **A minimal XLSX does not open.** The one workbook in our own tests (`mr-boss/test/files/Move costs.xlsx`, no `xl/styles.xml`) is refused. Opening through calamine (values and formula text into a new model) is needed in Phase 2 as the fallback, not in Phase 5.
+- **No real-world workbooks were on this machine** beyond upstream's 268 test files, so "what is lost" for charts, images, pivot tables, data validation and sheet protection is from the source (none is read or written), not from a run.
+
+### Rooms, the stored form and scopes
+
+- **Overlay edits relay between rooms with different data.** Two models of one document, 1,000 and 400 rows of different values: a formula, a text and a row height set in one, sent as its diff queue (51 bytes for the three) and applied to the other, give the same overlay there, evaluated over the other's data, with its data untouched. Applying does not queue the edits again, and an undo relays the same way. So the open question is answered: rooms of every scope of a document edit together.
+- **The stored form** is the room's workbook with the inserted rows deleted, the data sheet emptied and one evaluation: 14 KB for 300 formulas, in 2.5 ms, with every formula's cached value computed from no data.
+- **The shared strings must be rebuilt on save.** The workbook keeps one list of every text, the data sheet's included, and emptying the sheet leaves them (2,033 here): customers' names would be in the stored document. Save writes a list of the overlay's own strings only. This is a spec of its own.
+
+### Access profiles
+
+Confirmed in `crates/moqui-core/src/user/filter_tests.rs` (`a_profile_frame_gives_its_filters_to_finds_below_whatever_else_the_user_holds`): a user who holds an unfiltered grant on an entity and its view reads every row; under a pushed profile artifact (`push_checked`, an inheritable always-allow for view with a filter set) the same finds are filtered, on the entity and through the view's alias; off the frame the open grant answers again; a user with no organization gets a term that matches nothing. As the design says, inheritance allows every entity below the frame, so the list of offered entities is the engine's own check against the group's members.
+
+### The browser
+
+| Measured | Result |
+|---|---|
+| Tabulator built with 100,000 placeholder rows (`{id}` only) | 0.33 s, 28 MB of heap |
+| First screen drawn from a block | 32 ms |
+| Jump to row 90,000 with nothing loaded between | 49 ms to scroll, 47 to 52 ms for its block |
+| Steady scroll, about 80 rows a second | No frame with a row not yet loaded, with a 40-row margin and one request in flight |
+| A request and its answer, transport alone | 3.6 ms |
+| An edit (20 `SUMIFS` over 100,000 rows) | 422 ms, 421 of them the evaluation; the block after it 42 ms |
+| Completion for each keystroke | 0.3 to 0.6 ms a call |
+
+- **Loading by viewport works, and not with `progressiveLoad`.** The table gets a placeholder row for each sheet row and no data; a formatter draws each cell from a cache of blocks, and a scroll asks for the rows in view and a margin, then reformats the rows in view. A far jump needs nothing between. Range selection, the clipboard options and a custom editor work on such a table as they do in `Grid.qvue`.
+- **So Calc is its own Tabulator instance and its own component.** It shares the library and the range and clipboard options with the record grid, and nothing of its loading (`ajaxURL`, `progressiveLoad`, remote sort and filter). `Grid.qvue` shows one or the other by mode.
+- **The round trip is the evaluation.** Transport and block are a few milliseconds; completion can be a call for each keystroke. The browser engine (Phase 5) would not help an edit: the evaluation would cost the same there.
+- **The ESM build is needed for a custom module.** The vendored UMD file exposes `registerModule` and `extendModule` but not the `Module` base class or the module bindings, so a module cannot be written against it. The formatter, the editor and the loader above needed no module; the fill handle and reference picking do.
+
 ## Decisions
 
 Settled 2026-11-13.
@@ -312,7 +379,7 @@ Settled 2026-11-13.
 
 ## Open questions
 
-One, for Phase 0 to answer: **rooms of different scopes while editing.** Overlay edits are relayed to the other rooms of a document through the diff queue if the spike shows it works, else a document has one editing room at a time and the others follow it on reload.
+None from the plan; the question of rooms of different scopes was answered by Phase 0 (they edit together through the diff queue). Phase 0 left three things not run: the notification WebSocket as the transport, the owner of a workbook in a cluster, and real-world workbooks with charts and pivot tables.
 
 ## Working with upstream
 

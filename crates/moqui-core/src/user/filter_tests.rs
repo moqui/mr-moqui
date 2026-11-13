@@ -235,6 +235,144 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     session::reset_session();
 }
 
+/// plans/IronCalc-DB.md, Access profiles: an engine that enters a profile artifact (an inheritable always-allow) before
+/// it reads gets that record's filters on every find below, for a user who also holds an unfiltered grant on the same
+/// entity. Without the frame the other grant answers and nothing is filtered.
+#[test]
+fn a_profile_frame_gives_its_filters_to_finds_below_whatever_else_the_user_holds() {
+    const PROFILE: &str = "org.moqui.calc.profile.test";
+    session::reset_session();
+    clear_context_stack();
+    let runtime = temp_dir("filter-profile-runtime");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let factory = {
+        let _lock = crate::user::session::cookie_property_lock();
+        ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")
+    };
+    let (facade, _model_dir) = product_facade();
+    factory.set_entity(facade.clone());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    session::set_user("profile-user", "profile-user");
+    {
+        let _guard = context.disable_authz();
+        // the user's other grant: the entity and its view, no filter
+        for name in ["test.product.Product", VIEW] {
+            create(
+                &facade,
+                "moqui.security.ArtifactGroupMember",
+                &[
+                    ("artifactGroupId", "TEST_OPEN"),
+                    ("artifactName", name),
+                    ("artifactTypeEnumId", "AT_ENTITY"),
+                ],
+            );
+        }
+        create(
+            &facade,
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", "TEST_OPEN_AUTHZ"),
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", "TEST_OPEN"),
+                ("authzTypeEnumId", "AUTHZT_ALLOW"),
+                ("authzActionEnumId", "AUTHZA_ALL"),
+            ],
+        );
+        // the profile: its artifact, inheritable, allowed always for view, with the organization filter set
+        create(
+            &facade,
+            "moqui.security.ArtifactGroupMember",
+            &[
+                ("artifactGroupId", "TEST_PROFILE"),
+                ("artifactName", PROFILE),
+                ("artifactTypeEnumId", "AT_SERVICE"),
+                ("inheritAuthz", "Y"),
+            ],
+        );
+        create(
+            &facade,
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", "TEST_PROFILE_AUTHZ"),
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", "TEST_PROFILE"),
+                ("authzTypeEnumId", "AUTHZT_ALWAYS"),
+                ("authzActionEnumId", "AUTHZA_VIEW"),
+            ],
+        );
+        create(
+            &facade,
+            "moqui.security.EntityFilterSet",
+            &[("entityFilterSetId", "TEST_PROFILE_ORG")],
+        );
+        create(
+            &facade,
+            "moqui.security.EntityFilter",
+            &[
+                ("entityFilterId", "TEST_PROFILE_ORG_A"),
+                ("entityFilterSetId", "TEST_PROFILE_ORG"),
+                ("entityName", "test.product.Product"),
+                ("filterMap", "({ ownerPartyId: filterOrgIds })"),
+            ],
+        );
+        create(
+            &facade,
+            "moqui.security.ArtifactAuthzFilter",
+            &[
+                ("artifactAuthzId", "TEST_PROFILE_AUTHZ"),
+                ("entityFilterSetId", "TEST_PROFILE_ORG"),
+            ],
+        );
+        for (id, owner) in [("P1", "ORG1"), ("P2", "ORG9"), ("P3", "ORG2")] {
+            create(
+                &facade,
+                "test.product.Product",
+                &[("productId", id), ("ownerPartyId", owner)],
+            );
+        }
+    }
+    set_context_name(
+        "filterOrgIds",
+        Value::List(vec![Value::string("ORG1"), Value::string("ORG2")]),
+    )
+    .unwrap();
+    let ids = |entity: &str| -> Vec<String> {
+        let mut ids: Vec<String> = facade
+            .find(entity)
+            .unwrap()
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .filter_map(|row| row.get("productId").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        ids.sort();
+        ids
+    };
+    // by the open grant alone: every row
+    assert_eq!(ids("test.product.Product"), ["P1", "P2", "P3"]);
+    assert_eq!(ids(VIEW), ["P1", "P2", "P3"]);
+
+    // under the profile: its filters, on the entity and through the view's alias
+    context
+        .push_checked("AT_SERVICE", PROFILE, "view", Authz::Required, Tarpit::Skip, None)
+        .expect("the profile is granted");
+    assert_eq!(ids("test.product.Product"), ["P1", "P3"]);
+    assert_eq!(ids(VIEW), ["P1", "P3"]);
+    // a user with no organization gets a term that matches nothing (`1 = 0`, which the in-memory test database does
+    // not parse, so the condition is read and no find is run)
+    set_context_name("filterOrgIds", Value::List(Vec::new())).unwrap();
+    let none = super::apply_entity_filters("test.product.Product", None).expect("a term for no organization");
+    assert!(!has_in(&none, "ownerPartyId", &["ORG1"]), "{none:?}");
+    // off the profile the open grant answers again
+    context.pop().unwrap();
+    assert_eq!(ids(VIEW), ["P1", "P2", "P3"]);
+
+    clear_context_stack();
+    session::reset_session();
+}
+
 /// HL-024: a cluster peer's change to the filter tables reaches this process only as a remote invalidation, or as the
 /// whole-cache clear after a LISTEN reconnect. Each moves the authorization generation, so the filter sets are read
 /// again. The generation is a process static other tests move too, so what this thread moved is counted apart.
