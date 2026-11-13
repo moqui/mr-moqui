@@ -436,11 +436,10 @@ fn spawn_all(shared: &Arc<Shared>, workers: usize) -> Result<Vec<JoinHandle<()>>
 
 fn spawn_worker(shared: &Arc<Shared>, index: usize) -> Result<JoinHandle<()>, Error> {
     let shared = Arc::clone(shared);
-    thread::Builder::new()
-        .name(format!("moqui-request-{index}"))
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || worker_loop(shared))
-        .map_err(|err| Error::new(format!("request worker did not start: {err}")))
+    crate::script::spawn_script_thread(format!("moqui-request-{index}"), 8 * 1024 * 1024, move || {
+        worker_loop(shared)
+    })
+    .map_err(|err| Error::new(format!("request worker did not start: {err}")))
 }
 
 fn worker_loop(shared: Arc<Shared>) {

@@ -599,6 +599,7 @@ pub fn load_save(
 /// (`use my_component as _;`) so its `submit_component!` entry is kept.
 pub fn main() {
     process_started();
+    declare_main_stack();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(status) = terminal_helper(&args) {
         std::process::exit(status);
@@ -630,6 +631,41 @@ pub fn terminal_helper(args: &[String]) -> Option<i32> {
         Some("term-hold") => Some(term::hold::term_hold()),
         _ => None,
     }
+}
+
+/// Declare the main thread's stack to the script engine ([`moqui_core::script::declare_thread_stack`]): `moqui load` and
+/// `moqui test` run their data loads and specs on it. Its size is [`main_stack_size`]. Not declared, the engine counts
+/// on 1 MiB of it, which a demo data load's chain of services passed in a Debug build. On Windows (whose main thread has
+/// 1 MiB) it is left to the engine.
+fn declare_main_stack() {
+    #[cfg(unix)]
+    {
+        let limit = rustix::process::getrlimit(rustix::process::Resource::Stack).current;
+        let pointer = std::mem::size_of::<usize>();
+        let args = std::env::args_os().map(|arg| arg.len() + 1 + pointer).sum::<usize>();
+        let env = std::env::vars_os()
+            .map(|(key, value)| key.len() + value.len() + 2 + pointer)
+            .sum::<usize>();
+        if let Some(size) = main_stack_size(limit, args + env) {
+            moqui_core::script::declare_thread_stack(size);
+        }
+    }
+}
+
+/// The main thread's stack below `main`, to declare: the stack limit (`ulimit -s`, about 8 MiB by default on macOS and
+/// Linux; the main thread's stack is that size, counted from its top), less what sits above `main` on it: the arguments
+/// and the environment (`args_env` bytes, which Linux lets reach a quarter of the limit), and 1 MiB for the rest (the
+/// auxiliary vector, the runtime's start; a few KiB). A size larger than the real stack would turn the engine's clean
+/// `stack overflow` into a crash, so this errs short. `None`, leaving the thread to the engine, with no limit
+/// (`unlimited`, which has no floor to declare) or when what is left would give scripts less than a thread not declared
+/// (half of 2 MiB).
+#[cfg(unix)]
+fn main_stack_size(limit: Option<u64>, args_env: usize) -> Option<usize> {
+    const ABOVE_MAIN: usize = 1024 * 1024;
+    const MIN_DECLARED: usize = 2 * 1024 * 1024;
+    let limit = usize::try_from(limit?).unwrap_or(usize::MAX);
+    let size = limit.saturating_sub(ABOVE_MAIN).saturating_sub(args_env);
+    (size >= MIN_DECLARED).then_some(size)
 }
 
 /// When this process started: set first thing in [`main`], or on the first call when the host is embedded.

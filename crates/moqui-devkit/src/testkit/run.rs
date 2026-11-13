@@ -37,6 +37,8 @@ const ASSERT_NAME: &str = "moqui-test-assert.js";
 const SERVER_PRELUDE: &str = include_str!("server.js");
 const SERVER_PRELUDE_NAME: &str = "moqui-test-server.js";
 const HOST_PRELUDE_NAME: &str = "moqui-test-client.js";
+/// The stack of a spec's own threads (`runOnThread`, `parallel`), declared to the script engine.
+const SPEC_THREAD_STACK: usize = 8 * 1024 * 1024;
 
 /// The mode a spec runs in when it is not the server's: the client of `moqui test-client`, in the host crate.
 pub trait SpecHost: Send + Sync {
@@ -955,22 +957,19 @@ pub fn run_on_thread(
 ) -> std::io::Result<std::thread::JoinHandle<Result<String, String>>> {
     let source = source.to_string();
     let args_json = args_json.to_string();
-    std::thread::Builder::new()
-        .name(name.to_string())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let _host = HostGuard::set(Some(Arc::clone(&host)));
-            moqui_core::script::clear_context_stack();
-            let body = || -> Result<String, Error> {
-                install_prelude_for(Some(&*host))?;
-                let code = format!("JSON.stringify((({source}))(...({args_json})) ?? null)");
-                let value = moqui_core::script::eval_named_value(&code, "thread")?;
-                Ok(to_plain_string(&value))
-            };
-            let out = body().map_err(|err| err.to_string());
-            moqui_core::script::clear_context_stack();
-            out
-        })
+    moqui_core::script::spawn_script_thread(name.to_string(), SPEC_THREAD_STACK, move || {
+        let _host = HostGuard::set(Some(Arc::clone(&host)));
+        moqui_core::script::clear_context_stack();
+        let body = || -> Result<String, Error> {
+            install_prelude_for(Some(&*host))?;
+            let code = format!("JSON.stringify((({source}))(...({args_json})) ?? null)");
+            let value = moqui_core::script::eval_named_value(&code, "thread")?;
+            Ok(to_plain_string(&value))
+        };
+        let out = body().map_err(|err| err.to_string());
+        moqui_core::script::clear_context_stack();
+        out
+    })
 }
 
 /// What a thread's engine runs once its body is entered: [`run_script_on_thread`]'s work.
@@ -1027,42 +1026,39 @@ pub fn run_script_on_thread(
         after,
         around,
     } = script;
-    std::thread::Builder::new()
-        .name(name)
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let _host = HostGuard::set(Some(Arc::clone(&host)));
-            let body: ThreadBody<'_> = Box::new(move || {
-                moqui_core::script::clear_context_stack();
-                let run = || -> Result<String, Error> {
-                    install_prelude_for(Some(&*host))?;
-                    if !before.is_empty() {
-                        // its value is not read: it may be an object, such as `globalThis`, that does not convert
-                        moqui_core::script::eval_named_value(&format!("{before}\n;null"), "thread")?;
-                    }
-                    if let Some(file) = &file {
-                        // The wrapper opens on the file's first line, so a line in an error is the file's.
-                        let wrapped = format!("(function(){{{}\n}})();", file.source);
-                        moqui_core::script::eval_named_value(&wrapped, &file.display)?;
-                    }
-                    let code = format!("JSON.stringify((({call}))(...({args_json})) ?? null)");
-                    let value = moqui_core::script::eval_named_value(&code, "thread")?;
-                    Ok(to_plain_string(&value))
-                };
-                let out = run().map_err(|err| err.to_string());
-                if !after.is_empty() {
-                    if let Err(err) = moqui_core::script::eval_named_value(&format!("{after}\n;null"), "thread") {
-                        tracing::warn!("after a script thread: {err}");
-                    }
+    moqui_core::script::spawn_script_thread(name, SPEC_THREAD_STACK, move || {
+        let _host = HostGuard::set(Some(Arc::clone(&host)));
+        let body: ThreadBody<'_> = Box::new(move || {
+            moqui_core::script::clear_context_stack();
+            let run = || -> Result<String, Error> {
+                install_prelude_for(Some(&*host))?;
+                if !before.is_empty() {
+                    // its value is not read: it may be an object, such as `globalThis`, that does not convert
+                    moqui_core::script::eval_named_value(&format!("{before}\n;null"), "thread")?;
                 }
-                moqui_core::script::clear_context_stack();
-                out
-            });
-            match around {
-                Some(around) => around(body),
-                None => body(),
+                if let Some(file) = &file {
+                    // The wrapper opens on the file's first line, so a line in an error is the file's.
+                    let wrapped = format!("(function(){{{}\n}})();", file.source);
+                    moqui_core::script::eval_named_value(&wrapped, &file.display)?;
+                }
+                let code = format!("JSON.stringify((({call}))(...({args_json})) ?? null)");
+                let value = moqui_core::script::eval_named_value(&code, "thread")?;
+                Ok(to_plain_string(&value))
+            };
+            let out = run().map_err(|err| err.to_string());
+            if !after.is_empty() {
+                if let Err(err) = moqui_core::script::eval_named_value(&format!("{after}\n;null"), "thread") {
+                    tracing::warn!("after a script thread: {err}");
+                }
             }
-        })
+            moqui_core::script::clear_context_stack();
+            out
+        });
+        match around {
+            Some(around) => around(body),
+            None => body(),
+        }
+    })
 }
 
 /// `__moquiTestHost.parallel` ([`super::host`]): the function source on `count` threads, each with its own execution
@@ -1081,13 +1077,14 @@ pub(super) fn run_parallel(
         let thread_sender = sender.clone();
         let source = source.to_string();
         let args = args.to_string();
-        let spawned = std::thread::Builder::new()
-            .name(format!("moqui-test-parallel-{thread_num}"))
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || {
+        let spawned = moqui_core::script::spawn_script_thread(
+            format!("moqui-test-parallel-{thread_num}"),
+            SPEC_THREAD_STACK,
+            move || {
                 let out = run_thread(&factory, thread_num, &source, &args, transaction);
                 let _ = thread_sender.send((thread_num, out));
-            });
+            },
+        );
         if let Err(err) = spawned {
             let _ = sender.send((thread_num, Err(format!("thread {thread_num} did not start: {err}"))));
         }

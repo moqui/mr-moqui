@@ -360,3 +360,26 @@ impl Drop for DirGuard {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+/// The main thread's stack declared to the script engine is the stack limit less the arguments and environment above
+/// `main` and 1 MiB more, never larger than the real stack; with no limit, or one that would give scripts less than a
+/// thread not declared, nothing is declared.
+#[cfg(unix)]
+#[test]
+fn the_main_stack_declared_is_the_limit_less_what_is_above_main() {
+    use super::main_stack_size;
+    const MIB: usize = 1024 * 1024;
+    assert_eq!(main_stack_size(Some(8 * 1024 * 1024), 0), Some(7 * MIB));
+    assert_eq!(
+        main_stack_size(Some(8 * 1024 * 1024), 2 * MIB),
+        Some(5 * MIB),
+        "a long environment (Linux)"
+    );
+    assert_eq!(main_stack_size(None, 0), None, "unlimited");
+    assert_eq!(
+        main_stack_size(Some(3 * 1024 * 1024), 64 * 1024),
+        None,
+        "less than 2 MiB left"
+    );
+    assert_eq!(main_stack_size(Some(512 * 1024), 0), None);
+}

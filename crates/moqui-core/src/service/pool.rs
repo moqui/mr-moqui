@@ -53,6 +53,11 @@ const DEFAULT_JOB_POOL_MAX: usize = 8;
 const JOB_JOIN_WAIT: Duration = Duration::from_secs(30);
 /// The job worker threads' name prefix.
 const JOB_THREAD: &str = "moqui-job-";
+/// The stack of a service, job, scheduler or reserved worker, declared to the script engine
+/// ([`crate::script::declare_thread_stack`]): Rust's default 2 MiB, and 8 MiB in a Debug build, whose larger frames (a
+/// nested service call takes about 50 KiB there) would otherwise stop a chain of services far short of where release
+/// does.
+const WORKER_STACK: usize = if cfg!(debug_assertions) { 8 } else { 2 } * 1024 * 1024;
 
 type TickHook = Arc<dyn Fn() + Send + Sync>;
 
@@ -1027,17 +1032,15 @@ fn push_handle(handles: &mut Vec<JoinHandle<()>>, spawned: Result<JoinHandle<()>
 
 fn spawn_worker(shared: &Arc<Shared>, index: usize) -> Result<JoinHandle<()>, Error> {
     let shared = Arc::clone(shared);
-    thread::Builder::new()
-        .name(format!("moqui-worker-{index}"))
-        .spawn(move || worker_loop(shared))
-        .map_err(|err| Error::new(format!("service worker did not start: {err}")))
+    crate::script::spawn_script_thread(format!("moqui-worker-{index}"), WORKER_STACK, move || {
+        worker_loop(shared)
+    })
+    .map_err(|err| Error::new(format!("service worker did not start: {err}")))
 }
 
 fn spawn_job_worker(shared: &Arc<Shared>, index: usize) -> Result<JoinHandle<()>, Error> {
     let shared = Arc::clone(shared);
-    thread::Builder::new()
-        .name(format!("{JOB_THREAD}{index}"))
-        .spawn(move || job_loop(shared))
+    crate::script::spawn_script_thread(format!("{JOB_THREAD}{index}"), WORKER_STACK, move || job_loop(shared))
         .map_err(|err| Error::new(format!("service job worker did not start: {err}")))
 }
 
@@ -1078,10 +1081,10 @@ fn run_job_work(run: Box<super::jobs::JobRun>) {
 
 fn spawn_scheduler(shared: &Arc<Shared>) -> Result<JoinHandle<()>, Error> {
     let shared = Arc::clone(shared);
-    thread::Builder::new()
-        .name("moqui-scheduler".to_string())
-        .spawn(move || super::schedule::scheduler_loop(shared))
-        .map_err(|err| Error::new(format!("service scheduler did not start: {err}")))
+    crate::script::spawn_script_thread("moqui-scheduler".to_string(), WORKER_STACK, move || {
+        super::schedule::scheduler_loop(shared)
+    })
+    .map_err(|err| Error::new(format!("service scheduler did not start: {err}")))
 }
 
 fn worker_loop(shared: Arc<Shared>) {
@@ -1339,21 +1342,19 @@ fn reserved(
     let origin = current_origin();
     let trace_context = crate::telemetry::capture();
     // The thread ends when the call does; its slot is held until then.
-    thread::Builder::new()
-        .name("moqui-reserved".to_string())
-        .spawn(move || {
-            let _trace = crate::telemetry::attach(trace_context);
-            let _slot = slot;
-            let outcome = {
-                let _cleanup = WorkCleanup::new(Some(Arc::clone(&factory)));
-                unwind_result(catch_unwind(AssertUnwindSafe(|| {
-                    let _flag = WorkerFlag::enter();
-                    invoke(&factory, &name, &parameters, user_name.as_deref(), origin.as_ref())
-                })))
-            };
-            let _ = tx.send(outcome);
-        })
-        .map_err(|err| Error::new(format!("reserved worker did not start: {err}")))?;
+    crate::script::spawn_script_thread("moqui-reserved".to_string(), WORKER_STACK, move || {
+        let _trace = crate::telemetry::attach(trace_context);
+        let _slot = slot;
+        let outcome = {
+            let _cleanup = WorkCleanup::new(Some(Arc::clone(&factory)));
+            unwind_result(catch_unwind(AssertUnwindSafe(|| {
+                let _flag = WorkerFlag::enter();
+                invoke(&factory, &name, &parameters, user_name.as_deref(), origin.as_ref())
+            })))
+        };
+        let _ = tx.send(outcome);
+    })
+    .map_err(|err| Error::new(format!("reserved worker did not start: {err}")))?;
     Ok(rx)
 }
 
@@ -1468,23 +1469,21 @@ fn reserve_closure(shared: &Arc<Shared>, run: ClosureFn) -> Result<mpsc::Receive
     let factory = caller_factory(shared)?;
     let (tx, rx) = mpsc::channel();
     let trace_context = crate::telemetry::capture();
-    thread::Builder::new()
-        .name("moqui-reserved".to_string())
-        .spawn(move || {
-            let _trace = crate::telemetry::attach(trace_context);
-            let _slot = slot;
-            let outcome = {
-                let _cleanup = WorkCleanup::new(Some(Arc::clone(&factory)));
-                closure_outcome(catch_unwind(AssertUnwindSafe(|| {
-                    let _flag = WorkerFlag::enter();
-                    let ctx = factory.new_context();
-                    let _entered = ctx.enter();
-                    run()
-                })))
-            };
-            let _ = tx.send(outcome);
-        })
-        .map_err(|err| Error::new(format!("reserved worker did not start: {err}")))?;
+    crate::script::spawn_script_thread("moqui-reserved".to_string(), WORKER_STACK, move || {
+        let _trace = crate::telemetry::attach(trace_context);
+        let _slot = slot;
+        let outcome = {
+            let _cleanup = WorkCleanup::new(Some(Arc::clone(&factory)));
+            closure_outcome(catch_unwind(AssertUnwindSafe(|| {
+                let _flag = WorkerFlag::enter();
+                let ctx = factory.new_context();
+                let _entered = ctx.enter();
+                run()
+            })))
+        };
+        let _ = tx.send(outcome);
+    })
+    .map_err(|err| Error::new(format!("reserved worker did not start: {err}")))?;
     Ok(rx)
 }
 
