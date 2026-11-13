@@ -12,10 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The binary on an empty runtime (crates/moqui-embedded, docs/Run-Deploy.md "Built-in framework files"): `moqui load`
-//! writes a skeleton runtime and loads its seed data, and the server on it answers `/status`, the placeholder at `/`,
-//! `/Login`, the first admin account, a REST login and logout and the entity REST interface, with no file reported as differing.
-//! An acceptance test: it starts the embedded Postgres twice (`cargo test -p moqui --test cli -- --ignored skeleton`).
+//! The binary in an empty directory (crates/moqui-embedded, docs/Run-Deploy.md "Built-in framework files"): with no
+//! `MOQUI_RUNTIME`, `moqui load` writes a skeleton runtime in `runtime` in the working directory and loads its seed
+//! data; the server on it answers `/status`, the placeholder at `/`, `/Login`, the first admin account, a REST login and
+//! logout, the entity REST interface, the tools `moqui` REST API and the html `/apps`, with no file reported as
+//! differing; and `moqui tui` shows its login. An acceptance test: it starts the embedded Postgres three times
+//! (`cargo test -p moqui --test cli -- --ignored skeleton`).
 
 #![cfg(target_os = "linux")]
 
@@ -54,11 +56,12 @@ impl Drop for Server {
     }
 }
 
-fn moqui(runtime: &Path) -> Command {
+/// `moqui` started in `dir`, with no `MOQUI_RUNTIME`: its runtime is found from (or made in) the working directory.
+fn moqui(dir: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_moqui"));
     command
-        .current_dir(runtime.parent().unwrap())
-        .env("MOQUI_RUNTIME", runtime)
+        .current_dir(dir)
+        .env_remove("MOQUI_RUNTIME")
         .env("MOQUI_INSTALL", repo().join("runtime/install"))
         .env_remove("MOQUI_FRAMEWORK")
         .env_remove("MOQUI_CONF");
@@ -166,9 +169,9 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     let scratch = Scratch(PathBuf::from("/tmp").join(format!("mcs-{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&scratch.0);
     std::fs::create_dir_all(&scratch.0).unwrap();
-    let runtime = scratch.0.join("rt");
+    let runtime = scratch.0.join("runtime");
 
-    let load = moqui(&runtime).arg("load").output().unwrap();
+    let load = moqui(&scratch.0).arg("load").output().unwrap();
     let load_log = format!(
         "{}{}",
         String::from_utf8_lossy(&load.stdout),
@@ -178,12 +181,13 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     assert!(load_log.contains("wrote a skeleton runtime of"), "{load_log}");
     assert!(load_log.contains("match the ones built into this binary"), "{load_log}");
     assert!(runtime.join("base-component/framework/component.xml").is_file());
+    assert!(runtime.join("base-component/tools/service/moqui.rest.xml").is_file());
     assert!(runtime
         .join("base-component/webroot/screen/webroot/qapps.xml")
         .is_file());
 
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let mut child = moqui(&runtime)
+    let mut child = moqui(&scratch.0)
         .args([
             "-p",
             &port.to_string(),
@@ -296,11 +300,43 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     );
     let anonymous = request(port, "GET", "/rest/e1/moqui.basic.Uom/USD", &none, None);
     assert_eq!(anonymous.status, 401, "{}", anonymous.body);
+    // The tools component's REST API, which ADMIN may use.
+    let documents = request(port, "GET", "/rest/s1/moqui/dataDocuments", &rest_jar, None);
+    assert_eq!(documents.status, 200, "{}", documents.body);
+    assert!(documents.body.contains("dataDocumentId"), "{}", documents.body);
+    let anonymous = request(port, "GET", "/rest/s1/moqui/dataDocuments", &none, None);
+    assert_eq!(anonymous.status, 401, "{}", anonymous.body);
+    // The html apps root and the tools apps under it, with the html mode's style sheet and script.
+    for path in ["/apps/AppList", "/apps/system", "/apps/tools"] {
+        let page = request(port, "GET", path, &rest_jar, None);
+        assert_eq!(page.status, 200, "{path}: {}", page.body);
+        assert!(page.body.contains("/js/moqui-html.js"), "{path}: {}", page.body);
+    }
+    for path in [
+        "/css/moqui-html.css",
+        "/js/moqui-html.js",
+        "/libs/tom-select/tom-select.complete.min.js",
+        "/libs/sortablejs/Sortable.min.js",
+    ] {
+        assert_eq!(request(port, "GET", path, &none, None).status, 200, "{path}");
+    }
     let logout = request(port, "GET", "/rest/logout", &rest_jar, None);
     assert_eq!(logout.body.trim(), "successful", "{}", logout.body);
 
     drop(server);
     let log = log.lock().unwrap();
-    assert!(log.contains("match the ones built into this binary"), "{log}");
+    assert!(
+        log.contains("framework, tools and webroot files match the ones built into this binary"),
+        "{log}"
+    );
     assert!(!log.contains("differ from the ones built into this binary"), "{log}");
+
+    // The terminal client on the same runtime, in this process: the apps ask for a login.
+    let tui = moqui(&scratch.0)
+        .args(["tui", "--snapshot", "/apps", "--size", "100x30"])
+        .output()
+        .unwrap();
+    let screen = String::from_utf8_lossy(&tui.stdout);
+    assert!(tui.status.success(), "{screen}{}", String::from_utf8_lossy(&tui.stderr));
+    assert!(screen.contains("Log in"), "{screen}");
 }

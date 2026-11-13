@@ -12,20 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{ensure_runtime, new_runtime_dir};
-
-#[test]
-fn a_new_runtime_goes_beside_a_writable_executable_else_in_the_working_directory() {
-    let root = std::env::temp_dir().join(format!("moqui-new-runtime-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    let local = std::path::Path::new("runtime");
-    assert_eq!(new_runtime_dir(local, Some(&root.join("moqui"))), root.join("runtime"));
-    assert_eq!(new_runtime_dir(local, None), local);
-    // A directory that is not there takes no file: the working directory's runtime.
-    assert_eq!(new_runtime_dir(local, Some(&root.join("gone/moqui"))), local);
-    let _ = std::fs::remove_dir_all(&root);
-}
+use super::{ensure_runtime, names};
 
 #[test]
 fn a_skeleton_is_written_only_for_the_runtime_s_own_missing_framework() {
@@ -38,10 +25,27 @@ fn a_skeleton_is_written_only_for_the_runtime_s_own_missing_framework() {
     let framework = moqui_core::context::default_framework_dir(&runtime);
     ensure_runtime(&runtime, &framework).unwrap();
     assert!(framework.join("component.xml").is_file());
+    assert!(runtime.join("base-component/tools/service/moqui.rest.xml").is_file());
     assert!(runtime.join("base-component/webroot/screen/webroot/rest.xml").is_file());
+    assert!(runtime.join("base-component/webroot/screen/webroot/apps.xml").is_file());
     // A framework that is there is left alone.
     std::fs::remove_file(framework.join("conf/MoquiDefaultConf.xml")).unwrap();
     ensure_runtime(&runtime, &framework).unwrap();
     assert!(!framework.join("conf/MoquiDefaultConf.xml").exists());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_compared_components_are_named_in_a_list() {
+    use moqui_embedded::Set;
+    let dir = std::path::PathBuf::new;
+    assert_eq!(names(&[(Set::Framework, dir())]), "framework");
+    assert_eq!(
+        names(&[(Set::Framework, dir()), (Set::Webroot, dir())]),
+        "framework and webroot"
+    );
+    assert_eq!(
+        names(&[(Set::Framework, dir()), (Set::Tools, dir()), (Set::Webroot, dir())]),
+        "framework, tools and webroot"
+    );
 }

@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework and webroot stub files built into the binary (`crates/moqui-embedded`): where a runtime goes when there
-//! is none, the skeleton runtime written there, the startup comparison of the files on disk with the built-in ones, and
+//! The framework, tools and webroot stub files built into the binary (`crates/moqui-embedded`): the skeleton runtime
+//! written where there is none, the startup comparison of the files on disk with the built-in ones, and
 //! `moqui embedded`.
 
 use std::path::{Path, PathBuf};
@@ -21,31 +21,9 @@ use std::path::{Path, PathBuf};
 use moqui_embedded::{Kind, Set};
 use moqui_lib::error::Error;
 
-/// Where a runtime goes when none was found: `runtime` beside the executable when its directory is writable, so a
-/// binary in `/opt/moqui` gets `/opt/moqui/runtime` from any working directory, else `local` (`runtime` in the working
-/// directory), as for a binary in `/usr/bin`.
-pub(crate) fn new_runtime_dir(local: &Path, exe: Option<&Path>) -> PathBuf {
-    exe.and_then(Path::parent)
-        .filter(|dir| is_writable(dir))
-        .map_or_else(|| local.to_path_buf(), |dir| dir.join("runtime"))
-}
-
-/// Whether a file can be made in `dir`: one is made and removed, as permission bits do not say it for every user.
-fn is_writable(dir: &Path) -> bool {
-    let probe = dir.join(format!(".moqui-write-check-{}", std::process::id()));
-    let made = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-        .is_ok();
-    if made {
-        let _ = std::fs::remove_file(&probe);
-    }
-    made
-}
-
 /// Write a skeleton runtime from the built-in files when `framework_dir` is this runtime's own framework directory (no
-/// `MOQUI_FRAMEWORK` elsewhere) and has no `component.xml`: the framework, and the webroot stub when there is no webroot.
+/// `MOQUI_FRAMEWORK` elsewhere) and has no `component.xml`: the framework, and tools and the webroot stub when they
+/// are not there.
 ///
 /// # Errors
 ///
@@ -65,49 +43,71 @@ pub(crate) fn ensure_runtime(runtime_dir: &Path, framework_dir: &Path) -> Result
     })?;
     tracing::warn!(
         "No runtime with a framework component was found; wrote a skeleton runtime of {} files in {} from the \
-         framework and webroot built into this binary. It has the framework and the REST interface; the other base \
-         and application components are not installed.",
+         framework, tools and webroot built into this binary. It has the framework, the REST interface, the html \
+         apps and the terminal client; the web client (/qapps) and the application components are not installed.",
         written.len(),
         runtime_dir.display()
     );
     Ok(())
 }
 
-/// Compare the booted factory's framework and webroot components with the built-in files and log the result: one
-/// line when they match, else a summary and a line for each file. Runs on a thread of its own when `background`, so
-/// the server's startup does not wait for it.
+/// The runtime's directory of each built-in component that the factory loaded.
+fn factory_dirs(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<(Set, PathBuf)> {
+    let components = factory.components();
+    Set::COMPONENTS
+        .into_iter()
+        .filter_map(|set| {
+            if set == Set::Framework {
+                return Some((set, factory.framework_dir().to_path_buf()));
+            }
+            components
+                .iter()
+                .find(|component| component.name == set.name())
+                .map(|component| (set, component.location.clone()))
+        })
+        .collect()
+}
+
+/// Compare the booted factory's framework, tools and webroot components with the built-in files and log the result:
+/// one line when they match, else a summary and a line for each file. Runs on a thread of its own when `background`,
+/// so the server's startup does not wait for it.
 pub(crate) fn check(factory: &moqui_core::context::ExecutionContextFactory, background: bool) {
-    let framework = factory.framework_dir().to_path_buf();
-    let webroot = factory
-        .components()
-        .iter()
-        .find(|component| component.name == "webroot")
-        .map(|component| component.location.clone());
+    let dirs = factory_dirs(factory);
     if !background {
-        log_differences(&framework, webroot.as_deref());
+        log_differences(&dirs);
         return;
     }
     let spawned = std::thread::Builder::new()
         .name("embedded-check".into())
-        .spawn(move || log_differences(&framework, webroot.as_deref()));
+        .spawn(move || log_differences(&dirs));
     if let Err(err) = spawned {
         tracing::warn!("Could not start the comparison of the framework files with the built-in ones: {err}");
     }
 }
 
-fn log_differences(framework: &Path, webroot: Option<&Path>) {
-    let differences = match moqui_embedded::compare(framework, webroot) {
+fn borrowed(dirs: &[(Set, PathBuf)]) -> Vec<(Set, &Path)> {
+    dirs.iter().map(|(set, dir)| (*set, dir.as_path())).collect()
+}
+
+/// `framework, tools and webroot`: the names of the compared components.
+fn names(dirs: &[(Set, PathBuf)]) -> String {
+    let names: Vec<&str> = dirs.iter().map(|(set, _)| set.name()).collect();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+fn log_differences(dirs: &[(Set, PathBuf)]) {
+    let differences = match moqui_embedded::compare(&borrowed(dirs)) {
         Ok(differences) => differences,
         Err(err) => {
             tracing::error!("Could not read the framework files built into this binary: {err}");
             return;
         }
     };
-    let compared = if webroot.is_some() {
-        "framework and webroot"
-    } else {
-        "framework (no webroot component)"
-    };
+    let compared = names(dirs);
     if differences.is_empty() {
         tracing::info!("The {compared} files match the ones built into this binary");
         return;
@@ -134,7 +134,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         [command, path] if command == "diff" => diff_one(path),
         [command, dir] if command == "extract" => extract(Path::new(dir)),
         _ => Err(Error::new(
-            "usage: moqui embedded list | diff [framework/<path> | webroot/<path>] | extract <runtime dir>",
+            "usage: moqui embedded list | diff [<component>/<path>] | extract <runtime dir>",
         )),
     }
 }
@@ -150,65 +150,61 @@ fn list() -> Result<(), Error> {
     Ok(())
 }
 
-/// The framework and webroot directories `moqui` would boot with, without booting: the webroot beside the framework.
-fn dirs() -> (PathBuf, PathBuf) {
+/// The component directories `moqui` would boot with, without booting: the framework, and tools and webroot beside it
+/// when they are there.
+fn runtime_dirs() -> Vec<(Set, PathBuf)> {
     let (_, framework) = super::runtime_framework_dirs();
-    let webroot = framework
-        .parent()
-        .map_or_else(|| PathBuf::from("webroot"), |base| base.join("webroot"));
-    (framework, webroot)
+    let base = framework.parent().map(Path::to_path_buf).unwrap_or_default();
+    Set::COMPONENTS
+        .into_iter()
+        .filter_map(|set| match set {
+            Set::Framework => Some((set, framework.clone())),
+            _ => Some((set, base.join(set.name()))).filter(|(_, dir)| dir.is_dir()),
+        })
+        .collect()
 }
 
 fn diff_all() -> Result<(), Error> {
-    let (framework, webroot) = dirs();
-    let webroot = webroot.is_dir().then_some(webroot);
-    let differences = moqui_embedded::compare(&framework, webroot.as_deref()).map_err(io_error)?;
+    let dirs = runtime_dirs();
+    let differences = moqui_embedded::compare(&borrowed(&dirs)).map_err(io_error)?;
     if differences.is_empty() {
-        println!(
-            "The files in {} match the ones built into this binary",
-            framework.display()
-        );
+        println!("The {} files match the ones built into this binary", names(&dirs));
     }
     for difference in differences {
-        if difference.kind == Kind::Added {
-            println!("Only on disk: {}/{}", difference.set.name(), difference.path);
-            continue;
-        }
-        if difference.kind == Kind::Missing {
-            println!(
-                "Only in the binary: {0}/{1} (moqui embedded diff {0}/{1} prints it)",
-                difference.set.name(),
-                difference.path
-            );
-            continue;
-        }
-        if let Kind::Unreadable(error) = &difference.kind {
-            println!("Could not read {}/{}: {error}", difference.set.name(), difference.path);
-            continue;
-        }
-        let dir = if difference.set == Set::Webroot {
-            webroot.as_deref()
-        } else {
-            Some(framework.as_path())
-        };
-        if let Some(dir) = dir {
-            print_diff(difference.set, &difference.path, dir)?;
+        let name = difference.set.name();
+        let path = &difference.path;
+        match &difference.kind {
+            Kind::Added => println!("Only on disk: {name}/{path}"),
+            Kind::Missing => {
+                println!("Only in the binary: {name}/{path} (moqui embedded diff {name}/{path} prints it)")
+            }
+            Kind::Unreadable(error) => println!("Could not read {name}/{path}: {error}"),
+            Kind::Changed { .. } => {
+                if let Some((_, dir)) = dirs.iter().find(|(set, _)| *set == difference.set) {
+                    print_diff(difference.set, path, dir)?;
+                }
+            }
         }
     }
     Ok(())
 }
 
 fn diff_one(path: &str) -> Result<(), Error> {
-    let (framework, webroot) = dirs();
-    let (set, dir, relative) = if let Some(relative) = path.strip_prefix("framework/") {
-        (Set::Framework, framework, relative)
-    } else if let Some(relative) = path.strip_prefix("webroot/") {
-        (Set::Webroot, webroot, relative)
-    } else {
+    let dirs = runtime_dirs();
+    let named = path.split_once('/').and_then(|(name, relative)| {
+        let set = Set::named(name).filter(|set| Set::COMPONENTS.contains(set))?;
+        Some((set, relative))
+    });
+    let Some((set, relative)) = named else {
         return Err(Error::new(format!(
-            "{path}: name a built-in file as framework/<path> or webroot/<path> (moqui embedded list shows them)"
+            "{path}: name a built-in file as framework/<path>, tools/<path> or webroot/<path> (moqui embedded list \
+             shows them)"
         )));
     };
+    let dir = dirs
+        .iter()
+        .find(|(known, _)| *known == set)
+        .map_or_else(|| PathBuf::from(set.name()), |(_, dir)| dir.clone());
     if !print_diff(set, relative, &dir)? {
         println!("{path} matches the one built into this binary");
     }

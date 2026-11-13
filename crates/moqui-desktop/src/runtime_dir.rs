@@ -81,8 +81,9 @@ impl Location {
     }
 }
 
-/// The runtime `moqui` would use with no `MOQUI_RUNTIME`, if there is one: `runtime` in the working directory, or
-/// beside or around the executable. In an AppImage the executable is the AppImage file (`APPIMAGE`), not the binary in
+/// A runtime found with no `MOQUI_RUNTIME`, if there is one: `runtime` in the working directory, or beside or around
+/// the executable (an app is started from anywhere, so it looks beside itself where `moqui` looks only in its working
+/// directory). In an AppImage the executable is the AppImage file (`APPIMAGE`), not the binary in
 /// its mounted image, so a runtime beside the file is found.
 pub(crate) fn find_existing() -> Option<PathBuf> {
     let exe = std::env::var_os("APPIMAGE")

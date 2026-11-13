@@ -1,8 +1,9 @@
 # runtime
 
 The runtime directory holds everything that varies per instance. The binary finds it through `MOQUI_RUNTIME`
-(default `runtime` in the working directory, else `runtime` beside the binary, else the binary's own directory: the
-first with `base-component/` in it). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/` and
+(default `runtime` in the working directory when it has `base-component/`, else the working directory itself when it
+has one, else a new `runtime` in the working directory; never from where the binary is, so one binary runs several
+instances). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/` and
 `install/`, with the binary and `MoquiConf.xml` in it.
 
 | Path | In git | Purpose |
@@ -24,7 +25,7 @@ first with `base-component/` in it). `./moq archive` zips this directory, withou
 
 Directories marked "no" are listed in `.gitignore` and are created when first needed.
 
-The binary carries a copy of `base-component/framework` and of a webroot stub (`crates/moqui-embedded`). At startup it
-logs each framework or webroot file here that differs from that copy, and uses the files here. With no runtime it
-writes the copy as a skeleton runtime (beside the binary when it can, else here in the working directory), which boots
-and answers `/rest`, `/Login` and `/status` ([Run-Deploy](../docs/Run-Deploy.md#built-in-framework-files)).
+The binary carries a copy of `base-component/framework`, `base-component/tools` and a webroot stub
+(`crates/moqui-embedded`). At startup it logs each file of those here that differs from that copy, and uses the files
+here. With no runtime it writes the copy as a skeleton runtime, which boots, answers `/rest`, `/Login`, `/status` and
+the html `/apps`, and runs `moqui tui` ([Run-Deploy](../docs/Run-Deploy.md#built-in-framework-files)).

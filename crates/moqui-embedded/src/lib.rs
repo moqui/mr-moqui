@@ -12,18 +12,19 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework component's runtime files and a webroot stub, as this binary was built with them.
+//! The framework and tools components' runtime files and a webroot stub, as this binary was built with them.
 //!
 //! The binary's code depends on these files (entity and service definitions, the default conf, seed data, templates,
-//! the REST and login screens). They may be changed in a runtime, which is intended, but a change that no longer fits
-//! the binary fails in odd ways, so the host [`compare`]s the files on disk with these copies at startup and logs each
-//! difference, then goes on with the files on disk. With no runtime at all it writes them out as a skeleton runtime
-//! ([`write_skeleton`]), which boots, loads the seed data and answers `/rest`, `/Login` and `/status`.
+//! the REST, login and apps screens). They may be changed in a runtime, which is intended, but a change that no longer
+//! fits the binary fails in odd ways, so the host [`compare`]s the files on disk with these copies at startup and logs
+//! each difference, then goes on with the files on disk. With no runtime at all it writes them out as a skeleton runtime
+//! ([`write_skeleton`]), which boots, loads the seed data, answers `/rest`, `/Login`, `/status` and the html `/apps`
+//! (System, Tools and Dashboards among them), and runs the terminal client.
 //!
-//! Three sets are packed by build.rs: [`Set::Framework`], the framework component less its `test/` and `acceptance/`;
-//! [`Set::Webroot`], the webroot files `webroot-files.txt` names, a subset of the real ones; and [`Set::Skeleton`], files
-//! only a new skeleton gets and nothing compares (the placeholder page at `/`, which the web client's `qapps.xml`
-//! replaces).
+//! Four sets are packed by build.rs: [`Set::Framework`] and [`Set::Tools`], those components less their `test/` and
+//! `acceptance/`; [`Set::Webroot`], the webroot files `webroot-files.txt` names, a subset of the real ones (no fonts,
+//! icons, `qapps` or full JavaScript libraries); and [`Set::Skeleton`], files only a new skeleton gets and nothing
+//! compares (the placeholder page at `/`, which the web client's `qapps.xml` replaces).
 //!
 //! This crate has no framework dependency, so an edit to a framework file rebuilds it alone and relinks the binary.
 
@@ -34,8 +35,9 @@ use std::path::{Path, PathBuf};
 /// The files, as build.rs packed them.
 static ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.tar.gz"));
 
-/// The framework's top-level directories that are not packed and not compared: what only the tests read.
-pub const FRAMEWORK_SKIP: [&str; 2] = ["test", "acceptance"];
+/// The top-level directories of a whole component ([`Set::is_whole_component`]) that are not packed and not compared:
+/// what only the tests read.
+pub const COMPONENT_SKIP: [&str; 2] = ["test", "acceptance"];
 
 /// The framework files the binary has compiled in with `include_str!` and never reads from disk: an edit to one on
 /// disk changes nothing (`crates/moqui-core/src/script/actions.rs` and `screen/generate.rs`, `screen/statics.rs`).
@@ -51,6 +53,8 @@ pub const COMPILED_IN: [&str; 4] = [
 pub enum Set {
     /// The framework component, relative to its directory.
     Framework,
+    /// The tools component (System, Tools, Dashboards and the `moqui` REST API), relative to its directory.
+    Tools,
     /// The webroot stub, relative to the webroot component's directory.
     Webroot,
     /// Files only a skeleton runtime gets, relative to `base-component`; never compared.
@@ -58,9 +62,13 @@ pub enum Set {
 }
 
 impl Set {
+    /// The sets that are components, compared with a runtime's.
+    pub const COMPONENTS: [Set; 3] = [Set::Framework, Set::Tools, Set::Webroot];
+
     fn prefix(self) -> &'static str {
         match self {
             Self::Framework => "framework/",
+            Self::Tools => "tools/",
             Self::Webroot => "webroot/",
             Self::Skeleton => "skeleton/",
         }
@@ -71,9 +79,25 @@ impl Set {
     pub fn name(self) -> &'static str {
         match self {
             Self::Framework => "framework",
+            Self::Tools => "tools",
             Self::Webroot => "webroot",
             Self::Skeleton => "skeleton",
         }
+    }
+
+    /// The set named `name` ([`Set::name`]).
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        [Self::Framework, Self::Tools, Self::Webroot, Self::Skeleton]
+            .into_iter()
+            .find(|set| set.name() == name)
+    }
+
+    /// Whether the set is a whole component less its [`COMPONENT_SKIP`] directories, so a file on disk that the binary
+    /// does not have is a difference ([`Kind::Added`]); the webroot set is a subset.
+    #[must_use]
+    pub fn is_whole_component(self) -> bool {
+        matches!(self, Self::Framework | Self::Tools)
     }
 }
 
@@ -93,7 +117,7 @@ pub enum Kind {
     Changed { first_line: usize },
     /// The packed file is not on disk.
     Missing,
-    /// On disk and not packed (the framework set only; the webroot stub is a subset).
+    /// On disk and not packed (a whole component's set only; the webroot stub is a subset).
     Added,
     /// The file on disk could not be read.
     Unreadable(String),
@@ -150,7 +174,7 @@ pub fn entries() -> io::Result<Vec<Entry>> {
     for entry in archive.entries()? {
         let mut entry = entry?;
         let name = entry.path()?.to_string_lossy().replace('\\', "/");
-        let Some((set, path)) = [Set::Framework, Set::Webroot, Set::Skeleton]
+        let Some((set, path)) = [Set::Framework, Set::Tools, Set::Webroot, Set::Skeleton]
             .into_iter()
             .find_map(|set| name.strip_prefix(set.prefix()).map(|path| (set, path.to_string())))
         else {
@@ -163,25 +187,25 @@ pub fn entries() -> io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Write a skeleton runtime into `runtime_dir`: the framework set into `base-component/framework`, and, when
-/// `base-component/webroot` is not there, the webroot and skeleton sets into it. A file already there is left as it is.
-/// Returns the files written.
+/// Write a skeleton runtime into `runtime_dir`: the framework set into `base-component/framework`; the tools set into
+/// `base-component/tools` when that is not there; and the webroot and skeleton sets into `base-component/webroot` when
+/// that is not there. A file already there is left as it is. Returns the files written.
 ///
 /// # Errors
 ///
 /// Returns an error naming the path when a directory or file cannot be written, or when the archive cannot be read.
 pub fn write_skeleton(runtime_dir: &Path) -> io::Result<Vec<PathBuf>> {
     let base = runtime_dir.join("base-component");
-    let framework = base.join("framework");
-    let webroot = base.join("webroot");
-    let with_webroot = !webroot.exists();
+    let with_tools = !base.join("tools").exists();
+    let with_webroot = !base.join("webroot").exists();
     let mut written = Vec::new();
     for entry in entries()? {
         let target = match entry.set {
-            Set::Framework => framework.join(&entry.path),
-            Set::Webroot if with_webroot => webroot.join(&entry.path),
+            Set::Framework => base.join("framework").join(&entry.path),
+            Set::Tools if with_tools => base.join("tools").join(&entry.path),
+            Set::Webroot if with_webroot => base.join("webroot").join(&entry.path),
             Set::Skeleton if with_webroot => base.join(&entry.path),
-            Set::Webroot | Set::Skeleton => continue,
+            Set::Tools | Set::Webroot | Set::Skeleton => continue,
         };
         if target.exists() {
             continue;
@@ -195,28 +219,25 @@ pub fn write_skeleton(runtime_dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(written)
 }
 
-/// Compare the framework component in `framework_dir`, and the webroot stub with the webroot component in
-/// `webroot_dir` when there is one, with the packed files. The result is sorted by set and path; empty when all match.
-/// A file that cannot be read is a [`Kind::Unreadable`] difference, and the rest are still compared.
+/// Compare each component in `dirs` (a set and the directory of that component in the runtime) with the packed files;
+/// a set not named is not compared. The result is sorted by set and path; empty when all match. A file that cannot be
+/// read is a [`Kind::Unreadable`] difference, and the rest are still compared.
 ///
 /// # Errors
 ///
 /// Returns an error only when the archive cannot be read.
-pub fn compare(framework_dir: &Path, webroot_dir: Option<&Path>) -> io::Result<Vec<Difference>> {
+pub fn compare(dirs: &[(Set, &Path)]) -> io::Result<Vec<Difference>> {
+    let dir_of = |set: Set| dirs.iter().find(|(named, _)| *named == set).map(|(_, dir)| *dir);
     let mut differences = Vec::new();
     let mut packed = BTreeSet::new();
     for entry in entries()? {
-        let dir = match entry.set {
-            Set::Framework => {
-                packed.insert(entry.path.clone());
-                framework_dir
-            }
-            Set::Webroot => match webroot_dir {
-                Some(dir) => dir,
-                None => continue,
-            },
-            Set::Skeleton => continue,
+        if entry.set == Set::Skeleton {
+            continue;
+        }
+        let Some(dir) = dir_of(entry.set) else {
+            continue;
         };
+        packed.insert((entry.set, entry.path.clone()));
         let kind = match std::fs::read(dir.join(&entry.path)) {
             Ok(bytes) if bytes == entry.bytes => continue,
             Ok(bytes) => Kind::Changed {
@@ -231,15 +252,17 @@ pub fn compare(framework_dir: &Path, webroot_dir: Option<&Path>) -> io::Result<V
             kind,
         });
     }
-    let mut on_disk = Vec::new();
-    disk_files(framework_dir, "", true, &mut on_disk, &mut differences);
-    for path in on_disk {
-        if !packed.contains(&path) {
-            differences.push(Difference {
-                set: Set::Framework,
-                path,
-                kind: Kind::Added,
-            });
+    for (set, dir) in dirs.iter().filter(|(set, _)| set.is_whole_component()) {
+        let mut on_disk = Vec::new();
+        disk_files(*set, dir, "", &mut on_disk, &mut differences);
+        for path in on_disk {
+            if !packed.contains(&(*set, path.clone())) {
+                differences.push(Difference {
+                    set: *set,
+                    path,
+                    kind: Kind::Added,
+                });
+            }
         }
     }
     differences.sort_by(|a, b| (a.set, &a.path).cmp(&(b.set, &b.path)));
@@ -290,14 +313,14 @@ fn first_differing_line(a: &[u8], b: &[u8]) -> usize {
     a[..common].iter().filter(|byte| **byte == b'\n').count() + 1
 }
 
-/// The files under `dir`, as `/`-separated paths from the framework directory, less dot files and, at the top, the
-/// [`FRAMEWORK_SKIP`] directories. A directory that cannot be read is an [`Kind::Unreadable`] difference.
-fn disk_files(dir: &Path, prefix: &str, top: bool, files: &mut Vec<String>, differences: &mut Vec<Difference>) {
+/// The files under `dir`, as `/`-separated paths from the component directory of `set`, less dot files and, at the top,
+/// the [`COMPONENT_SKIP`] directories. A directory that cannot be read is an [`Kind::Unreadable`] difference.
+fn disk_files(set: Set, dir: &Path, prefix: &str, files: &mut Vec<String>, differences: &mut Vec<Difference>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
             differences.push(Difference {
-                set: Set::Framework,
+                set,
                 path: if prefix.is_empty() {
                     ".".to_string()
                 } else {
@@ -310,13 +333,13 @@ fn disk_files(dir: &Path, prefix: &str, top: bool, files: &mut Vec<String>, diff
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || (top && FRAMEWORK_SKIP.contains(&name.as_str())) {
+        if name.starts_with('.') || (prefix.is_empty() && COMPONENT_SKIP.contains(&name.as_str())) {
             continue;
         }
         let path = format!("{prefix}{name}");
         let is_dir = std::fs::metadata(entry.path()).is_ok_and(|meta| meta.is_dir());
         if is_dir {
-            disk_files(&entry.path(), &format!("{path}/"), false, files, differences);
+            disk_files(set, &entry.path(), &format!("{path}/"), files, differences);
         } else {
             files.push(path);
         }

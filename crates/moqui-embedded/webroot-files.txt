@@ -1,8 +1,11 @@
 # The webroot files built into the binary (crates/moqui-embedded): what /rest, /Login, its second factor and password
-# pages, /status and the error pages need, and the style sheets, scripts and icons the html theme
-# (data/WebrootThemeData.xml) and screen/includes/Header.html.fancy link. They are compared with the files on disk at
-# startup and written into a skeleton runtime. One path per line, relative to runtime/base-component/webroot; a
-# directory takes everything under it. A path that is not there fails the build.
+# pages, /status, the error pages and the html /apps need (the apps root that tools mounts under and the terminal
+# client starts at), with the html render mode's style sheet and scripts (screen/includes/Header.html.fancy,
+# data/WebrootThemeData.xml, the libraries framework/template/screen/ScreenHtml.js and js/moqui-html.js load). Fonts,
+# icons, /qapps and the qvt client's JavaScript libraries are left out; their links are broken in a skeleton runtime.
+# The files are compared with the ones on disk at startup and written into a skeleton runtime. One path per line,
+# relative to runtime/base-component/webroot; a directory takes everything under it. A path that is not there fails
+# the build.
 component.xml
 data
 script
@@ -11,6 +14,7 @@ screen/webroot.xml
 screen/includes/Header.html.fancy
 screen/includes/Footer.html.fancy
 screen/includes/Messages.html.fancy
+screen/includes/navbar.html.fancy
 screen/webroot/rest.xml
 screen/webroot/Login.xml
 screen/webroot/Login.html.fancy
@@ -20,11 +24,11 @@ screen/webroot/ChangePassword.xml
 screen/webroot/ReAuth.xml
 screen/webroot/error.xml
 screen/webroot/error
-screen/webroot/favicon.ico
-screen/webroot/MoquiLogo100.png
-screen/webroot/manifest.webmanifest
-screen/webroot/images
+screen/webroot/apps.xml
+screen/webroot/apps
 screen/webroot/css/moqui-html.css
 screen/webroot/js/moqui-html.js
-screen/webroot/libs/fontawesome
-screen/webroot/libs/material-symbols
+screen/webroot/js/moqui-form-when.js
+screen/webroot/libs/tom-select
+screen/webroot/libs/sortablejs
+screen/webroot/libs/NOTICES.md

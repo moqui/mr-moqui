@@ -15,25 +15,27 @@
 use super::{dispatch, load_options, parse_load_args, should_load_data, startup_load_flags, LoadFlags};
 
 #[test]
-fn runtime_is_the_local_one_else_beside_or_around_the_executable() {
+fn runtime_is_found_from_the_start_directory_not_the_executable() {
     let root = std::env::temp_dir().join(format!("moqui-runtime-lookup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    let local = root.join("work/runtime");
-    let archive = root.join("archive");
-    let beside = archive.join("runtime");
-    let exe = archive.join("moqui");
-    // A directory without base-component is not a runtime; with none, a new one goes beside a writable executable.
+    let start = root.join("instance");
+    let local = start.join("runtime");
+    // Nothing there: a new runtime in the start directory, which the server fills with a skeleton.
     std::fs::create_dir_all(&local).unwrap();
-    std::fs::create_dir_all(&beside).unwrap();
-    assert_eq!(super::runtime_dir_for(&local, Some(&exe)), beside);
-    // The archive layout: the binary sits in the runtime.
-    std::fs::create_dir_all(archive.join("base-component")).unwrap();
-    assert_eq!(super::runtime_dir_for(&local, Some(&exe)), archive);
-    assert_eq!(super::runtime_dir_for(&local, None), local);
-    std::fs::create_dir_all(beside.join("base-component")).unwrap();
-    assert_eq!(super::runtime_dir_for(&local, Some(&exe)), beside);
+    assert_eq!(super::runtime_dir_in(&start), local);
+    // The archive layout started in its own directory: the start directory is the runtime.
+    std::fs::create_dir_all(start.join("base-component")).unwrap();
+    assert_eq!(super::runtime_dir_in(&start), start);
+    // runtime in the start directory comes first.
     std::fs::create_dir_all(local.join("base-component")).unwrap();
-    assert_eq!(super::runtime_dir_for(&local, Some(&exe)), local);
+    assert_eq!(super::runtime_dir_in(&start), local);
+    // The desktop app's search still looks beside the executable.
+    let archive = root.join("archive");
+    std::fs::create_dir_all(archive.join("base-component")).unwrap();
+    assert_eq!(
+        super::find_runtime_dir(&root.join("elsewhere/runtime"), Some(&archive.join("moqui"))),
+        Some(archive.clone())
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

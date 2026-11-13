@@ -41,7 +41,7 @@ Check
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
-  embedded         list | diff [path] | extract <dir>       The framework and webroot files built into this binary
+  embedded         list | diff [path] | extract <dir>       The framework, tools and webroot files built into this binary
 
 Test
   test             [component ...] [options]                Run component JavaScript specs
@@ -66,11 +66,11 @@ Server options
   moqui -p 8081 -D entity_ds_db_conf=postgres
 
 Environment
-  MOQUI_RUNTIME      Runtime directory (default: the first with a base-component directory of
-                     runtime in the working directory, runtime beside this executable, and the
-                     directory of this executable; with none, runtime beside this executable when
-                     that directory is writable, else in the working directory). A runtime with no
-                     framework component gets a skeleton one from the files built into this binary.
+  MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
+                     base-component directory, else the working directory itself when it has one, else
+                     a new runtime in the working directory; never found from this executable, so one
+                     binary runs several instances). A runtime with no framework component gets a
+                     skeleton one from the files built into this binary.
   MOQUI_FRAMEWORK    Framework component (default: <runtime>/base-component/framework)
   MOQUI_CONF         Runtime conf merged over MoquiDefaultConf.xml, relative to the runtime
                      directory or absolute. Unset uses MoquiConf.xml in the runtime directory,
@@ -578,15 +578,16 @@ moqui help <command> and moqui <command> --help (or -h) print that command.
 ";
 
 const EMBEDDED: &str = "\
-moqui embedded list | diff [framework/<path> | webroot/<path>] | extract <runtime dir>
-    The framework component and the webroot stub built into this binary.
+moqui embedded list | diff [<component>/<path>] | extract <runtime dir>
+    The framework and tools components and the webroot stub built into this binary.
 
-At startup moqui compares the framework component and the webroot component with these files and logs
-each file that differs (changed, missing, or added on disk); the files on disk are used. With no runtime,
-or a runtime with no framework component, it writes these files there as a skeleton runtime that boots,
-loads the seed data and answers /rest, /Login and /status. See runtime/README.md.
+At startup moqui compares the framework, tools and webroot components with these files and logs each
+file that differs (changed, missing, or added on disk); the files on disk are used. With no runtime, or a
+runtime with no framework component, it writes these files there as a skeleton runtime that boots, loads
+the seed data, answers /rest, /Login, /status and the html /apps (System, Tools, Dashboards), and runs
+moqui tui. Fonts, icons, /qapps and the web client's libraries are not in it. See runtime/README.md.
 
-  list      Every built-in file, as framework/<path> or webroot/<path>, with its size.
+  list      Every built-in file, as framework/<path>, tools/<path> or webroot/<path>, with its size.
   diff      A unified diff of each changed file (built in as the old side; a missing or added file is one
             line), or of the one file named.
   extract   Write a skeleton runtime into the directory; files already there are kept.
@@ -887,7 +888,7 @@ pub fn command_usage(command: &str) -> Error {
         }
         "help" => "moqui help [command]",
         "version" => "moqui version",
-        "embedded" => "moqui embedded list | diff [framework/<path> | webroot/<path>] | extract <runtime dir>",
+        "embedded" => "moqui embedded list | diff [<component>/<path>] | extract <runtime dir>",
         _ => "moqui [command] [args...]",
     };
     let help = if command_help(command).is_some() {

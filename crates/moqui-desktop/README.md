@@ -220,7 +220,8 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
 
 The runtime is, in order: `MOQUI_RUNTIME`; in a development run, this repository's `runtime`; the first one with a
 `base-component` directory of `runtime` in the working directory, `runtime` beside the executable (for an AppImage, the
-`.AppImage` file) and the executable's own directory, as `moqui` finds one; else the bundled runtime. So
+`.AppImage` file) and the executable's own directory (the app looks beside itself, since it is started from anywhere;
+`moqui` looks only in its working directory); else the bundled runtime. So
 `MR-Moqui_0.1.0_amd64.AppImage` run from a checkout's root, or with `MOQUI_RUNTIME` set, runs on that runtime and its
 database.
 

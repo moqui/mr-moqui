@@ -18,7 +18,6 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" default-menu-title="Moqui" allow-extra-path="true">
     <pre-actions><script><![CDATA[
-        html_stylesheets.add('/libs/fontawesome/css/font-awesome.min.css')
         html_stylesheets.add('/css/moqui-html.css')
         html_scripts.add('/js/moqui-html.js')
     ]]></script></pre-actions>
@@ -26,9 +25,11 @@ along with this software (see the LICENSE.md file). If not, see
         <render-mode><text type="html"><![CDATA[
             <main class="error-page">
                 <h1>Moqui is running from a skeleton runtime</h1>
-                <p>This runtime was built from the copy of the framework in the moqui binary. It has the framework and the
-                    REST interface, not the web applications: install the base and application components in the runtime
-                    directory to get them.</p>
+                <p>This runtime was built from the copy of the framework in the moqui binary. It has the framework, the
+                    REST interface and the System, Tools and Dashboards apps in the plain html interface at
+                    <a href="${sri.buildUrl("/apps").url}">/apps</a>, and runs <code>moqui tui</code>. It does not have the
+                    web client, its fonts and icons, or the application components: install the base and application
+                    components in the runtime directory to get them.</p>
                 <p>The REST interface is under <code>/rest</code>: <code>/rest/login</code> and <code>/rest/logout</code>,
                     entities at <code>/rest/e1</code> and services at <code>/rest/s1</code>.</p>
                 <p class="actions">

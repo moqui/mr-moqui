@@ -1,11 +1,11 @@
-# The framework component's runtime files and a webroot stub, built into the binary: the host compares the files on
-# disk with them at startup and logs each difference, and writes them out as a skeleton runtime when there is none
-# (runtime/README.md). Its own crate with no framework dependency, so an edit to a framework file rebuilds only this
-# crate and relinks; build.rs packs the files.
+# The framework and tools components' runtime files and a webroot stub, built into the binary: the host compares the
+# files on disk with them at startup and logs each difference, and writes them out as a skeleton runtime when there is
+# none (runtime/README.md). Its own crate with no framework dependency, so an edit to a framework file rebuilds only
+# this crate and relinks; build.rs packs the files.
 
 [package]
 name = "moqui-embedded"
-description = "The framework and webroot stub files built into the binary, for the startup comparison and a skeleton runtime."
+description = "The framework, tools and webroot stub files built into the binary, for the startup comparison and a skeleton runtime."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

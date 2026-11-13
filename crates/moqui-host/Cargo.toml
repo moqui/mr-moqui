@@ -155,7 +155,7 @@ moqui-channels = { workspace = true, optional = true }
 moqui-xmpp = { workspace = true, optional = true }
 # The DAV server, the VCard and ICalendar tools and elFinder (crates/moqui-dav), in every build; /dav/ and SFTP serve it.
 moqui-dav = { workspace = true }
-# The framework and webroot stub files built into the binary (crates/moqui-embedded), in every build.
+# The framework, tools and webroot stub files built into the binary (crates/moqui-embedded), in every build.
 moqui-embedded = { workspace = true }
 # The development kit (crates/moqui-devkit), in every build: moqui test, lint, check and types; its file watcher is the
 # devtools feature's.

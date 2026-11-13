@@ -886,21 +886,27 @@ fn runtime_framework_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
     (runtime, framework)
 }
 
-/// The first runtime directory, one with `base-component` in it, of: `runtime` in the working directory, `runtime`
-/// beside the executable (links resolved), and the executable's own directory, so an archive from `./moq archive` (a
-/// runtime with the binary in it) runs as `/path/to/it/moqui` from anywhere. None: where a new one goes
-/// ([`embedded_files::new_runtime_dir`]), which the server and `moqui load` fill with a skeleton runtime.
+/// The runtime when `MOQUI_RUNTIME` is not set, found from the working directory and never from the executable, so one
+/// binary serves several instances, each started in its own directory ([`runtime_dir_in`]).
 fn default_runtime_dir() -> std::path::PathBuf {
-    let exe = std::env::current_exe().and_then(std::fs::canonicalize).ok();
-    runtime_dir_for(std::path::Path::new("runtime"), exe.as_deref())
+    let start = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    runtime_dir_in(&start)
 }
 
-fn runtime_dir_for(local: &std::path::Path, exe: Option<&std::path::Path>) -> std::path::PathBuf {
-    find_runtime_dir(local, exe).unwrap_or_else(|| embedded_files::new_runtime_dir(local, exe))
+/// `runtime` in `start` when it has a `base-component` directory; else `start` itself when it has one (an unpacked
+/// archive, or `/opt/moqui`, started in its own directory); else `runtime` in `start`, a new one that the server and
+/// `moqui load` fill with a skeleton runtime from the files built into the binary.
+fn runtime_dir_in(start: &std::path::Path) -> std::path::PathBuf {
+    let local = start.join("runtime");
+    if !local.join("base-component").is_dir() && start.join("base-component").is_dir() {
+        return start.to_path_buf();
+    }
+    local
 }
 
 /// The first of `local`, `runtime` beside `exe` and the directory of `exe` that has a `base-component` directory: the
-/// search `moqui` makes when `MOQUI_RUNTIME` is not set, which the desktop app makes too before using its bundled one.
+/// desktop app's search before it uses its bundled runtime, since an app is started from anywhere. `moqui` itself
+/// looks only in its working directory ([`runtime_dir_in`]).
 pub fn find_runtime_dir(local: &std::path::Path, exe: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let exe_dir = exe.and_then(std::path::Path::parent);
     std::iter::once(local.to_path_buf())

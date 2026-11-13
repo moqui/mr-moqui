@@ -1206,9 +1206,10 @@ without .zip or .tgz. That directory is a runtime directory with the binary in i
   LICENSE.md
   and all of runtime/ (.env, base-component, conf, db, ...) except log/, tmp/, save/ and
   install/, with Chromium, OpenSearch and the embedded database when they are there
-The binary uses the directory it is in as the runtime when it has base-component/, and merges
-the MoquiConf.xml there, so it runs as <dir>/moqui from any directory; on its first start it
-unpacks the embedded Postgres into <dir>/install.
+Started in that directory (cd <dir> && ./moqui), the binary uses it as the runtime, since it
+has base-component/, and merges the MoquiConf.xml there; the runtime is found from the working
+directory, never from the binary. On its first start it unpacks the embedded Postgres into
+<dir>/install.
 
 The file goes in the current directory unless named elsewhere, with .zip (or .tgz) added when
 the name lacks it; a name ending in .tgz or .tar.gz means --tgz. A directory gets the default
@@ -4528,8 +4529,8 @@ archive_readme() {
         cat <<EOF
 
 Run
-  $name/moqui starts the server (HTTP on 8080, HTTPS on 8443) from any directory: this
-  directory is its runtime. $name/moqui help lists its other commands and options.
+  cd $name && ./moqui starts the server (HTTP on 8080, HTTPS on 8443): this directory is its
+  runtime, found from the working directory. ./moqui help lists its other commands and options.
 
   MoquiConf.xml is this instance's conf, merged over the framework defaults, a copy of
   $(rel "$conf").

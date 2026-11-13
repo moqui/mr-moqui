@@ -12,45 +12,51 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Packs the files src/lib.rs embeds into `OUT_DIR/embedded.tar.gz`: the framework component less its top-level
-//! `test/` and `acceptance/`, under `framework/`; the webroot files `webroot-files.txt` names, under `webroot/`; and this
-//! crate's `skeleton/` tree, under `skeleton/`. The tar is the same for the same files (sorted, no times or owners).
+//! Packs the files src/lib.rs embeds into `OUT_DIR/embedded.tar.gz`: the framework and tools components less their
+//! top-level `test/` and `acceptance/`, under `framework/` and `tools/`; the webroot files `webroot-files.txt` names,
+//! under `webroot/`; and this crate's `skeleton/` tree, under `skeleton/`. The tar is the same for the same files (sorted,
+//! no times or owners).
 //!
-//! Cargo watches each packed top-level entry, not the framework directory as a whole, so an edit to a framework test
-//! does not relink the binary; a new top-level directory in the framework is packed once anything else changes.
+//! Cargo watches each packed top-level entry, not a component directory as a whole, so an edit to a component's tests
+//! does not relink the binary; a new top-level directory in a component is packed once anything else changes.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// The framework's top-level directories that are not packed: what only the tests read.
-const FRAMEWORK_SKIP: [&str; 2] = ["test", "acceptance"];
+/// The components packed whole, less [`COMPONENT_SKIP`].
+const WHOLE_COMPONENTS: [&str; 2] = ["framework", "tools"];
+
+/// The top-level directories of a whole component that are not packed: what only the tests read.
+const COMPONENT_SKIP: [&str; 2] = ["test", "acceptance"];
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let base = manifest.join("../../runtime/base-component");
-    let framework = base.join("framework");
     let webroot = base.join("webroot");
     let list = manifest.join("webroot-files.txt");
     let skeleton = manifest.join("skeleton");
 
     let mut files: Vec<(String, PathBuf)> = Vec::new();
 
-    let mut top: Vec<_> = std::fs::read_dir(&framework)
-        .unwrap_or_else(|err| panic!("could not read {}: {err}", framework.display()))
-        .map(|entry| {
-            entry
-                .expect("framework entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .filter(|name| !name.starts_with('.') && !FRAMEWORK_SKIP.contains(&name.as_str()))
-        .collect();
-    top.sort();
-    for name in top {
-        let path = framework.join(&name);
-        println!("cargo:rerun-if-changed={}", path.display());
-        collect(&path, &format!("framework/{name}"), &mut files);
+    for component in WHOLE_COMPONENTS {
+        let dir = base.join(component);
+        let mut top: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("could not read {}: {err}", dir.display()))
+            .map(|entry| {
+                entry
+                    .expect("component entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| !name.starts_with('.') && !COMPONENT_SKIP.contains(&name.as_str()))
+            .collect();
+        top.sort();
+        for name in top {
+            let path = dir.join(&name);
+            println!("cargo:rerun-if-changed={}", path.display());
+            collect(&path, &format!("{component}/{name}"), &mut files);
+        }
     }
 
     println!("cargo:rerun-if-changed={}", list.display());

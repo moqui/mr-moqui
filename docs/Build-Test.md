@@ -244,9 +244,10 @@ mr-moqui-20261019/
   install/         not in the archive: the first start unpacks the embedded Postgres into install/postgres/
 ```
 
-The binary takes the first directory with `base-component/` in it of: `runtime` in the working directory, `runtime`
-beside the binary, and the binary's own directory (links resolved), so `<dir>/moqui` runs from anywhere. The binary
-also carries the framework component and a webroot stub (`crates/moqui-embedded`, about 2.7 MB compressed): it
+The binary takes `runtime` in the working directory when it has `base-component/`, else the working directory itself
+when it has one, so the unpacked directory runs as `cd <dir> && ./moqui`; it never looks beside the binary, so one
+binary runs several instances ([Runtime directory](Run-Deploy.md#runtime-directory-and-conf)). The binary also
+carries the framework and tools components and a webroot stub (`crates/moqui-embedded`, about 2.2 MB compressed): it
 compares the runtime's copies with them at startup and logs each difference, and writes them as a skeleton runtime
 when it finds none ([Built-in framework files](Run-Deploy.md#built-in-framework-files)). With no
 `MOQUI_CONF`, it merges `<runtime>/MoquiConf.xml`, else `<runtime>/conf/MoquiDevConf.xml`. `--tgz` needs GNU or BSD tar.
