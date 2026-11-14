@@ -241,11 +241,39 @@ fn output_of(program: &str, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-/// Kill every process of this runner's user but the runner and the processes it runs under, between the jobs of a
-/// registered runner (`moqui ci-run poll`): what a job left running, in a group of its own or not, does not see the
-/// next job (docs/interfaces/Pipelines.md, "Registered runners"). Never as root. A runner runs as a user of its own,
-/// which nothing else uses. How many were killed.
-pub fn end_leftovers() -> usize {
+/// Seconds from a `ps` `etime` (`[[dd-]hh:]mm:ss`), the time since a process started.
+fn etime_seconds(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let (days, clock) = match text.split_once('-') {
+        Some((days, clock)) => (days.parse::<u64>().ok()?, clock),
+        None => (0, text),
+    };
+    let mut seconds = 0u64;
+    for part in clock.split(':') {
+        seconds = seconds.checked_mul(60)?.checked_add(part.parse::<u64>().ok()?)?;
+    }
+    Some(days * 86_400 + seconds)
+}
+
+/// The processes of a `ps -o pid=,etime=` listing started within `within_seconds`, but those of `keep`.
+fn started_within(listing: &str, within_seconds: u64, keep: &[u32]) -> Vec<u32> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let pid: u32 = words.next()?.parse().ok()?;
+            let age = etime_seconds(words.next()?)?;
+            (age <= within_seconds && !keep.contains(&pid)).then_some(pid)
+        })
+        .collect()
+}
+
+/// Kill the processes of this runner's user that a job left running, between the jobs of a registered runner
+/// (`moqui ci-run poll`): those started since the job began (`job_seconds` ago), in a group of their own or not, so
+/// they do not see the next job (docs/interfaces/Pipelines.md, "Registered runners"); never the runner, the processes
+/// it runs under, or one started before the job (a `tee` the runner's output goes through). Never as root. How many
+/// were killed.
+pub fn end_leftovers(job_seconds: u64) -> usize {
     #[cfg(unix)]
     {
         let uid = output_of("id", &["-u"]).trim().to_string();
@@ -264,12 +292,9 @@ pub fn end_leftovers() -> usize {
                 .parse()
                 .unwrap_or(0);
         }
-        let listed = output_of("ps", &["-U", &uid, "-o", "pid="]);
+        let listed = output_of("ps", &["-U", &uid, "-o", "pid=,etime="]);
         let mut killed = 0;
-        for pid in listed.split_whitespace().filter_map(|pid| pid.parse::<u32>().ok()) {
-            if keep.contains(&pid) {
-                continue;
-            }
+        for pid in started_within(&listed, job_seconds, &keep) {
             let ended = Command::new("kill")
                 .args(["-KILL", &pid.to_string()])
                 .stdout(Stdio::null())
@@ -283,7 +308,10 @@ pub fn end_leftovers() -> usize {
         killed
     }
     #[cfg(not(unix))]
-    0
+    {
+        let _ = job_seconds;
+        0
+    }
 }
 
 /// How a step ended.
@@ -379,9 +407,10 @@ fn run_step(
     for reader in readers {
         let _ = reader.join();
     }
-    let status = child.wait().ok();
-    // what the step left in its group goes with it
+    // what the step left in its group goes with it: before the step's process is waited for, while its id (the
+    // group's) cannot be another's, so no group that took a reused id is killed
     end_group(child.id());
+    let status = child.wait().ok();
     if let Some(stop) = stopped {
         return Err(stop);
     }

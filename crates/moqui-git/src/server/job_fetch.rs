@@ -140,6 +140,7 @@ pub(super) fn serve(request: &GitHttpRequest, job_token: &str, body: &mut dyn Re
                 moqui_core::web::note_auth_failure();
                 Refusal::Unauthenticated("the job token is not valid: its job has ended".into())
             })?;
+        moqui_core::web::note_token_verified();
         if request.service != GitService::UploadPack {
             return Err(Refusal::Forbidden("a job token does not push".into()));
         }

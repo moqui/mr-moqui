@@ -111,6 +111,7 @@ impl Drop for WorkCleanup {
             if outermost {
                 crate::script::clear_context_stack();
                 crate::web::take_auth_failure();
+                crate::web::take_token_verified();
             }
             let Some(facade) = factory.as_ref().and_then(|factory| factory.entity()) else {
                 return;

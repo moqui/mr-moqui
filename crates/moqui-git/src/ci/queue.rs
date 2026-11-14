@@ -190,7 +190,8 @@ struct Decision {
 
 /// Ask the conf's `git-ci` `run-check-service` about a run, as the LFS upload check is asked: in `repositoryId`,
 /// `pipelineName`, `event`, `refName`, `commitId`, `mergeRequestId`, `sourceRepositoryId`, `pushedForReview`,
-/// `triggeredByUserId`, `trusted` (the engine's answer) and `jobCount`; out `decision` (allow, wait or refuse),
+/// `triggeredByUserId`, `trusted` (the engine's answer) and `jobCount`; out `decision` (allow, wait, refuse, or skip:
+/// queue nothing, write no run and no status, for an application's "pipelines off"),
 /// `trusted` (false lowers the engine's; true never raises it), `message`, `ownerId` and `runnerPoolId`. With no
 /// service, or no decision, a trusted run is allowed and an untrusted one waits. A service that fails refuses.
 fn decide(request: &RunRequest, pipeline: &str, trusted: bool, job_count: usize) -> Decision {
@@ -241,6 +242,7 @@ fn decide(request: &RunRequest, pipeline: &str, trusted: bool, job_count: usize)
                 Some("allow") => "allow".to_string(),
                 Some("wait") => "wait".to_string(),
                 Some("refuse") => "refuse".to_string(),
+                Some("skip") => "skip".to_string(),
                 _ => default(trusted),
             };
             Decision {
@@ -283,6 +285,10 @@ pub(crate) fn check_again(run: &EntityValue) -> Result<(), String> {
         )),
         "wait" => Err(format!(
             "the run check holds pipeline run {run_id} for approval: {}",
+            decided.message.unwrap_or_default()
+        )),
+        "skip" => Err(format!(
+            "the run check skips the pipelines of pipeline run {run_id}'s repository now: {}",
             decided.message.unwrap_or_default()
         )),
         _ => Err(format!(
@@ -475,8 +481,39 @@ fn queue_pipeline(
         trust::is_trusted(request.event, &origin),
         jobs.len(),
     );
+    // the application's "pipelines off": no run, no status, nothing to approve
+    if decided.decision == "skip" {
+        return Ok(None);
+    }
     let protected =
         decided.trusted && trust::is_protected(entity, &request.repository_id, request.event, &request.ref_name)?;
+    // a job in an environment that requires approval holds the whole run for a maintainer's (§8.6)
+    let approval_needed = if decided.decision == "allow" && decided.trusted {
+        trust::approval_environments(
+            entity,
+            &request.repository_id,
+            decided.owner_id.as_deref(),
+            jobs.iter().map(|job| &job.spec),
+        )?
+    } else {
+        Vec::new()
+    };
+    let decided = Decision {
+        decision: if approval_needed.is_empty() {
+            decided.decision
+        } else {
+            "wait".to_string()
+        },
+        message: if approval_needed.is_empty() {
+            decided.message
+        } else {
+            Some(format!(
+                "Waiting for approval: environment {} requires it",
+                approval_needed.join(", ")
+            ))
+        },
+        ..decided
+    };
     let (run_status, approval, description) = match decided.decision.as_str() {
         "allow" => ("queued", "none", "Queued".to_string()),
         "wait" => (
@@ -545,8 +582,9 @@ pub fn queue(provider: &GitProvider, entity: &EntityFacade, request: &RunRequest
     let (pipelines, source) = match definition(provider, &request.repository_id, &request.commit_id)? {
         Definition::None => return Ok(Vec::new()),
         Definition::Invalid(message) => {
-            // an invalid file is told once per commit and event
-            if duplicate_error(entity, request)? {
+            // an invalid file is told once per commit and event, unless the application skips the repository's
+            // pipelines (no run, so no error run either)
+            if duplicate_error(entity, request)? || decide(request, "ci.xml", false, 0).decision == "skip" {
                 return Ok(Vec::new());
             }
             return Ok(vec![error_run(entity, request, "ci.xml", &message)?]);

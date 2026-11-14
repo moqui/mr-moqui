@@ -113,11 +113,12 @@ impl GitProvider {
         let network = source.definition.objects_id().to_string();
         // with the source's writers and its delete: a source that is going (delete#GitRepository marks it archived
         // first, and then looks for forks under this lock) or archived is not forked
+        // and with a delete on another cluster member: the source's lease, kept until this transaction ends, so a
+        // delete that takes it next finds the fork's row (shared.rs, docs/interfaces/Git-Hosting.md); taken before
+        // this process's lock, which a writer of the source then never holds while it waits for the lease
+        let lease = self.repository_lease(source_id)?;
         let lock = self.lock_of(source_id);
         let _turn = moqui_lib::sync::lock(&lock);
-        // and with a delete on another cluster member: the source's lease, kept until this transaction ends, so a
-        // delete that takes it next finds the fork's row (shared.rs, docs/interfaces/Git-Hosting.md)
-        let lease = self.repository_lease(source_id)?;
         let transactions = entity.transactions_for(GIT_REPOSITORY)?;
         let _lease = if transactions.in_transaction() {
             lease.until_transaction_end(&transactions)?;
@@ -350,9 +351,10 @@ impl GitProvider {
         let haves: Vec<ObjectId> = tips.into_iter().filter(|id| known.contains(id)).collect();
         let lock = self.lock_of(to);
         let copied = {
+            let shared = self.shared_turn(to, target.definition.kind)?;
             let _turn = moqui_lib::sync::lock(&lock);
-            let _shared = self.shared_turn(to, target.definition.kind)?;
             self.still_writable(to)?;
+            crate::lease::check(shared.as_ref())?;
             super::server::copy_objects(
                 source.store.as_ref(),
                 target.store.as_ref(),
@@ -373,15 +375,17 @@ impl GitProvider {
     pub(crate) fn set_merge_request_head(&self, repository_id: &str, num: i64, head: ObjectId) -> Result<(), Error> {
         let repo = self.repo(repository_id)?;
         let name = super::reach::merge_request_ref(num);
+        // the lease before this process's lock, so no writer holds the lock while it waits on another member
+        let shared = self.shared_turn(repository_id, repo.definition.kind)?;
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
-        let _shared = self.shared_turn(repository_id, repo.definition.kind)?;
         self.still_writable(repository_id)?;
         for _ in 0..4 {
             let current = repo.store.read_ref(&name)?;
             if current == Some(head) {
                 return Ok(());
             }
+            crate::lease::check(shared.as_ref())?;
             let outcomes = repo.store.update_refs(
                 &[RefEdit {
                     name: name.clone(),

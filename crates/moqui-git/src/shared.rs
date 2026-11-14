@@ -35,31 +35,42 @@ use moqui_core::context::{Error, ExecutionContextFactory};
 /// How long a node's answer to "am I a cluster member" is kept.
 const CLUSTERED_FRESH: Duration = Duration::from_secs(30);
 
-/// Whether the conf says `runtime/git` (and every `localPath`) is on storage every cluster member mounts.
-pub(crate) fn shared_storage() -> bool {
-    super::setting("shared-storage") == "true"
+/// Whether the conf says `runtime/git` (and every `localPath`) is on storage every cluster member mounts: of the
+/// current context's factory, else of `factory` (a provider's, read on a thread with no context entered).
+pub(crate) fn shared_storage_of(factory: Option<&ExecutionContextFactory>) -> bool {
+    let setting = moqui_core::context::ExecutionContext::with_current(|ec| {
+        ec.factory().conf_setting("git-server", "shared-storage")
+    })
+    .or_else(|| factory.map(|factory| factory.conf_setting("git-server", "shared-storage")))
+    .unwrap_or_default();
+    setting == "true"
 }
 
 /// Whether `factory`'s node is a member of a cluster: another member's heartbeat is live, or the node is set up to be
 /// one (`cluster_base_url`, `cluster_transport`).
 pub(crate) fn is_cluster_member(factory: &ExecutionContextFactory) -> bool {
+    member_answer(factory).unwrap_or(false)
+}
+
+/// Whether `factory`'s node is a cluster member, or `None` when that could not be read (the members' rows).
+fn member_answer(factory: &ExecutionContextFactory) -> Option<bool> {
     let configured = ["cluster_base_url", "cluster_transport"]
         .iter()
         .any(|name| !moqui_lib::env::get_prop_or_env(name).trim().is_empty());
     if configured {
-        return true;
+        return Some(true);
     }
-    let Some(facade) = factory.entity() else {
-        return false;
-    };
+    let facade = factory.entity()?;
     let own = moqui_core::cluster::instance_id(factory);
     match moqui_core::cluster::member_report(factory, &facade) {
-        Ok(members) => members
-            .iter()
-            .any(|member| member.live && Some(&member.instance_id) != own.as_ref()),
+        Ok(members) => Some(
+            members
+                .iter()
+                .any(|member| member.live && Some(&member.instance_id) != own.as_ref()),
+        ),
         Err(err) => {
             tracing::warn!("the cluster members were not read: {err}");
-            false
+            None
         }
     }
 }
@@ -74,16 +85,45 @@ fn needs_shared_storage(repository_id: &str) -> Error {
 }
 
 impl GitProvider {
-    /// Whether this provider's node is a cluster member, read again at most every [`CLUSTERED_FRESH`].
+    /// Remember the factory this provider is the `git` scheme of, for reads with no context entered.
+    pub(crate) fn set_factory(&self, factory: &Arc<ExecutionContextFactory>) {
+        let _ = self.inner.factory.set(Arc::downgrade(factory));
+    }
+
+    fn factory(&self) -> Option<Arc<ExecutionContextFactory>> {
+        self.inner.factory.get().and_then(Weak::upgrade)
+    }
+
+    /// [`shared_storage_of`] this provider's factory.
+    pub(crate) fn shared_storage(&self) -> bool {
+        shared_storage_of(self.factory().as_deref())
+    }
+
+    /// Whether this provider's node is a cluster member, read again at most every [`CLUSTERED_FRESH`], by the current
+    /// context's factory or else this provider's. An answer that could not be read is not kept, and a node once seen
+    /// to be a member stays one: a member whose peers' heartbeats are all down (a restart of the others, a lost
+    /// database connection) is still a member whose disk the others share nothing of.
     pub(crate) fn clustered(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.inner.was_clustered.load(Ordering::Acquire) {
+            return true;
+        }
         let mut known = moqui_lib::sync::lock(&self.inner.clustered);
         if let Some((at, answer)) = *known {
             if at.elapsed() < CLUSTERED_FRESH {
                 return answer;
             }
         }
-        let answer =
-            moqui_core::context::ExecutionContext::with_current(|ec| is_cluster_member(ec.factory())).unwrap_or(false);
+        let answer = moqui_core::context::ExecutionContext::with_current(|ec| member_answer(ec.factory()))
+            .or_else(|| self.factory().map(|factory| member_answer(&factory)))
+            .flatten();
+        let Some(answer) = answer else {
+            // not known now: the last answer, if any, and nothing kept
+            return known.is_some_and(|(_, answer)| answer);
+        };
+        if answer {
+            self.inner.was_clustered.store(true, Ordering::Release);
+        }
         *known = Some((Instant::now(), answer));
         answer
     }
@@ -92,6 +132,9 @@ impl GitProvider {
     #[cfg(test)]
     pub(crate) fn forget_clustered(&self) {
         *moqui_lib::sync::lock(&self.inner.clustered) = None;
+        self.inner
+            .was_clustered
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 
     /// May a new repository directory of `repository_id` be made on this node: not on a cluster member without shared
@@ -101,7 +144,7 @@ impl GitProvider {
     ///
     /// `GitNeedsSharedStorage` on such a node.
     pub(crate) fn may_make_on_disk(&self, repository_id: &str) -> Result<(), Error> {
-        if !shared_storage() && self.clustered() {
+        if !self.shared_storage() && self.clustered() {
             return Err(needs_shared_storage(repository_id));
         }
         Ok(())
@@ -114,7 +157,7 @@ impl GitProvider {
     ///
     /// `GitLeaseBusy` when another member writes it past `git-server` `shared-lock-wait-seconds`.
     pub(crate) fn shared_turn(&self, repository_id: &str, kind: RepositoryKind) -> Result<Option<Lease>, Error> {
-        if kind == RepositoryKind::Db || !shared_storage() {
+        if kind == RepositoryKind::Db || !self.shared_storage() {
             return Ok(None);
         }
         self.repository_lease(repository_id).map(Some)
@@ -136,7 +179,7 @@ impl GitProvider {
 
     /// [`Self::shared_turn`] for a repository known by its id only: its kind read from its row.
     pub(crate) fn shared_turn_of(&self, repository_id: &str) -> Result<Option<Lease>, Error> {
-        if !shared_storage() {
+        if !self.shared_storage() {
             return Ok(None);
         }
         let kind = self.definition(repository_id)?.kind;

@@ -19,7 +19,9 @@ use std::time::Duration;
 
 use moqui_core::entity::EntityFacade;
 
-use super::{take, try_take, TTL};
+use super::{new_holder, take, try_take, update, TTL};
+use moqui_core::entity::Condition;
+use moqui_lib::object::Value;
 
 fn other_thread<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::spawn(body).join().unwrap()
@@ -70,4 +72,57 @@ fn a_waiting_take_gets_the_lease_when_it_is_let_go() {
     let lease = take(&entity, "t:wait", TTL, Duration::from_secs(5)).unwrap();
     holder.join().unwrap();
     drop(lease);
+}
+
+/// Fencing: a lease another member took over (its row names another holder) is lost, and a writer's check refuses
+/// before it writes; one still held passes the check, which renews it.
+#[test]
+fn a_lease_taken_over_fails_its_check_and_one_held_passes() {
+    let entity = moqui_core::testing::open();
+    let lease = try_take(&entity, "t:fence", TTL).unwrap().expect("free");
+    lease.check().expect("held");
+    update(
+        &entity,
+        "t:fence",
+        vec![("holderId", Value::string("another-member"))],
+        Condition::is_not_null("holderId"),
+    )
+    .unwrap();
+    let lost = lease.check().unwrap_err();
+    assert!(lost.message().starts_with("GitLeaseLost: "), "{lost}");
+    // and stays lost, without asking the database again
+    assert!(lease.check().is_err());
+    assert!(super::check(None).is_ok(), "no lease to check (a db repository)");
+}
+
+/// A lease taken again on its thread shares the outer take: whichever is dropped last lets it go, and one let go on
+/// another thread (a transaction's end hook) is not held on this one any more.
+#[test]
+fn the_last_of_a_lease_and_its_reentries_lets_it_go_on_any_thread() {
+    let entity = moqui_core::testing::open();
+    let outer = try_take(&entity, "t:share", TTL).unwrap().expect("free");
+    let inner = take(&entity, "t:share", TTL, Duration::ZERO).unwrap();
+    drop(outer);
+    assert!(!free_elsewhere(&entity, "t:share"), "the inner one still holds it");
+    drop(inner);
+    assert!(free_elsewhere(&entity, "t:share"), "let go with the last");
+
+    let lease = try_take(&entity, "t:moved", TTL).unwrap().expect("free");
+    std::thread::spawn(move || drop(lease)).join().unwrap();
+    assert!(free_elsewhere(&entity, "t:moved"), "let go on the other thread");
+    let again = try_take(&entity, "t:moved", TTL)
+        .unwrap()
+        .expect("taken anew, not a stale re-entry");
+    assert!(!free_elsewhere(&entity, "t:moved"));
+    drop(again);
+}
+
+/// Holder ids differ on every take and carry 128 random bits beside the process id.
+#[test]
+fn holder_ids_are_unique_and_random() {
+    let (one, two) = (new_holder(), new_holder());
+    assert_ne!(one, two);
+    let random = one.rsplit('-').next().unwrap();
+    assert_eq!(random.len(), 32, "{one}");
+    assert!(random.bytes().all(|byte| byte.is_ascii_hexdigit()));
 }

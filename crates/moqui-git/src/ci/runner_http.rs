@@ -77,26 +77,46 @@ impl From<moqui_lib::error::Error> for Refused {
     }
 }
 
-/// Per factory: each job's requests in the current minute.
-#[derive(Default)]
-struct Rates(Mutex<HashMap<String, (i64, u64)>>);
+/// The most jobs and runners counted in one minute; past it a new one is not counted that minute (each key is a job
+/// or a runner whose token was found good, so this is far more than run at once).
+const MAX_COUNTED: usize = 10_000;
 
+/// Per factory: each job's and runner's requests in the current minute. The counts start again each minute, all at
+/// once, so nothing is swept key by key.
+#[derive(Default)]
+struct Rates(Mutex<Window>);
+
+#[derive(Default)]
+struct Window {
+    minute: i64,
+    counts: HashMap<String, u64>,
+}
+
+impl Window {
+    /// Count a request of `key` in `minute`: whether it is over `max`.
+    fn count(&mut self, key: &str, minute: i64, max: u64) -> bool {
+        if self.minute != minute {
+            self.minute = minute;
+            self.counts.clear();
+        }
+        if self.counts.len() >= MAX_COUNTED && !self.counts.contains_key(key) {
+            return false;
+        }
+        let count = self.counts.entry(key.to_string()).or_default();
+        *count += 1;
+        *count > max
+    }
+}
+
+/// Whether the job or runner `key`, whose token was found good, is over `runner-max-requests-per-minute`. Only a key
+/// of a good token is counted, so made-up tokens add no entries (they are the web protection's, by address).
 fn over_rate(key: &str) -> bool {
     let Some(rates) = ExecutionContext::with_current(|ec| ec.factory().extension(|_| Rates::default())) else {
         return false;
     };
     let max = super::number_setting("runner-max-requests-per-minute", DEFAULT_MAX_REQUESTS);
-    let minute = now_millis() / 60_000;
-    let mut rates = moqui_lib::sync::lock(&rates.0);
-    if rates.len() > 10_000 {
-        rates.retain(|_, (at, _)| *at == minute);
-    }
-    let entry = rates.entry(key.to_string()).or_insert((minute, 0));
-    if entry.0 != minute {
-        *entry = (minute, 0);
-    }
-    entry.1 += 1;
-    entry.1 > max
+    let over = moqui_lib::sync::lock(&rates.0).count(key, now_millis() / 60_000, max);
+    over
 }
 
 fn respond(out: &mut dyn HttpResponder, status: u16, body: &serde_json::Value) {
@@ -168,7 +188,10 @@ fn read_json(request: &RunnerHttpRequest, body: &mut dyn Read) -> Result<serde_j
 /// The running job of a job token and its run, for a request at `jobs/<job_run_id>/...`.
 fn job_of(entity: &EntityFacade, bearer: &str, job_run_id: &str) -> Result<(EntityValue, EntityValue), Refused> {
     let auth = match token::job_token(entity, bearer)? {
-        token::JobToken::Running(auth) => auth,
+        token::JobToken::Running(auth) => {
+            moqui_core::web::note_token_verified();
+            auth
+        }
         // a runner's call after its job was cancelled or timed out, or on another member that ended it: no failed
         // sign-in, and the runner stops without trying again (docs/interfaces/Pipelines.md, "Job tokens")
         token::JobToken::Ended => return Err(Refused::new(410, "the job has ended: its token takes no more calls")),
@@ -455,6 +478,7 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
                 let name = body["name"].as_str().unwrap_or("runner");
                 match super::registered::register(&entity, &bearer, name, body["platform"].as_str())? {
                     Some((runner_id, runner_token)) => {
+                        moqui_core::web::note_token_verified();
                         Ok(Some(json!({ "runnerId": runner_id, "token": runner_token })))
                     }
                     None => {
@@ -464,20 +488,21 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
                 }
             }
             ("POST", "claim") => {
-                if over_rate(&format!("runner:{}", token::hash(&bearer))) {
+                // the token first, so only a good one is counted
+                let Some((runner_id, pool_id)) = token::runner_of(&entity, &bearer)? else {
+                    moqui_core::web::note_auth_failure();
+                    return Err(Refused::new(401, "the runner token is not valid"));
+                };
+                moqui_core::web::note_token_verified();
+                if over_rate(&format!("runner:{runner_id}")) {
                     return Err(Refused::new(429, "too many requests of this runner in a minute"));
                 }
-                match super::registered::claim(&entity, &bearer) {
-                    Ok(Some(claimed)) => Ok(Some(json!({
-                        "jobRunId": claimed.job_run_id,
-                        "token": claimed.job_token,
-                    }))),
-                    Ok(None) => Ok(Some(json!({}))),
-                    Err(err) => {
-                        moqui_core::web::note_auth_failure();
-                        Err(Refused::new(401, err.message()))
-                    }
-                }
+                Ok(Some(
+                    match super::registered::claim_for(&entity, &runner_id, &pool_id)? {
+                        Some(claimed) => json!({ "jobRunId": claimed.job_run_id, "token": claimed.job_token }),
+                        None => json!({}),
+                    },
+                ))
             }
             _ => Err(Refused::new(404, "not a runner endpoint")),
         }
@@ -517,3 +542,7 @@ impl HttpResponder for MemoryResponse {
         &mut self.body
     }
 }
+
+#[cfg(test)]
+#[path = "runner_http_tests.rs"]
+mod tests;

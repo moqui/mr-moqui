@@ -316,8 +316,8 @@ pub(crate) fn xmpp_node(factory: &ExecutionContextFactory, node: &str, xmpp: &mu
 
 /// The SSH part of the offer to local node `node` (E16): the port of its own `EdgePort` row of kind ssh when it has
 /// one, else the conf's `edge_ssh_tunnel_port` while it is the one active pairing (the port goes to no other), else
-/// none. A node with no front set offers none (`for_role`). A read that fails is logged, and the conf's port is
-/// offered as to the one pairing.
+/// none. A node with no front set offers none (`for_role`). A read that fails is logged and offers no port: the conf's
+/// port may be another pairing's, and the next offer (at the next link) reads again.
 pub(crate) fn ssh_node(factory: &ExecutionContextFactory, node: &str, ssh: &mut ProtoSsh) {
     let read = store::facade(factory).and_then(|facade| {
         let rows = moqui_core::edge::ports::list(&facade, Some(node))?;
@@ -329,8 +329,8 @@ pub(crate) fn ssh_node(factory: &ExecutionContextFactory, node: &str, ssh: &mut 
             (rows, only)
         }
         Err(err) => {
-            tracing::error!("Edge offer to {node}: its SSH port was not read: {err}");
-            (Vec::new(), true)
+            tracing::error!("Edge offer to {node}: its SSH port was not read, so none is offered: {err}");
+            (Vec::new(), false)
         }
     };
     let own = rows

@@ -325,8 +325,9 @@ fn what_a_repository_keeps_is_capped_and_its_caches_count() {
     };
     upload(Kind::Artifact, "a", &[1u8; 60]).unwrap();
     upload(Kind::Cache, "c", &[2u8; 30]).unwrap();
-    // the cap: what is left is 10 bytes, so a larger upload is cut there and refused
-    assert!(upload(Kind::Artifact, "b", &[3u8; 50]).is_err());
+    // the cap: what is left is 10 bytes, so a larger upload is cut there and refused as the quota's
+    let refused = upload(Kind::Artifact, "b", &[3u8; 50]).unwrap_err();
+    assert!(refused.message().starts_with("GitCiStorageQuota: "), "{refused}");
     let usage = super::artifact::stored_by_kind(&entity, "repositoryId", "app").unwrap();
     assert_eq!(usage, (60, 30));
     assert_eq!(super::artifact::stored_bytes(&entity, "ownerId", "acme").unwrap(), 90);
@@ -393,4 +394,154 @@ fn a_schedule_runs_at_most_once_in_its_minimum_interval() {
     };
     assert!(!checked(5), "five minutes after its last run: not yet");
     assert!(checked(16), "past its fifteen minutes: due");
+}
+
+/// A pool token with no expiry (made before tokens expired) registers nothing; a runner in a pool with no owner on a
+/// server with a run check gets no job; a retry twice makes one attempt; one runner is reserved by one claim at a time;
+/// and a job of a run that ended is given to no runner.
+#[test]
+fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
+    let fixture = operator_fixture(
+        "ci-safety-claims",
+        r#"<git-ci run-check-service="org.example.check#Run"/>"#,
+    );
+    registered_pool(&fixture, "SHARED", None);
+    registered_pool(&fixture, "OWN", Some("acme"));
+    queued_run(&fixture, Some("acme"));
+    let shared = runner(&fixture, "RS", "SHARED");
+    let own = runner(&fixture, "RO", "OWN");
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    // a token with no expiry date
+    let pool_token = format!("{}{}", token::POOL_PREFIX, "ab".repeat(32));
+    let mut pool = super::one(&entity, RUNNER_POOL, "runnerPoolId", "OWN")
+        .unwrap()
+        .unwrap();
+    pool.set("registrationTokenHash", s(&token::hash(&pool_token)));
+    pool.update(&entity).unwrap();
+    assert_eq!(
+        token::pool_of(&entity, &pool_token).unwrap(),
+        None,
+        "no expiry is expired"
+    );
+    // an ownerless pool of registered runners on a server with tenants
+    let refused = registered::claim(&entity, &shared).unwrap_err();
+    assert!(refused.message().contains("has no ownerId"), "{refused}");
+    // the run ended (cancelled as the claim read its jobs): its job goes to no runner
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("statusId", s("cancelled"));
+    run.update(&entity).unwrap();
+    assert_eq!(registered::claim(&entity, &own).unwrap(), None);
+    run.set("statusId", s("queued"));
+    run.update(&entity).unwrap();
+    // a runner already reserved for a job by another claim gets none
+    let mut taken = super::one(&entity, RUNNER, "runnerId", "RO").unwrap().unwrap();
+    taken.set("currentJobRunId", s("J-ELSEWHERE"));
+    taken.update(&entity).unwrap();
+    row(
+        &fixture,
+        JOB_RUN,
+        &[
+            ("jobRunId", s("J-ELSEWHERE")),
+            ("pipelineRunId", s("R-OTHER")),
+            ("statusId", s("queued")),
+        ],
+    );
+    assert_eq!(
+        registered::claim(&entity, &own).unwrap(),
+        None,
+        "reserved for another claim"
+    );
+    // once that job has ended the runner is free again
+    let mut elsewhere = super::one(&entity, JOB_RUN, "jobRunId", "J-ELSEWHERE")
+        .unwrap()
+        .unwrap();
+    elsewhere.set("statusId", s("cancelled"));
+    elsewhere.update(&entity).unwrap();
+    let claimed = registered::claim(&entity, &own).unwrap().expect("free again");
+    assert_eq!(claimed.job_run_id, "J1");
+    assert_eq!(text(&one(&fixture, RUNNER, "runnerId", "RO"), "currentJobRunId"), "J1");
+
+    // a retry twice: one attempt
+    assert!(engine::finish_job(&entity, "J1", &engine::Outcome::error("failed".to_string())).unwrap());
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("statusId", s("error"));
+    run.update(&entity).unwrap();
+    engine::retry_job(&entity, "J1").unwrap();
+    let again = engine::retry_job(&entity, "J1").unwrap_err();
+    assert!(again.message().contains("was already run again"), "{again}");
+    let attempts = entity
+        .find(JOB_RUN)
+        .unwrap()
+        .eq("pipelineRunId", s("R1"))
+        .count()
+        .unwrap();
+    assert_eq!(attempts, 2, "the first and one retry");
+}
+
+/// A cache written by a job that was given secrets (an environment whose allowedRefs names an unprotected branch) is of
+/// the protected class, which no untrusted run reads.
+#[test]
+fn a_cache_of_a_job_given_secrets_is_protected() {
+    let fixture = operator_fixture("ci-safety-cache-class", "");
+    queued_run(&fixture, None);
+    row(
+        &fixture,
+        super::CI_ENVIRONMENT,
+        &[
+            ("environmentId", s("E1")),
+            ("repositoryId", s("app")),
+            ("name", s("staging")),
+            ("allowedRefs", s("feature-*")),
+        ],
+    );
+    row(
+        &fixture,
+        super::CI_SECRET,
+        &[
+            ("secretId", s("S1")),
+            ("repositoryId", s("app")),
+            ("name", s("DEPLOY_KEY")),
+            ("secretValue", s("k")),
+            ("scope", s("environment")),
+            ("environmentId", s("E1")),
+        ],
+    );
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("refName", s("refs/heads/feature-x"));
+    run.set("event", s("push"));
+    run.update(&entity).unwrap();
+    let mut job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
+    job.set(
+        "jobSpec",
+        s(r#"{"environment":"staging","secrets":[{"name":"DEPLOY_KEY","env":"DEPLOY_KEY"}]}"#),
+    );
+    job.update(&entity).unwrap();
+    let upload = Upload {
+        kind: Kind::Cache,
+        name: "deps",
+        path: None,
+        cache_key: Some("deps-1"),
+        retention_days: None,
+    };
+    let id = artifact::store(&entity, &run, &job, &upload, &mut &b"cached"[..])
+        .unwrap()
+        .expect("stored");
+    let stored = super::one(&entity, super::RUN_ARTIFACT, "artifactId", &id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text(&stored, "protectedRef"), "Y", "the class of a run given secrets");
+    let mut untrusted = run.clone();
+    untrusted.set("trusted", s("N"));
+    assert!(artifact::find_cache(&entity, &untrusted, "deps-1").unwrap().is_none());
 }

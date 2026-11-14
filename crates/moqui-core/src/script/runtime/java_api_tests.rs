@@ -646,8 +646,11 @@ fn the_reserved_paths_are_read_with_no_request() {
     holds(
         r#"(() => {
             const paths = ec.web.reservedPaths;
-            return Array.isArray(paths) && ["git", "ci", "dav", "apps", "Login", "libs"].every(p => paths.includes(p))
-                && !paths.includes("forum") && ec.web.getReservedPaths().length === paths.length;
+            const subPaths = ec.web.reservedSubPaths;
+            return Array.isArray(paths) && ["git", "ci", ".well-known", "dav", "apps", "Login", "libs"].every(p => paths.includes(p))
+                && !paths.includes("forum") && ec.web.getReservedPaths().length === paths.length
+                && ["ci/runner", ".well-known/caldav"].every(p => subPaths.includes(p))
+                && !subPaths.includes(".well-known/security.txt");
         })()"#,
     );
     clear_context_stack();

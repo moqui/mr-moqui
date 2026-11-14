@@ -64,7 +64,8 @@ pub fn is_trusted(event: Event, origin: &Origin<'_>) -> bool {
 }
 
 /// Whether `ref_name` is protected: a branch rule that names it restricts who pushes to it directly (a push group,
-/// or a merge request required), so what is on it was pushed by one of those or merged by review. A rule that only
+/// or a merge request required with at least one approval), so what is on it was pushed by one of those or merged by
+/// review. A merge request with no approval required is no review (a Developer merges their own), and a rule that only
 /// keeps a branch from a force push or a delete protects nothing a secret needs. A secret of the `protected` or
 /// `tags` scope is given only then. Never for a merge request's run, whose commits are not the protected branch's yet.
 pub fn is_protected(entity: &EntityFacade, repository_id: &str, event: Event, ref_name: &str) -> Result<bool, Error> {
@@ -73,7 +74,7 @@ pub fn is_protected(entity: &EntityFacade, repository_id: &str, event: Event, re
     }
     Ok(crate::rules::rules_for(entity, repository_id, ref_name)?
         .iter()
-        .any(|rule| rule.push_group.is_some() || rule.require_merge_request))
+        .any(|rule| rule.push_group.is_some() || (rule.require_merge_request && rule.required_approvals >= 1)))
 }
 
 /// A secret a job is given: the variable and the value.
@@ -136,16 +137,55 @@ pub(crate) fn environment_allows(environment: &EntityValue, run: &EntityValue) -
 
 /// The environment a job names, by its name, of the run's repository or owner.
 fn environment_of(entity: &EntityFacade, run: &EntityValue, name: &str) -> Result<Option<EntityValue>, Error> {
-    let repository = field(run, "repositoryId").unwrap_or_default();
+    environment_named(
+        entity,
+        &field(run, "repositoryId").unwrap_or_default(),
+        field(run, "ownerId").as_deref(),
+        name,
+    )
+}
+
+/// The environments of `specs` (the jobs' `jobSpec`s, each naming its `environment`) that require approval
+/// (`approvalRequired`), by name, of the repository or its owner: a run with such a job waits for a maintainer's
+/// approval before it is queued, and is approved only by another than who triggered it (plans/Dogfood.md §8.4, §8.6).
+pub(crate) fn approval_environments<'a>(
+    entity: &EntityFacade,
+    repository_id: &str,
+    owner_id: Option<&str>,
+    specs: impl IntoIterator<Item = &'a serde_json::Value>,
+) -> Result<Vec<String>, Error> {
+    let mut names: Vec<String> = Vec::new();
+    for spec in specs {
+        let Some(name) = spec["environment"].as_str().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        if names.iter().any(|known| known == name) {
+            continue;
+        }
+        if environment_named(entity, repository_id, owner_id, name)?
+            .is_some_and(|environment| is_yes(&environment, "approvalRequired"))
+        {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+fn environment_named(
+    entity: &EntityFacade,
+    repository: &str,
+    owner: Option<&str>,
+    name: &str,
+) -> Result<Option<EntityValue>, Error> {
     let found = entity
         .find(CI_ENVIRONMENT)?
-        .eq("repositoryId", Value::string(&repository))
+        .eq("repositoryId", Value::string(repository))
         .eq("name", Value::string(name))
         .one()?;
     if found.is_some() {
         return Ok(found);
     }
-    let Some(owner) = field(run, "ownerId") else {
+    let Some(owner) = owner else {
         return Ok(None);
     };
     Ok(entity

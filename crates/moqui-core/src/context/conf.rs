@@ -248,6 +248,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "ssh-server",
         "terminal",
         "git-server",
+        // the CI engine (docs/interfaces/Pipelines.md): an application names its run check and run URL services
+        "git-ci",
         "dav-server",
         "smtp-server",
         "logging",

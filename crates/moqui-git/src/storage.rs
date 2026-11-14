@@ -466,11 +466,11 @@ impl GitProvider {
         let in_transaction = transactions.in_transaction();
         {
             // no push or write of this process stores while the rows go; one that waited reads the mark next
+            // nor a fork or writer of another cluster member: the mark and the look for forks under the repository's
+            // lease, which a fork holds until its transaction ends (shared.rs); the lease before this process's lock
+            let lease = self.repository_lease(repository_id)?;
             let lock = self.lock_of(repository_id);
             let _writer = moqui_lib::sync::lock(&lock);
-            // nor a fork or writer of another cluster member: the mark and the look for forks under the repository's
-            // lease, which a fork holds until its transaction ends (shared.rs)
-            let lease = self.repository_lease(repository_id)?;
             let marked = self.mark_going(&entity, repository_id)?;
             if marked {
                 self.refresh(repository_id);

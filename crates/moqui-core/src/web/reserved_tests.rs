@@ -25,17 +25,67 @@ fn each_segment_is_listed_once_as_one_plain_segment() {
             reserved.segment
         );
     }
-    assert_eq!(reserved_paths().len(), RESERVED.len());
+    for partly in PARTLY_RESERVED {
+        assert!(seen.insert(partly.segment), "{} is listed twice", partly.segment);
+    }
+    assert_eq!(reserved_paths().len(), RESERVED.len() + PARTLY_RESERVED.len());
 }
 
 #[test]
 fn the_host_routes_screens_and_static_files_are_reserved_as_written() {
-    for first in ["git", "ci", "dav", "mcp", "apps", "rest", "Login", "sw.js", "libs"] {
+    for first in ["git", "dav", "mcp", "apps", "rest", "Login", "sw.js", "libs"] {
         assert!(is_reserved(first), "{first}");
+    }
+    for partly in PARTLY_RESERVED {
+        assert!(!is_reserved(partly.segment), "{} is in one list only", partly.segment);
     }
     assert!(!is_reserved("login"), "matched as written");
     assert!(!is_reserved("forum"));
     assert!(is_static("libs") && !is_static("apps") && !is_static("git"));
+}
+
+/// `.well-known` and `ci` are reserved only under the host's own sub-paths: a site serves `/.well-known/security.txt`
+/// and a page at `/ci`, never `/ci/runner/` or `/.well-known/caldav`. As names (a group, a mount) they stay reserved
+/// whole, and `ec.web.reservedPaths` lists them; `reservedSubPaths` lists the sub-paths.
+#[test]
+fn well_known_and_ci_are_reserved_per_sub_path_for_pages_and_whole_for_names() {
+    for path in [
+        "/.well-known/caldav",
+        "/.well-known/carddav",
+        "/.well-known/agent-card.json",
+        "/.well-known/mcp.json",
+        "/.well-known/ai-catalog.json",
+        "/ci/runner/jobs/j1/log",
+        "/ci/runner",
+        "/git/acme/widget.git/info/refs",
+        "/apps/x",
+        "/Login",
+    ] {
+        assert!(is_reserved_path(path), "{path}");
+    }
+    for path in [
+        "/.well-known/security.txt",
+        "/.well-known/apple-app-site-association",
+        "/.well-known/assetlinks.json",
+        "/.well-known",
+        "/ci",
+        "/ci/",
+        "/ci/pipelines",
+        "/forum/x",
+        "/login",
+    ] {
+        assert!(!is_reserved_path(path), "{path}");
+    }
+    for name in ["ci", ".well-known", "git", "apps"] {
+        assert!(is_reserved_name(name), "{name}");
+    }
+    assert!(!is_reserved_name("forum"));
+    let paths = reserved_paths();
+    assert!(paths.contains(&"ci") && paths.contains(&".well-known"));
+    assert_eq!(paths.len(), RESERVED.len() + PARTLY_RESERVED.len());
+    let subs = reserved_sub_paths();
+    assert!(subs.iter().any(|sub| sub == "ci/runner") && subs.iter().any(|sub| sub == ".well-known/caldav"));
+    assert!(!subs.iter().any(|sub| sub.contains("security.txt")));
 }
 
 #[test]

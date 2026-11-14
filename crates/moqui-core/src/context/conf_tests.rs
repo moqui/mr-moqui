@@ -178,6 +178,51 @@ fn a_runtime_conf_overrides_one_attribute_of_a_settings_element() {
     assert_eq!(ssh.attribute("sftp-root").as_deref(), Some("dbresource://sftp"));
 }
 
+/// A component's `<git-ci>` (Mantle names its run check and run URL services) merges over the framework's, attribute
+/// by attribute; and every top-level element of the framework's default conf has a merge rule, so none is dropped.
+#[test]
+fn a_components_git_ci_attributes_merge_over_the_default() {
+    let base = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><git-ci enabled="" run-check-service="" run-url-service="" run-url="" max-jobs="50"/></moqui-conf>"#,
+    )
+    .unwrap();
+    let over = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><git-ci run-check-service="mantle.smithy.SmithyCiServices.check#PipelineRun"
+                run-url-service="mantle.smithy.SmithyCiServices.get#PipelineRunUrl"/></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    let ci = base.first_named("git-ci").unwrap();
+    assert_eq!(
+        ci.attribute("run-check-service").as_deref(),
+        Some("mantle.smithy.SmithyCiServices.check#PipelineRun")
+    );
+    assert_eq!(
+        ci.attribute("run-url-service").as_deref(),
+        Some("mantle.smithy.SmithyCiServices.get#PipelineRunUrl")
+    );
+    assert_eq!(ci.attribute("max-jobs").as_deref(), Some("50"));
+    assert_eq!(base.children_named("git-ci").len(), 1);
+
+    // each top-level element of the default conf is merged: a component's copy of it changes the one element
+    let defaults = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"),
+    )
+    .unwrap();
+    let defaults = MNode::parse_text("moqui-conf", &defaults).unwrap();
+    let merge_rules = include_str!("conf.rs");
+    for child in defaults.children() {
+        let name = child.name();
+        assert!(
+            merge_rules.contains(&format!("\"{name}\"")),
+            "the conf element {name} has no merge rule in context/conf.rs, so a component's is dropped"
+        );
+    }
+}
+
 #[test]
 fn telemetry_and_report_settings_merge_without_losing_security_limits() {
     let base = moqui_lib::node::MNode::parse_text("base",r#"<moqui-conf><telemetry enabled="true" sample-ratio="1" log-retention-days="7"><artifact type="AT_SERVICE" spans="true" metrics="true"/><receiver body-limit="8192" requests-per-minute="10"/></telemetry><report week-start="1" fiscal-start-month="1"/></moqui-conf>"#).unwrap();

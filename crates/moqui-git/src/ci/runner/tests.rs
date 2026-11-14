@@ -100,3 +100,17 @@ fn an_archive_round_trips_by_workspace_paths() {
     }
     std::fs::remove_file(&archive_file).unwrap();
 }
+
+/// Between a registered runner's jobs only what started since the job began is killed: never the runner, what it runs
+/// under, or a process started before the job (the `tee` its output goes through). `ps`'s elapsed time reads in its
+/// forms (`mm:ss`, `hh:mm:ss`, `dd-hh:mm:ss`).
+#[test]
+fn only_processes_started_during_the_job_are_leftovers() {
+    assert_eq!(super::etime_seconds("00:07"), Some(7));
+    assert_eq!(super::etime_seconds("1:02:03"), Some(3723));
+    assert_eq!(super::etime_seconds("2-00:00:01"), Some(172_801));
+    assert_eq!(super::etime_seconds("x"), None);
+    let listing = "  100 3-01:00:00\n  200 10:00\n  300 00:05\n  301 00:40\n  400 00:02\n";
+    // the job ran 45 seconds; 400 is the runner itself
+    assert_eq!(super::started_within(listing, 45, &[400]), [300, 301]);
+}

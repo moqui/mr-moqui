@@ -44,14 +44,6 @@ pub mod status;
 pub mod token;
 pub mod trust;
 
-#[cfg(test)]
-#[path = "claim_tests.rs"]
-mod claim_tests;
-
-#[cfg(test)]
-#[path = "safety_tests.rs"]
-mod safety_tests;
-
 pub(crate) const PIPELINE_RUN: &str = "moqui.resource.GitPipelineRun";
 pub(crate) const JOB_RUN: &str = "moqui.resource.GitJobRun";
 pub(crate) const JOB_STEP: &str = "moqui.resource.GitJobStep";
@@ -185,15 +177,7 @@ pub(crate) fn set_fields(
     Ok(changed)
 }
 
-/// Where a conditional update is committed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Commit {
-    /// In the caller's transaction, if any.
-    Caller,
-    /// A statement of its own on a reserve connection, committed at once: a claim other members see before the
-    /// caller's transaction ends.
-    Own,
-}
+pub(crate) use crate::conditional::Commit;
 
 /// `UPDATE entity SET fields, lastUpdatedStamp WHERE key = id AND statusId = status`: whether the row changed.
 pub(crate) fn update_when(
@@ -209,32 +193,7 @@ pub(crate) fn update_when(
         moqui_core::entity::Condition::equals(key, Value::string(id)),
         moqui_core::entity::Condition::equals("statusId", Value::string(status)),
     ]);
-    let (statement, tx, stamped) = entity.with_group(entity_name, |definition, dialect, _, tx| {
-        let stamped = definition.has_field("lastUpdatedStamp");
-        let mut names: Vec<&str> = fields.iter().map(|(name, _)| *name).collect();
-        if stamped {
-            names.push("lastUpdatedStamp");
-        }
-        Ok((
-            moqui_db::sql::update(definition, dialect, &names, Some(&condition))?,
-            tx.clone(),
-            stamped,
-        ))
-    })?;
-    let mut params: Vec<Value> = fields.iter().map(|(_, value)| value.clone()).collect();
-    if stamped {
-        let millis = match commit {
-            Commit::Caller => tx.start_time_millis().unwrap_or_else(now_millis),
-            Commit::Own => now_millis(),
-        };
-        params.push(moqui_core::user::stamp_value(millis));
-    }
-    params.extend(statement.params);
-    let count = match commit {
-        Commit::Caller => moqui_core::entity::exec::execute_tx(&tx, &statement.sql, &params)?,
-        Commit::Own => tx.with_reserve(|conn| conn.execute(&statement.sql, &params))?,
-    };
-    Ok(count > 0)
+    Ok(crate::conditional::update_where(entity, entity_name, fields, &condition, commit)? > 0)
 }
 
 /// The audit log of a `statusId` a conditional update moved from `was`, when the entity audits it (as
@@ -281,7 +240,7 @@ pub(crate) fn audit_status(entity: &EntityFacade, entity_name: &str, id: &str, w
 }
 
 /// Run `body`, a call whose errors in the message facade are its answer: the errors it left are taken from the facade
-/// (those before it stay) and are its error when it gave none.
+/// (those before it stay) and are its error when it gave none, or are added to the one it gave.
 pub(crate) fn with_errors_taken<T>(body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
     let outcome = body();
@@ -290,6 +249,13 @@ pub(crate) fn with_errors_taken<T>(body: impl FnOnce() -> Result<T, Error>) -> R
         .unwrap_or_default();
     match outcome {
         Ok(_) if !errors.is_empty() => Err(Error::new(errors.join("\n"))),
+        // the facade's errors are the service's own words: kept with the failure, not dropped
+        Err(err) if !errors.is_empty() => {
+            let message = err.message().to_string();
+            let mut lines: Vec<String> = errors.into_iter().filter(|error| *error != message).collect();
+            lines.insert(0, message);
+            Err(Error::new(lines.join("\n")))
+        }
         outcome => outcome,
     }
 }
@@ -365,3 +331,11 @@ pub(crate) fn delete_repository_rows(entity: &EntityFacade, repository_id: &str)
     }
     Ok(runs.len())
 }
+
+#[cfg(test)]
+#[path = "claim_tests.rs"]
+mod claim_tests;
+
+#[cfg(test)]
+#[path = "safety_tests.rs"]
+mod safety_tests;

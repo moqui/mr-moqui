@@ -134,6 +134,7 @@ pub fn open_snapshot_reads() -> EntityFacade {
 fn open_group(framework_dir: &std::path::Path, options: Options, snapshot_reads: bool) -> EntityFacade {
     let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
         store: Arc::new(Mutex::new(BTreeMap::new())),
+        whole: Arc::default(),
         tape: options.tape,
     });
     // Room for two service workers each two force-new levels deep: three ordinary connections apiece.
@@ -165,6 +166,7 @@ fn open_group(framework_dir: &std::path::Path, options: Options, snapshot_reads:
 pub fn open_with_conf(conf: &moqui_lib::node::MNode) -> EntityFacade {
     let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
         store: Arc::new(Mutex::new(BTreeMap::new())),
+        whole: Arc::default(),
         tape: None,
     });
     let transactions = TransactionManager::new(
@@ -208,6 +210,7 @@ pub fn open_groups_with_components(second: &str, dirs: &[PathBuf]) -> EntityFaca
     let manager = || {
         let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
             store: Arc::new(Mutex::new(BTreeMap::new())),
+            whole: Arc::default(),
             tape: None,
         });
         TransactionManager::new(
@@ -279,17 +282,17 @@ impl tracing::field::Visit for FieldVisit {
     }
 }
 
-/// Held while an autocommit statement reads and puts back its table, and while a commit replays its writes: each
-/// applies whole, as on a database.
-static AUTOCOMMIT: Mutex<()> = Mutex::new(());
-
 struct MemDriver {
     store: Arc<Mutex<Tables>>,
+    /// Held while an autocommit statement reads and puts back its table, and while a commit replays its writes: each
+    /// applies whole, as on a database. One per store, so tests on stores of their own do not wait on each other.
+    whole: Arc<Mutex<()>>,
     tape: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 struct MemConn {
     store: Arc<Mutex<Tables>>,
+    whole: Arc<Mutex<()>>,
     tape: Option<Arc<Mutex<Vec<String>>>>,
     local: Option<Tables>,
     dirty: BTreeSet<String>,
@@ -323,6 +326,7 @@ impl DbDriver for MemDriver {
     fn connect(&self) -> Result<Box<dyn DbConnection>, Error> {
         Ok(Box::new(MemConn {
             store: Arc::clone(&self.store),
+            whole: Arc::clone(&self.whole),
             tape: self.tape.clone(),
             local: None,
             dirty: BTreeSet::new(),
@@ -425,7 +429,7 @@ impl DbConnection for MemConn {
         };
         let dirty = std::mem::take(&mut self.dirty);
         let changes = std::mem::take(&mut self.changes);
-        let _whole = lock(&AUTOCOMMIT);
+        let _whole = lock(&self.whole);
         let mut committed = lock(&self.store);
         for table in dirty {
             let current = committed.get(&table).cloned().unwrap_or_default();
@@ -506,7 +510,8 @@ impl MemConn {
         let stmt = parse(sql).map_err(|err| Error::new(format!("{err} sql={sql}")))?;
         // an autocommit statement reads its table and puts it back: one at a time, as a database applies each
         // statement whole, so two conditional updates of one row (a claim) never both apply
-        let _whole = self.local.is_none().then(|| lock(&AUTOCOMMIT));
+        let whole = Arc::clone(&self.whole);
+        let _whole = self.local.is_none().then(|| lock(&whole));
         self.exec(stmt, params)
     }
 

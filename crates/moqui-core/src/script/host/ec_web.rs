@@ -123,6 +123,7 @@ pub(super) static WEB: HostClass = HostClass {
         method!("ec.web", "requestParameters", [], parameters),
         method!("ec.web", "sessionToken", [], session_token),
         method!("ec.web", "reservedPaths", [], reserved_paths),
+        method!("ec.web", "reservedSubPaths", [], reserved_sub_paths),
     ],
     hidden: &[
         method!("ec.web", "sendError", [Int, OptText, OptText], send_error),
@@ -450,10 +451,20 @@ fn decline_session(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Undefined)
 }
 
-/// The first path segments the framework reserves on every host ([`crate::web::reserved`]), as written: there with
-/// no request too.
+/// The first path segments the framework reserves on every host ([`crate::web::reserved`]), as written, whole and
+/// partly reserved alike (the names a repository group, mount or handle may not take): there with no request too.
 fn reserved_paths(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     let paths = crate::web::reserved::reserved_paths()
+        .into_iter()
+        .map(Value::string)
+        .collect();
+    Ok(Value::List(paths).into())
+}
+
+/// The reserved sub-paths of the partly reserved segments, `segment/sub-path` (`ci/runner`, `.well-known/caldav`): a
+/// site page's route may take the rest of those segments ([`crate::web::reserved::is_reserved_path`]).
+fn reserved_sub_paths(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let paths = crate::web::reserved::reserved_sub_paths()
         .into_iter()
         .map(Value::string)
         .collect();

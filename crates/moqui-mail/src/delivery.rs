@@ -675,7 +675,7 @@ const DELIVERED_SUBJECT: &str = "Delivery Status Notification (delivered)";
 
 /// A "delivered" `multipart/report` (RFC 3464) for `told`, with the header fields of the message (a delivered notice
 /// returns no content, whatever `RET` asked: RFC 3461 section 4.3 is about failures).
-fn delivered_report(head: &[u8], envelope: &Envelope, told: &[&RecipientDsn], date: &str) -> Vec<u8> {
+pub(crate) fn delivered_report(head: &[u8], envelope: &Envelope, told: &[&RecipientDsn], date: &str) -> Vec<u8> {
     let hostname = trace_text(&envelope.hostname);
     let boundary = format!("{}.dsn/{hostname}", trace_text(&envelope.session_id));
     let mut out = String::new();
@@ -933,7 +933,7 @@ pub(crate) fn field_name_value(field: &[u8]) -> (String, String) {
 }
 
 /// The authserv-id of an `Authentication-Results` value: its first word before the first `;`.
-fn authserv_of(value: &str) -> String {
+pub(crate) fn authserv_of(value: &str) -> String {
     value
         .split(';')
         .next()
@@ -943,7 +943,7 @@ fn authserv_of(value: &str) -> String {
 }
 
 /// The first result of each method (`spf=pass dkim=pass dmarc=pass`) in these `Authentication-Results` values.
-fn verdict(values: &[String]) -> String {
+pub(crate) fn verdict(values: &[String]) -> String {
     let mut found: Vec<String> = Vec::new();
     for value in values {
         for part in entries(value).into_iter().skip(1) {
@@ -995,7 +995,7 @@ fn entries(value: &str) -> Vec<&str> {
 }
 
 /// A spam verdict field that says yes: `YES`, `Yes, score=7.2`, `true`.
-fn says_yes(value: &str) -> bool {
+pub(crate) fn says_yes(value: &str) -> bool {
     let word = value
         .trim()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -1014,7 +1014,7 @@ fn trace_text(text: &str) -> String {
 }
 
 /// The message for one account: the trace fields, the fields kept, then the body.
-fn with_trace(kept: &[&[u8]], body: &[u8], envelope: &Envelope, recipient: &Recipients) -> Vec<u8> {
+pub(crate) fn with_trace(kept: &[&[u8]], body: &[u8], envelope: &Envelope, recipient: &Recipients) -> Vec<u8> {
     let addresses = recipient.addresses.as_slice();
     let mut out = Vec::with_capacity(body.len() + 1024);
     let mut push = |line: String| out.extend_from_slice(line.as_bytes());
@@ -1055,128 +1055,4 @@ fn with_trace(kept: &[&[u8]], body: &[u8], envelope: &Envelope, recipient: &Reci
     }
     out.extend_from_slice(body);
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn header_fields_keep_their_folded_lines() {
-        let raw = b"A: one\r\nB: two\r\n  more\r\nC: three\r\n\r\nbody\r\n";
-        let (head, body) = split_head(raw);
-        assert_eq!(body, b"\r\nbody\r\n");
-        let fields = header_fields(head);
-        assert_eq!(fields.len(), 3);
-        assert_eq!(fields[1], b"B: two\r\n  more\r\n");
-        assert_eq!(field_name_value(fields[1]), ("B".to_string(), "two more".to_string()));
-        let (head, body) = split_head(b"Only: header\n");
-        assert_eq!(head, b"Only: header\n");
-        assert!(body.is_empty());
-    }
-
-    #[test]
-    fn an_empty_authserv_id_is_warned_of_where_mail_comes_without_a_listener() {
-        assert!(authserv_warning("", true, || false).is_some_and(|text| text.contains("edge node")));
-        assert!(authserv_warning("", false, || true).is_some_and(|text| text.contains("IMAP")));
-        assert_eq!(authserv_warning("", false, || false), None);
-        assert_eq!(authserv_warning("mx.example.com", true, || true), None);
-    }
-
-    #[test]
-    fn verdicts_read_the_gateway_fields() {
-        assert!(says_yes("YES"));
-        assert!(says_yes(" Yes, score=7.1 required=5.0"));
-        assert!(!says_yes("No, score=0.1"));
-        assert!(!says_yes(""));
-        assert_eq!(authserv_of("mx.example.com 1; spf=pass"), "mx.example.com");
-        assert_eq!(
-            verdict(&[
-                "mx.example.com; spf=pass smtp.mailfrom=a.org; dkim=fail header.d=a.org".to_string(),
-                "mx.example.com; dkim=pass; dmarc=pass (p=none)".to_string(),
-            ]),
-            "spf=pass dkim=fail dmarc=pass"
-        );
-        // a quoted value or a comment that holds `;` separates nothing: a sender's text there is not a result
-        assert_eq!(
-            verdict(&[
-                "mx.example.com; spf=fail (x; dmarc=pass) smtp.mailfrom=\"a; dmarc=pass header.from=bank.example\\\" (\"@a.org; dmarc=fail header.from=a.org".to_string()
-            ]),
-            "spf=fail dmarc=fail"
-        );
-    }
-
-    #[test]
-    fn the_trace_fields_go_on_top() {
-        let raw = b"Return-Path: <forged@x.org>\r\nSubject: Hi\r\n\r\nbody\r\n";
-        let (head, body) = split_head(raw);
-        let fields: Vec<&[u8]> = header_fields(head)
-            .into_iter()
-            .filter(|field| !field.starts_with(b"Return-Path"))
-            .collect();
-        let envelope = Envelope {
-            mail_from: "a@x.org".to_string(),
-            helo: "gw.example.com\u{7}".to_string(),
-            client_ip: "10.0.0.5".to_string(),
-            protocol: "ESMTP".to_string(),
-            session_id: "s1".to_string(),
-            hostname: "moqui.example.com".to_string(),
-            ..Envelope::default()
-        };
-        let recipient = Recipients {
-            email_account_id: "A1".to_string(),
-            addresses: vec!["Sales@example.com".to_string()],
-            dsn: vec![RecipientDsn {
-                address: "Sales@example.com".to_string(),
-                notify: "SUCCESS".to_string(),
-                original: "rfc822;sales+x@example.com".to_string(),
-            }],
-        };
-        let text = String::from_utf8(with_trace(&fields, body, &envelope, &recipient)).unwrap();
-        assert!(text.starts_with("Return-Path: <a@x.org>\r\nDelivered-To: Sales@example.com\r\nOriginal-Recipient: rfc822;sales+x@example.com\r\nReceived: from gw.example.com? ([10.0.0.5])\r\n\tby moqui.example.com (mr-moqui) with ESMTP id s1\r\n\tfor <Sales@example.com>;"), "{text}");
-        assert!(text.ends_with("\r\nSubject: Hi\r\n\r\nbody\r\n"), "{text}");
-        assert_eq!(text.matches("Return-Path").count(), 1);
-    }
-
-    #[test]
-    fn a_delivered_report_names_each_recipient_and_returns_the_header() {
-        let envelope = Envelope {
-            mail_from: "a@x.org".to_string(),
-            session_id: "S1".to_string(),
-            hostname: "mx.example.com".to_string(),
-            dsn_envid: "QQ314159".to_string(),
-            ..Envelope::default()
-        };
-        let one = RecipientDsn {
-            address: "sales@example.com".to_string(),
-            notify: "SUCCESS,FAILURE".to_string(),
-            original: "rfc822;Sales@Example.com".to_string(),
-        };
-        assert!(one.wants_success());
-        assert!(!RecipientDsn {
-            notify: "FAILURE,DELAY".to_string(),
-            ..RecipientDsn::default()
-        }
-        .wants_success());
-        let text = String::from_utf8(delivered_report(
-            b"Subject: Hi\r\nMessage-ID: <m@x.org>\r\n",
-            &envelope,
-            &[&one],
-            "Mon, 19 Oct 2026 11:00:00 +0000",
-        ))
-        .unwrap();
-        assert!(
-            text.starts_with("From: Mail Delivery System <MAILER-DAEMON@mx.example.com>\r\nTo: <a@x.org>\r\n"),
-            "{text}"
-        );
-        assert!(
-            text.contains(
-                "Content-Type: multipart/report; report-type=delivery-status;\r\n\tboundary=\"S1.dsn/mx.example.com\""
-            ),
-            "{text}"
-        );
-        assert!(text.contains("Reporting-MTA: dns; mx.example.com\r\nOriginal-Envelope-Id: QQ314159\r\nArrival-Date: Mon, 19 Oct 2026 11:00:00 +0000\r\n\r\nOriginal-Recipient: rfc822;Sales@Example.com\r\nFinal-Recipient: rfc822; sales@example.com\r\nAction: delivered\r\nStatus: 2.0.0\r\n"), "{text}");
-        assert!(text.ends_with("Content-Type: text/rfc822-headers\r\n\r\nSubject: Hi\r\nMessage-ID: <m@x.org>\r\n\r\n--S1.dsn/mx.example.com--\r\n"), "{text}");
-        assert!(parse_message(text.as_bytes()).is_ok());
-    }
 }

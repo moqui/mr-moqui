@@ -729,6 +729,23 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="objectList" type="List"><description>Maps: oid, size</description></parameter>
         </in-parameters>
     </service>
+    <service verb="check" noun="GitOutbound" type="interface">
+        <description>The service git-server outbound-check-service names: asked before a repository's webhook
+            deliveries are queued (once per push or event, when it has webhooks that take it) and before its push
+            mirror pushes, with authorization off. allowed false (or N) holds them: nothing is queued, and the push
+            mirror records the message as its error. An application that hides or suspends a repository answers false
+            for it. A service that fails holds them too. Deliveries already queued are still sent.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="kind" required="true"><description>webhook or push-mirror</description></parameter>
+            <parameter name="event"><description>The webhook event (push, merge_request...); empty for a push
+                mirror</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
     <service verb="set" noun="GitRepositoryPath" type="rust" location="moqui_git::service::hosting::set_repository_path">
         <description>Set the path git URLs carry for a repository (moqui/mr-moqui: /git/moqui/mr-moqui.git, SSH
             moqui/mr-moqui.git, and the page URL on a public-site host), or clear it with an empty repositoryPath (the

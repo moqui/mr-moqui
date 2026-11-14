@@ -87,6 +87,7 @@ pub(crate) fn start(
                     config.offline_page = offline_page(factory);
                     config.forward_idle = settings.forward_idle;
                     config.forward_head = settings.forward_head;
+                    config.forward_first_byte = settings.forward_first_byte;
                     config.max_ssh_tunnels = settings.ssh_tunnels;
                     config.capabilities = super::offer::areas(factory, &config);
                     let server = EdgeServer::new(factory, config, &identity.fingerprint, shutdown.clone());

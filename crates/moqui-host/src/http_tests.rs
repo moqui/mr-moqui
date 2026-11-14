@@ -1076,10 +1076,95 @@ fn every_host_route_is_under_a_reserved_first_segment() {
         "the route literals were found: {paths:?}"
     );
     for path in &paths {
-        let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
         assert!(
-            moqui_core::web::reserved::is_reserved(first),
-            "the host route {path} starts with {first}, which moqui_core::web::reserved does not list"
+            moqui_core::web::reserved::is_reserved_path(path),
+            "the host route {path} is not under a path moqui_core::web::reserved lists (a wholly reserved first \
+             segment, or a sub-path of a partly reserved one)"
         );
     }
+}
+
+/// The request deadline: none for the paths that run as long as they need, a socket or an upload, and, on an edge
+/// node, for any request it forwards to a member, which applies its own with the exemptions only it can tell (a push
+/// to git at a public site's page URL, whose site rows the edge node does not have).
+#[test]
+fn a_forwarded_request_has_no_deadline_on_the_edge_node() {
+    let limit = Some(std::time::Duration::from_secs(300));
+    let deadline = |path: &str, streaming: bool, forwarded: bool| {
+        super::serve::request_deadline(limit, path, streaming, forwarded)
+    };
+    assert_eq!(deadline("/apps/x", false, false), limit);
+    assert_eq!(deadline("/acme/widget.git/git-receive-pack", false, false), limit);
+    assert_eq!(deadline("/acme/widget.git/git-receive-pack", false, true), None);
+    assert_eq!(deadline("/acme/widget.git/info/lfs/objects/abc", false, true), None);
+    for path in [
+        "/git/acme/widget.git/info/refs",
+        "/ci/runner/jobs/j1/log",
+        "/dav/x",
+        "/llm/v1/chat",
+        "/xmpp-upload/a",
+    ] {
+        assert_eq!(deadline(path, false, false), None, "{path}");
+    }
+    assert_eq!(deadline("/apps/upload", true, false), None);
+    assert_eq!(super::serve::request_deadline(None, "/apps/x", false, false), None);
+}
+
+/// The answer to a request with a CI token: its marker records the token as found good (here, and kept for an edge
+/// node in front when the request came down its link), a 401 or 410 forgets it; a marker on the answer of a request
+/// with no CI token is removed and believes nothing.
+#[test]
+fn a_ci_token_answer_is_recorded_and_its_marker_removed_at_the_outermost_node() {
+    use axum::response::IntoResponse as _;
+    let guard = crate::guard::tests::guard(
+        r#"<web-protection enabled="true"><rate-limit name="all" requests="1" seconds="60" burst="1"/></web-protection>"#,
+        "",
+    );
+    let token = format!("mqcj_{}", "ab".repeat(32));
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
+    let client: std::net::IpAddr = "203.0.113.70".parse().unwrap();
+    let check = || {
+        guard
+            .check(
+                client,
+                client,
+                "ci.example.com",
+                "POST",
+                "/ci/runner/jobs/j1/log",
+                &headers,
+            )
+            .is_ok()
+    };
+    let marked = |status: u16| {
+        let mut response = (axum::http::StatusCode::from_u16(status).unwrap(), "").into_response();
+        response
+            .headers_mut()
+            .insert(crate::guard::CI_TOKEN_HEADER, "verified".parse().unwrap());
+        response
+    };
+    assert!(check());
+    assert!(!check(), "limited by address before it is found good");
+    let mut response = marked(200);
+    super::serve::ci_token_answer(&guard, "ci.example.com", Some(&token), &mut response, true);
+    assert!(
+        response.headers().contains_key(crate::guard::CI_TOKEN_HEADER),
+        "kept for the edge node"
+    );
+    assert!(check() && check());
+    let mut response = marked(200);
+    super::serve::ci_token_answer(&guard, "ci.example.com", Some(&token), &mut response, false);
+    assert!(
+        !response.headers().contains_key(crate::guard::CI_TOKEN_HEADER),
+        "removed at the outermost node"
+    );
+    let mut gone = (axum::http::StatusCode::GONE, "").into_response();
+    super::serve::ci_token_answer(&guard, "ci.example.com", Some(&token), &mut gone, false);
+    assert!(!check(), "a job that ended: by address again");
+    let mut response = marked(200);
+    super::serve::ci_token_answer(&guard, "ci.example.com", None, &mut response, true);
+    assert!(!response.headers().contains_key(crate::guard::CI_TOKEN_HEADER));
 }

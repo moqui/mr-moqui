@@ -30,7 +30,9 @@
 //! **Waits** ([`Waits`]). A request's answer may come only once its whole body is stored (an LFS object, a CI artifact
 //! or result, a large upload), so the edge node bounds the member's connection taking the request and each gap in the
 //! request's body as it goes down, and then the wait for the answer's head from when the body is all sent, which is
-//! long by default; never the whole of it by one short timeout.
+//! long by default; never the whole of it by one short timeout. A request with no body waits only a short time for its
+//! answer's head (`forward-first-byte-seconds`), so a GET or HEAD a hung member holds goes once more to another member
+//! and the hung one is set aside, well within the client's patience.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -332,18 +334,22 @@ pub(crate) enum Failed {
 /// body is stored (an LFS or CI upload, a slow multipart post) may take as long as its body takes to send, so only
 /// the parts that say nothing is happening are short: `open` for the member's connection to take the request, `idle`
 /// for a gap in the request's body as it goes down, and `head`, from when the body is all sent, for the answer's
-/// head (the `<edge>` conf's `forward-idle-seconds` and `forward-head-seconds`).
+/// head (the `<edge>` conf's `forward-idle-seconds` and `forward-head-seconds`). A request with no body waits
+/// `first_byte` for its head instead (`forward-first-byte-seconds`, at most `head`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Waits {
     pub(crate) open: Duration,
     pub(crate) idle: Duration,
     pub(crate) head: Duration,
+    pub(crate) first_byte: Duration,
 }
 
 /// How far a forwarded request's body has gone down its member's connection: when a frame of it was last taken, and
 /// when it ended, in nanoseconds after `start`. A request that carries none in its extensions has no body.
 pub(crate) struct Progress {
     start: tokio::time::Instant,
+    /// The request has no body: its head is waited for `first_byte` from when it is sent.
+    bodyless: bool,
     last: AtomicU64,
     /// [`NOT_ENDED`] while the body is still going.
     ended: AtomicU64,
@@ -355,6 +361,7 @@ impl Progress {
     fn new(ended: bool) -> Self {
         Self {
             start: tokio::time::Instant::now(),
+            bodyless: ended,
             last: AtomicU64::new(0),
             ended: AtomicU64::new(if ended { 0 } else { NOT_ENDED }),
         }
@@ -384,12 +391,17 @@ impl Progress {
             .compare_exchange(NOT_ENDED, now, Ordering::AcqRel, Ordering::Acquire);
     }
 
-    /// When the wait for the answer's head runs out as things stand: `idle` after the body last moved while it goes,
-    /// `head` after it ended.
+    /// When the wait for the answer's head runs out as things stand: for a request with no body, `first_byte` after it
+    /// was sent; else `idle` after the body last moved while it goes, and after it ended the later of that and `head`
+    /// after the end, so the end of the body never shortens the wait.
     fn deadline(&self, waits: &Waits) -> tokio::time::Instant {
+        let at = |nanos: u64, wait: Duration| self.start + Duration::from_nanos(nanos) + wait;
+        let idle = at(self.last.load(Ordering::Acquire), waits.idle);
         match self.ended.load(Ordering::Acquire) {
-            NOT_ENDED => self.start + Duration::from_nanos(self.last.load(Ordering::Acquire)) + waits.idle,
-            ended => self.start + Duration::from_nanos(ended) + waits.head,
+            // `sending` set both clocks to when it was sent
+            ended if self.bodyless => at(ended, waits.first_byte.min(waits.head)),
+            NOT_ENDED => idle,
+            ended => idle.max(at(ended, waits.head)),
         }
     }
 }
@@ -644,6 +656,11 @@ where
                 server.config().open_timeout
             } else {
                 server.config().forward_head
+            },
+            first_byte: if websocket {
+                server.config().open_timeout
+            } else {
+                server.config().forward_first_byte
             },
         },
         |picked, ok| {

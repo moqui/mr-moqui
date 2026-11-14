@@ -122,8 +122,10 @@
         stickyCookie); a member whose requests fail or time out set-aside-failures times in a row gets no new work for
         set-aside-seconds. A forwarded request waits for its answer while its body keeps moving (a gap of
         forward-idle-seconds at most) and then forward-head-seconds once it is all sent, so an LFS or CI upload
-        answered once it is stored is not cut off; ssh-tunnels is the SSH connections a tunnel port pipes at once. -->
+        answered once it is stored is not cut off; a request with no body waits forward-first-byte-seconds for its
+        answer's head, so a GET held by a hung member goes to another; ssh-tunnels is the SSH connections a tunnel
+        port pipes at once. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
             sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"
-            forward-idle-seconds="120" forward-head-seconds="3600" ssh-tunnels="256"/>
+            forward-idle-seconds="120" forward-head-seconds="3600" forward-first-byte-seconds="30" ssh-tunnels="256"/>
 </moqui-conf>

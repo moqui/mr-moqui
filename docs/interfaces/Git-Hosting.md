@@ -779,6 +779,19 @@ holds up no other rule; pushes of one repository take turns, and each sends the 
 change, or Push Mirror Now, pushes again. A push ends as git's does: it waits for the mirror's `git-receive-pack` to
 end, so the mirror's own post-receive hooks finish.
 
+### Outbound check
+
+What a repository sends out of the server, its webhook deliveries and its push mirror's pushes, waits on the
+application when `git-server` `outbound-check-service` names a service (interface `check#GitOutbound`; none by
+default). It is asked, with authorization off, before a push's or an event's deliveries are queued (once, when the
+repository has webhooks that take it) and before a push mirror pushes, with `repositoryId`, `kind` (`webhook` or
+`push-mirror`) and `event`. `allowed` false (or `N`) holds them: no delivery is queued, and the push mirror records
+`not pushed: <message>` as its `lastPushMirrorError`. A service that fails holds them too. An application that hides a
+repository from all but its owners (or suspends one) answers false for it, as its run check (`git-ci`
+`run-check-service`, [Pipelines](Pipelines.md)) refuses its runs; deliveries queued before it was hidden are still
+sent, and a `test#GitWebhook` ping by an owner is sent. The service is asked of each push, so it should be a cheap
+read.
+
 ### Merge requests
 
 `org.moqui.git.GitReviewServices` keeps a merge request into a target branch of a repository
@@ -975,7 +988,9 @@ round robin; SSH goes by the client's address). A `local` or `remote` repository
 `shared-storage="true"` (`git_shared_storage`).
 
 A node is a cluster member when another member's heartbeat is live in `moqui.server.ClusterMember`, or it is set up to
-be one (`cluster_base_url`, `cluster_transport`). On a member **without** shared storage:
+be one (`cluster_base_url`, `cluster_transport`); once seen to be one it stays one until it restarts, though every
+peer's heartbeat lapse, and an answer that could not be read is not kept. A thread with no context reads this and the
+conf through the provider's own factory. On a member **without** shared storage:
 
 - a new `local` or `remote` repository is refused (`GitNeedsSharedStorage`): the first write or `init#GitRepository`
   of one whose directory is not there yet, a mirror's first `fetch#GitRepository`, and a fork of a `local`
@@ -986,12 +1001,19 @@ be one (`cluster_base_url`, `cluster_transport`). On a member **without** shared
 
 **With** shared storage every writer of an on-disk repository (a push, a ref write, a merge, a `git://` write,
 `commit#GitFiles`, an import, a fetch of a mirror, the merge request heads, the steps of `gc#GitRepositories` that
-rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:<repositoryId>`, as well as the lock of
-its own process, so two members never write the same directory at once: one waits for the other, at most
-`shared-lock-wait-seconds` (120; then `GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed
-while held and taken over once it lapses (60 seconds after a member that held it stopped); its times are the members'
-clocks, which keep within seconds of each other. `fetch#AllGitRepositories` runs on one member at a time (`fetch-due`),
-and the pushes of a repository to its push mirror take turns across the members (`push-mirror:<repositoryId>`).
+rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:<repositoryId>`, and then the lock of
+its own process (the lease first, so no writer holds the lock while it waits on another member), so two members never
+write the same directory at once: one waits for the other, at most `shared-lock-wait-seconds` (120; then
+`GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed while held (by one thread of the
+process; a lease let go within its first renewal interval costs none) and taken over once it lapses (60 seconds after
+a member that held it stopped); its times are the database's clock, so the members' clocks do not matter. Its holder
+id is the process and 128 random bits. A lease is fenced: one whose renewal found another holder, or that went
+unrenewed for nearly its time (a lost database connection, a long pause), is lost, and a writer checks its lease right
+before what must happen under it (a ref update, a push's objects taken from quarantine, gc's deletes), renewing it on
+the condition that the row still names it and has not lapsed; a writer that lost it stops with `GitLeaseLost` and
+writes nothing. A lease taken again on its thread shares the first take, and the last of them let go releases it, on
+whatever thread. `fetch#AllGitRepositories` runs on one member at a time (`fetch-due`), and the pushes of a repository
+to its push mirror take turns across the members (`push-mirror:<repositoryId>`).
 
 What a member keeps in memory of an on-disk repository is checked against the disk on use rather than told of other
 members' writes: gix reads the loose refs and `packed-refs` (by its modification time) at each read and looks for a new
@@ -1140,7 +1162,9 @@ cluster members an edge node balances, and an edge cluster.
   local node's link as HTTP/2, with the bodies streamed both ways: a clone, a push, an LFS object and a CI upload are
   never held whole on the edge node. The edge node bounds the member taking the request, each gap in a request body as
   it goes down (`<edge forward-idle-seconds>`, 120) and the wait for the answer's head once the body is all sent
-  (`forward-head-seconds`, 3600), so an LFS PUT answered only once its object is stored is not cut off. A host in
+  (`forward-head-seconds`, 3600), so an LFS PUT answered only once its object is stored is not cut off. The edge
+  node's own `request-timeout` does not apply to a request it forwards (it cannot tell git at a public site's page URL,
+  having no site rows); the local node applies its own, with git's exemption. A host in
   `passthrough` mode ends its TLS on the local node: the edge node pipes the connection's bytes. Git at a page's URL
   on a public-site host is rewritten to its `/git/` path on the local node, as without an edge node; the edge node
   sees the request as any other.
@@ -1164,8 +1188,8 @@ cluster members an edge node balances, and an edge cluster.
   once. A client that a pairing's shared ban names is refused on that pairing's tunnel ports as on its hosts.
 - **Web protection.** The edge node applies its own rules before a request goes down, and the local node applies its
   rules to the client's address after. A ban the local node starts (a client failing to log in) is told up to the
-  edge node, which refuses that client for that pairing's hosts and tunnel ports. CI runner requests with a token are
-  counted per token ([Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool)).
+  edge node, which refuses that client for that pairing's hosts and tunnel ports. CI runner requests, and a job's
+  fetch, with a token found good are counted per token ([Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool)).
 - **In a pool or a cluster** (a load balancer, or an edge node's pool, which sends an LFS request or an SSH
   connection to any member and after a failover to another): every member has the same `ssh_host_key`, or clients
   are told the host key changed, and the same `git_lfs_token_key`, or a member refuses the tokens another issued

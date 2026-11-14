@@ -1459,6 +1459,10 @@ fn queue_webhook_push(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if push_hooks.is_empty() && tag_hooks.is_empty() {
         return none();
     }
+    if let Err(why) = crate::outbound_allowed(&id, crate::Outbound::Webhook, "push") {
+        tracing::info!(repository = %id, "webhook deliveries not queued: {why}");
+        return none();
+    }
     let refs: Vec<BTreeMap<String, Value>> = match parameters.get("refUpdates") {
         Some(Value::List(items)) => items
             .iter()
@@ -1561,6 +1565,10 @@ fn queue_event(parameters: &Parameters, facade: &EntityFacade) -> Out {
     };
     let hooks = webhooks_for(facade, &id, &event)?;
     if hooks.is_empty() {
+        return Ok(out([("queuedCount", count(0))]));
+    }
+    if let Err(why) = crate::outbound_allowed(&id, crate::Outbound::Webhook, &event) {
+        tracing::info!(repository = %id, event, "webhook deliveries not queued: {why}");
         return Ok(out([("queuedCount", count(0))]));
     }
     let branch = provider

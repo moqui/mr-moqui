@@ -67,6 +67,21 @@ thread_local! {
     static WEB: RefCell<Option<WebSlot>> = const { RefCell::new(None) };
     /// Set by a login with credentials that were not valid, for the host's web protection to count.
     static AUTH_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set when a token counted by itself rather than by the client's address (a CI job, runner or pool token) was
+    /// looked up and found good, for the host's web protection to exempt that token's later requests.
+    static TOKEN_VERIFIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the work on this thread as having found good the request's CI token (a job, runner or pool token), which is
+/// counted by itself: the host's web protection then exempts that token from the per-address rate limits for a while
+/// (`moqui-host`'s `guard`, docs/interfaces/Pipelines.md).
+pub fn note_token_verified() {
+    TOKEN_VERIFIED.with(|flag| flag.set(true));
+}
+
+/// Whether the work on this thread found the request's CI token good since the last call, and forget it.
+pub fn take_token_verified() -> bool {
+    TOKEN_VERIFIED.with(|flag| flag.replace(false))
 }
 
 /// Mark the work on this thread as having tried credentials that were not valid.
@@ -1373,15 +1388,47 @@ pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Op
     let base = location.split_once('#').map_or(location, |(base, _)| base);
     let last = base.trim_end_matches('/').rsplit('/').next().unwrap_or(base);
     let file_name = file_name.map(str::trim).filter(|name| !name.is_empty()).unwrap_or(last);
+    let application_file = matches!(
+        base.split_once("://").map(|(scheme, _)| scheme),
+        Some("component" | "classpath")
+    );
+    if let Err(err) = respond_file(&opened, file_name, last, inline, application_file) {
+        tracing::warn!(
+            "Sending error response, resource at {location} cannot be read: {}",
+            err.message()
+        );
+        send_bytes(
+            500,
+            "text/plain",
+            format!("Resource at {location} cannot be read").into_bytes(),
+        );
+    }
+}
+
+/// Send `opened` as this request's response, a file named `file_name` (an attachment unless `inline`), streamed a
+/// window at a time with `Range`, `ETag` and `If-Range` as `sendResourceResponse` sends a resource: for content a
+/// service reads from its own storage (a CI artifact's content blob, `send#RunArtifact`) with its own access check,
+/// so it is not copied to a file first.
+///
+/// # Errors
+///
+/// When the content cannot be read; nothing is sent then, and the caller answers.
+pub fn send_file_response(opened: &crate::context::Opened, file_name: &str, inline: bool) -> Result<(), Error> {
+    respond_file(opened, file_name, file_name, inline, false)
+}
+
+fn respond_file(
+    opened: &crate::context::Opened,
+    file_name: &str,
+    last: &str,
+    inline: bool,
+    application_file: bool,
+) -> Result<(), Error> {
     // a type the name does not tell is bytes to save, never sniffed as a page
     let content_type = moqui_lib::resource::content_type_for_name(file_name)
         .or_else(|| moqui_lib::resource::content_type_for_name(last))
         .unwrap_or("application/octet-stream");
     let mut headers = vec![("Content-Type".to_string(), content_type.to_string())];
-    let application_file = matches!(
-        base.split_once("://").map(|(scheme, _)| scheme),
-        Some("component" | "classpath")
-    );
     if inline {
         headers.push(("Content-Disposition".to_string(), "inline".to_string()));
     } else {
@@ -1396,17 +1443,7 @@ pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Op
     let conditional = WEB
         .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.clone()))
         .unwrap_or_default();
-    if let Err(err) = crate::screen::static_files::respond_opened(&conditional, headers, &opened) {
-        tracing::warn!(
-            "Sending error response, resource at {location} cannot be read: {}",
-            err.message()
-        );
-        send_bytes(
-            500,
-            "text/plain",
-            format!("Resource at {location} cannot be read").into_bytes(),
-        );
-    }
+    crate::screen::static_files::respond_opened(&conditional, headers, opened)
 }
 
 /// The signer for QZ Tray, from `qz-private-key.pem`. Java reads it once from the classpath at class load. This

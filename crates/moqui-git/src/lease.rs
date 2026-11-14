@@ -17,23 +17,32 @@
 //! a CI pool's starts, a fork against a delete. A lease is taken by one conditional `UPDATE` (or the row's first
 //! `INSERT`), a statement of its own committed at once on a reserve connection, so it holds on every database and
 //! whatever transaction the caller is in; it is renewed while held and lapses when its holder stops renewing (a
-//! member that died). The lease times are this host's clock: members keep their clocks within seconds, far less than
-//! [`TTL`].
+//! member that died). Its times are the database's clock ([`db_now`]), not each member's.
 //!
-//! A thread that holds a lease takes it again for free (a fork that writes to its source in the same transaction), so
-//! two "members" of a test are two threads.
+//! **Fencing.** A holder that cannot renew (a lost database connection, a long pause) may find another member took
+//! the lease over. So a lease knows when it was last renewed, and is marked lost when a renewal changes no row or
+//! none succeeded for nearly its time-to-live; a writer calls [`Lease::check`] right before what must happen under it
+//! (a ref update, a push's quarantine taken in, gc's pack rename or delete), which also renews it on the condition that
+//! this holder still has it and it has not lapsed, so a writer that lost it stops instead of writing beside the new
+//! holder.
+//!
+//! A thread that holds a lease takes it again for free (a fork that writes to its source in the same transaction):
+//! the inner take shares the outer one's state, and the last of them dropped lets it go, wherever it is dropped. Two
+//! "members" of a test are two threads. Renewals are made by one thread for the process ([`renewals`]), and a lease
+//! let go within its first renewal interval costs no renewal at all.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::Error;
 use moqui_core::entity::{Condition, EntityFacade};
 use moqui_core::transaction::TransactionManager;
 use moqui_lib::object::Value;
+
+use crate::conditional::{update_where, Commit};
 
 pub(crate) const LEASE: &str = "moqui.resource.GitLease";
 
@@ -44,31 +53,68 @@ pub(crate) const TTL: Duration = Duration::from_secs(60);
 /// `shared-lock-wait-seconds` says otherwise.
 pub(crate) const DEFAULT_WAIT: Duration = Duration::from_secs(120);
 
+/// How often the database's clock is read again for [`db_now`].
+const CLOCK_FRESH: Duration = Duration::from_secs(30);
+
 thread_local! {
-    /// The leases this thread holds, by name, with how many times it took each.
-    static HELD: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
+    /// The leases this thread holds, by name: the state each take shares with its re-entries.
+    static HELD: RefCell<HashMap<String, Weak<Held>>> = RefCell::new(HashMap::new());
 }
 
-/// A lease held until dropped (or until the transaction it was handed to ends, [`Lease::until_transaction_end`]).
-#[must_use = "dropping a lease lets it go"]
-pub(crate) struct Lease {
+/// What a take and its re-entries on its thread share; the last one dropped lets the lease go.
+struct Held {
     entity: EntityFacade,
     name: String,
     holder: String,
-    renewer: Option<mpsc::Sender<()>>,
+    ttl: Duration,
+    state: Arc<State>,
+    /// Its entry in the process's renewals, while it has one.
+    renewal: u64,
+}
+
+/// A lease's standing, which the renewer and its writers both read.
+struct State {
+    /// Cleared when a renewal or a check found another holder, or none succeeded for nearly the time-to-live.
+    valid: AtomicBool,
+    /// When it was last taken or renewed, by this process's monotonic clock.
+    last_ok: Mutex<Instant>,
+    /// Set as it is let go, so a renewal racing the release is not taken for a loss.
+    released: AtomicBool,
+}
+
+impl State {
+    fn new() -> Self {
+        Self {
+            valid: AtomicBool::new(true),
+            last_ok: Mutex::new(Instant::now()),
+            released: AtomicBool::new(false),
+        }
+    }
+
+    fn renewed(&self) {
+        *moqui_lib::sync::lock(&self.last_ok) = Instant::now();
+    }
+
+    /// Whether it has gone too long without a renewal to be trusted: within a sixth of its time-to-live of lapsing.
+    fn stale(&self, ttl: Duration) -> bool {
+        moqui_lib::sync::lock(&self.last_ok).elapsed() > ttl.saturating_sub(ttl / 6)
+    }
+}
+
+/// A lease held until dropped (or until the transaction it was handed to ends, [`Lease::until_transaction_end`]).
+/// It may be dropped on another thread (a transaction's end hook): the state is shared, not the thread's.
+#[must_use = "dropping a lease lets it go"]
+pub(crate) struct Lease {
+    held: Arc<Held>,
 }
 
 impl std::fmt::Debug for Lease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Lease")
-            .field("name", &self.name)
-            .field("holder", &self.holder)
+            .field("name", &self.held.name)
+            .field("holder", &self.held.holder)
             .finish()
     }
-}
-
-fn now_millis() -> i64 {
-    jiff::Timestamp::now().as_millisecond()
 }
 
 fn stamp(millis: i64) -> Value {
@@ -79,42 +125,74 @@ fn ttl_millis(ttl: Duration) -> i64 {
     i64::try_from(ttl.as_millis()).unwrap_or(i64::MAX)
 }
 
-/// A holder id no other take shares: this process and a counter.
+fn local_millis() -> i64 {
+    jiff::Timestamp::now().as_millisecond()
+}
+
+/// The database server's time in epoch milliseconds, for the lease times: every member compares them by the one
+/// clock, whatever its own says. Read again every [`CLOCK_FRESH`] and kept as an offset from this host's clock; this
+/// host's own when the database does not say (a test's in-memory one).
+pub(crate) fn db_now(entity: &EntityFacade) -> i64 {
+    static OFFSET: Mutex<Option<(Instant, i64)>> = Mutex::new(None);
+    if let Some((at, offset)) = *moqui_lib::sync::lock(&OFFSET) {
+        if at.elapsed() < CLOCK_FRESH {
+            return local_millis() + offset;
+        }
+    }
+    let read = entity
+        .with_group(LEASE, |_, _, _, tx| Ok(tx.clone()))
+        .map_err(Error::from)
+        .and_then(|tx| Ok(tx.with_reserve(|conn| conn.query("SELECT CURRENT_TIMESTAMP", &[]))?));
+    let offset = read
+        .ok()
+        .and_then(|rows| {
+            rows.first()
+                .and_then(|row| row.columns.first().map(|(_, value)| value.clone()))
+        })
+        .and_then(|value| moqui_core::context::millis_of(&value))
+        .map_or(0, |db| db - local_millis());
+    *moqui_lib::sync::lock(&OFFSET) = Some((Instant::now(), offset));
+    local_millis() + offset
+}
+
+/// A holder id no other take shares, on any member: this process and 128 random bits.
 fn new_holder() -> String {
-    static TAKES: AtomicU64 = AtomicU64::new(0);
-    format!(
-        "{}-{}-{}",
-        std::process::id(),
-        now_millis(),
-        TAKES.fetch_add(1, Ordering::Relaxed)
-    )
+    let mut bytes = [0u8; 16];
+    if getrandom::fill(&mut bytes).is_err() {
+        // no random bytes: the time and a counter, which still differ between this process's takes
+        static TAKES: AtomicU64 = AtomicU64::new(0);
+        bytes[..8].copy_from_slice(&local_millis().to_le_bytes());
+        bytes[8..].copy_from_slice(&TAKES.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    }
+    format!("{}-{}", std::process::id(), moqui_lib::codec::hex_encode(&bytes))
 }
 
-/// Run one statement on a reserve connection, committed at once.
-fn execute(tx: &TransactionManager, sql: &str, params: &[Value]) -> Result<u64, Error> {
-    Ok(tx.with_reserve(|conn| conn.execute(sql, params))?)
-}
-
-/// Set `fields` on the lease row `name` when `condition` holds as well: how many rows changed.
+/// Set `fields` on the lease row `name` when `condition` holds as well, a statement committed at once: how many rows
+/// changed.
 fn update(entity: &EntityFacade, name: &str, fields: Vec<(&str, Value)>, condition: Condition) -> Result<u64, Error> {
     let condition = Condition::and(vec![Condition::equals("leaseName", Value::string(name)), condition]);
-    let mut names: Vec<&str> = fields.iter().map(|(name, _)| *name).collect();
-    names.push("lastUpdatedStamp");
-    let (statement, tx) = entity.with_group(LEASE, |definition, dialect, _, tx| {
-        Ok((
-            moqui_db::sql::update(definition, dialect, &names, Some(&condition))?,
-            tx.clone(),
-        ))
-    })?;
-    let mut params: Vec<Value> = fields.into_iter().map(|(_, value)| value).collect();
-    params.push(stamp(now_millis()));
-    params.extend(statement.params);
-    execute(&tx, &statement.sql, &params)
+    update_where(entity, LEASE, &fields, &condition, Commit::Own)
 }
 
-/// One try at the lease `name` for `holder` until `until`: free, lapsed or its own. Whether it was taken.
-fn attempt(entity: &EntityFacade, name: &str, holder: &str, until: i64) -> Result<bool, Error> {
-    let now = now_millis();
+/// Renew the lease `name` of `holder` for `ttl` from the database's now, on the condition that it is still this
+/// holder's and has not lapsed: whether it was.
+fn renew(entity: &EntityFacade, name: &str, holder: &str, ttl: Duration) -> Result<bool, Error> {
+    let now = db_now(entity);
+    let changed = update(
+        entity,
+        name,
+        vec![("leaseUntil", stamp(now + ttl_millis(ttl)))],
+        Condition::and(vec![
+            Condition::equals("holderId", Value::string(holder)),
+            Condition::greater("leaseUntil", stamp(now)),
+        ]),
+    )?;
+    Ok(changed > 0)
+}
+
+/// One try at the lease `name` for `holder` for `ttl`: free, lapsed or its own. Whether it was taken.
+fn attempt(entity: &EntityFacade, name: &str, holder: &str, ttl: Duration) -> Result<bool, Error> {
+    let now = db_now(entity);
     let free = Condition::or(vec![
         Condition::is_null("holderId"),
         Condition::less("leaseUntil", stamp(now)),
@@ -122,7 +200,7 @@ fn attempt(entity: &EntityFacade, name: &str, holder: &str, until: i64) -> Resul
     ]);
     let fields = vec![
         ("holderId", Value::string(holder)),
-        ("leaseUntil", stamp(until)),
+        ("leaseUntil", stamp(now + ttl_millis(ttl))),
         ("takenDate", stamp(now)),
     ];
     if update(entity, name, fields.clone(), free.clone())? > 0 {
@@ -144,7 +222,7 @@ fn attempt(entity: &EntityFacade, name: &str, holder: &str, until: i64) -> Resul
     let (sql, tx) = entity.with_group(LEASE, |definition, dialect, _, tx| {
         Ok((moqui_db::sql::insert(definition, dialect, &columns)?, tx.clone()))
     })?;
-    if let Err(err) = execute(&tx, &sql, &[Value::string(name), stamp(now)]) {
+    if let Err(err) = tx.with_reserve(|conn| conn.execute(&sql, &[Value::string(name), stamp(now)])) {
         tracing::debug!(lease = name, "a git lease row was made by another: {err}");
     }
     Ok(update(entity, name, fields, free)? > 0)
@@ -157,11 +235,11 @@ fn attempt(entity: &EntityFacade, name: &str, holder: &str, until: i64) -> Resul
 ///
 /// When the lease row cannot be read or written.
 pub(crate) fn try_take(entity: &EntityFacade, name: &str, ttl: Duration) -> Result<Option<Lease>, Error> {
-    if let Some(lease) = reentered(entity, name) {
+    if let Some(lease) = reentered(name) {
         return Ok(Some(lease));
     }
     let holder = new_holder();
-    if !attempt(entity, name, &holder, now_millis() + ttl_millis(ttl))? {
+    if !attempt(entity, name, &holder, ttl)? {
         return Ok(None);
     }
     Ok(Some(held(entity, name, holder, ttl)))
@@ -173,14 +251,14 @@ pub(crate) fn try_take(entity: &EntityFacade, name: &str, ttl: Duration) -> Resu
 ///
 /// `GitLeaseBusy` when another holder keeps it past `wait`, and a lease row that cannot be read or written.
 pub(crate) fn take(entity: &EntityFacade, name: &str, ttl: Duration, wait: Duration) -> Result<Lease, Error> {
-    if let Some(lease) = reentered(entity, name) {
+    if let Some(lease) = reentered(name) {
         return Ok(lease);
     }
     let holder = new_holder();
     let deadline = Instant::now() + wait;
     let mut pause = Duration::from_millis(5);
     loop {
-        if attempt(entity, name, &holder, now_millis() + ttl_millis(ttl))? {
+        if attempt(entity, name, &holder, ttl)? {
             return Ok(held(entity, name, holder, ttl));
         }
         let now = Instant::now();
@@ -195,69 +273,77 @@ pub(crate) fn take(entity: &EntityFacade, name: &str, ttl: Duration, wait: Durat
     }
 }
 
-/// A lease this thread holds already: taken again, let go when the outer one is.
-fn reentered(entity: &EntityFacade, name: &str) -> Option<Lease> {
+/// A lease this thread holds already: taken again, sharing the outer take's state.
+fn reentered(name: &str) -> Option<Lease> {
     HELD.with(|held| {
         let mut held = held.borrow_mut();
-        let count = held.get_mut(name)?;
-        *count += 1;
-        Some(Lease {
-            entity: entity.clone(),
-            name: name.to_string(),
-            holder: String::new(),
-            renewer: None,
-        })
+        match held.get(name).map(Weak::upgrade) {
+            Some(Some(shared)) => Some(Lease { held: shared }),
+            Some(None) => {
+                // let go elsewhere (its transaction's end hook on another thread): not held here any more
+                held.remove(name);
+                None
+            }
+            None => None,
+        }
     })
 }
 
 fn held(entity: &EntityFacade, name: &str, holder: String, ttl: Duration) -> Lease {
-    HELD.with(|held| held.borrow_mut().insert(name.to_string(), 1));
-    let (stop, stopped) = mpsc::channel::<()>();
-    let (renew_entity, renew_name, renew_holder) = (entity.clone(), name.to_string(), holder.clone());
-    let every = (ttl / 3).max(Duration::from_millis(100));
-    let spawned = std::thread::Builder::new()
-        .name("git-lease".into())
-        .spawn(move || loop {
-            match stopped.recv_timeout(every) {
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let until = now_millis() + ttl_millis(ttl);
-                    let renewed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        update(
-                            &renew_entity,
-                            &renew_name,
-                            vec![("leaseUntil", stamp(until))],
-                            Condition::equals("holderId", Value::string(&renew_holder)),
-                        )
-                    }));
-                    match renewed {
-                        Ok(Ok(1)) => {}
-                        Ok(Ok(_)) => {
-                            tracing::error!(lease = %renew_name, "a git lease was lost before it was let go");
-                            return;
-                        }
-                        Ok(Err(err)) => tracing::warn!(lease = %renew_name, "a git lease was not renewed: {err}"),
-                        Err(_) => tracing::error!(lease = %renew_name, "renewing a git lease panicked"),
-                    }
-                }
-                _ => return,
-            }
-        });
-    let renewer = match spawned {
-        Ok(_) => Some(stop),
-        Err(err) => {
-            tracing::warn!(lease = name, "a git lease is not renewed (no thread): {err}");
-            None
-        }
-    };
-    Lease {
+    let state = Arc::new(State::new());
+    let renewal = renewals().add(Renewal {
+        entity: entity.clone(),
+        name: name.to_string(),
+        holder: holder.clone(),
+        ttl,
+        due: Instant::now() + every(ttl),
+        state: Arc::clone(&state),
+    });
+    let shared = Arc::new(Held {
         entity: entity.clone(),
         name: name.to_string(),
         holder,
-        renewer,
-    }
+        ttl,
+        state,
+        renewal,
+    });
+    HELD.with(|held| held.borrow_mut().insert(name.to_string(), Arc::downgrade(&shared)));
+    Lease { held: shared }
+}
+
+/// How often a lease of `ttl` is renewed.
+fn every(ttl: Duration) -> Duration {
+    (ttl / 3).max(Duration::from_millis(100))
 }
 
 impl Lease {
+    /// Whether this lease is still this holder's, right before a write that must happen under it: not marked lost,
+    /// renewed recently enough, and renewed now on the condition that the row still names this holder and has not
+    /// lapsed by the database's clock (a fencing check: a holder that lost it to another member stops here).
+    ///
+    /// # Errors
+    ///
+    /// `GitLeaseLost` when it is not, and a lease row that cannot be written (the write is not made unverified).
+    pub(crate) fn check(&self) -> Result<(), Error> {
+        let held = &self.held;
+        let lost = || {
+            held.state.valid.store(false, Ordering::Release);
+            Error::new(format!(
+                "GitLeaseLost: the lease {} lapsed or was taken over by another cluster member before this write; \
+                 nothing was written, try again",
+                held.name
+            ))
+        };
+        if !held.state.valid.load(Ordering::Acquire) || held.state.stale(held.ttl) {
+            return Err(lost());
+        }
+        if !renew(&held.entity, &held.name, &held.holder, held.ttl)? {
+            return Err(lost());
+        }
+        held.state.renewed();
+        Ok(())
+    }
+
     /// Keep the lease until the transaction in place ends (committed or rolled back), so another member that takes it
     /// next reads what this transaction wrote; with no transaction it is let go when dropped, as usual.
     ///
@@ -276,28 +362,21 @@ impl Lease {
     }
 }
 
-impl Drop for Lease {
+/// [`Lease::check`] of a lease a writer may hold (`None`: a `db` repository, or no shared storage).
+pub(crate) fn check(lease: Option<&Lease>) -> Result<(), Error> {
+    lease.map_or(Ok(()), Lease::check)
+}
+
+impl Drop for Held {
     fn drop(&mut self) {
-        let outer = HELD.with(|held| {
+        self.state.released.store(true, Ordering::Release);
+        renewals().remove(self.renewal);
+        let _ = HELD.try_with(|held| {
             let mut held = held.borrow_mut();
-            match held.get_mut(&self.name) {
-                Some(count) if *count > 1 => {
-                    *count -= 1;
-                    false
-                }
-                Some(_) => {
-                    held.remove(&self.name);
-                    true
-                }
-                None => !self.holder.is_empty(),
+            if held.get(&self.name).is_some_and(|weak| weak.strong_count() == 0) {
+                held.remove(&self.name);
             }
         });
-        if !outer || self.holder.is_empty() {
-            return;
-        }
-        if let Some(stop) = self.renewer.take() {
-            let _ = stop.send(());
-        }
         let released = update(
             &self.entity,
             &self.name,
@@ -308,6 +387,133 @@ impl Drop for Lease {
             tracing::warn!(lease = %self.name, "a git lease was not let go (it lapses): {err}");
         }
     }
+}
+
+/// A held lease's renewal, kept by the process's renewer.
+struct Renewal {
+    entity: EntityFacade,
+    name: String,
+    holder: String,
+    ttl: Duration,
+    due: Instant,
+    state: Arc<State>,
+}
+
+/// The renewals of the process's held leases, made by one thread ([`renewals`]).
+struct Renewals {
+    entries: Mutex<HashMap<u64, Renewal>>,
+    changed: Condvar,
+    next_id: AtomicU64,
+}
+
+/// After a renewal that failed (the database did not answer), the next try comes this soon.
+const RETRY: Duration = Duration::from_secs(1);
+
+impl Renewals {
+    fn add(&self, renewal: Renewal) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        moqui_lib::sync::lock(&self.entries).insert(id, renewal);
+        self.changed.notify_all();
+        id
+    }
+
+    fn remove(&self, id: u64) {
+        moqui_lib::sync::lock(&self.entries).remove(&id);
+    }
+
+    /// The renewer's loop: renew each lease when it is due, outside the lock.
+    fn run(&self) {
+        loop {
+            let due: Vec<(u64, EntityFacade, String, String, Duration, Arc<State>)> = {
+                let mut entries = moqui_lib::sync::lock(&self.entries);
+                let now = Instant::now();
+                let next = entries.values().map(|entry| entry.due).min();
+                match next {
+                    Some(next) if next <= now => {}
+                    Some(next) => {
+                        let _ = moqui_lib::sync::wait_timeout(&self.changed, entries, next - now);
+                        continue;
+                    }
+                    None => {
+                        let _ = moqui_lib::sync::wait_timeout(&self.changed, entries, Duration::from_secs(60));
+                        continue;
+                    }
+                }
+                entries
+                    .iter_mut()
+                    .filter(|(_, entry)| entry.due <= now)
+                    .map(|(id, entry)| {
+                        // pushed back now, so one that fails is not tried again at once
+                        entry.due = now + RETRY;
+                        (
+                            *id,
+                            entry.entity.clone(),
+                            entry.name.clone(),
+                            entry.holder.clone(),
+                            entry.ttl,
+                            Arc::clone(&entry.state),
+                        )
+                    })
+                    .collect()
+            };
+            for (id, entity, name, holder, ttl, state) in due {
+                let renewed =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| renew(&entity, &name, &holder, ttl)));
+                let keep = match renewed {
+                    Ok(Ok(true)) => {
+                        state.renewed();
+                        if let Some(entry) = moqui_lib::sync::lock(&self.entries).get_mut(&id) {
+                            entry.due = Instant::now() + every(ttl);
+                        }
+                        true
+                    }
+                    Ok(Ok(false)) => {
+                        // let go as this ran, or lost: lapsed, and maybe taken over by another member
+                        if !state.released.load(Ordering::Acquire) {
+                            state.valid.store(false, Ordering::Release);
+                            tracing::error!(lease = %name, "a git lease was lost before it was let go: its writes stop");
+                        }
+                        false
+                    }
+                    Ok(Err(err)) => {
+                        tracing::warn!(lease = %name, "a git lease was not renewed, trying again: {err}");
+                        true
+                    }
+                    Err(_) => {
+                        tracing::error!(lease = %name, "renewing a git lease panicked");
+                        true
+                    }
+                };
+                if keep && state.stale(ttl) && !state.released.load(Ordering::Acquire) {
+                    // no renewal for nearly its time: another member may take it over, so it is not written under
+                    state.valid.store(false, Ordering::Release);
+                    tracing::error!(lease = %name, "a git lease went unrenewed for nearly its time: its writes stop");
+                }
+                if !keep {
+                    self.remove(id);
+                }
+            }
+        }
+    }
+}
+
+/// The process's renewer, started with the first lease held.
+fn renewals() -> &'static Renewals {
+    static RENEWALS: OnceLock<&'static Renewals> = OnceLock::new();
+    RENEWALS.get_or_init(|| {
+        let renewals: &'static Renewals = Box::leak(Box::new(Renewals {
+            entries: Mutex::new(HashMap::new()),
+            changed: Condvar::new(),
+            next_id: AtomicU64::new(1),
+        }));
+        if let Err(err) = std::thread::Builder::new()
+            .name("git-lease".into())
+            .spawn(move || renewals.run())
+        {
+            tracing::error!("git leases are not renewed (no thread): {err}");
+        }
+        renewals
+    })
 }
 
 /// The lease of the writers of repository `repository_id`.

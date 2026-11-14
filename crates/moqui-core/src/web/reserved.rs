@@ -21,6 +21,13 @@
 //!
 //! A segment is matched as written, case and all (`Login`); an application that compares names without case lowers
 //! both.
+//!
+//! Two of the host's first segments are used only under some of their sub-paths ([`PARTLY_RESERVED`]): `.well-known`
+//! (a site serves its own `security.txt`, `assetlinks.json` and the like there) and `ci` (only `/ci/runner/` is a
+//! route). A request path, a site page's route, is the framework's when [`is_reserved_path`] says so: its first segment
+//! is wholly reserved, or it is under one of those sub-paths. A name that owns everything under it (a repository group,
+//! a mount, a handle) must stay off the whole segment, since `/ci/runner` would shadow its `ci/runner`: those check
+//! [`is_reserved_name`] and read [`reserved_paths`] (`ec.web.reservedPaths`), which lists both kinds whole.
 
 /// What a reserved segment is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,9 +78,7 @@ pub const RESERVED: &[Reserved] = &[
     host("termws"),
     host("callws"),
     host("git"),
-    host("ci"),
     host("dav"),
-    host(".well-known"),
     host("assist"),
     host("a2a"),
     host("mcp"),
@@ -118,9 +123,60 @@ pub const RESERVED: &[Reserved] = &[
     asset("assets"),
 ];
 
-/// Whether `first`, the first segment of a request path, is reserved.
+/// A first segment the host uses only under some of its sub-paths; the rest of it is free for a site's pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartlyReserved {
+    pub segment: &'static str,
+    /// The host's routes under it, each the second segment of their paths.
+    pub sub_paths: &'static [&'static str],
+}
+
+/// The first segments the host uses only in part, with the sub-paths it uses.
+pub const PARTLY_RESERVED: &[PartlyReserved] = &[
+    PartlyReserved {
+        segment: ".well-known",
+        sub_paths: &["caldav", "carddav", "agent-card.json", "mcp.json", "ai-catalog.json"],
+    },
+    PartlyReserved {
+        segment: "ci",
+        sub_paths: &["runner"],
+    },
+];
+
+/// Whether `first`, the first segment of a request path, is wholly reserved: every path under it is the framework's.
+/// Not a [`PARTLY_RESERVED`] one; for a path use [`is_reserved_path`], for a name [`is_reserved_name`].
 pub fn is_reserved(first: &str) -> bool {
     RESERVED.iter().any(|reserved| reserved.segment == first)
+}
+
+/// Whether `first` is a name no repository group, mount or handle may take: wholly or partly reserved, since a name
+/// owns everything under it.
+pub fn is_reserved_name(first: &str) -> bool {
+    is_reserved(first) || PARTLY_RESERVED.iter().any(|partly| partly.segment == first)
+}
+
+/// Whether the request path `path` is the framework's: its first segment is wholly reserved, or it is at or under a
+/// sub-path of a [`PARTLY_RESERVED`] one (`/ci/runner/...`, `/.well-known/caldav`). The path as written: a caller that
+/// serves a path resolved some other way (`..`) asks of that path too.
+pub fn is_reserved_path(path: &str) -> bool {
+    let mut segments = path.trim_start_matches('/').split('/');
+    let first = segments.next().unwrap_or("");
+    if is_reserved(first) {
+        return true;
+    }
+    let second = segments.next().unwrap_or("");
+    PARTLY_RESERVED
+        .iter()
+        .any(|partly| partly.segment == first && partly.sub_paths.contains(&second))
+}
+
+/// The reserved sub-paths of the [`PARTLY_RESERVED`] segments, as `segment/sub-path` (`ci/runner`): what
+/// `ec.web.reservedSubPaths` gives, for a site page's route.
+pub fn reserved_sub_paths() -> Vec<String> {
+    PARTLY_RESERVED
+        .iter()
+        .flat_map(|partly| partly.sub_paths.iter().map(|sub| format!("{}/{sub}", partly.segment)))
+        .collect()
 }
 
 /// Whether `first` is one of the [`Kind::Static`] segments.
@@ -130,9 +186,14 @@ pub fn is_static(first: &str) -> bool {
         .any(|reserved| reserved.kind == Kind::Static && reserved.segment == first)
 }
 
-/// The reserved segments, in the list's order: what `ec.web.reservedPaths` gives.
+/// The reserved first segments, whole and partly reserved alike, in the lists' order: what `ec.web.reservedPaths`
+/// gives, the names no repository group, mount or handle may take ([`is_reserved_name`]).
 pub fn reserved_paths() -> Vec<&'static str> {
-    RESERVED.iter().map(|reserved| reserved.segment).collect()
+    RESERVED
+        .iter()
+        .map(|reserved| reserved.segment)
+        .chain(PARTLY_RESERVED.iter().map(|partly| partly.segment))
+        .collect()
 }
 
 /// The host routes a host whose root screen refuses the framework's routes (`framework-routes="refuse"`, a site of

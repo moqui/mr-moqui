@@ -28,9 +28,12 @@
 //! to the requests for those host names, on top of the rules without one, so one site can be stricter than another. A
 //! connection's checks, before its first request names a host, use only the client rules without `host`.
 //!
-//! **CI runners** ([`ci_runner_token`]): a request to `/ci/runner/` with a well-formed CI token is counted by its token
-//! by the CI endpoints, so no per-client rate limit applies to it and its auth failures count toward no ban, on a
-//! front or edge node and on the local node alike; one without such a token is counted as usual.
+//! **CI runners** ([`ci_credential`], [`Guard::ci_token_verified`]): a request to `/ci/runner/` or `/git/` with a CI
+//! token that the CI endpoints or the git server found good a short time ago is counted by its token, by the CI
+//! endpoints, so no per-client rate limit applies to it. The answer that found it good carries [`CI_TOKEN_HEADER`],
+//! which the node serving the request records, and an edge node in front of it records too as the answer passes
+//! (`http::serve`), so the exemption holds on every node of every topology. A made-up token is counted by its address
+//! as any request is, and a failed lookup of one counts toward the `ci-token-failure` ban, not `auth-failure`'s.
 //!
 //! **Shared bans** (§4.3): a ban started here is told to the other members of the cluster and up to the edge node
 //! this node is paired with ([`Guard::set_notifier`], `crate::guard_share`), and one told by them is applied here
@@ -66,6 +69,9 @@ pub(crate) enum Event {
     RateLimited,
     /// A client, method, path or user-agent rule refused the request.
     Denied,
+    /// A well-formed CI token (job, runner or pool) that the CI endpoints or the git server did not know: runners
+    /// share addresses, so this counts toward a ban of its own with a higher threshold than `auth-failure`.
+    CiTokenFailure,
 }
 
 impl Event {
@@ -74,6 +80,7 @@ impl Event {
             "auth-failure" => Some(Self::AuthFailure),
             "rate-limited" => Some(Self::RateLimited),
             "denied" => Some(Self::Denied),
+            "ci-token-failure" => Some(Self::CiTokenFailure),
             _ => None,
         }
     }
@@ -209,43 +216,48 @@ fn has_credentials(headers: &HeaderMap) -> bool {
         || headers.contains_key("login_key")
 }
 
-/// The CI engine's runner REST (docs/interfaces/Pipelines.md "The runner REST").
-const CI_RUNNER_PATH: &str = "/ci/runner/";
+/// Where a CI token is taken: the runner REST (docs/interfaces/Pipelines.md "The runner REST") and a job's fetch over
+/// git HTTP. Matched against the raw path, as the router routes it to those handlers.
+const CI_TOKEN_PATHS: [&str; 2] = ["/ci/runner/", "/git/"];
 /// The CI tokens' prefixes, job, runner and pool (`moqui_git::ci::token`), each before 32 random bytes in hex.
 const CI_TOKEN_PREFIXES: [&str; 3] = ["mqcj_", "mqcr_", "mqcp_"];
 const CI_TOKEN_HEX: usize = 64;
+/// The answer header of a request whose CI token was found good (set by `git_http`'s responder), which the node
+/// serving it and an edge node in front of it record ([`Guard::ci_token_verified`]) and the outermost node removes.
+pub(crate) const CI_TOKEN_HEADER: &str = "x-moqui-ci-token";
+/// How long a CI token found good is exempt from the per-address limits after its last good request.
+const CI_TOKEN_TTL: Duration = Duration::from_secs(600);
+/// The most CI tokens kept as found good; past it a new one is not kept (its requests are counted by address).
+const MAX_CI_TOKENS: usize = 16_384;
 
-/// Whether a request is a CI runner's that carries a well-formed job, runner or pool token (`Authorization: Bearer`, or
-/// Basic's password as git sends it), to the runner REST at `path` (decoded). Such a request is counted by its token,
-/// not its address: the CI endpoints limit each token, and runners share addresses (a NAT, a pool of machines), so
-/// the per-client rate limits pass it and its auth failures (a token of a job that ended) count toward no ban. Whether
-/// the token is good is not checked here; a request without one is counted as any other.
-pub(crate) fn ci_runner_token(path: &str, headers: &HeaderMap) -> bool {
-    if !path.starts_with(CI_RUNNER_PATH) {
-        return false;
+/// The CI token of a request to `path` (raw, as the router routes it): a well-formed job, runner or pool token in
+/// `Authorization: Bearer`, or Basic's password as git sends it, to the runner REST or git HTTP. A path with a `%`
+/// escape or a `.` or `..` segment has none, so no path that a screen or another route resolves differently (`/ci%2F
+/// runner/../Login/login`) is taken for one. Whether the token is good is not checked here.
+pub(crate) fn ci_credential(path: &str, headers: &HeaderMap) -> Option<String> {
+    if !CI_TOKEN_PATHS.iter().any(|prefix| path.starts_with(prefix))
+        || path.contains('%')
+        || path.split('/').any(|segment| segment == "." || segment == "..")
+    {
+        return None;
     }
-    let Some(header) = headers
+    let header = headers
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
-    let header = header.trim();
+        .and_then(|value| value.to_str().ok())?
+        .trim();
     let token = match header
         .strip_prefix("Bearer ")
         .or_else(|| header.strip_prefix("bearer "))
     {
         Some(token) => token.trim().to_string(),
-        None => match moqui_core::web::basic_credentials(header) {
-            Some((_, password)) => password,
-            None => return false,
-        },
+        None => moqui_core::web::basic_credentials(header)?.1,
     };
-    CI_TOKEN_PREFIXES.iter().any(|prefix| {
+    let well_formed = CI_TOKEN_PREFIXES.iter().any(|prefix| {
         token.strip_prefix(prefix).is_some_and(|hex| {
             hex.len() == CI_TOKEN_HEX && hex.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
         })
-    })
+    });
+    well_formed.then_some(token)
 }
 
 /// A `ban`: `threshold` of its `events` within `window` bans the client for `duration`.
@@ -694,6 +706,10 @@ pub(crate) struct Guard {
     /// the ban's name. Each holds only for its node's hosts ([`Self::banned_for`]).
     link_bans: Mutex<HashMap<String, NodeBans>>,
     notifier: std::sync::OnceLock<Notifier>,
+    /// The CI tokens found good a short time ago, by a keyed hash of the host and the token: until when each is
+    /// exempt from the per-address rate limits ([`Self::ci_token_verified`]).
+    ci_tokens: Mutex<HashMap<u64, Instant>>,
+    ci_keys: std::hash::RandomState,
 }
 
 /// A connection counted against its client's `max-per-client` until it is dropped.
@@ -725,7 +741,47 @@ impl Guard {
             rule_counts: Mutex::new(HashMap::new()),
             link_bans: Mutex::new(HashMap::new()),
             notifier: std::sync::OnceLock::new(),
+            ci_tokens: Mutex::new(HashMap::new()),
+            ci_keys: std::hash::RandomState::new(),
         }
+    }
+
+    fn ci_key(&self, host: &str, token: &str) -> u64 {
+        use std::hash::BuildHasher as _;
+        self.ci_keys.hash_one((host, token))
+    }
+
+    /// The CI endpoints or the git server found `token` good for a request to `host`: its requests there are exempt
+    /// from the per-address rate limits for [`CI_TOKEN_TTL`] after this. Keyed by host too, so a paired node an edge
+    /// node forwards to vouches only for its own hosts.
+    pub(crate) fn ci_token_verified(&self, host: &str, token: &str) {
+        let key = self.ci_key(host, token);
+        let now = Instant::now();
+        let mut tokens = moqui_lib::sync::lock(&self.ci_tokens);
+        if tokens.len() >= MAX_CI_TOKENS && !tokens.contains_key(&key) {
+            tokens.retain(|_, until| *until > now);
+            if tokens.len() >= MAX_CI_TOKENS {
+                return;
+            }
+        }
+        tokens.insert(key, now + CI_TOKEN_TTL);
+    }
+
+    /// `token` was refused for a request to `host` (unknown, or its job ended): it is counted by address again.
+    pub(crate) fn ci_token_failed(&self, host: &str, token: &str) {
+        let key = self.ci_key(host, token);
+        moqui_lib::sync::lock(&self.ci_tokens).remove(&key);
+    }
+
+    /// Whether a request to `host` at `path` (raw) carries a CI token found good a short time ago ([`ci_credential`]).
+    fn ci_token_exempt(&self, host: &str, path: &str, headers: &HeaderMap) -> bool {
+        let Some(token) = ci_credential(path, headers) else {
+            return false;
+        };
+        let key = self.ci_key(host, &token);
+        moqui_lib::sync::lock(&self.ci_tokens)
+            .get(&key)
+            .is_some_and(|until| *until > Instant::now())
     }
 
     /// Tell `notifier` of each ban started here and each lift ([`BanNotice`]); set once.
@@ -952,8 +1008,9 @@ impl Guard {
         if let Some(rule) = self.path_rule(host, &decoded) {
             return Err(self.deny(key, client, &rule, refusal(404, "not found", false, None)));
         }
-        // a CI runner's request with a token is limited per token by the CI endpoints, not per address here
-        if self.conf().rate_limits.is_empty() || ci_runner_token(&decoded, headers) {
+        // a CI token found good is limited per token by the CI endpoints, not per address here; the raw path, as the
+        // router routes it, so no path a screen resolves elsewhere passes as the runner REST
+        if self.conf().rate_limits.is_empty() || self.ci_token_exempt(host, path, headers) {
             return Ok(());
         }
         let limits = &self.conf().rate_limits;

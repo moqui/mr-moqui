@@ -359,37 +359,56 @@ impl GitProvider {
             .condition(Condition::less("closedDate", before))
             .select_field("mergeRequestNum")
             .list()?;
-        let mut released = 0;
-        for row in closed.iter() {
-            let Some(num) = super::long(row.get("mergeRequestNum")) else {
-                continue;
-            };
-            let name = super::reach::merge_request_ref(num);
-            let Some((_, current)) = heads.iter().find(|(head, _)| *head == name) else {
-                continue;
-            };
-            // one that is not deleted is logged and the others still go
-            let lock = self.lock_of(repository_id);
-            let _turn = moqui_lib::sync::lock(&lock);
-            let _shared = self.shared_turn_of(repository_id)?;
-            // still closed, now that the lock is held: one reopened since keeps its head
-            let still_closed = entity
-                .find("moqui.resource.GitMergeRequest")?
-                .eq("repositoryId", Value::string(repository_id))
-                .eq("mergeRequestNum", Value::I64(num))
-                .eq("statusId", Value::string("GmrClosed"))
-                .count()?
-                > 0;
-            if !still_closed {
-                continue;
+        let due: Vec<(i64, String, ObjectId)> = closed
+            .iter()
+            .filter_map(|row| {
+                let num = super::long(row.get("mergeRequestNum"))?;
+                let name = super::reach::merge_request_ref(num);
+                let current = heads.iter().find(|(head, _)| *head == name)?.1;
+                Some((num, name, current))
+            })
+            .collect();
+        if due.is_empty() {
+            return Ok(0);
+        }
+        // the repository's writers once for all of them, the lease before this process's lock (so no writer holds the
+        // lock while it waits on another member); one busy past its wait leaves them for the next pass
+        let shared = match self.shared_turn_of(repository_id) {
+            Ok(shared) => shared,
+            Err(err) => {
+                tracing::warn!(repository = %repository_id, "closed merge request heads not released now: {}", err.message());
+                return Ok(0);
             }
-            let edit = super::store::RefEdit {
-                name: name.clone(),
-                expected: Some(*current),
-                new: None,
-            };
-            match repo.store.update_refs(&[edit], true) {
-                Ok(_) => released += 1,
+        };
+        let lock = self.lock_of(repository_id);
+        let _turn = moqui_lib::sync::lock(&lock);
+        let mut released = 0;
+        for (num, name, current) in due {
+            // one that is not deleted is logged and the others still go
+            let released_one = (|| -> Result<bool, Error> {
+                // still closed, now that the lock is held: one reopened since keeps its head
+                let still_closed = entity
+                    .find("moqui.resource.GitMergeRequest")?
+                    .eq("repositoryId", Value::string(repository_id))
+                    .eq("mergeRequestNum", Value::I64(num))
+                    .eq("statusId", Value::string("GmrClosed"))
+                    .count()?
+                    > 0;
+                if !still_closed {
+                    return Ok(false);
+                }
+                crate::lease::check(shared.as_ref())?;
+                let edit = super::store::RefEdit {
+                    name: name.clone(),
+                    expected: Some(current),
+                    new: None,
+                };
+                repo.store.update_refs(&[edit], true)?;
+                Ok(true)
+            })();
+            match released_one {
+                Ok(true) => released += 1,
+                Ok(false) => {}
                 Err(err) => tracing::error!(repository = %repository_id, "{name} not released: {}", err.message()),
             }
         }

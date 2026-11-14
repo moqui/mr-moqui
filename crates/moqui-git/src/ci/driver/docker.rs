@@ -236,6 +236,27 @@ impl DockerHost {
             .ok_or_else(|| Error::new(format!("creating container {name}: the answer has no Id")))
     }
 
+    /// With `container-user="image"`, a container made from an image that runs as root (its `Config.User` empty, uid 0
+    /// or `root`) is refused before it starts: a job never runs as root, in any form.
+    fn refuse_root(&self, id: &str, name: &str) -> Result<(), Error> {
+        let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
+        if response.status() >= 300 {
+            return Err(Self::problem(&format!("inspecting container {name}"), &response));
+        }
+        let user = serde_json::from_str::<serde_json::Value>(response.body())
+            .ok()
+            .and_then(|body| body["Config"]["User"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        if user.trim().is_empty() || is_root_user(&user) {
+            return Err(Error::new(format!(
+                "the image of container {name} runs as root (its user is {}), and git-ci container-user=\"image\" \
+                 takes only an image whose user is not root: set its USER, or set container-user to a uid",
+                if user.trim().is_empty() { "unset" } else { user.trim() }
+            )));
+        }
+        Ok(())
+    }
+
     fn start(&self, id: &str) -> Result<(), Error> {
         let response = self.send(Method::Post, &format!("/containers/{id}/start"), None, CALL_TIMEOUT)?;
         // 304: already started
@@ -654,11 +675,17 @@ fn start_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
                     pull,
                 )?;
                 made.push(id.clone());
+                if hardening.user.is_none() {
+                    host.refuse_root(&id, &format!("{name}-{service_name}"))?;
+                }
                 host.start(&id)?;
             }
         }
         let id = host.create(&name, &create_body(parameters, &hardening, network.as_deref()), pull)?;
         made.push(id.clone());
+        if hardening.user.is_none() {
+            host.refuse_root(&id, &name)?;
+        }
         if network.is_some() && egress != "bridge" && egress != "none" {
             host.connect_network(&egress, &id)?;
         }

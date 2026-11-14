@@ -106,5 +106,5 @@
         list. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
             sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"
-            forward-idle-seconds="120" forward-head-seconds="3600" ssh-tunnels="256"/>
+            forward-idle-seconds="120" forward-head-seconds="3600" forward-first-byte-seconds="30" ssh-tunnels="256"/>
 </moqui-conf>

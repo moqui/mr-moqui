@@ -86,6 +86,24 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
             200,
             json!({"State": {"Status": "exited", "Running": false, "ExitCode": 137}}).to_string(),
         ),
+        // a created container's own user, from its image: one image runs as root
+        ("GET", path) if path.starts_with("/v1.40/containers/c") && path.ends_with("/json") => {
+            let index: usize = path
+                .trim_start_matches("/v1.40/containers/c")
+                .trim_end_matches("/json")
+                .parse()
+                .unwrap_or(usize::MAX);
+            let image = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, target, _)| method == "POST" && target.starts_with("/v1.40/containers/create"))
+                .nth(index)
+                .map(|(_, _, body)| body["Image"].as_str().unwrap_or_default().to_string())
+                .unwrap_or_default();
+            let user = if image == "runs-as-root:1" { "" } else { "app" };
+            (200, json!({"Config": {"User": user}}).to_string())
+        }
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
         ("POST", path) if path.ends_with("/start") => (204, String::new()),
         ("DELETE", path) if path.starts_with("/v1.40/networks/") => {
@@ -144,8 +162,12 @@ struct Api {
 impl Api {
     /// A context with one instance host `H`, reached as `protocol` says.
     fn new(protocol: &str, address: &str, port: Option<u16>, seen: Seen) -> Self {
+        Self::with_conf(protocol, address, port, seen, r#"<git-ci server-id="this"/>"#)
+    }
+
+    fn with_conf(protocol: &str, address: &str, port: Option<u16>, seen: Seen, conf: &str) -> Self {
         let context = ExecutionContextFactory::test_context_in(
-            r#"<moqui-conf><git-ci server-id="this"/></moqui-conf>"#,
+            &format!("<moqui-conf>{conf}</moqui-conf>"),
             moqui_core::service::ServicePools::idle(),
             std::path::PathBuf::from("."),
         );
@@ -168,6 +190,10 @@ impl Api {
     }
 
     fn tcp() -> Self {
+        Self::tcp_with(r#"<git-ci server-id="this"/>"#)
+    }
+
+    fn tcp_with(conf: &str) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen: Seen = Seen::default();
@@ -177,7 +203,7 @@ impl Api {
                 serve(stream, &shared);
             }
         });
-        Self::new("http", "127.0.0.1", Some(port), seen)
+        Self::with_conf("http", "127.0.0.1", Some(port), seen, conf)
     }
 
     /// Call a run service of the driver. Its result, and the errors it left.
@@ -578,4 +604,28 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         errors.contains("the client certificate and key are not PEM"),
         "{errors}"
     );
+}
+
+/// With `container-user="image"` the container runs as its image's user, which is inspected before it starts: an
+/// image with no user, or root, is refused and what was made is removed; one with its own user starts.
+#[test]
+fn an_image_user_that_is_root_is_refused_before_it_starts() {
+    let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("runs-as-root:1"));
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("runs as root"), "{errors}");
+    let seen = api.seen();
+    assert!(
+        !seen.iter().any(|(_, target, _)| target.ends_with("/start")),
+        "never started: {seen:?}"
+    );
+    assert!(seen
+        .iter()
+        .any(|(method, target, _)| method == "DELETE" && target.contains("/containers/c0")));
+    assert!(seen[0].2.get("User").is_none(), "no user set: the image's");
+
+    let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
+    assert!(errors.is_empty(), "{errors}");
+    assert!(out.contains_key("instanceRef"));
 }

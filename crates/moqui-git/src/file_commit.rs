@@ -299,10 +299,12 @@ impl GitProvider {
             {
                 // the rules passed: the objects go into the store as a push's do, with the repository's writers,
                 // and into one that is not archived or going now (the row read again under the lock)
+                // the lease before this process's lock, so no writer holds the lock while it waits on another member
+                let shared = self.shared_turn(repository_id, repo.definition.kind)?;
                 let lock = self.lock_of(repository_id);
                 let _turn = moqui_lib::sync::lock(&lock);
-                let _shared = self.shared_turn(repository_id, repo.definition.kind)?;
                 self.still_writable(repository_id)?;
+                crate::lease::check(shared.as_ref())?;
                 overlay.flush()?;
             }
             self.record_update(repository_id, &origin, store, &prior, &[change]);

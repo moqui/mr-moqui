@@ -19,7 +19,7 @@ use axum::http::HeaderMap;
 use moqui_core::web::address::{parse_cidrs, ClientAddressing};
 use moqui_lib::node::MNode;
 
-use super::{ci_runner_token, decode_path, Event, Glob, Guard, GuardConf};
+use super::{ci_credential, decode_path, Event, Glob, Guard, GuardConf};
 
 fn ip(text: &str) -> IpAddr {
     text.parse().unwrap()
@@ -290,7 +290,11 @@ fn the_default_conf_is_off_until_there_are_trusted_proxies() {
         assert!(!git.applies("", "POST", path, true), "{path}");
     }
     assert!(!git.applies("", "GET", "/moqui/mr-moqui/-/issues", false));
-    assert_eq!(on.bans.len(), 2);
+    assert_eq!(on.bans.len(), 3);
+    assert!(on
+        .bans
+        .iter()
+        .any(|ban| ban.name == "ci-token-failure" && ban.events == [Event::CiTokenFailure]));
     let exempt = |address: &str| {
         on.client_rules
             .iter()
@@ -497,11 +501,12 @@ fn shared_bans_are_told_applied_scoped_and_lifted() {
     assert!(told[1].lift);
 }
 
-/// A CI runner's request with a well-formed job, runner or pool token is counted by its token (by the CI endpoints),
-/// not by its address: no rate limit applies to it. Without a token, with a malformed one, or on another path it is
-/// limited as usual (docs/interfaces/Pipelines.md).
+/// A CI token found good (by the CI endpoints or the git server, [`Guard::ci_token_verified`]) is counted by its token,
+/// not its address: no rate limit applies to its requests to the runner REST or git HTTP on that host. A made-up
+/// well-formed token is limited by address as any request; so is a good one at another host, on another path, at a
+/// path the router does not send to those handlers (`%` escapes, `.` and `..` segments), and once it was refused.
 #[test]
-fn a_ci_runner_with_a_token_is_not_rate_limited_by_its_address() {
+fn only_a_ci_token_found_good_passes_the_rate_limits_by_its_token() {
     let guard = guard(
         r#"<web-protection enabled="true"><rate-limit name="all" requests="1" seconds="60" burst="1"/></web-protection>"#,
         "",
@@ -512,10 +517,10 @@ fn a_ci_runner_with_a_token_is_not_rate_limited_by_its_address() {
         headers.insert(axum::http::header::AUTHORIZATION, authorization.parse().unwrap());
         headers
     };
-    let check = |client: &str, path: &str, headers: &HeaderMap| match guard.check(
+    let check = |client: &str, host: &str, path: &str, headers: &HeaderMap| match guard.check(
         ip(client),
         ip(client),
-        "",
+        host,
         "POST",
         path,
         headers,
@@ -523,55 +528,101 @@ fn a_ci_runner_with_a_token_is_not_rate_limited_by_its_address() {
         Ok(()) => 200,
         Err(refused) => refused.response.status().as_u16(),
     };
-    for prefix in ["mqcj_", "mqcr_", "mqcp_"] {
-        let bearer = with(&format!("Bearer {prefix}{hex}"));
+    // a made-up token, well formed, is counted by its address
+    let fake = with(&format!("Bearer mqcr_{}", "f".repeat(64)));
+    assert_eq!(check("203.0.113.10", "ci.example.com", "/ci/runner/claim", &fake), 200);
+    assert_eq!(check("203.0.113.10", "ci.example.com", "/ci/runner/claim", &fake), 429);
+
+    for (index, prefix) in ["mqcj_", "mqcr_", "mqcp_"].into_iter().enumerate() {
+        let token = format!("{prefix}{hex}");
+        let bearer = with(&format!("Bearer {token}"));
+        guard.ci_token_verified("ci.example.com", &token);
+        let client = format!("203.0.113.{}", 20 + index);
         for _ in 0..5 {
             assert_eq!(
-                check("203.0.113.20", "/ci/runner/v1/jobs/request", &bearer),
+                check(&client, "ci.example.com", "/ci/runner/jobs/j1/log", &bearer),
                 200,
                 "{prefix}"
             );
         }
     }
-    // git's Basic, the token as its password
+    // git's Basic, the job token as its password, for the job's fetch
     use base64::Engine as _;
+    let job = format!("mqcj_{hex}");
     let basic = with(&format!(
         "Basic {}",
-        base64::engine::general_purpose::STANDARD.encode(format!("x:mqcj_{hex}"))
+        base64::engine::general_purpose::STANDARD.encode(format!("x:{job}"))
     ));
-    assert_eq!(check("203.0.113.20", "/ci/runner/v1/jobs/j1/log", &basic), 200);
-    assert!(ci_runner_token("/ci/runner/v1/jobs/j1/log", &basic));
-    // the same address is limited on another path, and without a well-formed token
     assert_eq!(
-        check("203.0.113.20", "/apps/x", &with(&format!("Bearer mqcj_{hex}"))),
-        200
+        ci_credential("/git/acme/widget.git/git-upload-pack", &basic).as_deref(),
+        Some(job.as_str())
     );
-    assert_eq!(
-        check("203.0.113.20", "/apps/x", &with(&format!("Bearer mqcj_{hex}"))),
-        429
-    );
-    for (index, header) in [
-        String::new(),
-        format!("Bearer mqcx_{hex}"),
-        format!("Bearer mqcj_{}", &hex[1..]),
-        format!("Bearer mqcj_{}", hex.to_uppercase()),
-        "Bearer mqcj_".to_string(),
+    for _ in 0..3 {
+        assert_eq!(
+            check(
+                "203.0.113.30",
+                "ci.example.com",
+                "/git/acme/widget.git/git-upload-pack",
+                &basic
+            ),
+            200
+        );
+    }
+    // another host, another path, a path a screen resolves elsewhere: by address
+    let bearer = with(&format!("Bearer {job}"));
+    for (index, (host, path)) in [
+        ("other.example.com", "/ci/runner/jobs/j1/log"),
+        ("ci.example.com", "/apps/x"),
+        ("ci.example.com", "/ci%2Frunner/../Login/login"),
+        ("ci.example.com", "/ci/runner/../Login/login"),
+        ("ci.example.com", "/ci/runner/./jobs/j1/log"),
+        ("ci.example.com", "/git/%2e%2e/Login/login"),
     ]
     .into_iter()
     .enumerate()
     {
-        let headers = if header.is_empty() {
-            HeaderMap::new()
-        } else {
-            with(&header)
-        };
-        let client = format!("203.0.113.{}", 30 + index);
-        assert!(!ci_runner_token("/ci/runner/v1/jobs/request", &headers), "{header}");
-        assert_eq!(
-            check(&client, "/ci/runner/v1/jobs/request", &headers),
-            200,
-            "{header}: the first"
-        );
-        assert_eq!(check(&client, "/ci/runner/v1/jobs/request", &headers), 429, "{header}");
+        let client = format!("203.0.113.{}", 40 + index);
+        assert_eq!(check(&client, host, path, &bearer), 200, "{host}{path}: the first");
+        assert_eq!(check(&client, host, path, &bearer), 429, "{host}{path}");
     }
+    // a token refused since (its job ended) is counted by address again
+    guard.ci_token_failed("ci.example.com", &job);
+    assert_eq!(
+        check("203.0.113.50", "ci.example.com", "/ci/runner/jobs/j1/log", &bearer),
+        200
+    );
+    assert_eq!(
+        check("203.0.113.50", "ci.example.com", "/ci/runner/jobs/j1/log", &bearer),
+        429
+    );
+    // not a CI token: none
+    for header in [
+        format!("Bearer mqcx_{hex}"),
+        format!("Bearer mqcj_{}", &hex[1..]),
+        format!("Bearer mqcj_{}", hex.to_uppercase()),
+        "Bearer mqcj_".to_string(),
+    ] {
+        assert_eq!(ci_credential("/ci/runner/claim", &with(&header)), None, "{header}");
+    }
+    assert_eq!(ci_credential("/ci/runner/claim", &HeaderMap::new()), None);
+}
+
+/// A well-formed CI token that was not known counts toward a ban of its own (`ci-token-failure`), apart from the
+/// `auth-failure` ban.
+#[test]
+fn unknown_ci_tokens_count_toward_their_own_ban() {
+    let guard = guard(
+        r#"<web-protection enabled="true">
+            <ban name="auth-failure" events="auth-failure" threshold="2" seconds="600" duration="900"/>
+            <ban name="ci-token-failure" events="ci-token-failure" threshold="4" seconds="600" duration="900"/>
+        </web-protection>"#,
+        "",
+    );
+    let client = ip("203.0.113.60");
+    for _ in 0..3 {
+        guard.record(client, Event::CiTokenFailure);
+    }
+    assert_eq!(status(&guard, "203.0.113.60", "GET", "/"), 200, "three, under four");
+    guard.record(client, Event::CiTokenFailure);
+    assert_eq!(status(&guard, "203.0.113.60", "GET", "/"), 403, "banned at four");
 }

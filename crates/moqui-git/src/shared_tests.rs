@@ -226,3 +226,47 @@ fn a_fork_keeps_its_sources_lease_until_its_transaction_ends_and_a_delete_takes_
     let refused = provider.delete_repository("source").unwrap_err();
     assert!(refused.message().starts_with("GitHasForks: "), "{refused}");
 }
+
+/// With no context entered (a background thread), a provider reads the conf and the cluster's members through its own
+/// factory; and a node once seen to be a member stays one when every peer's heartbeat is down, so it still refuses a
+/// new on-disk repository its peers could not reach.
+#[test]
+fn with_no_context_the_providers_factory_answers_and_membership_does_not_lapse() {
+    let fixture = fixture_with(
+        "shared-no-context",
+        moqui_core::context::framework_dir(),
+        r#"<git-server shared-storage="true"/>"#,
+    );
+    let provider = provider_of(&fixture);
+    let on_thread = |provider: &GitProvider| {
+        let provider = provider.clone();
+        std::thread::spawn(move || (provider.shared_storage(), provider.clustered()))
+            .join()
+            .unwrap()
+    };
+    assert_eq!(on_thread(&provider), (true, false), "alone");
+    another_member(&fixture);
+    provider.forget_clustered();
+    assert_eq!(
+        on_thread(&provider),
+        (true, true),
+        "read through the provider's factory"
+    );
+    // the peer's heartbeat stops: still a member
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find("moqui.server.ClusterMember")
+            .unwrap()
+            .eq("instanceId", Value::string("the-other-member"))
+            .update_all([(
+                "heartbeat".to_string(),
+                moqui_core::user::stamp_value(jiff::Timestamp::now().as_millisecond() - 3_600_000),
+            )])
+            .unwrap();
+    }
+    *moqui_lib::sync::lock(&provider.inner.clustered) = None;
+    assert!(provider.clustered(), "a member whose peers are all down is still one");
+}

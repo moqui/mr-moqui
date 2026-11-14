@@ -312,15 +312,16 @@ pub(crate) fn claim_job(
     Ok(Some(plain))
 }
 
-/// Give a job whose start rolled back to the queue again, while it is still running with no result: its claim was
-/// committed on its own ([`claim_job`]), and no runner got its token.
+/// Give a job whose claim's transaction rolled back to the queue again, while it is still running with no result: its
+/// claim was committed on its own ([`claim_job`]). Its token's hash stays until the next claim replaces it, so a runner
+/// that got the token in an answer sent before the rollback is told the job is gone (410), not that the token is
+/// unknown. A container start is never in a caller's transaction ([`start_queued`]), so no running container's job
+/// is queued again.
 fn unclaim(entity: &EntityFacade, job_run_id: &str) {
     let fields = [
         ("statusId", Value::string("queued")),
         ("runnerId", Value::Null),
         ("instanceHostId", Value::Null),
-        ("tokenHash", Value::Null),
-        ("tokenExpireDate", Value::Null),
         ("startedDate", Value::Null),
     ];
     match super::update_when(entity, JOB_RUN, "jobRunId", job_run_id, "running", &fields, Commit::Own) {
@@ -328,6 +329,12 @@ fn unclaim(entity: &EntityFacade, job_run_id: &str) {
         Ok(false) => {}
         Err(err) => tracing::error!(job = %job_run_id, "a job whose start rolled back was not queued again: {err}"),
     }
+}
+
+/// [`unclaim`], for a test of what a rolled-back claim leaves.
+#[cfg(test)]
+pub(crate) fn unclaim_for_test(entity: &EntityFacade, job_run_id: &str) {
+    unclaim(entity, job_run_id);
 }
 
 fn pairs(value: &serde_json::Value) -> Vec<(String, String)> {
@@ -403,6 +410,9 @@ pub struct Started {
 /// Start queued job runs, oldest first, up to each pool's `maxConcurrent`. A job with no pool or an image its pool
 /// does not allow is an error; a job of a pool of registered runners waits for one to ask.
 pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
+    // outside the caller's transaction (start#QueuedJobRuns runs in one): a claim and its container's start are
+    // committed as they happen, so a rollback after a container started never queues its job again while it runs
+    let _outside = Suspended::of(entity)?;
     // the claims one pass at a time in this process; the containers are started after, outside it, so a host that
     // is slow to start one (an image to pull) holds no other start
     let (mut done, claimed) = {
@@ -439,6 +449,31 @@ pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
         }
     }
     Ok(done)
+}
+
+/// The caller's transaction suspended until this is dropped, when it is resumed.
+struct Suspended {
+    transactions: Option<moqui_core::transaction::TransactionManager>,
+}
+
+impl Suspended {
+    fn of(entity: &EntityFacade) -> Result<Self, Error> {
+        let transactions = entity.transactions_for(JOB_RUN)?;
+        let suspended = transactions.suspend()?;
+        Ok(Self {
+            transactions: suspended.then_some(transactions),
+        })
+    }
+}
+
+impl Drop for Suspended {
+    fn drop(&mut self) {
+        if let Some(transactions) = self.transactions.take() {
+            if let Err(err) = transactions.resume() {
+                tracing::error!("the transaction suspended for a start pass was not resumed: {err}");
+            }
+        }
+    }
 }
 
 /// A job claimed by a start pass, whose container is to be started.
@@ -486,6 +521,10 @@ fn claim_queued(entity: &EntityFacade) -> Result<(Started, Vec<Claimed>), Error>
             else {
                 return Ok(());
             };
+            // a run that ended (cancelled as this pass read its jobs) starts none: its cancel ends them
+            if field(&run, "statusId").is_some_and(|status| ENDED.contains(&status.as_str())) {
+                return Ok(());
+            }
             let pool = match pool_for(entity, &run, job)? {
                 PoolChoice::Pool(pool) => *pool,
                 PoolChoice::None(why) => {
@@ -611,39 +650,50 @@ pub(crate) fn release(entity: &EntityFacade, job: &EntityValue) {
 /// its token dead, its container removed, and its run moved on. False when it had already ended.
 pub fn finish_job(entity: &EntityFacade, job_run_id: &str, outcome: &Outcome) -> Result<bool, Error> {
     let _rows = crate::rows_guard();
-    let Some(job) = super::one(entity, JOB_RUN, "jobRunId", job_run_id)? else {
-        return Ok(false);
+    // from the status it has now, again when it moved in between (a claim that took a queued job as it was cancelled):
+    // a cancel never loses to a claim, and the job is ended whatever it moved to, unless that is an end
+    let mut tries = 0;
+    let (job, now, started, used_millis, minutes) = loop {
+        let Some(job) = super::one(entity, JOB_RUN, "jobRunId", job_run_id)? else {
+            return Ok(false);
+        };
+        let Some(was) = field(&job, "statusId").filter(|status| !ENDED.contains(&status.as_str())) else {
+            return Ok(false);
+        };
+        let now = now_millis();
+        let started = millis(&job, "startedDate");
+        let used_millis = started.map_or(0, |started| (now - started).max(0));
+        let minutes = if started.is_some() {
+            (used_millis + MINUTE - 1) / MINUTE
+        } else {
+            0
+        };
+        let claimed = set_fields(
+            entity,
+            JOB_RUN,
+            "jobRunId",
+            job_run_id,
+            Some(&was),
+            vec![
+                ("statusId", Value::string(outcome.status)),
+                ("exitCode", outcome.exit_code.map_or(Value::Null, int)),
+                ("statusMessage", opt(outcome.message.clone())),
+                ("finishedDate", moqui_core::user::stamp_value(now)),
+                // the token's hash stays, so a late call with it is told the job is gone (410); only a running job's
+                // token is taken (token::job_token)
+                ("minutesUsed", int(minutes)),
+            ],
+        )?;
+        if claimed {
+            break (job, now, started, used_millis, minutes);
+        }
+        tries += 1;
+        if tries >= 8 {
+            return Err(Error::new(format!(
+                "job run {job_run_id} kept changing its status; it was not ended"
+            )));
+        }
     };
-    let Some(was) = field(&job, "statusId").filter(|status| !ENDED.contains(&status.as_str())) else {
-        return Ok(false);
-    };
-    let now = now_millis();
-    let started = millis(&job, "startedDate");
-    let used_millis = started.map_or(0, |started| (now - started).max(0));
-    let minutes = if started.is_some() {
-        (used_millis + MINUTE - 1) / MINUTE
-    } else {
-        0
-    };
-    let claimed = set_fields(
-        entity,
-        JOB_RUN,
-        "jobRunId",
-        job_run_id,
-        Some(&was),
-        vec![
-            ("statusId", Value::string(outcome.status)),
-            ("exitCode", outcome.exit_code.map_or(Value::Null, int)),
-            ("statusMessage", opt(outcome.message.clone())),
-            ("finishedDate", moqui_core::user::stamp_value(now)),
-            // the token's hash stays, so a late call with it is told the job is gone (410); only a running job's
-            // token is taken (token::job_token)
-            ("minutesUsed", int(minutes)),
-        ],
-    )?;
-    if !claimed {
-        return Ok(false);
-    }
     // the steps it did not get to, and the one it was in
     for step in entity
         .find(JOB_STEP)?
@@ -966,24 +1016,35 @@ pub fn cancel_run(entity: &EntityFacade, pipeline_run_id: &str) -> Result<(), Er
             field(&run, "statusId").unwrap_or_default()
         )));
     }
-    let was = field(&run, "statusId").unwrap_or_default();
     let cancelled = Outcome {
         status: "cancelled",
         exit_code: None,
         message: Some("Cancelled".to_string()),
     };
-    // first the run, so ending its jobs does not queue the ones that wait for them
-    set_fields(
-        entity,
-        PIPELINE_RUN,
-        "pipelineRunId",
-        pipeline_run_id,
-        Some(&was),
-        vec![
-            ("statusId", Value::string("cancelled")),
-            ("finishedDate", moqui_core::user::now_value()),
-        ],
-    )?;
+    // first the run, so ending its jobs does not queue the ones that wait for them; from the status it has now, again
+    // when a claim moved it in between (queued to running), so a cancel never loses to a claim
+    let mut run = run;
+    for _ in 0..8 {
+        let was = field(&run, "statusId").unwrap_or_default();
+        let moved = set_fields(
+            entity,
+            PIPELINE_RUN,
+            "pipelineRunId",
+            pipeline_run_id,
+            Some(&was),
+            vec![
+                ("statusId", Value::string("cancelled")),
+                ("finishedDate", moqui_core::user::now_value()),
+            ],
+        )?;
+        if moved {
+            break;
+        }
+        match super::one(entity, PIPELINE_RUN, "pipelineRunId", pipeline_run_id)? {
+            Some(now) if !is_ended(&now) => run = now,
+            _ => break,
+        }
+    }
     for job in current_jobs(entity, pipeline_run_id)? {
         if let Some(job_run_id) = field(&job, "jobRunId").filter(|_| !is_ended(&job)) {
             finish_job(entity, &job_run_id, &cancelled)?;
@@ -1072,6 +1133,24 @@ pub fn retry_job(entity: &EntityFacade, job_run_id: &str) -> Result<String, Erro
         Some("waiting") => return Err(Error::new(format!("pipeline run {run_id} was never approved"))),
         _ => {}
     }
+    // superseded first, by one conditional update in this transaction: of two retries at once only one makes an
+    // attempt (the other waits on the row, then finds it superseded)
+    let superseded = crate::conditional::update_where(
+        entity,
+        JOB_RUN,
+        &[("superseded", Value::string("Y"))],
+        &moqui_core::entity::Condition::and(vec![
+            moqui_core::entity::Condition::equals("jobRunId", Value::string(job_run_id)),
+            moqui_core::entity::Condition::or(vec![
+                moqui_core::entity::Condition::is_null("superseded"),
+                moqui_core::entity::Condition::equals("superseded", Value::string("N")),
+            ]),
+        ]),
+        Commit::Caller,
+    )?;
+    if superseded == 0 {
+        return Err(Error::new(format!("job run {job_run_id} was already run again")));
+    }
     let mut next = EntityValue::make(entity, JOB_RUN)?;
     next.set_sequenced_id_primary(entity)?;
     // the pool the attempt ran in (the one the application's check named) stays its pool
@@ -1118,14 +1197,6 @@ pub fn retry_job(entity: &EntityFacade, job_run_id: &str) -> Result<String, Erro
         copy.set("statusId", Value::string("pending"));
         copy.create(entity)?;
     }
-    set_fields(
-        entity,
-        JOB_RUN,
-        "jobRunId",
-        job_run_id,
-        None,
-        vec![("superseded", Value::string("Y"))],
-    )?;
     // the jobs skipped because this one did not succeed wait for the new attempt
     let name = field(&job, "jobName").unwrap_or_default();
     let mut waiting_for: Vec<String> = vec![name];

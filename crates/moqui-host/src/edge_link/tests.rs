@@ -401,3 +401,18 @@ fn the_ssh_tunnel_of_an_offer_is_its_host_and_port() {
     assert!(!super::offer::offer_of(offer(false, 22)).ssh.available);
     assert!(!super::offer::offer_of(super::proto::Offer::default()).ssh.available);
 }
+
+/// When the pairing's ports cannot be read (here, no entity facade), the SSH offer names no port: the conf's tunnel
+/// port may be another pairing's, so it is not offered as if this node were the one pairing.
+#[test]
+fn an_ssh_offer_whose_ports_were_not_read_names_no_port() {
+    let context = moqui_core::context::ExecutionContextFactory::test_context();
+    let mut ssh = super::proto::SshOffer {
+        available: true,
+        host: "edge.example.com".to_string(),
+        port: 2222,
+    };
+    super::offer::ssh_node(context.factory(), "local-1", &mut ssh);
+    assert_eq!(ssh.port, 0);
+    assert!(!ssh.available);
+}

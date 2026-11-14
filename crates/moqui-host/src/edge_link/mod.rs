@@ -462,6 +462,8 @@ pub struct EdgeConfig {
     /// head once its body is all sent (`<edge forward-idle-seconds forward-head-seconds>`, [`web::Waits`]).
     pub forward_idle: Duration,
     pub forward_head: Duration,
+    /// The longest wait for the answer's head of a forwarded request with no body (`<edge forward-first-byte-seconds>`).
+    pub forward_first_byte: Duration,
     /// SSH connections piped at once by the conf's SSH tunnel port, and by each SSH port of a pairing
     /// (`<edge ssh-tunnels>`).
     pub max_ssh_tunnels: usize,
@@ -498,6 +500,7 @@ impl EdgeConfig {
             open_timeout: Duration::from_secs(10),
             forward_idle: moqui_core::edge::conf::DEFAULT_FORWARD_IDLE,
             forward_head: moqui_core::edge::conf::DEFAULT_FORWARD_HEAD,
+            forward_first_byte: moqui_core::edge::conf::DEFAULT_FORWARD_FIRST_BYTE,
             max_ssh_tunnels: moqui_core::edge::conf::DEFAULT_SSH_TUNNELS,
             front: moqui_core::edge::node_role_kind().has_front(),
             link_url: moqui_lib::env::get_prop_or_env(moqui_core::cluster::EDGE_LINK_URL_PROPERTY)

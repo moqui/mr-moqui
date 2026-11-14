@@ -1318,14 +1318,19 @@ impl Session<'_> {
             .provider
             .begin_update(&definition.id, &origin, &refs_before, &recorded);
         if !accepted.is_empty() {
+            // with the other cluster members' writers of a repository on shared storage too (shared.rs): the lease
+            // before this process's lock, so no push holds the lock while it waits on another member
+            let shared = self.provider.shared_turn(&definition.id, definition.kind);
             let lock = self.provider.lock_of(&definition.id);
             let _turn = moqui_lib::sync::lock(&lock);
-            // with the other cluster members' writers of a repository on shared storage too (shared.rs)
-            let shared = self.provider.shared_turn(&definition.id, definition.kind);
             // the row as it is now, under the lock: a repository archived or deleted while the pack came in takes
-            // nothing (delete#GitRepository marks it first, so no object is stored under an id that is going)
+            // nothing (delete#GitRepository marks it first, so no object is stored under an id that is going); and
+            // the lease still this member's (fencing: crate::lease)
             let stored = match &shared {
-                Ok(_) => self.provider.still_writable(&definition.id),
+                Ok(lease) => self
+                    .provider
+                    .still_writable(&definition.id)
+                    .and_then(|()| crate::lease::check(lease.as_ref())),
                 Err(err) => Err(Error::new(err.message())),
             }
             .and_then(|()| match quarantine.as_mut() {
@@ -1356,7 +1361,11 @@ impl Session<'_> {
                     let moved = if edits.is_empty() {
                         Ok(Vec::new())
                     } else {
-                        store.update_refs(&edits, request.has("atomic"))
+                        match &shared {
+                            Ok(lease) => crate::lease::check(lease.as_ref()),
+                            Err(err) => Err(Error::new(err.message())),
+                        }
+                        .and_then(|()| store.update_refs(&edits, request.has("atomic")))
                     };
                     match moved {
                         Ok(outcomes) => {

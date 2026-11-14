@@ -151,6 +151,13 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     let Some((runner_id, pool_id)) = token::runner_of(entity, runner_token)? else {
         return Err(Error::new("the runner token is not valid"));
     };
+    claim_for(entity, &runner_id, &pool_id)
+}
+
+/// [`claim`] for the active runner `runner_id` of pool `pool_id`, its token already looked up (the runner REST counts
+/// its requests by runner once the token is known good).
+pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Result<Option<Claimed>, Error> {
+    let (runner_id, pool_id) = (runner_id.to_string(), pool_id.to_string());
     let _rows = crate::rows_guard();
     super::set_fields(
         entity,
@@ -166,6 +173,15 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     if !super::is_yes(&pool, "enabled") || field(&pool, "poolKind").as_deref() != Some("registered") {
         return Ok(None);
     }
+    let pool_owner = field(&pool, "ownerId");
+    // a registered runner keeps its machine from one job to the next, so on a server with tenants (a run check) its
+    // pool is one owner's: one stored before that rule, or with its owner taken off, gets no job
+    if pool_owner.is_none() && !super::setting("run-check-service").is_empty() {
+        return Err(Error::new(format!(
+            "runner pool {pool_id} has no ownerId: on a server with git-ci run-check-service a pool of registered \
+             runners serves one owner, since a runner is not cleaned between jobs"
+        )));
+    }
     // a runner runs one job at a time
     let busy = entity
         .find(JOB_RUN)?
@@ -175,16 +191,9 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     if busy > 0 {
         return Ok(None);
     }
-    // the count and the claim under the pool's lease, so two members never both take its last place
-    let Some(_turn) = super::engine::pool_turn(entity, &pool_id)? else {
-        return Ok(None);
-    };
-    if super::engine::running_in(entity, &pool_id)? >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
-        return Ok(None);
-    }
+    free_stale_job(entity, &runner_id)?;
     let trusted = super::is_yes(&pool, "trusted");
     let pool_name = field(&pool, "poolName").unwrap_or_else(|| "default".to_string());
-    let pool_owner = field(&pool, "ownerId");
     let queued = entity
         .find(JOB_RUN)?
         .eq("statusId", Value::string("queued"))
@@ -192,6 +201,17 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
         .order_by("jobRunId", false)
         .limit(200)
         .list()?;
+    // nothing queued: no lease taken (a runner asks every few seconds)
+    if queued.is_empty() {
+        return Ok(None);
+    }
+    // the count and the claim under the pool's lease, so two members never both take its last place
+    let Some(_turn) = super::engine::pool_turn(entity, &pool_id)? else {
+        return Ok(None);
+    };
+    if super::engine::running_in(entity, &pool_id)? >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
+        return Ok(None);
+    }
     for job in queued.iter() {
         // the pool the application named, else the pool's name
         let named = match field(job, "runnerPoolId") {
@@ -208,6 +228,10 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
         else {
             continue;
         };
+        // a run that ended (cancelled as this claim read its jobs) gives none
+        if field(&run, "statusId").is_some_and(|status| super::ENDED.contains(&status.as_str())) {
+            continue;
+        }
         if super::is_yes(&run, "trusted") != trusted
             || pool_owner
                 .as_ref()
@@ -224,19 +248,71 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
                 }
             }
         }
+        let job_run_id = field(job, "jobRunId").unwrap_or_default();
+        // the runner first, by one conditional update: of two claims of one runner at once (two members, two
+        // requests) only one gets a job
+        if !reserve_runner(entity, &runner_id, &job_run_id)? {
+            return Ok(None);
+        }
         let Some(job_token) = super::engine::claim_job(entity, &run, job, &pool, Some(&runner_id))? else {
+            release_runner(entity, &runner_id, &job_run_id);
             continue;
         };
-        let job_run_id = field(job, "jobRunId").unwrap_or_default();
-        super::set_fields(
-            entity,
-            RUNNER,
-            "runnerId",
-            &runner_id,
-            None,
-            vec![("currentJobRunId", Value::string(&job_run_id))],
-        )?;
         return Ok(Some(Claimed { job_run_id, job_token }));
     }
     Ok(None)
+}
+
+/// `GitRunner.currentJobRunId = job_run_id` where it names no job, committed at once: whether this claim has the
+/// runner.
+fn reserve_runner(entity: &EntityFacade, runner_id: &str, job_run_id: &str) -> Result<bool, Error> {
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals("runnerId", Value::string(runner_id)),
+        moqui_core::entity::Condition::is_null("currentJobRunId"),
+    ]);
+    Ok(crate::conditional::update_where(
+        entity,
+        RUNNER,
+        &[("currentJobRunId", Value::string(job_run_id))],
+        &condition,
+        crate::conditional::Commit::Own,
+    )? > 0)
+}
+
+/// Give the runner back when the job it was reserved for went to another claim.
+fn release_runner(entity: &EntityFacade, runner_id: &str, job_run_id: &str) {
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals("runnerId", Value::string(runner_id)),
+        moqui_core::entity::Condition::equals("currentJobRunId", Value::string(job_run_id)),
+    ]);
+    let released = crate::conditional::update_where(
+        entity,
+        RUNNER,
+        &[("currentJobRunId", Value::Null)],
+        &condition,
+        crate::conditional::Commit::Own,
+    );
+    if let Err(err) = released {
+        tracing::error!(
+            runner = runner_id,
+            "a runner reserved for a job another claim took was not freed: {err}"
+        );
+    }
+}
+
+/// Free a runner whose `currentJobRunId` names a job that has ended or is gone (a member that stopped before it freed
+/// it): it is free, as its running jobs were just counted.
+fn free_stale_job(entity: &EntityFacade, runner_id: &str) -> Result<(), Error> {
+    let Some(runner) = super::one(entity, RUNNER, "runnerId", runner_id)? else {
+        return Ok(());
+    };
+    let Some(current) = field(&runner, "currentJobRunId") else {
+        return Ok(());
+    };
+    let ended = super::one(entity, JOB_RUN, "jobRunId", &current)?
+        .is_none_or(|job| field(&job, "statusId").is_some_and(|status| super::ENDED.contains(&status.as_str())));
+    if ended {
+        release_runner(entity, runner_id, &current);
+    }
+    Ok(())
 }

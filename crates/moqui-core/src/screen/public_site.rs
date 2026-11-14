@@ -22,10 +22,13 @@ pub(super) struct PublicSiteRoute {
 /// was not routed has none, whatever it sends.
 pub(super) const BOUND_SITE_PARAMETER: &str = "resolvedSiteId";
 
-/// First path segments that always belong to the framework, never to a public site: the one list,
-/// [`crate::web::reserved`], with the host's own routes in it.
-fn framework_route(first: &str) -> bool {
-    crate::web::reserved::is_reserved(first)
+/// Request paths that always belong to the framework, never to a public site: the one list,
+/// [`crate::web::reserved`], with the host's own routes in it (all of a wholly reserved first segment, only the host's
+/// sub-paths of `.well-known` and `ci`), by the path as written and as the screens resolve it (`/.well-known/../apps`
+/// is the apps).
+fn framework_route(path: &str) -> bool {
+    crate::web::reserved::is_reserved_path(path)
+        || crate::web::reserved::is_reserved_path(&format!("/{}", screen_path_names(path).join("/")))
 }
 
 /// The framework routes a restricted host still serves (`host-check-service`, Commerce F87): the static files a page
@@ -91,7 +94,7 @@ pub(super) fn refuses_framework_route(
         return true;
     }
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if !servlet_route && !framework_route(first) {
+    if !servlet_route && !framework_route(&request.path) {
         return false;
     }
     if !servlet_route && static_route(first) && screen_path_first(&request.path) == first {
@@ -220,8 +223,7 @@ fn resolve_conf(conf: &MNode, request: &WebRequest) -> Result<Option<PublicSiteR
     let host = request_host(request);
     // Authentication, API, libraries and token routes keep their framework handlers on every host but one whose
     // `host-check-service` restricts it (`refuses_framework_route`, checked before any servlet or token route runs).
-    let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if framework_route(first) {
+    if framework_route(&request.path) {
         return Ok(None);
     }
     // A path under a site's named mount (`/forum`) on a host no site names is concealed. A mount at the root claims

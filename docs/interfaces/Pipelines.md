@@ -121,7 +121,8 @@ not.
   checkout. It is restored before the first step, and saved after the last when the job succeeded and nothing is
   stored under the key. Caches are per repository and apart for protected refs: a run for a protected ref reads only
   caches such a run wrote, an untrusted run never reads them (a build with secrets may have filled one), and another
-  trusted run reads both. A key with a `/` outside its `${hash:...}` parts, or longer than 200 characters once each
+  trusted run reads both. A cache of a job that was given secrets (an environment whose `allowedRefs` names a branch
+  no rule protects) is of the protected class too. A key with a `/` outside its `${hash:...}` parts, or longer than 200 characters once each
   hash is its 16 digits, is an error of the file.
 - **`artifact`**: files uploaded when the steps have run, also of a failed job, as one tar.gz download with a size, a
   checksum and an expiry (`retention-days`).
@@ -166,8 +167,9 @@ also write a context the target branch's pipeline does not have. Name in `requir
 target branch's pipeline defines (the engine does not read the target's file to decide which are required; the
 branch rule's list is what decides). The
 status's target is the run's page: what `git-ci` `run-url-service` answers
-(`org.moqui.git.GitCiServices.get#PipelineRunUrl`), else the `run-url` template with `{repositoryId}`,
-`{repositoryPath}`, `{pipelineRunId}`, `{runNum}` and `{jobRunId}`.
+(`org.moqui.git.GitCiServices.get#PipelineRunUrl`), else (no service, no `url` from it for a repository whose page is
+not the application's, or a service that failed) the `run-url` template with `{repositoryId}`, `{repositoryPath}`,
+`{pipelineRunId}`, `{runNum}` and `{jobRunId}`.
 
 The engine writes them through `create#GitCommitStatus`, as the system: with authorization disabled and
 `includeHidden`, so the status of a hidden merge request's head is written where a user's is not, a service ECA rule
@@ -194,15 +196,24 @@ right. An untrusted run:
   `approve#PipelineRun` is called by a user with the update right, or with authorization disabled. Approved, it is
   still untrusted.
 
+A run with a job whose `environment` has `approvalRequired` waits for approval when it is queued, whatever its trust
+(its `statusMessage` names the environment). Such a run is approved only by a user with the delete right on the
+repository (a maintainer) who did not trigger it (the pusher), and `approvedByUserId` records who did.
+
 A run refused by the check (`approvalState` `refused`) or never approved is not run again: `retry#JobRun` refuses
 it, and for any other ended run asks the check again (with the run's event, ref, commit and the caller), so a run
-the check would now refuse, hold or trust less is not run again either. The new attempt keeps the pool the old one
+the check would now refuse, hold or trust less is not run again either. Two retries of one job at once make one
+attempt (the old one is marked superseded first, by one conditional update). A cancel ends a job whatever a claim
+moved it to meanwhile, and a start pass or a runner's claim skips the jobs of a run that ended. A start pass runs
+outside its caller's transaction, so a rollback never queues again a job whose container runs. The new attempt keeps the pool the old one
 ran in (`runnerPoolId`).
 
 Before any run is queued the engine asks the service `git-ci` `run-check-service` names, with authorization
 disabled, as the LFS upload check is asked (`org.moqui.git.GitCiServices.check#PipelineRun` is its interface). It
 answers `decision`: `allow` (an untrusted run may start with no approval), `wait` (hold a trusted run too, for a
-quota) or `refuse` (an `error` run whose statuses carry the `message`; an error the service leaves refuses too). It
+quota), `refuse` (an `error` run whose statuses carry the `message`; an error the service leaves refuses too) or
+`skip` (nothing at all: no run, no status, for a repository whose pipelines the application has turned off; it is
+asked too, as pipeline `ci.xml` with no jobs, before the `error` run of a file that is not valid). It
 may lower `trusted` and never raise it, and may name the `ownerId` the run's secrets and usage count under and the
 `runnerPoolId` its jobs use. With no service, or no decision, a trusted run is allowed and an untrusted one waits.
 **A server whose accounts sign themselves up sets `run-check-service`**: with none, any account's push to its own
@@ -225,7 +236,7 @@ only when its run is trusted and the secret's scope is met:
 
 | Scope | Given when |
 | --- | --- |
-| `protected` | The run's ref is protected: a branch rule that names it keeps direct pushes to a push group (`pushUserGroupId`) or to merge requests (`requireMergeRequest`). A rule that only forbids a force push or a delete protects nothing. Never for a merge request's run. |
+| `protected` | The run's ref is protected: a branch rule that names it keeps direct pushes to a push group (`pushUserGroupId`) or to merge requests with at least one approval (`requireMergeRequest` and `requiredApprovals` 1 or more; with none, a Developer merges their own). A rule that only forbids a force push or a delete protects nothing. Never for a merge request's run. |
 | `tags` | The run's ref is a protected tag. |
 | `environment` | The job's `environment` is the secret's environment, and the environment allows the run: never a merge request's run; a run of a protected ref, or of a branch its `allowedRefs` names; with `approvalRequired`, only an approved run. |
 
@@ -251,7 +262,8 @@ A runner is never the server, nor on its machine or its network. A pool (`GitRun
 | `serverUrl` | The URL the pool's runners reach the server by, when it is not `git-ci` `server-url`. |
 
 The pools are an operator's: `find#RunnerPools`, `store#`, `delete#RunnerPool`, `create#RunnerPoolToken` and
-`revoke#Runner` need the `GIT_CI_ADMIN` permission (the `ADMIN` group has it) or authorization disabled.
+`revoke#Runner` need the `GIT_CI_ADMIN` permission (the `ADMIN` group has it) or authorization disabled. It is
+a sealed permission (`user-facade` `authz`): only a holder grants it to a group.
 
 **Drivers.** An `InstanceHostType` names the services that start a run that ends, inspect it, remove it and clean up
 (`runStartService`, `runInspectService`, `runRemoveService`, `runCleanupService`; the interfaces are
@@ -273,7 +285,8 @@ reaches it.
 
 A job's container is created with: no privilege, every capability dropped, `no-new-privileges`, no host path or
 socket mounted, no port published, an init as process 1 that reaps what a step leaves (so orphans do not use up
-`pidsLimit`), the user `git-ci` `container-user` (1000:1000; root in no form, `0`, `0:x` or `root:x`), a read-only
+`pidsLimit`), the user `git-ci` `container-user` (1000:1000; root in no form, `0`, `0:x` or `root:x`; `image` runs the
+image's own user, and a container whose image has none, or root, is refused before it starts), a read-only
 root with a sized tmpfs at `/tmp` (`container-tmp-mb`) and the working directory (`container-workdir`, `/workspace`)
 on a tmpfs of `container-workspace-mb` (4096; it counts toward `memoryMb`), or, when the pool sets `diskMb`, on the
 root filesystem `diskMb` sizes, which is then writable: the working directory is never unbounded. Then the pool's
@@ -315,12 +328,18 @@ MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_RUNNER_TOKEN=mqcr_... moq
 `register` prints the runner token, once. `poll` asks for a job every few seconds; when its pool has room it is given
 the oldest queued job of the pool with a job token, runs it in a directory of its own, and asks again. A runner runs
 one job at a time, and nothing isolates a job from the machine: use such a pool for trusted runs, of one owner. Each
-step's process group is killed when the step ends, and after each job `poll` kills every process of the runner's
-user but itself and what it runs under (never as root; `--keep-processes` leaves them), so what a job left running
-does not see the next job: run the runner as a user of its own, which nothing else uses.
+step's process group is killed when the step ends (before the step's process is reaped, so a reused group id is
+never hit), and after each job `poll` kills the processes of the runner's user that started since the job began, but
+itself and what it runs under (never as root; `--keep-processes` leaves them), so what a job left running, in a group
+or session of its own, does not see the next job, and a process started before it (a `tee` of the runner's output)
+is left alone: run the runner as a user of its own.
 
 A pool token registers runners for `git-ci` `pool-token-days` (7), or the `validDays` of `create#RunnerPoolToken`;
-a new token replaces it, and with `revokeRunners` the pool's runners are revoked too (a token that leaked).
+one with no expiry (made before tokens expired) registers nothing: make a new one. A new token replaces it, and with
+`revokeRunners` the pool's runners are revoked too (a token that leaked). A runner is reserved for its job by one
+conditional update (`GitRunner.currentJobRunId` empty), so it never gets two jobs at once; a pool with no `ownerId` on
+a server with `run-check-service` gives its runners no job (as `store#RunnerPool` refuses it), and a runner's claim
+takes the pool's lease only when a job is queued.
 `revoke#Runner` revokes one runner (`GitRunner.statusId` `revoked`): its token is refused from then on, and the job it
 runs ends as an error.
 
@@ -385,7 +404,9 @@ after it ended or passed its time; 401 for a token that is not a job token of th
 `max-log-batch-bytes`; an upload is limited by its kind (`max-artifact-bytes`, `max-report-bytes`,
 `max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches. What a repository and a
 run's owner keep is capped (`max-repository-upload-bytes`, `max-owner-upload-bytes`; 0, no cap): an upload past it is
-refused (`GitCiStorageQuota`) and one that would pass it is cut there. A cache from an untrusted run is
+refused (`GitCiStorageQuota`), one that would pass it is cut there and refused the same way, and an upload is
+counted again once stored, so of two at once the one that went past the cap is taken back. Artifacts stored before
+they carried their run's owner are given it before an owner's cap is counted. A cache from an untrusted run is
 422. A refusal is its status with `{"error": ...}`. A token that is not valid (401) counts as an authentication failure
 for web protection; an ended job's (410) does not.
 
@@ -456,11 +477,13 @@ run's do once approved, and their token is the only thing that fetches the hidde
 | `get#JobRun` | view | `job`, `stepList`, `failedTestList`, `artifactList` (artifacts and reports) |
 | `get#JobLog` | view | See below |
 | `get#RunArtifact` | view | An artifact or report and a piece of its content (`offset`, `maxBytes`; `bytes`, `nextOffset`, `done`). A cache is not found. |
+| `send#RunArtifact` | view | Send an artifact or report as the request's response, streamed from its content blob with `Range`, `ETag` and `If-Range` (`inline` to show a report's HTML): call it from a screen's download transition, and nothing is copied to a file. A cache is not found. |
+| `get#PipelineDefinitions` | view | The pipelines a commit (`revision`: branch, tag, ref or commit; the default branch when empty) defines, as the engine reads them: `source` (`file`, `builtin`, `none`, `invalid` with `errorMessage`) and `pipelineList` (`pipelineName`, `events`, `manual`, `branches`, `tags`, `cron`, `jobNames`), so an application need not parse `ci.xml`. |
 | `run#Pipeline` | update | A pipeline with the manual event, for a branch or tag |
 | `rerun#PipelineRun` | update | A new run for the same commit and event; one that was untrusted for where its commits came from stays so |
 | `cancel#PipelineRun` | update, or the user who asked for the run | A run that has ended is an error |
 | `retry#JobRun` | update | A new attempt of an ended job in its run, in the pool the old one ran in; the old one is `superseded`, the jobs skipped for it wait again. Not of a refused or never approved run, nor one the run check would now refuse, hold or trust less |
-| `approve#PipelineRun` | update, or authorization disabled | A run that does not wait is an error |
+| `approve#PipelineRun` | update, or authorization disabled; delete for a run with a job in an `approvalRequired` environment, never by who triggered it | A run that does not wait is an error |
 | `find#CiSecrets`, `store#CiSecret`, `delete#CiSecret` | delete (a maintainer) for a repository's; authorization disabled for an owner's | Values are written and never read; a move to another scope or environment needs a new value |
 | `find#CiEnvironments` | view (a repository's) | Without the target's token |
 | `store#CiEnvironment`, `delete#CiEnvironment` | as secrets | `allowedRefs`, `approvalRequired`; delete is refused while a secret is scoped to it |
@@ -520,18 +543,24 @@ the client's address arrives).
 - **Streamed.** Artifact, cache and report uploads and the result post stream down the link to the local node, and
   a cache download streams back; the edge node waits for the answer's head as long as the body keeps moving (`<edge
   forward-idle-seconds>`) and then up to `forward-head-seconds` once it is all sent, so an upload answered once it is
-  stored is not timed out.
+  stored is not timed out. The edge node's `request-timeout` does not apply to a request it forwards; the local
+  node's does, and `/ci/runner/` is exempt from it.
 - **`server-url`.** The URL the runners reach the server by: the public URL on the edge node (empty uses it), or
   another name only when runners reach the local node some other way (a private address on the same network).
   Statuses and the `run-url` link name the public URL.
 - **Refusing hosts.** A host whose root screen refuses the framework's routes still serves `/ci/runner/`, so a
   site's own host can be the runners' URL.
-- **Web protection.** A request to `/ci/runner/` that carries a well-formed job, runner or pool token (`mqcj_`,
-  `mqcr_`, `mqcp_` and 64 hex digits) is counted by its token, by the engine's own per-token limit
-  (`runner-max-requests-per-minute`): no per-client rate limit applies to it, on the edge node or on the local node,
-  and its authentication failures (a token of a job that ended) count toward no ban, since runners share addresses (a
-  NAT, a pool of machines). A request without such a token is counted as any other. An address already banned is
-  refused at connect, whatever it sends.
+- **Web protection.** Runners share addresses (a NAT, a pool of machines), so a request to `/ci/runner/`, or a job's
+  fetch under `/git/`, whose job, runner or pool token (`mqcj_`, `mqcr_`, `mqcp_` and 64 hex digits, as `Bearer` or
+  git's Basic password) was found good a short time ago is counted by its token: by the engine's own limit per job and
+  per runner (`runner-max-requests-per-minute`), and by no per-client rate limit, for 10 minutes after its last good
+  request on that host. The answer that finds a token good carries a marker that the node serving it records, and an
+  edge node in front of it records too as the answer passes (and removes), so this holds on the edge node and on the
+  local node alike. Until then, and for a token that is made up, the request is counted by its address as any other;
+  a well-formed token that is not known counts toward the `ci-token-failure` ban (100 in 10 minutes), not
+  `auth-failure`'s, and a token of a job that ended (410) toward neither. The path is taken as the router routes it: a
+  `%` escape or a `.` or `..` segment makes it no runner request. An address already banned is refused at connect,
+  whatever it sends.
 - **In a pool.** Any member answers any runner request: jobs, logs, artifacts and caches are rows and content in the
   shared database and content store. A job fetches its commit over git HTTP with its job token, from any member.
 
