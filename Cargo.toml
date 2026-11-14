@@ -126,7 +126,7 @@ example = { path = "runtime/components/dev/example" }
 moqui-tui = { path = "crates/moqui-tui", default-features = false }
 # Exact pin. default-features off so `async` (tokio) and `config` stay out.
 # moqui-tui turns on `markdown` only. Rust 1.95. Not a dependency of `moqui`.
-revue = { version = "=3.12.0", default-features = false }
+revue = { version = "=3.15.0", default-features = false }
 
 # --- moqui-lib ---
 # QR Model 2 and Data Matrix ECC 200, emitted as inline SVG by the print helpers.
@@ -142,7 +142,7 @@ foldhash = "0.2"
 # The thread's CPU clock for the operation profile (moqui-core telemetry/profile.rs); already in the tree.
 rustix = { version = "1", default-features = false, features = ["std", "time"] }
 # The binaries' global allocator (crates/moqui, and the binary ./moq build generates); not on MSVC.
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 # Signer stand-ins. Stay in RustCrypto (or aws-lc). No OpenSSL.
@@ -263,14 +263,14 @@ getrandom = { version = "0.4", features = ["std"] }
 # The script engine, in safe Rust (plans/archive/Script-Engine-Oxide.md). The moqui fork, by exact revision;
 # local work on the fork patches it to ../quickjs-oxide outside committed files. Declares rust-version 1.99.
 quickjs-oxide = { git = "https://github.com/moqui/quickjs-oxide", rev = "b7e34e04bde919d1a76cfd01430226ea0493017f", default-features = false }
-# 0.156.0 declares rust-version 1.97.0.
-oxc_parser = "0.156"
+# 0.158.0 declares rust-version 1.97.0.
+oxc_parser = "0.158"
 # The parser's arena, kept per thread and reset after each parse. Already in the tree under oxc_parser.
-oxc_allocator = "0.156"
+oxc_allocator = "0.158"
 # The ESTree JSON of a parsed expression, for the server-static compatibility walk. Already in the tree under oxc_parser.
-oxc_ast = { version = "0.156", features = ["serialize"] }
+oxc_ast = { version = "0.158", features = ["serialize"] }
 # Spans of parsed nodes, for the test harness power-assert rewrite. Already in the tree under oxc_parser.
-oxc_span = "0.156"
+oxc_span = "0.158"
 # HTML cleaning for allow-html="safe" service parameters. MIT OR Apache-2.0. Builder::default() is the
 # conservative maintained allow-list; there is no custom list in this repo.
 ammonia = "4"
@@ -394,11 +394,11 @@ ipp = { version = "8", default-features = false }
 
 # WebRTC for calls (moqui-rtc, plans/archive/Comms-Framework.md §6.2, D-W1): sans-IO ICE-lite, DTLS-SRTP, simulcast, TWCC.
 # default-features off leaves out its examples (rouille); aws-lc-rs is the crypto rustls already links.
-str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"] }
+str0m = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"] }
 # The embedded TURN server (moqui-rtc turn/, plans/archive/Comms-Framework.md §6.5, D-W4): sans-IO, std only (no openssl); the
 # host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
-turn-server-proto = { version = "0.7.3", default-features = false, features = ["std"] }
-turn-client-proto = { version = "0.7.3", default-features = false, features = ["std"] }
+turn-server-proto = { version = "0.8.0", default-features = false, features = ["std"] }
+turn-client-proto = { version = "0.8.0", default-features = false, features = ["std"] }
 # SFrame (RFC 9605) for the tests of encrypted calls only (W8): moqui-rtc's tests check the RFC's vectors, which the browser's
 # own SFrame (webroot js/WebrootSFrame.js) runs too, against this independent implementation. rust-crypto: the CTR suites
 # as well, on the aes-gcm, hkdf, sha2, ctr and cipher already in the graph; not ring.
@@ -429,4 +429,4 @@ sasl = { version = "0.5", default-features = false }
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the
 # target C compiler, which is emcc for wasm32-unknown-emscripten. SQLite is public domain.
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }

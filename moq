@@ -1609,7 +1609,7 @@ moqui-core = { path = \"$ROOT/crates/moqui-core\", default-features = false }
 ${deps}
 # The global allocator, as crates/moqui has it (src/main.rs); not on MSVC.
 [target.'cfg(not(target_env = \"msvc\"))'.dependencies]
-tikv-jemallocator = \"0.6\"
+tikv-jemallocator = \"0.7\"
 
 # Its own workspace: not a member of the repository's.
 [workspace]
