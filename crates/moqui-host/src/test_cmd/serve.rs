@@ -100,9 +100,7 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         if let Some(dir) = self.0.take() {
             super::interrupt::untrack(&dir);
-            if let Err(err) = std::fs::remove_dir_all(&dir) {
-                tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display());
-            }
+            super::interrupt::remove_scratch(&dir);
         }
     }
 }

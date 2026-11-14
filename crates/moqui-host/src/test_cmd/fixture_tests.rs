@@ -21,12 +21,18 @@ use super::{data_hash, prune_snapshots, scratch_runtime, USED_MARK};
 
 /// A runtime with the framework, `components/addon/plain` and the dev component `components/dev/devonly`.
 fn runtime() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("moqui-fixture-key-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    // Beside the scratch runtime, on `/tmp`, so a file link stays on one volume.
+    let root = PathBuf::from("/tmp").join(format!("moqui-fixture-key-{}", std::process::id()));
+    super::super::interrupt::remove_scratch(&root);
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
     std::fs::create_dir_all(root.join("conf")).unwrap();
-    moqui_core::context::layout::link_base_set(&std::fs::canonicalize(repo.join("components/base")).unwrap(), &root)
-        .unwrap();
+    let base = std::fs::canonicalize(repo.join("components/base")).unwrap();
+    std::fs::create_dir_all(root.join("components")).unwrap();
+    super::link(&base, &root.join("components/base")).unwrap();
+    let manifest = base.parent().unwrap().join("components.xml");
+    if manifest.is_file() {
+        std::fs::copy(manifest, root.join("components/components.xml")).unwrap();
+    }
     for (dir, component) in [("components/addon", "plain"), ("components/dev", "devonly")] {
         let location = root.join(dir).join(component);
         std::fs::create_dir_all(location.join("entity")).unwrap();
@@ -71,7 +77,7 @@ fn the_snapshot_key_follows_the_components_that_load() {
         assert_ne!(dev, data_hash(&first, &framework()).unwrap());
     }
     for dir in [first, second, runtime] {
-        let _ = std::fs::remove_dir_all(dir);
+        super::super::interrupt::remove_scratch(&dir);
     }
 }
 
@@ -92,29 +98,52 @@ fn the_scratch_runtime_links_the_downloaded_chromium() {
         Some(scratch.join("chromium/chrome"))
     );
     for dir in [scratch, runtime] {
-        let _ = std::fs::remove_dir_all(dir);
+        super::super::interrupt::remove_scratch(&dir);
     }
 }
 
 /// The scratch runtime copies the conf with its topology directories, so a `MOQUI_CONF` such as
-/// `conf/edge/MoquiEdgeConf.xml` is found there; a symbolic link to a directory (here a loop) is not followed.
+/// `conf/edge/MoquiEdgeConf.xml` is found there; a link to a directory (here a loop) is not followed.
 #[test]
 fn the_scratch_runtime_copies_the_conf_directories() {
     let root = std::env::temp_dir().join(format!("moqui-fixture-conf-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    super::super::interrupt::remove_scratch(&root);
     std::fs::create_dir_all(root.join("conf/edge")).unwrap();
     std::fs::create_dir_all(root.join("components/base")).unwrap();
     std::fs::write(root.join("conf/MoquiDevConf.xml"), "<moqui-conf/>").unwrap();
     std::fs::write(root.join("conf/edge/MoquiEdgeConf.xml"), "<moqui-conf/>").unwrap();
-    std::os::unix::fs::symlink(root.join("conf"), root.join("conf/edge/loop")).unwrap();
+    super::link(&root.join("conf"), &root.join("conf/edge/loop")).unwrap();
     let runtime = std::fs::canonicalize(&root).unwrap();
     let scratch = scratch_runtime(&runtime).unwrap();
     assert!(scratch.join("conf/MoquiDevConf.xml").is_file());
     assert!(scratch.join("conf/edge/MoquiEdgeConf.xml").is_file());
     assert!(!scratch.join("conf/edge/loop").exists());
-    for dir in [scratch, runtime] {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    let loop_link = runtime.join("conf/edge/loop");
+    let _ = std::fs::remove_file(&loop_link);
+    let _ = std::fs::remove_dir(&loop_link);
+    super::super::interrupt::remove_scratch(&scratch);
+    super::super::interrupt::remove_scratch(&runtime);
+}
+
+/// Removing a scratch runtime takes off the link to a component set and leaves the directory that link names.
+#[test]
+fn removing_a_scratch_runtime_leaves_the_linked_directory() {
+    let root = std::env::temp_dir().join(format!("moqui-fixture-keep-{}", std::process::id()));
+    super::super::interrupt::remove_scratch(&root);
+    let marked = root.join("marked");
+    std::fs::create_dir_all(&marked).unwrap();
+    std::fs::write(marked.join("keep.txt"), "stay").unwrap();
+    std::fs::create_dir_all(root.join("runtime/conf")).unwrap();
+    std::fs::create_dir_all(root.join("runtime/components")).unwrap();
+    super::link(&marked, &root.join("runtime/components/base")).unwrap();
+    let runtime = std::fs::canonicalize(root.join("runtime")).unwrap();
+    let scratch = scratch_runtime(&runtime).unwrap();
+    assert!(scratch.join("components/base/keep.txt").is_file());
+    super::super::interrupt::remove_scratch(&scratch);
+    assert_eq!(std::fs::read_to_string(marked.join("keep.txt")).unwrap(), "stay");
+    assert!(!scratch.exists());
+    super::super::interrupt::remove_scratch(&runtime);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// At a run's end the other snapshots go once no run has used them for an hour: the one the run used stays however old,
