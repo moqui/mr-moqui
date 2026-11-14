@@ -38,7 +38,13 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish that opens a
   merge request. None of Dev AIDE's own writes (a file, a git command that changes a repository, a call of a group
   server) runs under an agent's fence or in a sim: `try_service` refuses its write services, and the writes refuse
-  themselves. The server's REST decides, as you there: the framework's
+  themselves. Dev Assist's `hosting` tool reads the same (merge requests, threads, checks, a job's log and failed tests,
+  an issue) as untrusted data, opens a merge request or comments only by your approval, never approves, merges,
+  re-runs, resolves or signs, and is refused the diff of a merge request whose authors have not signed. A commit's
+  checks have **Run locally**: a job of the working tree's `ci.xml` in a host session of the Terminal, its steps and
+  variables but not its image or secrets. The **Sessions** tab makes a worktree of a root for an Assist session
+  (`runtime/worktrees`, a branch of its own), where that session's file and git tools work; a worktree is not loaded,
+  so its changes are checked and committed there, not run live. The server's REST decides, as you there: the framework's
   ([Git-Hosting](../../../../docs/interfaces/Git-Hosting.md#rest)), or the REST of the application that keeps the
   repository (Smithy). Steps: [Run-Deploy](../../../../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server).
 
@@ -62,7 +68,7 @@ and the services say they are not built in.
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
   through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and
-  Sign). The Chromium smokes are acceptance tests, run by
+  Sign, the `hosting` tool, two sessions' worktrees, a `ci.xml`'s local jobs). The Chromium smokes are acceptance tests, run by
   `./moq accept-all`: `cargo test -p moqui-host --test gate3_browser the_workspace` and
   `the_entity_modeler`, `the_screen_builder` and `the_service_writer`. `test/vectors/` are the visual views' operations, which the page tests make and the
   crate's tests apply (`MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide` writes their outlines and texts again).

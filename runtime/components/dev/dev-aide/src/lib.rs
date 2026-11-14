@@ -29,6 +29,7 @@ mod docs;
 mod entities;
 pub mod git;
 mod hosting;
+mod local_run;
 mod notify;
 mod patch;
 mod repo;
@@ -43,6 +44,7 @@ mod template;
 pub mod tier;
 mod vcs;
 pub(crate) mod workspace;
+mod worktree;
 
 use moqui_core::context::Error;
 use moqui_core::native::{submit_component, NativeComponent, NativeRegistry};
@@ -63,5 +65,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     repo::register(registry)?;
     repos::register(registry)?;
     hosting::register(registry)?;
+    worktree::register(registry)?;
+    local_run::register(registry)?;
     tasks::register(registry)
 }

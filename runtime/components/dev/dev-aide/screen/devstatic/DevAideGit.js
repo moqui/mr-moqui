@@ -16,7 +16,8 @@
  * Git depth in the Workspace (plans/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
  * Advanced toggle, the Merge requests tab of a root a group server hosts (21.4: mine, waiting for my review, open; Check
  * out, New; Review with the server's threads), a commit's checks (21.5: statuses, runs, a job's log and its failed tests
- * as links, Re-run), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
+ * as links, Re-run, Run locally: a job of the working tree's ci.xml in a terminal, not in its image), the Sessions
+ * tab (21.8: agents' sessions in worktrees, which are not loaded), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
  * its publish branch, Open on the hosting site), a
  * compare of two refs, and the conflict view: ours, the result and theirs side by side, Accept ours, theirs or both on
  * each conflict, Mark resolved and Abort. Each component takes the Workspace (ws) for its transitions, its notes and its
@@ -76,6 +77,24 @@
 
     const date = (text) => String(text || "").slice(0, 10);
     // the color of a check's state chip (21.5)
+    // The Assist conversation of this tab's drawer, whose session a worktree is for (21.8); null with none.
+    pure.assistConversation = () => {
+        const assist = root.moqui && root.moqui.assist;
+        const id = assist && assist.state && assist.state.convo && assist.state.convo.conversationId;
+        return id ? String(id) : null;
+    };
+    // Run locally (21.5): the combination of a job a local run takes (its matrix key, the first by default), as text
+    // lines to show: its commands in order and its variables; a secret is named, never set.
+    pure.localRunLines = (job, matrixKey) => {
+        if (!job) return { steps: [], env: [], secrets: [] };
+        const combos = job.combinations || [job];
+        const combo = combos.find((item) => item.matrixKey === matrixKey) || combos[0] || job;
+        return {
+            steps: (combo.steps || []).map((step, index) => ({ seq: index + 1, name: step.name || "", run: step.run || "", continueOnError: !!step.continueOnError })),
+            env: (combo.env || []).map((pair) => pair[0] + "=" + pair[1]),
+            secrets: (job.secrets || []).slice()
+        };
+    };
     pure.stateColor = (state) => (state === "failure" ? "negative" : state === "pending" ? "warning" : state === "success" ? "positive" : "grey");
 
     const branches = {
@@ -542,8 +561,8 @@
     const checks = {
         name: "mDevGitChecks",
         props: { ws: { type: Object, required: true }, commitId: { type: String, required: true } },
-        data() { return { loading: true, state: "", statuses: [], runs: [], job: null, error: "" }; },
-        computed: { pure: () => pure },
+        data() { return { loading: true, state: "", statuses: [], runs: [], job: null, error: "", local: null, localJobs: null, localNote: "", localError: "" }; },
+        computed: { pure: () => pure, localLines() { return this.local ? pure.localRunLines(this.local.job, this.local.matrixKey) : null; } },
         mounted() { this.load(); },
         beforeUnmount() { this.stopFollow(); },
         methods: {
@@ -571,6 +590,28 @@
             },
             stopFollow() { if (this.timer) clearTimeout(this.timer); this.timer = null; },
             openTest(test) { if (test.link) { this.ws.openFile(test.link.path, test.link.line || 0); this.$emit("close"); } },
+            // Run locally (21.5): the jobs of the working tree's ci.xml; one, as it would run, before it runs in a terminal
+            openLocal(pipeline, jobName, matrixKey) {
+                this.ws.get("localJobs", { rootId: this.ws.rootId }).then((answer) => {
+                    this.localJobs = answer.jobs || []; this.localNote = answer.note || ""; this.localError = answer.error || "";
+                    const job = pipeline ? this.localJobs.find((item) => item.pipeline === pipeline && item.job === jobName) : null;
+                    if (pipeline && !job) this.localError = "The working tree's ci.xml has no job " + pipeline + "/" + jobName;
+                    this.local = job ? { job, matrixKey: matrixKey && (job.matrixKeys || []).includes(matrixKey) ? matrixKey : ((job.matrixKeys || [])[0] || "") } : null;
+                }, this.ws.fail);
+            },
+            pickLocal(job) { this.local = { job, matrixKey: (job.matrixKeys || [])[0] || "" }; },
+            startLocal() {
+                const local = this.local;
+                if (!local) return;
+                this.ws.post("startLocalRun", { rootId: this.ws.rootId, pipeline: local.job.pipeline, job: local.job.job, matrixKey: local.matrixKey }).then((answer) => {
+                    if (!answer.sessionId) return;
+                    const terminal = moqui.terminal;
+                    if (terminal && terminal.refresh && terminal.showSomewhere) terminal.refresh().then(() => terminal.showSomewhere(answer.sessionId));
+                    else root.open("/qapps/Terminal", "_blank", "noopener");
+                    this.ws.note("Running " + local.job.job + " in a terminal, on this machine: not in the job's image");
+                    this.local = null;
+                }, this.ws.fail);
+            },
             rerun(run, job) {
                 // the run's number with a job too: a repository an application keeps retries a job of a run
                 const params = { rootId: this.ws.rootId, runNum: run.runNum };
@@ -583,8 +624,29 @@
 <div class="column no-wrap q-pa-sm" id="DevChecks">
   <div class="row items-center"><span class="text-subtitle2">Checks of {{commitId.slice(0, 9)}}</span>
     <q-badge v-if="state" :color="pure.stateColor(state)" :label="state" class="q-ml-sm"></q-badge><q-space></q-space>
+    <q-btn dense flat no-caps size="sm" label="Run locally…" @click="openLocal()" id="DevRunLocallyAll"></q-btn>
     <q-btn dense flat no-caps size="sm" label="Refresh" :loading="loading" @click="load"></q-btn></div>
   <div v-if="error" class="text-negative">{{error}}</div>
+  <div v-if="localJobs" class="q-pa-sm q-mb-sm bg-grey-2 text-black" id="DevLocalRun">
+    <div class="text-caption text-weight-medium">Run locally</div>
+    <div class="text-caption">{{localNote}}</div>
+    <div v-if="localError" class="text-negative text-caption">{{localError}}</div>
+    <div v-if="!local" class="row q-gutter-xs q-mt-xs">
+      <q-btn v-for="item in localJobs" :key="item.pipeline + '/' + item.job" dense outline no-caps size="sm" :label="item.pipeline + '/' + item.job" @click="pickLocal(item)"></q-btn>
+    </div>
+    <template v-else>
+      <div class="row items-center q-gutter-x-sm text-caption"><span class="text-weight-medium">{{local.job.pipeline}}/{{local.job.job}}</span>
+        <span class="m-muted">image {{local.job.image}}, which this run does not use</span>
+        <q-select v-if="(local.job.matrixKeys || []).length > 1" dense outlined options-dense v-model="local.matrixKey" :options="local.job.matrixKeys" label="Combination" style="min-width: 10rem"></q-select></div>
+      <div v-for="step in localLines.steps" :key="step.seq" class="text-caption"><span class="m-muted">{{step.seq}}. {{step.name}}</span>
+        <code class="m-dev-mono q-ml-xs">{{step.run}}</code><span v-if="step.continueOnError" class="m-muted"> (continues on error)</span></div>
+      <div v-if="localLines.env.length" class="text-caption m-muted">Variables: <code class="m-dev-mono">{{localLines.env.join('  ')}}</code></div>
+      <div v-if="localLines.secrets.length" class="text-caption">Not set (secrets are never passed): {{localLines.secrets.join(', ')}}</div>
+      <div class="row q-gutter-x-sm q-mt-xs">
+        <q-btn dense unelevated no-caps color="primary" size="sm" label="Run in a terminal" @click="startLocal" id="DevRunLocallyStart"></q-btn>
+        <q-btn dense flat no-caps size="sm" label="Cancel" @click="local = null; localJobs = null"></q-btn></div>
+    </template>
+  </div>
   <div v-for="status in statuses" :key="status.context" class="row items-center no-wrap text-caption">
     <q-badge :color="pure.stateColor(status.state)" :label="status.state" class="q-mr-xs"></q-badge>{{status.context}}
     <span class="m-muted q-ml-xs ellipsis">{{status.description}}</span>
@@ -597,6 +659,7 @@
       <q-badge :color="pure.stateColor(job.state)" :label="job.statusId" class="q-mr-xs"></q-badge>
       <a href="#" @click.prevent="openJob(job)">{{job.jobName}}{{job.matrixKey ? ' (' + job.matrixKey + ')' : ''}}</a>
       <span v-if="job.testFailedCount" class="text-negative q-ml-xs">{{job.testFailedCount}} failed</span><q-space></q-space>
+      <q-btn dense flat no-caps size="sm" label="Run locally" @click="openLocal(run.pipelineName, job.jobName, job.matrixKey)"></q-btn>
       <q-btn v-if="run.canUpdate" dense flat no-caps size="sm" label="Retry" @click="rerun(run, job)"></q-btn></div>
   </div>
   <div v-if="job" class="q-mt-sm" id="DevJobLog">
@@ -610,10 +673,74 @@
 </div>`
     };
 
+    // The agents' sessions of a root (21.8): each worktree with its branch, its Assist conversation and its uncommitted
+    // changes; a new one for this tab's Assist conversation; Open; Remove (its uncommitted changes discarded only
+    // after a confirm; its branch stays). A worktree is not loaded (question 19), which the panel says.
+    const sessions = {
+        name: "mDevGitSessions",
+        props: { ws: { type: Object, required: true } },
+        data() { return { items: [], note: "", loading: false, branch: "", conversation: pure.assistConversation() }; },
+        computed: {
+            main() { return (this.ws.root && this.ws.root.worktreeOf) || this.ws.rootId; },
+            mainLabel() { const found = this.ws.roots.find((item) => item.id === this.main); return found ? found.label : this.main; }
+        },
+        mounted() { this.load(); },
+        methods: {
+            load() {
+                this.loading = true;
+                this.conversation = pure.assistConversation();
+                this.ws.get("worktrees", { rootId: this.main }).then((answer) => {
+                    this.loading = false; this.items = answer.worktrees || []; this.note = answer.note || "";
+                }, (error) => { this.loading = false; this.ws.fail(error); });
+            },
+            refreshRoots() { return this.ws.get("roots").then((answer) => { this.ws.roots = answer.roots || this.ws.roots; }); },
+            create() {
+                this.ws.post("createWorktree", { rootId: this.main, conversationId: this.conversation || "", branch: this.branch.trim() }).then((answer) => {
+                    this.ws.note("Worktree on " + answer.branch + (this.conversation ? " for this Assist session" : ""));
+                    this.branch = "";
+                    this.refreshRoots().then(() => this.load());
+                }, this.ws.fail);
+            },
+            open(item) { this.ws.selectRoot(item.rootId); },
+            remove(item) {
+                const go = (discard) => this.ws.post("removeWorktree", { rootId: item.rootId, discardChanges: discard ? "true" : "false" }).then((answer) => {
+                    this.ws.note(answer.message || "Removed");
+                    if (this.ws.rootId === item.rootId) this.ws.selectRoot(this.main);
+                    this.refreshRoots().then(() => this.load());
+                }, this.ws.fail);
+                if (!item.changes) { go(false); return; }
+                this.$q.dialog({ title: "Discard the uncommitted changes?", message: item.label + " has " + item.changes + " uncommitted changes, which removing it loses. Its branch " + item.branch + " stays with its commits.",
+                    cancel: true, ok: { label: "Discard and remove", color: "negative", unelevated: true } }).onOk(() => go(true));
+            }
+        },
+        template: `
+<div class="column no-wrap q-pa-sm" id="DevSessions">
+  <div class="text-caption">Agents' sessions of {{mainLabel}}: each in a worktree on a branch of its own, so two sessions do not share uncommitted changes.
+    The session's file and git tools work in its worktree.</div>
+  <div class="text-caption text-orange-9" id="DevSessionsNotLoaded">{{note}}</div>
+  <div class="row items-center q-gutter-x-sm q-my-xs">
+    <q-input dense outlined v-model="branch" label="Branch (agent/… by default)" style="min-width: 14rem"></q-input>
+    <q-btn dense unelevated no-caps color="primary" size="sm" :label="conversation ? 'New worktree for this Assist session' : 'New worktree'" @click="create" id="DevNewWorktree"></q-btn>
+    <span v-if="!conversation" class="text-caption m-muted">No Assist conversation in this tab yet: one bound to it starts from the drawer's session.</span>
+    <q-space></q-space><q-btn dense flat no-caps size="sm" label="Refresh" :loading="loading" @click="load"></q-btn>
+  </div>
+  <div v-for="item in items" :key="item.rootId" class="row items-center no-wrap text-caption q-py-xs" :data-worktree="item.rootId">
+    <span class="text-weight-medium ellipsis">{{item.label}}</span>
+    <span class="m-muted q-ml-sm">{{item.branch}}</span>
+    <q-badge v-if="item.conversationId" color="grey-6" class="q-ml-sm" :label="'session ' + item.conversationId"></q-badge>
+    <span v-if="item.changes" class="text-orange-9 q-ml-sm">{{item.changes}} uncommitted</span>
+    <q-space></q-space>
+    <q-btn dense flat no-caps size="sm" label="Open" @click="open(item)"></q-btn>
+    <q-btn dense flat no-caps size="sm" label="Remove" color="negative" @click="remove(item)"></q-btn>
+  </div>
+  <div v-if="!loading && !items.length" class="m-muted text-caption">No worktrees of {{mainLabel}}.</div>
+</div>`
+    };
+
     devAide.gitComponents = {
         "m-dev-git-branches": branches, "m-dev-git-tags": tags, "m-dev-git-stashes": stashes,
         "m-dev-git-settings": settings, "m-dev-git-conflict": conflict, "m-dev-git-merge-requests": mergeRequests,
-        "m-dev-git-checks": checks
+        "m-dev-git-checks": checks, "m-dev-git-sessions": sessions
     };
     const qvt = moqui.qvt;
     if (qvt && qvt.registerLate) Object.keys(devAide.gitComponents).forEach((name) => qvt.registerLate(name, devAide.gitComponents[name]));

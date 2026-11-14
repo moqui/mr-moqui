@@ -24,7 +24,7 @@ use moqui_llm::tools::schema::{object, Property};
 use moqui_llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
-use super::{arg, context, file};
+use super::{arg, file, session_context};
 use crate::roots::RootKind;
 use crate::tier::Tier;
 
@@ -60,16 +60,16 @@ impl AgentTool for SourceTool {
         &self.0
     }
 
-    fn call(&self, _ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
-        match run(&args) {
+    fn call(&self, ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
+        match run(ctx, &args) {
             Ok(answer) => super::json(&answer),
             Err(error) => error.outcome(),
         }
     }
 }
 
-fn run(args: &Json) -> Result<Json, ToolError> {
-    let context = context(Tier::View)?;
+fn run(ctx: &TurnContext<'_>, args: &Json) -> Result<Json, ToolError> {
+    let context = session_context(ctx, Tier::View)?;
     // an artifact names its file and its first line
     let (named, artifact_line) = match arg(args, "artifact") {
         Some(id) => {

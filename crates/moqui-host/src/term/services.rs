@@ -257,6 +257,11 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
     };
     match opened {
         Ok(session) => {
+            // what a host session's program reads first, as typed (the Dev AIDE's Run locally: `sh <script>`)
+            let input = text(parameters, "input");
+            if kind == Kind::Host && !input.is_empty() && !session.type_in(input.into_bytes()) {
+                tracing::warn!("terminal session {}: its input was not taken", session.id);
+            }
             // a command or host session's opening is logged with its audit row
             if kind == Kind::Apps {
                 tracing::info!("terminal session {} (apps) opened for {username}", session.id);

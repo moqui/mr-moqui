@@ -397,7 +397,7 @@
         },
         watch: {
 
-            tab(name) { if (["branches", "tags", "stashes", "settings", "mergeRequests"].indexOf(name) >= 0) this.loadGit(); },
+            tab(name) { if (["branches", "tags", "stashes", "settings", "mergeRequests", "sessions"].indexOf(name) >= 0) this.loadGit(); },
             advanced(on) { store.set("advanced", on); if (!on && ["branches", "tags", "stashes"].indexOf(this.tab) >= 0) this.tab = "code"; },
             active() { this.remember(); },
             // a visual view reads the outline of the text as it changes, in Text or by its own operations
@@ -1376,6 +1376,8 @@
     <q-btn dense flat no-caps label="Commit…" :disable="!isGit || !canWrite" @click="tab = 'changes'"></q-btn>
     <q-btn dense unelevated no-caps color="primary" :label="'Publish' + (siteChanges ? ' ' + siteChanges : '')" :disable="!isGit || !canWrite || !siteChanges" :loading="busy === 'publish'" @click="publish" id="DevPublish"></q-btn>
   </div>
+  <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
+    for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">A change needs a restart to apply.
     <template v-slot:action><q-btn dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
   </q-banner>
@@ -1387,6 +1389,7 @@
     <q-tab v-if="advanced" name="tags" label="Tags" :disable="!isGit"></q-tab>
     <q-tab v-if="advanced" name="stashes" label="Stashes" :disable="!isGit"></q-tab>
     <q-tab v-if="hosted" name="mergeRequests" label="Merge requests" :disable="!isGit" id="DevMergeRequestsTab"></q-tab>
+    <q-tab name="sessions" label="Sessions" :disable="!isGit" id="DevSessionsTab"></q-tab>
     <q-tab name="settings" label="Settings" :disable="!isGit"></q-tab>
     <q-tab v-if="review" name="review" :label="'Review ' + review.files.length" id="DevReviewTab"></q-tab>
     <q-space></q-space>
@@ -1406,6 +1409,7 @@
     <m-dev-git-stashes v-if="tab === 'stashes'" :ws="this" :key="'s' + rootId"></m-dev-git-stashes>
     <m-dev-git-settings v-if="tab === 'settings'" :ws="this" :key="'g' + rootId"></m-dev-git-settings>
     <m-dev-git-merge-requests v-if="tab === 'mergeRequests' && hosted" :ws="this" :key="'m' + rootId"></m-dev-git-merge-requests>
+    <m-dev-git-sessions v-if="tab === 'sessions'" :ws="this" :key="'w' + rootId"></m-dev-git-sessions>
   </template>
   <q-separator></q-separator>
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">

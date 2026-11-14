@@ -2283,3 +2283,28 @@ moqui-git `service::rest`, moqui-core `sso_app` and `user_keys`, moqui-devkit `a
 agreement), `GroupServers.spec.js`. Not built: a browser smoke of a thread in the merge view; a job's log and failed
 tests against a real run; an `LlmApiClient` for a scoped key while the gateway's `require-client` is on; Run locally and
 the hosting tool (P13).
+
+**P13, built** (Nov 14, 2026): the `hosting` tool (`src/agent/hosting.rs`, lazy as `vcs` is) reads `merge_requests`,
+`merge_request` (`get#MergeRequest`), `changes` (the files, or one file at its base and head), `threads`, `checks`,
+`job` (the log's last 20,000 characters and the failed tests) and `issue` (`get#Issue`: the offer's `tasks.issuePath`,
+else Mantle's `workEfforts/{id}`), and writes `open_merge_request`, `comment` and `reply`, each an EXTERNAL approval
+whose card names the server, repository, merge request, file and line and shows the text; approve, merge, re-run,
+retry, resolve, close, sign, push and fork answer `not_offered`. It runs HostingServices as the user; the server's
+answers reach the model as `<untrusted from="group-server">`; a merge request's diff is refused ("the authors have not
+signed") when a commit author is known, required and unsigned (`get#MergeRequestChanges` `checkAuthors`) or the
+application says `diffRefused`. Its reads run under the read fence with a remote permit for the hosted server's
+origin, the client lifting the fence for that GET alone after `check_remote`; `need_hosted` does not resolve under a
+fence. Worktrees (`src/worktree.rs`): `create#`, `remove#` (refused with uncommitted changes unless `discardChanges`;
+the branch stays) and `get#Worktrees`, under `runtime/worktrees`, a `DevAideRoot` with `worktreeOf`, `conversationId`,
+`worktreeBranch`, `worktreeUserId`, mirroring its main tree's components and never reloaded; a conversation's tools
+are rooted in its worktree (`agent::session_context`); the Workspace's Sessions tab and a banner say a worktree is not
+loaded (question 19 as proposed). Run locally (`src/local_run.rs`): `get#LocalJobs` and `start#LocalRun` read `ci.xml`
+with `moqui_git::ci::file::parse` and `ci::plan::plan`, write a script under `runtime/tmp/dev-aide-run` (the job's and
+CI's variables, each secret's variable unset, each step `sh -c`, stopping at a failure unless continue-on-error) and
+open a host session with it typed in (`open#TerminalSession` `input`); the checks dialog shows the combination, steps,
+variables and unset secrets first and says it is not the job's image (question 20 as proposed). Checked: dev-aide
+`local_run::`, `worktree::`, `hosting::`; `devaide_group` (the tool's reads under the fence, the unsigned diff refused,
+approve and merge not offered, the comment card, refused in a sim and posted after, two sessions' worktrees isolated
+with the removal rules, a matrix job's local jobs); `DevAide.spec.js`; cargo lint, lint-min. Not built: a pty test of
+`input`, a header-login test of the tool's writes, a local container run (Dogfood F8), ending a worktree with its
+conversation, a browser smoke.

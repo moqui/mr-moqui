@@ -128,6 +128,40 @@ fn author(context: &Context, root: &crate::roots::Root) -> (String, String) {
     (read("user.email"), read("user.name"))
 }
 
+/// Whether `email` has signed the hosted repository's agreement, as the server answers it (`known`, `required`,
+/// `signed`, `message`, `signUrl`, `application`).
+pub(crate) fn author_signed(hosted: &super::review::Hosted, email: &str) -> Result<Json, LibError> {
+    let path = Some(hosted.server.offered("agreement.path"))
+        .filter(|path| path.starts_with('/'))
+        .unwrap_or_else(|| format!("{}/agreement", hosted.server.rest_path("hosting")));
+    let id = hosted.id();
+    hosted
+        .server
+        .get(&path, &[("repositoryId", id.as_str()), ("authorEmail", email)])
+}
+
+/// The authors of `emails` who have not signed the hosted repository's agreement where the server decides it
+/// (`known` and `required`): an agent is not given the diff of a merge request of theirs (plans/design-dev-aide.md
+/// 21.8, Dogfood §10). A server that does not decide the agreement (`known` false) has none to keep.
+pub(crate) fn unsigned_authors(hosted: &super::review::Hosted, emails: &[String]) -> Result<Vec<String>, LibError> {
+    let mut unsigned = Vec::new();
+    for email in emails {
+        let answer = author_signed(hosted, email)?;
+        if unsigned_in(&answer) {
+            unsigned.push(email.clone());
+        }
+    }
+    Ok(unsigned)
+}
+
+/// Whether an agreement answer says the author has not signed where signing is required.
+#[must_use]
+pub fn unsigned_in(answer: &Json) -> bool {
+    answer["known"].as_bool() == Some(true)
+        && answer["required"].as_bool() == Some(true)
+        && answer["signed"].as_bool() != Some(true)
+}
+
 /// `get#Agreement`: whether the next commit's author (git's `user.email`, or `authorEmail`) has signed the hosted
 /// repository's agreement, as the server reports it: `known` (the server decides it), `required`, `signed`,
 /// `signUrl`, and what Sign would add (`line` with the user's account on the server).
@@ -148,13 +182,7 @@ fn get_agreement(
     let email = Some(text(parameters, "authorEmail"))
         .filter(|email| !email.is_empty())
         .unwrap_or(email);
-    let path = Some(hosted.server.offered("agreement.path"))
-        .filter(|path| path.starts_with('/'))
-        .unwrap_or_else(|| format!("{}/agreement", hosted.server.rest_path("hosting")));
-    let id = hosted.id();
-    let answer = hosted
-        .server
-        .get(&path, &[("repositoryId", id.as_str()), ("authorEmail", email.as_str())])?;
+    let answer = author_signed(&hosted, &email)?;
     let year = moqui_core::user::now_value();
     let year = moqui_lib::object::to_plain_string(&year)
         .chars()

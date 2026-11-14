@@ -114,6 +114,18 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="signAgreement"><service-call name="org.moqui.devaide.HostingServices.sign#Agreement" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- Run locally (21.5, P13): a job of the working tree's ci.xml in a host session of the Terminal -->
+    <transition name="localJobs" read-only="true"><service-call name="org.moqui.devaide.LocalRunServices.get#LocalJobs" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="startLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.start#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <!-- worktrees for agents' sessions (21.8, P13) -->
+    <transition name="worktrees" read-only="true"><service-call name="org.moqui.devaide.WorktreeServices.get#Worktrees" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="createWorktree"><service-call name="org.moqui.devaide.WorktreeServices.create#Worktree" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="removeWorktree"><service-call name="org.moqui.devaide.WorktreeServices.remove#Worktree" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- the task panel (14) -->
     <transition name="tasks" read-only="true"><service-call name="org.moqui.devaide.TaskServices.get#Tasks" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

@@ -1142,8 +1142,11 @@ On a dev instance with the dev-aide component loaded (plans/design-dev-aide.md 1
 (`DEV_AIDE_VIEW`, `DEV_AIDE_EXTEND`, `DEV_AIDE`) gets the `dev.aide` capability in a run of an agent whose tool policy
 pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen-xml` dialect
 (`ui.write:screen-xml`, `Dialect::dev_only`). The dev tools are the dev-aide crate's: `artifact`, `source` and `check`
-(READ, also listed over MCP), `propose_edit` (WRITE), `try_service` (the sim; a real run is an approval) and `vcs`
-(lazy).
+(READ, also listed over MCP), `propose_edit` (WRITE), `try_service` (the sim; a real run is an approval), `vcs`
+(lazy) and `hosting` (lazy; a connected group server's merge requests, threads, checks, job logs and issues, the
+server's text as untrusted data; a merge request, comment or reply is an EXTERNAL approval; never an approve, merge,
+re-run, resolve or signature; plans/design-dev-aide.md 21.8). A conversation with a worktree of a root (the Workspace's
+Sessions tab) has its file and git tools rooted in the worktree in place of that root.
 
 - **A change set** is an approval of target kind `file`: its arguments are the files with their base hashes and changes
   (XML operations, exact replacements or a whole text), which the hash binds; its snapshot's `changeSet` is what the card
