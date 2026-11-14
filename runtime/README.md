@@ -22,14 +22,15 @@ instances). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/`
 | `tmp/` | no | Scratch files |
 | `txlog/` | no | Transaction logs |
 | `.env` | no | Generated secrets and local overrides |
-| `install/` | no | The embedded Postgres, unpacked from the binary on the first start (`MOQUI_INSTALL` moves it) |
+| `install/` | no | The embedded Postgres, and OpenSearch and Chromium when built in, unpacked from the binary when first needed (`MOQUI_INSTALL` moves it) |
 | `MoquiConf.xml` | no | The instance conf, merged over `MoquiDefaultConf.xml` when `MOQUI_CONF` is not set |
 
 Directories marked "no" are listed in `.gitignore` and are created when first needed.
 
 The binary carries a copy of `components/base/framework`, `components/base/tools`, a webroot stub and `conf/`
-(`crates/moqui-embedded`). It reads each of those files that is not here from the copy, and uses the file here when
-there is one; at startup it logs how many it reads from the copy and each file here that differs from it. With no
-runtime it makes only the directories, and the runtime boots, answers `/rest`, `/Login`, `/status` and the html
-`/apps`, and runs `moqui tui`; `moqui embedded extract` writes the copy out
-([Run-Deploy](../docs/Run-Deploy.md#built-in-framework-files)).
+(`crates/moqui-embedded`), and when built with `--embed production` of every component here less tests and plans. It
+reads each of those files that is not here from the copy, and uses the file here when there is one; at startup it logs
+how many it reads from the copy and each file here that differs from it. With no runtime it makes only the
+directories, and the runtime boots, answers `/rest`, `/Login`, `/status` and the html `/apps`, and runs `moqui tui`
+(with a production copy it is the whole instance); `moqui embedded extract` writes the copy out
+([Run-Deploy](../docs/Run-Deploy.md#built-in-runtime-files)).

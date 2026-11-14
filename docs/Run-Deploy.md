@@ -5,7 +5,8 @@ also covers connecting instances to each other: PASS servers to a BOSS server, a
 group server. The first sections give the steps for the common cases; the sections after them have the detail. Building
 and the build packages are in [Build-Test](Build-Test.md).
 
-- [Quick start](#quick-start): develop on your machine, run one production server, run in a container
+- [Quick start](#quick-start): develop on your machine, run one production server, deploy a single binary, run in a
+  container
 - [Everyday commands](#everyday-commands)
 - [Choose a topology](#choose-a-topology)
 - [Production checklist](#production-checklist)
@@ -95,6 +96,36 @@ On the server:
 6. Back up `/opt/moqui/.env` with the database. It holds `entity_ds_crypt_pass`, the key of the encrypted fields.
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
+
+### Deploy a single binary
+
+A binary built with the production runtime in it ([Built-in runtime files](#built-in-runtime-files)) is the whole
+deployment: no archive to unpack, and an upgrade is a new binary. On the build machine:
+
+```sh
+./moq archive --binary --embed-opensearch   # moqui-YYYYMMDD.gz and moqui-YYYYMMDD.sha256
+```
+
+`--binary` builds with `--embed production` (every base and add-on component in `runtime/components`, less tests and
+plans); `--embed-opensearch` and `--embed-chromium` add those programs when the server has none of its own. On the
+server, as in [Run one production server](#run-one-production-server) with the binary in place of the archive:
+
+```sh
+sudo install -d -o moqui -g moqui /opt/moqui /etc/moqui
+gunzip -c moqui-20261114.gz | sudo install -o moqui -g moqui -m 755 /dev/stdin /opt/moqui/moqui
+sudo install -o moqui -g moqui -m 644 moqui-20261114.sha256 /opt/moqui/embedded.sha256
+sudo tee /etc/moqui/environment > /dev/null <<'EOF'
+MOQUI_RUNTIME=/opt/moqui
+MOQUI_CONF=conf/MoquiProductionConf.xml
+EOF
+```
+
+`MOQUI_RUNTIME` makes `/opt/moqui` the runtime though it has no `components/` yet, and `MOQUI_CONF` picks the
+production conf built in (the binary alone otherwise runs the dev conf). The first start unpacks Postgres, and
+OpenSearch when it is used, into `/opt/moqui/install/`, and reads every other file from the binary. With
+`embedded.sha256` there it checks the binary against it first and does not start when a part differs; where settings
+come from the environment, set `MOQUI_EMBEDDED_SHA256_RUNTIME` and the others instead (`moqui embedded checksum --env`
+prints them). Put an edited conf or a changed file on disk and it is used in place of the built-in one.
 
 ### Run in a container
 
@@ -201,37 +232,70 @@ and secrets ([runtime/README.md](../runtime/README.md)). The binary takes the fi
 
 The runtime is never found from where the binary is, so one binary runs several instances, each started in its own
 directory. Run a command such as `moqui load` from the instance's directory, or with `MOQUI_RUNTIME`; from anywhere
-else it finds no runtime and makes a new one there. A runtime reads the framework, tools, webroot and conf files it
-does not have from the binary (below), so a lone binary starts in an empty directory.
+else it finds no runtime and makes a new one there. A runtime reads the files built into the binary that it does not
+have (the framework, tools, webroot and conf files, and with a production build every component; below), so a lone
+binary starts in an empty directory.
 
-### Built-in framework files
+### Built-in runtime files
 
-The binary carries a copy of the framework and tools components (less their `test/`, which holds both suites), of a
-webroot stub, listed in `crates/moqui-embedded/webroot-files.txt` (the REST, login, error and html `/apps` screens, and
-the html render mode's style sheet and scripts with the two libraries it loads, Tom Select and SortableJS), and of the
-runtime's `conf/` directory with every example and starter conf. Fonts, icons, `/qapps` and the web client's
-JavaScript libraries are not in it. It uses the copy three ways:
+The binary carries a copy of part of the runtime (`crates/moqui-embedded`), at one of three levels chosen when it is
+built (`./moq build --embed <level>`, [Embedded runtime and programs](Build-Test.md#embedded-runtime-and-programs)):
+
+| Level | What is built in |
+| --- | --- |
+| `framework` (the default) | The framework and tools components less their `test/`, a webroot stub listed in `crates/moqui-embedded/webroot-files.txt` (the REST, login, error and html `/apps` screens, the html render mode's style sheet and scripts with Tom Select and SortableJS; no fonts, icons, `/qapps` or web client libraries), and the runtime's `conf/` with every example and starter conf |
+| `production` | The framework level with the whole webroot (the web client) and every other component of the base and add-on sets, each less its top-level `test/`, `plan/` and `plans/`: the file set of `./moq archive` |
+| `all` | The production level with each component's `test/`, `plan/` and `plans/`, and the dev and test sets: `./moq archive --with-tests --with-dev` |
+
+Neither the binary nor `./moq archive` takes the names `crates/moqui-embedded/archive-excludes.txt` lists (`.git`, a
+component crate's `target/`, `__pycache__`, editor backups); the binary also leaves out dot files. It uses the copy
+three ways:
 
 - **Files read in place.** Each built-in file that is not on disk is read from the binary, in any runtime; a file on
   disk is used in its place. The framework component is the one `MOQUI_FRAMEWORK` names, tools and webroot are in
-  `components/base`, and the confs in `conf/`, so `--conf conf/MoquiProductionConf.xml` and the topology confs work
-  with the binary alone. Without a runtime the server and `moqui load` make only its directories
-  (`components/base/framework`, `tools`, `webroot`, and the database and log directories when they are used); with a
+  `components/base`, the other components in their sets under `components/`, and the confs in `conf/`, so `--conf
+  conf/MoquiProductionConf.xml` and the topology confs work with the binary alone. Without a runtime the server and
+  `moqui load` make only its directories (`components/base/framework`, `tools`, `webroot`, a directory for each other
+  built-in component, and the database and log directories when they are used). At the framework level, with a
   placeholder page at `/` in place of the web client and the built-in sets' manifest `components/components.xml`, it
   boots, loads the seed data, answers `/rest` (with the tools `moqui` API), `/Login`, `/status` and the html `/apps`
-  (System, Tools, Dashboards), and runs `moqui tui`. Links to fonts, icons and the web client are broken until the full
-  webroot is installed, and the application components are not there. A file written to a built-in location (an
-  edit in System, a component put in `components/addon`) lands on disk and is used from then on.
-- **Startup comparison.** After the factory boots, the server and `moqui load` compare the framework, tools and
-  webroot components on disk with the copies and log `N framework, tools and webroot files are not on disk and are read
-  from this binary` when there are some, and `N … files differ from the ones built into this binary`, then one line per
-  file: changed (with the first line that differs) or added on disk (framework and tools; the webroot copy is a
-  subset). The lines say why a changed file may no longer fit the binary. A file the binary has compiled in
-  (`template/XmlActions.js` and three others) is marked as ignored, since its disk copy is never read. `moqui embedded
-  diff [<set>/<path>]` prints the diffs (`conf/<path>` too) and `moqui embedded list` the built-in files.
+  (System, Tools, Dashboards), and runs `moqui tui`; links to fonts, icons and the web client are broken until the
+  full webroot is installed. At the production level it is the whole instance ([Deploy a single
+  binary](#deploy-a-single-binary)). Every built-in component loads, as one on disk would. A file written to a
+  built-in location (an edit in System, a component put in `components/addon`) lands on disk and is used from then on.
+- **Startup comparison.** After the factory boots, the server and `moqui load` compare the components on disk with the
+  copies and log `N framework, tools and webroot files are not on disk and are read from this binary` when there are
+  some, and `N … files differ from the ones built into this binary`, then one line per file: changed (with the first
+  line that differs) or added on disk (the framework level's webroot copy is a subset). For the framework, tools and
+  webroot these are warnings, since a changed file may no longer fit the binary's code; for the other components
+  (production and all) they are information, and a component on disk in a built-in set that the binary does not have
+  is one line. A file the binary has compiled in (`template/XmlActions.js` and three others) is marked as ignored,
+  since its disk copy is never read. `moqui embedded diff [<set>/<path>]` prints the diffs (`conf/<path>` and
+  `components/<set>/<component>/<path>` too), `moqui embedded list` the built-in files and `moqui embedded info` the
+  level, sets and programs.
 - **Extract.** `moqui embedded extract` writes each built-in file that is not on disk into the runtime `moqui` uses,
   and `moqui embedded extract <dir>` into another; files already there are never replaced. Then the runtime reads
   none from the binary, and its files can be edited or put in git.
+
+**Programs.** Postgres (the `embedded-postgres` feature of the Lite and Maximal packages), OpenSearch (`--embed-opensearch`)
+and Chromium (`--embed-chromium`) can be built in as their archives. Each is unpacked into the install directory,
+`<MOQUI_INSTALL>/<program>/<version>` (default `install/` in the runtime, which `./moq archive` leaves out), the first
+time it is needed, and runs as its own process; unlike the runtime files they are then ordinary files on disk, so
+this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
+the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
+and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
+start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+`moqui_chromium_path` and `runtime/chromium`, before an installed one.
+
+**Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
+(the packed runtime files as built), and `postgres`, `opensearch` and `chromium` (each the `sha256sum` of the archive
+file the build embedded); `--env` prints them as `MOQUI_EMBEDDED_SHA256_<PART>=<hex>`. Before it starts, the server
+and `moqui load` check the parts named in the file `moqui_embedded_checksums` names (a property, environment
+variable or `.env` entry; it must be there), else in `<runtime>/embedded.sha256` when that is there, and in the
+`MOQUI_EMBEDDED_SHA256_*` variables, which take the place of the file's lines. A part that differs, or one named that
+the binary does not have, is logged as an error with both checksums, and the start is refused. Lines for other files
+(the `.gz` that `./moq archive --binary` writes) are skipped, so the same file serves `sha256sum -c
+--ignore-missing`. With none given nothing is checked.
 
 Keep the runtime path short. The embedded Postgres socket, `<runtime>/db/embedded/.s.PGSQL.5432`, must be under 108
 bytes, or the start fails with "postgres socket path is N bytes".

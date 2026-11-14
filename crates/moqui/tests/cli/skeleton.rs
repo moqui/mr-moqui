@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The binary in an empty directory (crates/moqui-embedded, docs/Run-Deploy.md "Built-in framework files"): with no
+//! The binary in an empty directory (crates/moqui-embedded, docs/Run-Deploy.md "Built-in runtime files"): with no
 //! `MOQUI_RUNTIME`, `moqui load` makes only the directories of a runtime in `runtime` in the working directory, reads
 //! the framework, tools, webroot and conf files from the binary, and loads the seed data; the server on it answers
 //! `/status`, the placeholder at `/`, `/Login`, the first admin account, a REST login and logout, the entity REST

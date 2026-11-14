@@ -10,7 +10,8 @@ The binary carries a stub of this component, the files that `/rest`, `/Login`, `
 `/apps` need with the html render mode's style sheet, scripts and libraries (no fonts, icons, `/qapps` or web client
 libraries), listed in [crates/moqui-embedded/webroot-files.txt](../../../../../../crates/moqui-embedded/webroot-files.txt):
 it logs each one that differs at startup and writes them into a skeleton runtime
-([Built-in framework files](../../../../../../docs/Run-Deploy.md#built-in-framework-files)). When one of those pages, or
+([Built-in runtime files](../../../../../../docs/Run-Deploy.md#built-in-runtime-files)); a binary built with `--embed
+production` carries the whole component instead. When one of those pages, or
 the html render mode, comes to use another file, add the file to that list.
 
 ## Moqui files

@@ -210,26 +210,30 @@ pub(crate) fn verify(runtime_dir: &Path) -> Result<(), Error> {
         );
         return Ok(());
     }
-    for (part, want, have) in &failed {
-        match have {
-            Some(have) => tracing::error!(
-                "The embedded {} does not match its expected checksum: {} expects {}, this binary has {have}",
+    let lines: Vec<String> = failed
+        .iter()
+        .map(|(part, want, have)| match have {
+            Some(have) => format!(
+                "the embedded {} does not match its expected checksum: {} expects {}, this binary has {have}",
                 part.name(),
                 want.source,
                 want.sha256
             ),
-            None => tracing::error!(
+            None => format!(
                 "{} expects a checksum for {}, which this binary does not embed",
                 want.source,
                 part.name()
             ),
-        }
+        })
+        .collect();
+    for line in &lines {
+        tracing::error!("{line}");
     }
-    let names: Vec<&str> = failed.iter().map(|(part, _, _)| part.name()).collect();
+    // the lines go in the error too: the start may stop before the log has a console or a file
     Err(Error::new(format!(
-        "this binary does not match the expected embedded checksums ({}); not starting. `moqui embedded checksum` \
-         prints what it has",
-        names.join(", ")
+        "this binary does not match the expected embedded checksums; not starting (`moqui embedded checksum` prints \
+         what it has): {}",
+        lines.join("; ")
     )))
 }
 
