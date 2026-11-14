@@ -750,6 +750,19 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   pinning, the per-operation access walk and the phone-width spec (acceptance). Not shown: a real push through
   Smithy's gate and a real LFS upload through its check (the rules are tested with the framework's context, and
   the framework's own test refuses a real push by the pack's size).
+- **DG3**, Nov 14, 2026: issues. A `SmithyIssue` is a number in its repository on a task of the tracker's project;
+  the public projection (`mantle.work.PublicProjectionServices`), `#12` and `Fixes #12` scoped to the pushed
+  repository, labels and milestones kept by repository; the gate (`ForumCore.gate`) that the forum's posts, mail
+  in and every Smithy text go through; record topics (`ForumTopic.kind` `record`) for a conversation, with
+  Owners-only posts and state lines; Markdown as an authoring format of the forum's composer and of Smithy. In
+  PASS the Issues, issue, new issue, labels and milestones pages; in BOSS the number and the public conversation
+  on a task. Differences: **a confidential issue's task is in a companion project of its repository whose only
+  members are the Owners** (hiding it from each reader left about forty readers open; the hidden-item filter stays
+  as a second layer); a milestone is not set on a confidential issue; issue and commit pages are not cached
+  publicly; a key or a `Task:` trailer pushed to a Smithy repository links only that repository's issues, or a
+  task whose project the pusher is on. Not built: attachments on an issue, a topic made an issue (DG6), reference
+  links in commit messages on pages. Not shown or not traced: a hidden task in CalDAV and in follower
+  notifications; universal search drops its hit and may still count it; the composer's changes in a browser.
 
 ---
 
