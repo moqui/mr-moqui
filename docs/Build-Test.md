@@ -334,7 +334,7 @@ how it runs are in its [README](../crates/moqui-desktop/README.md) and [Mobile-D
 Prerequisites, beyond those of the server build:
 
 - **Tauri CLI**, the version `./moq desktop` checks for (`TAURI_CLI_VERSION` in `moq`), from cargo, so no Node:
-  `cargo install tauri-cli --version 3.0.0-alpha.5 --locked`.
+  `cargo install tauri-cli --version 3.0.0-alpha.6 --locked`.
 - **CMake, Ninja and a C++ compiler**, which build CEF's C++ wrapper (cef-dll-sys uses the Ninja generator).
 - **Linux:** the GTK 4 development packages and pkg-config (gtk4-sys); `patchelf` for the AppImage; and `cc`, which
   quick-sharun and `./moq` use while bundling.
@@ -347,7 +347,7 @@ Prerequisites, beyond those of the server build:
 sudo apt install build-essential pkg-config cmake ninja-build libgtk-4-dev patchelf
 # macOS (with the Xcode command line tools)
 brew install cmake ninja
-cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+cargo install tauri-cli --version 3.0.0-alpha.6 --locked
 ./moq desktop build                    # target/release/bundle: .deb and .AppImage on Linux, .app and .dmg on macOS
 ```
 
@@ -373,7 +373,7 @@ desktop` lists them:
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the artifacts.
 
 On Linux, `./moq desktop build` builds with `cargo tauri build --no-bundle` and then runs `cargo tauri bundle`, with
-these workarounds for tauri-bundler 3.0.0-alpha.4:
+these workarounds for tauri-bundler 3.0.0-alpha.5 (the Tauri CLI's):
 
 - Its `.deb` and AppImage steps copy CEF's `libEGL.so` and `libGLESv2.so`, which the CEF 154 Linux distribution no
   longer has. The bundle step's `CEF_PATH` is `target/desktop-cef`, links to the distribution's files with an empty

@@ -199,7 +199,7 @@ bundles are unsigned and the app has no updater.
 The Tauri CLI comes from cargo, so no Node is needed:
 
 ```sh
-cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+cargo install tauri-cli --version 3.0.0-alpha.6 --locked
 ./moq desktop                              # cargo tauri dev, on this repository's runtime (MOQUI_RUNTIME for another)
 MOQUI_DESKTOP_NODE=sidecar ./moq desktop   # the node as target/release/moqui (./moq build first)
 MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign in to one (./moq run for a local one)

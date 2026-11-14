@@ -23,8 +23,8 @@ moqui-client-tauri = { path = "../moqui-client-tauri" }
 moqui-lib = { path = "../moqui-lib" }
 # The same Tauri as the desktop app; here on the wry runtime (the platform WebView), which tauri::mobile_entry_point
 # names.
-tauri = { version = "=3.0.0-alpha.5", features = ["unstable"] }
-tauri-runtime-wry = "=3.0.0-alpha.5"
+tauri = { version = "=3.0.0-alpha.6", features = ["unstable"] }
+tauri-runtime-wry = "=3.0.0-alpha.6"
 # The page bridge's notify (src/commands.rs), with its Kotlin side on Android.
 tauri-plugin-notification = "=3.0.0-alpha.3"
 # A page's request body through the host (src/scheme.rs scheme_fetch).

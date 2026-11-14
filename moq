@@ -1027,7 +1027,7 @@ build puts the Maximal binary in the bundle. It first writes target/moqui-app, t
 the framework and the component crates, which the app depends on. It needs the Tauri CLI of the same
 version, from cargo:
 
-    cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+    cargo install tauri-cli --version 3.0.0-alpha.6 --locked
 
 The first build downloads CEF (about 1 GB) into the tauri-cef cache (CEF_PATH to use another).
 dev runs on this repository's runtime (MOQUI_RUNTIME to use another); a bundled app keeps its
@@ -1089,7 +1089,7 @@ Other arguments go to the Tauri CLI. The Android SDK is ANDROID_HOME, else ~/And
 else the javac on the PATH (scripts/android-env.sh). It needs the Tauri CLI of the desktop app
 and the Rust targets:
 
-    cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+    cargo install tauri-cli --version 3.0.0-alpha.6 --locked
     rustup target add x86_64-linux-android aarch64-linux-android
 
 The Gradle project downloads Gradle, the Android Gradle plugin and the SDK platform it compiles
@@ -1714,7 +1714,7 @@ task_build() {
 }
 
 # The Tauri CLI version the desktop app is built with: the tauri crate's version in crates/moqui-desktop/Cargo.toml.
-TAURI_CLI_VERSION=3.0.0-alpha.5
+TAURI_CLI_VERSION=3.0.0-alpha.6
 # Where the AppImage step gets the helper sources quick-sharun.sh compiles in (task_desktop).
 ANYLINUX_APPIMAGES_LIB=https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/df9cd3246ccbcf61eb22fc321a52277351047b4b/useful-tools/lib
 
