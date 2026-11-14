@@ -4918,8 +4918,8 @@ task_completion() {
 
 conf_names() {
     local f
-    for f in "$RUNTIME_DIR"/conf/*.xml; do
-        [ -f "$f" ] && printf 'conf/%s\n' "$(basename "$f")"
+    for f in "$RUNTIME_DIR"/conf/*.xml "$RUNTIME_DIR"/conf/*/*.xml; do
+        [ -f "$f" ] && printf '%s\n' "${f#"$RUNTIME_DIR"/}"
     done
 }
 

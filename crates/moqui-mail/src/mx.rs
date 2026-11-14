@@ -13,7 +13,7 @@
  */
 
 //! The edge node's MX delivery, the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b), when `edge_mail_mta` is `moqui`
-//! (MoquiEdgeConf.xml sets it; empty or `postfix` keeps E5a's relay to the MTA beside the edge node).
+//! (conf/edge/MoquiEdgeConf.xml sets it; empty or `postfix` keeps E5a's relay to the MTA beside the edge node).
 //!
 //! - **Recorded.** `deliver#EdgeOutboundMail` signs the message with the node's DKIM key (`super::auth`), queues it
 //!   back to the local node for the recipients that are the local node's own accounts, and records one
@@ -104,7 +104,7 @@ pub enum Mta {
     Postfix,
 }
 
-/// `edge_mail_mta`: `moqui` for the MTA in moqui (MoquiEdgeConf.xml sets it), else E5a's relay to Postfix, so an
+/// `edge_mail_mta`: `moqui` for the MTA in moqui (conf/edge/MoquiEdgeConf.xml sets it), else E5a's relay to Postfix, so an
 /// E5a deployment that never set it keeps its Postfix.
 #[must_use]
 pub fn mta() -> Mta {

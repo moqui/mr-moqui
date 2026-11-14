@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A member of a local cluster behind a load balancer of your own (conf/local-cluster/README.md): every member runs this
+    conf, on one external database. Members find each other in the moqui.server.ClusterMember table, with heartbeats on
+    the database clock (no Hazelcast or Redis), and send each other cache clears, notifications, co-editing updates,
+    session ends and call signaling over their cluster port. Sessions are rows in the shared database, so any member
+    can serve any request; scheduled jobs take a lock row, so each runs on one member at a time.
+    Use the Enterprise package (--enterprise): it has no embedded Postgres, so a member cannot start on a database of its
+    own by mistake. An edge node pooling and balancing the members is not built yet (plans/Edge-Node2.md, E17). -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+
+    <!-- The shared database: Postgres, or MySQL (mysql8) with the default cluster transport. The rest in .env, the same
+        on every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user, entity_ds_password, and
+        entity_ds_sslmode and entity_ds_sslrootcert for its TLS. The content database shares it unless
+        content_ds_db_conf names another (docs/Run-Deploy.md, Content database). -->
+    <default-property name="entity_ds_db_conf" value="postgres"/>
+
+    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and entity_ds_crypt_pass.
+        The first member's first start generates them into its .env; copy that .env to each other member before its
+        first start. A start fails when a live member has another session key or certificate. Each member keeps its own
+        instance id in runtime/db/instance_id, not in .env, so copying .env is safe.
+        Per member in .env: cluster_base_url, https://(this member's private address):8444, which the other members
+        reach (empty is https://127.0.0.1:8444, an error once other members are live). Open 8444 between the members
+        only. -->
+
+    <!-- How peers reach this member: empty for its cluster port (TLS with the cluster certificate, client certificate
+        required), notify for Postgres LISTEN/NOTIFY on the shared database when members cannot connect to each other
+        (Postgres only), ssh through its SSH server (ssh_port; a build with the ssh feature). cluster_protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1
+        only; members on different settings or builds still reach each other. -->
+    <default-property name="cluster_transport" value=""/>
+    <default-property name="cluster_protocol" value=""/>
+
+    <!-- The load balancer (.env): webapp_trusted_proxies, its address ranges, which also turns on web protection by
+        client address (each member counts its own limits); webapp_client_ip_header, the header it sets
+        (X-Forwarded-For, X-Real-IP, CF-Connecting-IP or CloudFront-Viewer-Address). Leave webapp_https_port empty
+        when it serves 443. -->
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- A load balancer that does not keep a client on one member: write each session change before the response, so the
+        next request on another member sees it. With sticky sessions this can go. -->
+    <webapp-list>
+        <webapp name="webroot">
+            <session-config flush="guarantee"/>
+        </webapp>
+    </webapp-list>
+</moqui-conf>

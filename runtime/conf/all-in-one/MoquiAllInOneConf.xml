@@ -1,21 +1,23 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
-<!-- An all-in-one node (plans/archive/Edge-Node.md §10, E12): the production conf for a full server, with its own users, apps,
-    data, mail domains, chat bridges, calls and XMPP domain, that is also the edge node of one local node (a desktop or
-    office node with no listening port of its own). No second cloud instance is needed. The local node pairs with it
-    (System › Edge Clients) and dials its HTTPS listener (by ALPN), and sees no difference from a dedicated edge node:
-    the link, the wizard, delegated calls, the queue and replication are the same.
+<!-- An all-in-one node (conf/all-in-one/README.md; plans/archive/Edge-Node.md §10, E12): the production conf for a full
+    server, with its own users, apps, data, mail domains, chat bridges, calls and XMPP domain, that is also the edge
+    node of one local node (a desktop or office node with no listening port of its own). No second cloud instance is
+    needed. The local node pairs with it (System › Edge Clients) and dials its HTTPS listener (by ALPN), and sees no
+    difference from a dedicated edge node: the link, the wizard, delegated calls, the queue and replication are the
+    same.
     Each item belongs to one side. The server's own host names, mail accounts, webhooks, calls, numbers and XMPP domain
     stay its own and are served here as on a normal node; the paired node's (its EdgeHost names, its replicated
     recipients and bridges, its calls and numbers) go over the link. A name, address, number or bridge both sides claim
     is refused, with an error naming it, so the paired node cannot take one of the server's.
-    Unlike MoquiEdgeConf.xml the runtime is a full one (the server's own components), and mr-pass keeps its local
-    authority: pass_backend_url is not edge: here, so the server's own PASS sites stay its own.
+    Unlike conf/edge/MoquiEdgeConf.xml the runtime is a full one (the server's own components), and mr-pass keeps its
+    local authority: pass_backend_url is not edge: here, so the server's own PASS sites stay its own.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link. Per-host
     settings (names, addresses, ports) go in .env. The HTTPS listener needs a WebPKI certificate in runtime/cert, which
     the local node checks when it pairs; the links use edge_link_key, generated into .env at the first start (a changed
     key means pairing again). Set edge_public_addresses in .env to this node's public IPv4 and IPv6 addresses, which
-    the local node's wizard checks its A and AAAA records against. docs/Run-Deploy.md has the commands. -->
+    the local node's wizard checks its A and AAAA records against. The local node runs conf/edge/MoquiLocalConf.xml, as
+    with a dedicated edge node. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
     <default-property name="node_role" value="all-in-one"/>
@@ -35,7 +37,7 @@
         with recipients on both sides is delivered once to each. The paired node's mail out (an EmailServer with smtpHost
         edge: there) is DKIM-signed here and delivered to each domain's MX, from bounce+(item)@ the domain
         edge_mail_bounce_domain names. A mail domain may be split between the sides by address, since its MX is this
-        host. DNS to publish: docs/Run-Deploy.md, Edge node mail. -->
+        host. The settings and DNS to publish: docs/interfaces/Mail-Inbound.md, The edge node as the gateway. -->
     <default-property name="edge_mail_mta" value="moqui"/>
     <default-property name="smtp_internet" value="true"/>
     <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
@@ -66,9 +68,13 @@
                                      <default-property name="sip_public_address" value="(this node's address)"/>
         Open sip_port (UDP, TCP), sip_tls_port (TCP) and sip_rtp_ports (UDP, 20000-20999). -->
 
-    <!-- Backups: the server's own data and the link's queue (the paired node's items until delivered) are both here:
-        unpause the backup_EmbeddedDatabase_daily job (System › Service Jobs) and set its mirror (docs/Run-Deploy.md,
-        backups). A restore can deliver a queued item again; its receipt applies it once. -->
+    <!-- Backups: the server's own data and the link's queue (the paired node's items until delivered) are both here.
+        The nightly backup_EmbeddedDatabase_daily job is paused in the seed data; this sets it running at each boot (false
+        pauses it). Give it a mirror on System › Operations › Jobs to keep a copy off this host (docs/Run-Deploy.md,
+        Backups). It backs up the embedded database only: with an external one it logs that it skipped, and the
+        database is backed up with its own tools. A restore can deliver a queued item again; its receipt applies it
+        once. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
 
     <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
 

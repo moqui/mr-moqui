@@ -1,6 +1,6 @@
 # Edge Node 2: domains, pools, edge clusters and the front
 
-Status 2026-11-12: plan; nothing here is built. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
+Status 2026-11-13: plan; E13 is built ([§5](#5-phases)), the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
 with E0–E10 and E12 built: the link, web access, delegate, queue and replicate, mr-pass on gRPC, mail, chat webhooks,
 calls, SIP, the XMPP tunnel, the attach wizard and the all-in-one node. This plan carries what that one left open
 ([§2](#2-open-from-edge-node)) and adds what larger deployments need, from the user's notes and answers of Nov 12,
@@ -84,7 +84,7 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 | A TURN secret per pairing | Revoking a node does not end its TURN access: the edge node's one `turn_auth_secret` must be rotated | E16 |
 | An ACME client | Certificates for an edge node's terminate hosts, and through the tunnel for a local node's passthrough names. Also [Dogfood](Dogfood.md) F10 | E15: by a screen, never on its own ([§4.8](#48-certificates-and-acme)) |
 | The System menu | It cannot leave a screen out by a condition, so Edge Node and Edge Clients show on every node | Framework, with E16's screens |
-| The edge node's backup job | A conf cannot unpause a seed job, so the operator unpauses `backup_EmbeddedDatabase_daily` by hand | E13, if a conf property can do it |
+| The edge node's backup job | Built (E13): the property `embedded_db_backup_scheduled=true`, which each boot applies, sets the paused seed job `backup_EmbeddedDatabase_daily` running; `conf/edge/MoquiEdgeConf.xml` and `conf/all-in-one/MoquiAllInOneConf.xml` set it | E13, built |
 | Filtering in moqui (E11) | Content and reputation scoring for mail, internal mail, public forms and outside chat, in place of the external Rspamd | E11, after the first release |
 | A PASS read cache on the edge node | Public pages read while the local node is away; writes fail closed | Later |
 | Monitoring over the link (§5.9) | The edge node's OTLP export to the local node's Monitor, the alerts (link down, an old queued item, a quota nearly reached), the wizard's Monitoring area | Later; with several pairings each gets its own part |
@@ -114,12 +114,12 @@ sets it apart ([§4.9](#49-example-confs-for-each-topology)).
 |---|---|---|---|
 | One node | Development, one production server, the demo | `conf/` itself | Built |
 | One node, several sites by host name | Separate sites on sub-domains or related domains, one server | `conf/` (`MoquiSitesConf.xml`) | E14 |
-| PASS servers with a BOSS authority | Public sites with no business data on the public machines, direct REST or gRPC | `conf/pass/` | Built |
-| Dev instances with a group server | A team | `conf/dev-group/` | Built |
-| A local node with an edge node | A server in the office or at home with a public presence; the desktop and mobile apps as its clients | `conf/edge/` | Built; the apps' exit checks are open |
-| A local node with an all-in-one node | The same, with a full public server as the edge node | `conf/all-in-one/` | Built |
+| PASS servers with a BOSS authority | Public sites with no business data on the public machines, direct REST or gRPC | `conf/pass/` | Built, with its confs (E13) |
+| Dev instances with a group server | A team | `conf/dev-group/` | Built, with its confs (E13) |
+| A local node with an edge node | A server in the office or at home with a public presence; the desktop and mobile apps as its clients | `conf/edge/` | Built, with its confs (E13); the apps' exit checks are open |
+| A local node with an all-in-one node | The same, with a full public server as the edge node | `conf/all-in-one/` | Built, with its confs (E13) |
 | Several local nodes on one edge node | Branch offices, or separate organizations of one group, each with its own domains | `conf/multi-domain/` | E16 |
-| A local cluster | More capacity, or a member that can fail: pooled and balanced by an edge node, or behind a load balancer of your own | `conf/local-cluster/` | Built behind your own balancer; E17 with an edge node |
+| A local cluster | More capacity, or a member that can fail: pooled and balanced by an edge node, or behind a load balancer of your own | `conf/local-cluster/` | Built behind your own balancer, with its conf (E13); E17 with an edge node |
 | A local node with a standby | A second machine started when the first one dies | `conf/local-failover/` | E17 |
 | An edge cluster | An edge node that can fail, or more capacity at the edge | `conf/edge-cluster/` | E18 |
 | A front node before a local cluster | Load balancing and web protection, with none of the edge node's comms | `conf/front/` | E19 |
@@ -517,6 +517,21 @@ diagram, its steps and what is not built. The settings move into the conf files'
 230 lines today; the per-area detail goes to the conf comments and to the interface guides, which already have a
 "behind an edge node" part each.
 
+**As built (E13, 2026-11-13).** `conf/edge/` (`MoquiEdgeConf.xml`, `MoquiLocalConf.xml`), `conf/all-in-one/`
+(`MoquiAllInOneConf.xml`; its local node runs `../edge/MoquiLocalConf.xml`, the same node), `conf/pass/`
+(`MoquiPassConf.xml`, `MoquiAuthorityConf.xml`), `conf/dev-group/` (`MoquiGroupConf.xml`) and `conf/local-cluster/`
+(`MoquiLocalConf.xml`, every member), each with a README; `runtime/conf/README.md` indexes them. The dev instances and
+the shared dev-aide server of `dev-group` keep `conf/MoquiDevConf.xml` with a few `.env` properties: one runtime conf
+is merged, so a conf of their own would repeat the whole dev conf. The production nodes that hold data set
+`embedded_db_backup_scheduled=true`. The test is `moqui-devkit`'s `runtime_conf_tests` (core cannot depend on the
+devkit's checker): every `runtime/conf/**/*.xml` with a `moqui-conf` root parses; the file alone has no element,
+attribute or value the schema does not take; merged over `MoquiDefaultConf.xml` with `merge_conf` it passes the whole
+schema, required attributes included (an overlay takes them from the default conf's element); and every directory has
+a README. It found the XSD missing `request-pool-max` and `request-queue` on `<tools>`, now added. The mail detail of
+Run-Deploy's edge node section moved to Mail-Inbound's "The edge node as the gateway"; the section is about 85 lines.
+The test runtimes copy `conf/` with its subdirectories (`moqui test`'s scratch runtime), the devkit project cache
+stamps the confs in them, and `./moq`'s completion lists them.
+
 ### 4.10 The System app
 
 System › Edge Clients today lists the paired nodes, makes pairing codes, and has a box of host names per node, the
@@ -558,7 +573,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 
 | Phase | What | Acceptance |
 |---|---|---|
-| **E13** | Example confs for the topologies built today, in their directories, with MoquiEdgeConf.xml and MoquiAllInOneConf.xml moved; the conf test; Run-Deploy's sections cut down to them. Each later phase adds its directory | Each built topology starts from its directory's files by its README. Run-Deploy names a directory for every topology. The test loads every conf |
+| **E13** | Example confs for the topologies built today, in their directories, with MoquiEdgeConf.xml and MoquiAllInOneConf.xml moved; the conf test; Run-Deploy's sections cut down to them. Each later phase adds its directory. **Built 2026-11-13**: `edge`, `all-in-one`, `pass`, `dev-group` and `local-cluster`, each node started from its conf; the edge node's backup job runs by `embedded_db_backup_scheduled`; the test is `moqui-devkit`'s `runtime_conf_tests` ([§4.9](#49-example-confs-for-each-topology), As built) | Each built topology starts from its directory's files by its README. Run-Deploy names a directory for every topology. The test loads every conf |
 | **E14** | Root screens by host name: the ten checks of [§4.2](#42-root-screens-by-host-name), what they find fixed, the example conf and the mr-pass wrapper roots | A served instance answers two host names with two root screens: the shell, static files, sign-in, errors and links right on each, each host with its own session. mr-pass serves the Forum and the Shop each at the root of its own host |
 | **E15** | Certificates: the screen and the ACME client ([§4.8](#48-certificates-and-acme)) | A node with no certificate for a name serves no HTTPS for it and asks nobody. From the screen an edge node gets a certificate for a terminate host, and a local node one for a passthrough name through the tunnel. Both renew by the job. A file put in `runtime/cert` shows beside them |
 | **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |

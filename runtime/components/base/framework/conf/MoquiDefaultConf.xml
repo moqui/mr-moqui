@@ -174,7 +174,7 @@
         listener. mail_dkim_selector: its selector (the TXT record to publish at selector._domainkey.domain is
         org.moqui.mail.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
         for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
-        MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
+        conf/edge/MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
         time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
         mail_mx_override (testing and staging only): domain=host:port pairs, * for any, in place of the MX.
         mail_dns_offline (testing only): true makes no DNS query.
@@ -458,7 +458,7 @@
     <default-property name="instance_id" value=""/>
     <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, edge for an edge node,
         which then takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1), or all-in-one for a
-        full server that also takes the link of a paired local node (§10, runtime/conf/MoquiAllInOneConf.xml): its own
+        full server that also takes the link of a paired local node (§10, runtime/conf/all-in-one/MoquiAllInOneConf.xml): its own
         names, mail, webhooks and calls stay its own, and the paired node's go over the link. A local node needs no
         role: it dials its edge node when edge_node_url is set. Pairing (System › Edge Node) writes edge_node_url,
         edge_node_key (this node's private key, base64 PKCS#8; a secret) and edge_node_pin (the SHA-256 of the edge node's

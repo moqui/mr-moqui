@@ -59,7 +59,7 @@
 
     <!-- Component Sets -->
     <component-set name="apps" components="mr-marble,mr-boss,mr-pass"/>
-    <!-- An edge node (plans/archive/Edge-Node.md, conf/MoquiEdgeConf.xml): mr-pass only; the base components it also needs
+    <!-- An edge node (plans/archive/Edge-Node.md, conf/edge/MoquiEdgeConf.xml): mr-pass only; the base components it also needs
         (framework, tools, webroot, basic-comms) come with mr-moqui -->
     <component-set name="edge" components="mr-pass"/>
 </addons>

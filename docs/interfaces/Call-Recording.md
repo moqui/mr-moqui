@@ -70,7 +70,7 @@ the recording and the file's name; the recorder's end (`note#RecorderEnd`) goes 
 recording's id, so it never overtakes a segment. The local node's `CallRecordingServices.receive#EdgeRecording` (run
 only for the queue, as `_edge_`) stores each with `store#RecordingSegment` from the queue's copy (`fromLocation`, which
 `store#RecordingFile` takes only under `dbresource://moqui/edge/content/in/`). While the link is down they wait in the
-edge node's queue, kept 14 days. An edge node's segments are at most 32 MiB (`MoquiEdgeConf.xml` sets
+edge node's queue, kept 14 days. An edge node's segments are at most 32 MiB (`conf/edge/MoquiEdgeConf.xml` sets
 `call_recording_segment_mb` 16), under the queue's 64 MiB content cap.
 
 **Failure ends the recording, not the call.** A full queue, a file error or a store error stops the recorder: its

@@ -312,7 +312,7 @@ the edge node is not a member of the local node's cluster:
   node.
 
 Settings: `rtc_media_port`, `rtc_media_host` 0.0.0.0, `rtc_public_address` and `turn_port` on the edge node
-(`MoquiEdgeConf.xml` sets all but the address); nothing on the local node, which needs no media port. W7 cascading
+(`conf/edge/MoquiEdgeConf.xml` sets all but the address); nothing on the local node, which needs no media port. W7 cascading
 between the edge node and a local media node is later work.
 
 ## Tests

@@ -188,7 +188,7 @@ along with this software (see the LICENSE.md file). If not, see
         </widgets></section>
         <section name="NotEdge" condition="notEdge"><widgets>
             <container-box><box-header title="Edge clients"/><box-body>
-                <label type="p" text="This node is not an edge node, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/MoquiEdgeConf.xml), and a full server that also takes a local node's link with node_role set to all-in-one (conf/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
+                <label type="p" text="This node is not an edge node, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/edge/MoquiEdgeConf.xml), and a full server that also takes a local node's link with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
                 <link url="../EdgeNode" text="Edge node" icon="sym_o_cloud_sync"/>
             </box-body></container-box>
         </widgets></section>

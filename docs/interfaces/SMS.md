@@ -56,7 +56,7 @@ with a messaging bridge and no trunk texts.
 - The webhook URL in the portal is the edge node's: `https://<edge node>/channels/<chatBridgeId>/webhook`. The edge node
   checks the signature with the bridge's public key (replicated to it; the API key stays on the local node), answers 200
   once the text is queued, and the local node takes it when its link is up, once, without checking it again.
-- `channels_webhooks_enabled=true` is on the edge node (MoquiEdgeConf.xml). On the local node `channels_public_url` is
+- `channels_webhooks_enabled=true` is on the edge node (`conf/edge/MoquiEdgeConf.xml`). On the local node `channels_public_url` is
   the edge node's address; the Edge Node wizard sets it.
 - MMS. Each file of a text that goes out is put on the edge node before the send, and the provider fetches it from
   there (`/channels/<chatBridgeId>/media/<token>`, for `channels_media_minutes`). While the link is down the text waits.

@@ -107,7 +107,7 @@ left open and its next phases are under [Edge node and deployment topologies](#e
 
 ## Edge node and deployment topologies
 
-[Edge-Node2](Edge-Node2.md) (plan, Nov 12, 2026; nothing built) follows the archived [Edge-Node](archive/Edge-Node.md).
+[Edge-Node2](Edge-Node2.md) (plan, Nov 12, 2026; E13 built Nov 13) follows the archived [Edge-Node](archive/Edge-Node.md).
 The user's call: the bulk of it comes before the first release, as what sets MR Moqui apart, saves administration and
 opens these topologies to small businesses and homelabs. In order; E11 (filtering in moqui) and its Later row are in
 [Future-Plans](Future-Plans.md#edge-node).
@@ -115,7 +115,6 @@ opens these topologies to small businesses and homelabs. In order; E11 (filterin
 | Item | Source |
 |---|---|
 | The checks on a deployed edge node, none run: PASS on the link, mail at a large provider, a Telnyx round trip, calls with real browsers, a real trunk and phones, an XMPP client, the whole wizard, a served all-in-one server | [Edge-Node2 §2.1](Edge-Node2.md#21-checks-on-a-deployed-edge-node) |
-| E13: an example conf directory for each topology under `runtime/conf/` (MoquiEdgeConf.xml and MoquiAllInOneConf.xml move), a test that loads every conf, and Run-Deploy cut down to refer to them | [§4.9](Edge-Node2.md#49-example-confs-for-each-topology) |
 | E14: root screens by host name, as Moqui Java has: ten checks on a served instance, what they find fixed, each host with its own session, mr-pass's wrapper roots | [§4.2](Edge-Node2.md#42-root-screens-by-host-name) |
 | E15: System › Certificates and an ACME client used only from it; a name with no certificate gets no HTTPS and nothing is requested for it | [§4.8](Edge-Node2.md#48-certificates-and-acme) |
 | E16: several local nodes on one edge node, each area routed by its domain's owner, with claims and limits per pairing | [§4.1](Edge-Node2.md#41-domains-on-one-edge-node) |

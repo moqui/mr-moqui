@@ -89,12 +89,17 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
                 The core (minimum) size of the worker thread pool.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-max" type="xs:integer"><xs:annotation><xs:documentation>
-                The maximum size of the worker thread pool, 25 by default. Each worker can hold two connections
+                The maximum size of the worker thread pool, 22 by default. Each worker can hold two connections
                 (a transaction and a suspended one), so it counts twice in the startup check of the pool size.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-alive" type="xs:integer"><xs:annotation><xs:documentation>
                 The amount of time, in seconds, to keep idle worker threads alive (beyond core pool size).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="notification-topic-factory" type="xs:string"><xs:annotation><xs:documentation>
                 The ToolFactory to use to get a SimpleTopic for distributed NotificationMessage</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="request-pool-max" type="xs:integer"><xs:annotation><xs:documentation>
+                The number of request worker threads, 16 by default.
+                Each can hold two connections, so it counts twice in the startup check of the pool size.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="request-queue" type="xs:integer"><xs:annotation><xs:documentation>
+                The most requests that wait for a request worker, 64 by default.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="tool-factory">

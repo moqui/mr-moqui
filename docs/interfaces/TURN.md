@@ -69,7 +69,7 @@ Open these ports on the firewall:
 ## On an edge node
 
 An edge node ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4) runs the embedded TURN of its local node's calls, beside its
-media socket (`turn_port` 3478 in `MoquiEdgeConf.xml`, relays to its own media port). The local node gives the legs
+media socket (`turn_port` 3478 in `conf/edge/MoquiEdgeConf.xml`, relays to its own media port). The local node gives the legs
 their credentials, and the edge node's TURN checks them with its own `turn_auth_secret`, which the two do not share as
 configuration. So the edge node tells its secret to the local node in the answer to the link's Hello, on an up
 connection whose keys both ends pinned (never in a Hello, which a check before pairing also gets). The local node keeps
