@@ -21,7 +21,7 @@ mod factor;
 mod filter;
 mod login;
 mod password;
-mod policy;
+pub(crate) mod policy;
 mod preference;
 pub mod session;
 mod system;

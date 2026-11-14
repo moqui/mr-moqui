@@ -133,7 +133,7 @@ fn push_once(fixture: &Fixture, base: &str, maps: &str) -> PushOutcome {
     super::pktline::data(&mut &stream, b"git-receive-pack /dst.git\0host=localhost\0").unwrap();
     let mut input = stream.try_clone().unwrap();
     let mut output = BufWriter::new(stream);
-    let outcome = push::push(src.store.as_ref(), &refs, &mut input, &mut output).unwrap();
+    let outcome = push::push(src.store.as_ref(), &refs, None, &mut input, &mut output).unwrap();
     drop(output);
     outcome
 }

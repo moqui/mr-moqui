@@ -569,7 +569,9 @@ impl Inner {
                 flow.auth_flow_id
             )));
         }
-        Ok(profile(&flow, attributes, provider.as_ref(), id_token))
+        let mut profile = profile(&flow, attributes, provider.as_ref(), id_token);
+        profile.user_info_url.clone_from(&built.user_info);
+        Ok(profile)
     }
 
     async fn user_info(
@@ -662,6 +664,7 @@ fn profile(
         attributes,
         roles,
         id_token,
+        user_info_url: None,
     }
 }
 

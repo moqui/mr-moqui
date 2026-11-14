@@ -39,6 +39,7 @@ pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;
 pub(crate) mod events;
+pub(crate) mod fetch_refs;
 pub(crate) mod file_commit;
 pub(crate) mod fork;
 pub(crate) mod fs;
@@ -48,6 +49,7 @@ pub(crate) mod index;
 pub(crate) mod lease;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
+pub(crate) mod mirror;
 pub(crate) mod ops;
 pub(crate) mod reach;
 pub(crate) mod revwalk;
@@ -1303,7 +1305,7 @@ impl GitProvider {
         let pushed = {
             let io = server::push::ExecIo(std::cell::RefCell::new(exec.as_mut()));
             let mut output = std::io::BufWriter::with_capacity(64 * 1024, &io);
-            let pushed = server::push::push(repo.store.as_ref(), &refs, &mut &io, &mut output);
+            let pushed = server::push::push(repo.store.as_ref(), &refs, None, &mut &io, &mut output);
             drop(output);
             pushed
         };

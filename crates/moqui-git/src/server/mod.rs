@@ -43,6 +43,7 @@ pub(crate) mod receive;
 #[cfg(test)]
 mod repository_tests;
 pub(crate) mod review;
+pub(crate) mod smart_http;
 #[cfg(test)]
 pub(crate) mod tests;
 pub(crate) mod upload;
@@ -297,7 +298,7 @@ pub(crate) fn pack_threads() -> Option<usize> {
     positive_setting("pack-threads")
 }
 
-fn max_object_size() -> Option<usize> {
+pub(crate) fn max_object_size() -> Option<usize> {
     Some(positive_setting("max-object-size").unwrap_or(512 * 1024 * 1024))
 }
 
@@ -963,6 +964,20 @@ pub fn serve_ssh(
 
 /// Unique names for quarantine directories.
 static QUARANTINES: AtomicU64 = AtomicU64::new(0);
+
+/// A new quarantine directory for objects coming into `store`: in its own objects directory when it is on disk (so
+/// accepting is a rename), else under `scratch`.
+pub(crate) fn quarantine_in(store: &dyn GitStore, scratch: &std::path::Path) -> std::path::PathBuf {
+    let name = format!(
+        "incoming-{}-{}",
+        std::process::id(),
+        QUARANTINES.fetch_add(1, Ordering::Relaxed)
+    );
+    match store.disk_path() {
+        Some(path) => path.join("objects").join(name),
+        None => scratch.join(name),
+    }
+}
 
 /// One conversation with a client about one repository.
 struct Session<'a> {

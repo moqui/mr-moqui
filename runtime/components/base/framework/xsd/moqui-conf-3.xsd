@@ -990,6 +990,14 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>Ignored: the password a login tried is never stored, as that is too much
                     security risk (UserLoginHistory.passwordUsed is removed). Kept so a Java conf that sets it is still
                     valid.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sso-linked-service" type="xs:string"><xs:annotation><xs:documentation>A service told of
+                each real SSO sign-in (an OAuth or OpenID Connect flow, org.moqui.sso.AuthServices.handle#Callback) that
+                links or confirms the account's provider id (UserAccount.externalUserId), once the sign-in's transaction
+                commits, with authorization disabled: userId, authFlowId, providerHost (the host of the user info
+                endpoint), externalUserId, login (the provider's username), email, emailVerified (Boolean) and
+                urlsOverridden (Boolean: the flow sets an endpoint or discovery URL of its own). A failure is logged and
+                never blocks the sign-in; a write of externalUserId by hand calls nothing. None when empty.
+                docs/security/Recent-Auth.md, SSO sign-in hook.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <!-- Future security settings:

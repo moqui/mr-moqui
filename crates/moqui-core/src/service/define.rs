@@ -2105,7 +2105,7 @@ pub fn configured_service_files() -> Result<Vec<PathBuf>, Error> {
     configured_paths()
 }
 
-fn configured_paths() -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn configured_paths() -> Result<Vec<PathBuf>, Error> {
     let configured = ExecutionContext::with_current(|ec| ec.factory().conf_text().to_string())
         .filter(|conf| !conf.trim().is_empty())
         .map(|conf| MNode::parse_shared("moqui-conf", &conf))
