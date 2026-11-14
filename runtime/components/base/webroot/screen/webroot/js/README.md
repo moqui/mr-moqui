@@ -76,6 +76,7 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `WebrootTerminal.js` | `moqui.terminal`: the browser terminal's sessions, their xterm.js instances and sockets, the views that show them (`m-terminal-view`, `m-terminal-node`), the header button, the key bar and the floating terminals ([Terminal](../../../../../../../docs/ui/Terminal.md)) |
 | `WebrootFloats.js` | `moqui.floats`: the floating windows over the shell (`m-float-layer`, `m-float`) that Assist, the tray's tabs and a terminal undock into ([Qvt-Client](../../../../../../../docs/ui/Qvt-Client.md#floats)) |
 | `WebrootAssist.js` | `moqui.assist`: the Assist drawer, its store, transport and follow ([Assist](../../../../../../../docs/ai/Assist.md)) |
+| `MoquiFind.js` | `moqui.find`: the semantic find of a page an app turns on with `moqui.find.attach` (Ctrl+F by meaning, ranked by `/find/rank`); it needs no other file and works on any page ([Semantic find](../../../../../../../docs/ui/Semantic-Find.md)) |
 | `MoquiQzComponent.js` | QZ Tray printing, loaded only when the user preference `qz.print.enabled` is `true` |
 | `../css/WebrootVue.qvt.css` | the styles of the shell, the div tables and the widgets |
 

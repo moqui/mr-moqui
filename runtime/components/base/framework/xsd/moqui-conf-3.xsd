@@ -1330,7 +1330,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element name="semantic" minOccurs="0"><xs:complexType>
                 <xs:annotation><xs:documentation>Semantic and hybrid retrieval on the postgres backend. Off unless enabled;
                     needs the pgvector extension (not bundled with embedded Postgres) and an embedder. Enabling it
-                    rebuilds the search tables. The embed#PendingDocuments service fills the embeddings.</xs:documentation></xs:annotation>
+                    rebuilds the search tables. The embed#PendingDocuments service fills the embeddings. The embedder
+                    also ranks the texts of a page's semantic find (rank#Texts, docs/ui/Semantic-Find.md), on any
+                    backend and without pgvector.</xs:documentation></xs:annotation>
                 <xs:attribute name="enabled" type="boolean" default="false"/>
                 <xs:attribute name="dimensions" type="xs:positiveInteger" default="1024"><xs:annotation><xs:documentation>
                     The embedder's vector size.</xs:documentation></xs:annotation></xs:attribute>
@@ -1344,6 +1346,13 @@ along with this software (see the LICENSE.md file). If not, see
                     (a model's api-config may ask for them). hash installs a deterministic word-hash embedder for
                     development and tests; it has no semantic quality. With none, an application installs its model on
                     the search facade.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="query-prefix" type="xs:string"><xs:annotation><xs:documentation>
+                    Text put before a query when it is embedded: the instruction the model was trained with ("task:
+                    search result | query: " for EmbeddingGemma). Kept as written, with its last space.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="document-prefix" type="xs:string"><xs:annotation><xs:documentation>
+                    Text put before a document, and before a text ec.search.rankTexts ranks, when it is embedded ("title:
+                    none | text: " for EmbeddingGemma). Stored documents get it when they are indexed
+                    again.</xs:documentation></xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
         </xs:sequence>
         <xs:attribute name="backend" type="xs:string" default="postgres"><xs:annotation><xs:documentation>

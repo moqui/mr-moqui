@@ -141,6 +141,7 @@ fn attach_backend(
             let facade = SearchFacade::new(Arc::new(backend), entity.clone());
             if conf.semantic.enabled {
                 facade.set_embedder(embedder_of(factory, &conf.semantic));
+                facade.set_prefixes(&conf.semantic.query_prefix, &conf.semantic.document_prefix);
             }
             moqui_core::search::install(factory, facade);
             Ok((store, "Postgres"))
@@ -276,7 +277,13 @@ fn attach_opensearch(
             wait_for(factory, &backend, &dir)?;
         }
     }
-    moqui_core::search::install(factory, SearchFacade::new(Arc::new(backend), entity.clone()));
+    let facade = SearchFacade::new(Arc::new(backend), entity.clone());
+    // The backend stores no vectors; the embedder ranks texts a caller holds (rankTexts).
+    if conf.semantic.enabled {
+        facade.set_embedder(embedder_of(factory, &conf.semantic));
+        facade.set_prefixes(&conf.semantic.query_prefix, &conf.semantic.document_prefix);
+    }
+    moqui_core::search::install(factory, facade);
     Ok(store)
 }
 

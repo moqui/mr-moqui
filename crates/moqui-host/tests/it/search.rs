@@ -1243,7 +1243,7 @@ fn hybrid_parity(backend: &dyn SearchBackend) {
             fuzzy_below,
             ..HybridOptions::default()
         };
-        hybrid::search(backend, &mappings, &request, &options, None).unwrap()
+        hybrid::search(backend, &mappings, &request, &options, None, text.trim()).unwrap()
     };
     let ids = |page: &moqui_core::search::SearchPage| page.hits.iter().map(|hit| hit.id.clone()).collect::<Vec<_>>();
 

@@ -250,6 +250,29 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="rank" noun="Texts">
+        <description>Rank texts the caller holds, a page's sentences, against a query by meaning and words, best first:
+            the semantic find (js/MoquiFind.js). Each match is the index of its text in texts, its score, its cosine to
+            the query (meaning) and the share of the query's words it has (words). The texts' vectors are kept in memory;
+            an empty query embeds them for later calls and matches none. Needs search-facade/semantic enabled with an
+            embedder; without one available is false and the error says so.</description>
+        <in-parameters>
+            <parameter name="query" allow-html="any"/>
+            <parameter name="texts" type="List" required="true" allow-html="any"/>
+            <parameter name="limit" type="Integer" default="10"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="matches" type="List"/>
+            <parameter name="available" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            matches = []
+            available = ec.search.isAvailable() && ec.search.hasEmbedder()
+            if (!available) { ec.message.addError(ec.l10n.localize("No embedding model is configured (search-facade semantic)")); return }
+            matches = ec.search.rankTexts({query: query || '', texts: texts, limit: limit})
+        ]]></script></actions>
+    </service>
+
     <service verb="delete" noun="ElasticIndex">
         <description>Drop the search store of every DataDocument in indexName. The next index call makes it again.</description>
         <in-parameters>
