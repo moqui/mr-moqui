@@ -62,6 +62,84 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <!-- ========== Runs that end: a container for one CI job (docs/interfaces/Pipelines.md "Runners and drivers") ==========
+        A host type names its implementations in InstanceHostType.runStartService, runInspectService, runRemoveService
+        and runCleanupService; the CI engine (crates/moqui-git/src/ci/driver) calls them with authorization disabled. -->
+    <service verb="start" noun="InstanceRun" type="interface">
+        <description>Start a container that runs once and ends: no privilege, no host socket or path, a non-root user,
+            the limits given, and the labels, which tie it to its job run. Service containers are started first, each
+            reached from the run by its name.</description>
+        <in-parameters>
+            <parameter name="instanceHostId" required="true"/>
+            <parameter name="name" required="true"/>
+            <parameter name="image" required="true"/>
+            <parameter name="command" type="List"><description>The image's own when empty</description></parameter>
+            <parameter name="envMap" type="Map"/>
+            <parameter name="labels" type="Map"/>
+            <parameter name="services" type="List"><description>Maps: name, image, envMap</description></parameter>
+            <parameter name="cpuLimit"><description>CPUs, a decimal</description></parameter>
+            <parameter name="memoryMb" type="Integer"/>
+            <parameter name="diskMb" type="Integer"/>
+            <parameter name="pidsLimit" type="Integer"/>
+            <parameter name="networkMode"><description>bridge when empty; none, or a network of the host</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="instanceRef"><description>The container's id on the host</description></parameter></out-parameters>
+    </service>
+    <service verb="inspect" noun="InstanceRun" type="interface">
+        <in-parameters>
+            <parameter name="instanceHostId" required="true"/>
+            <parameter name="instanceRef" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="state"><description>running, exited or missing</description></parameter>
+            <parameter name="exitCode" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="remove" noun="InstanceRun" type="interface">
+        <description>Remove a run's container, running or not, with its volumes; with labelName and labelValue every
+            container of that label too (the run's service containers) and the run's network.</description>
+        <in-parameters>
+            <parameter name="instanceHostId" required="true"/>
+            <parameter name="instanceRef"/>
+            <parameter name="labelName"/>
+            <parameter name="labelValue"/>
+        </in-parameters>
+    </service>
+    <service verb="cleanup" noun="InstanceRuns" type="interface">
+        <description>Remove the containers that have every label of filterLabels and whose labelName label is not one
+            of keepValues: what ended or lost runs left.</description>
+        <in-parameters>
+            <parameter name="instanceHostId" required="true"/>
+            <parameter name="labelName" required="true"/>
+            <parameter name="keepValues" type="List"/>
+            <parameter name="filterLabels" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
+    </service>
+
+    <!-- The Docker Engine API, which Podman serves on its socket too (crates/moqui-git/src/ci/driver/docker.rs): the host
+        is reached over a Unix socket (hostProtocol unix, hostAddress the socket's path), HTTP, or HTTPS with the
+        host's tlsCaCert, tlsClientCert and tlsClientKey. -->
+    <service verb="start" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::start_run_docker">
+        <implements service="org.moqui.dev.InstanceServices.start#InstanceRun"/></service>
+    <service verb="inspect" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::inspect_run_docker">
+        <implements service="org.moqui.dev.InstanceServices.inspect#InstanceRun"/></service>
+    <service verb="remove" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::remove_run_docker">
+        <implements service="org.moqui.dev.InstanceServices.remove#InstanceRun"/></service>
+    <service verb="cleanup" noun="RunsDocker" type="rust" location="moqui_git::ci::driver::docker::cleanup_runs_docker">
+        <implements service="org.moqui.dev.InstanceServices.cleanup#InstanceRuns"/></service>
+
+    <!-- The fake host type (crates/moqui-git/src/ci/driver/fake.rs): starts nothing, records what it was asked, and
+        answers as the host's hostAddress says (success, fail, hang, lost or exit). For tests. -->
+    <service verb="start" noun="RunFake" type="rust" location="moqui_git::ci::driver::fake::start_run_fake">
+        <implements service="org.moqui.dev.InstanceServices.start#InstanceRun"/></service>
+    <service verb="inspect" noun="RunFake" type="rust" location="moqui_git::ci::driver::fake::inspect_run_fake">
+        <implements service="org.moqui.dev.InstanceServices.inspect#InstanceRun"/></service>
+    <service verb="remove" noun="RunFake" type="rust" location="moqui_git::ci::driver::fake::remove_run_fake">
+        <implements service="org.moqui.dev.InstanceServices.remove#InstanceRun"/></service>
+    <service verb="cleanup" noun="RunsFake" type="rust" location="moqui_git::ci::driver::fake::cleanup_runs_fake">
+        <implements service="org.moqui.dev.InstanceServices.cleanup#InstanceRuns"/></service>
+
     <!-- ========== Database Interfaces ========== -->
 
     <service verb="create" noun="Database" type="interface">

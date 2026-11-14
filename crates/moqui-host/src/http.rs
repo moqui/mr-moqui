@@ -371,7 +371,10 @@ pub(crate) async fn listen(
         app
     };
     #[cfg(feature = "git")]
-    let app = app.route("/git/{*rest}", axum::routing::any(crate::git_http::handle));
+    let app = app
+        .route("/git/{*rest}", axum::routing::any(crate::git_http::handle))
+        // the runner REST of the CI engine (docs/interfaces/Pipelines.md): tokens, no session
+        .route("/ci/runner/{*rest}", axum::routing::any(crate::git_http::handle_runner));
     // the event stream of an agent run and its catch-up (the Assist drawer)
     #[cfg(feature = "llm")]
     let app = crate::llm::routes(app);

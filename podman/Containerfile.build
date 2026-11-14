@@ -1,0 +1,80 @@
+# moqui-build: the image pipeline jobs run in (docs/interfaces/Pipelines.md "Images", plans/Dogfood.md §8.3). The same
+# Debian base as the server's image (Containerfile), with what a build and a test run of MR Moqui need
+# (docs/Build-Test.md): the pinned Rust toolchain, a C toolchain, git, bash and curl, and the libraries the embedded
+# Postgres loads. Node is not needed. Chromium and a Java runtime for OpenSearch are optional, by build argument.
+# It holds the moqui binary too: the runner is `moqui ci-run`, and the built-in pipeline of a component repository
+# runs `./moq test` in the MR Moqui tree at /opt/moqui.
+#
+# Build it with podman/build.sh --build-image, which stages the binary and the tree. A job's container has a
+# read-only root, no privilege and the user 1000, with a volume at /workspace (the checkout is /workspace/src) and a
+# tmpfs at /tmp, so everything a job writes is under /workspace or /tmp: CARGO_HOME and HOME are there.
+FROM docker.io/library/debian:13-slim
+
+ARG RUST_VERSION
+ARG WITH_CHROMIUM=0
+ARG WITH_JAVA=0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        build-essential \
+        ca-certificates \
+        clang \
+        cmake \
+        curl \
+        git \
+        jq \
+        libgcc-s1 \
+        libgssapi-krb5-2 \
+        liblz4-1 \
+        libssl3t64 \
+        libxml2 \
+        libzstd1 \
+        perl \
+        pkg-config \
+        procps \
+        tar \
+        unzip \
+        xz-utils \
+        zip \
+        zlib1g \
+    && if [ "$WITH_CHROMIUM" = "1" ]; then apt-get install -y --no-install-recommends chromium; fi \
+    && if [ "$WITH_JAVA" = "1" ]; then apt-get install -y --no-install-recommends default-jre-headless; fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# The toolchain rust-toolchain.toml pins, with clippy and rustfmt, for every user and read only: a job installs none.
+ENV RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN test -n "$RUST_VERSION" \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+    && CARGO_HOME=/usr/local/cargo sh /tmp/rustup-init.sh -y --no-modify-path --profile minimal \
+        --default-toolchain "$RUST_VERSION" --component rustfmt --component clippy \
+    && rm -f /tmp/rustup-init.sh \
+    && chmod -R a+rX /usr/local/rustup /usr/local/cargo
+ENV RUSTUP_TOOLCHAIN=$RUST_VERSION
+
+RUN groupadd --gid 1000 moqui \
+    && useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home \
+        --shell /bin/bash --comment "MR Moqui CI" moqui \
+    && mkdir -p /workspace \
+    && chown 1000:1000 /workspace
+
+# The runner, and the tree the built-in pipeline of a component tests in (moq, addons.xml, runtime, a built binary).
+COPY moqui /usr/local/bin/moqui
+COPY --chown=1000:1000 tree /opt/moqui
+RUN chmod 755 /usr/local/bin/moqui \
+    && mkdir -p /opt/moqui/target/release \
+    && ln -sf /usr/local/bin/moqui /opt/moqui/target/release/moqui \
+    && chown -h 1000:1000 /opt/moqui /opt/moqui/target /opt/moqui/target/release /opt/moqui/target/release/moqui
+
+# What a job writes is on the volume: the cargo registry and build caches, the home of its tools.
+ENV MOQUI_HOME=/opt/moqui \
+    HOME=/workspace/home \
+    CARGO_HOME=/workspace/.cargo \
+    CARGO_TERM_COLOR=never
+
+USER 1000:1000
+WORKDIR /workspace
+# The engine starts a job's container with this command (git-ci runner-command); it reads the server's URL and the
+# job token from its environment.
+CMD ["moqui", "ci-run"]

@@ -953,6 +953,7 @@ impl Guard {
     /// The path rules again, for the path a request is served at when that is not the one it came with (git at a
     /// page's URL, served under `/git/`): a `path-rule` that denies the served path stops the request too. The client
     /// rules, the methods and the rate limits were applied by [`Self::check`], to the path it came with.
+    #[cfg(any(feature = "git", test))]
     pub(crate) fn check_served_path(&self, client: IpAddr, host: &str, path: &str) -> Result<(), Refused> {
         if !self.conf().enabled || self.exempt(client, Some(host)) {
             return Ok(());

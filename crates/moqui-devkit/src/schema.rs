@@ -41,6 +41,7 @@ pub const ROOTS: &[(&str, &str)] = &[
     ("eecas", "entity-eca-3.xsd"),
     ("emecas", "email-eca-3.xsd"),
     ("gitecas", "git-eca-3.xsd"),
+    ("ci", "git-ci-3.xsd"),
     ("resource", "rest-api-3.xsd"),
     ("moqui-conf", "moqui-conf-3.xsd"),
 ];

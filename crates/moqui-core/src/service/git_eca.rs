@@ -295,3 +295,15 @@ pub fn run_git_rules(
 pub fn install(factory: &std::sync::Arc<crate::context::ExecutionContextFactory>, xml: &str) {
     eca_rules::install(factory, eca_rules::from_xml("", "").with_git(xml));
 }
+
+/// Install service ECA rules (`seca_xml`, a `secas` document) and gitECA rules from XML on a factory, for tests of
+/// rules that work together (the pipelines' rule on `queue#MergeRequestEvent` beside the framework's gitECA rules).
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn install_with_secas(
+    factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+    seca_xml: &str,
+    xml: &str,
+) {
+    eca_rules::install(factory, eca_rules::from_xml(seca_xml, "").with_git(xml));
+}

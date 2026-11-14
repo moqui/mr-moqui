@@ -47,6 +47,7 @@ Test
   test             [component ...] [options]                Run component JavaScript specs
   test-client      [component | path ...] [options]         Run component client specs against a running server
   test-load        [component | path] [--script Name]       Run a component's load script against a running server
+  ci-run           [register | poll] [options]              Run a pipeline job as its runner (in a job's container)
 
 Help
   help             [command]                                This list, or the detail for one command
@@ -566,6 +567,46 @@ Options:
   --log-level level               Console level: trace, debug, info, warn, or error (warn).
 ";
 
+const CI_RUN: &str = "\
+moqui ci-run [--workspace DIR] [--shell SHELL]
+moqui ci-run register [--name NAME] [--platform TEXT]
+moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL]
+    The runner of a pipeline job (docs/interfaces/Pipelines.md). With no command it runs the one job
+    its environment names, as the server starts it in the job's container: it gets the job, checks
+    the commit out shallow with git, restores the caches, runs each step with the shell in the
+    checkout, sends the log lines as they are written, uploads the reports, the artifacts and the
+    caches, and posts the result. It reads no runtime, conf or database; it needs git and a shell.
+
+    register and poll are a registered runner's, a long-lived machine that asks for jobs: register
+    once with the pool's token (the runner token is printed, once), then poll with the runner token.
+
+  MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_TOKEN=... MOQUI_CI_JOB_RUN_ID=100123 moqui ci-run
+  MOQUI_CI_SERVER_URL=... MOQUI_CI_POOL_TOKEN=... moqui ci-run register --name mac-mini-1
+  MOQUI_CI_SERVER_URL=... MOQUI_CI_RUNNER_TOKEN=... moqui ci-run poll
+
+Exit codes: 0 the job succeeded, 1 a step failed, 2 an error (no checkout, the server not reached),
+3 the server no longer takes the job's calls (cancelled, or past its time).
+
+Environment
+  MOQUI_CI_SERVER_URL             The server, as the runner reaches it.
+  MOQUI_CI_TOKEN                  The job token: good for this job run, while it runs. It is not
+                                  passed on to the steps.
+  MOQUI_CI_JOB_RUN_ID             The job run.
+  MOQUI_CI_POOL_TOKEN             register: the pool's registration token.
+  MOQUI_CI_RUNNER_TOKEN           poll: the runner's token.
+
+Options
+  --workspace DIR                 The empty directory the commit is checked out into and the steps
+                                  run in (src in the working directory).
+  --shell SHELL                   The shell of the steps (sh), run as SHELL -c <command>.
+  --name NAME, --platform TEXT    register: what the runner is called, and what it says it is
+                                  (the OS and architecture).
+  --once                          poll: ask once, run the job if there is one, and exit with its code.
+  --interval SECONDS              poll: the wait between asks with no job (10).
+  --work DIR                      poll: where each job gets a directory, removed after it
+                                  (moqui-ci in the temporary directory).
+";
+
 const HELP: &str = "\
 moqui help [command]
     This list, or the detail for one command.
@@ -633,6 +674,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
+        "ci-run" => Some(CI_RUN),
         "help" => Some(HELP),
         "version" => Some(VERSION),
         _ => None,
@@ -698,6 +740,7 @@ fn is_known_command(name: &str) -> bool {
             | "test"
             | "test-client"
             | "test-load"
+            | "ci-run"
             | "serve"
             | "tui"
             // the browser terminal's helper (`crate::terminal_helper`), hidden from the help
@@ -884,6 +927,7 @@ pub fn command_usage(command: &str) -> Error {
         "test" => "moqui test [component ...] [options]",
         "test-client" => "moqui test-client [component | path ...] [options]",
         "test-load" => "moqui test-load [component | path] [--script Name] [options]",
+        "ci-run" => "moqui ci-run [register | poll] [options]",
         "tui" => {
             "moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--snapshot PATH [--size WxH]] [--agent] [--server URL [--forget]]"
         }

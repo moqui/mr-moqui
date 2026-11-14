@@ -1291,6 +1291,22 @@
         gc#GitRepositories deletes unreachable objects not written or referenced in the last gc-prune-days days (at
         least 1), keeps the commits of the last gc-reflog-days days of changes (a force push can be undone), and passes
         over a repository of more than gc-max-objects objects.
+        Push to review (docs/interfaces/Git-Hosting.md, Push to review): with review-push a user who may view a
+        repository pushes refs/for/[branch], which opens or updates a merge request, and nothing else; one with no
+        push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap). With
+        review-start-hidden such a merge request starts hidden, until the application shows it. What the server does
+        for such a user is small: a push's commands, shallow lines and options are at most review-max-commands each
+        in review-max-request-bytes (push-max-commands and push-max-request-bytes for a user who may push), it builds
+        on at most review-max-built-on commits of the repository, at most review-max-trees trees are read to check
+        what it names, and after review-max-refused refused pushes for review or proposals in an hour (per node; 0:
+        no cap) the account sends no more that hour.
+        merge-request-url is the page told to the client ({repositoryPath}, {repositoryId}, {mergeRequestNum},
+        {mergeRequestId}; after public-url when it starts with /). A commit is read or fetched by its id only when a
+        ref reaches it, from at most reach-max-commits commits kept in memory per repository; get#GitCommitRefs reads
+        at most contains-max-commits. Commit status contexts that start with one of reserved-status-contexts (comma
+        separated; none by default, a hosting application sets agreement/,ci/) are written with authorization
+        disabled only. The head ref of a merge request closed unmerged is deleted review-ref-retention-days after. committer-name and committer-email are the committer
+        of a commit#GitFiles commit whose author the application gives.
     -->
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
@@ -1302,7 +1318,33 @@
             archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"
             archive-max-concurrent="2"
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
-            db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"/>
+            db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"
+            review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
+            review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
+            review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
+            merge-request-url="" reach-max-commits="1000000" contains-max-commits="200000"
+            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
+
+    <!--
+        Pipelines: the CI engine over the hosted repositories (docs/interfaces/Pipelines.md). With enabled empty the
+        engine queues runs only while there is an enabled GitRunnerPool, so a server that runs no CI writes no
+        statuses. server-url is the URL runners reach this server by (the git public URL when empty). The
+        run-check-service is asked before a run is queued (org.moqui.git.GitCiServices.check#PipelineRun) and the
+        run-url-service, else the run-url template, gives the target of the commit statuses. A job never runs on
+        this server: the limits here are what a ci.xml may ask for and what a runner may send.
+    -->
+    <git-ci enabled="${git_ci_enabled}" server-url="${git_ci_server_url}" server-id="" run-check-service=""
+            run-url-service="" run-url=""
+            builtin-enabled="true" builtin-image="moqui-build" builtin-pool="" builtin-workers="2"
+            max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
+            max-timeout-minutes="360" default-timeout-minutes="60" max-fetch-depth="50"
+            max-log-bytes="16777216" max-log-batch-bytes="1048576" max-artifact-bytes="1073741824"
+            max-report-bytes="16777216" max-cache-bytes="2147483648" max-artifacts="100"
+            artifact-retention-days="30" max-artifact-retention-days="365" log-retention-days="90"
+            cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
+            runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
+            container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
+            container-tmp-mb="1024"/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the

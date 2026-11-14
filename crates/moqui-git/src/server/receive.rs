@@ -91,13 +91,58 @@ fn id_or_none(text: &str) -> Result<Option<ObjectId>, Error> {
     Ok((!id.is_null()).then_some(id))
 }
 
-/// Read the commands and push options; `None` when the client sent none (nothing to push, or a probe).
-pub(crate) fn read_request(input: &mut dyn Read) -> Result<Option<PushRequest>, Error> {
+/// How much of a push's request is taken before its pack: the commands, the shallow lines and the push options are
+/// kept in memory, and a client sends as many as it likes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RequestLimits {
+    /// The most commands, the most shallow lines and the most push options (each).
+    pub lines: usize,
+    /// The most bytes of them all together.
+    pub bytes: usize,
+}
+
+impl RequestLimits {
+    /// The conf's limits (`git-server`): `push-max-commands` (100,000) and `push-max-request-bytes` (16 MiB) for a
+    /// user who may push; `review-max-commands` (8) and `review-max-request-bytes` (64 KiB) for a `viewer`, who
+    /// pushes for review only.
+    pub(crate) fn of(viewer: bool) -> Self {
+        let number = |name: &str, default: usize| Some(crate::number_setting(name, default)).filter(|n| *n > 0);
+        if viewer {
+            Self {
+                lines: number("review-max-commands", 8).unwrap_or(8),
+                bytes: number("review-max-request-bytes", 64 * 1024).unwrap_or(64 * 1024),
+            }
+        } else {
+            Self {
+                lines: number("push-max-commands", 100_000).unwrap_or(100_000),
+                bytes: number("push-max-request-bytes", 16 * 1024 * 1024).unwrap_or(16 * 1024 * 1024),
+            }
+        }
+    }
+
+    /// Count one more line of `len` bytes, of which there are `lines` of its kind now.
+    fn take(&self, lines: usize, len: usize, read: &mut usize) -> Result<(), Error> {
+        *read = read.saturating_add(len);
+        if lines > self.lines || *read > self.bytes {
+            return Err(Error::new(format!(
+                "GitPushRequestTooLarge: a push here names at most {} refs, shallow commits or options, in {} bytes",
+                self.lines, self.bytes
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Read the commands and push options, within `limits`; `None` when the client sent none (nothing to push, or a
+/// probe).
+pub(crate) fn read_request(input: &mut dyn Read, limits: &RequestLimits) -> Result<Option<PushRequest>, Error> {
     let mut request = PushRequest::default();
+    let mut read = 0;
     loop {
         match pktline::read(input).map_err(io_error)? {
             None | Some(Packet::Flush) => break,
             Some(Packet::Data(data)) => {
+                limits.take(0, data.len(), &mut read)?;
                 let (line, caps) = match data.iter().position(|byte| *byte == 0) {
                     Some(at) => (&data[..at], Some(&data[at + 1..])),
                     None => (&data[..], None),
@@ -108,6 +153,7 @@ pub(crate) fn read_request(input: &mut dyn Read) -> Result<Option<PushRequest>, 
                 }
                 let line = String::from_utf8_lossy(line.strip_suffix(b"\n").unwrap_or(line)).into_owned();
                 if let Some(rest) = line.strip_prefix("shallow ") {
+                    limits.take(request.shallow.len() + 1, 0, &mut read)?;
                     request.shallow.push(
                         ObjectId::from_hex(rest.trim().as_bytes())
                             .map_err(|_| Error::new(format!("not an object id: {rest}")))?,
@@ -120,6 +166,7 @@ pub(crate) fn read_request(input: &mut dyn Read) -> Result<Option<PushRequest>, 
                         "protocol error: expected old/new/ref, got '{line}'"
                     )));
                 };
+                limits.take(request.commands.len() + 1, 0, &mut read)?;
                 request.commands.push(Command {
                     old: id_or_none(old)?,
                     new: id_or_none(new)?,
@@ -136,7 +183,11 @@ pub(crate) fn read_request(input: &mut dyn Read) -> Result<Option<PushRequest>, 
         loop {
             match pktline::read(input).map_err(io_error)? {
                 None | Some(Packet::Flush) => break,
-                Some(packet) => request.options.push(packet.text().unwrap_or_default()),
+                Some(packet) => {
+                    let option = packet.text().unwrap_or_default();
+                    limits.take(request.options.len() + 1, option.len(), &mut read)?;
+                    request.options.push(option);
+                }
             }
         }
     }
@@ -192,3 +243,7 @@ pub(crate) fn message(out: &mut dyn Write, request: &PushRequest, text: &str) ->
     pktline::band(out, pktline::BAND_PROGRESS, text.as_bytes(), MAX_BAND_64K).map_err(io_error)?;
     out.flush().map_err(io_error)
 }
+
+#[cfg(test)]
+#[path = "receive_tests.rs"]
+mod tests;

@@ -164,7 +164,8 @@ fn create_ssh_key(
             })
         });
     if taken {
-        add_error(format!("SSH key {fingerprint} is already in use"));
+        // the code first, for an account page (docs/interfaces/Git-Hosting.md, Error codes)
+        add_error(format!("KeyInUse: SSH key {fingerprint} is already in use"));
         return Ok(BTreeMap::new());
     }
     let mut row = EntityValue::make(facade, USER_SSH_KEY)?;
