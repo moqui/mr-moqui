@@ -185,3 +185,72 @@ fn a_stored_message_is_read_as_a_report_by_its_files() {
     assert!(read_delivery_report(&missing, &facade).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Hostile and broken reports answer what they can and never panic: no field separator, a folded line with no field
+/// before it, bytes that are not UTF-8 (a multi-byte character cut at the part limit too), a feedback part with no body,
+/// a marker inside a multi-byte text, and far more recipients than are read.
+#[test]
+fn a_hostile_or_broken_report_never_panics() {
+    for body in [
+        "",
+        "\n\n\n",
+        " folded first line\r\n\tmore\r\n",
+        "no colon at all\r\nFinal-Recipient\r\n",
+        "Final-Recipient: ;\r\nAction:\r\nStatus:\r\n",
+        "Final-Recipient: rfc822; <>\r\nAction: failed\r\nStatus: 5.1.1\r\n",
+        "\u{feff}Final-Recipient: rfc822; é@ü.example\r\nAction: FAILED\r\nStatus: \r\n",
+    ] {
+        let status = delivery_status(body);
+        assert!(status
+            .recipients
+            .iter()
+            .all(|recipient| !recipient.final_recipient.is_empty()));
+        let _ = feedback_report(body);
+    }
+    let many: String = (0..1000)
+        .map(|n| format!("\r\nFinal-Recipient: rfc822; r{n}@example.net\r\nAction: failed\r\nStatus: 5.1.1\r\n"))
+        .collect();
+    assert_eq!(
+        delivery_status(&format!("Reporting-MTA: dns; x\r\n{many}"))
+            .recipients
+            .len(),
+        RECIPIENTS_MAX
+    );
+    let rcpts: String = (0..1000)
+        .map(|n| format!("Original-Rcpt-To: r{n}@example.net\r\n"))
+        .collect();
+    assert_eq!(feedback_report(&rcpts).original_rcpt_to.len(), RECIPIENTS_MAX);
+    for raw in [
+        &b"Content-Type: message/feedback-report"[..],
+        b"Content-Type: message/feedback-report\r\nno empty line",
+        b"\xff\xfe\xc3Content-Type: message/feedback-report\r\n\r\n\xc3\x28Feedback-Type: abuse\r\n",
+        "Subject: ü\u{1F600}content-type: MESSAGE/FEEDBACK-REPORT\r\n\r\nFeedback-Type: fraud\r\n".as_bytes(),
+    ] {
+        let _ = parse_arf(raw);
+    }
+    // a part over the limit cut inside a multi-byte character, and broken Message-IDs
+    let mut long = "Message-ID: <x@y>\r\n".as_bytes().to_vec();
+    long.resize(PART_MAX - 1, b'a');
+    long.extend_from_slice("é".repeat(4).as_bytes());
+    let parts = [
+        ("message/rfc822".to_string(), long),
+        (
+            "message/delivery-status".to_string(),
+            vec![0xff, 0xfe, 0x00, b':', b'\n'],
+        ),
+    ];
+    let report = stored_report(
+        "Delivered-To:\r\n\tbounces+1@x.example\r\nDelivered-To: <>\r\n",
+        "",
+        &parts,
+    );
+    assert_eq!(report.report_type, "dsn");
+    assert_eq!(report.original_message_id, "<x@y>");
+    assert_eq!(report.delivered_to, ["bounces+1@x.example"]);
+    assert_eq!(message_id_of("Message-ID: <>\r\n"), "");
+    assert_eq!(message_id_of("Message-ID:\r\n"), "");
+    assert_eq!(
+        stored_report("", "<>, ,no-address,a@b.example", &[]).delivered_to,
+        ["a@b.example"]
+    );
+}

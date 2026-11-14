@@ -517,6 +517,7 @@ fn a_call_gives_its_subject_sender_relay_and_bounce_address() {
             ("emailTemplateId", "PROFILED"),
             ("emailServerId", "TEST_TEMPLATE_RELAY"),
             ("fromAddress", "template@example.com"),
+            ("fromName", "Template name"),
             ("bounceAddress", "template-bounces@example.com"),
             ("subject", "Template ${title}"),
         ],
@@ -542,6 +543,8 @@ fn a_call_gives_its_subject_sender_relay_and_bounce_address() {
     send(&[
         ("bounceAddress", "bad\r\nX: y@example.com"),
         ("fromAddress", "no-at-sign"),
+        ("fromName", "Evil\r\nBcc: x@example.com"),
+        ("emailServerId", "TEST_PROFILE_RELAY\nX"),
     ]);
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
@@ -553,6 +556,7 @@ fn a_call_gives_its_subject_sender_relay_and_bounce_address() {
     assert_eq!(sent[0].bounce, "bounces+D100@bounce.retail.example");
     assert!(sent[1].subject.starts_with("Template"), "{}", sent[1].subject);
     assert_eq!(sent[1].from_address, "template@example.com");
+    assert_eq!(sent[1].from_name, "Template name");
     assert_eq!(sent[1].bounce, "template-bounces@example.com");
     let id = moqui_lib::object::to_plain_string(out.get("emailMessageId").expect("id"));
     let row = facade
