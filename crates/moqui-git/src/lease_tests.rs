@@ -157,6 +157,33 @@ fn a_renewal_held_by_the_database_does_not_lose_the_other_leases() {
     assert!(lost.message().starts_with("GitLeaseLost: "), "{lost}");
 }
 
+/// A lease marked lost is renewed no more and its row is let go, though its holder has not dropped it yet: another
+/// member takes it, where a renewal that went on would keep it held for a holder whose writes have stopped.
+#[test]
+fn a_lost_lease_is_renewed_no_more_and_its_row_is_let_go() {
+    let entity = moqui_core::testing::open();
+    let ttl = Duration::from_millis(600);
+    let lease = try_take(&entity, "t:lost-renewed", ttl).unwrap().expect("free");
+    std::thread::sleep(Duration::from_millis(250));
+    lease.check().expect("held and renewed");
+    // as the renewer or a check finds it: lost
+    lease
+        .held
+        .state
+        .valid
+        .store(false, std::sync::atomic::Ordering::Release);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !free_elsewhere(&entity, "t:lost-renewed") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the row of a lost lease is still held"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(lease.check().is_err());
+    drop(lease);
+}
+
 /// A lease taken again on its thread after the outer take was marked lost is taken anew in the database: refused
 /// while another member holds it, held anew (and checked good) once it is free, instead of sharing the lost state.
 #[test]

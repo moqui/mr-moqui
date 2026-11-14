@@ -138,6 +138,9 @@ pub struct SsoProfile {
     pub roles: Vec<String>,
     /// The raw ID token, for the `id_token_hint` of a logout at the provider.
     pub id_token: Option<String>,
+    /// The user info endpoint the profile was read from (the flow's own, or its client type's default), when there was
+    /// one: its host is the `providerHost` of the conf's `login` `sso-linked-service`.
+    pub user_info_url: Option<String>,
 }
 
 /// The protocol work, installed by the host.

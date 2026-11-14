@@ -537,3 +537,15 @@ fn a_users_inline_file_is_sandboxed_and_active_types_are_attachments() {
         assert!(!super::is_active_content_type(passive), "{passive}");
     }
 }
+
+/// A user's file asked inline (`sendResourceResponse(location, true)`, a PASS download whose authority says inline)
+/// is an attachment when its type can run script, and shown sandboxed otherwise, a PDF unsandboxed.
+#[test]
+fn a_users_file_asked_inline_is_shown_only_when_passive_and_then_sandboxed() {
+    use super::user_file_inline;
+    assert_eq!(user_file_inline("text/html; charset=utf-8", true), (false, false));
+    assert_eq!(user_file_inline("image/svg+xml", true), (false, false));
+    assert_eq!(user_file_inline("image/png", true), (true, true));
+    assert_eq!(user_file_inline("application/pdf", true), (true, false));
+    assert_eq!(user_file_inline("image/png", false), (false, false));
+}

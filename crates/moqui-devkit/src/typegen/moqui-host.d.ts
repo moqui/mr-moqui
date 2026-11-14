@@ -892,8 +892,12 @@ interface MoquiUserFacade {
     endVisit(visitId: string): number;
     /** A null or empty username or password fails as a wrong one does: false, with the message in ec.message. */
     loginUser(username: string | null, password: string | null): boolean;
+    /** A job's login: leaves the account's hasLoggedOut as it is. */
     internalLoginUser(username: string): boolean;
+    /** Logs out and marks the account hasLoggedOut, which ends its sessions in every browser. */
     logoutUser(): boolean;
+    /** Ends this context's login only, writing nothing to the account: the end of a job's internalLoginUser. */
+    logoutLocal(): boolean;
 }
 
 /** An uploaded file. A script cannot hold the bytes. */

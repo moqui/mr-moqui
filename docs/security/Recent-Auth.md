@@ -53,6 +53,25 @@ allowed), so a provider that ignores the request gives no recent sign-in.
 
 In the terminal, BasicComms Settings, My devices has a "Confirm it is you" form (password and code).
 
+## SSO sign-in hook
+
+The conf's `user-facade` `login` `sso-linked-service` names a service told of each real sign-in through an OAuth or
+OpenID Connect flow (`handle#Callback`) that links or confirms the account's provider id (`UserAccount.externalUserId`),
+so an application can tie its own records to the identity (Smithy's GitHub authors, claimed by signing in with GitHub).
+It is called once the sign-in's transaction commits, with authorization disabled, with:
+
+| Parameter | |
+|---|---|
+| `userId`, `authFlowId` | who signed in, through which flow |
+| `providerHost` | the host of the user info endpoint the profile was read from (the flow's own, or its client type's: `api.github.com`), else of the ID token's issuer |
+| `externalUserId` | the provider's id |
+| `login` | the provider's username (`login`, `preferred_username` or `username`), when the profile has one |
+| `email`, `emailVerified` | the profile's email, and whether the provider's `email_verified` claim is true |
+| `urlsOverridden` | the flow names an endpoint (OAuth) or a discovery or base URL (OpenID) of its own instead of its client type's |
+
+A failure is logged and never blocks or undoes the sign-in. A write of `externalUserId` by hand (an administrator's
+link) is no sign-in and calls nothing. Test: `cargo test -p moqui-core service::sso`.
+
 ## Tests
 
 - `cargo test -p moqui-core --lib user::login`: which logins count, an account switch, a local login, and a

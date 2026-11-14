@@ -215,15 +215,24 @@ fn pass_open(host_call: &mut Call<'_>) -> Result<Ret, HostError> {
                 .as_deref()
                 .and_then(|value| pass_authority::download_cache_control(&call.operation, value))
                 .unwrap_or("no-store");
+            // sent as every transport sends a user's file (web::file_headers): never sniffed, a type that can run
+            // script (HTML, SVG, XML, JavaScript) never shown inline, and one shown inline sandboxed (a PDF aside)
+            let (inline, sandboxed) = crate::web::user_file_inline(&content_type, meta.disposition == "inline");
             let mut headers = vec![
                 ("Content-Type".to_string(), content_type),
                 ("Cache-Control".to_string(), cache_control.to_string()),
                 ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
                 (
                     "Content-Disposition".to_string(),
-                    format!("{}; filename=\"{filename}\"", meta.disposition),
+                    format!(
+                        "{}; filename=\"{filename}\"",
+                        if inline { "inline" } else { "attachment" }
+                    ),
                 ),
             ];
+            if sandboxed {
+                headers.push(("Content-Security-Policy".to_string(), "sandbox".to_string()));
+            }
             // a file that takes byte ranges answers its range as a static file does (Shop F88)
             if let Some(ranged) = meta.ranged {
                 headers.push(("Accept-Ranges".to_string(), "bytes".to_string()));

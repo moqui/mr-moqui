@@ -42,6 +42,7 @@ pub mod hosting;
 #[cfg(test)]
 mod images_tests;
 mod repository;
+pub(crate) mod mirror;
 pub(crate) mod rest;
 pub mod review;
 #[cfg(test)]
@@ -72,6 +73,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     review::register(map)?;
     commit::register(map)?;
     rest::register(map)?;
+    mirror::register(map)?;
     repository::register(map)
 }
 

@@ -136,12 +136,30 @@ pub fn register_in(
     platform: Option<&str>,
 ) -> Result<Option<(String, String)>, Error> {
     let _rows = crate::rows_guard();
+    // 0 is no cap, as the other CI caps
+    let max = match super::setting("max-runners-per-pool").trim().parse::<u64>() {
+        Ok(0) => i64::MAX,
+        Ok(max) => i64::try_from(max).unwrap_or(i64::MAX),
+        Err(_) => i64::try_from(DEFAULT_MAX_RUNNERS).unwrap_or(i64::MAX),
+    };
+    // the count and the insert under the pool's lease, so registrations at once, on any member, cannot pass the cap
+    // together; a pool whose lease another member keeps past a few seconds is refused as full, to be tried again
+    let _turn = if max < i64::MAX {
+        match super::engine::pool_turn(entity, pool_id)? {
+            Some(turn) => Some(turn),
+            None => {
+                tracing::warn!(pool = pool_id, "a runner was not registered: the pool's lease is held");
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
     let active = entity
         .find(RUNNER)?
         .eq("runnerPoolId", Value::string(pool_id))
         .eq("statusId", Value::string("active"))
         .count()?;
-    let max = i64::try_from(super::number_setting("max-runners-per-pool", DEFAULT_MAX_RUNNERS)).unwrap_or(i64::MAX);
     if active >= max {
         tracing::warn!(
             pool = pool_id,

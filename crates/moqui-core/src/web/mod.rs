@@ -1358,8 +1358,9 @@ fn attachment_disposition(file_name: &str) -> String {
 ///
 /// Only an application's own files (`component://`, `classpath://`) shown inline may be kept by a shared cache, as Java
 /// sends every inline resource; anything else (a drive's or a record's file, a temporary zip) is `private, no-store`, so
-/// a proxy or a shared browser keeps no copy of what a user was allowed to read; such a file is never sniffed, and
-/// shown inline it is sandboxed (`file_headers`).
+/// a proxy or a shared browser keeps no copy of what a user was allowed to read; such a file is never sniffed, shown
+/// inline it is sandboxed (`file_headers`), and one of an active type is sent as an attachment even when asked inline
+/// ([`FileDisposition::Inline`]).
 pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Option<&str>) {
     let opened = ExecutionContext::with_current(|ec| ec.factory().resource().open(location)).transpose();
     let opened = match opened {
@@ -1393,6 +1394,9 @@ pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Op
         base.split_once("://").map(|(scheme, _)| scheme),
         Some("component" | "classpath")
     );
+    // a user's file is shown inline as FileDisposition::Inline shows it: a type that can run script (HTML, SVG, XML,
+    // JavaScript) is an attachment, sandboxed or not; only the application's own files are shown whatever their type
+    let inline = inline && (application_file || user_file_inline(file_content_type(file_name, last), true).0);
     if let Err(err) = respond_file(&opened, file_name, last, inline, application_file) {
         tracing::warn!(
             "Sending error response, resource at {location} cannot be read: {}",
@@ -1444,6 +1448,17 @@ pub fn is_active_content_type(content_type: &str) -> bool {
             | "application/ecmascript"
             | "text/ecmascript"
     ) || content_type.ends_with("+xml")
+}
+
+/// How a user's file (not the application's own) of `content_type` asked to be shown inline is sent, by every
+/// transport (`sendResourceResponse`, a PASS download): (shown inline, sandboxed). A type that can run script
+/// ([`is_active_content_type`]) is an attachment, as [`FileDisposition::Inline`] has it; one shown inline is sandboxed,
+/// a PDF aside (browsers will not show one in a sandbox, and its viewer has an origin of its own).
+#[must_use]
+pub fn user_file_inline(content_type: &str, asked_inline: bool) -> (bool, bool) {
+    let inline = asked_inline && !is_active_content_type(content_type);
+    let base = content_type.split(';').next().unwrap_or_default().trim();
+    (inline, inline && !base.eq_ignore_ascii_case("application/pdf"))
 }
 
 /// Send `opened` as this request's response, a file named `file_name` as `disposition` says, streamed a window at a

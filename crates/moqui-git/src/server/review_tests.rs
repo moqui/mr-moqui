@@ -1379,3 +1379,145 @@ fn a_merge_request_page_is_a_full_url_or_a_path_under_the_public_url() {
         "https://code.example.com/moqui/mr-moqui/-/merge-requests/7"
     );
 }
+
+/// An imported merge request (plans/Dogfood.md DG8) keeps the number, state, dates and author it is given, has its
+/// head when the commit is here and none when it is not, and fires nothing: no webhook delivery, where one opened by
+/// a user is told to the repository's webhooks. Only the repository's administrator (or the application) imports.
+#[test]
+fn an_imported_merge_request_keeps_its_state_and_fires_nothing() {
+    let fixture = fixture_with(
+        "review-imported",
+        moqui_core::context::framework_dir(),
+        r#"<git-server webhook-private-network="true"/>"#,
+    );
+    grant_entities(&fixture);
+    framework_rules(&fixture);
+    define(&fixture, "imp", "db");
+    {
+        moqui_core::testing::seed_status_flows(&fixture.entity);
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        crate::server::tests::create(
+            &fixture.entity,
+            "moqui.service.message.SystemMessageType",
+            &[
+                ("systemMessageTypeId", "GitWebhook"),
+                ("sendServiceName", "org.moqui.git.GitServices.send#GitWebhookDelivery"),
+            ],
+        );
+    }
+    commit_files(
+        &fixture,
+        WRITER,
+        "imp",
+        &[("message", s("First")), ("fileMap", file_map(&[("a.txt", "one\n")]))],
+    );
+    let side = commit_files(
+        &fixture,
+        WRITER,
+        "imp",
+        &[
+            ("message", s("Side")),
+            ("newBranch", s("side")),
+            ("fileMap", file_map(&[("b.txt", "side\n")])),
+        ],
+    );
+    settled(&fixture);
+    ok(
+        &fixture,
+        WRITER,
+        &git("store#GitWebhook"),
+        &[
+            ("repositoryId", s("imp")),
+            ("url", s("http://127.0.0.1:9/hook")),
+            ("events", s("merge_request")),
+        ],
+    );
+    let imported = |user: &str, num: &str, head: &str, status: &str| {
+        call(
+            &fixture,
+            user,
+            &review("create#MergeRequest"),
+            &[
+                ("repositoryId", s("imp")),
+                ("title", s("Pull request")),
+                ("imported", s("true")),
+                ("pushedForReview", s("true")),
+                ("headCommitId", s(head)),
+                ("mergeRequestNum", s(num)),
+                ("statusId", s(status)),
+                ("authorUserId", s(READER)),
+                ("createdDate", s("2024-03-01 10:00:00")),
+                ("mergedDate", s("2024-03-02 11:00:00")),
+            ],
+        )
+    };
+    let (_, errors) = imported(WRITER, "7", &side, "GmrMerged");
+    assert!(errors.trim().is_empty(), "{errors}");
+    let missing = "0123456789012345678901234567890123456789";
+    let (_, errors) = imported(WRITER, "8", missing, "GmrClosed");
+    assert!(errors.trim().is_empty(), "{errors}");
+    let rows = merge_requests(&fixture, "imp");
+    assert_eq!(rows.len(), 2);
+    let (merged, closed) = (&rows[0], &rows[1]);
+    assert_eq!(
+        (
+            field(merged, "mergeRequestNum").as_str(),
+            field(merged, "statusId").as_str(),
+            field(merged, "authorUserId").as_str(),
+            field(merged, "headCommitId").as_str(),
+            field(merged, "mergeableEnumId").as_str(),
+        ),
+        ("7", "GmrMerged", READER, side.as_str(), "GmaMerged")
+    );
+    // the dates given (early March 2024, whatever the zone), not now
+    let millis = |name: &str| field(merged, name).parse::<i64>().unwrap_or_default();
+    assert!(
+        (1_709_200_000_000..1_709_500_000_000).contains(&millis("createdDate")),
+        "{merged:?}"
+    );
+    assert_eq!(
+        millis("mergedDate") - millis("createdDate"),
+        25 * 3_600_000,
+        "{merged:?}"
+    );
+    assert_eq!(
+        head_of(&fixture, "imp", "refs/merge-requests/7/head"),
+        Some(side.clone())
+    );
+    // compared with its target
+    assert_eq!(field(merged, "baseCommitId").len(), 40, "{merged:?}");
+    // a head that is not here: kept with no head and no ref
+    assert_eq!(
+        (
+            field(closed, "statusId").as_str(),
+            field(closed, "headCommitId").as_str()
+        ),
+        ("GmrClosed", "")
+    );
+    assert_eq!(head_of(&fixture, "imp", "refs/merge-requests/8/head"), None);
+    assert!(webhook_bodies(&fixture).is_empty(), "{:?}", webhook_bodies(&fixture));
+
+    // refused: a number taken, and an import by who may not administer the repository
+    let (_, errors) = imported(WRITER, "7", &side, "GmrOpen");
+    assert!(errors.contains("GitNumberTaken"), "{errors}");
+    let (_, errors) = imported(READER, "9", &side, "GmrOpen");
+    assert!(errors.contains("may not import"), "{errors}");
+    assert_eq!(merge_requests(&fixture, "imp").len(), 2);
+
+    // one opened by a user is told to the webhooks (the delivery is sent on the service pool, which a test factory
+    // does not run: that error is not the create's)
+    let _ = call(
+        &fixture,
+        WRITER,
+        &review("create#MergeRequest"),
+        &[
+            ("repositoryId", s("imp")),
+            ("title", s("Opened here")),
+            ("sourceRef", s("side")),
+        ],
+    );
+    let bodies = webhook_bodies(&fixture);
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    assert!(bodies[0].contains("\"opened\""), "{}", bodies[0]);
+}

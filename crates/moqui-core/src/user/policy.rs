@@ -114,6 +114,12 @@ pub(crate) fn login_history_store() -> bool {
     conf_text("login", "history-store", "true") != "false"
 }
 
+/// `login/@sso-linked-service`: the service told of each SSO sign-in that links or confirms an account's provider id
+/// (`org.moqui.sso.AuthServices.handle#Callback`); none when empty.
+pub(crate) fn sso_linked_service() -> String {
+    conf_text("login", "sso-linked-service", "").trim().to_string()
+}
+
 fn count_matching(password: &str, pred: impl Fn(char) -> bool) -> i64 {
     i64::try_from(password.chars().filter(|ch| pred(*ch)).count()).unwrap_or(i64::MAX)
 }

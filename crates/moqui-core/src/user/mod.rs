@@ -21,7 +21,7 @@ mod factor;
 mod filter;
 mod login;
 mod password;
-mod policy;
+pub(crate) mod policy;
 mod preference;
 pub mod session;
 mod system;
@@ -37,30 +37,30 @@ pub(crate) use authz::{
     denied, entity_permitted, is_authz_entity, is_permitted, note_entity_write, AuthInfo, Permit, RegisteredAuthz,
     StackAuthz,
 };
+#[cfg(test)]
+pub(crate) use factor::totp_code_now;
 pub use factor::{
     login_with_code, random_code, random_string, reauthenticate, second_factor_required, send_login_code,
     send_reauth_code, single_use_hash, totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,
 };
 pub(crate) use factor::{CODE_NOT_VALID, FACTOR_INFO, SEND_CODE, VALIDATE_CODE};
-#[cfg(test)]
-pub(crate) use factor::totp_code_now;
 pub(crate) use filter::apply_view_filters;
 pub use filter::{apply_entity_filters, entity_filters_apply, find_filters_for_user};
 pub use login::app_password_key;
 pub(crate) use login::login_user_local;
 pub use login::stamp_value;
 pub use login::{
-    apply_header_keys, change_password, get_device_key, get_login_key, header_login_session, internal_login_queued_user,
-    internal_login_user,
-    issue_device_key, login_anonymous, login_app_password, login_external_user, login_key_user_by_hash, login_user,
-    login_user_key, logout, logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login,
-    now_value, renew_device_key, revoke_login_key, with_client_ip,
+    apply_header_keys, change_password, get_device_key, get_login_key, header_login_session,
+    internal_login_queued_user, internal_login_user, issue_device_key, login_anonymous, login_app_password,
+    login_external_user, login_key_user_by_hash, login_user, login_user_key, logout, logout_anonymous_only,
+    logout_local, looks_like_app_password, new_app_password, note_header_login, now_value, renew_device_key,
+    revoke_login_key, with_client_ip,
 };
 pub use login::{get_scoped_key, login_user_key_for, KEY_SCOPES};
 pub use login::{last_auth_millis, recent_auth};
-pub use login::{user_account_closed, username_account_closed};
 pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
+pub use login::{user_account_closed, username_account_closed};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
 pub use moqui_entity::period::period_range;
 pub use password::{hash_login_key, hash_password, scram_sha256_verifier};
@@ -72,9 +72,9 @@ pub use preference::{
 pub use session::derived_cookie_key;
 pub(crate) use session::Memory;
 pub use session::{
-    bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_sessions, end_user_visit,
-    error_parameters, flash_messages, format_session_cookie, format_visitor_cookie, http_log_identity, invalidate,
-    is_anonymous, live_session_user_id, locale, saved_parameters, screen_history, session_attribute_values,
+    bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_sessions,
+    end_user_visit, error_parameters, flash_messages, format_session_cookie, format_visitor_cookie, http_log_identity,
+    invalidate, is_anonymous, live_session_user_id, locale, saved_parameters, screen_history, session_attribute_values,
     session_attributes, set_current_log_actor, set_session_attribute, set_session_attribute_json, time_zone,
     verify_session_cookie, visit_id, visitor_id, HttpLogIdentity, SessionCookies, SessionGuard, SESSION_COOKIE_NAME,
     VISITOR_COOKIE_NAME,

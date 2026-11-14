@@ -2920,7 +2920,8 @@ fn a_start_pass_is_outside_its_callers_transaction_and_a_rolled_back_claim_keeps
             .unwrap();
         job.set("statusId", s("running"));
         job.update(&fixture.entity).unwrap();
-        crate::ci::engine::unclaim_for_test(&fixture.entity, &job_run_id);
+        let hash = text(&job, "tokenHash");
+        crate::ci::engine::unclaim_for_test(&fixture.entity, &job_run_id, &hash);
         let job = crate::ci::one(&fixture.entity, "moqui.resource.GitJobRun", "jobRunId", &job_run_id)
             .unwrap()
             .unwrap();
@@ -2931,6 +2932,186 @@ fn a_start_pass_is_outside_its_callers_transaction_and_a_rolled_back_claim_keeps
             "a late call with the old token is told the job is gone"
         );
     }
+}
+
+/// A job cancelled while its container starts (after the engine read it running, before the container is kept on its
+/// row) has that container removed by the start: its cancel found none to remove.
+#[test]
+fn a_container_started_as_its_job_was_cancelled_is_removed() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let fixture = ci_fixture("ci-start-cancelled", "cancel", "");
+    let base = http_server(fixture.context.factory());
+    let (_work, commit) = pushed(&fixture, &base, "app", &[]);
+    let run = only_run(&fixture, "app", &commit);
+    let started = {
+        let _entered = fixture.context.enter();
+        engine::start_queued(&fixture.entity).unwrap()
+    };
+    assert_eq!(started.started, 0, "not counted as started");
+    let hosts = FakeHosts::of(fixture.context.factory());
+    assert!(hosts.containers().is_empty(), "{:?}", hosts.containers());
+    let actions: Vec<String> = hosts.calls().into_iter().map(|call| call.action).collect();
+    assert!(
+        actions.iter().any(|action| action == "start") && actions.iter().any(|action| action == "remove"),
+        "{actions:?}"
+    );
+    let job = job_named(&fixture, &text(&run, "pipelineRunId"), "test");
+    assert_eq!(text(&job, "statusId"), "cancelled");
+    assert!(text(&job, "instanceRef").is_empty());
+}
+
+/// A resource provider whose one file is there only with authorization disabled.
+#[derive(Debug)]
+struct AuthzProbe;
+
+impl moqui_core::native::ResourceProvider for AuthzProbe {
+    fn read_bytes(&self, _location: &str) -> Result<Vec<u8>, moqui_core::context::Error> {
+        Ok(b"secret\n".to_vec())
+    }
+
+    fn stat(&self, _location: &str) -> Result<Option<moqui_core::context::ResourceStat>, moqui_core::context::Error> {
+        let open =
+            moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::authz_disabled)
+                .unwrap_or(false);
+        Ok(open.then_some(moqui_core::context::ResourceStat {
+            is_file: true,
+            size: 7,
+            last_modified: None,
+        }))
+    }
+}
+
+/// The authority of a PASS download (`getAttachment`) answering a run artifact's `ci-artifact://` location.
+const PASS_AUTHORITY_STUB: &str = r#"<services>
+    <service verb="handle" noun="Call" authenticate="anonymous-all">
+        <in-parameters><parameter name="operation"/><parameter name="siteId"/><parameter name="input" type="Map"/>
+            <parameter name="delegation"/><parameter name="clientId"/><parameter name="clientVerified" type="Boolean"/>
+            <parameter name="visitorAddress"/><parameter name="operationId"/></in-parameters>
+        <out-parameters><parameter name="result" type="Map"/><parameter name="download" type="Map"/>
+            <parameter name="error" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            result = {}
+            download = {location: input.location, contentType: 'text/plain', filename: 'out.txt'}
+        ]]></script></actions>
+    </service>
+</services>"#;
+
+/// A hidden run's artifact at its `ci-artifact://` location is read with authorization disabled and by the user the run
+/// was made for, and by no other reader of the repository. A PASS authority download opens a `ci-artifact://` answer
+/// with authorization disabled (the artifact's own check vouches for it) and any other answer (a `git://` file) with
+/// the caller's authorization.
+#[test]
+fn a_hidden_runs_artifact_is_its_users_and_the_authority_opens_only_artifacts_unchecked() {
+    let fixture = ci_fixture("ci-artifact-hidden", "success", "");
+    define(&fixture, "app", "db");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let blobs = moqui_core::resource::blob::BlobStore::new(fixture.entity.clone());
+        let info = blobs
+            .put(
+                &mut &b"hidden\n"[..],
+                &moqui_core::resource::blob::Expected::default(),
+                1024,
+            )
+            .unwrap();
+        create(
+            &fixture.entity,
+            "moqui.resource.GitPipelineRun",
+            &[
+                ("pipelineRunId", "R-H"),
+                ("repositoryId", "app"),
+                ("pipelineName", "review"),
+                ("statusId", "success"),
+                ("hidden", "Y"),
+                ("triggeredByUserId", READER),
+            ],
+        );
+        create(
+            &fixture.entity,
+            "moqui.resource.GitRunArtifact",
+            &[
+                ("artifactId", "A-H"),
+                ("jobRunId", "J-H"),
+                ("pipelineRunId", "R-H"),
+                ("repositoryId", "app"),
+                ("artifactKind", "report"),
+                ("name", "out.txt"),
+                ("blobId", &info.id),
+                ("keep", "N"),
+            ],
+        );
+    }
+    let resources = fixture.context.factory().resource();
+    let opens = |user: Option<&str>| {
+        let _entered = fixture.context.enter();
+        if let Some(user) = user {
+            moqui_core::user::internal_login_user(user).unwrap();
+        }
+        let found = resources.open("ci-artifact://A-H/out.txt").unwrap().is_some();
+        if user.is_some() {
+            moqui_core::user::logout().unwrap();
+        }
+        found
+    };
+    assert!(opens(Some(READER)), "the user it was made for");
+    assert!(!opens(Some(WRITER)), "another reader of the repository");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        assert!(
+            resources.open("ci-artifact://A-H").unwrap().is_some(),
+            "authorization disabled"
+        );
+    }
+
+    // a location whose provider shows its file only with authorization disabled, as one checking its reader does to
+    // a caller with no right
+    resources
+        .install_provider("authz-probe", std::sync::Arc::new(AuthzProbe))
+        .unwrap();
+    {
+        let _entered = fixture.context.enter();
+        assert!(resources.open("authz-probe://a.txt").unwrap().is_none());
+        let _authz = fixture.context.disable_authz();
+        assert!(resources.open("authz-probe://a.txt").unwrap().is_some());
+    }
+    let stub_dir = fixture.dir.join("service/mantle/pass");
+    std::fs::create_dir_all(&stub_dir).unwrap();
+    let stub = stub_dir.join("PassAuthorityServices.xml");
+    std::fs::write(&stub, PASS_AUTHORITY_STUB).unwrap();
+    let download = |location: &str| {
+        let context = fixture.context.factory().new_context();
+        let _entered = context.enter();
+        moqui_core::service::lint(std::slice::from_ref(&stub)).unwrap();
+        let call = moqui_core::pass_authority::Call {
+            operation: "getAttachment".into(),
+            site_id: "S1".into(),
+            input: serde_json::json!({ "location": location }),
+            operation_id: "op-1".into(),
+            ..Default::default()
+        };
+        let client = moqui_core::pass_authority::Client::Checked {
+            id: "pass-client".into(),
+        };
+        match moqui_core::pass_authority::serve_download(fixture.context.factory(), &call, &client).unwrap() {
+            Ok(served) => Some(served.meta.length),
+            Err(_) => None,
+        }
+    };
+    assert_eq!(
+        download("ci-artifact://A-H/out.txt"),
+        Some(Some(7)),
+        "the artifact's check vouches for it"
+    );
+    assert_eq!(
+        download("authz-probe://a.txt"),
+        None,
+        "opened with the call's own authorization: not read"
+    );
 }
 
 /// A pool token mints only so many runner tokens: registrations are counted per pool

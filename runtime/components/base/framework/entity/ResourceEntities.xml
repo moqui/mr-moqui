@@ -318,6 +318,44 @@ along with this software (see the LICENSE.md file). If not, see
                     sendServiceName="org.moqui.git.GitServices.send#GitWebhookDelivery" contentType="application/json"/>
         </seed-data>
     </entity>
+    <entity entity-name="GitRepositoryMirror" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A push mirror of a repository (store#GitRepositoryMirror, docs/interfaces/Git-Hosting.md Push
+            mirrors): another server the refs its patterns cover are pushed to, each forced to the local value, after
+            each change and from a queue with back-off (nextAttemptDate, run#GitRepositoryMirrors). One push of a mirror
+            runs at a time across a cluster (the GitLease git-mirror:[mirrorId]). No Java counterpart.</description>
+        <field name="mirrorId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="url" type="text-medium"><description>https://host/owner/repo.git (no user or password in it), or
+            an ssh URL (ssh://git@host/owner/repo.git, git@host:owner/repo.git) with hostKeyFingerprint</description></field>
+        <field name="username" type="text-medium"><description>For https: the user of the credential (GitHub takes
+            any, such as x-access-token, with a token); for ssh, when the URL names none</description></field>
+        <field name="credential" type="text-very-long" encrypt="true"><description>For https a password or token; for
+            ssh a private key (PEM or OpenSSH) or a password. Never returned (find#GitRepositoryMirrors says
+            hasCredential), never in a log or an error.</description></field>
+        <field name="hostKeyFingerprint" type="text-medium"><description>For ssh: the server's host key, SHA256:...</description></field>
+        <field name="refPattern" type="text-medium"><description>Comma separated patterns of branches and tags
+            (refs/heads/*, main, refs/tags/v*, main:mirror); every branch and tag when empty</description></field>
+        <field name="deleteRefs" type="text-indicator"><description>Y: refs of the mirror the patterns cover that are gone
+            here are deleted there</description></field>
+        <field name="enabled" type="text-indicator"><description>N: not pushed</description></field>
+        <field name="createdByUserId" type="id"><description>Who stored it: told when its pushes start to fail
+            (notification topic GitMirrorFailure)</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastPushDate" type="date-time"><description>When a push last worked</description></field>
+        <field name="lastResult" type="text-long"><description>What the last push did, or failed</description></field>
+        <field name="lastError" type="text-long"><description>Why the last push failed, the credential taken out;
+            empty after one that worked</description></field>
+        <field name="nextAttemptDate" type="date-time"><description>When it is to be pushed: now when a push is asked
+            for, later after a failure; empty when it is current</description></field>
+        <field name="attemptCount" type="number-integer"><description>Failures in a row since the last push that worked</description></field>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <index name="GIT_MIRROR_REPO"><index-field name="repositoryId"/></index>
+        <index name="GIT_MIRROR_NEXT"><index-field name="nextAttemptDate"/></index>
+        <seed-data>
+            <moqui.security.user.NotificationTopic topic="GitMirrorFailure" description="A push mirror's pushes fail"
+                    typeString="danger" showAlert="Y" persistOnSend="Y" receiveNotifications="Y"/>
+        </seed-data>
+    </entity>
     <entity entity-name="GitBranchRule" package="moqui.resource" use="nontransactional" cache="never">
         <description>A protected branch (or tag) of a repository, enforced by the git server before a pushed ref moves and
             by the ref and merge services: a pattern that starts with refs/ is matched against the full ref name, any

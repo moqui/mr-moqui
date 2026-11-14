@@ -785,7 +785,44 @@ do, and the framework's own, which queues its [pipeline runs](Pipelines.md#event
 
 ### Push mirrors
 
-A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
+A repository has any number of push mirrors (`moqui.resource.GitRepositoryMirror`, plans/Dogfood.md F6), each kept
+by `org.moqui.git.GitServices` with the update right on the repository (or authorization disabled):
+
+| Service | |
+|---|---|
+| `store#GitRepositoryMirror` | `repositoryId*`, `mirrorId` (none: a new one), `url`, `username`, `credential`, `hostKeyFingerprint`, `refPattern`, `deleteRefs`, `enabled`, `clearRefPattern`, `clearCredential` → `mirrorId`. An empty or null value keeps the one stored; `clearRefPattern` empties the patterns and `clearCredential` the username and credential |
+| `find#GitRepositoryMirrors` | `repositoryId*` → `mirrorList`: each row with `hasCredential`, never the credential |
+| `delete#GitRepositoryMirror` | `mirrorId*` → `deleted` |
+| `push#GitRepositoryMirror` | `mirrorId*` → `queued`: a push now, whatever the back-off; while one runs on any member, an error starting `GitMirrorBusy: ` |
+| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute) |
+
+- **Where.** `url` is `https://host/owner/repo.git` with no user or password in it (refused), the credential apart:
+  `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
+  write access), sent as basic authorization. Or an SSH URL (`git@github.com:owner/repo.git`,
+  `ssh://git@host:port/owner/repo.git`) with `hostKeyFingerprint` (`SHA256:...`, required) and a private key or a
+  password in `credential`. The credential is kept encrypted and is never in a log, an error, `lastError` or a URL.
+- **What.** `refPattern`: comma-separated patterns of branches and tags (`refs/heads/*`, `main`, `refs/tags/v*`,
+  `main:mirror`), every branch and tag when empty; a pattern of other refs (a merge request's head, the framework's
+  `refs/moqui-*`) is refused. A push forces each ref the patterns cover to the local value; with `deleteRefs` Y the
+  refs of the mirror the patterns cover that are gone here are deleted there. It is a mirror: nothing is pushed to it
+  by hand.
+- **When.** The framework's post-receive rule (`queue#GitRepositoryMirrorPushes`, after each push, fetch, import or
+  write) marks each enabled mirror due (`nextAttemptDate` now) and starts its push on the service pool; a new or
+  re-enabled mirror is due at once. A failure counts (`attemptCount`), is kept (`lastResult`, `lastError`) and puts the
+  next try off by 1 minute, doubling to 6 hours; a later change still pushes at once. A success clears them. One push
+  of a mirror runs at a time across a cluster (the GitLease `git-mirror:<mirrorId>`): a push asked for while one runs
+  is pushed by that one before it lets go, with the refs as they are then.
+- **Told.** The first failure after a success is a notification (topic `GitMirrorFailure`, kept and shown) to the user
+  who stored the mirror (`createdByUserId`); an application that wants a repository's owners told subscribes them or
+  reads the rows.
+- **Out.** Each push asks the [outbound check](#outbound-check) (`kind` `push-mirror`); a refusal is the push's
+  `not pushed: <message>` error. The address rules are the webhooks': no loopback, private or link-local address (by
+  name or written out), and no plain `http://`, unless `git-server` `webhook-private-network="true"`; no redirect is
+  followed. HTTPS is git's smart HTTP (`GET info/refs?service=git-receive-pack`, then `POST git-receive-pack`, the
+  request written to a file under `runtime/tmp` and sent from it), with 60 seconds to read the refs (at most 32 MiB)
+  and 30 minutes for the push, its report at most 1 MiB. Refused in sim mode.
+
+**The older push mirror.** A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
 fetch, import or write, by the framework's post-receive rule (`push#GitMirror`; Push Mirror Now on the repository's
 screen). The `SystemMessageRemote` holds where and how: `sendUrl` the SSH URL (`git@github.com:owner/repo.git` or
 `ssh://git@host:port/owner/repo.git`), `privateKey` and `publicKey` (a deploy key with write access), and
@@ -797,6 +834,24 @@ holds up no other rule; pushes of one repository take turns, and each sends the 
 `lastPushMirrorDate` and `lastPushMirrorError` are on the row (a failure does not fail the `GitUpdate`); the next
 change, or Push Mirror Now, pushes again. A push ends as git's does: it waits for the mirror's `git-receive-pack` to
 end, so the mirror's own post-receive hooks finish.
+
+### Fetching refs
+
+`GitServices.fetch#GitRefs` (`repositoryId*`, `remoteUrl*`, `username`, `password`, `refMap*`: remote ref → local
+ref) → `fetched` (the local refs written, or already at the remote's value), `problems` brings named refs of another
+server into a repository of any store, over the same smart HTTP client and address rules as a push mirror: one
+`git-upload-pack` request with the commits the repository has (up to 256 ref tips) as haves, one pack back. GitHub's
+importer fetches `refs/pull/<n>/head` to `refs/merge-requests/<n>/head` this way. It needs the update right on the
+repository, or authorization disabled.
+
+- Local refs only under `refs/merge-requests/`, `refs/heads/` and `refs/tags/`; any other (`refs/moqui-*` among
+  them), a remote ref that is not there, and a branch or tag a rule refused are `problems`, and the rest is fetched.
+- The objects come in as a push's: into quarantine, each within `max-object-size`, checked to be whole, accepted under
+  the repository's lock and lease. The [reachability](#reachability) rules of hidden merge requests do not hold them
+  back. LFS objects are not fetched (a file in LFS comes as its pointer).
+- A branch or tag moves as a fetch's does (its pre events, then a `GitUpdate` and the post events of the rules that
+  take `source` `fetch`: webhooks, push mirrors; no pipeline); a merge request's ref moves with no event, as the review services move it.
+- The password is sent as basic authorization, never logged, and taken out of every error and problem.
 
 ### Outbound check
 
@@ -822,7 +877,7 @@ read.
 
 | Service | |
 |---|---|
-| `create#MergeRequest` | of a branch of the repository by a user who may push; with `sourceRepositoryId`, of a fork's branch by a user who may view the target and has the update right on the fork; one open request per source and target; head, merge base and mergeability read now. With authorization disabled only: `mergeRequestNum`, a free number (an import) |
+| `create#MergeRequest` | of a branch of the repository by a user who may push; with `sourceRepositoryId`, of a fork's branch by a user who may view the target and has the update right on the fork; one open request per source and target; head, merge base and mergeability read now. With authorization disabled only: `mergeRequestNum`, a free number (an import). Imported (`imported`, with authorization disabled or the delete right): see below |
 | `update#MergeRequest` | title, description, target (a branch of the repository, else `GitNoSuchRef`), draft (marked ready), merge method, delete the source after; by the author or a user with update |
 | `set#MergeRequestReviewers` | replace, add or remove reviewers (not the author) |
 | `submit#MergeRequestReview` | approve, request changes or comment, at the current head; only a user who may push (update) approves, a viewer comments or requests changes; the author does not approve their own |
@@ -832,6 +887,18 @@ read.
 | `find#MergeRequests` | of the repositories the user may view: by repository, status, author, reviewer, waiting for a user's review, target, title |
 | `get#MergeRequestApprovals` | the approvals that count toward the branch rules, as `merge#MergeRequest` counts them |
 | `get#MergeRequestDiff` | its commits and diffs as `get#GitCompare` gives them |
+
+#### Imported merge requests
+
+`create#MergeRequest` with `imported` true brings a merge request of another server (a GitHub pull request) in the
+state it has there, by the application (authorization disabled) or the repository's administrator (the delete right):
+`statusId` (`GmrOpen`, `GmrDraft`, `GmrMerged` or `GmrClosed`), `createdDate`, `mergedDate`, `closedDate`,
+`authorUserId` (another account, such as a placeholder of an imported author), and `mergeRequestNum` as given
+(`GitNumberTaken` when taken). Its head is set (`refs/merge-requests/<n>/head`) when `headCommitId` (with
+`pushedForReview`, after [`fetch#GitRefs`](#fetching-refs)) is in the store, or the source branch is there; it is
+compared with the target when the target branch is there; otherwise it is kept with no head (a target or a source that
+is gone is no refusal). Nothing fires: no `queue#MergeRequestEvent`, so no webhook, no pipeline run and no
+application handler of it; it does not start hidden unless `hidden` is given.
 
 #### Merge request refs
 
@@ -1103,8 +1170,12 @@ rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:
 its own process (the lease first, so no writer holds the lock while it waits on another member), so two members never
 write the same directory at once: one waits for the other, at most `shared-lock-wait-seconds` (120; then
 `GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed while held (scheduled by one thread of
-the process, each renewal on a thread of its own and waiting at most a sixth of the lease's time for the database, so
-one renewal the database holds does not lose the others; a lease let go within its first renewal interval costs none)
+the process, each renewal on a thread of its own, so one renewal the database holds does not lose the others; on
+Postgres the renewal's clock read and update each wait at most a sixth of the lease's time, while on MySQL, whose
+client cannot change an open connection's read timeout, they wait up to the datasource's `read-timeout` (600 s by
+default) and the renewer marks the lease lost once it goes stale meanwhile; a lease let go within its first renewal
+interval costs none; a lease marked lost is renewed no more and its row is let go at once, on the condition that its
+holder still has it)
 and taken over once it lapses (60 seconds after a member that held it stopped); its times are the database's clock
 (read by the statement its dialect takes, every 30 seconds; a read that fails keeps the offset last read, is warned of
 and is tried again at the next use), so the members' clocks do not matter. Its holder

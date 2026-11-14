@@ -286,28 +286,34 @@ pub(crate) fn claim_job(
     // the writes after the claim are each committed as they go (a start pass is outside any transaction): one that
     // fails gives the job back to the queue, its token never handed out, so a job is never left running with no one
     // to run it, and a run already moved to running with a queued job is a state it has anyway
-    match claimed_after(entity, run, &job_run_id, now) {
+    match claimed_after(entity, run, &job_run_id, &hashed, now) {
         Ok(()) => Ok(Some(plain)),
         Err(err) => {
-            unclaim(entity, &job_run_id);
+            unclaim(entity, &job_run_id, &hashed);
             Err(err)
         }
     }
 }
 
-/// What [`claim_job`] writes once the job is claimed: the rollback hook of a caller's transaction, the run started,
-/// the job's commit status.
-fn claimed_after(entity: &EntityFacade, run: &EntityValue, job_run_id: &str, now: i64) -> Result<(), Error> {
+#[cfg(test)]
+thread_local! {
+    /// A test's failure of the writes after a claim, on this thread.
+    pub(crate) static FAIL_AFTER_CLAIM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// What [`claim_job`] writes once the job is claimed: the run started, the job's commit status, then the rollback hook
+/// of a caller's transaction, tied to this claim (`token_hash`) as the give-back of a failure here is.
+fn claimed_after(
+    entity: &EntityFacade,
+    run: &EntityValue,
+    job_run_id: &str,
+    token_hash: &str,
+    now: i64,
+) -> Result<(), Error> {
     let job_run_id = job_run_id.to_string();
-    // a caller's transaction that rolls back gives the job back to the queue (when it is still this claim's)
-    if let Ok(transactions) = entity.transactions_for(JOB_RUN) {
-        if transactions.in_transaction() {
-            let (back, id) = (entity.clone(), job_run_id.clone());
-            let added = transactions.on_rollback(move || unclaim(&back, &id));
-            if let Err(err) = added {
-                tracing::warn!(job = %job_run_id, "a claimed job is not given back if its start rolls back: {err}");
-            }
-        }
+    #[cfg(test)]
+    if FAIL_AFTER_CLAIM.with(std::cell::Cell::get) {
+        return Err(Error::new("a write after the claim failed (test)"));
     }
     if let Some(run_id) = field(run, "pipelineRunId") {
         set_fields(
@@ -325,6 +331,16 @@ fn claimed_after(entity: &EntityFacade, run: &EntityValue, job_run_id: &str, now
     if let Some(job) = super::one(entity, JOB_RUN, "jobRunId", &job_run_id)? {
         status::write_job(entity, run, &job, "Running");
     }
+    // a caller's transaction that rolls back gives the job back to the queue, when it is still this claim's
+    if let Ok(transactions) = entity.transactions_for(JOB_RUN) {
+        if transactions.in_transaction() {
+            let (back, id, hash) = (entity.clone(), job_run_id.clone(), token_hash.to_string());
+            let added = transactions.on_rollback(move || unclaim(&back, &id, &hash));
+            if let Err(err) = added {
+                tracing::warn!(job = %job_run_id, "a claimed job is not given back if its start rolls back: {err}");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -332,25 +348,31 @@ fn claimed_after(entity: &EntityFacade, run: &EntityValue, job_run_id: &str, now
 /// again, while it is still running with no result: its claim was committed on its own ([`claim_job`]). Its token's
 /// hash stays until the next claim replaces it, so a runner that got the token in an answer sent before the rollback is
 /// told the job is gone (410), not that the token is unknown. A container start is never in a caller's transaction
-/// ([`start_queued`]), so no running container's job is queued again.
-fn unclaim(entity: &EntityFacade, job_run_id: &str) {
+/// ([`start_queued`]), so no running container's job is queued again. Only the claim whose token's hash is `token_hash`
+/// is given back: a later claim of the job (queued again some other way and claimed anew) is left as it is.
+fn unclaim(entity: &EntityFacade, job_run_id: &str, token_hash: &str) {
     let fields = [
         ("statusId", Value::string("queued")),
         ("runnerId", Value::Null),
         ("instanceHostId", Value::Null),
         ("startedDate", Value::Null),
     ];
-    match super::update_when(entity, JOB_RUN, "jobRunId", job_run_id, "running", &fields, Commit::Own) {
-        Ok(true) => super::audit_status(entity, JOB_RUN, job_run_id, "running", &fields),
-        Ok(false) => {}
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals("jobRunId", Value::string(job_run_id)),
+        moqui_core::entity::Condition::equals("statusId", Value::string("running")),
+        moqui_core::entity::Condition::equals("tokenHash", Value::string(token_hash)),
+    ]);
+    match crate::conditional::update_where(entity, JOB_RUN, &fields, &condition, Commit::Own) {
+        Ok(0) => {}
+        Ok(_) => super::audit_status(entity, JOB_RUN, job_run_id, "running", &fields),
         Err(err) => tracing::error!(job = %job_run_id, "a job whose start rolled back was not queued again: {err}"),
     }
 }
 
 /// [`unclaim`], for a test of what a rolled-back claim leaves.
 #[cfg(test)]
-pub(crate) fn unclaim_for_test(entity: &EntityFacade, job_run_id: &str) {
-    unclaim(entity, job_run_id);
+pub(crate) fn unclaim_for_test(entity: &EntityFacade, job_run_id: &str, token_hash: &str) {
+    unclaim(entity, job_run_id, token_hash);
 }
 
 fn pairs(value: &serde_json::Value) -> Vec<(String, String)> {

@@ -154,10 +154,11 @@ the user services call.
 | `endVisit(visitId)` | Ends another session of the signed-in user; how many web sessions ended. An error for the current visit or another user's |
 | `getClientIp()` | The request's client address; empty outside a request |
 | `loginUser(username, password)` | Whether the user is logged in. A failure adds its message to `ec.message` and returns false; false with no message when a second factor is still needed |
-| `internalLoginUser(username)` | Logs the user in without a password; a failure is a message and false |
+| `internalLoginUser(username)` | Logs the user in without a password; a failure is a message and false. A job's login borrows the account: it leaves `UserAccount.hasLoggedOut` as it is (a person's sign-in, a second factor's code, clears it) |
 | `loginUserKey(loginKey)` | Whether the login key logged its user in; a key that does not adds an error message |
 | `loginAnonymousIfNoUser()` | With nobody logged in the session becomes anonymous; whether this call did that |
-| `logoutUser()` | Logs out; true unless it failed |
+| `logoutUser()` | Logs out; true unless it failed. It marks the account `hasLoggedOut`, which ends its sessions in every browser |
+| `logoutLocal()` | Ends this context's login only (Java's `logoutLocal`), writing nothing to the account: the end of a job's `internalLoginUser`, so the person's own sessions go on; true unless it failed |
 | `getLoginKey(expireHours)` | A new login key (an API key) of the signed-in user; an error with nobody signed in |
 | `passwordRules` | The password policy of the conf: `{minLength, minDigits, minOthers}` |
 | `loginRules` | The login policy of the conf: `{maxFailures, disableMinutes, historyLimit, emailExpireHours, emailRequireChange}` |

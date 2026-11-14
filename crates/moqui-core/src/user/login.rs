@@ -204,7 +204,7 @@ fn authenticate(
     }
     // A request repeating Basic credentials for the user its session already holds keeps its id.
     let same_user = session::current_username()?.as_deref() == Some(username);
-    finish_login(facade, account, Some(password), true)?;
+    finish_login(facade, account, Some(password), true, true)?;
     note_recent_auth(&user_id);
     Ok(Checked::LoggedIn { rotate: !same_user })
 }
@@ -406,7 +406,7 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
     let finishes_factor = !username.is_empty()
         && session::session_attribute_flag(AUTHC_FACTOR_REQUIRED)
         && session::session_attribute(PRE_AUTHC_USERNAME).as_deref() == Some(username);
-    internal_login(username, false).1?;
+    internal_login(username, false, finishes_factor).1?;
     if finishes_factor {
         if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
             note_recent_auth(&user_id);
@@ -423,7 +423,7 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or needs a password change.
 pub fn internal_login_queued_user(username: &str) -> Result<(), Error> {
-    internal_login(username, true).1
+    internal_login(username, true, false).1
 }
 
 /// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person
@@ -434,7 +434,7 @@ pub(crate) fn is_display_account(account: &EntityValue) -> bool {
 
 /// [`internal_login_user`], with the user id of the account once it passed the gate (None before), for the login history.
 /// `queued` is [`internal_login_queued_user`]'s.
-fn internal_login(username: &str, queued: bool) -> (Option<String>, Result<(), Error>) {
+fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>, Result<(), Error>) {
     if username.is_empty() {
         return (None, Err(Error::new("No username specified")));
     }
@@ -462,14 +462,14 @@ fn internal_login(username: &str, queued: bool) -> (Option<String>, Result<(), E
         return (None, Err(Error::new(INVALID_LOGIN)));
     }
     let user_id = Some(text_field(&account, "userId")).filter(|id| !id.is_empty());
-    let result = post_password(&account, now).and_then(|()| finish_login(&facade, &account, None, false));
+    let result = post_password(&account, now).and_then(|()| finish_login(&facade, &account, None, false, person));
     (user_id, result)
 }
 
 /// [`internal_login`] for a key, app password or identity provider login, recorded in the login history when the
 /// account is known.
 fn recorded_login(username: &str) -> Result<(), Error> {
-    let (user_id, result) = internal_login(username, false);
+    let (user_id, result) = internal_login(username, false, true);
     if let Some(user_id) = user_id {
         save_history(&user_id, result.is_ok());
     }
@@ -966,6 +966,21 @@ pub fn logout_anonymous_only() {
     }
 }
 
+/// End this context's login only (`ec.user.logoutLocal()`), as Java's `logoutLocal`: the end of a job's borrowed
+/// sign-in (an internal login as a user to do work as them). Nothing is written to the account, so its `hasLoggedOut`
+/// stays as it is and the person's own sessions go on; the user and anonymous flag are cleared here.
+///
+/// # Errors
+///
+/// Returns an error when the bound session cannot be flushed. The login is cleared either way.
+pub fn logout_local() -> Result<(), Error> {
+    session::set_session_attribute(LAST_AUTH, None);
+    session::set_session_attribute(REAUTH_PASSWORD, None);
+    session::clear_login();
+    forget_shell_providers();
+    session::flush_after_logout()
+}
+
 /// Clear the in-memory user and anonymous flag. Sets `hasLoggedOut` on the account.
 ///
 /// Guarantee mode flushes the bound session after the user is cleared.
@@ -1287,7 +1302,16 @@ fn rehash_legacy(facade: &EntityFacade, account: &EntityValue, plain: &str) -> R
     )
 }
 
-fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str>, rehash: bool) -> Result<(), Error> {
+/// The login of `account`. `person`: a person signs in (a password, the code of a second factor, a key, an app
+/// password, an identity provider), which clears the account's `hasLoggedOut`; a job's or a worker's internal login
+/// borrows the account and leaves the flag as it is, so it does not bring back the sessions a sign-out ended.
+fn finish_login(
+    facade: &EntityFacade,
+    account: &EntityValue,
+    plain: Option<&str>,
+    rehash: bool,
+    person: bool,
+) -> Result<(), Error> {
     let user_id = text_field(account, "userId");
     let username = text_field(account, "username");
     if user_id.is_empty() || username.is_empty() {
@@ -1310,10 +1334,13 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
             fields.push(("passwordBase64", Value::string("N")));
         }
     }
-    if needs_reset(account) {
+    let logged_out = text_field(account, "hasLoggedOut") == "Y";
+    if failed_or_disabled(account) {
         fields.push(("successiveFailedLogins", Value::I64(0)));
         fields.push(("disabled", Value::string("N")));
         fields.push(("disabledDateTime", Value::Null));
+    }
+    if person && logged_out {
         fields.push(("hasLoggedOut", Value::string("N")));
     }
     // The account's update and the visit's link to it in one transaction-cache frame (plans/archive/TX-Cache.md F3).
@@ -1419,11 +1446,15 @@ fn legacy_hash(account: &EntityValue) -> bool {
     )
 }
 
-fn needs_reset(account: &EntityValue) -> bool {
+/// Whether the account has failed logins counted or is disabled (what a login that passes resets).
+fn failed_or_disabled(account: &EntityValue) -> bool {
     field_i64(account, "successiveFailedLogins").unwrap_or(0) != 0
         || text_field(account, "disabled") == "Y"
         || field_millis(account, "disabledDateTime").is_some()
-        || text_field(account, "hasLoggedOut") == "Y"
+}
+
+fn needs_reset(account: &EntityValue) -> bool {
+    failed_or_disabled(account) || text_field(account, "hasLoggedOut") == "Y"
 }
 
 fn still_disabled(account: &EntityValue, now: i64) -> bool {
