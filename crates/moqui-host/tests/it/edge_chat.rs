@@ -313,7 +313,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
         "edge-chat-edge",
         CONF,
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("channels_webhooks_enabled", "true"),
         ],

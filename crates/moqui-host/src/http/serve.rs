@@ -552,6 +552,15 @@ where
         request.extensions_mut().insert(HttpsRequest);
     }
     let limits = &web.limits;
+    // the host a request is for, for the web protection rules of that host (plans/Edge-Node2.md §4.3)
+    let host = crate::guard::request_host(
+        request
+            .headers()
+            .get(axum::http::header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .or_else(|| request.uri().authority().map(axum::http::uri::Authority::as_str))
+            .unwrap_or_default(),
+    );
     let uri_length = request.uri().path_and_query().map_or(0, |whole| whole.as_str().len());
     let refused = if uri_length > limits.max_uri {
         Some(plain(414, "the request URI is too long"))
@@ -563,7 +572,14 @@ where
             request.method().as_str()
         };
         web.guard
-            .check(remote.ip(), client, method, request.uri().path(), request.headers())
+            .check(
+                remote.ip(),
+                client,
+                &host,
+                method,
+                request.uri().path(),
+                request.headers(),
+            )
             .err()
             .map(|refused| *refused.response)
     };
@@ -587,7 +603,7 @@ where
         Some(refused) => Some(refused),
         None => match git_page_uri(web, &request) {
             // a path rule that denies the path it is served at stops it as it stops a request under /git/
-            Some(uri) => match web.guard.check_served_path(client, uri.path()) {
+            Some(uri) => match web.guard.check_served_path(client, &host, uri.path()) {
                 Ok(()) => {
                     *request.uri_mut() = uri;
                     request.extensions_mut().insert(crate::git_http::GitPageRequest);
@@ -609,17 +625,25 @@ where
     });
     // on an edge node, a terminate host's request goes through the router's request log and telemetry like any other,
     // and down its node's link at the router's edge-forward layer
+    let mut refused = refused;
     if refused.is_none() {
         let target = web
             .edge
             .as_ref()
             .and_then(|front| Some((front, front.target(&request)?)));
-        if let Some((front, target)) = target {
-            request.extensions_mut().insert(Forward {
-                front: Arc::clone(front),
-                target,
-                peer: peer.clone(),
-            });
+        match target {
+            // a ban the target's own node told this edge node holds for its hosts (plans/Edge-Node2.md §4.3)
+            Some((_, target)) if target.node().is_some_and(|node| web.guard.banned_for(node, client)) => {
+                refused = Some(plain(403, "forbidden"));
+            }
+            Some((front, target)) => {
+                request.extensions_mut().insert(Forward {
+                    front: Arc::clone(front),
+                    target,
+                    peer: peer.clone(),
+                });
+            }
+            None => {}
         }
     }
     let call = refused.is_none().then(|| {

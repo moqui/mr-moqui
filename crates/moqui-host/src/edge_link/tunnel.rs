@@ -29,6 +29,10 @@
 //!   its pairings' domains ([`xmpp_to_pairing`]), so one pair of ports serves every domain.
 //! - **A port per pairing** ([`watch_rows`], E16): each `moqui.edge.EdgePort` row, an SSH or XMPP port whose
 //!   connections go to its pairing only, opened and closed as the System app sets the rows.
+//!
+//! Each tunnel goes to one member of the pairing's pool, by the client's address (an IPv6 one by its /64,
+//! plans/Edge-Node2.md §4.4): a client's connections stay on one member, whose XMPP sessions and SSH host key are its
+//! own. A tunnel that is not opened counts toward setting its member aside.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -41,6 +45,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 
 use super::accept::EdgeServer;
+use super::balance::Affinity;
 use super::{CLIENT_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS};
 
 /// SSH connections piped at once.
@@ -49,16 +54,17 @@ const MAX_SSH_TUNNELS: usize = 64;
 /// part of what a link may hold (768 tunnels and WebSockets); the local node's own limits apply behind it.
 const MAX_XMPP_TUNNELS: usize = 256;
 
-/// Open a tunnel of `kind` down `node`'s link for `client`.
+/// Open a tunnel of `kind` down `node`'s link for `client`, to the member of its pool the client's address chooses.
 async fn open(
     server: &EdgeServer,
     node: &str,
     kind: &'static str,
     client: SocketAddr,
 ) -> Result<TokioIo<hyper::upgrade::Upgraded>, String> {
-    let mut send = server
-        .down_sender(node)
-        .ok_or_else(|| format!("{node} is not linked"))?;
+    let picked = server
+        .link_of(node, Affinity::Address(client.ip()))
+        .map_err(|_| format!("{node} is not linked"))?;
+    let mut send = picked.send.clone();
     let request = http::Request::builder()
         .method(http::Method::CONNECT)
         .version(http::Version::HTTP_2)
@@ -68,23 +74,40 @@ async fn open(
         .extension(hyper::ext::Protocol::from_static(TUNNEL_PROTOCOL))
         .body(tonic::body::Body::empty())
         .map_err(|err| format!("the tunnel request: {err}"))?;
+    // Err with whether the member answered: a refusal (it serves no such tunnel) is not a failure of the member
     let opened = async {
-        send.ready().await.map_err(|err| format!("{node}'s link: {err}"))?;
+        send.ready()
+            .await
+            .map_err(|err| (format!("{node}'s link: {err}"), false))?;
         let response = send
             .send_request(request)
             .await
-            .map_err(|err| format!("{node}'s link: {err}"))?;
+            .map_err(|err| (format!("{node}'s link: {err}"), false))?;
         if !response.status().is_success() {
-            return Err(format!("{node} refused the {kind} tunnel: {}", response.status()));
+            return Err((format!("{node} refused the {kind} tunnel: {}", response.status()), true));
         }
         hyper::upgrade::on(response)
             .await
-            .map_err(|err| format!("{node}'s {kind} tunnel: {err}"))
+            .map_err(|err| (format!("{node}'s {kind} tunnel: {err}"), false))
     };
+    server.count_member("moqui.edgelink.requests", kind, node, &picked.member);
     match tokio::time::timeout(server.config().open_timeout, opened).await {
-        Ok(Ok(upgraded)) => Ok(TokioIo::new(upgraded)),
-        Ok(Err(err)) => Err(err),
-        Err(_) => Err(format!("{node} did not open the {kind} tunnel in time")),
+        Ok(Ok(upgraded)) => {
+            server.succeeded(&picked);
+            Ok(TokioIo::new(upgraded))
+        }
+        Ok(Err((err, answered))) => {
+            if answered {
+                server.succeeded(&picked);
+            } else {
+                server.failed(&picked, kind);
+            }
+            Err(err)
+        }
+        Err(_) => {
+            server.failed(&picked, kind);
+            Err(format!("{node} did not open the {kind} tunnel in time"))
+        }
     }
 }
 

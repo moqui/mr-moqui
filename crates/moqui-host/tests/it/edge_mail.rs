@@ -381,7 +381,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
         "edge-mail-edge",
         EDGE_CONF,
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("smtp_listen_port", "0"),
             ("smtp_allowed_addresses", "127.0.0.1"),
@@ -688,7 +688,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
         "edge-mta-edge",
         EDGE_MTA_CONF,
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("smtp_listen_port", "0"),
             ("smtp_hostname", "edge.example.com"),

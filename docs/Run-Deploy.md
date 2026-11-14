@@ -152,12 +152,14 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | [`conf/edge/`](../runtime/conf/edge/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
 | An all-in-one node | A public server, with its own users, apps and data, that is also the edge node of one local node (a desktop or office node), so no second cloud instance is needed | [`conf/all-in-one/`](../runtime/conf/all-in-one/README.md) | Server: Maximal. Local: Maximal or Enterprise | Each its own; the server also keeps the local node's queue and copies | [An all-in-one node](#an-all-in-one-node) |
 | Several local nodes on one edge node | Branch offices, or the separate organizations of one group, each with its own data and domains behind one edge node | [`conf/multi-domain/`](../runtime/conf/multi-domain/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each local node its own; the edge node keeps each one's queue and copies | [Several local nodes on one edge node](#several-local-nodes-on-one-edge-node) |
+| A local cluster with an edge node | More capacity, or a member that can fail, with a public presence and no load balancer of your own: the edge node pools and balances the members | [`conf/local-cluster/`](../runtime/conf/local-cluster/README.md) (`MoquiPooledConf.xml`) | Members: Enterprise (`--enterprise`). Edge node: Maximal | One external Postgres for all members; the edge node keeps the pairing's queue and copies | [A local cluster with an edge node](#a-local-cluster-with-an-edge-node) |
+| A local node with a standby | A second machine, started by hand or by your own automation when the first one dies, that takes over at the edge node | [`conf/local-failover/`](../runtime/conf/local-failover/README.md) | Both: Maximal or Enterprise. Edge node: Maximal | The same external database, a promoted replica, or the last backup restored | [A local node with a standby](#a-local-node-with-a-standby) |
 | The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | In the app; its edge or all-in-one node as above | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
 
 The conf is the runtime conf each node runs, under `runtime/`. A topology's directory has a conf for each kind of node,
 whose comments say what each setting does, and a README with its diagram, the `.env` names each node needs and the
 commands ([runtime/conf](../runtime/conf/README.md)). The sections below keep what each topology is, its steps and
-what is not built. The topologies still to come (a standby, an edge cluster, a front node, the full stack) get their directories as they are built
+what is not built. The topologies still to come (an edge cluster, a front node, the full stack) get their directories as they are built
 ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 
 ## Production checklist
@@ -324,7 +326,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
-| `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#a-local-server-with-an-edge-node)); `all-in-one` makes a full server that also takes one local node's link, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
+| `node_role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it (E19, [Edge-Node2 §4.3](../plans/Edge-Node2.md#43-the-front-option-set)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
@@ -756,6 +758,12 @@ The server terminates HTTPS itself, so a proxy is optional. A proxy or load bala
   `CloudFront-Viewer-Address`.
 - Setting `webapp_trusted_proxies` also turns on the per-client web protection: rate limits, connection limits and
   bans by client address. Without a proxy, `webapp_web_protection=true` turns it on.
+- A `rate-limit` or a client, path or user-agent rule with `host="shop.example.com"` (or `*.example.com`) applies only
+  to that site, on top of the rules without `host`, so one site can be stricter than the others.
+- A ban is shared with the other cluster members and up the edge link: a ban a local node starts (a sign-in that
+  keeps failing) is told to its edge node, which refuses that client for that node's host names only. An edge node
+  tells the nodes behind it nothing, as its bans may come from another pairing's visitors. System › Security › Web
+  Protection lists what each rule refused and the bans held now, and lifts one.
 - Leave `webapp_https_port` empty when the proxy serves 443.
 
 ## One production server
@@ -975,10 +983,12 @@ System › Edge Node shows the outbox and the replicated sets, with Pause and Re
 queue and sets. The edge node's database holds the queue, and its conf sets the backup job running
 (`embedded_db_backup_scheduled`).
 
-**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): a
-clustered local node with every member linked (E17; today only the member holding the link sends its outbox and
-replication, and a call's socket on another member is refused), a second edge node (E18), certificates by ACME (E15),
-a PASS read cache on the edge node, and monitoring over the link.
+**A cluster or a standby behind it.** Every member of a local cluster links on its own, and the edge node pools and
+balances them ([A local cluster with an edge node](#a-local-cluster-with-an-edge-node)). A second machine started
+when the first one dies takes over the pairing ([A local node with a standby](#a-local-node-with-a-standby)).
+
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): a second edge node (E18), a PASS read cache on the
+edge node, and monitoring over the link.
 
 ## An all-in-one node
 
@@ -1062,8 +1072,105 @@ The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](
   each domain), its media and TURN ports, web protection's counts, CPU and bandwidth. Revoking a local node ends its
   link and its TURN access.
 
-**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): an operator per local node with a view of its own,
-and a cluster of local nodes as one pairing (E17).
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): an operator per local node with a view of its own.
+A local node may be a cluster: its members are one pairing ([A local cluster with an edge
+node](#a-local-cluster-with-an-edge-node)).
+
+## A local cluster with an edge node
+
+An edge node can be the load balancer of a local cluster ([plan](../plans/Edge-Node2.md#44-pools-load-balancing)
+§4.4). The cluster pairs once; every member then links on its own with the pairing's key, and the edge node pools the
+members linked for the pairing and balances its names over the live ones. The members need no load balancer of your
+own, and no open port, port forward or fixed address.
+
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, ...
+ edge node     conf/edge/MoquiEdgeConf.xml                      pools the pairing's members; its queue and copies
+    ^  each member dials 443 and keeps its own link open
+ member 1   member 2   member 3     conf/local-cluster/MoquiPooledConf.xml; 8444 between members only
+    +----------+----------+
+       shared Postgres
+```
+
+The confs, the `.env` names and the commands are in [runtime/conf/local-cluster](../runtime/conf/local-cluster/README.md).
+The cluster itself is as in [Cluster](#cluster): one external database, the same secrets, a distinct instance id.
+
+1. Set up the edge node as for one local node. Start the first member, and pair it and run the wizard (System › Edge
+   Node) as for one local node.
+2. Copy its whole `.env`, with what pairing wrote, to each other member, add that member's own `cluster_base_url`,
+   and start it. Never copy `runtime/db`: each member keeps its own instance id and member key there.
+3. Check System › Edge Clients › Clients on the edge node: each member under Members, linked and live.
+
+- **Joining.** While a member is linked, a new one is admitted only when a linked member's cluster lists it as live:
+  a member joins the cluster first, then links. Anything else with the key, such as a staging copy on another
+  database, is refused "join the cluster first" and shown under Members. With none linked the key admits, which is
+  how a pool starts and how it comes back after every member was down. Each member's own key is pinned for its id; a
+  member made again with a new key is refused until its key is forgotten (Members, Forget key).
+- **Members.** Clients shows each member: linked and live in its cluster; live but not linked, a fault to look at;
+  linked with a stale heartbeat; on another version than most of the pool; stopped; refused. Each member's own System
+  › Edge Node shows its cluster as its links tell the edge node.
+- **Draining and rolling upgrades.** Drain a member before stopping or upgrading it, on its own System › Edge Node or
+  on the edge node's Members: it finishes what it has, gets no new work, and its `/health` answers 503. A member also
+  says when it is starting or stopping. Drain, stop, upgrade, start, resume, one member at a time.
+- **Work from the pool**, replication and shared bans: [Cluster, What is shared and what is
+  not](#what-is-shared-and-what-is-not), With an edge node.
+- **Drain the last live member** only to take the pairing offline: its names get the offline page, or a refused
+  connection, until it resumes.
+
+**Balancing.** The edge node spreads a pairing's work over its members that are linked and live, each kind its own way:
+
+| Traffic | To the member |
+|---|---|
+| A terminate host's requests | Of the session cookie (`moqui.session`, or the host's own, set on Edge Clients › Domains), by rendezvous hashing over the live members, so a browser stays on one member and every edge node picks the same; with no cookie, in turn. A WebSocket as its opening request |
+| A passthrough host's connections, SSH and XMPP tunnels | Of the client's address, an IPv6 address by its /64 |
+| PASS authority calls | Of the session handle while a sign-in is in progress, else the one with the fewest calls in flight |
+| Delegated calls | Of the call's conversation (its call session, else its phone call), so one call's events reach one member |
+| Call signaling | The member whose socket bound the leg |
+
+A member whose requests fail or time out three times in a row is set aside for 30 seconds, then tried again; with every
+member set aside they are all tried. A request that fails before any byte of an answer goes once more to another
+member when it is a GET or HEAD with no body, or when it was never sent; nothing else is sent twice. A member that
+stops moves only its own clients, and they stay signed in: sessions are rows in the pool's database. The defaults are
+the `<edge>` element's `sticky-cookie`, `set-aside-failures` and `set-aside-seconds`; Edge Clients › Balancing shows them
+with each member's requests in flight and in all and whether it is set aside (`get#EdgeBalancing`), and the `moqui.edgelink.requests`,
+`retries` and `set_asides` counters name the pairing and the member.
+
+## A local node with a standby
+
+A local node paired with an edge node can have a hot standby: a second machine, started when the first one dies, that
+takes its place at the edge node ([plan](../plans/Edge-Node2.md#45-failover-to-a-standby) §4.5). Nothing starts it by
+itself: a person does, or automation the operator adds, such as a monitor of the first machine.
+
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, ...
+ edge node        conf/edge/MoquiEdgeConf.xml                 holds the queue and mail while no machine is linked
+    ^  one machine at a time dials 443
+ first machine    conf/local-failover/MoquiLocalConf.xml      the apps and the data
+ standby          conf/local-failover/MoquiLocalConf.xml      started when the first machine dies
+```
+
+The conf, the `.env` names and the commands are in
+[runtime/conf/local-failover](../runtime/conf/local-failover/README.md).
+
+- **The standby** has the same runtime and `.env` (the pairing's key, the edge node's address and pin, the crypt pass)
+  and an instance id and member key of its own (never copy `runtime/db`). Its data is one of: the same external
+  database; a replica that is promoted before it starts; or the last backup restored (`moqui load-save`), mirrored off
+  the first machine ([Backups](#backups)).
+- **Taking over.** With none of the pairing's members linked, the edge node admits the standby: it gets every name of
+  the pairing, replication starts with full sends, and the queue delivers. The takeover is noted on the pairing
+  (System › Edge Clients › Clients, Takeovers) and sent as a notification to the edge node's administrators. To have
+  a new node wait for an administrator's approval instead, set New nodes to Held for approval there; Approve is then
+  on its row under Members.
+- **After a restore from a backup**, the standby lacks what was delivered since. On Clients use Deliver again with
+  the backup's time: the edge node keeps delivered items for the queue's retention period (`queue-retention-days`),
+  and the receipts make an item the standby already has do nothing.
+- **The first machine coming back** is refused while the standby has the pairing, and after it too, until the
+  operator lets it link again on Takeovers, so the two never trade the link with two copies of the data. Make it the
+  new standby, or a member of the standby's cluster on the same database.
+- **While no machine is linked** the edge node holds what it holds for any local node that is away: the queue for its
+  retention period, mail for the replicated recipients, the voicemail fallback and the offline page.
 
 ## Cluster
 
@@ -1085,8 +1192,8 @@ Sessions are rows in the shared database, so any member can serve any request.
 
 Every member runs `conf/local-cluster/MoquiLocalConf.xml`; the `.env` names and the commands are in
 [runtime/conf/local-cluster](../runtime/conf/local-cluster/README.md), and the conf's comments say what each setting
-does. A cluster pooled and balanced by an edge node in place of your own load balancer is not built yet
-([Edge-Node2](../plans/Edge-Node2.md) E17).
+does. An edge node can take the load balancer's place: [A local cluster with an edge
+node](#a-local-cluster-with-an-edge-node).
 
 ### Requirements
 
@@ -1129,9 +1236,19 @@ values are in the conf's comments.
     that member.
   - Files on disk are each member's own: the SFTP root (`runtime://sftp`), and any setting that names a directory,
     such as `pass_media_root`. Share the directory between the members.
-  - The LLM gateway's requests-per-minute and the web protection's limits are counted on each member separately.
+  - The LLM gateway's requests-per-minute and the web protection's limits are counted on each member separately. A
+    ban is shared: one a member starts is told to the others on the cluster topic `web-ban` and holds there too, and
+    a member takes it only from a live member of its cluster. System › Security › Web Protection shows one member's
+    counts and every ban it holds, and lifts a ban on every member.
+- **With an edge node** (plans/Edge-Node2.md §4.4): each member's outbox is one queue for the pool (any linked member
+  sends an item, the items of a key in order, each once) and an item from the edge node is applied once whichever
+  member it reaches. One member sends replication and keeps the edge node's call media and SIP rows: the one holding
+  the lock row `EdgeSenderLock` (claimed while its link is up, taken over 30 seconds after it stops renewing, let go
+  when it stops). The others send it their change notes on the cluster topic `edge-replica-note`; a new sender sends
+  each replicated set whole.
 
-**Not built**: shared bans across members; a screen listing the members.
+**Not built**: a screen listing the members of a cluster that no edge node pools (with one, the edge node's Edge
+Clients › Clients and each member's System › Edge Node list them).
 
 ## PASS servers with a BOSS server or cluster
 

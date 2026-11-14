@@ -16,7 +16,9 @@
 //! node's dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
 //! [`EdgeServer`] with its web front, SSH tunnel port and delegated calls; on both, the queue's metrics and retention.
 //! An all-in-one node (`node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
-//! and XMPP stay a normal node's, and only its paired node's `EdgeHost` names go down the link.
+//! and XMPP stay a normal node's, and only its paired node's `EdgeHost` names go down the link. A node whose role has
+//! no front set (`node_role=edge`, plans/Edge-Node2.md §4.3) forwards no web access: its local nodes' names are reached
+//! through a front node.
 //! Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as properties;
 //! unpairing removes them (plans/archive/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
 
@@ -26,7 +28,7 @@ use std::time::Duration;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{
     Configured, DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeInfo, EdgeLink, EdgeOffer, EdgeSetup, LinkStatus,
-    PairResult, PairingCode, NODE_ID, NODE_KEY, NODE_PIN, NODE_URL,
+    MemberState, PairResult, PairingCode, PoolMemberInfo, NODE_ID, NODE_KEY, NODE_PAIRING, NODE_PIN, NODE_URL,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -220,7 +222,8 @@ pub(crate) fn start(
             }
             Started {
                 acceptor: Some(acceptor),
-                front: Some(Arc::new(WebFront::new(&server))),
+                // the front set's web access by host name (plans/Edge-Node2.md §4.3): an edge node behind a front has none
+                front: role.has_front().then(|| Arc::new(WebFront::new(&server))),
             }
         }
         None => {
@@ -230,7 +233,7 @@ pub(crate) fn start(
                 State::off(if takes_links {
                     "this node takes no links"
                 } else {
-                    "node_role is not edge or all-in-one"
+                    "node_role is not set"
                 }),
             );
             Started::default()
@@ -295,9 +298,7 @@ impl Hook {
 
     fn server(&self) -> Result<Arc<EdgeServer>, Error> {
         if !moqui_core::edge::takes_links() {
-            return Err(Error::new(
-                "this is not an edge node (node_role is not edge or all-in-one)",
-            ));
+            return Err(Error::new("this is not an edge node (node_role is not set)"));
         }
         self.server
             .as_ref()
@@ -309,6 +310,10 @@ impl Hook {
         let factory = self.factory.upgrade();
         if config.web.is_none() {
             config.web = factory.as_deref().and_then(super::down::local_web);
+        }
+        // this instance's own key, which its links prove (plans/Edge-Node2.md §4.11)
+        if let Some(factory) = &factory {
+            config.member_key = Some(super::member_key::MemberKey::load_or_create(factory.runtime_dir())?);
         }
         // a node paired before E7 pins its edge node's instance id on its first link, into runtime/.env
         if config.on_pin.is_none() {
@@ -389,6 +394,8 @@ impl EdgeLink for Hook {
             (NODE_KEY.to_string(), paired.key.clone()),
             (NODE_PIN.to_string(), paired.pin.clone()),
             (NODE_ID.to_string(), paired.edge.instance_id.clone()),
+            // the pairing every member of this cluster is known by (plans/Edge-Node2.md §4.4)
+            (NODE_PAIRING.to_string(), instance.clone()),
         ];
         moqui_lib::env::update_dotenv_file(&self.env_path()?, &set, &[])?;
         for (name, value) in &set {
@@ -462,7 +469,7 @@ impl EdgeLink for Hook {
         // and E8 do
         let calls = moqui_core::edge::calls::CALLS_ENABLED;
         let sip = moqui_core::edge::sip::SIP_ENABLED;
-        let names = [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, calls, sip];
+        let names = [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, NODE_PAIRING, calls, sip];
         moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &names)?;
         for name in names {
             moqui_lib::env::clear_property(name);
@@ -500,6 +507,10 @@ impl EdgeLink for Hook {
 
     fn create_pairing_code(&self, valid_minutes: u32) -> Result<PairingCode, Error> {
         self.server()?.create_pairing_code(valid_minutes)
+    }
+
+    fn serving(&self) -> bool {
+        !moqui_core::edge::takes_links() || self.server().is_ok()
     }
 
     fn clients(&self) -> Result<Vec<EdgeClientInfo>, Error> {
@@ -568,10 +579,48 @@ impl EdgeLink for Hook {
         super::probe::turn_probe(url, username, credential, peer).map_err(Error::new)
     }
 
+    fn members(&self, paired_node_id: Option<&str>) -> Result<Vec<PoolMemberInfo>, Error> {
+        self.server()?.members(paired_node_id)
+    }
+
+    fn balancing(&self, paired_node_id: Option<&str>) -> Result<moqui_core::edge::BalancingInfo, Error> {
+        Ok(self.server()?.balancing(paired_node_id))
+    }
+
+    fn drain_member(&self, paired_node_id: &str, instance_id: &str, drain: bool) -> Result<MemberState, Error> {
+        let server = self.server()?;
+        let (node, member) = (paired_node_id.to_string(), instance_id.to_string());
+        crate::edge::block_on(async move { server.drain_member(&node, &member, drain).await })?.map_err(Error::new)
+    }
+
+    fn member_forgotten(&self, paired_node_id: &str, instance_id: &str) {
+        if let Ok(server) = self.server() {
+            if server.close_member(paired_node_id, instance_id) {
+                tracing::warn!(
+                    "Edge node: the link of member {instance_id} of {paired_node_id} is closed, its key forgotten"
+                );
+            }
+        }
+    }
+
+    fn state_changed(&self) {
+        if let Some(dialer) = lock(&self.dialer).as_ref() {
+            dialer.state_changed();
+        }
+    }
+
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error> {
         let server = self.server()?;
         let node = paired_node_id.to_string();
         let rtt = crate::edge::block_on(async move { server.ping_local(&node).await })?.map_err(Error::new)?;
+        Ok(rtt.as_secs_f64() * 1000.0)
+    }
+
+    fn ping_member(&self, paired_node_id: &str, instance_id: &str) -> Result<f64, Error> {
+        let server = self.server()?;
+        let (node, member) = (paired_node_id.to_string(), instance_id.to_string());
+        let rtt =
+            crate::edge::block_on(async move { server.ping_member(&node, &member).await })?.map_err(Error::new)?;
         Ok(rtt.as_secs_f64() * 1000.0)
     }
 }

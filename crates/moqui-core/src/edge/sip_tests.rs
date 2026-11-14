@@ -208,6 +208,7 @@ fn paired(facade: &EntityFacade, node: &str, status: &str, setup: &str) {
 /// A paired node's full send of `set` with one record of `entity` keyed by `number`.
 fn numbers(facade: &EntityFacade, node: &str, set: &str, entity: &str, numbers: &[&str]) {
     let batch = crate::edge::replica::Batch {
+        sender_token: 0,
         set_name: set.to_string(),
         epoch: "e1".to_string(),
         base_seq: 0,

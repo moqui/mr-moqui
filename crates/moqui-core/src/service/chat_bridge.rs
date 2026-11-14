@@ -1102,23 +1102,40 @@ fn deliver_head(
         push_state(&room_id, seq);
         return Ok(Step::Done);
     }
+    // read FOR UPDATE and checked in one transaction: an entity update_all reads and then writes by key, so two members
+    // could both claim (plans/Edge-Node2.md §4.4, as the edge queue's claim)
     let claimed = force_new(facade, DELIVERY, || {
-        facade
+        let row = facade
             .find(DELIVERY)?
             .eq("chatBridgeDeliveryId", Value::string(&delivery_id))
-            .eq("statusEnumId", Value::string(PENDING))
-            .eq("attemptCount", Value::I64(attempts))
-            .condition(Condition::or(vec![
-                Condition::is_null("leaseExpiresDate"),
-                Condition::less_equal("leaseExpiresDate", stamp(now)),
-            ]))
+            .use_cache(false)
+            .for_update(true)
             .disable_authz()
-            .update_all([
-                ("attemptCount".to_string(), Value::I64(attempts + 1)),
-                ("leaseOwner".to_string(), Value::string(node)),
-                ("leaseExpiresDate".to_string(), stamp(now + LEASE_MILLIS)),
-                ("lastAttemptDate".to_string(), stamp(now)),
-            ])
+            .one()?;
+        let Some(mut row) = row else { return Ok(0) };
+        let free = row
+            .get("leaseExpiresDate")
+            .and_then(crate::user::value_millis)
+            .is_none_or(|until| until <= now);
+        let attempt_count = row
+            .get("attemptCount")
+            .map(moqui_lib::object::to_plain_string)
+            .and_then(|count| count.split('.').next().and_then(|whole| whole.parse::<i64>().ok()))
+            .unwrap_or(0);
+        let pending = row
+            .get("statusEnumId")
+            .map(moqui_lib::object::to_plain_string)
+            .as_deref()
+            == Some(PENDING);
+        if !pending || attempt_count != attempts || !free {
+            return Ok(0);
+        }
+        row.set("attemptCount", Value::I64(attempts + 1));
+        row.set("leaseOwner", Value::string(node));
+        row.set("leaseExpiresDate", stamp(now + LEASE_MILLIS));
+        row.set("lastAttemptDate", stamp(now));
+        row.update(facade)?;
+        Ok(1)
     })?;
     if claimed == 0 {
         return Ok(Step::Hold);

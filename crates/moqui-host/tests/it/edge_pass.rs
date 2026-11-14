@@ -483,7 +483,10 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     let edge = crate::common::start_second_with(
         "edge-pass-edge",
         "",
-        &[("node_role", "edge"), ("webapp_https_listen_port", &edge_port_text)],
+        &[
+            ("node_role", "front_edge"),
+            ("webapp_https_listen_port", &edge_port_text),
+        ],
         &files(&big, &[("cert/default.crt", &cert), ("cert/default.key", &key)]),
     );
 

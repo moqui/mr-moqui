@@ -429,7 +429,7 @@ fn the_size_cap_holds_for_each_pairing_alone() {
     let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
     let settings = EdgeSettings {
-        role: super::super::NodeRole::Edge,
+        role: super::super::NodeRole::FrontEdge,
         max_bytes: 250,
         ..settings()
     };
@@ -481,7 +481,7 @@ fn a_pairings_own_cap_holds_in_place_of_the_confs() {
     let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
     let settings = EdgeSettings {
-        role: super::super::NodeRole::Edge,
+        role: super::super::NodeRole::FrontEdge,
         max_bytes: 250,
         ..settings()
     };
@@ -496,4 +496,91 @@ fn a_pairings_own_cap_holds_in_place_of_the_confs() {
     assert_eq!(node_cap(&facade, &settings, "local-a"), 2 * 1024 * 1024);
     assert_eq!(node_cap(&facade, &settings, "local-b"), 250, "0 is unset");
     assert_eq!(node_cap(&facade, &settings, "local-z"), 250, "no row");
+}
+
+/// Two members of a local cluster send one outbox (plans/Edge-Node2.md §4.4): the rows are keyed by the one id of the
+/// pool, and each member claims heads by its lease. Here they take turns on heads each read before the other worked
+/// (this test database has no row locks; `edge_pool` races two members on Postgres): an item the other holds or has
+/// delivered is not claimed, so every item goes once, the items of each key in order.
+#[test]
+fn two_members_sending_one_outbox_deliver_each_item_once_in_its_keys_order() {
+    let (ctx, facade) = open();
+    let node = local_node_id(ctx.factory());
+    for index in 0..4 {
+        for key in ["a", "b"] {
+            enqueue(ctx.factory(), &facade, None, &item(key, &format!("{key}{index}"))).unwrap();
+        }
+    }
+    let settings = settings();
+    let mut delivered: Vec<String> = Vec::new();
+    for _ in 0..20 {
+        let now = now_millis();
+        // both read the heads before either works
+        let first = due_heads(&facade, &node, TO_EDGE, now).unwrap();
+        let second = due_heads(&facade, &node, TO_EDGE, now).unwrap();
+        if first.due.is_empty() {
+            break;
+        }
+        // the first claims each head; the second, at the same heads, finds them held
+        let claimed: Vec<QueueItem> = first
+            .due
+            .iter()
+            .filter_map(|head| claim(&facade, head, "m-1/7", now).unwrap())
+            .collect();
+        for head in &second.due {
+            assert!(
+                claim(&facade, head, "m-2/3", now).unwrap().is_none(),
+                "held by the other"
+            );
+        }
+        for item in &claimed {
+            delivered.push(item.idempotency_key.clone());
+            let applied = Outcome::Answered(Applied::Applied);
+            assert_eq!(
+                finish(&facade, &settings, item, &applied, now).unwrap(),
+                Step::Delivered
+            );
+        }
+        // and once they are delivered, still not
+        for head in &second.due {
+            assert!(
+                claim(&facade, head, "m-2/3", now).unwrap().is_none(),
+                "delivered already"
+            );
+        }
+        // the next round's heads go to the second
+        let now = now_millis();
+        for head in due_heads(&facade, &node, TO_EDGE, now).unwrap().due {
+            let item = claim(&facade, &head, "m-2/3", now).unwrap().unwrap();
+            delivered.push(item.idempotency_key.clone());
+            let applied = Outcome::Answered(Applied::Applied);
+            assert_eq!(
+                finish(&facade, &settings, &item, &applied, now).unwrap(),
+                Step::Delivered
+            );
+        }
+    }
+    assert_eq!(delivered.len(), 8, "each once: {delivered:?}");
+    for key in ["a", "b"] {
+        let order: Vec<&String> = delivered.iter().filter(|id| id.starts_with(key)).collect();
+        let expected: Vec<String> = (0..4).map(|index| format!("{key}{index}")).collect();
+        assert_eq!(order, expected.iter().collect::<Vec<_>>(), "key {key} in order");
+    }
+}
+
+/// A member whose link came back lets go of its own earlier leases, never another member's, whose delivery may be on
+/// its way.
+#[test]
+fn a_member_releases_only_its_own_leases() {
+    let (ctx, facade) = open();
+    let node = local_node_id(ctx.factory());
+    enqueue(ctx.factory(), &facade, None, &item("a", "1")).unwrap();
+    enqueue(ctx.factory(), &facade, None, &item("b", "2")).unwrap();
+    let now = now_millis();
+    let heads = due_heads(&facade, &node, TO_EDGE, now).unwrap();
+    assert!(claim(&facade, &heads.due[0], "m-1/1", now).unwrap().is_some());
+    assert!(claim(&facade, &heads.due[1], "m-12/1", now).unwrap().is_some());
+    assert_eq!(release_leases(&facade, &node, TO_EDGE, "m-1/").unwrap(), 1);
+    let heads = due_heads(&facade, &node, TO_EDGE, now).unwrap();
+    assert_eq!(keys(&heads), ["1"], "m-12's lease holds b");
 }

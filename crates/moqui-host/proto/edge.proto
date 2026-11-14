@@ -84,6 +84,36 @@ message PairReply {
 
 message HelloRequest {
   Hello hello = 1;
+  // The local node's state and its cluster's members (plans/Edge-Node2.md §4.4): the edge node admits a member that
+  // is not linked only when a linked member's list has it as a live member.
+  MemberStatus status = 2;
+  // The member's own public key (Ed25519, 32 bytes), from a key each member keeps for itself and never shares
+  // (plans/Edge-Node2.md §4.11): the edge node pins it for the member's instance id on its first link, so the pairing's
+  // shared key alone cannot name a member.
+  bytes member_key = 3;
+  // The member key's signature over this TLS connection's exporter value (label EXPORTER-moqui-edge-member, 32 bytes),
+  // so the proof holds for this connection only.
+  bytes member_proof = 4;
+}
+
+// One member of a local node's cluster (plans/Edge-Node2.md §4.4), from its moqui.server.ClusterMember row.
+message ClusterMember {
+  string instance_id = 1;
+  // How long ago its heartbeat was written, in milliseconds, by the cluster database's clock.
+  uint64 heartbeat_age_ms = 2;
+  // Its heartbeat is within its cluster's liveness window.
+  bool live = 3;
+  // The moqui binary version it runs.
+  string version = 4;
+}
+
+// A linked member's state and its cluster's members: with its Hello, with every Ping on its up connection, and when
+// the edge node asks (LocalLink.Members). The edge node keeps the latest list of each pairing in memory only, and
+// checks it as input (sizes, ids, a count cap), for that pairing alone.
+message MemberStatus {
+  // starting, live, draining or stopping: only a live member gets new work.
+  string state = 1;
+  repeated ClusterMember members = 2;
 }
 
 message HelloReply {
@@ -94,11 +124,31 @@ message HelloReply {
   // credentials for the edge node's TURN with it. Only here, on an up connection whose key the edge node pinned, never
   // in a Hello (which Probe tells anyone); the local node keeps it in memory and never logs or stores it.
   string turn_secret = 3;
+  // The pairing the key is for (plans/Edge-Node2.md §4.4): the id every member of the local node's cluster is known
+  // by on the edge node, which may differ from the member's own instance id.
+  string pairing_id = 4;
+  // A random token for this up connection's down connection, which names it after its generation in the down role
+  // bytes (plans/Edge-Node2.md §4.11): a generation alone is guessable.
+  bytes down_token = 5;
 }
 
 message PingRequest {
   // The link generation the sender is on.
   uint64 generation = 1;
+  // On an up connection, the local node's state and its cluster's members (plans/Edge-Node2.md §4.4); unset down.
+  MemberStatus status = 2;
+}
+
+// The edge node asks a linked member for its cluster's members now (plans/Edge-Node2.md §4.4, admission).
+message MembersRequest {
+  uint64 generation = 1;
+}
+
+// The edge node's operator drains a member, or brings it back (plans/Edge-Node2.md §4.4, health): the member sets its
+// own state and answers with it; nothing is kept on the edge node.
+message DrainRequest {
+  uint64 generation = 1;
+  bool drain = 2;
 }
 
 message PingReply {
@@ -232,6 +282,9 @@ message ReplicateRequest {
   // The last part of a full send: the edge node removes the set's records of older epochs.
   bool snapshot_end = 6;
   repeated ReplicaChange changes = 7;
+  // When the sending member of a clustered local node took the sender lock (epoch milliseconds): the edge node refuses a
+  // batch with an earlier one for a set a later sender wrote (plans/Edge-Node2.md §4.4).
+  uint64 sender_token = 8;
 }
 
 message ReplicateReply {
@@ -445,4 +498,8 @@ service LocalLink {
   rpc PutContent(stream ContentChunk) returns (PutContentReply);
   // The edge node's messages for the local node on cluster topics (E7), in order, while the link lasts.
   rpc Signal(stream SignalMessage) returns (SignalReply);
+  // The member's state and its cluster's members now (plans/Edge-Node2.md §4.4).
+  rpc Members(MembersRequest) returns (MemberStatus);
+  // Drain the member, or bring it back; the answer has its state after.
+  rpc Drain(DrainRequest) returns (MemberStatus);
 }

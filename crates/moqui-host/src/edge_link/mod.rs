@@ -51,16 +51,18 @@
 
 use std::time::Duration;
 
-use moqui_core::edge::EdgeInfo;
+use moqui_core::edge::{ClusterMemberInfo, EdgeInfo, MemberState};
 
 pub(crate) use crate::grpc_client::H2Channel;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 pub(crate) mod accept;
+pub(crate) mod balance;
 pub mod dial;
 pub(crate) mod down;
 pub(crate) mod hook;
 pub(crate) mod hosts;
+pub mod member_key;
 mod offer;
 pub mod pair;
 mod probe;
@@ -74,8 +76,9 @@ pub(crate) mod web;
 pub(crate) mod xmpp_domain;
 
 pub(crate) use accept::{Acceptor, Secured};
-pub use dial::{connect_up, Dialer, UpLink};
+pub use dial::{connect_up, Dialer, FixedMember, PoolMember, UpLink};
 pub use down::{local_web, LocalWeb};
+pub use member_key::MemberKey;
 pub(crate) use hook::{start, stopped};
 pub use pair::{check, new_key, pair, PairConfig, Paired};
 pub use probe::{turn_probe, xmpp_probe};
@@ -96,8 +99,10 @@ pub const ROLE_PAIR: u8 = b'P';
 /// The role byte of an up connection: the local node is the HTTP/2 client.
 pub const ROLE_UP: u8 = b'U';
 /// The role byte of a down connection, followed by the generation (8 bytes, big-endian) of the up connection it belongs
-/// to: the edge node is the HTTP/2 client.
+/// to and that connection's down token ([`DOWN_TOKEN`] bytes, from its Hello answer): the edge node is the HTTP/2 client.
 pub const ROLE_DOWN: u8 = b'D';
+/// The length of a down connection's token (plans/Edge-Node2.md §4.11).
+pub const DOWN_TOKEN: usize = 16;
 
 /// The request header in which the edge node names the client of a forwarded request (`ip:port`). The local node
 /// reads it only on the down connection, and the edge node removes any copy a client sent.
@@ -258,6 +263,38 @@ pub(crate) fn hello(
     }
 }
 
+/// A member's state and its cluster's members as the link carries them (plans/Edge-Node2.md §4.4).
+pub(crate) fn status_to_proto(state: MemberState, members: &[ClusterMemberInfo]) -> proto::MemberStatus {
+    proto::MemberStatus {
+        state: state.as_str().to_string(),
+        members: members
+            .iter()
+            .map(|member| proto::ClusterMember {
+                instance_id: member.instance_id.clone(),
+                heartbeat_age_ms: member.heartbeat_age_ms,
+                live: member.live,
+                version: member.version.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// What a member's status says: its state (`None` for one this end does not know) and its cluster's members, as sent;
+/// the caller checks the list as input (`moqui_core::edge::pool::check_member_list`).
+pub(crate) fn status_from_proto(status: &proto::MemberStatus) -> (Option<MemberState>, Vec<ClusterMemberInfo>) {
+    let members = status
+        .members
+        .iter()
+        .map(|member| ClusterMemberInfo {
+            instance_id: member.instance_id.clone(),
+            heartbeat_age_ms: member.heartbeat_age_ms,
+            live: member.live,
+            version: member.version.clone(),
+        })
+        .collect();
+    (MemberState::parse(&status.state), members)
+}
+
 /// An edge node's Hello as the screens show it, with the fingerprint of its key.
 pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
     let checked = check_versions(LINK_VERSION, hello.link_version, "edge node");
@@ -403,6 +440,9 @@ pub struct EdgeConfig {
     pub offline_page: std::sync::Arc<str>,
     /// How long opening a tunnel or forwarding a request head down a link may take.
     pub open_timeout: Duration,
+    /// This node has the front set (plans/Edge-Node2.md §4.3): it passes passthrough hosts' connections down links. An
+    /// edge node behind a front node (`node_role=edge`) does not.
+    pub front: bool,
 }
 
 impl EdgeConfig {
@@ -428,6 +468,7 @@ impl EdgeConfig {
             xmpp_tls_tunnel: tunnel_bind(TUNNEL_PORTS[2].0, TUNNEL_PORTS[2].1, TUNNEL_PORTS[2].2),
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
+            front: moqui_core::edge::node_role_kind().has_front(),
         }
     }
 }
@@ -514,9 +555,16 @@ pub struct LocalConfig {
     /// Keeps the id pinned on a first link when [`LocalConfig::edge_id`] was empty (the hook writes it to
     /// `runtime/.env`); none keeps it only for the dialer's life.
     pub on_pin: Option<OnPin>,
-    /// This node's instance id, which the edge node keys its rows by.
+    /// This node's instance id: the member its links name (plans/Edge-Node2.md §4.4). The edge node keys its rows by
+    /// the pairing its key is for, which every member of a cluster shares.
     pub instance_id: String,
     pub node_name: String,
+    /// This member's own key (plans/Edge-Node2.md §4.11): a server's from `runtime/db/edge_member_key`
+    /// ([`MemberKey::load_or_create`]), else one made for this config. Clones of a config share it.
+    pub member_key: Option<std::sync::Arc<MemberKey>>,
+    /// What this member tells its edge node of itself and its cluster: none for its server's
+    /// ([`dial::ServerMember`] with [`LocalConfig::web`]), else this node alone and live.
+    pub member: Option<std::sync::Arc<dyn PoolMember>>,
     pub backoff: Backoff,
     /// The waits after the edge node refused this node.
     pub refused_backoff: Backoff,
@@ -543,6 +591,8 @@ impl LocalConfig {
             on_pin: None,
             instance_id: instance_id.to_string(),
             node_name: instance_id.to_string(),
+            member: None,
+            member_key: MemberKey::generate().ok().map(std::sync::Arc::new),
             backoff: Backoff::default(),
             refused_backoff: Backoff::refused(),
             keepalive: Duration::from_secs(15),
@@ -583,6 +633,7 @@ impl std::fmt::Debug for LocalConfig {
             .field("edge_id", &self.edge_id)
             .field("instance_id", &self.instance_id)
             .field("node_name", &self.node_name)
+            .field("member", &self.member.is_some())
             .field("backoff", &self.backoff)
             .field("refused_backoff", &self.refused_backoff)
             .field("keepalive", &self.keepalive)

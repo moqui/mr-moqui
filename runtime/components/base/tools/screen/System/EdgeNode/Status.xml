@@ -24,7 +24,12 @@ along with this software (see the LICENSE.md file). If not, see
     calls on the edge node's media node while its link-kept row is live, or off by edge_calls_enabled) and phones
     (the trunks and phones through the edge node's SIP engine while its link-kept SipNode row is live, with its
     trunks loaded and the numbers with a fallback, or off by edge_sip_enabled), with Set up
-    again, which opens the wizard at Discover. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
+    again, which opens the wizard at Discover. This node's cluster (plans/Edge-Node2.md §4.4, §4.10 On a local node;
+    get#LocalCluster): every member links on its own with the pairing's key, and this box shows this member's instance
+    id and state on its links, the pairing it is known by, and its cluster's members as its links tell the edge node;
+    Drain and Resume (drain#EdgeMember with no pairing) drain this member, so the edge node sends it no new work and
+    /health answers 503, for a rolling upgrade or before stopping it. It shows while paired, and while edge_node_url is
+    set with the link not running in this process. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
@@ -44,6 +49,15 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="drainSelf">
+        <service-call name="org.moqui.edge.EdgeServices.drain#EdgeMember" in-map="{drain:drain}" out-map="drainOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="drainOut?.state == 'draining'"><then><message type="warning">This node is draining: the edge node sends it no new work until you resume it</message></then>
+                <else><message type="success">This node takes new work again</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="unpair">
         <service-call name="org.moqui.edge.EdgeServices.unpair#EdgeNode"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Unpaired: the link to the edge node is closed</message></if></actions>
@@ -59,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         notStarted = state === 'notStarted'
         const running = !notBuilt && !notStarted
         // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
-        isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
+        isEdge = running && link.takesLinks === true
         paired = running && !isEdge && state !== 'unpaired'
         unpaired = running && !isEdge && state === 'unpaired'
         const states = {connecting: [L('Connecting'), 'info'], linked: [L('Linked'), 'positive'], retrying: [L('Retrying'), 'warning'],
@@ -106,6 +120,33 @@ along with this software (see the LICENSE.md file). If not, see
             stateLabel: set.snapshotNeeded ? L('Full send due') : L('Up to date'),
             stateColor: set.snapshotNeeded ? 'warning' : 'positive',
             lastAckText: set.lastAckDate ? ec.l10n.format(set.lastAckDate, '') : L('Not yet')}))
+        // this member and its cluster (plans/Edge-Node2.md §4.4): every member links, so each shows its own; also with the
+        // link not running here, as long as this node is paired by its .env
+        const pairedByEnv = !!String(System.getProperty('edge_node_url') || '').trim()
+        ownCluster = !notBuilt && link.takesLinks !== true && (paired || (notStarted && pairedByEnv))
+        clusterError = ''
+        let clusterOut = {}
+        if (ownCluster) {
+            ec.message.pushErrors()
+            try {
+                clusterOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LocalCluster').call() || {}
+                if (ec.message.hasError()) clusterError = ec.message.getErrorsString()
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+        }
+        const memberStates = {live: L('Live'), starting: L('Starting'), draining: L('Draining'), stopping: L('Stopping')}
+        draining = clusterOut.state === 'draining'
+        // draining the only live member takes the pairing's names offline at the edge node
+        aloneLive = !Array.from(clusterOut.memberList || []).some((member) => member.live && !member.own)
+        ownMember = {instanceId: clusterOut.instanceId || '', pairingId: clusterOut.pairingId || L('Not written yet'),
+            stateLabel: memberStates[clusterOut.state] || clusterOut.state || ''}
+        clusterList = Array.from(clusterOut.memberList || []).map((member) => ({
+            instanceId: member.instanceId + (member.own ? ' (' + L('this node') + ')' : ''),
+            liveLabel: member.live ? L('Live') : L('Stopped'), liveColor: member.live ? 'positive' : 'grey',
+            heartbeatText: member.heartbeatAgeMs == null ? L('None written') : age(Math.round(Number(member.heartbeatAgeMs) / 1000)),
+            version: member.version || ''}))
         // the areas set up (plans/archive/Edge-Node.md §5.7): the host names from the edge node while the link is up, the
         // rest from this node's own rows and settings
         setup = {}
@@ -339,6 +380,48 @@ along with this software (see the LICENSE.md file). If not, see
                     <label type="p" style="m-muted q-pa-sm q-mb-none"
                             text="No replicated sets in this node's edge conf, or none since the link started."/>
                 </widgets></section>
+            </box-body-nopad></container-box>
+        </widgets></section>
+
+        <section name="OwnCluster" condition="ownCluster"><widgets>
+            <container-box><box-header title="This node's cluster"/><box-toolbar>
+                <link url="drainSelf" link-type="hidden-form" text="Drain this node" icon="sym_o_pause_circle"
+                        condition="!draining &amp;&amp; !clusterError &amp;&amp; !aloneLive" parameter-map="{drain:'true'}"
+                        confirmation="Drain this node? It finishes what it has, the edge node sends its work to the other members, and its health check answers 503, until you resume it."/>
+                <link url="drainSelf" link-type="hidden-form" text="Drain this node" icon="sym_o_pause_circle" btn-type="danger"
+                        condition="!draining &amp;&amp; !clusterError &amp;&amp; aloneLive" parameter-map="{drain:'true'}"
+                        confirmation="This node is its cluster's only live member. Draining it takes its sites offline at the edge node and holds queue delivery there, and its health check answers 503, until you resume it. Drain it?"/>
+                <link url="drainSelf" link-type="hidden-form" text="Resume" icon="sym_o_play_circle" btn-type="primary"
+                        condition="draining" parameter-map="{drain:'false'}"/>
+            </box-toolbar><box-body-nopad>
+                <section name="ClusterError" condition="clusterError"><widgets>
+                    <label type="p" text="${clusterError}" style="text-negative q-pa-sm q-mb-none"/>
+                </widgets></section>
+                <label type="p" style="m-muted q-pa-sm q-mb-none"
+                        text="Every member of this node's cluster links to the edge node on its own, with the pairing's key, and the edge node balances work over the live ones. It admits a new member only when a linked one lists it as live here. Drain a member before stopping or upgrading it."/>
+                <container style="q-pa-sm">
+                    <form-single name="OwnMember" map="ownMember">
+                        <field name="instanceId"><default-field title="This node" tooltip="Its instance id: the instance_id property when set, else the one kept in runtime/db/instance_id"><display/></default-field></field>
+                        <field name="stateLabel"><default-field title="State on its links" tooltip="What this node tells the edge node: starting, live, draining or stopping. Only a live member gets new work"><display/></default-field></field>
+                        <field name="pairingId"><default-field title="Pairing" tooltip="The id the edge node knows this cluster by (edge_node_pairing in the .env the members share)"><display/></default-field></field>
+                        <field-layout>
+                            <field-row><field-ref name="instanceId"/><field-ref name="stateLabel"/></field-row>
+                            <field-ref name="pairingId"/>
+                        </field-layout>
+                    </form-single>
+                </container>
+                <form-list name="ClusterList" list="clusterList" skip-form="true" paginate="false">
+                    <field name="instanceId"><default-field title="Member"><display style="text-weight-medium"/></default-field></field>
+                    <field name="live"><default-field title="In the cluster">
+                        <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${liveColor}">${liveLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: liveLabel})}]]></text></render-mode>
+                    </default-field></field>
+                    <field name="heartbeatText"><default-field title="Heartbeat" tooltip="How long ago its heartbeat was written to the shared database"><display/></default-field></field>
+                    <field name="version"><default-field title="Version"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="instanceId"/><field-ref name="version"/></column>
+                        <column><field-ref name="live"/><field-ref name="heartbeatText"/></column>
+                    </columns>
+                </form-list>
             </box-body-nopad></container-box>
         </widgets></section>
     </widgets>

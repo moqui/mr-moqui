@@ -780,6 +780,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="path" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated url-pattern style globs: * within a segment, ** across segments.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="methods" type="xs:string"/>
+                    <xs:attribute name="host" type="xs:string"><xs:annotation><xs:documentation>
+                        Comma separated host names this one applies to, *.example.com for any name under one; left out, every
+                        host. For a site that is stricter than the others (plans/Edge-Node2.md §4.3), on top of the ones
+                        without host.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="anonymous" type="xs:string" default="false"><xs:annotation><xs:documentation>
                         true: only requests with no credentials count, those with no Authorization, api_key or login_key
                         header (a session cookie is not looked at). For what anyone may use without signing in, such as
@@ -789,7 +793,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="ban"><xs:complexType>
                     <xs:annotation><xs:documentation>Per client: threshold of events within seconds bans the client for
                         duration seconds. A banned client's connections are closed and its requests answered 403. Merged
-                        by name.</xs:documentation></xs:annotation>
+                        by name. The events of every host count. A ban started on one server is told to the other members
+                        of its cluster and to the edge node it is paired with, which ban the client too; one
+                        a paired node tells an edge node holds there for that node's hosts only (plans/Edge-Node2.md
+                        §4.3).</xs:documentation></xs:annotation>
                     <xs:attribute name="name" type="xs:string" use="required"/>
                     <xs:attribute name="events" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated: auth-failure (credentials that were not valid: a login form, Basic auth, an API
@@ -809,6 +816,11 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:restriction></xs:simpleType></xs:attribute>
                     <xs:attribute name="cidr" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated address ranges.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="host" type="xs:string"><xs:annotation><xs:documentation>
+                        Comma separated host names this one applies to, *.example.com for any name under one; left out, every
+                        host. For a site that is stricter than the others (plans/Edge-Node2.md §4.3), on top of the ones
+                        without host. A connection, before its request names a host, and a ban use only the client rules
+                        without host.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="path-rule"><xs:complexType>
                     <xs:attribute name="name" type="xs:string"><xs:annotation><xs:documentation>
@@ -819,6 +831,10 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:restriction></xs:simpleType></xs:attribute>
                     <xs:attribute name="path" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated url-pattern style globs, matched without regard to case against the decoded path.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="host" type="xs:string"><xs:annotation><xs:documentation>
+                        Comma separated host names this one applies to, *.example.com for any name under one; left out, every
+                        host. For a site that is stricter than the others (plans/Edge-Node2.md §4.3), on top of the ones
+                        without host.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="user-agent-rule"><xs:complexType>
                     <xs:attribute name="name" type="xs:string"><xs:annotation><xs:documentation>
@@ -829,6 +845,10 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:restriction></xs:simpleType></xs:attribute>
                     <xs:attribute name="contains" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated text; a User-Agent containing one, without regard to case, is denied.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="host" type="xs:string"><xs:annotation><xs:documentation>
+                        Comma separated host names this one applies to, *.example.com for any name under one; left out, every
+                        host. For a site that is stricter than the others (plans/Edge-Node2.md §4.3), on top of the ones
+                        without host.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
             </xs:sequence>
             <xs:attribute name="enabled" type="xs:string"><xs:annotation><xs:documentation>
@@ -1821,7 +1841,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="delegate">
-                    <xs:annotation><xs:documentation>A service an edge node (node_role=edge) runs on its local node
+                    <xs:annotation><xs:documentation>A service an edge node (node_role=front_edge) runs on its local node
                         instead of itself, for a synchronous call (an async call or a scheduled job runs where it was
                         queued): the call goes down the link at once and fails with "local node offline" while the link
                         is down. An all-in-one node (node_role=all-in-one) delegates only a call for a paired node's
@@ -1897,6 +1917,23 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="queue-retry-seconds" type="xs:string" default="5">
                 <xs:annotation><xs:documentation>The wait after the first refusal, doubling up to 10 minutes; a decimal.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="sticky-cookie" type="xs:string" default="moqui.session">
+                <xs:annotation><xs:documentation>On a node with the front set, balancing a pool (plans/Edge-Node2.md
+                    §4.4): the cookie whose value picks the member for a terminate host's request, by rendezvous hashing
+                    over the live members, where the host names none (EdgeHost.stickyCookie). A request without it goes
+                    round robin. The session cookie's name by default.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="set-aside-failures" type="non-neg-int-expandable" default="3">
+                <xs:annotation><xs:documentation>The requests, calls or tunnel opens in a row that fail or time out
+                    before a pool member is set aside: it gets no new work for set-aside-seconds, unless no other member
+                    is live, then it is tried again. At least 1.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="set-aside-seconds" type="non-neg-int-expandable" default="30">
+                <xs:annotation><xs:documentation>How long a member is set aside before it is tried again.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType>

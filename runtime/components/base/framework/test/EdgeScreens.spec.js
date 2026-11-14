@@ -1,11 +1,16 @@
-// System › Edge Clients on a node that takes links (plans/Edge-Node2.md §4.10): its Clients, Domains and Ports tabs,
+// System › Edge Clients on a node that takes links (plans/Edge-Node2.md §4.10): its Clients, Domains, Ports and Balancing tabs,
 // and the rules of the services they call. A host name has one pairing: the first claim holds, another pairing's add
 // is refused with the generic "another node has this name", a revoked pairing gets none; a pairing's own queue cap is
 // above 0 or unset; the services refuse on a node that takes no links. Through the screen an administrator (System's
 // ADMIN) adds and removes a host name and a user without System cannot. A tunnel port goes to one active pairing,
-// never on this node's own ports. Each tab is rendered once in qvt and once in
-// tui (their state chips are render-mode sections), with all of its checks on that render. No link runs under moqui
-// test: node_role is set to edge around each step, and the pairings are rows.
+// never on this node's own ports. A pool's rows (plans/Edge-Node2.md §4.4, §4.5): a pairing's hold of new nodes, an
+// approval, a takeover cleared, a member's key forgotten and Deliver again since, each refused for a pairing that is
+// not one and on a node that takes no links, and the takeover cleared through Clients by an administrator but not by a
+// user without System. On a local node, System › Edge Node shows its own cluster and drains and resumes itself. Each
+// tab is rendered once in qvt and once in tui (their state chips are render-mode sections), with all of its checks on
+// that render; Domains shows each host's sticky cookie, and Balancing the conf's defaults. No link runs under moqui
+// test: node_role is set to front_edge around each step, the pairings are rows,
+// and no member is linked.
 // Run: ./moq test framework --spec EdgeScreens
 const S = "org.moqui.edge.EdgeServices."
 const WEBROOT = "component://webroot/screen/webroot.xml"
@@ -22,6 +27,8 @@ const NODES = [A, B, R]
 const NONE = "EDGE_SCREENS_SPEC_NONE"
 const ERP = "erp.edge-screens-spec.example.test"
 const SHOP = "shop.edge-screens-spec.example.test"
+const STANDBY = "edge-screens-spec-standby"
+const FIRST = "edge-screens-spec-first"
 const SETUP_A = {
     mailDomains: ["branch-a.edge-screens-spec.example.test"],
     xmppDomain: "xmpp-a.edge-screens-spec.example.test",
@@ -38,8 +45,8 @@ function sys(run) {
         if (!wasDisabled) ec.artifactExecution.enableAuthz()
     }
 }
-/** Run `fn` as a dedicated edge node would (node_role edge), with the property put back after. */
-const edge = (fn) => withProperty("node_role", "edge", fn)
+/** Run `fn` as a dedicated edge node would (node_role front_edge), with the property put back after. */
+const edge = (fn) => withProperty("node_role", "front_edge", fn)
 /** A service with authorization off (the rules, not the access), its errors returned. */
 function invoke(name, parameters) {
     let out = {}
@@ -75,6 +82,12 @@ function render(username, path, parameters, method, mode) {
         ec.artifactExecution.disableAuthz()
     }
 }
+/** Note on pairing `node` that the standby took it over from the first machine, as admission does. */
+function takeover(node) {
+    sys(() => ec.entity.makeValue(CLIENT).setAll({pairedNodeId: node, takeoverDate: ec.user.nowTimestamp,
+        takeoverFromId: FIRST, takeoverToId: STANDBY, lastMemberId: STANDBY}).update())
+}
+const clientRow = (node) => sys(() => ec.entity.find(CLIENT).condition("pairedNodeId", node).useCache(false).one())
 const hostRow = (name) => sys(() => ec.entity.find(HOST).condition("hostName", name).one())
 function client(pairedNodeId, statusId, setup) {
     const row = ec.entity.makeValue(CLIENT)
@@ -97,6 +110,8 @@ spec({
     },
     cleanupSpec() {
         ec.message.clearErrors()
+        // a failed step may leave this node drained
+        invoke("drain#EdgeMember", {drain: false})
         sys(() => {
             ec.entity.find(HOST).condition("pairedNodeId", "in", NODES).deleteAll()
             ec.entity.find(PORT).condition("pairedNodeId", "in", NODES).deleteAll()
@@ -199,10 +214,12 @@ feature("an administrator adds and removes a host name on Domains; a user withou
     }
 })
 
-feature("Clients shows each pairing with its state, version, queue cap and the link not running", {
+feature("Clients shows each pairing with its state, version, queue cap, new node hold and takeover, the link not running", {
     when() {
         context.out = edge(() => {
             invoke("update#EdgeClient", {pairedNodeId: A, queueMaxMegabytes: "64"})
+            invoke("hold#NewMembers", {pairedNodeId: B, hold: true})
+            takeover(A)
             return {
                 qvt: render("john.doe", "apps/system/EdgeClients/Clients", {}, null, "qvt"),
                 tui: render("john.doe", "apps/system/EdgeClients/Clients", {}, null, "tui")
@@ -222,6 +239,12 @@ feature("Clients shows each pairing with its state, version, queue cap and the l
         !qvt.text.includes("Make a pairing code")
         !qvt.text.includes("revokeClient")
         qvt.text.includes("Queue cap")
+        // the pool: B holds a new node for approval, A was taken over and its first machine waits; no member linked
+        qvt.text.includes("Held for approval") && qvt.text.includes("Admitted, with a notice")
+        qvt.text.includes("Takeovers") && qvt.text.includes(STANDBY) && qvt.text.includes(FIRST)
+        qvt.text.includes("Refused until you let it link again") && qvt.text.includes("clearTakeover")
+        qvt.text.includes("No member has linked since this node started")
+        qvt.text.includes("Deliver again") && qvt.text.includes("New nodes")
         // the tui template of the state chip, under Edge Clients' own notice
         tui.status === 200
         tui.errors === ""
@@ -230,18 +253,24 @@ feature("Clients shows each pairing with its state, version, queue cap and the l
         tui.text.includes(A)
         tui.text.includes("Revoked")
         tui.text.includes("64 MB")
+        tui.text.includes(STANDBY)
     }
 })
 
 feature("Domains shows each pairing's host names and what its setup claims, and the conflicts", {
     when() {
         context.out = edge(() => {
-            invoke("add#EdgeHost", {hostName: ERP, pairedNodeId: A, modeEnumId: "EdgeHostTerminate"})
+            invoke("add#EdgeHost", {hostName: ERP, pairedNodeId: A, modeEnumId: "EdgeHostTerminate", stickyCookie: "erp_member"})
+            invoke("add#EdgeHost", {hostName: SHOP, pairedNodeId: A})
+            // Add a host name again with no cookie keeps the host's own
+            const again = render("john.doe", "apps/system/EdgeClients/Domains/addHost", {hostName: ERP, pairedNodeId: A, modeEnumId: "EdgeHostTerminate"}, "post")
             const out = {
+                again, againRow: hostRow(ERP),
                 qvt: render("john.doe", "apps/system/EdgeClients/Domains", {}, null, "qvt"),
                 tui: render("john.doe", "apps/system/EdgeClients/Domains", {}, null, "tui")
             }
             invoke("remove#EdgeHost", {hostName: ERP})
+            invoke("remove#EdgeHost", {hostName: SHOP})
             return out
         })
     },
@@ -258,6 +287,12 @@ feature("Domains shows each pairing's host names and what its setup claims, and 
         qvt.text.includes("EDGE_SCREENS_BRIDGE")
         qvt.text.includes("forum-a")
         qvt.text.includes("Replica conflicts")
+        // a terminate host is sticky by its own cookie, with a dialog to change it; a passthrough one by the client's address
+        qvt.text.includes("Sticky by") && qvt.text.includes("erp_member")
+        qvt.text.includes("By client address")
+        qvt.text.includes("The sticky cookie of " + ERP)
+        out.again.errors === ""
+        out.againRow.stickyCookie === "erp_member"
         // a revoked pairing claims nothing
         !qvt.text.includes(R)
         // the tui template of the mode chip
@@ -321,5 +356,167 @@ feature("a tunnel port goes to one active pairing, never on this node's own port
         !tui.broken
         tui.text.includes(SSH_PORT)
         tui.text.includes("Waiting")
+    }
+})
+
+feature("a pool's rows: hold, approve, clear a takeover, forget a key, deliver again; refused for a stranger and off an edge node", {
+    when() {
+        sys(() => ec.entity.makeValue(CLIENT).setAll({pairedNodeId: B,
+            memberKeys: JSON.stringify([[FIRST, "ab".repeat(32)], [STANDBY, "cd".repeat(32)]])}).update())
+        takeover(B)
+        context.out = edge(() => ({
+            hold: invoke("hold#NewMembers", {pairedNodeId: B, hold: true}),
+            holdStranger: invoke("hold#NewMembers", {pairedNodeId: "edge-screens-spec-x", hold: true}),
+            approve: invoke("approve#EdgeMember", {pairedNodeId: B, instanceId: STANDBY}),
+            approveBad: invoke("approve#EdgeMember", {pairedNodeId: B, instanceId: "two words"}),
+            held: clientRow(B),
+            release: invoke("hold#NewMembers", {pairedNodeId: B}),
+            forget: invoke("forget#EdgeMember", {pairedNodeId: B, instanceId: FIRST}),
+            forgetAgain: invoke("forget#EdgeMember", {pairedNodeId: B, instanceId: FIRST}),
+            clear: invoke("clear#EdgeTakeover", {pairedNodeId: B}),
+            after: clientRow(B),
+            deliver: invoke("deliver#ItemsAgain", {pairedNodeId: B, sinceDate: ec.user.nowTimestamp}),
+            deliverNoDate: invoke("deliver#ItemsAgain", {pairedNodeId: B}),
+            deliverStranger: invoke("deliver#ItemsAgain", {pairedNodeId: "edge-screens-spec-x", sinceDate: ec.user.nowTimestamp}),
+            members: invoke("get#EdgeMembers"),
+            balancing: invoke("get#EdgeBalancing"),
+            ping: invoke("ping#EdgeClient", {pairedNodeId: B, instanceId: STANDBY})
+        }))
+        context.plain = {
+            hold: invoke("hold#NewMembers", {pairedNodeId: B, hold: true}),
+            clear: invoke("clear#EdgeTakeover", {pairedNodeId: B}),
+            members: invoke("get#EdgeMembers"),
+            balancing: invoke("get#EdgeBalancing")
+        }
+    },
+    then() {
+        const out = context.out
+        out.hold.error === ""
+        out.hold.hold === true
+        out.holdStranger.error.includes("is not paired")
+        out.approve.approved === true
+        out.approveBad.error.includes("not an instance id")
+        out.held.holdNewMember === "Y"
+        out.held.approvedMemberId === STANDBY
+        out.release.hold === false
+        out.forget.forgotten === true
+        out.forgetAgain.forgotten === false
+        out.clear.cleared === true
+        // the displaced node may link again; the takeover stays noted, and the other member's key stays pinned
+        out.after.holdNewMember === "N"
+        out.after.takeoverFromId == null
+        out.after.takeoverToId === STANDBY
+        out.after.takeoverDate != null
+        // the forgotten id is kept as forgotten, so its next link is a new node's, not the last member coming back
+        out.after.memberKeys.includes(JSON.stringify([FIRST, "forgotten"])) && out.after.memberKeys.includes("cd".repeat(32))
+        out.deliver.error === ""
+        out.deliver.itemCount == 0
+        out.deliverNoDate.error.includes("Since Date")
+        out.deliverStranger.error.includes("is not paired")
+        // no link runs here: no member is linked, and a member's ping has nowhere to go
+        out.members.error === ""
+        out.members.memberList.length === 0
+        // with no link, balancing's defaults from the conf and no members
+        out.balancing.error === ""
+        out.balancing.stickyCookie === "moqui.session"
+        out.balancing.setAsideFailures == 3
+        out.balancing.memberList.length === 0
+        out.ping.error !== ""
+        context.plain.hold.error.includes("only a node that takes links")
+        context.plain.clear.error.includes("only a node that takes links")
+        context.plain.members.error.includes("only a node that takes links")
+        context.plain.balancing.error.includes("only a node that takes links")
+    }
+})
+
+feature("an administrator lets a displaced node link again on Clients; a user without System cannot", {
+    when() {
+        context.out = edge(() => {
+            takeover(A)
+            return {
+                none: render("edge.screens.spec.none", "apps/system/EdgeClients/Clients/clearTakeover", {pairedNodeId: A}, "post"),
+                noneRow: clientRow(A),
+                admin: render("john.doe", "apps/system/EdgeClients/Clients/clearTakeover", {pairedNodeId: A}, "post"),
+                adminRow: clientRow(A)
+            }
+        })
+    },
+    then() {
+        const out = context.out
+        out.none.errors.includes("is not authorized")
+        out.noneRow.takeoverFromId === FIRST
+        out.admin.errors === ""
+        out.adminRow.takeoverFromId == null
+        out.adminRow.takeoverToId === STANDBY
+    }
+})
+
+feature("a local node's Edge Node shows its own cluster, and it drains and resumes itself", {
+    when() {
+        // paired by its .env, with the link not running in this process (no node_role: a local node)
+        context.out = withProperty("edge_node_url", "https://edge.edge-screens-spec.example.test", () => {
+            const before = invoke("get#LocalCluster")
+            const drained = invoke("drain#EdgeMember", {drain: true})
+            const during = invoke("get#LocalCluster")
+            const out = {
+                before, drained, during,
+                qvt: render("john.doe", "apps/system/EdgeNode/Status", {}, null, "qvt"),
+                tui: render("john.doe", "apps/system/EdgeNode/Status", {}, null, "tui")
+            }
+            out.resumed = invoke("drain#EdgeMember", {drain: false})
+            out.after = invoke("get#LocalCluster")
+            return out
+        })
+    },
+    then() {
+        const out = context.out
+        out.before.error === ""
+        out.before.instanceId !== ""
+        out.before.memberList.some((member) => member.own && member.instanceId === out.before.instanceId)
+        out.drained.state === "draining"
+        out.during.state === "draining"
+        out.resumed.error === ""
+        out.resumed.state !== "draining"
+        out.after.state !== "draining"
+        const {qvt, tui} = out
+        qvt.status === 200
+        qvt.errors === ""
+        !qvt.broken
+        qvt.text.includes("This node's cluster")
+        qvt.text.includes(out.before.instanceId)
+        qvt.text.includes("Draining") && qvt.text.includes("Resume")
+        !qvt.text.includes("Drain this node")
+        // the tui template of the members' chip
+        tui.status === 200
+        tui.errors === ""
+        !tui.broken
+        tui.text.includes("This node's cluster")
+        tui.text.includes("(this node)")
+        tui.text.includes("Draining")
+    }
+})
+
+feature("Balancing shows the conf's defaults and, with no link, no member sent work", {
+    when() {
+        context.out = edge(() => ({
+            qvt: render("john.doe", "apps/system/EdgeClients/Balancing", {}, null, "qvt"),
+            tui: render("john.doe", "apps/system/EdgeClients/Balancing", {}, null, "tui")
+        }))
+    },
+    then() {
+        const {qvt, tui} = context.out
+        qvt.status === 200
+        qvt.errors === ""
+        !qvt.broken
+        qvt.text.includes("moqui.session")
+        qvt.text.includes("After 3 failures in a row, for 30 s")
+        qvt.text.includes("No member has been sent work since this node started")
+        !qvt.text.includes("Balancing could not be read")
+        // the tui render of the tab under Edge Clients' own notice (its chip is a render-mode section)
+        tui.status === 200
+        tui.errors === ""
+        !tui.broken
+        tui.text.includes("This node takes no links now")
+        tui.text.includes("moqui.session")
     }
 })

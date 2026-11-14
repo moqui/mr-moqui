@@ -608,7 +608,7 @@ fn the_edge_node_passes_a_passthrough_names_challenge_down_the_tunnel() {
     let edge = crate::common::start_second_with(
         "acme-edge",
         "",
-        &[("node_role", "edge"), ("webapp_https_listen_port", &edge_port_text)],
+        &[("node_role", "front_edge"), ("webapp_https_listen_port", &edge_port_text)],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );
     let rt = runtime();
@@ -761,7 +761,7 @@ fn acceptance_certificates_for_an_edge_node_and_its_local_node() {
         &[("acme-root.pem", &authority.root_pem)],
     );
     let mut edge_properties = vec![
-        ("node_role", "edge"),
+        ("node_role", "front_edge"),
         ("webapp_https_listen_port", edge_port_text.as_str()),
     ];
     edge_properties.extend(acme);

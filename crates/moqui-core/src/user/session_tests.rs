@@ -478,7 +478,7 @@ fn a_session_ended_on_another_server_is_dropped_here() {
         .sessions
         .get(&id)
         .is_some_and(|live| live.retired));
-    assert!(!adopt_presented(&factory, &id).unwrap());
+    assert!(!adopt_presented(&factory, &id, false).unwrap());
     let browser = Arc::clone(&factory);
     let (id_after, user_after) = std::thread::spawn(move || {
         let ctx = browser.new_context();
@@ -528,7 +528,7 @@ fn a_lost_session_end_is_recovered_at_a_peers_clear_of_every_cache() {
     let retired = |id: &str| lock_sessions(&factory).sessions.get(id).map(|live| live.retired);
     assert_eq!(retired(&ended), Some(true));
     assert_eq!(retired(&kept), Some(false));
-    assert!(!adopt_presented(&factory, &ended).unwrap());
+    assert!(!adopt_presented(&factory, &ended, false).unwrap());
 }
 
 /// A flush of a session whose row was deleted elsewhere (before this server heard of it) does not insert the row
@@ -790,6 +790,96 @@ fn guarantee_flush_survives_clearing_the_factory_map() {
     let guard = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
     assert_eq!(guard.session_id(), id);
     assert_eq!(saved_parameters().unwrap().get("k").map(String::as_str), Some("v"));
+}
+
+/// On a node behind an edge node, eventual mode writes a session new in a request before its response, and a new id
+/// after sign-in, so another member of the pool that the new cookie hashes to finds it (plans/Edge-Node2.md §4.4); a
+/// later change of a written session waits for the flush as before. Elsewhere a new session waits too.
+#[test]
+fn a_new_session_is_written_before_its_response_behind_an_edge_node() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    create_user(&facade, "ada", "Secret1!");
+
+    let guard = bind(&factory, None, None, false).unwrap();
+    save_parameter("k", "v");
+    flush_bound(|_| false).unwrap();
+    assert!(
+        load_session_optional(&facade, &guard.session_id()).is_none(),
+        "not behind an edge node: later"
+    );
+    drop(guard);
+
+    let guard = bind(&factory, None, None, false).unwrap();
+    let first = guard.session_id();
+    flush_bound(|_| true).unwrap();
+    assert!(
+        load_session_optional(&facade, &first).is_some(),
+        "a new session's row before the response"
+    );
+    save_parameter("k", "v2");
+    let mut asked = false;
+    flush_bound(|_| {
+        asked = true;
+        true
+    })
+    .unwrap();
+    assert!(!asked, "a written session's change waits for the flush");
+    login::login_user("ada", "Secret1!").unwrap();
+    let rotated = guard.session_id();
+    assert_ne!(rotated, first, "sign-in gives a new id");
+    flush_bound(|_| true).unwrap();
+    assert_eq!(
+        text(&load_session(&facade, &rotated), "userId"),
+        "ada",
+        "the new id's row before the response"
+    );
+    drop(guard);
+    login::logout().ok();
+}
+
+/// On a member of a pool, a live copy that sat unused more than a few seconds is read again from its row when a request
+/// brings it back (another member may have served it, plans/Edge-Node2.md §4.4); one used just now, or on a node that
+/// is not pooled, is taken as it is.
+#[test]
+fn a_session_coming_back_to_a_pool_member_is_read_again() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let guard = bind(&factory, None, None, false).unwrap();
+    set_locale(Some("en"));
+    flush_dirty(&factory).unwrap();
+    let id = guard.session_id();
+    drop(guard);
+    // another member serves it and changes it
+    exec_update(
+        &facade,
+        &["locale", "sessionRevision"],
+        &[Value::string("fr"), Value::I64(9), Value::string(&id)],
+    );
+    let locale = |factory: &ExecutionContextFactory| {
+        lock_sessions(factory)
+            .sessions
+            .get(&id)
+            .and_then(|live| live.columns.locale.clone())
+    };
+    assert!(adopt_presented(&factory, &id, true).unwrap());
+    assert_eq!(locale(&factory).as_deref(), Some("en"), "used just now: as it is");
+    let idle = |factory: &ExecutionContextFactory| {
+        if let Some(live) = lock_sessions(factory).sessions.get_mut(&id) {
+            live.last_access -= REREAD_IDLE_MS + 1_000;
+        }
+    };
+    idle(&factory);
+    assert!(adopt_presented(&factory, &id, false).unwrap());
+    assert_eq!(locale(&factory).as_deref(), Some("en"), "not pooled: as it is");
+    assert!(adopt_presented(&factory, &id, true).unwrap());
+    assert_eq!(locale(&factory).as_deref(), Some("fr"), "pooled and idle: read again");
+    // a copy whose row is gone (ended on another member) starts over
+    idle(&factory);
+    delete_session_row(&facade, &id).unwrap();
+    assert!(!adopt_presented(&factory, &id, true).unwrap());
 }
 
 #[test]

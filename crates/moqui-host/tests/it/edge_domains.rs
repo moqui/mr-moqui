@@ -409,7 +409,7 @@ impl Domains {
             &format!("{label}-edge"),
             EDGE_CONF,
             &[
-                ("node_role", "edge"),
+                ("node_role", "front_edge"),
                 ("webapp_https_listen_port", &edge_port_text),
                 ("smtp_listen_port", "0"),
                 ("smtp_allowed_addresses", "127.0.0.1"),
@@ -508,6 +508,7 @@ impl Domains {
                     host_name: (*name).to_string(),
                     paired_node_id: node.to_string(),
                     mode_enum_id: HOST_TERMINATE.to_string(),
+                    sticky_cookie: None,
                 })
                 .collect(),
             set_hosts: true,

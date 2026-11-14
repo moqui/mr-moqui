@@ -246,3 +246,127 @@ fn the_edge_node_s_instance_id_is_the_pinned_one_and_never_this_node_s() {
     assert!(check_edge_id("", "local-1", "local-1").is_err_and(|err| err.contains("own instance id")));
     assert!(check_edge_id("", "", "local-1").is_err());
 }
+
+#[test]
+fn each_role_offers_only_its_own_sets() {
+    use moqui_core::edge::NodeRole;
+    let full = || super::proto::Offer {
+        web: Some(super::proto::WebOffer {
+            public_names: vec!["edge.example.com".to_string()],
+            modes: vec!["EdgeHostTerminate".to_string()],
+        }),
+        mail: Some(super::proto::MailOffer {
+            available: true,
+            ..Default::default()
+        }),
+        xmpp: Some(super::proto::XmppOffer {
+            available: true,
+            port: 5222,
+            ..Default::default()
+        }),
+        calls: Some(super::proto::CallsOffer {
+            available: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    // plans/Edge-Node2.md §4.3: a front node web access and ports only, an edge node behind a front none of them
+    let mut front = full();
+    super::offer::for_role(&mut front, NodeRole::Front);
+    assert!(front.web.as_ref().is_some_and(|web| !web.modes.is_empty()));
+    assert!(front.xmpp.as_ref().is_some_and(|xmpp| xmpp.available));
+    assert!(!front.mail.as_ref().is_some_and(|mail| mail.available));
+    assert!(!front.calls.as_ref().is_some_and(|calls| calls.available));
+    assert!(front.not_available.iter().any(|area| area == "mail"));
+    let mut edge = full();
+    super::offer::for_role(&mut edge, NodeRole::Edge);
+    assert!(edge
+        .web
+        .as_ref()
+        .is_some_and(|web| web.modes.is_empty() && web.public_names.is_empty()));
+    assert!(!edge.xmpp.as_ref().is_some_and(|xmpp| xmpp.available));
+    assert!(edge.mail.as_ref().is_some_and(|mail| mail.available));
+    assert!(edge.not_available.iter().any(|area| area == "web"));
+    for role in [NodeRole::FrontEdge, NodeRole::AllInOne] {
+        let mut both = full();
+        super::offer::for_role(&mut both, role);
+        assert_eq!(both, full(), "{role:?}");
+    }
+}
+
+#[test]
+fn a_member_status_crosses_the_link_and_back() {
+    use moqui_core::edge::{ClusterMemberInfo, MemberState};
+    let members = vec![ClusterMemberInfo {
+        instance_id: "member-a".to_string(),
+        heartbeat_age_ms: 1200,
+        live: true,
+        version: "0.1.0".to_string(),
+    }];
+    let status = super::status_to_proto(MemberState::Draining, &members);
+    assert_eq!(status.state, "draining");
+    assert_eq!(
+        super::status_from_proto(&status),
+        (Some(MemberState::Draining), members)
+    );
+    let unknown = super::proto::MemberStatus {
+        state: "asleep".to_string(),
+        members: Vec::new(),
+    };
+    assert_eq!(super::status_from_proto(&unknown).0, None);
+}
+
+#[test]
+fn a_member_key_proves_one_connection_and_is_kept_by_its_instance() {
+    use super::member_key::{fingerprint, verify, MemberKey};
+    let key = MemberKey::generate().unwrap();
+    let binding = [7_u8; 32];
+    let proof = key.prove(&binding);
+    assert!(verify(&key.public(), &binding, &proof));
+    assert!(!verify(&key.public(), &[8_u8; 32], &proof), "another connection's");
+    let other = MemberKey::generate().unwrap();
+    assert!(!verify(&other.public(), &binding, &proof), "another key's");
+    assert!(!verify(&[], &binding, &proof));
+    assert_eq!(fingerprint(&key.public()), key.fingerprint());
+    // kept under the runtime, the same each time it is read, never in .env
+    let runtime = std::env::temp_dir().join(format!("moqui-member-key-{}", std::process::id()));
+    let made = MemberKey::load_or_create(&runtime).unwrap();
+    let read = MemberKey::load_or_create(&runtime).unwrap();
+    assert_eq!(made.fingerprint(), read.fingerprint());
+    assert!(runtime.join("db/edge_member_key").is_file());
+    let _ = std::fs::remove_dir_all(&runtime);
+}
+
+#[test]
+fn a_member_key_file_that_is_not_one_names_itself_and_the_remedy() {
+    use super::member_key::MemberKey;
+    let runtime = std::env::temp_dir().join(format!("moqui-member-key-bad-{}", std::process::id()));
+    std::fs::create_dir_all(runtime.join("db")).unwrap();
+    std::fs::write(runtime.join("db/edge_member_key"), "not a key\n").unwrap();
+    let err = MemberKey::load_or_create(&runtime).unwrap_err();
+    assert!(
+        err.contains("edge_member_key") && err.contains("move it aside"),
+        "{err}"
+    );
+    // a new one is written whole, owner only, and read back the same
+    std::fs::remove_file(runtime.join("db/edge_member_key")).unwrap();
+    let made = MemberKey::load_or_create(&runtime).unwrap();
+    assert_eq!(
+        MemberKey::load_or_create(&runtime).unwrap().fingerprint(),
+        made.fingerprint()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(runtime.join("db/edge_member_key"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0, "{mode:o}");
+    }
+    assert!(
+        std::fs::read_dir(runtime.join("db")).unwrap().count() == 1,
+        "no part file left"
+    );
+    let _ = std::fs::remove_dir_all(&runtime);
+}

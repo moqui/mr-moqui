@@ -51,6 +51,8 @@ impl Mode {
 pub(crate) struct Route {
     pub node: String,
     pub mode: Mode,
+    /// The cookie a terminate host's requests are sticky by (plans/Edge-Node2.md §4.4); `None` for the conf's.
+    pub sticky_cookie: Option<std::sync::Arc<str>>,
 }
 
 /// The host names by their normal form ([`normalize`]) and what the active pairings' kept setups say, as one load
@@ -195,6 +197,10 @@ impl Hosts {
                         Route {
                             node: row.paired_node_id,
                             mode,
+                            sticky_cookie: row
+                                .sticky_cookie
+                                .filter(|cookie| !cookie.is_empty())
+                                .map(|cookie| std::sync::Arc::from(cookie.as_str())),
                         },
                     );
                 }

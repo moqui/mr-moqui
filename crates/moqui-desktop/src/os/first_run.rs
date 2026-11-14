@@ -49,7 +49,7 @@ pub(crate) fn wizard_url(node: &Url) -> Url {
 }
 
 /// Whether the node needs pairing: it has no `edge_node_url` (pairing writes it to `runtime/.env`, §5.1) and its
-/// `node_role` is not one that takes links (an edge or all-in-one node). `property` is the node's own value where the
+/// `node_role` is not one that takes links (front, front_edge, edge or all-in-one). `property` is the node's own value where the
 /// host can read it (the node in process), `env_file` the runtime's `.env` (for a sidecar node too).
 pub(crate) fn needs_pairing(env_file: &str, property: impl Fn(&str) -> String) -> bool {
     let dotenv = moqui_lib::env::parse_dotenv(env_file);

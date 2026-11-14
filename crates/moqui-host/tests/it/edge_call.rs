@@ -198,7 +198,7 @@ fn edge_node_process() {
         None,
         "",
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &port),
             ("rtc_media_port", "0"),
             ("turn_port", "0"),

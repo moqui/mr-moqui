@@ -291,6 +291,7 @@ pub fn check_setup(setup: &EdgeSetup) -> Result<EdgeSetup, Error> {
                 host_name: name,
                 paired_node_id: String::new(),
                 mode_enum_id: host.mode_enum_id.clone(),
+                sticky_cookie: None,
             });
         }
     }

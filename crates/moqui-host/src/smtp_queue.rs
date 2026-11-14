@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The listener's edge mode (plans/archive/Edge-Node.md §5.4, E5a): on an edge node (`node_role=edge`) the mail is not stored
+//! The listener's edge mode (plans/archive/Edge-Node.md §5.4, E5a): on an edge node (`node_role=front_edge`) the mail is not stored
 //! here, where no accounts are, but queued for the local node that has them (`moqui_mail::edge_mail`).
 //!
 //! `RCPT TO` is answered from the local nodes' replicated set `mailRecipients`, held in memory as a

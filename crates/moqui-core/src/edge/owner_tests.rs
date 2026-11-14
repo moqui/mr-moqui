@@ -54,7 +54,7 @@ fn a_normal_or_all_in_one_node_owns_an_item_unless_a_scope_names_a_paired_node()
 
 #[test]
 fn a_dedicated_edge_node_s_items_are_its_only_paired_node_s() {
-    let ctx = node_of(NodeRole::Edge);
+    let ctx = node_of(NodeRole::FrontEdge);
     let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
     let err = current(ctx.factory()).unwrap_err();
@@ -73,7 +73,7 @@ fn a_dedicated_edge_node_s_items_are_its_only_paired_node_s() {
 /// outside one it cannot be told and is refused, and a queued item that names no node takes the scope's.
 #[test]
 fn several_pairings_need_the_items_scope() {
-    let ctx = node_of(NodeRole::Edge);
+    let ctx = node_of(NodeRole::FrontEdge);
     let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
     for node in ["local-a", "local-b"] {

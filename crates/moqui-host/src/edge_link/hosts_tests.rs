@@ -22,6 +22,7 @@ fn a_route_is_found_by_any_spelling_of_its_name() {
         Route {
             node: "local-1".to_string(),
             mode: Mode::Terminate,
+            sticky_cookie: None,
         },
     );
     let route = hosts.route("ERP.example.com:443").unwrap();

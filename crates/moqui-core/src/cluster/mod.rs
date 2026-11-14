@@ -81,6 +81,7 @@ const MEMBER_COLUMNS: &[&str] = &[
     "sessionKeyFingerprint",
     "certFingerprint",
     "sshHostKeyFingerprint",
+    "binaryVersion",
 ];
 const DEFAULT_PORT: u16 = 8444;
 const RETRIES: u32 = 3;
@@ -436,6 +437,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         session_fp: fingerprints.session,
         cert_fp: fingerprints.cert,
         ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
@@ -591,6 +593,11 @@ pub fn live_member_count(factory: &ExecutionContextFactory, facade: &EntityFacad
         .count())
 }
 
+/// Whether this factory's cluster has other live members, as the heartbeat last read them (in memory, no database read).
+pub fn has_live_peers(factory: &ExecutionContextFactory) -> bool {
+    !lock(&ClusterState::of(factory).peers).urls.is_empty()
+}
+
 /// Whether `instance_id` is a live member of this factory's cluster (its heartbeat within the window): an edge node
 /// that names a member's id is refused (plans/archive/Edge-Node.md §5.4).
 ///
@@ -609,8 +616,48 @@ pub fn is_live_member(
         .any(|member| member.instance_id == instance_id && is_live(member.heartbeat, now, window)))
 }
 
+/// One member of this factory's cluster as an edge node is told it (plans/Edge-Node2.md §4.4): its id, how long ago
+/// its heartbeat was written by the database's clock, whether that is within the liveness window, and its version.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MemberReport {
+    pub instance_id: String,
+    pub heartbeat_age_ms: u64,
+    pub live: bool,
+    pub version: String,
+}
+
+/// The members of this factory's cluster from their rows, live or not, in id order.
+///
+/// # Errors
+///
+/// When the member rows cannot be read.
+pub fn member_report(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Result<Vec<MemberReport>, Error> {
+    let now = db_now(facade);
+    let window = window_millis(factory);
+    let mut members: Vec<MemberReport> = load_members(facade)?
+        .into_iter()
+        .map(|member| MemberReport {
+            heartbeat_age_ms: member
+                .heartbeat
+                .map_or(u64::MAX, |stamp| u64::try_from(now.saturating_sub(stamp)).unwrap_or(0)),
+            live: is_live(member.heartbeat, now, window),
+            instance_id: member.instance_id,
+            version: member.version,
+        })
+        .collect();
+    members.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
+    Ok(members)
+}
+
 pub fn is_linked(facade: &EntityFacade) -> bool {
     linked_state(facade).is_some()
+}
+
+/// The id of the member whose fan-out `facade` is linked to, once it started.
+pub(crate) fn linked_instance_id(facade: &EntityFacade) -> Option<String> {
+    linked_state(facade)
+        .map(|state| state.instance_id())
+        .filter(|id| !id.is_empty())
 }
 
 fn linked_state(facade: &EntityFacade) -> Option<Arc<ClusterState>> {
@@ -770,6 +817,8 @@ struct Member {
     cert_fp: String,
     /// This member's SSH host key, which a peer pins for the `ssh://` cluster channel. Empty without one.
     ssh_fp: String,
+    /// The moqui binary's version, which an edge node reports its pool's members with (plans/Edge-Node2.md §4.4).
+    version: String,
 }
 
 /// `instance_id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
@@ -1339,6 +1388,7 @@ struct LoadedMember {
     session_fp: String,
     cert_fp: String,
     ssh_fp: String,
+    version: String,
 }
 
 fn load_members(facade: &EntityFacade) -> Result<Vec<LoadedMember>, Error> {
@@ -1361,6 +1411,7 @@ fn member_from_row(row: &DbRow) -> LoadedMember {
         session_fp: row_text(row, "sessionKeyFingerprint"),
         cert_fp: row_text(row, "certFingerprint"),
         ssh_fp: row_text(row, "sshHostKeyFingerprint"),
+        version: row_text(row, "binaryVersion"),
     }
 }
 
@@ -1403,6 +1454,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
                     "sessionKeyFingerprint",
                     "certFingerprint",
                     "sshHostKeyFingerprint",
+                    "binaryVersion",
                 ],
                 Some(&by_id),
             )?
@@ -1418,6 +1470,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
         Value::string(&member.session_fp),
         Value::string(&member.cert_fp),
         Value::string(&member.ssh_fp),
+        Value::string(&member.version),
     ];
     let update_params = vec![
         Value::string(&member.base_url),
@@ -1425,6 +1478,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
         Value::string(&member.session_fp),
         Value::string(&member.cert_fp),
         Value::string(&member.ssh_fp),
+        Value::string(&member.version),
         instance.clone(),
     ];
     let tx = facade.transactions_for(MEMBER).map_err(Error::from)?;

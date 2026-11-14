@@ -21,6 +21,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EdgeClientActive" toStatusId="EdgeClientRevoked" transitionName="Revoke"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EdgeClientRevoked" toStatusId="EdgeClientActive" transitionName="Pair Again"/>
 
+    <!-- A new node took a pairing over with none of its members linked (a standby, plans/Edge-Node2.md §4.5), or is held
+        for approval: told to the edge node's administrators -->
+    <moqui.security.user.NotificationTopic topic="EdgeMemberTakeover" inboxEnumId="NinUpdates" description="Edge node: a new node took over a pairing"
+            typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y"
+            linkTemplate="/qapps/system/EdgeClients"/>
+
     <moqui.basic.EnumerationType enumTypeId="EdgeHostMode" description="Edge Host Mode"/>
     <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>
     <moqui.basic.Enumeration enumId="EdgeHostTerminate" enumTypeId="EdgeHostMode" sequenceNum="2" description="Terminate"/>

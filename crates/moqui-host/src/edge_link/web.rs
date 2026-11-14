@@ -20,10 +20,17 @@
 //!
 //! A passthrough host's request on the plain HTTP listener is sent to its https URL; one that came over this
 //! listener's TLS under another server name is misdirected (421), since its TLS belongs to the local node.
+//!
+//! **Pools** (plans/Edge-Node2.md §4.4). Each request goes to one member of the node's pool ([`super::balance`]):
+//! sticky by the host's cookie (`EdgeHost.stickyCookie`, else the conf's `sticky-cookie`, the session cookie by
+//! default), round robin without it; a WebSocket as its opening request. A request that fails before any byte of an
+//! answer goes once more to another member when it is a GET or HEAD with no body, or when it was not sent at all
+//! ([`send_once_more`]); nothing else is sent twice.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::response::Response;
 use http::header::{self, HeaderMap, HeaderValue};
@@ -31,7 +38,8 @@ use hyper::client::conn::http2::SendRequest;
 use hyper_util::rt::TokioIo;
 use sha1::{Digest as _, Sha1};
 
-use super::accept::EdgeServer;
+use super::accept::{EdgeServer, Picked};
+use super::balance::Affinity;
 use super::hosts::Mode;
 use super::{CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER};
 use crate::http::{plain, ExtendedConnect, Peer, TlsConnection};
@@ -119,17 +127,25 @@ impl WebFront {
 /// Where a request to one of the paired nodes' hosts goes.
 #[derive(Clone)]
 pub(crate) enum Target {
-    /// Down the node's link.
-    Forward {
-        node: String,
-        send: SendRequest<tonic::body::Body>,
-    },
+    /// Down a link of the node's pool, to the member chosen as it is sent: by `sticky`, the value of the host's sticky
+    /// cookie, else in turn.
+    Forward { node: String, sticky: Option<String> },
     /// The node's link is down.
     Offline,
     /// A passthrough host over plain HTTP: to its https URL.
     Https(String),
     /// A passthrough host's request that came over this listener's TLS.
     Misdirected,
+}
+
+impl Target {
+    /// The paired node a forward goes to.
+    pub(crate) fn node(&self) -> Option<&str> {
+        match self {
+            Self::Forward { node, .. } => Some(node),
+            _ => None,
+        }
+    }
 }
 
 /// The host a request names: `Host`, else the URI's authority.
@@ -145,6 +161,25 @@ fn request_host<B>(request: &http::Request<B>) -> Option<String> {
                 .authority()
                 .map(|authority| authority.as_str().to_string())
         })
+}
+
+/// The value of the cookie `name` in `headers` (each `Cookie` header, as HTTP/2 splits them), when it is not empty.
+fn sticky_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookies: Vec<&str> = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect();
+    if cookies.is_empty() {
+        return None;
+    }
+    moqui_core::web::cookie_value(&cookies.join("; "), name).filter(|value| !value.is_empty())
+}
+
+/// Whether a request may go once more to another member after it was sent and failed before any answer: a GET or HEAD
+/// with no body, not a WebSocket (plans/Edge-Node2.md §4.4).
+fn may_send_again(method: &http::Method, body_ended: bool, websocket: bool) -> bool {
+    !websocket && body_ended && (method == http::Method::GET || method == http::Method::HEAD)
 }
 
 fn is_websocket<B>(request: &http::Request<B>) -> bool {
@@ -187,10 +222,16 @@ impl WebFront {
                 let name = super::hosts::normalize(&host).unwrap_or(host);
                 Target::Https(format!("https://{name}{path}"))
             }
-            Mode::Terminate => match self.server.down_sender(&route.node) {
-                Some(send) => Target::Forward { node: route.node, send },
-                None => Target::Offline,
-            },
+            Mode::Terminate if self.server.takes_work(&route.node) => {
+                let cookie = route
+                    .sticky_cookie
+                    .unwrap_or_else(|| Arc::clone(&self.server.balance().sticky_cookie));
+                Target::Forward {
+                    sticky: sticky_value(request.headers(), &cookie),
+                    node: route.node,
+                }
+            }
+            Mode::Terminate => Target::Offline,
         })
     }
 
@@ -206,11 +247,11 @@ impl WebFront {
         B::Error: Into<axum::BoxError>,
     {
         match target {
-            Target::Forward { node, send } => {
+            Target::Forward { node, sticky } => {
                 let server = Arc::clone(&self.server);
                 let client = std::net::SocketAddr::new(peer.client, peer.remote.port());
                 let https = peer.https;
-                Box::pin(async move { forward(server, node, send, request, client, https).await })
+                Box::pin(async move { forward(server, node, sticky, request, client, https).await })
             }
             Target::Offline => {
                 self.server.count("moqui.edgelink.offline", "terminate");
@@ -247,11 +288,112 @@ fn redirect(location: &str) -> Response {
     response
 }
 
-/// Send `request` down `node`'s link as the edge node's request for `client`, and its answer back.
+/// An answer's body, its request counted in flight on its member until it ends or drops.
+struct Counted {
+    body: hyper::body::Incoming,
+    _flight: super::balance::Flight,
+}
+
+impl hyper::body::Body for Counted {
+    type Data = bytes::Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+/// Why a request down a member's link had no answer.
+#[derive(Debug)]
+pub(crate) enum Failed {
+    /// The connection failed it; whether the connection is closed now.
+    Error(String, bool),
+    TimedOut,
+}
+
+/// One try of `request` down `send`, within `wait`: the answer's head, the request back when it was not sent at all
+/// (the connection was not ready), or why there was no answer.
+async fn try_send(
+    mut send: SendRequest<tonic::body::Body>,
+    request: http::Request<tonic::body::Body>,
+    wait: Duration,
+) -> Result<http::Response<hyper::body::Incoming>, (Failed, Option<Box<http::Request<tonic::body::Body>>>)> {
+    let deadline = tokio::time::Instant::now() + wait;
+    match tokio::time::timeout_at(deadline, send.ready()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            return Err((
+                Failed::Error(err.to_string(), send.is_closed()),
+                Some(Box::new(request)),
+            ))
+        }
+        Err(_) => return Err((Failed::TimedOut, Some(Box::new(request)))),
+    }
+    match tokio::time::timeout_at(deadline, send.try_send_request(request)).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(mut err)) => {
+            let unsent = err.take_message().map(Box::new);
+            Err((Failed::Error(err.into_error().to_string(), send.is_closed()), unsent))
+        }
+        Err(_) => Err((Failed::TimedOut, None)),
+    }
+}
+
+/// Send `request` down the link of `first`, and when it fails before any byte of an answer, once more down the link of
+/// the member `other` gives in place of the failed one (plans/Edge-Node2.md §4.4): a request not sent at all, whatever
+/// it is, or one `again` makes anew (a GET or HEAD with no body). Each try's outcome goes to `outcome`, true when it
+/// was answered. The answer, or the last failure, with the member it came from.
+pub(crate) async fn send_once_more(
+    first: Picked,
+    request: http::Request<tonic::body::Body>,
+    again: Option<impl FnOnce() -> http::Request<tonic::body::Body>>,
+    other: impl FnOnce(&str) -> Option<Picked>,
+    wait: Duration,
+    outcome: impl Fn(&Picked, bool),
+) -> (Result<http::Response<hyper::body::Incoming>, Failed>, Picked) {
+    let (failed, unsent) = match try_send(first.send.clone(), request, wait).await {
+        Ok(response) => {
+            outcome(&first, true);
+            return (Ok(response), first);
+        }
+        Err(failed) => failed,
+    };
+    outcome(&first, false);
+    let Some(request) = unsent.map(|request| *request).or_else(|| again.map(|again| again())) else {
+        return (Err(failed), first);
+    };
+    let Some(second) = other(&first.member) else {
+        return (Err(failed), first);
+    };
+    drop(first);
+    match try_send(second.send.clone(), request, wait).await {
+        Ok(response) => {
+            outcome(&second, true);
+            (Ok(response), second)
+        }
+        Err((failed, _)) => {
+            outcome(&second, false);
+            (Err(failed), second)
+        }
+    }
+}
+
+/// Send `request` down a link of `node`'s pool as the edge node's request for `client`, and its answer back.
 async fn forward<B>(
     server: Arc<EdgeServer>,
     node: String,
-    mut send: SendRequest<tonic::body::Body>,
+    sticky: Option<String>,
     request: http::Request<B>,
     client: std::net::SocketAddr,
     https: bool,
@@ -267,6 +409,7 @@ where
         return plain(405, "CONNECT is not served here");
     }
     let websocket = h2_websocket || is_websocket(&request);
+    let again = may_send_again(request.method(), request.body().is_end_stream(), websocket);
     let (mut parts, body) = request.into_parts();
     let Some(host) = parts
         .headers
@@ -294,21 +437,34 @@ where
     let on_upgrade = websocket
         .then(|| parts.extensions.remove::<hyper::upgrade::OnUpgrade>())
         .flatten();
-    let mut down = http::Request::new(if websocket {
-        tonic::body::Body::empty()
-    } else {
-        tonic::body::Body::new(body)
+    let method = if websocket { http::Method::CONNECT } else { parts.method };
+    let make = move |body: tonic::body::Body, method: http::Method, uri: http::Uri, headers: HeaderMap| {
+        let mut down = http::Request::new(body);
+        *down.uri_mut() = uri;
+        *down.version_mut() = http::Version::HTTP_2;
+        *down.headers_mut() = headers;
+        *down.method_mut() = method;
+        if websocket {
+            down.extensions_mut()
+                .insert(hyper::ext::Protocol::from_static("websocket"));
+        }
+        down
+    };
+    // a GET or HEAD with no body may go once more, made anew from a copy of its head
+    let again = again.then(|| {
+        let (method, uri, headers) = (method.clone(), uri.clone(), headers.clone());
+        move || make(tonic::body::Body::empty(), method, uri, headers)
     });
-    *down.uri_mut() = uri;
-    *down.version_mut() = http::Version::HTTP_2;
-    *down.headers_mut() = headers;
-    if websocket {
-        *down.method_mut() = http::Method::CONNECT;
-        down.extensions_mut()
-            .insert(hyper::ext::Protocol::from_static("websocket"));
-    } else {
-        *down.method_mut() = parts.method;
-    }
+    let down = make(
+        if websocket {
+            tonic::body::Body::empty()
+        } else {
+            tonic::body::Body::new(body)
+        },
+        method,
+        uri,
+        headers,
+    );
     // a WebSocket holds a stream of the link as a tunnel does
     let active = if websocket {
         match server.opened(&node, "websocket") {
@@ -318,26 +474,52 @@ where
     } else {
         None
     };
-    let sent = async {
-        send.ready().await?;
-        send.send_request(down).await
+    let affinity = sticky.as_deref().map_or(Affinity::Any, Affinity::Key);
+    let Ok(picked) = server.link_of(&node, affinity) else {
+        server.count("moqui.edgelink.offline", "terminate");
+        return offline(&server.config().offline_page);
     };
-    let response = match tokio::time::timeout(server.config().open_timeout, sent).await {
-        Ok(Ok(response)) => response,
-        Ok(Err(err)) => {
-            tracing::debug!("Edge forward to {node} failed: {err}");
-            return if send.is_closed() {
+    // each member a request is sent to counts it, as a tunnel's open and a call do
+    server.count_member("moqui.edgelink.requests", "terminate", &node, &picked.member);
+    let (answered, picked) = send_once_more(
+        picked,
+        down,
+        again,
+        |failed| {
+            let other = server.link_other(&node, affinity, failed)?;
+            server.count_member("moqui.edgelink.retries", "terminate", &node, &other.member);
+            server.count_member("moqui.edgelink.requests", "terminate", &node, &other.member);
+            Some(other)
+        },
+        server.config().open_timeout,
+        |picked, ok| {
+            if ok {
+                server.succeeded(picked);
+            } else {
+                server.failed(picked, "terminate");
+            }
+        },
+    )
+    .await;
+    let response = match answered {
+        Ok(response) => response,
+        Err(Failed::Error(err, closed)) => {
+            tracing::debug!("Edge forward to {node} member {} failed: {err}", picked.member);
+            return if closed {
                 offline(&server.config().offline_page)
             } else {
                 plain(502, "the site's server did not answer")
             };
         }
-        Err(_) => return plain(504, "the site's server did not answer in time"),
+        Err(Failed::TimedOut) => return plain(504, "the site's server did not answer in time"),
     };
     if !websocket {
         server.count("moqui.edgelink.forwards", "terminate");
-        return response.map(axum::body::Body::new);
+        // the request counts in flight on its member until its answer's body ends
+        let flight = picked.flight;
+        return response.map(move |body| axum::body::Body::new(Counted { body, _flight: flight }));
     }
+    drop(picked);
     let Some(on_upgrade) = on_upgrade else {
         return plain(400, "a WebSocket upgrade the connection cannot take");
     };

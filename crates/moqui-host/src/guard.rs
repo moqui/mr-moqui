@@ -23,6 +23,16 @@
 //! The per-client parts are on when `enabled` is `true`, or when it is empty and `trusted-proxies` names a proxy;
 //! without a proxy list a deployment behind a proxy would see every client as the proxy. The global limits of
 //! [`crate::http::ListenLimits`] and the overload answers apply either way.
+//!
+//! **Per host** (plans/Edge-Node2.md §4.3): a `rate-limit` or a client, path or user-agent rule with `host` applies only
+//! to the requests for those host names, on top of the rules without one, so one site can be stricter than another. A
+//! connection's checks, before its first request names a host, use only the client rules without `host`.
+//!
+//! **Shared bans** (§4.3): a ban started here is told to the other members of the cluster and up to the edge node
+//! this node is paired with ([`Guard::set_notifier`], `crate::guard_share`), and one told by them is applied here
+//! ([`Guard::apply_shared`]). A ban a paired node told an edge node holds only for that node's hosts
+//! ([`Guard::banned_for`]). Each rule counts what it refused, and [`Guard::report`] lists the counts and the bans for
+//! System › Security › Web Protection, which can lift a ban ([`Guard::lift`]).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -71,6 +81,7 @@ impl Event {
 #[derive(Debug)]
 struct RateLimit {
     name: String,
+    hosts: Hosts,
     paths: Vec<Glob>,
     methods: Vec<String>,
     /// `anonymous="true"`: only requests without credentials count, such as a clone of a public repository.
@@ -82,10 +93,105 @@ struct RateLimit {
 }
 
 impl RateLimit {
-    fn applies(&self, method: &str, path: &str, credentials: bool) -> bool {
+    fn applies(&self, host: &str, method: &str, path: &str, credentials: bool) -> bool {
         !(self.anonymous && credentials)
+            && self.hosts.matches(host)
             && (self.methods.is_empty() || self.methods.iter().any(|allowed| allowed.eq_ignore_ascii_case(method)))
             && (self.paths.is_empty() || self.paths.iter().any(|glob| glob.matches(path)))
+    }
+}
+
+/// The `host` of a rule: the host names it applies to, `*.example.com` for any name under one; empty for every host.
+/// Matched without regard to ASCII case against the request's host without its port.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Hosts(Vec<String>);
+
+impl Hosts {
+    fn parse(text: &str) -> Self {
+        Self(
+            list(text)
+                .map(|name| {
+                    // a request's host is matched without its port, so a name with one never matches
+                    if name.rsplit_once(':').is_some_and(|(_, port)| port.bytes().all(|b| b.is_ascii_digit()))
+                        && !name.ends_with(']')
+                    {
+                        tracing::warn!("web-protection host '{name}' has a port; a request's host is matched without one, so it never applies");
+                    }
+                    name.trim_end_matches('.').to_ascii_lowercase()
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether the rule applies to every host.
+    fn all(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether `host` (as [`request_host`] gives it; empty when the request named none) is one of these.
+    fn matches(&self, host: &str) -> bool {
+        self.all()
+            || self.0.iter().any(|name| match name.strip_prefix("*.") {
+                Some(parent) => {
+                    host.len() > parent.len() + 1
+                        && host.ends_with(parent)
+                        && host.as_bytes()[host.len() - parent.len() - 1] == b'.'
+                }
+                None => host == name,
+            })
+    }
+
+    fn text(&self) -> String {
+        self.0.join(", ")
+    }
+}
+
+/// The host name of a request's `Host` header or authority, for the rules' `host`: lower case, without its port or a
+/// trailing dot; an IPv6 literal keeps its brackets.
+pub(crate) fn request_host(host: &str) -> String {
+    let host = host.trim();
+    let name = if host.starts_with('[') {
+        host.split_once(']').map_or(host, |(literal, _)| literal).to_string() + "]"
+    } else {
+        host.rsplit_once(':')
+            .filter(|(_, port)| port.bytes().all(|byte| byte.is_ascii_digit()))
+            .map_or(host, |(name, _)| name)
+            .to_string()
+    };
+    name.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// A `client-rule`: `deny` or exempt the clients of its ranges, for its hosts.
+#[derive(Debug)]
+struct ClientRule {
+    label: String,
+    hosts: Hosts,
+    cidrs: Vec<Cidr>,
+    deny: bool,
+}
+
+/// A `path-rule`: the paths it denies, for its hosts.
+#[derive(Debug)]
+struct PathRule {
+    label: String,
+    hosts: Hosts,
+    globs: Vec<Glob>,
+}
+
+/// A `user-agent-rule`: the user-agent text it denies, for its hosts.
+#[derive(Debug)]
+struct AgentRule {
+    label: String,
+    hosts: Hosts,
+    parts: Vec<String>,
+}
+
+/// The label of a rule in the counts: its kind and its name, or its place among the rules of its kind.
+fn rule_label(kind: &str, name: &str, index: usize) -> String {
+    if name.is_empty() {
+        format!("{kind} #{}", index + 1)
+    } else {
+        format!("{kind} {name}")
     }
 }
 
@@ -214,10 +320,9 @@ pub(crate) struct GuardConf {
     pub(crate) retry_after: u64,
     rate_limits: Vec<RateLimit>,
     bans: Vec<Ban>,
-    exempt: Vec<Cidr>,
-    deny: Vec<Cidr>,
-    deny_paths: Vec<Glob>,
-    deny_agents: Vec<String>,
+    client_rules: Vec<ClientRule>,
+    path_rules: Vec<PathRule>,
+    agent_rules: Vec<AgentRule>,
 }
 
 /// An attribute of `node`'s child `child` (of `node` itself when `child` is empty), `${}` expanded and trimmed, or
@@ -318,10 +423,9 @@ impl GuardConf {
             retry_after,
             rate_limits: Vec::new(),
             bans: Vec::new(),
-            exempt: Vec::new(),
-            deny: Vec::new(),
-            deny_paths: Vec::new(),
-            deny_agents: Vec::new(),
+            client_rules: Vec::new(),
+            path_rules: Vec::new(),
+            agent_rules: Vec::new(),
         };
         if let Some(node) = node {
             conf.read_lists(node);
@@ -363,27 +467,40 @@ impl GuardConf {
                 .filter(|element| attr(element, "enabled") != "false")
                 .collect::<Vec<_>>()
         };
-        for element in rules("client-rule") {
+        for (index, element) in rules("client-rule").into_iter().enumerate() {
             let cidrs = parse_cidrs(&attr(&element, "cidr"), "web-protection client-rule");
-            match attr(&element, "action").as_str() {
-                "exempt" => self.exempt.extend(cidrs),
-                "deny" => self.deny.extend(cidrs),
-                other => tracing::error!("web-protection client-rule action '{other}' is not deny or exempt"),
-            }
+            let deny = match attr(&element, "action").as_str() {
+                "exempt" => false,
+                "deny" => true,
+                other => {
+                    tracing::error!("web-protection client-rule action '{other}' is not deny or exempt");
+                    continue;
+                }
+            };
+            self.client_rules.push(ClientRule {
+                label: rule_label("client-rule", &attr(&element, "name"), index),
+                hosts: Hosts::parse(&attr(&element, "host")),
+                cidrs,
+                deny,
+            });
         }
-        for element in rules("path-rule") {
+        for (index, element) in rules("path-rule").into_iter().enumerate() {
             match attr(&element, "action").as_str() {
-                "deny" => self
-                    .deny_paths
-                    .extend(list(&attr(&element, "path")).filter_map(Glob::new)),
+                "deny" => self.path_rules.push(PathRule {
+                    label: rule_label("path-rule", &attr(&element, "name"), index),
+                    hosts: Hosts::parse(&attr(&element, "host")),
+                    globs: list(&attr(&element, "path")).filter_map(Glob::new).collect(),
+                }),
                 other => tracing::error!("web-protection path-rule action '{other}' is not deny"),
             }
         }
-        for element in rules("user-agent-rule") {
+        for (index, element) in rules("user-agent-rule").into_iter().enumerate() {
             match attr(&element, "action").as_str() {
-                "deny" => self
-                    .deny_agents
-                    .extend(list(&attr(&element, "contains")).map(str::to_ascii_lowercase)),
+                "deny" => self.agent_rules.push(AgentRule {
+                    label: rule_label("user-agent-rule", &attr(&element, "name"), index),
+                    hosts: Hosts::parse(&attr(&element, "host")),
+                    parts: list(&attr(&element, "contains")).map(str::to_ascii_lowercase).collect(),
+                }),
                 other => tracing::error!("web-protection user-agent-rule action '{other}' is not deny"),
             }
         }
@@ -420,6 +537,7 @@ fn rate_limit(element: &MNode, attr: &impl Fn(&MNode, &str) -> String) -> Option
     let tolerance = (interval as f64 * burst.floor()) as u64;
     Some(RateLimit {
         name: attr(element, "name"),
+        hosts: Hosts::parse(&attr(element, "host")),
         paths: list(&attr(element, "path")).filter_map(Glob::new).collect(),
         methods: list(&attr(element, "methods")).map(str::to_ascii_uppercase).collect(),
         anonymous: attr(element, "anonymous") == "true",
@@ -473,8 +591,39 @@ struct Client {
     /// Start and count of each ban's window.
     windows: Vec<(u64, u32)>,
     banned_until: u64,
+    /// What banned it: a ban rule here, another member, the node at the other end of a link.
+    ban_source: String,
     seen: u64,
 }
+
+/// The longest a ban told by another node lasts here, whatever it says: a week.
+const MAX_SHARED_BAN: Duration = Duration::from_secs(7 * 24 * 3600);
+/// The bans one paired node may have told an edge node at once; past it a new one is not kept.
+const MAX_BANS_PER_NODE: usize = 10_000;
+/// The count of the requests refused for a ban here ([`Guard::report`]).
+const BANNED: &str = "banned";
+/// The count of the requests to a pairing's hosts refused for a ban that pairing told an edge node.
+const BANNED_BY_PAIRING: &str = "banned by a pairing";
+/// The bans [`Guard::report`] lists at most.
+const MAX_REPORTED_BANS: usize = 1_000;
+
+/// The bans one paired node told an edge node: by client key, until when and the ban's name.
+type NodeBans = HashMap<IpAddr, (u64, String)>;
+
+/// A ban started or lifted here, for the other members and the links ([`Guard::set_notifier`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BanNotice {
+    /// The client's table key: its address, or its IPv6 prefix.
+    pub(crate) address: IpAddr,
+    /// How long it lasts; 0 for a lift.
+    pub(crate) seconds: u64,
+    /// The ban rule's name, or why it was lifted.
+    pub(crate) ban: String,
+    pub(crate) lift: bool,
+}
+
+/// Tells the others of a [`BanNotice`].
+pub(crate) type Notifier = Arc<dyn Fn(&BanNotice) + Send + Sync>;
 
 /// Refusal counts and overload counts, for `/metrics`.
 #[derive(Default)]
@@ -496,6 +645,12 @@ pub(crate) struct Guard {
     tracked: AtomicUsize,
     epoch: Instant,
     pub(crate) counts: Counts,
+    /// What each rule refused, by its label: a rate limit's 429s, a rule's denials, the bans a ban rule started.
+    rule_counts: Mutex<HashMap<String, u64>>,
+    /// The bans the nodes at the other end of this edge node's links told it, by node and client key: until when, and
+    /// the ban's name. Each holds only for its node's hosts ([`Self::banned_for`]).
+    link_bans: Mutex<HashMap<String, NodeBans>>,
+    notifier: std::sync::OnceLock<Notifier>,
 }
 
 /// A connection counted against its client's `max-per-client` until it is dropped.
@@ -524,7 +679,27 @@ impl Guard {
             tracked: AtomicUsize::new(0),
             epoch: Instant::now(),
             counts: Counts::default(),
+            rule_counts: Mutex::new(HashMap::new()),
+            link_bans: Mutex::new(HashMap::new()),
+            notifier: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Tell `notifier` of each ban started here and each lift ([`BanNotice`]); set once.
+    pub(crate) fn set_notifier(&self, notifier: Notifier) {
+        let _ = self.notifier.set(notifier);
+    }
+
+    fn notify(&self, notice: &BanNotice) {
+        if let Some(notifier) = self.notifier.get() {
+            notifier(notice);
+        }
+    }
+
+    fn count_rule(&self, label: &str) {
+        *moqui_lib::sync::lock(&self.rule_counts)
+            .entry(label.to_string())
+            .or_insert(0) += 1;
     }
 
     /// Everything per client off: the global limits only.
@@ -594,6 +769,7 @@ impl Guard {
                     arrivals: vec![0; self.conf().rate_limits.len()],
                     windows: vec![(0, 0); self.conf().bans.len()],
                     banned_until: 0,
+                    ban_source: String::new(),
                     seen: now,
                 })
             }
@@ -607,12 +783,25 @@ impl Guard {
         moqui_lib::sync::lock(self.shard(key)).get_mut(&key).map(body)
     }
 
-    fn exempt(&self, address: IpAddr) -> bool {
-        self.conf().exempt.iter().any(|range| range.contains(address))
+    /// Whether a client rule exempts `address`: for a request to `host`, the rules for it and those without `host`;
+    /// with no host (a connection, a ban), only those without.
+    fn exempt(&self, address: IpAddr, host: Option<&str>) -> bool {
+        self.client_rule(address, host, false).is_some()
     }
 
-    fn denied(&self, address: IpAddr) -> bool {
-        self.conf().deny.iter().any(|range| range.contains(address))
+    /// The label of a client rule that denies `address`, as [`Self::exempt`] reads the rules.
+    fn denied(&self, address: IpAddr, host: Option<&str>) -> Option<String> {
+        self.client_rule(address, host, true)
+    }
+
+    fn client_rule(&self, address: IpAddr, host: Option<&str>, deny: bool) -> Option<String> {
+        self.conf()
+            .client_rules
+            .iter()
+            .filter(|rule| rule.deny == deny)
+            .filter(|rule| host.map_or(rule.hosts.all(), |host| rule.hosts.matches(host)))
+            .find(|rule| rule.cidrs.iter().any(|range| range.contains(address)))
+            .map(|rule| rule.label.clone())
     }
 
     fn banned(&self, key: IpAddr) -> bool {
@@ -626,12 +815,13 @@ impl Guard {
     pub(crate) fn admit(self: &Arc<Self>, peer: IpAddr) -> Option<ConnectionSlot> {
         let peer = peer.to_canonical();
         let uncounted = ConnectionSlot { counted: None };
-        if !self.conf().enabled || self.conf().addressing.is_trusted(peer) || self.exempt(peer) {
+        if !self.conf().enabled || self.conf().addressing.is_trusted(peer) || self.exempt(peer, None) {
             return Some(uncounted);
         }
         let key = self.key(peer);
-        if self.denied(peer) {
+        if let Some(rule) = self.denied(peer, None) {
             self.counts.connections_refused.fetch_add(1, Ordering::Relaxed);
+            self.count_rule(&rule);
             return None;
         }
         let max = self.conf().max_per_client;
@@ -666,24 +856,28 @@ impl Guard {
         conf.addressing.resolve(peer, value)
     }
 
-    /// The rules and rate limits for a request from `client` (through `peer`), once its head is read. A refusal of a
-    /// client that came straight to this listener closes the connection; through a trusted proxy it does not, since the
-    /// proxy's connection carries other clients.
+    /// The rules and rate limits for a request from `client` (through `peer`) to `host` (its `Host`, as
+    /// [`request_host`] gives it; empty when it named none), once its head is read. A refusal of a client that came
+    /// straight to this listener closes the connection; through a trusted proxy it does not, since the proxy's
+    /// connection carries other clients.
     pub(crate) fn check(
         &self,
         peer: IpAddr,
         client: IpAddr,
+        host: &str,
         method: &str,
         path: &str,
         headers: &HeaderMap,
     ) -> Result<(), Refused> {
-        if !self.conf().enabled || self.exempt(client) {
+        if !self.conf().enabled || self.exempt(client, Some(host)) {
             return Ok(());
         }
         let close = !self.conf().addressing.is_trusted(peer.to_canonical());
         let key = self.key(client);
-        if self.denied(client) || self.banned(key) {
+        let denied = self.denied(client, Some(host));
+        if denied.is_some() || self.banned(key) {
             self.counts.denied.fetch_add(1, Ordering::Relaxed);
+            self.count_rule(denied.as_deref().unwrap_or(BANNED));
             return Err(Refused {
                 response: Box::new(refusal(403, "forbidden", close, None)),
             });
@@ -693,19 +887,27 @@ impl Guard {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !agent.is_empty() && self.conf().deny_agents.iter().any(|part| agent.contains(part.as_str())) {
-            return Err(self.deny(key, client, refusal(403, "forbidden", close, None)));
+        if !agent.is_empty() {
+            let rule = self
+                .conf()
+                .agent_rules
+                .iter()
+                .find(|rule| rule.hosts.matches(host) && rule.parts.iter().any(|part| agent.contains(part.as_str())))
+                .map(|rule| rule.label.clone());
+            if let Some(rule) = rule {
+                return Err(self.deny(key, client, &rule, refusal(403, "forbidden", close, None)));
+            }
         }
         if !self.conf().methods.is_empty() && !self.conf().methods.iter().any(|allowed| allowed == method) {
             let mut response = refusal(405, "method not allowed", false, None);
             if let Ok(allow) = self.conf().methods.join(", ").parse() {
                 response.headers_mut().insert(axum::http::header::ALLOW, allow);
             }
-            return Err(self.deny(key, client, response));
+            return Err(self.deny(key, client, "requests methods", response));
         }
         let decoded = decode_path(path);
-        if self.conf().deny_paths.iter().any(|glob| glob.matches(&decoded)) {
-            return Err(self.deny(key, client, refusal(404, "not found", false, None)));
+        if let Some(rule) = self.path_rule(host, &decoded) {
+            return Err(self.deny(key, client, &rule, refusal(404, "not found", false, None)));
         }
         if self.conf().rate_limits.is_empty() {
             return Ok(());
@@ -717,7 +919,7 @@ impl Guard {
             client_state.arrivals.resize(limits.len(), 0);
             let mut next = Vec::with_capacity(limits.len());
             for (index, limit) in limits.iter().enumerate() {
-                if !limit.applies(method, &decoded, credentials) {
+                if !limit.applies(host, method, &decoded, credentials) {
                     next.push(None);
                     continue;
                 }
@@ -739,6 +941,7 @@ impl Guard {
             return Ok(());
         };
         self.counts.rate_limited.fetch_add(1, Ordering::Relaxed);
+        self.count_rule(&format!("rate-limit {name}"));
         tracing::debug!("web protection: rate limit {name} refused a request from {client}");
         self.record_key(key, client, Event::RateLimited);
         let seconds = wait.div_ceil(1_000_000_000).max(1);
@@ -750,20 +953,30 @@ impl Guard {
     /// The path rules again, for the path a request is served at when that is not the one it came with (git at a
     /// page's URL, served under `/git/`): a `path-rule` that denies the served path stops the request too. The client
     /// rules, the methods and the rate limits were applied by [`Self::check`], to the path it came with.
-    pub(crate) fn check_served_path(&self, client: IpAddr, path: &str) -> Result<(), Refused> {
-        if !self.conf().enabled || self.exempt(client) {
+    pub(crate) fn check_served_path(&self, client: IpAddr, host: &str, path: &str) -> Result<(), Refused> {
+        if !self.conf().enabled || self.exempt(client, Some(host)) {
             return Ok(());
         }
         let decoded = decode_path(path);
-        if self.conf().deny_paths.iter().any(|glob| glob.matches(&decoded)) {
-            return Err(self.deny(self.key(client), client, refusal(404, "not found", false, None)));
+        if let Some(rule) = self.path_rule(host, &decoded) {
+            return Err(self.deny(self.key(client), client, &rule, refusal(404, "not found", false, None)));
         }
         Ok(())
     }
 
-    fn deny(&self, key: IpAddr, client: IpAddr, response: Response) -> Refused {
+    /// The label of a path rule for `host` that denies `decoded`.
+    fn path_rule(&self, host: &str, decoded: &str) -> Option<String> {
+        self.conf()
+            .path_rules
+            .iter()
+            .find(|rule| rule.hosts.matches(host) && rule.globs.iter().any(|glob| glob.matches(decoded)))
+            .map(|rule| rule.label.clone())
+    }
+
+    fn deny(&self, key: IpAddr, client: IpAddr, rule: &str, response: Response) -> Refused {
         self.counts.denied.fetch_add(1, Ordering::Relaxed);
-        tracing::debug!("web protection: a request from {client} was denied by a rule");
+        self.count_rule(rule);
+        tracing::debug!("web protection: a request from {client} was denied by {rule}");
         self.record_key(key, client, Event::Denied);
         Refused {
             response: Box::new(response),
@@ -773,7 +986,7 @@ impl Guard {
     /// Count `event` for `client` toward the bans that count it. Called from the connection task and from request
     /// workers (an auth failure).
     pub(crate) fn record(&self, client: IpAddr, event: Event) {
-        if !self.conf().enabled || self.exempt(client) {
+        if !self.conf().enabled || self.exempt(client, None) {
             return;
         }
         self.record_key(self.key(client), client, event);
@@ -802,6 +1015,7 @@ impl Guard {
                     let until = now.saturating_add(ban.duration);
                     if state.banned_until <= now {
                         started = Some((ban.name.clone(), ban.duration));
+                        state.ban_source = format!("ban {}", ban.name);
                     }
                     state.banned_until = state.banned_until.max(until);
                 }
@@ -813,7 +1027,192 @@ impl Guard {
                 "web protection: {client} is banned for {} seconds by ban {name}",
                 duration / 1_000_000_000
             );
+            self.count_rule(&format!("ban {name}"));
+            self.notify(&BanNotice {
+                address: key,
+                seconds: duration / 1_000_000_000,
+                ban: name,
+                lift: false,
+            });
         }
+    }
+
+    /// Apply a ban another node told this one of: `address` for `seconds` (at most [`MAX_SHARED_BAN`]), from `source`;
+    /// with `node`, a node at the other end of this edge node's links, only for that node's hosts. Never a trusted
+    /// proxy, nor a client a rule without `host` exempts. Not told on. True when it was applied.
+    pub(crate) fn apply_shared(&self, address: IpAddr, seconds: u64, source: &str, node: Option<&str>) -> bool {
+        let address = address.to_canonical();
+        if seconds == 0 || self.conf().addressing.is_trusted(address) || self.exempt(address, None) {
+            return false;
+        }
+        let key = self.key(address);
+        let duration = nanos(Duration::from_secs(seconds).min(MAX_SHARED_BAN));
+        match node {
+            Some(node) => {
+                let until = self.now().saturating_add(duration);
+                let mut bans = moqui_lib::sync::lock(&self.link_bans);
+                let of_node = bans.entry(node.to_string()).or_default();
+                if !of_node.contains_key(&key) && of_node.len() >= MAX_BANS_PER_NODE {
+                    tracing::warn!(
+                        "web protection: node {node} has {MAX_BANS_PER_NODE} bans here; one more is not kept"
+                    );
+                    return false;
+                }
+                let held = of_node.entry(key).or_insert((0, String::new()));
+                held.0 = held.0.max(until);
+                held.1 = source.to_string();
+                true
+            }
+            None => self
+                .with_client(key, |client, now| {
+                    client.banned_until = client.banned_until.max(now.saturating_add(duration));
+                    client.ban_source = source.to_string();
+                })
+                .is_some(),
+        }
+    }
+
+    /// Whether a ban that `node` (at the other end of this edge node's links) told holds for `client`: a request to one
+    /// of its hosts is then refused, and counted.
+    pub(crate) fn banned_for(&self, node: &str, client: IpAddr) -> bool {
+        if !self.conf().enabled {
+            return false;
+        }
+        let key = self.key(client);
+        let now = self.now();
+        let banned = moqui_lib::sync::lock(&self.link_bans)
+            .get(node)
+            .and_then(|of_node| of_node.get(&key))
+            .is_some_and(|(until, _)| *until > now);
+        if banned {
+            self.counts.denied.fetch_add(1, Ordering::Relaxed);
+            self.count_rule(BANNED_BY_PAIRING);
+        }
+        banned
+    }
+
+    /// Lift the ban of `address`: with `node`, only the one that node told; else every ban of it here. With `tell`
+    /// (an operator's lift), the others are told too. True when there was one.
+    pub(crate) fn lift(&self, address: IpAddr, node: Option<&str>, tell: bool) -> bool {
+        let key = self.key(address.to_canonical());
+        let now = self.now();
+        let mut lifted = false;
+        {
+            let mut bans = moqui_lib::sync::lock(&self.link_bans);
+            for (from, of_node) in bans.iter_mut() {
+                if node.is_none_or(|node| node == from) {
+                    if let Some((until, _)) = of_node.remove(&key) {
+                        lifted |= until > now;
+                    }
+                }
+            }
+            bans.retain(|_, of_node| !of_node.is_empty());
+        }
+        if node.is_none() {
+            lifted |= self
+                .with_known(key, |client| {
+                    let was = client.banned_until > now;
+                    client.banned_until = 0;
+                    client.ban_source.clear();
+                    client.windows.iter_mut().for_each(|window| *window = (0, 0));
+                    was
+                })
+                .unwrap_or(false);
+        }
+        if tell {
+            self.notify(&BanNotice {
+                address: key,
+                seconds: 0,
+                ban: "lifted".to_string(),
+                lift: true,
+            });
+        }
+        lifted
+    }
+
+    /// What web protection is doing, for System › Security › Web Protection: whether the per-client parts are on, the
+    /// counts, each rule with what it refused, and the clients banned now (at most [`MAX_REPORTED_BANS`]).
+    pub(crate) fn report(&self) -> serde_json::Value {
+        use serde_json::json;
+        let conf = self.conf();
+        let counted = moqui_lib::sync::lock(&self.rule_counts).clone();
+        let count = |label: &str| counted.get(label).copied().unwrap_or(0);
+        let mut rules = Vec::new();
+        for limit in &conf.rate_limits {
+            let label = format!("rate-limit {}", limit.name);
+            let per = limit.interval.max(1);
+            rules.push(
+                json!({"kind": "rate-limit", "name": limit.name, "hosts": limit.hosts.text(),
+                "detail": format!("{:.3} requests a second, {} at once", 1e9 / per as f64, limit.tolerance / per),
+                "count": count(&label)}),
+            );
+        }
+        for ban in &conf.bans {
+            let label = format!("ban {}", ban.name);
+            rules.push(json!({"kind": "ban", "name": ban.name, "hosts": "",
+                "detail": format!("{} events in {} seconds bans for {} seconds", ban.threshold, ban.window / 1_000_000_000,
+                    ban.duration / 1_000_000_000),
+                "count": count(&label)}));
+        }
+        for rule in &conf.client_rules {
+            rules.push(
+                json!({"kind": "client-rule", "name": rule.label, "hosts": rule.hosts.text(),
+                "detail": format!("{} {} ranges", if rule.deny { "deny" } else { "exempt" }, rule.cidrs.len()),
+                "count": count(&rule.label)}),
+            );
+        }
+        for rule in &conf.path_rules {
+            rules.push(
+                json!({"kind": "path-rule", "name": rule.label, "hosts": rule.hosts.text(),
+                "detail": format!("deny {} paths", rule.globs.len()), "count": count(&rule.label)}),
+            );
+        }
+        for rule in &conf.agent_rules {
+            rules.push(
+                json!({"kind": "user-agent-rule", "name": rule.label, "hosts": rule.hosts.text(),
+                "detail": format!("deny {} user agents", rule.parts.len()), "count": count(&rule.label)}),
+            );
+        }
+        // the requests refused for a ban rather than a rule: this server's own and its members', and on an edge node
+        // a pairing's for that pairing's hosts
+        rules.push(json!({"kind": "ban", "name": BANNED, "hosts": "",
+            "detail": "requests of a banned client", "count": count(BANNED)}));
+        rules.push(
+            json!({"kind": "ban", "name": BANNED_BY_PAIRING, "hosts": "its own hosts",
+            "detail": "requests to a pairing's hosts of a client it banned", "count": count(BANNED_BY_PAIRING)}),
+        );
+        let now = self.now();
+        let seconds = |until: u64| until.saturating_sub(now).div_ceil(1_000_000_000);
+        let mut bans = Vec::new();
+        for shard in &self.shards {
+            for (key, client) in moqui_lib::sync::lock(shard).iter() {
+                if client.banned_until > now && bans.len() < MAX_REPORTED_BANS {
+                    bans.push(
+                        json!({"address": key.to_string(), "seconds": seconds(client.banned_until),
+                        "source": client.ban_source, "node": ""}),
+                    );
+                }
+            }
+        }
+        let link_bans = moqui_lib::sync::lock(&self.link_bans);
+        for (node, key, (until, source)) in link_bans
+            .iter()
+            .flat_map(|(node, of_node)| of_node.iter().map(move |(key, held)| (node, key, held)))
+        {
+            if *until > now && bans.len() < MAX_REPORTED_BANS {
+                bans.push(
+                    json!({"address": key.to_string(), "seconds": seconds(*until), "source": source,
+                    "node": node}),
+                );
+            }
+        }
+        drop(link_bans);
+        let values: serde_json::Map<String, serde_json::Value> = self
+            .values()
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), json!(value)))
+            .collect();
+        json!({"enabled": conf.enabled, "counts": values, "rules": rules, "bans": bans})
     }
 
     /// Drop the clients idle past every window, with no open connection and no ban.
@@ -828,6 +1227,11 @@ impl Guard {
             });
             self.tracked.fetch_sub(before - shard.len(), Ordering::Relaxed);
         }
+        let mut link_bans = moqui_lib::sync::lock(&self.link_bans);
+        for of_node in link_bans.values_mut() {
+            of_node.retain(|_, (until, _)| *until > now);
+        }
+        link_bans.retain(|_, of_node| !of_node.is_empty());
     }
 
     /// A 503 for a busy server, with `Retry-After`.

@@ -27,8 +27,8 @@ pub(crate) use message::service_job_error;
 pub use message::{mark_sent, mark_viewed, NotificationMessage, ROUTE_USER_IDS};
 pub use topic::{
     has_listeners, install, origin_id, publish, subscribe, Listener, Subscription, TopicMessage, CALC_PRESENCE,
-    CALC_UPDATE, COLLAB_UPDATE, COMPONENT_DEPLOY, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE, RTC_SIGNAL,
-    RUNTIME_SETTINGS, SESSION_END, TOPICS,
+    CALC_UPDATE, COLLAB_UPDATE, COMPONENT_DEPLOY, EDGE_REPLICA_NOTE, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE,
+    RTC_SIGNAL, RUNTIME_SETTINGS, SESSION_END, TOPICS, WEB_BAN,
 };
 
 #[cfg(test)]

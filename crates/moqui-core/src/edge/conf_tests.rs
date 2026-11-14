@@ -32,7 +32,7 @@ fn the_edge_conf_reads_its_lists_and_limits() {
                 <replicate set="groups"><entity name="moqui.security.UserGroup" fields="description, groupTypeEnumId"/></replicate>
             </edge></moqui-conf>"#,
         ),
-        NodeRole::Edge,
+        NodeRole::FrontEdge,
     );
     assert!(settings.edge_node());
     assert!(settings.takes_links());
@@ -87,4 +87,37 @@ fn the_retry_wait_doubles_up_to_ten_minutes() {
     assert_eq!(settings.retry_after(2), Duration::from_secs(10));
     assert_eq!(settings.retry_after(4), Duration::from_secs(40));
     assert_eq!(settings.retry_after(30), MAX_RETRY);
+}
+
+/// Balancing's defaults (plans/Edge-Node2.md §4.4): the session cookie, three failures in a row and 30 seconds; a conf
+/// sets each, and a bad cookie name or count keeps the default (at least one failure).
+#[test]
+fn the_balancing_defaults_and_their_conf() {
+    let defaults = EdgeSettings::default();
+    assert_eq!(defaults.sticky_cookie, "moqui.session");
+    assert_eq!(defaults.sticky_cookie, crate::user::SESSION_COOKIE_NAME);
+    assert_eq!(
+        (defaults.set_aside_failures, defaults.set_aside_for),
+        (3, Duration::from_secs(30))
+    );
+    let settings = EdgeSettings::parse(
+        &conf(
+            r#"<moqui-conf><edge sticky-cookie="JSESSIONID" set-aside-failures="5" set-aside-seconds="10"/></moqui-conf>"#,
+        ),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(settings.sticky_cookie, "JSESSIONID");
+    assert_eq!(
+        (settings.set_aside_failures, settings.set_aside_for),
+        (5, Duration::from_secs(10))
+    );
+    let settings = EdgeSettings::parse(
+        &conf(r#"<moqui-conf><edge sticky-cookie="a b" set-aside-failures="0" set-aside-seconds="x"/></moqui-conf>"#),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(settings.sticky_cookie, "moqui.session");
+    assert_eq!(
+        (settings.set_aside_failures, settings.set_aside_for),
+        (1, Duration::from_secs(30))
+    );
 }

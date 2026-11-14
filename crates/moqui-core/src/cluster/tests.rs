@@ -286,6 +286,7 @@ fn put_member(
             session_fp: session_fp.to_string(),
             cert_fp: cert_fp.to_string(),
             ssh_fp: String::new(),
+            version: String::new(),
         },
     )
     .unwrap();

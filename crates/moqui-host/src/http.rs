@@ -319,6 +319,8 @@ pub(crate) async fn listen(
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
     guard.log_start(&factory);
+    // its bans told to and taken from the cluster and the edge links, and its view in the System app (plans/Edge-Node2.md §4.3)
+    crate::guard_share::install(&factory, &guard);
     // a conf reload that changes the webapp's web-protection rules gives the guard the new ones; the listener limits
     // (`connections`, `requests`) wait for a restart (plans/archive/Component-Deploy.md)
     let reloaded = Arc::downgrade(&guard);
@@ -1090,7 +1092,11 @@ async fn dispatch_screen(
     let mut web = WebRequest::new(parts.method.as_str(), parts.uri.path());
     web.https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing());
     web.peer_ip = peer.ip().to_string();
-    web.via = parts.extensions.get::<moqui_core::web::RequestVia>().copied().unwrap_or_default();
+    web.via = parts
+        .extensions
+        .get::<moqui_core::web::RequestVia>()
+        .copied()
+        .unwrap_or_default();
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
     web.raw_query = parts.uri.query().map(str::to_string);

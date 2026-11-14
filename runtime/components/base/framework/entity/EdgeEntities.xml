@@ -38,7 +38,9 @@ along with this software (see the LICENSE.md file). If not, see
             public key of the client certificate it paired with (hex): a link is taken only from that key, while statusId
             is EdgeClientActive. linkGeneration goes up by one with each new up connection; a connection of an older
             generation is closed and can no longer answer or acknowledge. The versions and features are the ones its last
-            Hello said.</description>
+            Hello said. A pairing is one local node or one cluster of them (plans/Edge-Node2.md §4.4): every member links
+            with the key and names its own instance id, the one linkGeneration numbers all their connections, and no
+            member is a row.</description>
         <field name="pairedNodeId" type="id" is-pk="true"/>
         <field name="keyFingerprint" type="text-medium" not-null="true"/>
         <field name="statusId" type="id"/>
@@ -61,6 +63,24 @@ along with this software (see the LICENSE.md file). If not, see
             waiting for it (plans/Edge-Node2.md §4.1), in place of the conf's queue-max-megabytes, which otherwise holds
             for each pairing alone; the retention pass fails its oldest waiting items past it. Empty, 0 or less is
             unset: the conf's cap holds.</description></field>
+        <field name="lastMemberId" type="id"><description>The member of the pairing that linked last
+            (plans/Edge-Node2.md §4.4): every member of a local cluster links with the pairing's key and names its own
+            instance id. With none of them linked, a node that is neither this one nor in the cluster's last member list
+            takes the pairing over (§4.5).</description></field>
+        <field name="holdNewMember" type="text-indicator"><description>Y: a new node taking the pairing over is refused,
+            held for approval, until approvedMemberId names it (§4.5). Otherwise it is admitted, logged, shown and told
+            to the administrators.</description></field>
+        <field name="approvedMemberId" type="id"/>
+        <field name="memberKeys" type="text-long"><description>Each member's own key, pinned for its instance id on its
+            first link (plans/Edge-Node2.md §4.11): a JSON array of [instanceId, SHA-256 of the key], at most 64, newest
+            last. A member's Hello proves its key over the TLS connection; an id named with another key is a new node.
+            forget#EdgeMember removes one.</description></field>
+        <field name="takeoverDate" type="date-time"><description>The last takeover by a new node: when, from which
+            member (takeoverFromId) and by which (takeoverToId).</description></field>
+        <field name="takeoverFromId" type="id"><description>The node the last takeover displaced: refused, "taken
+            over", until the operator clears it (clear#EdgeTakeover), so the link never goes back and forth between two
+            copies of the data.</description></field>
+        <field name="takeoverToId" type="id"/>
         <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
         <index name="EDGE_CLIENT_KEY"><index-field name="keyFingerprint"/></index>
     </entity>
@@ -76,6 +96,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="hostName" type="text-medium" is-pk="true"/>
         <field name="pairedNodeId" type="id" not-null="true"/>
         <field name="modeEnumId" type="id" not-null="true"/>
+        <field name="stickyCookie" type="text-short"><description>In terminate mode, the cookie whose value picks the
+            member of the node's pool for each request (plans/Edge-Node2.md §4.4): rendezvous hashing over the live
+            members, so a browser session stays on one member. Empty for the edge conf's sticky-cookie (moqui.session by
+            default). No Java counterpart.</description></field>
         <field name="createdDate" type="date-time"/>
         <relationship type="one" related="moqui.edge.EdgeClient"/>
         <relationship type="one" title="EdgeHostMode" related="moqui.basic.Enumeration" short-alias="mode">
@@ -87,7 +111,9 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgeQueueItem" package="moqui.edge" use="transactional" cache="never">
         <description>One unit of work queued for the other end of the link: on an edge node the items for a local node
             (EqdToLocal), on a local node its outbox for the edge node (EqdToEdge). pairedNodeId is the local node of
-            the pair: on an edge node the paired node's id (decision 1), on a local node its own instance id.
+            the pair: on an edge node the paired node's id (decision 1), on a local node the pairing it is known by
+            (edge_node_pairing, the same on every member of its cluster, plans/Edge-Node2.md §4.4), else its own instance
+            id.
             queueItemId is a UUID, so the receiver's receipt stays unique when this database is lost and made again;
             sequenceNum orders the items, and the items of one conversationKey (a room, a mailbox, a phone number) are
             delivered one at a time in that order: a head that failed holds the ones after it until it is delivered or
@@ -173,7 +199,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgeReceipt" package="moqui.edge" use="transactional" cache="never">
         <description>A queue item this node applied, from the other end of the link, by the sender's queueItemId:
             written in the transaction that applied it, so a redelivery (its acknowledgement was lost) finds it and is
-            only acknowledged. pairedNodeId is the local node of the pair, as on EdgeQueueItem. Kept for the queue's
+            only acknowledged. pairedNodeId is the local node of the pair, as on EdgeQueueItem, so every member of a local
+            cluster, and a standby, finds the receipts of the others. Kept for the queue's
             retention period.</description>
         <field name="pairedNodeId" type="id" is-pk="true"/>
         <field name="queueItemId" type="id" is-pk="true"/>
@@ -258,6 +285,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="setName" type="id" is-pk="true"/>
         <field name="replicaEpoch" type="text-short"/>
         <field name="sequenceNum" type="number-integer"/>
+        <field name="senderToken" type="number-integer"><description>When the local node's member that sent the last
+            batch took the sender lock (epoch milliseconds): a batch with an earlier one is refused, as it comes from a
+            member that lost the lock (plans/Edge-Node2.md §4.4).</description></field>
         <field name="snapshotDate" type="date-time"/>
         <field name="appliedDate" type="date-time"/>
         <relationship type="one" related="moqui.edge.EdgeClient"/>
@@ -320,5 +350,18 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <relationship type="one" related="moqui.edge.EdgeClient"/>
         <index name="EDGE_PORT_NODE"><index-field name="pairedNodeId"/></index>
+    </entity>
+
+    <entity entity-name="EdgeSenderLock" package="moqui.edge" use="transactional" cache="never">
+        <description>On a local node whose cluster members each link to the edge node (plans/Edge-Node2.md §4.4, "Work
+            from the pool to the edge node"), the member that sends replication and keeps the link's own rows
+            (CallMediaNode, SipNode) and the phone numbers' fallbacks: one row, lockName replicate. A member claims it
+            while its link is up and renews the lease (the database's time) while it holds it; a lease that lapsed is
+            taken over by another linked member, which then sends each replicated set whole. A member that stops lets
+            it go. No Java counterpart.</description>
+        <field name="lockName" type="id" is-pk="true"/>
+        <field name="instanceId" type="text-short"/>
+        <field name="leaseExpireDate" type="date-time"/>
+        <field name="claimedDate" type="date-time"/>
     </entity>
 </entities>

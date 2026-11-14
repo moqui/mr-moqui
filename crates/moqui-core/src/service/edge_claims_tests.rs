@@ -48,6 +48,7 @@ fn paired_copies(facade: &EntityFacade) {
         ],
     );
     let batch = |set: &str, entity: &str, pk: &str, fields: &str| Batch {
+        sender_token: 0,
         set_name: set.to_string(),
         epoch: "e1".to_string(),
         base_seq: 0,
@@ -157,7 +158,7 @@ fn the_servers_own_item_a_paired_node_holds_is_refused_naming_the_node() {
 
 #[test]
 fn a_node_that_is_not_all_in_one_checks_nothing() {
-    for role in [NodeRole::Normal, NodeRole::Edge] {
+    for role in [NodeRole::Normal, NodeRole::FrontEdge] {
         let (ctx, facade) = open(role);
         let _entered = ctx.enter();
         paired_copies(&facade);

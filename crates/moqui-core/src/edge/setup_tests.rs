@@ -67,6 +67,7 @@ fn a_configure_is_normalized_and_one_that_is_not_input_is_refused() {
         host_name: name.to_string(),
         paired_node_id: "someone-else".to_string(),
         mode_enum_id: mode.to_string(),
+        sticky_cookie: None,
     };
     let setup = EdgeSetup {
         hosts: vec![

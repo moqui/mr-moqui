@@ -20,13 +20,22 @@ along with this software (see the LICENSE.md file). If not, see
     domain, SIP realm, chat bridges and PASS sites, with the numbers its replicated copies have. Replica conflicts
     (get#ReplicaConflicts, recheck#ReplicaConflicts) are the records of a pairing's sets not applied because each claims
     an item another owner holds: on an all-in-one node the server itself, and between pairings the one that claimed it
-    first. -->
+    first. A terminate host's requests are balanced over its pairing's members sticky by a cookie (plans/Edge-Node2.md
+    §4.4): its own (EdgeHost.stickyCookie, add#EdgeHost's stickyCookie, set in the add dialog or a row's Sticky cookie)
+    or the edge conf's sticky-cookie; a passthrough host's connections are sticky by the client's address. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Domains" default-menu-index="2">
 
     <transition name="addHost">
-        <service-call name="org.moqui.edge.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}" out-map="hostOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.add#EdgeHost" in-map="Object.assign({hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}, stickyCookie ? {stickyCookie:stickyCookie} : {})" out-map="hostOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">${hostOut.hostName} now goes to ${pairedNodeId}</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a cookie left empty here clears the host's own, for the conf's; Add a host name leaves it as it is -->
+    <transition name="setStickyCookie">
+        <service-call name="org.moqui.edge.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId, stickyCookie:stickyCookie ?? ''}" out-map="hostOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${hostOut.hostName} is sticky by ${hostOut.stickyCookie || 'the default cookie'}</message></if></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
@@ -57,10 +66,12 @@ along with this software (see the LICENSE.md file). If not, see
         conflictList = []
         nodeOptions = []
         domainsError = ''
+        memoryError = ''
         if (!isEdge) return
         let hostsOut = {}
         let domainsOut = {}
         let conflictsOut = {}
+        let balancingOut = {}
         ec.message.pushErrors()
         try {
             hostsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeHosts').call() || {}
@@ -72,10 +83,29 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.popErrors()
         }
         if (domainsError) return
+        // what is kept in memory, in a probe of its own: a failure there leaves the rows shown
+        const probe = (name) => {
+            ec.message.pushErrors()
+            try {
+                const answer = ec.service.sync().name('org.moqui.edge.EdgeServices.' + name).call() || {}
+                if (!ec.message.hasError()) return answer
+                memoryError = ec.message.getErrorsString()
+                return {}
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+        }
+        balancingOut = probe('get#EdgeBalancing')
         const join = (items) => Array.from(items || []).join(', ')
+        // the edge conf's sticky-cookie, which a terminate host without its own uses
+        const stickyDefault = balancingOut.stickyCookie || 'moqui.session'
         hostList = Array.from(hostsOut.hostList || []).map((host) => {
             const terminate = host.modeEnumId === 'EdgeHostTerminate'
-            return {hostName: host.hostName, nodeId: host.pairedNodeId,
+            return {hostName: host.hostName, nodeId: host.pairedNodeId, modeEnumId: host.modeEnumId,
+                hostKey: String(host.hostName).replace(/[^A-Za-z0-9]/g, '_'), terminate,
+                cookieValue: host.stickyCookie || '',
+                cookieText: !terminate ? L('By client address') : host.stickyCookie || L('The conf\'s') + ' (' + stickyDefault + ')',
                 modeLabel: terminate ? L('Terminate') : L('Passthrough'), modeColor: terminate ? 'warning' : 'positive'}
         })
         domainList = Array.from(domainsOut.domainList || []).map((domain) => ({
@@ -112,6 +142,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <option key="EdgeHostPassthrough" text="Passthrough"/>
                         <option key="EdgeHostTerminate" text="Terminate"/>
                     </drop-down></default-field></field>
+                    <field name="stickyCookie"><default-field title="Sticky cookie" tooltip="For a terminate name whose local node is a cluster: the cookie its requests are sticky by, so a browser session stays on one member. Empty for this node's default, the session cookie"><text-line size="24"/></default-field></field>
                     <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                 </form-single>
             </container-dialog>
@@ -123,7 +154,17 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="mode"><default-field title="Mode">
                     <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${modeColor}">${modeLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: modeLabel})}]]></text></render-mode>
                 </default-field></field>
+                <field name="cookieText"><default-field title="Sticky by" tooltip="A terminate name's requests go to its local node's members sticky by this cookie; a passthrough name's connections by the client's address"><display/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="StickyCookie_${hostKey}" button-text="Sticky cookie" icon="sym_o_cookie" width="480" title="The sticky cookie of ${hostName}" type="default" condition="terminate">
+                        <form-single name="StickyCookie_${hostKey}" transition="setStickyCookie" map="{hostName, pairedNodeId: nodeId, modeEnumId, stickyCookie: cookieValue}">
+                            <field name="hostName"><default-field><hidden/></default-field></field>
+                            <field name="pairedNodeId"><default-field><hidden/></default-field></field>
+                            <field name="modeEnumId"><default-field><hidden/></default-field></field>
+                            <field name="stickyCookie"><default-field title="Cookie" tooltip="The cookie whose value picks the member for each request; empty for this node's default"><text-line size="24"/></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
                     <link url="removeHost" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger"
                             confirmation="Remove ${hostName}? This node stops answering for it." parameter-map="{hostName:hostName}"/>
                 </default-field></field>

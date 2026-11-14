@@ -12,26 +12,28 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Edge Clients (plans/archive/Edge-Node.md §5.7, plans/Edge-Node2.md §4.10): on a node that takes links (node_role edge,
-    a dedicated edge node, or all-in-one, a full server that also takes links), the local nodes paired with it, one
-    pairing each, in three tabs: Clients (each pairing's link, queue, queue cap and replicated sets; ping, revoke, a
-    pairing code), Domains (what each pairing claims: host names, which are added and removed here, and from its own
+<!-- Edge Clients (plans/archive/Edge-Node.md §5.7, plans/Edge-Node2.md §4.10): on a node that takes links (node_role
+    front, front_edge or edge, a dedicated edge node, or all-in-one, a full server that also takes links), the local nodes paired with it, one
+    pairing each (one local node, or the members of one cluster), in four tabs: Clients (each pairing's link, queue,
+    queue cap and replicated sets; its members, takeovers and the hold of new nodes; ping, drain, revoke, Deliver again,
+    a pairing code), Domains (what each pairing claims: host names, which are added and removed here, and from its own
     setup its mail domains, XMPP domain, SIP realm, numbers, chat bridges and PASS sites; the replica conflicts) and
-    Ports (the TCP ports that go to one pairing each, as SSH or XMPP tunnels). The menu shows it only on such a node
+    Ports (the TCP ports that go to one pairing each, as SSH or XMPP tunnels) and Balancing (the defaults, and each
+    member's work in flight and set-asides). The menu shows it only on such a node
     (default-menu-include reads node_role); elsewhere, and in a build without the edge link, the page is a notice. While
     the link is not running (no HTTPS listener started it) the tabs show the rows, with a warning: nothing links, and
     ping cannot reach a node. Every call goes through org.moqui.edge.EdgeServices (get#LinkStatus here). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge Clients" default-menu-index="14" default-menu-group="Integration" menu-image="sym_o_lan" menu-image-type="icon"
-        default-menu-include="['edge', 'all-in-one'].includes(String(System.getProperty('node_role') ?? '').trim().toLowerCase())">
+        default-menu-include="['front', 'front_edge', 'edge', 'all-in-one'].includes(String(System.getProperty('node_role') ?? '').trim().toLowerCase())">
     <subscreens default-item="Clients"/>
 
     <!-- always, so a tab rendered alone (its transitions, the terminal's standalone render) knows the node's role -->
     <always-actions><script><![CDATA[
         const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
-        // a dedicated edge node and an all-in-one node both take links (plans/archive/Edge-Node.md §10)
-        takesLinks = ['edge', 'all-in-one'].includes(link.nodeRole)
+        // every node_role takes links: a dedicated edge node of any set and an all-in-one node (plans/Edge-Node2.md §4.3)
+        takesLinks = link.takesLinks === true
         notEdge = !notBuilt && !takesLinks
         isEdge = !notBuilt && takesLinks
         notStarted = isEdge && link.state === 'notStarted'
@@ -47,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
         </widgets></section>
         <section name="NotEdge" condition="notEdge"><widgets>
             <container-box><box-header title="Edge clients"/><box-body>
-                <label type="p" text="This node takes no links, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/edge/MoquiEdgeConf.xml), and a full server that also takes local nodes' links with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
+                <label type="p" text="This node takes no links, so no local nodes pair with it. An edge node runs with node_role set to front_edge (conf/edge/MoquiEdgeConf.xml), and a full server that also takes local nodes' links with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
                 <link url="../EdgeNode" text="Edge node" icon="sym_o_cloud_sync"/>
             </box-body></container-box>
         </widgets></section>

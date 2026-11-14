@@ -25,6 +25,17 @@
 //! A ClientHello whose server name is a passthrough host of a linked node gets no handshake here: the connection and
 //! the bytes read so far go down that node's link ([`super::tunnel`], plans/archive/Edge-Node.md §5.3). The server name of a
 //! passthrough host whose node is not linked closes the connection.
+//!
+//! **Pools** (plans/Edge-Node2.md §4.4, §4.5). A pairing is one local node or one cluster of them: every member links
+//! with the pairing's key and names its own instance id in its Hello. The registry keeps the live links by pairing and
+//! member; the pairing's one generation counter numbers every member's connections, a new member's link sits beside
+//! the others, and a member that dials again replaces only its own older one. A member not linked is admitted
+//! ([`moqui_core::edge::pool::admission`]) when a linked member's member list, asked for at that moment, has it as a
+//! live member, else refused "join the cluster first"; with none linked the key admits it, and a new node taking the
+//! pairing over is logged, noted on the pairing's row and told to the administrators, or held for approval. Each
+//! member's state (starting, live, draining, stopping) and its cluster's member list come with its Hello and every
+//! Ping, and are kept in memory only. [`EdgeServer::link_of`] picks a member that takes work as [`super::balance`]
+//! says for the kind of work (plans/Edge-Node2.md §4.4), and counts it in flight until it is answered.
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
@@ -33,7 +44,10 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
-use moqui_core::edge::{DelegateAnswer, DelegateCall, EdgeClientInfo, PairingCode};
+use moqui_core::edge::pool::{self, Admission, LinkedMember, RefusedMember};
+use moqui_core::edge::{
+    ClusterMemberInfo, DelegateAnswer, DelegateCall, EdgeClientInfo, MemberState, PairingCode, PoolMemberInfo,
+};
 use moqui_core::telemetry::Telemetry;
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -43,14 +57,15 @@ use tokio::sync::watch;
 use tokio_rustls::server::TlsStream;
 use tonic::{Request, Response, Status};
 
+use super::balance::{self, Affinity, Flight, Health, Rules};
 use super::hosts::{self, Hosts, Route};
 use super::pair::Identity;
 use super::proto::link_server::{Link, LinkServer};
 use super::proto::{
-    ConfigureReply, ConfigureRequest, ContentChunk, DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply,
-    HelloRequest, LocalHelloRequest, Offer, OfferRequest, PairReply, PairRequest, PingReply, PingRequest, ProbeReply,
-    ProbeRequest, PutContentReply, ReplicateReply, ReplicateRequest, SignalMessage, SignalReply, UnpairReply,
-    UnpairRequest,
+    ConfigureReply, ConfigureRequest, ContentChunk, DelegateRequest, DeliverReply, DeliverRequest, DrainRequest, Hello,
+    HelloReply, HelloRequest, LocalHelloRequest, MemberStatus, MembersRequest, Offer, OfferRequest, PairReply,
+    PairRequest, PingReply, PingRequest, ProbeReply, ProbeRequest, PutContentReply, ReplicateReply, ReplicateRequest,
+    SignalMessage, SignalReply, UnpairReply, UnpairRequest,
 };
 use super::store::{self, Paired};
 use super::{
@@ -217,12 +232,14 @@ impl Acceptor {
             let stream = start.into_stream(Arc::clone(config)).await?;
             return Ok(Secured::Link(Handoff::Link(stream)));
         }
+        // the front set's (plans/Edge-Node2.md §4.3): an edge node behind a front passes no host through
         let passthrough = server_name
             .as_deref()
+            .filter(|_| self.server.config.front)
             .and_then(|name| self.server.hosts.route(name))
             .filter(|route| route.mode == hosts::Mode::Passthrough);
         if let Some(Route { node, .. }) = passthrough {
-            if self.server.down_sender(&node).is_none() {
+            if !self.server.takes_work(&node) {
                 self.server.count("moqui.edgelink.refused", super::TUNNEL_HTTPS);
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotConnected,
@@ -250,7 +267,8 @@ impl Acceptor {
     }
 }
 
-/// A live link: its generation, its key, and the down connection once it is open. Dropping it closes its connections.
+/// A member's live link: its generation, its key, and the down connection once it is open. Dropping it closes its
+/// connections.
 struct Linked {
     generation: u64,
     fingerprint: String,
@@ -259,6 +277,16 @@ struct Linked {
     _close: watch::Sender<bool>,
     hello: Option<Hello>,
     down: Option<Down>,
+    /// As its last Hello or Ping said (plans/Edge-Node2.md §4.4).
+    state: MemberState,
+    /// The same, for its down connection's queue delivery, which runs only while it is live.
+    state_watch: watch::Sender<MemberState>,
+    /// When its last Hello or Ping came (epoch milliseconds).
+    seen: i64,
+    /// The token its down connection must name after its generation (plans/Edge-Node2.md §4.11).
+    down_token: [u8; super::DOWN_TOKEN],
+    /// When it was registered.
+    linked_at: Instant,
 }
 
 struct Down {
@@ -266,20 +294,119 @@ struct Down {
     _close: watch::Sender<bool>,
 }
 
-/// The live links, and the nodes revoked since this process started: a link whose key was read as active just before
-/// a revoke is refused here, so a revoke always leaves no live link.
+/// One pairing's members linked now, by instance id, with the latest member list one of them sent and the nodes with
+/// its key refused or held lately (plans/Edge-Node2.md §4.4). In memory only: a restart loses it, and the first link
+/// brings it back.
+#[derive(Default)]
+struct Pool {
+    members: HashMap<String, Linked>,
+    /// The latest member list, kept after the members go: with none linked, a member of it comes back, not takes over.
+    cluster: Option<Vec<ClusterMemberInfo>>,
+    /// When a member last sent a list that was taken (not an empty or refused one).
+    cluster_at: Option<Instant>,
+    /// Newest last, at most [`MAX_REFUSED`].
+    refused: Vec<RefusedMember>,
+    /// The round robin's next turn ([`EdgeServer::link_of`]).
+    turn: usize,
+    /// Each member's traffic and health for balancing, kept across its links (at most [`MAX_HEALTH`] once pruned).
+    health: HashMap<String, Arc<Health>>,
+}
+
+/// The members' health a pool keeps before those neither linked nor busy are let go.
+const MAX_HEALTH: usize = 128;
+
+/// The refusals kept per pairing for Clients.
+const MAX_REFUSED: usize = 8;
+/// How long admission waits for the linked members' member lists, all asked at once.
+const ASK_MEMBERS: Duration = Duration::from_secs(3);
+/// The oldest list a member sent with its Ping that admission takes when no member answers in time: two Pings.
+const LIST_FRESH: Duration = Duration::from_secs(30);
+/// How long a member's first link has to pin its key before another link of its id, with none pinned, may replace it.
+const YOUNG_LINK: Duration = Duration::from_secs(5);
+/// How long a member whose link is up has to answer the Ping that tells whether a reconnect of its id replaces it.
+const STILL_LIVE: Duration = Duration::from_secs(1);
+/// The takeover and hold notices one pairing sends in [`NOTICE_WINDOW`]; more are only logged.
+const NOTICES_PER_WINDOW: usize = 4;
+const NOTICE_WINDOW: Duration = Duration::from_secs(3600);
+
+impl Pool {
+    fn note_refused(&mut self, refused: RefusedMember) {
+        self.refused.retain(|old| old.instance_id != refused.instance_id);
+        self.refused.push(refused);
+        if self.refused.len() > MAX_REFUSED {
+            self.refused.remove(0);
+        }
+    }
+
+    /// Its members linked now, as admission and the report see them.
+    fn linked(&self) -> Vec<LinkedMember> {
+        self.members
+            .iter()
+            .map(|(member, link)| LinkedMember {
+                instance_id: member.clone(),
+                generation: link.generation,
+                down: link.down.as_ref().is_some_and(|down| !down.send.is_closed()),
+                remote_address: link.remote.to_string(),
+                state: link.state,
+                binary_version: link
+                    .hello
+                    .as_ref()
+                    .map(|hello| hello.binary_version.clone())
+                    .unwrap_or_default(),
+                last_seen: Some(link.seen),
+            })
+            .collect()
+    }
+}
+
+/// The live links by pairing, and the pairings revoked since this process started: a link whose key was read as active
+/// just before a revoke is refused here, so a revoke always leaves no live link.
 #[derive(Default)]
 struct Registry {
-    links: HashMap<String, Linked>,
+    pools: HashMap<String, Pool>,
     revoked: HashSet<String>,
+}
+
+impl Registry {
+    fn link(&self, node: &str, member: &str) -> Option<&Linked> {
+        self.pools.get(node)?.members.get(member)
+    }
+
+    fn link_mut(&mut self, node: &str, member: &str) -> Option<&mut Linked> {
+        self.pools.get_mut(node)?.members.get_mut(member)
+    }
+}
+
+/// A member's up connection to register, once admitted ([`EdgeServer::register`]).
+struct Registration {
+    generation: u64,
+    fingerprint: String,
+    remote: SocketAddr,
+    close: watch::Sender<bool>,
+    hello: Hello,
+    state: MemberState,
+    /// The pairing's members linked when the admission was decided.
+    linked: Vec<String>,
 }
 
 /// Why [`EdgeServer::register`] refused.
 #[derive(Debug, PartialEq, Eq)]
 enum Unregistered {
     Revoked,
-    /// A newer generation is already live.
+    /// A newer generation of the member is already live.
     Stale(u64),
+    /// The pairing's linked members changed after the admission was decided: dial again.
+    Changed,
+}
+
+/// The member of a pairing a piece of work goes to ([`EdgeServer::link_of`]): its down connection's sender and the
+/// link's generation, with the work counted in flight until this drops.
+pub(crate) struct Picked {
+    pub node: String,
+    pub member: String,
+    pub generation: u64,
+    pub send: hyper::client::conn::http2::SendRequest<tonic::body::Body>,
+    pub flight: Flight,
 }
 
 /// The edge node's links and paired nodes.
@@ -301,6 +428,10 @@ pub(crate) struct EdgeServer {
     active: Arc<AtomicI64>,
     /// The places for tunnels and forwarded WebSockets, by node.
     tunnel_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    /// The takeover and hold notices sent lately, by pairing ([`EdgeServer::notice_allowed`]).
+    notices: Mutex<HashMap<String, Vec<Instant>>>,
+    /// Balancing's settings, from the `<edge>` conf (plans/Edge-Node2.md §4.4).
+    balance: Rules,
 }
 
 /// The sources whose Pair calls are counted at once; a new source past it is refused until a sweep frees room.
@@ -382,6 +513,8 @@ impl EdgeServer {
                 .to_string(),
             active: Arc::clone(&active),
             tunnel_slots: Mutex::new(HashMap::new()),
+            notices: Mutex::new(HashMap::new()),
+            balance: Rules::of(&moqui_core::edge::settings(factory)),
         });
         telemetry.observe_gauge("moqui.edgelink.tunnels.active", move || {
             Some(active.load(Ordering::Acquire) as f64)
@@ -390,8 +523,9 @@ impl EdgeServer {
         telemetry.observe_gauge("moqui.edgelink.up", move || {
             let server = weak.upgrade()?;
             let linked = lock(&server.registry)
-                .links
+                .pools
                 .values()
+                .flat_map(|pool| pool.members.values())
                 .filter(|link| link.down.is_some())
                 .count();
             Some(linked as f64)
@@ -418,21 +552,47 @@ impl EdgeServer {
         self.shutdown.clone()
     }
 
-    /// The sender of `node`'s down connection, while its link is up.
-    pub(crate) fn down_sender(&self, node: &str) -> Option<hyper::client::conn::http2::SendRequest<tonic::body::Body>> {
-        let registry = lock(&self.registry);
-        let down = registry.links.get(node)?.down.as_ref()?;
-        (!down.send.is_closed()).then(|| down.send.clone())
+    /// Balancing's settings.
+    pub(crate) fn balance(&self) -> &Rules {
+        &self.balance
     }
 
-    /// The nodes whose links are up, down connection and all.
+    /// Whether a member of pairing `node` takes new work now: linked with its down connection open, and live.
+    pub(crate) fn takes_work(&self, node: &str) -> bool {
+        lock(&self.registry).pools.get(node).is_some_and(|pool| {
+            pool.members
+                .values()
+                .any(|link| link.state.takes_work() && link.down.as_ref().is_some_and(|down| !down.send.is_closed()))
+        })
+    }
+
+    /// The pairings with a member linked, down connection and all.
     pub(crate) fn linked_nodes(&self) -> Vec<String> {
         lock(&self.registry)
-            .links
+            .pools
             .iter()
-            .filter(|(_, link)| link.down.is_some())
+            .filter(|(_, pool)| pool.members.values().any(|link| link.down.is_some()))
             .map(|(node, _)| node.clone())
             .collect()
+    }
+
+    /// The members of each pairing (of `node` when given) for Clients (plans/Edge-Node2.md §4.4): the links, the
+    /// latest member lists and the nodes refused or held lately.
+    pub(crate) fn members(&self, node: Option<&str>) -> Result<Vec<PoolMemberInfo>, Error> {
+        let registry = lock(&self.registry);
+        let mut nodes: Vec<&String> = registry
+            .pools
+            .keys()
+            .filter(|key| node.is_none_or(|node| node == key.as_str()))
+            .collect();
+        nodes.sort();
+        Ok(nodes
+            .into_iter()
+            .flat_map(|key| {
+                let pool = &registry.pools[key];
+                pool::report(key, &pool.linked(), pool.cluster.as_deref(), &pool.refused)
+            })
+            .collect())
     }
 
     /// Add one to the counter `name`, of a tunnel or forward `kind`.
@@ -443,6 +603,89 @@ impl EdgeServer {
             moqui_lib::object::Value::string(kind),
         );
         self.telemetry.add_counter(name, 1, attributes);
+    }
+
+    /// Add one to the counter `name`, of a forward, tunnel or call `kind` to member `member` of pairing `node`
+    /// (plans/Edge-Node2.md §4.10, metrics).
+    pub(crate) fn count_member(&self, name: &str, kind: &str, node: &str, member: &str) {
+        let mut attributes = moqui_core::entity::document::Document::default();
+        for (attribute, value) in [
+            ("moqui.edgelink.kind", kind),
+            ("moqui.edgelink.pairing", node),
+            ("moqui.edgelink.member", member),
+        ] {
+            attributes.insert(attribute.to_string(), moqui_lib::object::Value::string(value));
+        }
+        self.telemetry.add_counter(name, 1, attributes);
+    }
+
+    /// The work of `picked` of `kind` was answered: its member's failures in a row start again.
+    pub(crate) fn succeeded(&self, picked: &Picked) {
+        picked.flight.succeeded();
+    }
+
+    /// The work of `picked` of `kind` failed or timed out before an answer: counted toward setting its member aside
+    /// (plans/Edge-Node2.md §4.4, health), logged and counted when it does.
+    pub(crate) fn failed(&self, picked: &Picked, kind: &str) {
+        if picked.flight.failed() {
+            self.count_member("moqui.edgelink.set_asides", kind, &picked.node, &picked.member);
+            tracing::warn!(
+                "Edge link of {} member {}: {} failures in a row; set aside for {:?}",
+                picked.node,
+                picked.member,
+                self.balance.failures,
+                self.balance.aside_for
+            );
+        }
+    }
+
+    /// Balancing's defaults and each member's traffic, of pairing `node` when given (plans/Edge-Node2.md §4.10
+    /// Balancing): every member linked or with health kept, by pairing and id.
+    pub(crate) fn balancing(&self, node: Option<&str>) -> moqui_core::edge::BalancingInfo {
+        let now = Instant::now();
+        let wall = moqui_core::user::now_millis();
+        let registry = lock(&self.registry);
+        let mut members = Vec::new();
+        let mut nodes: Vec<&String> = registry
+            .pools
+            .keys()
+            .filter(|key| node.is_none_or(|node| node == key.as_str()))
+            .collect();
+        nodes.sort();
+        for key in nodes {
+            let pool = &registry.pools[key];
+            let mut ids: Vec<&String> = pool.members.keys().chain(pool.health.keys()).collect();
+            ids.sort();
+            ids.dedup();
+            for id in ids {
+                let link = pool.members.get(id);
+                let health = pool.health.get(id).map(|health| health.now(now)).unwrap_or_default();
+                let linked = link.is_some_and(|link| link.down.as_ref().is_some_and(|down| !down.send.is_closed()));
+                let live = link.is_some_and(|link| link.state.takes_work());
+                let aside_until = health.aside_until.map(|until| {
+                    let left = i64::try_from(until.saturating_duration_since(now).as_millis()).unwrap_or(i64::MAX);
+                    wall.saturating_add(left)
+                });
+                members.push(moqui_core::edge::BalanceMemberInfo {
+                    paired_node_id: key.clone(),
+                    instance_id: id.clone(),
+                    linked,
+                    state: link.map(|link| link.state.as_str().to_string()).unwrap_or_default(),
+                    takes_work: linked && live && aside_until.is_none(),
+                    in_flight: health.in_flight,
+                    requests: health.requests,
+                    failures_in_row: health.failures_in_row,
+                    set_asides: health.set_asides,
+                    set_aside_until: aside_until,
+                });
+            }
+        }
+        moqui_core::edge::BalancingInfo {
+            sticky_cookie: self.balance.sticky_cookie.to_string(),
+            set_aside_failures: self.balance.failures,
+            set_aside_seconds: self.balance.aside_for.as_secs(),
+            members,
+        }
     }
 
     /// A place for a tunnel or forwarded WebSocket of `kind` down `node`'s link, counted as open until the answer
@@ -522,7 +765,12 @@ impl EdgeServer {
         hello
             .capabilities
             .retain(|area| area != super::offer::CALLS_AREA && area != super::offer::SIP_AREA);
-        if let Some(advert) = self.media() {
+        // the media node and SIP are the edge set's (plans/Edge-Node2.md §4.3): a front node offers neither
+        let edge_set = self
+            .factory
+            .upgrade()
+            .is_some_and(|factory| moqui_core::edge::settings(&factory).role.has_edge());
+        if let Some(advert) = self.media().filter(|_| edge_set) {
             hello.media_address = advert.media_address;
             hello.turn_urls = advert.turn_urls;
             hello.media_started_ms = u64::try_from(advert.started_ms).unwrap_or(0);
@@ -533,6 +781,7 @@ impl EdgeServer {
         if let Some(sip) = self
             .factory
             .upgrade()
+            .filter(|_| edge_set)
             .and_then(|factory| moqui_core::edge::media::sip_advert(&factory))
         {
             hello.sip_address = sip.sip_address;
@@ -576,76 +825,311 @@ impl EdgeServer {
         }
     }
 
-    /// The generation of `node`'s live link, or 0.
-    fn current(&self, node: &str) -> u64 {
-        lock(&self.registry).links.get(node).map_or(0, |link| link.generation)
+    /// The generation of member `member`'s live link of pairing `node`, or 0.
+    fn current(&self, node: &str, member: &str) -> u64 {
+        lock(&self.registry)
+            .link(node, member)
+            .map_or(0, |link| link.generation)
     }
 
-    /// Register a new up connection of `node`, closing the one of an older generation it replaces; the receiver
-    /// closes this one. A revoked node, or a generation older than the live one, is refused.
+    /// Register member `member`'s new up connection of pairing `node`, closing only that member's link of an older
+    /// generation, which it replaces (plans/Edge-Node2.md §4.4); its `close` closes this one when dropped. A revoked
+    /// pairing, a generation older than the member's live one, and a pairing whose linked members are no longer the
+    /// ones the admission was decided on (two new nodes at once, plans/Edge-Node2.md §4.11) are refused. The answer is
+    /// the token the member's down connection must name.
     fn register(
         &self,
         node: &str,
-        generation: u64,
-        fingerprint: &str,
-        remote: SocketAddr,
-    ) -> Result<watch::Receiver<bool>, Unregistered> {
+        member: &str,
+        registration: Registration,
+    ) -> Result<[u8; super::DOWN_TOKEN], Unregistered> {
+        let mut token = [0_u8; super::DOWN_TOKEN];
+        rustls::crypto::aws_lc_rs::default_provider()
+            .secure_random
+            .fill(&mut token)
+            .map_err(|_| Unregistered::Changed)?;
+        let Registration {
+            generation,
+            fingerprint,
+            remote,
+            close,
+            hello,
+            state,
+            linked,
+        } = registration;
         let mut registry = lock(&self.registry);
         if registry.revoked.contains(node) {
             return Err(Unregistered::Revoked);
         }
-        if let Some(live) = registry.links.get(node).filter(|live| live.generation >= generation) {
+        if let Some(live) = registry.link(node, member).filter(|live| live.generation >= generation) {
             return Err(Unregistered::Stale(live.generation));
         }
-        let (close, closed) = watch::channel(false);
-        let replaced = registry.links.insert(
-            node.to_string(),
+        let pool = registry.pools.entry(node.to_string()).or_default();
+        let mut now: Vec<&String> = pool.members.keys().collect();
+        now.sort();
+        let mut then: Vec<&String> = linked.iter().collect();
+        then.sort();
+        if now != then {
+            return Err(Unregistered::Changed);
+        }
+        pool.refused.retain(|refused| refused.instance_id != member);
+        let (state_watch, _) = watch::channel(state);
+        let replaced = pool.members.insert(
+            member.to_string(),
             Linked {
                 generation,
-                fingerprint: fingerprint.to_string(),
+                fingerprint,
                 remote,
                 _close: close,
-                hello: None,
+                hello: Some(hello),
                 down: None,
+                state,
+                state_watch,
+                seen: moqui_core::user::now_millis(),
+                down_token: token,
+                linked_at: Instant::now(),
             },
         );
         drop(registry);
         if let Some(old) = replaced {
             tracing::info!(
-                "Edge link of {node}: generation {generation} from {remote} replaces generation {} from {}",
+                "Edge link of {node} member {member}: generation {generation} from {remote} replaces generation {} \
+                 from {}",
                 old.generation,
                 old.remote
             );
         }
-        Ok(closed)
+        Ok(token)
     }
 
-    /// Forget `node`'s link if it is still of `generation`.
-    fn unregister(&self, node: &str, generation: u64) {
-        let mut registry = lock(&self.registry);
-        if registry
-            .links
-            .get(node)
-            .is_some_and(|link| link.generation == generation)
-        {
-            registry.links.remove(node);
-        }
+    /// Forget member `member`'s link of pairing `node` if it is still of `generation`.
+    fn unregister(&self, node: &str, member: &str, generation: u64) {
+        let removed = {
+            let mut registry = lock(&self.registry);
+            let Some(pool) = registry.pools.get_mut(node) else {
+                return;
+            };
+            if pool
+                .members
+                .get(member)
+                .is_some_and(|link| link.generation == generation)
+            {
+                pool.members.remove(member)
+            } else {
+                None
+            }
+        };
+        drop(removed);
     }
 
-    /// Close `node`'s link, whatever its generation.
+    /// Close every member's link of pairing `node`, whatever its generation, and forget what was kept of it.
     pub(crate) fn close(&self, node: &str) -> bool {
-        let removed = lock(&self.registry).links.remove(node);
-        removed.is_some()
+        let removed = lock(&self.registry).pools.remove(node);
+        removed.is_some_and(|pool| !pool.members.is_empty())
     }
 
-    /// Mark `node` revoked and close its link, in one step under the registry's lock.
+    /// Mark `node` revoked and close its members' links, in one step under the registry's lock.
     fn revoked(&self, node: &str) {
         let removed = {
             let mut registry = lock(&self.registry);
             registry.revoked.insert(node.to_string());
-            registry.links.remove(node)
+            registry.pools.remove(node)
         };
         drop(removed);
+    }
+
+    /// Take what a member's Hello or Ping said of its state and its cluster (plans/Edge-Node2.md §4.4): the state on
+    /// its link, and the member list, checked as input, as the pairing's latest. A list that fails the check is
+    /// logged and not taken.
+    fn note_status(&self, node: &str, member: &str, generation: u64, status: Option<&MemberStatus>) {
+        let Some(status) = status else {
+            return;
+        };
+        let (state, list) = super::status_from_proto(status);
+        let list = match pool::check_member_list(&list) {
+            Ok(()) => Some(list),
+            Err(why) => {
+                tracing::warn!("Edge link of {node} member {member}: its member list is not taken: {why}");
+                None
+            }
+        };
+        let mut registry = lock(&self.registry);
+        let Some(pool) = registry.pools.get_mut(node) else {
+            return;
+        };
+        let Some(link) = pool
+            .members
+            .get_mut(member)
+            .filter(|link| link.generation == generation)
+        else {
+            return;
+        };
+        match state {
+            Some(state) => {
+                if link.state != state {
+                    tracing::info!("Edge link of {node} member {member}: {}", state.as_str());
+                }
+                link.state = state;
+                link.state_watch.send_replace(state);
+            }
+            None => tracing::warn!(
+                "Edge link of {node} member {member}: state {} is not one this node knows",
+                status.state.chars().take(20).collect::<String>()
+            ),
+        }
+        link.seen = moqui_core::user::now_millis();
+        if let Some(list) = list.filter(|list| !list.is_empty()) {
+            pool.cluster = Some(list);
+            pool.cluster_at = Some(Instant::now());
+        }
+    }
+
+    /// Ask the members of pairing `node` other than `asking`, with their down connections open, for their cluster's
+    /// members now (plans/Edge-Node2.md §4.4, admission): all at once, within one [`ASK_MEMBERS`], the first good
+    /// answer taken and kept as the pairing's latest list. `None` when none answered in time; each list is checked as
+    /// input.
+    async fn ask_members(&self, node: &str, asking: &str) -> Option<Vec<ClusterMemberInfo>> {
+        use futures_util::StreamExt as _;
+        let asked: Vec<(String, u64, hyper::client::conn::http2::SendRequest<tonic::body::Body>)> = {
+            let registry = lock(&self.registry);
+            let pool = registry.pools.get(node)?;
+            pool.members
+                .iter()
+                .filter(|(member, _)| member.as_str() != asking)
+                .filter_map(|(member, link)| {
+                    let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
+                    Some((member.clone(), link.generation, down.send.clone()))
+                })
+                .collect()
+        };
+        let mut asks: futures_util::stream::FuturesUnordered<_> = asked
+            .into_iter()
+            .map(|(member, generation, send)| async move {
+                let mut client = super::local_link_client(send);
+                let answer = client.members(MembersRequest { generation }).await;
+                (member, generation, answer)
+            })
+            .collect();
+        let budget = tokio::time::sleep(ASK_MEMBERS);
+        tokio::pin!(budget);
+        loop {
+            tokio::select! {
+                next = asks.next() => match next {
+                    None => return None,
+                    Some((member, generation, Ok(reply))) => {
+                        let status = reply.into_inner();
+                        let (_, list) = super::status_from_proto(&status);
+                        match pool::check_member_list(&list) {
+                            Ok(()) => {
+                                self.note_status(node, &member, generation, Some(&status));
+                                return Some(list);
+                            }
+                            Err(why) => tracing::warn!(
+                                "Edge link of {node} member {member}: its member list is not taken: {why}"
+                            ),
+                        }
+                    }
+                    Some((member, _, Err(status))) => tracing::info!(
+                        "Edge link of {node}: member {member} did not give its member list: {}",
+                        status.message()
+                    ),
+                },
+                () = &mut budget => {
+                    tracing::info!("Edge link of {node}: no member gave its member list in time");
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// The latest member list of pairing `node` while it is at most [`LIST_FRESH`] old: what admission takes when no
+    /// member answered in time.
+    fn fresh_list(&self, node: &str) -> Option<Vec<ClusterMemberInfo>> {
+        let registry = lock(&self.registry);
+        let pool = registry.pools.get(node)?;
+        pool.cluster_at
+            .filter(|at| at.elapsed() <= LIST_FRESH)
+            .and(pool.cluster.clone())
+    }
+
+    /// How long member `member`'s link of pairing `node` has been registered, while it is.
+    fn link_age(&self, node: &str, member: &str) -> Option<Duration> {
+        lock(&self.registry)
+            .link(node, member)
+            .map(|link| link.linked_at.elapsed())
+    }
+
+    /// Close member `member`'s link of pairing `node` (its key was forgotten, plans/Edge-Node2.md §4.11): its next link
+    /// is admitted afresh.
+    pub(crate) fn close_member(&self, node: &str, member: &str) -> bool {
+        let removed = lock(&self.registry)
+            .pools
+            .get_mut(node)
+            .and_then(|pool| pool.members.remove(member));
+        removed.is_some()
+    }
+
+    /// Whether member `member`'s link of pairing `node` still answers a Ping on its down connection within
+    /// [`STILL_LIVE`]: a reconnect of its id does not replace a link that does (plans/Edge-Node2.md §4.11).
+    async fn still_answers(&self, node: &str, member: &str) -> bool {
+        let (send, generation) = {
+            let registry = lock(&self.registry);
+            let Some(link) = registry.link(node, member) else {
+                return false;
+            };
+            let Some(down) = link.down.as_ref().filter(|down| !down.send.is_closed()) else {
+                return false;
+            };
+            (down.send.clone(), link.generation)
+        };
+        let mut client = super::local_link_client(send);
+        let request = PingRequest {
+            generation,
+            status: None,
+        };
+        matches!(tokio::time::timeout(STILL_LIVE, client.ping(request)).await, Ok(Ok(_)))
+    }
+
+    /// Whether pairing `node` may send another takeover or hold notice now: at most [`NOTICES_PER_WINDOW`] in
+    /// [`NOTICE_WINDOW`], so cycling ids does not flood the administrators.
+    fn notice_allowed(&self, node: &str) -> bool {
+        let mut notices = lock(&self.notices);
+        let sent = notices.entry(node.to_string()).or_default();
+        sent.retain(|at| at.elapsed() < NOTICE_WINDOW);
+        if sent.len() >= NOTICES_PER_WINDOW {
+            return false;
+        }
+        sent.push(Instant::now());
+        true
+    }
+
+    /// Ask member `member` of pairing `node` down its link to drain, or to come back (plans/Edge-Node2.md §4.4): its
+    /// state after, which its link then has.
+    pub(crate) async fn drain_member(&self, node: &str, member: &str, drain: bool) -> Result<MemberState, String> {
+        let (send, generation) = {
+            let registry = lock(&self.registry);
+            let link = registry
+                .link(node, member)
+                .ok_or_else(|| format!("member {member} of {node} is not linked"))?;
+            let down = link
+                .down
+                .as_ref()
+                .ok_or_else(|| format!("member {member} of {node} has no down connection"))?;
+            (down.send.clone(), link.generation)
+        };
+        let mut client = super::local_link_client(send);
+        let request = DrainRequest { generation, drain };
+        let status = match tokio::time::timeout(self.config.handshake_timeout, client.drain(request)).await {
+            Ok(Ok(reply)) => reply.into_inner(),
+            Ok(Err(status)) => return Err(format!("member {member} of {node}: {}", status.message())),
+            Err(_) => return Err(format!("member {member} of {node} did not answer in time")),
+        };
+        self.note_status(node, member, generation, Some(&status));
+        tracing::warn!(
+            "Edge node: member {member} of {node} {} at the operator's ask",
+            if drain { "drains" } else { "resumes" }
+        );
+        Ok(MemberState::parse(&status.state).unwrap_or_default())
     }
 
     /// Count a Pair call from `ip`; false when it is over the limit for the window.
@@ -733,29 +1217,33 @@ impl EdgeServer {
                 return;
             }
         };
-        let closed = match self.register(&node, generation, &fingerprint, remote) {
-            Ok(closed) => closed,
-            Err(Unregistered::Revoked) => {
-                tracing::info!("Edge link of {node} from {remote} refused: revoked");
-                let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
-                return;
-            }
-            Err(Unregistered::Stale(live)) => {
-                let message = format!("generation {generation} is older than the live generation {live}");
-                let _ = write_answer(&mut stream, Answer::Stale, &message).await;
-                return;
-            }
-        };
-        if write_answer(&mut stream, Answer::Ok, "").await.is_err() {
-            self.unregister(&node, generation);
+        if lock(&self.registry).revoked.contains(&node) {
+            tracing::info!("Edge link of {node} from {remote} refused: revoked");
+            let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
             return;
         }
+        // a member's proof of its own key is bound to this connection (plans/Edge-Node2.md §4.11)
+        let Some(binding) = super::member_key::binding(stream.get_ref().1) else {
+            let _ = write_answer(&mut stream, Answer::Failed, "the link's TLS gave no exporter value").await;
+            return;
+        };
+        if write_answer(&mut stream, Answer::Ok, "").await.is_err() {
+            return;
+        }
+        // the member is named in its Hello, which registers the link once it is admitted (plans/Edge-Node2.md §4.4);
+        // until then the connection closes when this sender goes, with the service
+        let (close, closed) = watch::channel(false);
         let helloed = Arc::new(AtomicBool::new(false));
+        let member = Arc::new(std::sync::OnceLock::new());
         let service = LinkService {
             server: Arc::clone(&self),
             mode: Mode::Up {
                 node: node.clone(),
                 generation,
+                fingerprint,
+                binding,
+                member: Arc::clone(&member),
+                close: Mutex::new(Some(close)),
             },
             remote,
             helloed: Arc::clone(&helloed),
@@ -767,8 +1255,10 @@ impl EdgeServer {
             hello: Some((self.config.handshake_timeout, helloed)),
         };
         self.serve_h2(stream, link_server(service), Some(closed), limits).await;
-        self.unregister(&node, generation);
-        tracing::debug!("Edge link of {node} (generation {generation}) closed");
+        if let Some(member) = member.get() {
+            self.unregister(&node, member, generation);
+            tracing::debug!("Edge link of {node} member {member} (generation {generation}) closed");
+        }
     }
 
     /// Serve `service` on an HTTP/2 connection until it ends, `closed` signals, the listener stops, or a limit is hit.
@@ -840,20 +1330,31 @@ impl EdgeServer {
     }
 
     async fn serve_down(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, key: Option<String>) {
-        let mut raw = [0_u8; 8];
+        let mut raw = [0_u8; 8 + super::DOWN_TOKEN];
         let read = tokio::time::timeout(self.config.handshake_timeout, stream.read_exact(&mut raw)).await;
         if !matches!(read, Ok(Ok(_))) {
             return;
         }
-        let generation = u64::from_be_bytes(raw);
-        let node = key.as_deref().and_then(|fingerprint| {
-            lock(&self.registry)
-                .links
-                .iter()
-                .find(|(_, link)| link.fingerprint == fingerprint && link.generation == generation)
-                .map(|(node, _)| node.clone())
+        let (generation, token) = raw.split_at(8);
+        let generation = u64::from_be_bytes(generation.try_into().unwrap_or_default());
+        // the pairing's one counter numbers every member's connections, so a key and a generation name one member; the
+        // token from its Hello answer proves it is that member's (plans/Edge-Node2.md §4.11), and a down connection
+        // already open and alive is not replaced
+        let found = key.as_deref().and_then(|fingerprint| {
+            let registry = lock(&self.registry);
+            registry.pools.iter().find_map(|(node, pool)| {
+                pool.members
+                    .iter()
+                    .find(|(_, link)| {
+                        link.fingerprint == fingerprint
+                            && link.generation == generation
+                            && same_token(&link.down_token, token)
+                            && link.down.as_ref().is_none_or(|down| down.send.is_closed())
+                    })
+                    .map(|(member, _)| (node.clone(), member.clone()))
+            })
         });
-        let Some(node) = node else {
+        let Some((node, member)) = found else {
             let message = format!("no up connection of generation {generation} for this node's key");
             let _ = write_answer(&mut stream, Answer::Stale, &message).await;
             return;
@@ -914,8 +1415,7 @@ impl EdgeServer {
         let attached = {
             let mut registry = lock(&self.registry);
             match registry
-                .links
-                .get_mut(&node)
+                .link_mut(&node, &member)
                 .filter(|link| link.generation == generation)
             {
                 Some(link) => {
@@ -935,50 +1435,76 @@ impl EdgeServer {
             driver.abort();
             return;
         }
-        tracing::info!("Edge link of {node} is up (generation {generation}, from {remote})");
-        // the messages of the node's calls whose media is here go down while this connection lasts (E7)
-        let (route, signals) = super::signal::route(&node, generation);
+        tracing::info!("Edge link of {node} member {member} is up (generation {generation}, from {remote})");
+        // the messages of the node's calls whose media is here go down while this connection lasts (E7), the replies for
+        // a leg to the member whose socket bound it, by its own route (plans/Edge-Node2.md §4.4)
+        let (route, signals) = super::signal::member_route(&node, &member, generation);
         let signal_client = send.clone();
         let signaling = tokio::spawn(super::signal::forward(signals, move |messages| {
             let mut client = super::local_link_client(signal_client.clone());
             let call: super::signal::Call = Box::pin(async move { client.signal(messages).await.map(drop) });
             call
         }));
-        // the node's queued items go down while this connection lasts (plans/archive/Edge-Node.md §5.2)
-        let delivery = tokio::spawn(super::queue::deliver(
-            Weak::clone(&self.factory),
-            node.clone(),
-            moqui_core::edge::queue::TO_LOCAL,
-            format!("{}/{node}/{generation}", self.config.instance_id),
-            Some(Arc::clone(&self.telemetry)),
-            deliver_down(send, generation),
-        ));
+        // the node's queued items go down while this connection lasts (plans/archive/Edge-Node.md §5.2), each member's
+        // while it is live: its delivery pauses while it drains, starts or stops (plans/Edge-Node2.md §4.4), so it
+        // claims nothing then. Items are claimed by lease, and receipts in the pool's database apply each once
+        let states = lock(&self.registry)
+            .link(&node, &member)
+            .map(|link| link.state_watch.subscribe());
+        let delivery = tokio::spawn({
+            let factory = Weak::clone(&self.factory);
+            let (node, owner) = (
+                node.clone(),
+                format!("{}/{node}/{member}/{generation}", self.config.instance_id),
+            );
+            let telemetry = Arc::clone(&self.telemetry);
+            async move {
+                let Some(mut states) = states else { return };
+                loop {
+                    if states.wait_for(|state| state.takes_work()).await.is_err() {
+                        return;
+                    }
+                    let run = super::queue::deliver(
+                        Weak::clone(&factory),
+                        node.clone(),
+                        moqui_core::edge::queue::TO_LOCAL,
+                        owner.clone(),
+                        Some(Arc::clone(&telemetry)),
+                        deliver_down(send.clone(), generation),
+                    );
+                    let ended = tokio::select! {
+                        () = run => true,
+                        paused = states.wait_for(|state| !state.takes_work()) => paused.is_err(),
+                    };
+                    if ended {
+                        return;
+                    }
+                }
+            }
+        });
         let _ = driver.await;
         delivery.abort();
         signaling.abort();
         drop(route);
         let mut registry = lock(&self.registry);
         if let Some(link) = registry
-            .links
-            .get_mut(&node)
+            .link_mut(&node, &member)
             .filter(|link| link.generation == generation)
         {
             link.down = None;
         }
     }
 
-    /// The link of the only active pairing, with its down connection's sender and the link's generation: what a
-    /// delegated call with no owner goes down, and a PASS authority call for a site no pairing names. Counted by the
-    /// pairings, not the links up, so with one pairing away such a call is [`OFFLINE`] rather than sent to another
-    /// (plans/Edge-Node2.md §4.1). [`OFFLINE`] at once while no node is paired or that node's link is down, and refused
-    /// while several are paired: such a call needs its owner.
+    /// The link of the only active pairing, a member chosen by `affinity`: what a delegated call with no owner goes
+    /// down, and a PASS authority call for a site no pairing names. Counted by the pairings, not the links up, so with
+    /// one pairing away such a call is [`OFFLINE`] rather than sent to another (plans/Edge-Node2.md §4.1). [`OFFLINE`]
+    /// at once while no node is paired or that node's link is down, and refused while several are paired: such a call
+    /// needs its owner.
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
-    pub(crate) fn only_pairing_link(
-        &self,
-    ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
+    pub(crate) fn only_pairing_link(&self, affinity: Affinity<'_>) -> Result<Picked, Error> {
         match self.hosts.active().as_slice() {
-            [only] => self.link_of(only),
+            [only] => self.link_of(only, affinity),
             [] => Err(Error::new(format!(
                 "{}: no local node is paired",
                 moqui_core::edge::OFFLINE
@@ -993,24 +1519,26 @@ impl EdgeServer {
     /// The link a PASS authority call for site `site` goes down (plans/Edge-Node2.md §4.1): the pairing whose Configure
     /// names the site (from the host table, which Configure, pairing and revoking load again); with none naming it,
     /// the only pairing's, as before E16 (a pairing that names no sites). Refused when no pairing names the site and
-    /// several are paired, or when two name it.
+    /// several are paired, or when two name it. Of the pairing's members (§4.4): by the session handle while a sign-in
+    /// is in progress (`session`), else the one with the fewest calls in flight.
     ///
     /// # Errors
     ///
     /// [`OFFLINE`] at once while that node's link is down; the refusal.
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
-    pub(crate) fn pass_link(
-        &self,
-        site: &str,
-    ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
+    pub(crate) fn pass_link(&self, site: &str, session: &str) -> Result<Picked, Error> {
+        let affinity = match session.trim() {
+            "" => Affinity::Fewest,
+            handle => Affinity::Key(handle),
+        };
         let named = match site.trim() {
             "" => None,
             site => self.hosts.site_node(site)?,
         };
         match named {
-            Some(node) => self.link_of(&node),
-            None => self.only_pairing_link().map_err(|err| {
+            Some(node) => self.link_of(&node, affinity),
+            None => self.only_pairing_link(affinity).map_err(|err| {
                 if err.message().starts_with(moqui_core::edge::OFFLINE) {
                     err
                 } else {
@@ -1023,46 +1551,114 @@ impl EdgeServer {
         }
     }
 
-    /// The link of `node` while its down connection is up, as [`EdgeServer::only_pairing_link`] gives it: what an all-in-one
-    /// node's delegated call of a paired node's item goes down (plans/archive/Edge-Node.md §10). [`OFFLINE`] at once while that
-    /// node's link is down.
+    /// The member of pairing `node` a piece of work goes to (plans/Edge-Node2.md §4.4): of the members linked with
+    /// their down connection open and live, the one `affinity` chooses ([`balance::choose`]), passing over those set
+    /// aside while another takes work. The work counts in flight until the answer drops. [`OFFLINE`] at once while no
+    /// member is linked, or none takes new work.
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
-    pub(crate) fn link_of(
-        &self,
-        node: &str,
-    ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
-        let registry = lock(&self.registry);
-        registry
-            .links
-            .get(node)
-            .and_then(|link| {
-                let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
-                Some((node.to_string(), down.send.clone(), link.generation))
-            })
+    pub(crate) fn link_of(&self, node: &str, affinity: Affinity<'_>) -> Result<Picked, Error> {
+        self.pick(node, affinity, None)
             .ok_or_else(|| Error::new(format!("{}: {node}", moqui_core::edge::OFFLINE)))
     }
 
-    /// A Ping down `node`'s down connection: its round trip.
+    /// Another member of pairing `node` than `not`, as [`Self::link_of`] chooses: where a request that failed before
+    /// any answer goes once more.
+    pub(crate) fn link_other(&self, node: &str, affinity: Affinity<'_>, not: &str) -> Option<Picked> {
+        self.pick(node, affinity, Some(not))
+    }
+
+    fn pick(&self, node: &str, affinity: Affinity<'_>, not: Option<&str>) -> Option<Picked> {
+        let mut registry = lock(&self.registry);
+        let pool = registry.pools.get_mut(node)?;
+        let mut ready: Vec<(&String, &Linked)> = pool
+            .members
+            .iter()
+            .filter(|(member, link)| {
+                Some(member.as_str()) != not
+                    && link.state.takes_work()
+                    && link.down.as_ref().is_some_and(|down| !down.send.is_closed())
+            })
+            .collect();
+        if ready.is_empty() {
+            return None;
+        }
+        ready.sort_by(|left, right| left.0.cmp(right.0));
+        let ready: Vec<(String, u64, hyper::client::conn::http2::SendRequest<tonic::body::Body>)> = ready
+            .into_iter()
+            .filter_map(|(member, link)| Some((member.clone(), link.generation, link.down.as_ref()?.send.clone())))
+            .collect();
+        if pool.health.len() >= MAX_HEALTH {
+            let members = &pool.members;
+            pool.health
+                .retain(|member, health| members.contains_key(member) || health.in_flight() > 0);
+        }
+        let healths: Vec<Arc<Health>> = ready
+            .iter()
+            .map(|(member, _, _)| Arc::clone(pool.health.entry(member.clone()).or_default()))
+            .collect();
+        let turn = pool.turn;
+        pool.turn = turn.wrapping_add(1);
+        drop(registry);
+        let candidates: Vec<balance::Candidate<'_>> = ready
+            .iter()
+            .zip(&healths)
+            .map(|((member, _, _), health)| balance::Candidate { member, health })
+            .collect();
+        let index = balance::choose(&candidates, affinity, turn, Instant::now())?;
+        let (member, generation, send) = ready[index].clone();
+        Some(Picked {
+            node: node.to_string(),
+            member,
+            generation,
+            send,
+            flight: Flight::start(Arc::clone(&healths[index]), self.balance.clone()),
+        })
+    }
+
+    /// A Ping down the down connection of a member of `node` ([`Self::link_of`]): its round trip.
     pub(crate) async fn ping_local(&self, node: &str) -> Result<Duration, String> {
+        let picked = self
+            .link_of(node, Affinity::Any)
+            .map_err(|_| format!("{node} is not linked"))?;
+        let mut client = super::local_link_client(picked.send.clone());
+        let started = Instant::now();
+        let request = PingRequest {
+            generation: picked.generation,
+            status: None,
+        };
+        match tokio::time::timeout(self.config.handshake_timeout, client.ping(request)).await {
+            Ok(Ok(_)) => Ok(started.elapsed()),
+            Ok(Err(status)) => Err(format!("Ping: {}", status.message())),
+            Err(_) => Err(format!("{node} did not answer Ping in time")),
+        }
+    }
+
+    /// A Ping down the down connection of member `member` of pairing `node`, whatever its state: its round trip
+    /// (Clients' Ping on a member row, plans/Edge-Node2.md §4.10).
+    pub(crate) async fn ping_member(&self, node: &str, member: &str) -> Result<Duration, String> {
         let (send, generation) = {
             let registry = lock(&self.registry);
             let link = registry
-                .links
-                .get(node)
-                .ok_or_else(|| format!("{node} is not linked"))?;
+                .link(node, member)
+                .ok_or_else(|| format!("member {member} of {node} is not linked"))?;
             let down = link
                 .down
                 .as_ref()
-                .ok_or_else(|| format!("{node} has no down connection"))?;
+                .filter(|down| !down.send.is_closed())
+                .ok_or_else(|| format!("member {member} of {node} has no down connection"))?;
             (down.send.clone(), link.generation)
         };
         let mut client = super::local_link_client(send);
         let started = Instant::now();
-        match tokio::time::timeout(self.config.handshake_timeout, client.ping(PingRequest { generation })).await {
+        let request = PingRequest {
+            generation,
+            status: None,
+        };
+        match tokio::time::timeout(self.config.handshake_timeout, client.ping(request)).await {
             Ok(Ok(_)) => Ok(started.elapsed()),
             Ok(Err(status)) => Err(format!("Ping: {}", status.message())),
-            Err(_) => Err(format!("{node} did not answer Ping in time")),
+            Err(_) => Err(format!("member {member} of {node} did not answer Ping in time")),
         }
     }
 
@@ -1071,11 +1667,15 @@ impl EdgeServer {
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
-        let (node, send, generation) = match call.node.as_deref() {
-            Some(node) => self.link_of(node)?,
-            None => self.only_pairing_link()?,
+        // of the pool, by the call's conversation, so one call's events reach one member (plans/Edge-Node2.md §4.4)
+        let conversation = balance::conversation(&call.parameters);
+        let affinity = conversation.as_deref().map_or(Affinity::Fewest, Affinity::Key);
+        let picked = match call.node.as_deref() {
+            Some(node) => self.link_of(node, affinity)?,
+            None => self.only_pairing_link(affinity)?,
         };
-        let mut client = super::local_link_client(send);
+        let (node, generation) = (picked.node.clone(), picked.generation);
+        let mut client = super::local_link_client(picked.send.clone());
         // a conf entry may wait less than the link does (E8: routing a call that rings); the local node is told, and
         // does no work past it
         let wait = call.timeout.map_or(super::queue::ANSWER_TIMEOUT, |wait| {
@@ -1097,7 +1697,14 @@ impl EdgeServer {
             "moqui.artifact.name".to_string(),
             moqui_lib::object::Value::string(&call.service),
         );
+        self.count_member("moqui.edgelink.requests", "delegate", &node, &picked.member);
         let answered = tokio::time::timeout(wait, client.delegate(request)).await;
+        match &answered {
+            Ok(Ok(_)) => self.succeeded(&picked),
+            Ok(Err(status)) if !lost(status) => self.succeeded(&picked),
+            _ => self.failed(&picked, "delegate"),
+        }
+        drop(picked);
         self.telemetry.record_duration(
             "moqui.edgelink.delegate.duration",
             started.elapsed().as_secs_f64(),
@@ -1147,18 +1754,24 @@ impl EdgeServer {
         })
     }
 
-    /// The paired nodes with their live links.
+    /// The paired nodes with their live links: linked while any member is, the newest member's link.
     pub(crate) fn clients(&self) -> Result<Vec<EdgeClientInfo>, Error> {
         let rows = store::list_clients(&*self.factory()?)?;
         let registry = lock(&self.registry);
         Ok(rows
             .into_iter()
             .map(|mut client| {
-                if let Some(link) = registry.links.get(&client.paired_node_id) {
+                let newest = registry
+                    .pools
+                    .get(&client.paired_node_id)
+                    .and_then(|pool| pool.members.values().max_by_key(|link| link.generation));
+                if let Some(link) = newest {
+                    let pool = &registry.pools[&client.paired_node_id];
                     client.linked = true;
-                    client.down = link.down.is_some();
+                    client.down = pool.members.values().any(|link| link.down.is_some());
                     client.generation = link.generation;
                     client.remote_address = link.remote.to_string();
+                    client.members_linked = u32::try_from(pool.members.len()).unwrap_or(u32::MAX);
                     if let Some(hello) = &link.hello {
                         client.binary_version.clone_from(&hello.binary_version);
                         client.link_version = hello.link_version;
@@ -1184,6 +1797,44 @@ impl EdgeServer {
     pub(crate) fn create_pairing_code(&self, valid_minutes: u32) -> Result<PairingCode, Error> {
         store::create_code(&*self.factory()?, valid_minutes)
     }
+
+    /// Tell the administrators that `to` took pairing `node` over from `from`, or is held for their approval
+    /// (plans/Edge-Node2.md §4.5); a failure is logged.
+    async fn tell_takeover(&self, node: &str, from: &str, to: &str, remote: &str, held: bool) {
+        if !self.notice_allowed(node) {
+            tracing::warn!(
+                "Edge node: pairing {node} has sent {NOTICES_PER_WINDOW} takeover notices within the hour; the one for \
+                 {to} is only logged"
+            );
+            return;
+        }
+        let (node, from, to, remote) = (node.to_string(), from.to_string(), to.to_string(), remote.to_string());
+        let told = self
+            .on_pool(move |_| pool::notify_takeover(&node, &from, &to, &remote, held))
+            .await;
+        if let Err(err) = told {
+            tracing::error!("Edge node: the administrators were not told of a takeover: {err}");
+        }
+    }
+}
+
+/// Whether a call's status says its member was not reached or did not answer, rather than answering with a refusal:
+/// what counts toward setting a member aside.
+pub(crate) fn lost(status: &Status) -> bool {
+    matches!(
+        status.code(),
+        tonic::Code::Unavailable | tonic::Code::Cancelled | tonic::Code::Unknown | tonic::Code::DeadlineExceeded
+    )
+}
+
+/// Whether `token` is `expected`, in time that does not depend on where they differ.
+fn same_token(expected: &[u8], token: &[u8]) -> bool {
+    expected.len() == token.len()
+        && expected
+            .iter()
+            .zip(token)
+            .fold(0_u8, |differ, (left, right)| differ | (left ^ right))
+            == 0
 }
 
 /// The edge node's [`Link`] service for one connection, with the link's message limits.
@@ -1197,7 +1848,7 @@ fn link_server(service: LinkService) -> LinkServer<LinkService> {
 type DeliveryAnswer =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<moqui_core::edge::queue::Applied, String>> + Send>>;
 
-/// Send a queued item, with its content first, down a node's down connection of `generation`.
+/// Send a queued item, with its content first, down a member's down connection of `generation`.
 fn deliver_down(
     send: hyper::client::conn::http2::SendRequest<tonic::body::Body>,
     generation: u64,
@@ -1240,12 +1891,17 @@ struct Limits {
 /// What an up or pairing connection may do.
 enum Mode {
     /// A check connection (no key: Probe only) or a pairing connection (the new key).
-    Pairing {
-        key: Option<String>,
-    },
+    Pairing { key: Option<String> },
+    /// An up connection of pairing `node`; its member is named by its Hello, which registers it once admitted.
     Up {
         node: String,
         generation: u64,
+        fingerprint: String,
+        /// The TLS exporter value the member's Hello proves its own key over.
+        binding: [u8; 32],
+        member: Arc<std::sync::OnceLock<String>>,
+        /// Closes the connection when dropped: moved into the registry by the Hello that admits the member.
+        close: Mutex<Option<watch::Sender<bool>>>,
     },
 }
 
@@ -1259,15 +1915,222 @@ struct LinkService {
 }
 
 impl LinkService {
-    /// The node and generation of an up connection that is still current.
+    /// The pairing and generation of an up connection whose member is admitted and still current.
     fn up(&self) -> Result<(&str, u64), Status> {
-        let Mode::Up { node, generation } = &self.mode else {
+        let (node, member, generation) = self.up_member()?;
+        let _ = member;
+        Ok((node, generation))
+    }
+
+    /// The pairing, member and generation of an up connection whose member is admitted and still current.
+    fn up_member(&self) -> Result<(&str, &str, u64), Status> {
+        let Mode::Up {
+            node,
+            generation,
+            member,
+            ..
+        } = &self.mode
+        else {
             return Err(Status::failed_precondition("not an up connection"));
         };
-        if self.server.current(node) != *generation {
+        let Some(member) = member.get() else {
+            return Err(Status::failed_precondition("Hello first"));
+        };
+        if self.server.current(node, member) != *generation {
             return Err(Status::failed_precondition("stale link generation"));
         }
-        Ok((node, *generation))
+        Ok((node, member, *generation))
+    }
+
+    /// Admit member `member` of pairing `node` (plans/Edge-Node2.md §4.4, §4.5, §4.11) and register its link, naming it
+    /// on this connection before anything else is awaited. Its id is its own only with the key pinned for it
+    /// (`member_key`, its fingerprint). A member linked already reconnects, unless its link still answers a Ping. With
+    /// others linked, they are asked for their cluster's members now. The node a takeover displaced is refused until
+    /// its operator clears it. With none linked the key admits it, and a new node taking the pairing over is noted, told
+    /// and logged, or held. The answer is the down connection's token.
+    async fn admit(
+        &self,
+        node: &str,
+        member: &str,
+        member_key: &str,
+        local: &Hello,
+        state: MemberState,
+    ) -> Result<[u8; super::DOWN_TOKEN], Status> {
+        let Mode::Up {
+            generation,
+            fingerprint,
+            close,
+            member: named,
+            ..
+        } = &self.mode
+        else {
+            return Err(Status::failed_precondition("not an up connection"));
+        };
+        let generation = *generation;
+        let key = node.to_string();
+        let row = self
+            .server
+            .on_pool(move |factory| store::member_settings(factory, &key))
+            .await
+            .map_err(|err| {
+                tracing::error!("Edge link of {node}: its pairing was not read for admission: {err}");
+                Status::internal("the edge node could not take the link")
+            })?;
+        let pinned = pool::key_matches(&row.pins, member, member_key);
+        let (linked, known) = {
+            let registry = lock(&self.server.registry);
+            let pool = registry.pools.get(node);
+            let linked: Vec<String> = pool
+                .map(|pool| pool.members.keys().cloned().collect())
+                .unwrap_or_default();
+            let known = pool.and_then(|pool| pool.cluster.clone()).unwrap_or_default();
+            (linked, known)
+        };
+        let reconnect = linked.iter().any(|linked| linked == member);
+        // a linked id with no key pinned yet is a first link racing another of the same id: the older one is given
+        // [`YOUNG_LINK`] to pin its key before a link of that id can replace it (plans/Edge-Node2.md §4.11)
+        if reconnect && pinned.is_none() && self.server.link_age(node, member).is_some_and(|age| age < YOUNG_LINK) {
+            return Err(Status::unavailable(
+                "this member's first link is being taken: a second link of the same member is not taken yet",
+            ));
+        }
+        if reconnect && pinned != Some(false) && self.server.still_answers(node, member).await {
+            return Err(Status::unavailable(
+                "this member's link is up and answers: a second link of the same member is not taken",
+            ));
+        }
+        let listed = if !reconnect && !linked.is_empty() {
+            // asked now, else the latest list a linked member sent with its Ping, while it is fresh
+            match self.server.ask_members(node, member).await {
+                Some(list) => Some(list),
+                None => self.server.fresh_list(node),
+            }
+        } else {
+            None
+        };
+        let decided = pool::admission(&pool::AdmissionFacts {
+            member,
+            linked: &linked,
+            listed: listed.as_deref(),
+            known: &known,
+            last_member: &row.last_member,
+            hold: row.hold,
+            approved: &row.approved,
+            pinned,
+            displaced: &row.displaced,
+            forgotten: pool::forgotten(&row.pins, member),
+        });
+        let remote = self.remote.to_string();
+        let refuse = |message: String, held: bool| {
+            let mut registry = lock(&self.server.registry);
+            registry
+                .pools
+                .entry(node.to_string())
+                .or_default()
+                .note_refused(RefusedMember {
+                    instance_id: member.to_string(),
+                    remote_address: remote.clone(),
+                    at: moqui_core::user::now_millis(),
+                    message: message.clone(),
+                    held,
+                });
+            Status::permission_denied(message)
+        };
+        let takeover = match decided {
+            Admission::Admit => None,
+            Admission::TakeOver { from } => Some(from),
+            Admission::Refuse(message) => {
+                tracing::warn!("Edge link of {node}: member {member} from {remote} refused: {message}");
+                return Err(refuse(message, false));
+            }
+            Admission::Hold { from } => {
+                let first = !lock(&self.server.registry)
+                    .pools
+                    .get(node)
+                    .is_some_and(|pool| pool.refused.iter().any(|old| old.instance_id == member && old.held));
+                tracing::warn!(
+                    "Edge link of {node}: new node {member} from {remote} would take over from {from}; held for \
+                     approval"
+                );
+                let refused = refuse(pool::HELD_FOR_APPROVAL.to_string(), true);
+                if first {
+                    self.server.tell_takeover(node, &from, member, &remote, true).await;
+                }
+                return Err(refused);
+            }
+        };
+        // the member's key, claimed for its id in one transaction before its link is registered: pinned when none is,
+        // kept when it matches, pinned again on a decided takeover; else refused. The ids linked, the last and the kept
+        // list's are never evicted past the cap
+        let mut keep: Vec<String> = linked.clone();
+        keep.push(row.last_member.clone());
+        keep.extend(known.iter().map(|row| row.instance_id.clone()));
+        let claim = {
+            let (key, id, fingerprint, keep) = (node.to_string(), member.to_string(), member_key.to_string(), keep);
+            let takeover = takeover.is_some();
+            self.server
+                .on_pool(move |factory| store::claim_key(factory, &key, &id, &fingerprint, takeover, &keep))
+                .await
+        };
+        match claim {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!("Edge link of {node}: member {member} from {remote} refused: another key is pinned");
+                return Err(refuse(pool::JOIN_FIRST.to_string(), false));
+            }
+            Err(err) => {
+                tracing::error!("Edge link of {node}: member {member}'s key was not pinned: {err}");
+                return Err(Status::internal("the edge node could not take the link"));
+            }
+        }
+        let Some(close) = lock(close).take() else {
+            return Err(Status::failed_precondition("Hello was said already on this connection"));
+        };
+        let registration = Registration {
+            generation,
+            fingerprint: fingerprint.clone(),
+            remote: self.remote,
+            close,
+            hello: local.clone(),
+            state,
+            linked,
+        };
+        let token = match self.server.register(node, member, registration) {
+            Ok(token) => token,
+            Err(Unregistered::Revoked) => {
+                return Err(Status::permission_denied(
+                    "this node's key is not paired with this edge node, or was revoked; pair again",
+                ))
+            }
+            Err(Unregistered::Stale(live)) => {
+                return Err(Status::failed_precondition(format!(
+                    "generation {generation} is older than the live generation {live}"
+                )))
+            }
+            Err(Unregistered::Changed) => {
+                return Err(Status::unavailable(
+                    "the pairing's links changed while this one was admitted; dial again",
+                ))
+            }
+        };
+        // named now, before anything else is awaited: a call dropped from here on still leaves no link behind
+        let _ = named.set(member.to_string());
+        if let Some(from) = takeover {
+            tracing::warn!("Edge link of {node}: new node {member} from {remote} takes the pairing over from {from}");
+            let server = Arc::clone(&self.server);
+            let (key, to) = (node.to_string(), member.to_string());
+            tokio::spawn(async move {
+                let (noted_key, noted_to, noted_from) = (key.clone(), to.clone(), from.clone());
+                let noted = server
+                    .on_pool(move |factory| store::note_takeover(factory, &noted_key, &noted_from, &noted_to))
+                    .await;
+                if let Err(err) = noted {
+                    tracing::error!("Edge link of {key}: the takeover by {to} was not noted on its row: {err}");
+                }
+                server.tell_takeover(&key, &from, &to, &remote, false).await;
+            });
+        }
+        Ok(token)
     }
 
     /// The key of a check (`None`) or pairing connection, counting the call against the connection's limit.
@@ -1356,26 +2219,56 @@ impl Link for LinkService {
     }
 
     async fn hello(&self, request: Request<HelloRequest>) -> Result<Response<HelloReply>, Status> {
-        let (node, generation) = self.up()?;
-        let local = request.into_inner().hello.unwrap_or_default();
+        let Mode::Up {
+            node,
+            generation,
+            member: named,
+            ..
+        } = &self.mode
+        else {
+            return Err(Status::failed_precondition("not an up connection"));
+        };
+        let (node, generation) = (node.as_str(), *generation);
+        let request = request.into_inner();
+        let local = request.hello.unwrap_or_default();
         check_versions(LINK_VERSION, local.link_version, "local node").map_err(Status::failed_precondition)?;
-        if local.instance_id != node {
-            return Err(Status::permission_denied(format!(
-                "this key is paired for local node {node}, not {}",
-                local.instance_id.chars().take(40).collect::<String>()
-            )));
+        // the member is its own instance id, the pairing the key's (plans/Edge-Node2.md §4.4)
+        let member = local.instance_id.clone();
+        if !pool::valid_member_id(&member) {
+            return Err(Status::invalid_argument(
+                "the local node's instance id is empty, too long, or has spaces, control characters or @",
+            ));
         }
-        if let Some(link) = lock(&self.server.registry)
-            .links
-            .get_mut(node)
-            .filter(|link| link.generation == generation)
-        {
-            link.hello = Some(local.clone());
+        if named.get().is_some() {
+            return Err(Status::failed_precondition("Hello was said already on this connection"));
         }
+        // the member's own key, proved over this connection (plans/Edge-Node2.md §4.11)
+        let Mode::Up { binding, .. } = &self.mode else {
+            return Err(Status::failed_precondition("not an up connection"));
+        };
+        if !super::member_key::verify(&request.member_key, binding, &request.member_proof) {
+            tracing::warn!(
+                "Edge link of {node}: member {member} from {} gave no proof of its own key",
+                self.remote
+            );
+            return Err(Status::permission_denied(
+                "this member does not prove a key of its own (plans/Edge-Node2.md §4.11)",
+            ));
+        }
+        let member_key = super::member_key::fingerprint(&request.member_key);
+        let state = request
+            .status
+            .as_ref()
+            .and_then(|status| MemberState::parse(&status.state))
+            .unwrap_or_default();
+        let down_token = self.admit(node, &member, &member_key, &local, state).await?;
+        self.server
+            .note_status(node, &member, generation, request.status.as_ref());
         let key = node.to_string();
+        let saved_member = member.clone();
         let saved = self
             .server
-            .on_pool(move |factory| store::save_hello(factory, &key, &local))
+            .on_pool(move |factory| store::save_hello(factory, &key, &saved_member, &local))
             .await;
         if let Err(err) = saved {
             tracing::warn!("Edge link of {node}: its Hello was not saved: {err}");
@@ -1409,14 +2302,19 @@ impl Link for LinkService {
             turn_secret: salt
                 .map(|salt| self.server.turn_secret(node, &salt))
                 .unwrap_or_default(),
+            pairing_id: node.to_string(),
+            down_token: down_token.to_vec(),
         }))
     }
 
-    async fn ping(&self, _request: Request<PingRequest>) -> Result<Response<PingReply>, Status> {
-        let (_, generation) = self.up()?;
+    async fn ping(&self, request: Request<PingRequest>) -> Result<Response<PingReply>, Status> {
+        let (node, member, generation) = self.up_member()?;
         if !self.helloed.load(Ordering::Acquire) {
             return Err(Status::failed_precondition("Hello first"));
         }
+        // the member's state and its cluster's members, every Ping (plans/Edge-Node2.md §4.4)
+        self.server
+            .note_status(node, member, generation, request.into_inner().status.as_ref());
         Ok(Response::new(PingReply { generation }))
     }
 
@@ -1444,13 +2342,13 @@ impl Link for LinkService {
     }
 
     async fn signal(&self, request: Request<tonic::Streaming<SignalMessage>>) -> Result<Response<SignalReply>, Status> {
-        let (node, _) = self.up()?;
+        let (node, member, _) = self.up_member()?;
         if !self.helloed.load(Ordering::Acquire) {
             return Err(Status::failed_precondition("Hello first"));
         }
         // the up connection is the generation; each message's own is not checked again. Only what this node may send
         // is taken, its frames' replies addressed to itself (E7), each stamped with the node (E12)
-        let take = super::signal::edge_takes(node);
+        let take = super::signal::edge_takes(node, member);
         let reply = super::signal::receive(request.into_inner(), |_| Ok(()), take).await?;
         Ok(Response::new(reply))
     }

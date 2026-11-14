@@ -149,6 +149,8 @@ mod git_http;
 #[cfg(feature = "axum")]
 mod guard;
 #[cfg(feature = "axum")]
+mod guard_share;
+#[cfg(feature = "axum")]
 mod http;
 #[cfg(feature = "axum")]
 pub mod in_process;
