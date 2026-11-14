@@ -52,6 +52,7 @@ mod misconfig;
 pub mod multipart;
 pub mod origin;
 pub mod protection_view;
+pub mod reserved;
 pub mod servlet;
 pub mod stream;
 pub(crate) mod upstream;

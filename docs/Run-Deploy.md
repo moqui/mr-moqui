@@ -863,7 +863,7 @@ every host gets `webroot.xml`, the apps on paths under it, until a `root-screen`
   |---|---|
   | not set | The root's own screens and the shared static files. The token routes, the servlets and the sockets answer as on every host (Moqui Java's behaviour) |
   | `include` | The root's own screens first, then `webroot.xml`'s for a first path name the root does not have: the shell (`/qapps`), sign-in, the apps, `/rest`, the PWA files and Web Push |
-  | `refuse` | The root's own screens and the shared static files only. `/Login`, `/apps`, `/qapps`, `/rest`, the token routes, the servlets, the sockets, `/dav`, `/health`, `/metrics` and the gRPC services of the HTTPS listener are Not Found there, so nobody signs in to the framework on the host. Git at a public site's page URL is the one exception, on a host that is also a `public-site`'s. Use it for a public site |
+  | `refuse` | The root's own screens and the shared static files only. `/Login`, `/apps`, `/qapps`, `/rest`, the token routes, the servlets, the sockets, `/dav`, `/health`, `/metrics` and the gRPC services of the HTTPS listener are Not Found there, so nobody signs in to the framework on the host. Git and CI runners are the exception, each behind its own authentication and web protection: `/git/` (smart HTTP and LFS), git at a public site's page URL on a host that is also a `public-site`'s, and `/ci/runner/`. Use it for a public site |
 
 - **Links.** A link made in a request to such a host keeps that host, with the webapp's scheme and port: only a host a
   `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
@@ -978,6 +978,7 @@ address.
 | Phones: trunks, outside phones, the fallback while the local node is away | [SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away) |
 | XMPP clients through the tunnel ports | [XMPP](interfaces/XMPP.md#behind-an-edge-node) |
 | SSH through the tunnel port | [`MoquiEdgeConf.xml`](../runtime/conf/edge/MoquiEdgeConf.xml)'s comments; [Attack-Surface](security/Attack-Surface.md#edge-node), SSH tunnel port |
+| Git hosting and CI: the URLs, the SSH tunnel's clone URLs, uploads, refusing hosts, runners' tokens | [Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool), [Pipelines](interfaces/Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool) |
 | Work over the link: delegated services, the queue, replicated sets | the `<edge>` element in `MoquiEdgeConf.xml` and `MoquiDefaultConf.xml`; [plan](../plans/archive/Edge-Node.md) §5.2 |
 
 System › Edge Node shows the outbox and the replicated sets, with Pause and Resync; Edge Clients shows each node's
@@ -1119,6 +1120,9 @@ The cluster itself is as in [Cluster](#cluster): one external database, the same
   says when it is starting or stopping. Drain, stop, upgrade, start, resume, one member at a time.
 - **Work from the pool**, replication and shared bans: [Cluster, What is shared and what is
   not](#what-is-shared-and-what-is-not), With an edge node.
+- **Git hosting and CI** behind the edge node and in the pool (the URLs to set, the SSH tunnel, the shared SSH host
+  key and LFS key): [Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool),
+  [Pipelines](interfaces/Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
 - **Drain the last live member** only to take the pairing offline: its names get the offline page, or a refused
   connection, until it resumes.
 
@@ -1136,7 +1140,9 @@ A member whose requests fail or time out three times in a row is set aside for 3
 member set aside they are all tried. A request that fails before any byte of an answer goes once more to another
 member when it is a GET or HEAD with no body, or when it was never sent; nothing else is sent twice. A member that
 stops moves only its own clients, and they stay signed in: sessions are rows in the pool's database. The defaults are
-the `<edge>` element's `sticky-cookie`, `set-aside-failures` and `set-aside-seconds`; Edge Clients › Balancing shows them
+the `<edge>` element's `sticky-cookie`, `set-aside-failures` and `set-aside-seconds`. A forwarded request waits for its
+answer while its body keeps moving, a gap of `forward-idle-seconds` (120) at most, and then `forward-head-seconds`
+(3600) once it is all sent, so an upload answered once it is stored (Git LFS, CI artifacts) is not cut off; Edge Clients › Balancing shows them
 with each member's requests in flight and in all and whether it is set aside (`get#EdgeBalancing`), and the `moqui.edgelink.requests`,
 `retries` and `set_asides` counters name the pairing and the member.
 
@@ -1257,6 +1263,11 @@ node](#a-local-cluster-with-an-edge-node).
 - **The same secrets on every member**: `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key` and
   `entity_ds_crypt_pass`. Startup fails when a live member has a different session key or certificate, with
   "session_cookie_key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
+  For git hosting, `ssh_host_key` and `git_lfs_token_key` too: behind a load balancer or an edge node's pool a client's
+  SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
+  key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
+  host key differs from a live member's warns at startup; no member row shows the LFS key. Copying the first member's
+  whole `.env` gives each the same ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
 - **A distinct instance id**: each member keeps its own in `runtime/db/instance_id` (or `instance_id`). It is not in
   `.env`, so copying `.env` between members is safe.
 
@@ -1286,8 +1297,9 @@ values are in the conf's comments.
 - **Shared**: scheduled jobs take a lock row, so each job runs on one member at a time. Content blobs, `db` git
   repositories, sessions and the LLM quotas are in the database.
 - **Not shared**:
-  - `local` and `remote` git repositories are on one member's disk. Use `db` repositories, or send `/git` and SSH to
-    that member.
+  - `local` and `remote` git repositories are on disk under `runtime/git`. In a cluster they are allowed only with
+    the conf setting that says `runtime/git` is on storage every member mounts, and refused without it; else use
+    `db` repositories ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
   - Files on disk are each member's own: the SFTP root (`runtime://sftp`), and any setting that names a directory,
     such as `pass_media_root`. Share the directory between the members.
   - The LLM gateway's requests-per-minute and the web protection's limits are counted on each member separately. A

@@ -27,7 +27,9 @@ which pools the members of a pairing and balances over them. Requirements, what 
 
 - **Every member, the same**: `entity_ds_host`, `entity_ds_port`, `entity_ds_database`, `entity_ds_user`,
   `entity_ds_password`; the secrets the first member generates, `session_cookie_key`, `cluster_tls_cert`,
-  `cluster_tls_key` and `entity_ds_crypt_pass`. Behind your own load balancer: `webapp_trusted_proxies`,
+  `cluster_tls_key`, `entity_ds_crypt_pass`, and for git hosting `ssh_host_key` and `git_lfs_token_key`: a client's
+  SSH connections and LFS requests reach any member, and another one after a failover (a member whose SSH host key
+  differs warns at startup). Copying the first member's whole `.env` gives each the same. Behind your own load balancer: `webapp_trusted_proxies`,
   `webapp_client_ip_header`. With an edge node: what pairing writes on the first member, `edge_node_url`,
   `edge_node_key`, `edge_node_pin`, `edge_node_id` and `edge_node_pairing`.
 - **Each member, its own**: `cluster_base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:

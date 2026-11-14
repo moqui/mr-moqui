@@ -463,6 +463,10 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
         status.state == LinkState::Linked
     });
     wait_until(Duration::from_secs(5), "the down connection", || down(&edge, "local-w"));
+    // the SSH tunnel port the offer names for this pairing, the one active one, which its clone URLs take (E16)
+    let offer = rt.block_on(dialer.offer()).unwrap();
+    assert!(offer.ssh.available, "{:?}", offer.ssh);
+    assert_eq!(offer.ssh.port, tunnel_port);
 
     // what the local node's sockets need: john.doe's login key, and an app password for DAV
     let (login_key, app_password) = {

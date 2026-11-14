@@ -415,6 +415,13 @@ pub(crate) struct Picked {
     pub flight: Flight,
 }
 
+/// The links an edge member holds that another member's change ended (`EdgeServer::stale_links`): the pairings no
+/// longer active, and each member whose pinned key is forgotten or another, by pairing.
+struct StaleLinks {
+    revoked: Vec<String>,
+    forgotten: Vec<(String, String)>,
+}
+
 /// The edge node's links and paired nodes.
 pub(crate) struct EdgeServer {
     factory: Weak<ExecutionContextFactory>,
@@ -1087,7 +1094,7 @@ impl EdgeServer {
 
     /// The links this edge member holds whose pairing is no longer active, or whose member's pinned key is forgotten
     /// or another (plans/Edge-Node2.md §4.6): what another member did and this one may not have heard.
-    fn stale_links(&self, factory: &ExecutionContextFactory) -> Result<(Vec<String>, Vec<(String, String)>), Error> {
+    fn stale_links(&self, factory: &ExecutionContextFactory) -> Result<StaleLinks, Error> {
         let held: Vec<(String, Vec<(String, String)>)> = {
             let registry = lock(&self.registry);
             registry
@@ -1106,21 +1113,21 @@ impl EdgeServer {
         let mut revoked = Vec::new();
         let mut forgotten = Vec::new();
         for (node, members) in held {
-            let Some((active, pins)) = store::pairing_state(factory, &node)? else {
+            let Some(state) = store::pairing_state(factory, &node)? else {
                 revoked.push(node);
                 continue;
             };
-            if !active {
+            if !state.active {
                 revoked.push(node);
                 continue;
             }
             for (member, key) in members {
-                if pool::key_matches(&pins, &member, &key) != Some(true) {
+                if pool::key_matches(&state.pins, &member, &key) != Some(true) {
                     forgotten.push((node.clone(), member));
                 }
             }
         }
-        Ok((revoked, forgotten))
+        Ok(StaleLinks { revoked, forgotten })
     }
 
     /// Keep this edge member's `EdgeMemberLinks` row (plans/Edge-Node2.md §4.6, §4.11) and check its links against the
@@ -1161,7 +1168,7 @@ impl EdgeServer {
                 })
                 .await;
             match done {
-                Ok(Some((revoked, forgotten))) => {
+                Ok(Some(StaleLinks { revoked, forgotten })) => {
                     for node in revoked {
                         // closed, not marked revoked: its key is checked as each new link opens, and a pairing made
                         // again is let in whether or not this member heard of it
@@ -2377,22 +2384,20 @@ impl LinkService {
                         // with the pairing's row locked: another edge member that admitted a link of this pairing
                         // since has written its row in the same lock
                         let now = server.read_elsewhere(factory, &key)?;
-                        if now.members.iter().any(|other| *other == id) {
+                        if now.members.contains(&id) {
                             return Ok(Some(true));
                         }
                         Ok((!now.members.iter().any(|other| !seen.contains(other))).then_some(false))
                     };
                     let write_own = || server.write_links(factory);
-                    store::claim_key(
-                        factory,
-                        &key,
-                        &id,
-                        &fingerprint,
-                        wanted_takeover,
-                        &keep,
-                        recheck,
-                        write_own,
-                    )
+                    let claim = store::KeyClaim {
+                        node: &key,
+                        member: &id,
+                        member_key: &fingerprint,
+                        takeover: wanted_takeover,
+                        keep: &keep,
+                    };
+                    store::claim_key(factory, &claim, recheck, write_own)
                 })
                 .await
         };

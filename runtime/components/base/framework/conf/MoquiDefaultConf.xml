@@ -1298,7 +1298,8 @@
         what it names, and after review-max-refused refused pushes for review or proposals in an hour (per node; 0:
         no cap) the account sends no more that hour.
         merge-request-url is the page told to the client ({repositoryPath}, {repositoryId}, {mergeRequestNum},
-        {mergeRequestId}; after public-url when it starts with /). A commit is read or fetched by its id only when a
+        {mergeRequestId}; a full URL, http:// or https://, as given, so it may name an app's pages on another host or
+        under a mount; anything else follows public-url). A commit is read or fetched by its id only when a
         ref reaches it, from at most reach-max-commits commits kept in memory per repository; get#GitCommitRefs reads
         at most contains-max-commits. Commit status contexts that start with one of reserved-status-contexts (comma
         separated; none by default, a hosting application sets agreement/,ci/) are written with authorization

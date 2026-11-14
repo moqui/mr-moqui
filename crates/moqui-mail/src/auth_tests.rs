@@ -251,3 +251,63 @@ fn the_from_address_is_the_first_address_of_the_from_field() {
     assert_eq!(from_address(b"From: nobody\r\n\r\nbody"), None);
     assert_eq!(from_domain(b"From: Ann <ann@Desk.Example.>\r\n\r\nx").as_deref(), Some("desk.example"));
 }
+
+/// A reverse path with a quoted local part that holds `;` and `=` (valid SMTP) cannot put results of its own into this
+/// server's `Authentication-Results`: the field names its domain alone, and a reader that splits the field on `;` finds
+/// only this server's results. An SRS address, quoted by mail-auth only for its `=`, is kept as it is.
+#[test]
+fn a_forged_mail_from_writes_no_results_of_its_own() {
+    let signed = test_key().sign(MESSAGE.as_bytes(), "example.com", "moqui").unwrap();
+    let forged = "\"x; dmarc=pass header.from=bank.example (\\\"ok\\\")\"@example.com";
+    let mut forged_session = session("192.0.2.1");
+    forged_session.mail_from = forged.to_string();
+    let verdict = dns::run(verify(
+        signed.clone(),
+        forged_session,
+        "edge.example.net".to_string(),
+        Some(records("reject")),
+    ))
+    .unwrap();
+    let field = &verdict.field;
+    // mail-auth's comment keeps the path's safe characters only, so it holds no `;`, `=` or quote
+    assert!(
+        !field.contains("header.from=bank") && !field.contains("\"x;"),
+        "{field}"
+    );
+    assert!(field.contains(" smtp.mailfrom=example.com;"), "{field}");
+    // the field's own entries, as a reader splitting on `;` sees them: spf, dkim and dmarc once each
+    let dmarc: Vec<&str> = field
+        .split(';')
+        .map(str::trim)
+        .filter(|part| part.starts_with("dmarc="))
+        .collect();
+    assert_eq!(dmarc.len(), 1, "{field}");
+    assert!(dmarc[0].contains("header.from=example.com"), "{field}");
+
+    let mut srs = session("192.0.2.1");
+    srs.mail_from = "SRS0=HHH=TT=example.com=ann@example.com".to_string();
+    let verdict = dns::run(verify(
+        signed,
+        srs,
+        "edge.example.net".to_string(),
+        Some(records("reject")),
+    ))
+    .unwrap();
+    assert!(
+        verdict
+            .field
+            .contains("smtp.mailfrom=\"SRS0=HHH=TT=example.com=ann@example.com\""),
+        "{}",
+        verdict.field
+    );
+    // the HELO identity's result names no path, and a field written another way is left with no results
+    let helo = "Authentication-Results: mx; spf=none smtp.helo=mx.example.com\r\n".to_string();
+    assert_eq!(safe_mailfrom(helo.clone(), "\"a;b\"@example.com"), helo);
+    assert_eq!(
+        safe_mailfrom(
+            "Authentication-Results: mx; spf=pass smtp.mailfrom=a;b@example.com\r\n".to_string(),
+            "\"a;b\"@example.com"
+        ),
+        "Authentication-Results: mx; none (the MAIL FROM could not be written)\r\n"
+    );
+}

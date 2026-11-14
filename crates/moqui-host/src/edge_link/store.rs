@@ -252,10 +252,6 @@ pub(crate) fn note_takeover(factory: &ExecutionContextFactory, node: &str, from:
     })
 }
 
-/// Claim member `member`'s own key `member_key` (a fingerprint) for its id, before its link is registered
-/// (plans/Edge-Node2.md §4.11): read and written in one transaction of its own, committed before the answer, so two
-/// first links of one id cannot both pin (`moqui_core::edge::pool::claim_key`). False when another key is pinned and
-/// no takeover was decided. `keep` are the ids never evicted past the cap.
 /// What [`claim_key`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Claimed {
@@ -267,21 +263,35 @@ pub(crate) enum Claimed {
     Changed,
 }
 
-/// Claim member `member`'s key for its id on pairing `node`'s row, read for update, in one transaction committed
-/// before the link registers (plans/Edge-Node2.md §4.11). In the same transaction, so two edge members of a cluster
-/// admitting at once see each other (§4.6): `recheck` reads the other edge members' links again (`None`: another member
-/// linked since, `Some(true)`: this member is linked on another one now, so this is not a takeover), and `write_own`
-/// writes this edge member's row with the link.
+/// What a member's link claims ([`claim_key`]): member `member` of pairing `node` holds key `member_key` (a
+/// fingerprint), and takes the pairing over when `takeover`. `keep` are the ids never evicted past the cap.
+pub(crate) struct KeyClaim<'a> {
+    pub(crate) node: &'a str,
+    pub(crate) member: &'a str,
+    pub(crate) member_key: &'a str,
+    pub(crate) takeover: bool,
+    pub(crate) keep: &'a [String],
+}
+
+/// Claim a member's key for its id on its pairing's row ([`KeyClaim`]), read for update, in one transaction of its
+/// own committed before the link registers and before the answer, so two first links of one id cannot both pin
+/// (plans/Edge-Node2.md §4.11, `moqui_core::edge::pool::claim_key`). In the same transaction, so two edge members of a
+/// cluster admitting at once see each other (§4.6): `recheck` reads the other edge members' links again (`None`:
+/// another member linked since, `Some(true)`: this member is linked on another one now, so this is not a takeover),
+/// and `write_own` writes this edge member's row with the link.
 pub(crate) fn claim_key(
     factory: &ExecutionContextFactory,
-    node: &str,
-    member: &str,
-    member_key: &str,
-    takeover: bool,
-    keep: &[String],
+    claim: &KeyClaim<'_>,
     recheck: impl FnOnce() -> Result<Option<bool>, Error>,
     write_own: impl FnOnce() -> Result<(), Error>,
 ) -> Result<Claimed, Error> {
+    let KeyClaim {
+        node,
+        member,
+        member_key,
+        takeover,
+        keep,
+    } = *claim;
     let facade = facade(factory)?;
     committed(&facade, CLIENT, || {
         let Some(row) = facade
@@ -312,11 +322,15 @@ pub(crate) fn claim_key(
     })
 }
 
+/// A pairing's row as [`pairing_state`] reads it.
+pub(crate) struct PairingState {
+    pub(crate) active: bool,
+    /// Its pinned member keys, each member id and its key's fingerprint.
+    pub(crate) pins: Vec<(String, String)>,
+}
+
 /// Whether pairing `node` is active, and its pinned member keys: `None` when it has no row.
-pub(crate) fn pairing_state(
-    factory: &ExecutionContextFactory,
-    node: &str,
-) -> Result<Option<(bool, Vec<(String, String)>)>, Error> {
+pub(crate) fn pairing_state(factory: &ExecutionContextFactory, node: &str) -> Result<Option<PairingState>, Error> {
     let facade = facade(factory)?;
     transaction(&facade, CLIENT, || {
         let row = facade
@@ -324,11 +338,9 @@ pub(crate) fn pairing_state(
             .eq("pairedNodeId", Value::string(node))
             .use_cache(false)
             .one()?;
-        Ok(row.map(|row| {
-            (
-                text(row.get("statusId")) == ACTIVE,
-                moqui_core::edge::pool::pinned_keys(&text(row.get("memberKeys"))),
-            )
+        Ok(row.map(|row| PairingState {
+            active: text(row.get("statusId")) == ACTIVE,
+            pins: moqui_core::edge::pool::pinned_keys(&text(row.get("memberKeys"))),
         }))
     })
 }

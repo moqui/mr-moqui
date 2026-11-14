@@ -440,6 +440,30 @@ authorization disabled only), `queue#ScheduledRuns`, `start#QueuedJobRuns`, `end
 
 Each job tolerates one failing piece: a job that cannot be started, checked or expired is logged and the rest go on.
 
+## Behind a front or edge node, and in a pool
+
+The runner REST (`/ci/runner/`) and the job's git fetch go through a front or edge node as any request does, in
+every topology ([Git-Hosting](Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool) has what is forwarded and how
+the client's address arrives).
+
+- **Streamed.** Artifact, cache and report uploads and the result post stream down the link to the local node, and
+  a cache download streams back; the edge node waits for the answer's head as long as the body keeps moving (`<edge
+  forward-idle-seconds>`) and then up to `forward-head-seconds` once it is all sent, so an upload answered once it is
+  stored is not timed out.
+- **`server-url`.** The URL the runners reach the server by: the public URL on the edge node (empty uses it), or
+  another name only when runners reach the local node some other way (a private address on the same network).
+  Statuses and the `run-url` link name the public URL.
+- **Refusing hosts.** A host whose root screen refuses the framework's routes still serves `/ci/runner/`, so a
+  site's own host can be the runners' URL.
+- **Web protection.** A request to `/ci/runner/` that carries a well-formed job, runner or pool token (`mqcj_`,
+  `mqcr_`, `mqcp_` and 64 hex digits) is counted by its token, by the engine's own per-token limit
+  (`runner-max-requests-per-minute`): no per-client rate limit applies to it, on the edge node or on the local node,
+  and its authentication failures (a token of a job that ended) count toward no ban, since runners share addresses (a
+  NAT, a pool of machines). A request without such a token is counted as any other. An address already banned is
+  refused at connect, whatever it sends.
+- **In a pool.** Any member answers any runner request: jobs, logs, artifacts and caches are rows and content in the
+  shared database and content store. A job fetches its commit over git HTTP with its job token, from any member.
+
 ## Limits and conf
 
 `<git-ci>` in the conf (`moqui-conf-3.xsd`; the defaults are in `MoquiDefaultConf.xml`).

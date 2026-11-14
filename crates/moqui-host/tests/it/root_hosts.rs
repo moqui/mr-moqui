@@ -159,17 +159,29 @@ fn a_wrapper_root_serves_its_host_by_its_framework_routes() {
     let (status, _, body) = get(address, "site.localhost", "/manifest.webmanifest");
     assert!(status == 200 && body.contains("start_url"), "{status} {body}");
 
-    // a refusing host that is a public site's: git at a page's URL reaches the git server (401 with no credentials),
-    // a request to /git/ itself does not
+    // a refusing host still serves git over HTTP and LFS under /git/ and the CI runner REST, each behind its own
+    // authentication (401 with no credentials), and on a public site's host git at a page's URL too; nothing else
+    // of the host's (moqui_core::web::reserved::SERVED_ON_REFUSING_HOSTS)
     #[cfg(feature = "git")]
     {
         let refs = "/moqui/mr-moqui/info/refs?service=git-upload-pack";
         let (status, _, body) = get(address, "git.localhost", refs);
         assert_eq!(status, 401, "git at a page's URL: {body}");
-        let (status, _, body) = get(address, "git.localhost", &format!("/git{refs}"));
-        assert_eq!(status, 404, "/git/ on a refusing host: {body}");
-        let (status, _, body) = get(address, "localhost", &format!("/git{refs}"));
-        assert_eq!(status, 401, "/git/ on another host: {body}");
+        for host in ["git.localhost", "public.localhost", "localhost"] {
+            let (status, _, body) = get(address, host, &format!("/git{refs}"));
+            assert_eq!(status, 401, "/git/ on {host}: {body}");
+            let lfs = on(
+                address,
+                host,
+                "POST",
+                "/git/moqui/mr-moqui.git/info/lfs/objects/batch",
+                &[("Content-Type", "application/vnd.git-lfs+json")],
+                r#"{"operation":"download","objects":[]}"#,
+            );
+            assert_eq!(lfs.0, 401, "LFS on {host}: {}", lfs.2);
+            let runner = on(address, host, "POST", "/ci/runner/v1/jobs/request", &[], "{}");
+            assert_ne!(runner.0, 404, "the CI runner REST on {host}: {}", runner.2);
+        }
     }
 
     // a page the wrapper has not: the default root's error screen, on both

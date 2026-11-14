@@ -19,7 +19,8 @@
         sip_domain, its phones' realm (sip.branch-a.example.com), which its Configure names;
         the PASS sites in pass_client_edge_sites, which the wizard sends: an mr-pass site has one authority;
         mail: its domains' addresses, which reach it by its replicated accounts (a domain two nodes share is split by
-        address, and an address both have is held back until one lets it go).
+        address, and an address both have is held back until one lets it go), and smtp_authserv_id, the edge node's
+        authserv-id (conf/edge/MoquiLocalConf.xml, Mail in).
         Chat and SMS: the wizard sets channels_public_url to the edge node's address. Bridge ids from two databases can
         be the same; when they may, set channels_public_url to one of this node's terminate host names, so its
         networks' webhooks name this node. -->

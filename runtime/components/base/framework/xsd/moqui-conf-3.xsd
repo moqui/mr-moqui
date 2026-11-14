@@ -466,7 +466,9 @@ along with this software (see the LICENSE.md file). If not, see
                             host. include: its own screens first, then the default root's for a first path name it does not
                             have (the shell, sign-in, the apps, /rest, the error screens). refuse: its own screens and the
                             shared static files only; the token routes, the servlets and the host's own routes (sockets,
-                            /dav, /health, /metrics...) are Not Found on the host.</xs:documentation></xs:annotation>
+                            /dav, /health, /metrics...) are Not Found on the host, but for git (/git/, LFS, and git at a
+                            public site's page URL) and the CI runner REST (/ci/runner/), each behind its own
+                            authentication.</xs:documentation></xs:annotation>
                         <xs:simpleType><xs:restriction base="xs:token">
                             <xs:enumeration value="include"/>
                             <xs:enumeration value="refuse"/>
@@ -1785,7 +1787,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="review-max-refused" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>After this many pushes for review and proposals of one account with no push right were refused in an hour, on this node, the account's next ones that hour are refused before anything is read (GitReviewRefusals); 0 for no cap.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="push-max-commands" type="non-neg-int-expandable" default="100000"><xs:annotation><xs:documentation>The most commands (refs), the most shallow lines and the most push options (each) of one push from a user who may push.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="push-max-request-bytes" type="non-neg-int-expandable" default="16777216"><xs:annotation><xs:documentation>The most bytes of the commands, shallow lines and push options of one push from a user who may push; the pack is not counted (max-push-size).</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="merge-request-url" type="xs:string"><xs:annotation><xs:documentation>The page of a merge request, told to the client of a push for review: {repositoryPath}, {repositoryId}, {mergeRequestNum} and {mergeRequestId} are filled in, and one that starts with / follows public-url. None when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="merge-request-url" type="xs:string"><xs:annotation><xs:documentation>The page of a merge request, told to the client of a push for review: {repositoryPath}, {repositoryId}, {mergeRequestNum} and {mergeRequestId} are filled in. A full URL (http:// or https://) is taken as given, so it may name an application's pages on another host or under a mount; anything else is a path that follows public-url. None when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="reach-max-commits" type="non-neg-int-expandable" default="1000000"><xs:annotation><xs:documentation>The most commits of a repository's history kept in memory to answer which commits its refs reach, for reads and fetches by commit id; in a larger history an older commit is not read by its id.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="contains-max-commits" type="non-neg-int-expandable" default="200000"><xs:annotation><xs:documentation>The most commits one get#GitCommitRefs call reads; past it the answer is truncated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="reserved-status-contexts" type="xs:string" default=""><xs:annotation><xs:documentation>Prefixes of commit status contexts that create#GitCommitStatus takes only with authorization disabled (the system: an agreement check, the CI engine), separated by commas. Empty (the default): none, as an outside CI posts its checks (ci/...) with a user's token; a hosting application that writes checks of its own sets it (agreement/,ci/).</xs:documentation></xs:annotation></xs:attribute>
@@ -1997,6 +1999,24 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="set-aside-seconds" type="non-neg-int-expandable" default="30">
                 <xs:annotation><xs:documentation>How long a member is set aside before it is tried again.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="forward-idle-seconds" type="non-neg-int-expandable" default="120">
+                <xs:annotation><xs:documentation>On a node with the front set, a terminate host's request forwarded down
+                    a link: the longest gap in its body as it goes down before it is answered 504. Only the member
+                    taking the request (10 seconds), this gap and forward-head-seconds bound it, so an upload answered
+                    once it is stored (Git LFS, CI artifacts) takes as long as its body takes to send. At least 1.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="forward-head-seconds" type="non-neg-int-expandable" default="3600">
+                <xs:annotation><xs:documentation>The longest wait for a forwarded request's answer head once its body is
+                    all sent (at once for a request with no body), before it is answered 504. At least 1.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="ssh-tunnels" type="non-neg-int-expandable" default="256">
+                <xs:annotation><xs:documentation>SSH connections piped at once by the SSH tunnel port
+                    (edge_ssh_tunnel_port), and by each pairing's own SSH port (an EdgePort row); each also counts
+                    toward a link's tunnels. At least 1.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType>

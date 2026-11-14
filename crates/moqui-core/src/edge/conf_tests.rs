@@ -121,3 +121,31 @@ fn the_balancing_defaults_and_their_conf() {
         (1, Duration::from_secs(30))
     );
 }
+
+/// A forwarded request's waits and the SSH tunnels at once: long by default, so an upload answered once it is stored
+/// is not cut off; a conf sets each, and zero or a bad number keeps at least one second (one tunnel).
+#[test]
+fn the_forward_waits_and_ssh_tunnels_and_their_conf() {
+    let defaults = EdgeSettings::default();
+    assert_eq!(defaults.forward_idle, Duration::from_secs(120));
+    assert_eq!(defaults.forward_head, Duration::from_secs(3600));
+    assert_eq!(defaults.ssh_tunnels, 256);
+    let settings = EdgeSettings::parse(
+        &conf(
+            r#"<moqui-conf><edge forward-idle-seconds="30" forward-head-seconds="7200" ssh-tunnels="1024"/></moqui-conf>"#,
+        ),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(
+        (settings.forward_idle, settings.forward_head, settings.ssh_tunnels),
+        (Duration::from_secs(30), Duration::from_secs(7200), 1024)
+    );
+    let settings = EdgeSettings::parse(
+        &conf(r#"<moqui-conf><edge forward-idle-seconds="0" forward-head-seconds="x" ssh-tunnels="0"/></moqui-conf>"#),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(
+        (settings.forward_idle, settings.forward_head, settings.ssh_tunnels),
+        (Duration::from_secs(1), Duration::from_secs(3600), 1)
+    );
+}

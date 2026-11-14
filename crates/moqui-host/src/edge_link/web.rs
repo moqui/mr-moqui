@@ -26,9 +26,15 @@
 //! default), round robin without it; a WebSocket as its opening request. A request that fails before any byte of an
 //! answer goes once more to another member when it is a GET or HEAD with no body, or when it was not sent at all
 //! ([`send_once_more`]); nothing else is sent twice.
+//!
+//! **Waits** ([`Waits`]). A request's answer may come only once its whole body is stored (an LFS object, a CI artifact
+//! or result, a large upload), so the edge node bounds the member's connection taking the request and each gap in the
+//! request's body as it goes down, and then the wait for the answer's head from when the body is all sent, which is
+//! long by default; never the whole of it by one short timeout.
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -322,15 +328,133 @@ pub(crate) enum Failed {
     TimedOut,
 }
 
-/// One try of `request` down `send`, within `wait`: the answer's head, the request back when it was not sent at all
+/// The bounds of a forwarded request's wait for its answer's head. A request whose answer comes only after its whole
+/// body is stored (an LFS or CI upload, a slow multipart post) may take as long as its body takes to send, so only
+/// the parts that say nothing is happening are short: `open` for the member's connection to take the request, `idle`
+/// for a gap in the request's body as it goes down, and `head`, from when the body is all sent, for the answer's
+/// head (the `<edge>` conf's `forward-idle-seconds` and `forward-head-seconds`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Waits {
+    pub(crate) open: Duration,
+    pub(crate) idle: Duration,
+    pub(crate) head: Duration,
+}
+
+/// How far a forwarded request's body has gone down its member's connection: when a frame of it was last taken, and
+/// when it ended, in nanoseconds after `start`. A request that carries none in its extensions has no body.
+pub(crate) struct Progress {
+    start: tokio::time::Instant,
+    last: AtomicU64,
+    /// [`NOT_ENDED`] while the body is still going.
+    ended: AtomicU64,
+}
+
+const NOT_ENDED: u64 = u64::MAX;
+
+impl Progress {
+    fn new(ended: bool) -> Self {
+        Self {
+            start: tokio::time::Instant::now(),
+            last: AtomicU64::new(0),
+            ended: AtomicU64::new(if ended { 0 } else { NOT_ENDED }),
+        }
+    }
+
+    fn now(&self) -> u64 {
+        u64::try_from(self.start.elapsed().as_nanos()).unwrap_or(NOT_ENDED - 1)
+    }
+
+    /// The request is handed to a connection now: its body has not been read by it yet, so the clocks start again.
+    fn sending(&self) {
+        let now = self.now();
+        self.last.store(now, Ordering::Release);
+        if self.ended.load(Ordering::Acquire) != NOT_ENDED {
+            self.ended.store(now, Ordering::Release);
+        }
+    }
+
+    fn moved(&self) {
+        self.last.store(self.now(), Ordering::Release);
+    }
+
+    fn end(&self) {
+        let now = self.now();
+        let _ = self
+            .ended
+            .compare_exchange(NOT_ENDED, now, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    /// When the wait for the answer's head runs out as things stand: `idle` after the body last moved while it goes,
+    /// `head` after it ended.
+    fn deadline(&self, waits: &Waits) -> tokio::time::Instant {
+        match self.ended.load(Ordering::Acquire) {
+            NOT_ENDED => self.start + Duration::from_nanos(self.last.load(Ordering::Acquire)) + waits.idle,
+            ended => self.start + Duration::from_nanos(ended) + waits.head,
+        }
+    }
+}
+
+/// A request body that tells its [`Progress`] as each frame is taken and when it ends.
+struct Watched {
+    body: tonic::body::Body,
+    progress: Arc<Progress>,
+}
+
+impl hyper::body::Body for Watched {
+    type Data = bytes::Bytes;
+    type Error = <tonic::body::Body as hyper::body::Body>::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let polled = Pin::new(&mut self.body).poll_frame(cx);
+        match &polled {
+            std::task::Poll::Ready(Some(Ok(_))) => {
+                self.progress.moved();
+                // hyper asks is_end_stream after a frame and may not poll again
+                if self.body.is_end_stream() {
+                    self.progress.end();
+                }
+            }
+            std::task::Poll::Ready(_) => self.progress.end(),
+            std::task::Poll::Pending => {}
+        }
+        polled
+    }
+
+    fn is_end_stream(&self) -> bool {
+        let ended = self.body.is_end_stream();
+        if ended {
+            self.progress.end();
+        }
+        ended
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+/// `body` as a forwarded request's, with the [`Progress`] to put in the request's extensions.
+pub(crate) fn watched(body: tonic::body::Body) -> (tonic::body::Body, Arc<Progress>) {
+    use hyper::body::Body as _;
+    let progress = Arc::new(Progress::new(body.is_end_stream()));
+    let body = tonic::body::Body::new(Watched {
+        body,
+        progress: Arc::clone(&progress),
+    });
+    (body, progress)
+}
+
+/// One try of `request` down `send`, within `waits`: the answer's head, the request back when it was not sent at all
 /// (the connection was not ready), or why there was no answer.
 async fn try_send(
     mut send: SendRequest<tonic::body::Body>,
     request: http::Request<tonic::body::Body>,
-    wait: Duration,
+    waits: Waits,
 ) -> Result<http::Response<hyper::body::Incoming>, (Failed, Option<Box<http::Request<tonic::body::Body>>>)> {
-    let deadline = tokio::time::Instant::now() + wait;
-    match tokio::time::timeout_at(deadline, send.ready()).await {
+    match tokio::time::timeout(waits.open, send.ready()).await {
         Ok(Ok(())) => {}
         Ok(Err(err)) => {
             return Err((
@@ -340,13 +464,32 @@ async fn try_send(
         }
         Err(_) => return Err((Failed::TimedOut, Some(Box::new(request)))),
     }
-    match tokio::time::timeout_at(deadline, send.try_send_request(request)).await {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(mut err)) => {
-            let unsent = err.take_message().map(Box::new);
-            Err((Failed::Error(err.into_error().to_string(), send.is_closed()), unsent))
+    let progress = request
+        .extensions()
+        .get::<Arc<Progress>>()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(Progress::new(true)));
+    progress.sending();
+    let answer = send.try_send_request(request);
+    tokio::pin!(answer);
+    loop {
+        tokio::select! {
+            answered = &mut answer => {
+                return match answered {
+                    Ok(response) => Ok(response),
+                    Err(mut err) => {
+                        let unsent = err.take_message().map(Box::new);
+                        Err((Failed::Error(err.into_error().to_string(), send.is_closed()), unsent))
+                    }
+                };
+            }
+            // the deadline moves while the body goes, so it is read again when it comes
+            () = tokio::time::sleep_until(progress.deadline(&waits)) => {
+                if progress.deadline(&waits) <= tokio::time::Instant::now() {
+                    return Err((Failed::TimedOut, None));
+                }
+            }
         }
-        Err(_) => Err((Failed::TimedOut, None)),
     }
 }
 
@@ -359,10 +502,10 @@ pub(crate) async fn send_once_more(
     request: http::Request<tonic::body::Body>,
     again: Option<impl FnOnce() -> http::Request<tonic::body::Body>>,
     other: impl FnOnce(&str) -> Option<Picked>,
-    wait: Duration,
+    waits: Waits,
     outcome: impl Fn(&Picked, bool),
 ) -> (Result<http::Response<hyper::body::Incoming>, Failed>, Picked) {
-    let (failed, unsent) = match try_send(first.send.clone(), request, wait).await {
+    let (failed, unsent) = match try_send(first.send.clone(), request, waits).await {
         Ok(response) => {
             outcome(&first, true);
             return (Ok(response), first);
@@ -377,7 +520,7 @@ pub(crate) async fn send_once_more(
         return (Err(failed), first);
     };
     drop(first);
-    match try_send(second.send.clone(), request, wait).await {
+    match try_send(second.send.clone(), request, waits).await {
         Ok(response) => {
             outcome(&second, true);
             (Ok(response), second)
@@ -439,7 +582,9 @@ where
         .flatten();
     let method = if websocket { http::Method::CONNECT } else { parts.method };
     let make = move |body: tonic::body::Body, method: http::Method, uri: http::Uri, headers: HeaderMap| {
+        let (body, progress) = watched(body);
         let mut down = http::Request::new(body);
+        down.extensions_mut().insert(progress);
         *down.uri_mut() = uri;
         *down.version_mut() = http::Version::HTTP_2;
         *down.headers_mut() = headers;
@@ -491,7 +636,16 @@ where
             server.count_member("moqui.edgelink.requests", "terminate", &node, &other.member);
             Some(other)
         },
-        server.config().open_timeout,
+        Waits {
+            open: server.config().open_timeout,
+            idle: server.config().forward_idle,
+            // a WebSocket is answered as it opens, with no body to wait for
+            head: if websocket {
+                server.config().open_timeout
+            } else {
+                server.config().forward_head
+            },
+        },
         |picked, ok| {
             if ok {
                 server.succeeded(picked);

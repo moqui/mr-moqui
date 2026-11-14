@@ -153,7 +153,11 @@ async fn tried(
             asked.store(true, std::sync::atomic::Ordering::SeqCst);
             Some(picked("member-b", second))
         },
-        Duration::from_secs(5),
+        Waits {
+            open: Duration::from_secs(5),
+            idle: Duration::from_secs(5),
+            head: Duration::from_secs(5),
+        },
         |picked, ok| outcomes.lock().unwrap().push((picked.member.clone(), ok)),
     )
     .await;
@@ -258,4 +262,131 @@ fn the_sticky_cookie_is_read_from_every_cookie_header() {
     assert_eq!(sticky_value(&headers, "JSESSIONID"), None);
     headers.insert(header::COOKIE, HeaderValue::from_static("moqui.session="));
     assert_eq!(sticky_value(&headers, "moqui.session"), None, "an empty one is none");
+}
+
+/// A request body fed by a test: each chunk as it is sent, ended when the sender drops.
+struct Fed(tokio::sync::mpsc::Receiver<bytes::Bytes>);
+
+impl hyper::body::Body for Fed {
+    type Data = bytes::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        self.0
+            .poll_recv(cx)
+            .map(|chunk| chunk.map(|chunk| Ok(hyper::body::Frame::data(chunk))))
+    }
+}
+
+/// A member that reads a request's whole body before it answers, `then` after the body ended: as an LFS PUT or a CI
+/// upload is answered once the object is stored. The bytes it read go in its answer.
+async fn storing_member(then: Duration) -> (SendRequest<tonic::body::Body>, tokio::task::JoinHandle<()>) {
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let serving = tokio::spawn(async move {
+        let service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| async move {
+            use hyper::body::Body as _;
+            let mut body = request.into_body();
+            let mut read = 0usize;
+            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+                if let Ok(data) = frame?.into_data() {
+                    read += data.len();
+                }
+            }
+            tokio::time::sleep(then).await;
+            Ok::<_, hyper::Error>(http::Response::new(read.to_string()))
+        });
+        let _ = hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .serve_connection(TokioIo::new(server), service)
+            .await;
+    });
+    let (send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .handshake(TokioIo::new(client))
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    (send, serving)
+}
+
+/// A PUT of `chunks` chunks of 64 KiB, each `gap` after the last, to `send` within `waits`: the bytes the member read,
+/// or the failure.
+async fn upload(
+    send: &SendRequest<tonic::body::Body>,
+    chunks: usize,
+    gap: Duration,
+    waits: Waits,
+) -> Result<String, String> {
+    let (feed, fed) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move {
+        for _ in 0..chunks {
+            tokio::time::sleep(gap).await;
+            if feed.send(bytes::Bytes::from(vec![7u8; 64 * 1024])).await.is_err() {
+                return;
+            }
+        }
+    });
+    let (body, progress) = watched(tonic::body::Body::new(Fed(fed)));
+    let mut request = down_request(http::Method::PUT);
+    *request.body_mut() = body;
+    request.extensions_mut().insert(progress);
+    let (answered, _) = send_once_more(
+        picked("member-a", send),
+        request,
+        None::<fn() -> http::Request<tonic::body::Body>>,
+        |_| None,
+        waits,
+        |_, _| {},
+    )
+    .await;
+    match answered {
+        Ok(response) => {
+            use hyper::body::Body as _;
+            let mut body = response.into_body();
+            let mut text = Vec::new();
+            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+                if let Ok(data) = frame.unwrap().into_data() {
+                    text.extend_from_slice(&data);
+                }
+            }
+            Ok(String::from_utf8(text).unwrap())
+        }
+        Err(failed) => Err(format!("{failed:?}")),
+    }
+}
+
+/// An answer that comes only after the whole request body is stored is not cut off by a short timeout: the body may
+/// take far longer than the open wait while it keeps moving, and the head may come well after it ends, within the
+/// head wait. A body that stops moving for the idle wait, or a head later than the head wait, is timed out (504).
+#[tokio::test]
+async fn an_answer_after_a_slow_large_body_is_waited_for() {
+    let waits = Waits {
+        open: Duration::from_millis(100),
+        idle: Duration::from_millis(400),
+        head: Duration::from_millis(800),
+    };
+    // 16 chunks 50 ms apart (800 ms, eight times the open wait), stored for 300 ms before the answer
+    let (storing, _a) = storing_member(Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    let answered = upload(&storing, 16, Duration::from_millis(50), waits).await;
+    assert_eq!(
+        answered.as_deref(),
+        Ok("1048576"),
+        "the whole body was read and answered"
+    );
+    assert!(
+        started.elapsed() > Duration::from_millis(900),
+        "{:?}",
+        started.elapsed()
+    );
+
+    // a body that stalls past the idle wait
+    let answered = upload(&storing, 2, Duration::from_millis(700), waits).await;
+    assert_eq!(answered.unwrap_err(), "TimedOut");
+
+    // a head that comes later than the head wait after the body ended
+    let (slow, _b) = storing_member(Duration::from_millis(1500)).await;
+    let answered = upload(&slow, 2, Duration::from_millis(10), waits).await;
+    assert_eq!(answered.unwrap_err(), "TimedOut");
 }

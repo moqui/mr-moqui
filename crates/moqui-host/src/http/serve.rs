@@ -606,7 +606,6 @@ where
             Some(uri) => match web.guard.check_served_path(client, &host, uri.path()) {
                 Ok(()) => {
                     *request.uri_mut() = uri;
-                    request.extensions_mut().insert(crate::git_http::GitPageRequest);
                     None
                 }
                 Err(refused) => Some(*refused.response),

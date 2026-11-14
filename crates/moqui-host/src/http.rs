@@ -393,7 +393,8 @@ pub(crate) async fn listen(
     #[cfg(feature = "xmpp")]
     let app = crate::xmpp::routes(app, &factory);
     // a host whose root screen refuses the framework's routes (root-screen framework-routes="refuse", a site of its
-    // own, plans/Edge-Node2.md §4.2) gets none of the routes above; the screens' fallback decides the rest
+    // own, plans/Edge-Node2.md §4.2) gets none of the routes above but git, LFS and the CI runner REST; the screens'
+    // fallback decides the rest
     let app = app.route_layer(axum::middleware::from_fn_with_state(
         Arc::clone(&factory),
         refuse_on_site_host,
@@ -1308,9 +1309,10 @@ pub(crate) fn internal_error(detail: &str) -> Response {
 }
 
 /// A route of the host (a socket, `/dav`, `/health`...) on a host whose `webroot` root screen says
-/// `framework-routes="refuse"` is Not Found. Git at a public site's page URL (Smithy at a host's root,
-/// [`crate::git_http::page_request`]) still reaches the git server on a public site's host; a request to `/git/` there
-/// does not.
+/// `framework-routes="refuse"` is Not Found, but for git over HTTP and Git LFS under `/git/` (git at a public site's
+/// page URL among them, served at its `/git/` path, [`crate::git_http::page_request`]) and the CI runner REST under
+/// `/ci/runner/` ([`moqui_core::web::reserved::served_on_refusing_host`]): each has its own authentication and the web
+/// protection's checks, and a site's host is where its clones and runners are pointed.
 async fn refuse_on_site_host(
     State(factory): State<Arc<ExecutionContextFactory>>,
     request: Request,
@@ -1322,12 +1324,9 @@ async fn refuse_on_site_host(
         .and_then(|value| value.to_str().ok())
         .or_else(|| request.uri().host())
         .unwrap_or("");
-    // only git at a page's URL, marked where it was rewritten to /git/ (http::serve), never a request to /git/ itself
-    #[cfg(feature = "git")]
-    let git_page = request.extensions().get::<crate::git_http::GitPageRequest>().is_some();
-    #[cfg(not(feature = "git"))]
-    let git_page = false;
-    if !git_page && moqui_core::screen::info::host_refuses_framework_routes(&factory, host) {
+    if !moqui_core::web::reserved::served_on_refusing_host(request.uri().path())
+        && moqui_core::screen::info::host_refuses_framework_routes(&factory, host)
+    {
         let mut response = Response::new(axum::body::Body::from("Not found"));
         *response.status_mut() = axum::http::StatusCode::NOT_FOUND;
         return response;

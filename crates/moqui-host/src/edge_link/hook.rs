@@ -85,6 +85,9 @@ pub(crate) fn start(
                 Ok(identity) => {
                     let mut config = EdgeConfig::from_properties(&instance_id(factory));
                     config.offline_page = offline_page(factory);
+                    config.forward_idle = settings.forward_idle;
+                    config.forward_head = settings.forward_head;
+                    config.max_ssh_tunnels = settings.ssh_tunnels;
                     config.capabilities = super::offer::areas(factory, &config);
                     let server = EdgeServer::new(factory, config, &identity.fingerprint, shutdown.clone());
                     super::accept::acceptor(&server, resolver, &identity).map(|acceptor| (server, acceptor))
@@ -602,7 +605,11 @@ impl EdgeLink for Hook {
 
     fn offer(&self) -> Result<EdgeOffer, Error> {
         let client = self.up_client()?;
-        crate::edge::block_on(async move { super::dial::offer_on(client, OFFER_TIMEOUT).await })?.map_err(Error::new)
+        let offer = crate::edge::block_on(async move { super::dial::offer_on(client, OFFER_TIMEOUT).await })?
+            .map_err(Error::new)?;
+        // where the edge node takes this node's SSH clients, for its clone URLs
+        moqui_core::edge::setup::remember_ssh(&*self.factory()?, &offer.ssh);
+        Ok(offer)
     }
 
     fn configure(&self, setup: &EdgeSetup) -> Result<Configured, Error> {
@@ -615,6 +622,7 @@ impl EdgeLink for Hook {
         if let Some(dialer) = lock(&self.dialer).as_ref() {
             dialer.note_configured(&configured);
         }
+        moqui_core::edge::setup::remember_ssh(&*self.factory()?, &configured.offer.ssh);
         Ok(configured)
     }
 

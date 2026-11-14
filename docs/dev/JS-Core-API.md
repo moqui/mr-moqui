@@ -1090,6 +1090,7 @@ empty, and a send needs a request.
 | `getWebappRootUrl(requireFullUrl, useEncryption)` | Empty when a path-only link will do, else the scheme and host of the conf webapp. The request's `Host` only when a `root-screen` pattern other than `.*` names it (a site of its own, [Run-Deploy](../Run-Deploy.md#several-sites-by-host-name)), with the conf's scheme and port; never another `Host` header |
 | `getWebappRootUrl(webappName, servletContextPath, requireFullUrl, useEncryption)` | The same for a named webapp |
 | `getResourceDistinctValue()` | A value that changes when the server starts, for the `?v=` of asset links |
+| `reservedPaths` | The first path segments the framework reserves on every host, an array of text as written (`Login`): the host's own routes (`git`, `ci`, `dav`, `mcp`, `assist`, `.well-known`...), the framework's screens and its sign-in, token and asset paths, whether or not this binary's features serve them now. An app keeps its mounts, page routes and names off them, comparing without case where its names are. There with no request too ([Attack-Surface](../security/Attack-Surface.md)) |
 | `rotateSession()` | Gives the browser a new session id after authentication, keeping the session's state |
 | `declineSession()` | Sends this response no session: no session or visitor cookie and no session token ([Attack-Surface](../security/Attack-Surface.md)) |
 | `getPageMessages()` | The messages, errors and validation errors for the page, the saved ones first: each `{message, typeString}`, a validation error also with `field` and `form` |

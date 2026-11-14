@@ -31,8 +31,10 @@
 //!   connections go to its pairing only, opened and closed as the System app sets the rows.
 //!
 //! Each tunnel goes to one member of the pairing's pool, by the client's address (an IPv6 one by its /64,
-//! plans/Edge-Node2.md §4.4): a client's connections stay on one member, whose XMPP sessions and SSH host key are its
-//! own. A tunnel that is not opened counts toward setting its member aside.
+//! plans/Edge-Node2.md §4.4): a client's connections stay on one member, whose XMPP sessions are its own. Any member
+//! may still take a client's next connection after a failover, so the members of a pool share one SSH host key
+//! (`ssh_host_key`, runtime/conf/local-cluster). A tunnel that is not opened counts toward setting its member aside,
+//! and a client the pairing banned (shared bans, §4.3) is refused as its requests to the pairing's hosts are.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -48,8 +50,6 @@ use super::accept::EdgeServer;
 use super::balance::Affinity;
 use super::{CLIENT_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS};
 
-/// SSH connections piped at once.
-const MAX_SSH_TUNNELS: usize = 64;
 /// XMPP client connections piped at once, STARTTLS and direct TLS together. Clients stay connected, so this is a good
 /// part of what a link may hold (768 tunnels and WebSockets); the local node's own limits apply behind it.
 const MAX_XMPP_TUNNELS: usize = 256;
@@ -312,7 +312,7 @@ pub(crate) struct TunnelPort {
     pub(crate) permits: Arc<tokio::sync::Semaphore>,
 }
 
-/// The edge node's tunnel ports from its settings: SSH to the one active pairing (at most [`MAX_SSH_TUNNELS`] at once),
+/// The edge node's tunnel ports from its settings: SSH to the one active pairing (at most `max_ssh_tunnels` at once),
 /// and XMPP's STARTTLS and direct TLS ports, each connection by the XMPP domain it names (at most [`MAX_XMPP_TUNNELS`]
 /// at once, the two together). All of them also count toward the link's own limit of tunnels
 /// (`accept::MAX_TUNNELS_PER_NODE`). The ports of one pairing each are `EdgePort` rows ([`watch_rows`]).
@@ -323,7 +323,7 @@ pub(crate) fn ports(config: &super::EdgeConfig) -> Vec<TunnelPort> {
             kind: TUNNEL_SSH,
             bind,
             route: PortRoute::OnlyPairing,
-            permits: Arc::new(tokio::sync::Semaphore::new(MAX_SSH_TUNNELS)),
+            permits: Arc::new(tokio::sync::Semaphore::new(config.max_ssh_tunnels.max(1))),
         });
     }
     let xmpp_permits = Arc::new(tokio::sync::Semaphore::new(MAX_XMPP_TUNNELS));
@@ -487,7 +487,7 @@ fn reconcile(
             .and_then(|kind| Ok((kind, row_bind(kind, row.port)?)))
             .and_then(|(kind, bind)| {
                 let max = if kind == TUNNEL_SSH {
-                    MAX_SSH_TUNNELS
+                    server.config().max_ssh_tunnels.max(1)
                 } else {
                     MAX_XMPP_TUNNELS
                 };
@@ -586,7 +586,8 @@ async fn stopped(mut shutdown: tokio::sync::watch::Receiver<bool>, stop: Option<
 
 /// Listen on `port`'s address and pipe each connection down a linked node's tunnel of its kind, until the listeners
 /// stop (or, with `stop`, the port's row goes). `guard`, the web protection, admits each connection first (its deny
-/// and exempt rules, bans and per-client limit). The node is the port's route's: the one active pairing, the pairing
+/// and exempt rules, bans and per-client limit), and refuses it once its node is known when that node banned the
+/// client ([`banned_by_node`]). The node is the port's route's: the one active pairing, the pairing
 /// whose XMPP domain the connection names (what was read for it goes first, then both ways; an all-in-one node's own
 /// domain is served by its own XMPP server), or the row's pairing. The bound address, or why it did not bind.
 pub(crate) fn listen(
@@ -634,8 +635,16 @@ pub(crate) fn listen(
                 continue;
             };
             let (server, route, factory, stop) = (Arc::clone(&server), route.clone(), factory.clone(), stop.clone());
+            let guard = Arc::clone(&guard);
             tokio::spawn(async move {
-                connection(&server, kind, &route, &factory, stream, remote, stop).await;
+                let port = Port {
+                    server: &server,
+                    guard: &guard,
+                    kind,
+                    route: &route,
+                    factory: &factory,
+                };
+                port.connection(stream, remote, stop).await;
                 drop((permit, admitted));
             });
         }
@@ -646,67 +655,95 @@ pub(crate) fn listen(
 /// How long a client has to name its XMPP domain on a port of every domain.
 const DOMAIN_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// One connection of a tunnel port, to its node by `route`, until either end closes.
-async fn connection(
-    server: &Arc<EdgeServer>,
+/// A ban the node told this edge node of (shared bans, plans/Edge-Node2.md §4.3) refuses its client's connections to
+/// that node's tunnel ports as it refuses its requests to the node's hosts: why, when `client` is banned for `node`.
+pub(crate) fn banned_by_node(guard: &crate::guard::Guard, node: &str, client: std::net::IpAddr) -> Option<String> {
+    guard
+        .banned_for(node, client)
+        .then(|| format!("local node {node} banned the client"))
+}
+
+/// What a tunnel port's connection needs of its listener.
+struct Port<'a> {
+    server: &'a Arc<EdgeServer>,
+    guard: &'a crate::guard::Guard,
     kind: &'static str,
-    route: &PortRoute,
-    factory: &Weak<ExecutionContextFactory>,
-    mut stream: TcpStream,
-    remote: SocketAddr,
-    stop: Option<tokio::sync::watch::Receiver<bool>>,
-) {
-    let refused = |why: String| {
-        server.count("moqui.edgelink.refused", kind);
-        tracing::info!("Edge {kind} tunnel from {remote} refused: {why}");
-    };
-    let mut first = Vec::new();
-    let node = match route {
-        PortRoute::OnlyPairing => only_pairing(server),
-        PortRoute::Pairing(node) => Ok(node.to_string()),
-        PortRoute::ByDomain => {
-            let direct = kind == TUNNEL_XMPPS;
-            let domain = match tokio::time::timeout(DOMAIN_WAIT, super::xmpp_domain::sniff(&mut stream, direct)).await {
-                Ok(Ok((domain, seen))) => {
-                    first = seen;
-                    domain
-                }
-                Ok(Err(err)) => return refused(format!("its start did not read: {err}")),
-                Err(_) => return refused("it named no XMPP domain in time".to_string()),
-            };
-            match route_xmpp(server, factory, domain.as_deref(), direct, false) {
-                XmppRoute::Pairing(node) => Ok(node),
-                XmppRoute::Own => {
-                    // an all-in-one node's own domain on its tunnel port: its own XMPP server takes it
-                    let stream = super::xmpp_domain::Prefixed::new(first, stream);
-                    let taken = factory
-                        .upgrade()
-                        .is_some_and(|factory| crate::xmpp::serve_tunneled(&factory, stream, remote, direct));
-                    if !taken {
-                        refused("this node's own XMPP server did not take it".to_string());
+    route: &'a PortRoute,
+    factory: &'a Weak<ExecutionContextFactory>,
+}
+
+impl Port<'_> {
+    /// One connection of the port, to its node by its route, until either end closes. A client the node banned is
+    /// refused once the node is known ([`banned_by_node`]).
+    async fn connection(
+        &self,
+        mut stream: TcpStream,
+        remote: SocketAddr,
+        stop: Option<tokio::sync::watch::Receiver<bool>>,
+    ) {
+        let Self {
+            server,
+            guard,
+            kind,
+            route,
+            factory,
+        } = *self;
+        let refused = |why: String| {
+            server.count("moqui.edgelink.refused", kind);
+            tracing::info!("Edge {kind} tunnel from {remote} refused: {why}");
+        };
+        let mut first = Vec::new();
+        let node = match route {
+            PortRoute::OnlyPairing => only_pairing(server),
+            PortRoute::Pairing(node) => Ok(node.to_string()),
+            PortRoute::ByDomain => {
+                let direct = kind == TUNNEL_XMPPS;
+                let domain =
+                    match tokio::time::timeout(DOMAIN_WAIT, super::xmpp_domain::sniff(&mut stream, direct)).await {
+                        Ok(Ok((domain, seen))) => {
+                            first = seen;
+                            domain
+                        }
+                        Ok(Err(err)) => return refused(format!("its start did not read: {err}")),
+                        Err(_) => return refused("it named no XMPP domain in time".to_string()),
+                    };
+                match route_xmpp(server, factory, domain.as_deref(), direct, false) {
+                    XmppRoute::Pairing(node) => Ok(node),
+                    XmppRoute::Own => {
+                        // an all-in-one node's own domain on its tunnel port: its own XMPP server takes it
+                        let stream = super::xmpp_domain::Prefixed::new(first, stream);
+                        let taken = factory
+                            .upgrade()
+                            .is_some_and(|factory| crate::xmpp::serve_tunneled(&factory, stream, remote, direct));
+                        if !taken {
+                            refused("this node's own XMPP server did not take it".to_string());
+                        }
+                        return;
                     }
-                    return;
+                    XmppRoute::Refused(why) => Err(why),
                 }
-                XmppRoute::Refused(why) => Err(why),
             }
+        };
+        let node = match node {
+            Ok(node) => node,
+            Err(why) => return refused(why),
+        };
+        if let Some(why) = banned_by_node(guard, &node, remote.ip()) {
+            return refused(why);
         }
-    };
-    let node = match node {
-        Ok(node) => node,
-        Err(why) => return refused(why),
-    };
-    let Some(_active) = server.opened(&node, kind) else {
-        return;
-    };
-    let mut tunnel = match open(server, &node, kind, remote).await {
-        Ok(tunnel) => tunnel,
-        Err(err) => return refused(err),
-    };
-    if !first.is_empty() && (tunnel.write_all(&first).await.is_err() || tunnel.flush().await.is_err()) {
-        return;
+        let Some(_active) = server.opened(&node, kind) else {
+            return;
+        };
+        let mut tunnel = match open(server, &node, kind, remote).await {
+            Ok(tunnel) => tunnel,
+            Err(err) => return refused(err),
+        };
+        if !first.is_empty() && (tunnel.write_all(&first).await.is_err() || tunnel.flush().await.is_err()) {
+            return;
+        }
+        let _ = stream.set_nodelay(true);
+        pipe(stopped(server.shutdown(), stop), &mut stream, &mut tunnel).await;
     }
-    let _ = stream.set_nodelay(true);
-    pipe(stopped(server.shutdown(), stop), &mut stream, &mut tunnel).await;
 }
 
 /// On an all-in-one node, a connection to its own XMPP port that names a pairing's XMPP domain (plans/Edge-Node2.md

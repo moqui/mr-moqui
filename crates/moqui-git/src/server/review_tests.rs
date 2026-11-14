@@ -1357,3 +1357,25 @@ fn what_the_server_does_for_a_reader_is_small_and_counted() {
     assert!(merge_requests(&fixture, "proj").is_empty());
     settled(&fixture);
 }
+
+/// A merge request's page: a full URL template as given (another host, a mount), anything else under the public URL.
+#[test]
+fn a_merge_request_page_is_a_full_url_or_a_path_under_the_public_url() {
+    let base = "https://code.example.com";
+    assert_eq!(
+        super::merge_request_page("https://shop.example.com/forum/mr/7", base),
+        "https://shop.example.com/forum/mr/7"
+    );
+    assert_eq!(
+        super::merge_request_page("HTTP://other.test/x", base),
+        "HTTP://other.test/x"
+    );
+    assert_eq!(
+        super::merge_request_page("/moqui/mr-moqui/-/merge-requests/7", base),
+        "https://code.example.com/moqui/mr-moqui/-/merge-requests/7"
+    );
+    assert_eq!(
+        super::merge_request_page("moqui/mr-moqui/-/merge-requests/7", "https://code.example.com/"),
+        "https://code.example.com/moqui/mr-moqui/-/merge-requests/7"
+    );
+}

@@ -1021,3 +1021,65 @@ async fn the_shutdown_drain_waits_for_an_open_websocket() {
         .expect("the drain ended once the socket closed")
         .unwrap();
 }
+
+/// The first segments of the paths the host registers routes for, from its source: each `.route("/...")` literal,
+/// with the routes registered by a constant named here.
+fn registered_route_paths() -> Vec<String> {
+    fn walk(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let mut paths = Vec::new();
+    for file in files {
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        if name.ends_with("_tests.rs") || name == "tests.rs" {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        let mut rest = text.as_str();
+        while let Some((_, after)) = rest.split_once(".route(") {
+            rest = after;
+            if let Some(literal) = after.trim_start().strip_prefix('"') {
+                if let Some((path, _)) = literal.split_once('"') {
+                    paths.push(path.to_string());
+                }
+            }
+        }
+    }
+    #[cfg(feature = "xmpp")]
+    paths.extend([
+        crate::xmpp::upload::PREFIX.to_string(),
+        crate::xmpp::ws::PATH.to_string(),
+    ]);
+    paths
+}
+
+/// Every route the host registers starts with a segment of the framework's one list of reserved paths
+/// (`moqui_core::web::reserved`), so a public site's pages, git at a page's URL and an application's names (which read
+/// it as `ec.web.reservedPaths`) never take a path the host answers first.
+#[test]
+fn every_host_route_is_under_a_reserved_first_segment() {
+    let paths = registered_route_paths();
+    assert!(
+        paths.iter().any(|path| path == "/health") && paths.iter().any(|path| path == "/dav/{*rest}"),
+        "the route literals were found: {paths:?}"
+    );
+    for path in &paths {
+        let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+        assert!(
+            moqui_core::web::reserved::is_reserved(first),
+            "the host route {path} starts with {first}, which moqui_core::web::reserved does not list"
+        );
+    }
+}

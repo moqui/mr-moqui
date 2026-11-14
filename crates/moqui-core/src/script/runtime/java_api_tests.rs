@@ -635,3 +635,20 @@ fn utility_classes_have_javas_statics() {
     );
     clear_context_stack();
 }
+
+/// `ec.web.reservedPaths` (and its method form) is the framework's one list of reserved first path segments, there
+/// with no request too, the host's routes and the screens' alike (crate::web::reserved).
+#[test]
+fn the_reserved_paths_are_read_with_no_request() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    holds(
+        r#"(() => {
+            const paths = ec.web.reservedPaths;
+            return Array.isArray(paths) && ["git", "ci", "dav", "apps", "Login", "libs"].every(p => paths.includes(p))
+                && !paths.includes("forum") && ec.web.getReservedPaths().length === paths.length;
+        })()"#,
+    );
+    clear_context_stack();
+}

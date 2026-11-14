@@ -19,7 +19,7 @@ use axum::http::HeaderMap;
 use moqui_core::web::address::{parse_cidrs, ClientAddressing};
 use moqui_lib::node::MNode;
 
-use super::{decode_path, Event, Glob, Guard, GuardConf};
+use super::{ci_runner_token, decode_path, Event, Glob, Guard, GuardConf};
 
 fn ip(text: &str) -> IpAddr {
     text.parse().unwrap()
@@ -495,4 +495,83 @@ fn shared_bans_are_told_applied_scoped_and_lifted() {
     let told = told.lock().unwrap();
     assert_eq!(told.len(), 2);
     assert!(told[1].lift);
+}
+
+/// A CI runner's request with a well-formed job, runner or pool token is counted by its token (by the CI endpoints),
+/// not by its address: no rate limit applies to it. Without a token, with a malformed one, or on another path it is
+/// limited as usual (docs/interfaces/Pipelines.md).
+#[test]
+fn a_ci_runner_with_a_token_is_not_rate_limited_by_its_address() {
+    let guard = guard(
+        r#"<web-protection enabled="true"><rate-limit name="all" requests="1" seconds="60" burst="1"/></web-protection>"#,
+        "",
+    );
+    let hex = "0123456789abcdef".repeat(4);
+    let with = |authorization: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::AUTHORIZATION, authorization.parse().unwrap());
+        headers
+    };
+    let check = |client: &str, path: &str, headers: &HeaderMap| match guard.check(
+        ip(client),
+        ip(client),
+        "",
+        "POST",
+        path,
+        headers,
+    ) {
+        Ok(()) => 200,
+        Err(refused) => refused.response.status().as_u16(),
+    };
+    for prefix in ["mqcj_", "mqcr_", "mqcp_"] {
+        let bearer = with(&format!("Bearer {prefix}{hex}"));
+        for _ in 0..5 {
+            assert_eq!(
+                check("203.0.113.20", "/ci/runner/v1/jobs/request", &bearer),
+                200,
+                "{prefix}"
+            );
+        }
+    }
+    // git's Basic, the token as its password
+    use base64::Engine as _;
+    let basic = with(&format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("x:mqcj_{hex}"))
+    ));
+    assert_eq!(check("203.0.113.20", "/ci/runner/v1/jobs/j1/log", &basic), 200);
+    assert!(ci_runner_token("/ci/runner/v1/jobs/j1/log", &basic));
+    // the same address is limited on another path, and without a well-formed token
+    assert_eq!(
+        check("203.0.113.20", "/apps/x", &with(&format!("Bearer mqcj_{hex}"))),
+        200
+    );
+    assert_eq!(
+        check("203.0.113.20", "/apps/x", &with(&format!("Bearer mqcj_{hex}"))),
+        429
+    );
+    for (index, header) in [
+        String::new(),
+        format!("Bearer mqcx_{hex}"),
+        format!("Bearer mqcj_{}", &hex[1..]),
+        format!("Bearer mqcj_{}", hex.to_uppercase()),
+        "Bearer mqcj_".to_string(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let headers = if header.is_empty() {
+            HeaderMap::new()
+        } else {
+            with(&header)
+        };
+        let client = format!("203.0.113.{}", 30 + index);
+        assert!(!ci_runner_token("/ci/runner/v1/jobs/request", &headers), "{header}");
+        assert_eq!(
+            check(&client, "/ci/runner/v1/jobs/request", &headers),
+            200,
+            "{header}: the first"
+        );
+        assert_eq!(check(&client, "/ci/runner/v1/jobs/request", &headers), 429, "{header}");
+    }
 }

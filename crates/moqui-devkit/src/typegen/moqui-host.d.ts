@@ -931,6 +931,10 @@ interface MoquiWebFacade {
     readonly multiPartParameters: MoquiMap;
     readonly sessionAttributes: MoquiMap;
     readonly sessionToken: string;
+    /** The first path segments the framework reserves on every host, as written (`Login`): the host's routes (`git`,
+     * `ci`, `dav`, `mcp`...), its screens and sign-in, token and asset paths. An app keeps its mounts, pages and names
+     * off them (compare without case when its names are). There with no request too. */
+    readonly reservedPaths: string[];
     /** Rotate the browser session after authentication, preserving its server-side state. */
     rotateSession(): void;
     /** Send this response no session: no session or visitor cookie and no session token. A request that came with no

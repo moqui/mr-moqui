@@ -28,6 +28,10 @@
 //! to the requests for those host names, on top of the rules without one, so one site can be stricter than another. A
 //! connection's checks, before its first request names a host, use only the client rules without `host`.
 //!
+//! **CI runners** ([`ci_runner_token`]): a request to `/ci/runner/` with a well-formed CI token is counted by its token
+//! by the CI endpoints, so no per-client rate limit applies to it and its auth failures count toward no ban, on a
+//! front or edge node and on the local node alike; one without such a token is counted as usual.
+//!
 //! **Shared bans** (§4.3): a ban started here is told to the other members of the cluster and up to the edge node
 //! this node is paired with ([`Guard::set_notifier`], `crate::guard_share`), and one told by them is applied here
 //! ([`Guard::apply_shared`]). A ban a paired node told an edge node holds only for that node's hosts
@@ -203,6 +207,45 @@ fn has_credentials(headers: &HeaderMap) -> bool {
     headers.contains_key(axum::http::header::AUTHORIZATION)
         || headers.contains_key("api_key")
         || headers.contains_key("login_key")
+}
+
+/// The CI engine's runner REST (docs/interfaces/Pipelines.md "The runner REST").
+const CI_RUNNER_PATH: &str = "/ci/runner/";
+/// The CI tokens' prefixes, job, runner and pool (`moqui_git::ci::token`), each before 32 random bytes in hex.
+const CI_TOKEN_PREFIXES: [&str; 3] = ["mqcj_", "mqcr_", "mqcp_"];
+const CI_TOKEN_HEX: usize = 64;
+
+/// Whether a request is a CI runner's that carries a well-formed job, runner or pool token (`Authorization: Bearer`, or
+/// Basic's password as git sends it), to the runner REST at `path` (decoded). Such a request is counted by its token,
+/// not its address: the CI endpoints limit each token, and runners share addresses (a NAT, a pool of machines), so
+/// the per-client rate limits pass it and its auth failures (a token of a job that ended) count toward no ban. Whether
+/// the token is good is not checked here; a request without one is counted as any other.
+pub(crate) fn ci_runner_token(path: &str, headers: &HeaderMap) -> bool {
+    if !path.starts_with(CI_RUNNER_PATH) {
+        return false;
+    }
+    let Some(header) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let header = header.trim();
+    let token = match header
+        .strip_prefix("Bearer ")
+        .or_else(|| header.strip_prefix("bearer "))
+    {
+        Some(token) => token.trim().to_string(),
+        None => match moqui_core::web::basic_credentials(header) {
+            Some((_, password)) => password,
+            None => return false,
+        },
+    };
+    CI_TOKEN_PREFIXES.iter().any(|prefix| {
+        token.strip_prefix(prefix).is_some_and(|hex| {
+            hex.len() == CI_TOKEN_HEX && hex.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+    })
 }
 
 /// A `ban`: `threshold` of its `events` within `window` bans the client for `duration`.
@@ -909,7 +952,8 @@ impl Guard {
         if let Some(rule) = self.path_rule(host, &decoded) {
             return Err(self.deny(key, client, &rule, refusal(404, "not found", false, None)));
         }
-        if self.conf().rate_limits.is_empty() {
+        // a CI runner's request with a token is limited per token by the CI endpoints, not per address here
+        if self.conf().rate_limits.is_empty() || ci_runner_token(&decoded, headers) {
             return Ok(());
         }
         let limits = &self.conf().rate_limits;

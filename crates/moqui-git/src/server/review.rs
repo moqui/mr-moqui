@@ -222,11 +222,7 @@ impl Session<'_> {
                 .replace("{repositoryId}", id)
                 .replace("{mergeRequestNum}", &num)
                 .replace("{mergeRequestId}", &request_id);
-            lines.push(if url.starts_with('/') {
-                format!("  {}{url}", public_base_url())
-            } else {
-                format!("  {url}")
-            });
+            lines.push(format!("  {}", merge_request_page(&url, &public_base_url())));
         }
         Ok(lines)
     }
@@ -313,6 +309,17 @@ impl Session<'_> {
         }
         Ok(left.into_iter().next())
     }
+}
+
+/// A merge request's page from `merge-request-url` filled in: a full URL (`http://` or `https://`) as given, so an
+/// application may point it at its pages on another host or under a mount; anything else is a path under the public
+/// base URL (`git-server public-url`).
+fn merge_request_page(url: &str, base: &str) -> String {
+    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return url.to_string();
+    }
+    format!("{}/{}", base.trim_end_matches('/'), url.trim_start_matches('/'))
 }
 
 #[cfg(test)]

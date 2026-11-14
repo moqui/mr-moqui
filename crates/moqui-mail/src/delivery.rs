@@ -421,6 +421,31 @@ pub fn listener_options(factory: &moqui_core::context::ExecutionContextFactory) 
     (options, plus_separator(&setting("plus-separator")))
 }
 
+/// Why a node that receives mail without a listener of its own should set `smtp_authserv_id`, when it is empty
+/// (`authserv_id`): it is paired with an edge node (`paired`), whose mail it delivers here keeping every
+/// `Authentication-Results` as it came unless the edge node names an authserv-id of its own, or it syncs mail from an
+/// IMAP or POP3 server (`synced`, asked only when needed), whose fields an application trusts only under the
+/// provider's authserv-id named here. None when it is set or neither holds.
+pub fn authserv_warning(authserv_id: &str, paired: bool, synced: impl FnOnce() -> bool) -> Option<&'static str> {
+    if !authserv_id.trim().is_empty() {
+        return None;
+    }
+    if paired {
+        return Some(
+            "smtp_authserv_id is empty on a node paired with an edge node: mail the edge node passes on without an \
+             authserv-id of its own keeps every Authentication-Results as it came, a forged one too; set it to the \
+             edge node's (its smtp_authserv_id, else its smtp_hostname)",
+        );
+    }
+    if synced() {
+        return Some(
+            "smtp_authserv_id is empty on a node that syncs mail from an IMAP or POP3 server: no Authentication-Results \
+             of the synced mail is told from a forged one; set it to the provider's authserv-id",
+        );
+    }
+    None
+}
+
 /// An account and the recipient addresses that named it.
 #[derive(Clone, Debug, Default)]
 pub struct Recipients {
@@ -921,7 +946,7 @@ fn authserv_of(value: &str) -> String {
 fn verdict(values: &[String]) -> String {
     let mut found: Vec<String> = Vec::new();
     for value in values {
-        for part in value.split(';').skip(1) {
+        for part in entries(value).into_iter().skip(1) {
             let Some(token) = part.split_whitespace().next() else {
                 continue;
             };
@@ -939,6 +964,34 @@ fn verdict(values: &[String]) -> String {
         }
     }
     found.join(" ")
+}
+
+/// The parts of an `Authentication-Results` value between its `;` (RFC 8601): a `;` inside a quoted string (a
+/// property's value, such as a quoted `smtp.mailfrom`) or a comment separates nothing, so what a sender wrote there is
+/// never read as a result.
+fn entries(value: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut quoted, mut escaped, mut comment) = (false, false, 0usize);
+    let mut start = 0;
+    for (index, ch) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if quoted || comment > 0 => escaped = true,
+            '"' if comment == 0 => quoted = !quoted,
+            '(' if !quoted => comment += 1,
+            ')' if !quoted => comment = comment.saturating_sub(1),
+            ';' if !quoted && comment == 0 => {
+                parts.push(&value[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&value[start..]);
+    parts
 }
 
 /// A spam verdict field that says yes: `YES`, `Yes, score=7.2`, `true`.
@@ -1023,6 +1076,14 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_authserv_id_is_warned_of_where_mail_comes_without_a_listener() {
+        assert!(authserv_warning("", true, || false).is_some_and(|text| text.contains("edge node")));
+        assert!(authserv_warning("", false, || true).is_some_and(|text| text.contains("IMAP")));
+        assert_eq!(authserv_warning("", false, || false), None);
+        assert_eq!(authserv_warning("mx.example.com", true, || true), None);
+    }
+
+    #[test]
     fn verdicts_read_the_gateway_fields() {
         assert!(says_yes("YES"));
         assert!(says_yes(" Yes, score=7.1 required=5.0"));
@@ -1035,6 +1096,13 @@ mod tests {
                 "mx.example.com; dkim=pass; dmarc=pass (p=none)".to_string(),
             ]),
             "spf=pass dkim=fail dmarc=pass"
+        );
+        // a quoted value or a comment that holds `;` separates nothing: a sender's text there is not a result
+        assert_eq!(
+            verdict(&[
+                "mx.example.com; spf=fail (x; dmarc=pass) smtp.mailfrom=\"a; dmarc=pass header.from=bank.example\\\" (\"@a.org; dmarc=fail header.from=a.org".to_string()
+            ]),
+            "spf=fail dmarc=fail"
         );
     }
 

@@ -114,17 +114,11 @@ async fn feed(mut body: axum::body::Body, tx: mpsc::Sender<Chunk>, limit: u64, i
     }
 }
 
-/// The mark of a request that was git's at a page's URL on a public-site host and is served as its `/git/` request
-/// (`http::serve`): a host that refuses the framework's routes still passes it to the git handler, and nothing else
-/// under `/git/` (plans/Edge-Node2.md §4.2).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct GitPageRequest;
-
 /// The `/git/...` path a request at a page's URL on a public-site host is served at, when it is git's (plans/Dogfood.md
 /// D4: the page URL itself clones): `GET <path>/info/refs?service=git-upload-pack` (or `git-receive-pack`), `POST
 /// <path>/git-upload-pack` or `git-receive-pack`, and Git LFS under `<path>.git/info/lfs/`, each with or without
-/// `.git` after the path, where `<path>` is a repository path whose first segment is not `git` or another framework
-/// route. The shape is checked first, with suffix tests only, so a page request costs no more; `is_site_host` is asked
+/// `.git` after the path, where `<path>` is a repository path whose first segment is not reserved by the framework
+/// (`moqui_core::web::reserved`, `git` among them). The shape is checked first, with suffix tests only, so a page request costs no more; `is_site_host` is asked
 /// last. The repository itself is looked up by the git server: one that is not there is answered as under `/git/`.
 pub(crate) fn page_request(
     method: &str,
@@ -149,7 +143,7 @@ pub(crate) fn page_request(
         return None;
     }
     let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if first == "git" || moqui_core::screen::is_public_site_framework_route(first) {
+    if moqui_core::web::reserved::is_reserved(first) {
         return None;
     }
     let (repository, _) = server::path::split_request(path)?;
@@ -398,6 +392,7 @@ pub(crate) async fn handle_runner(
     if content_length.is_some_and(|length| length > limit) {
         return plain(413, &format!("the runner request is over {limit} bytes"));
     }
+    let token_shaped = crate::guard::ci_runner_token(parts.uri.path(), &parts.headers);
     let runner_request = runner_http::RunnerHttpRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().strip_prefix("/ci/runner/").unwrap_or("").to_string(),
@@ -421,7 +416,8 @@ pub(crate) async fn handle_runner(
         };
         runner_http::serve(&runner_request, &mut reader, &mut responder);
         let _ = std::io::Write::flush(&mut responder.body);
-        if moqui_core::web::take_auth_failure() {
+        // a request with a well-formed token is counted by its token, by the CI endpoints (crate::guard)
+        if moqui_core::web::take_auth_failure() && !token_shaped {
             guard.record(client, Event::AuthFailure);
         }
         Ok(())

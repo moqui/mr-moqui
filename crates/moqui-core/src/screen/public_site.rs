@@ -22,43 +22,17 @@ pub(super) struct PublicSiteRoute {
 /// was not routed has none, whatever it sends.
 pub(super) const BOUND_SITE_PARAMETER: &str = "resolvedSiteId";
 
-/// First path segments that always belong to the framework, never to a public site.
-const FRAMEWORK_ROUTES: [&str; 29] = [
-    "apps",
-    "qapps",
-    "rest",
-    "rpc",
-    "status",
-    "error",
-    "health",
-    "metrics",
-    "fop",
-    "js",
-    "css",
-    "libs",
-    "images",
-    "static",
-    "assets",
-    "Login",
-    "SecondFactor",
-    "PasswordReset",
-    "sso",
-    "notws",
-    "termws",
-    "PublicShell",
-    "s",
-    "u",
-    "cal",
-    "r",
-    // the PWA: its service worker, manifest and the push transitions
-    "sw.js",
-    "manifest.webmanifest",
-    "WebPush",
-];
+/// First path segments that always belong to the framework, never to a public site: the one list,
+/// [`crate::web::reserved`], with the host's own routes in it.
+fn framework_route(first: &str) -> bool {
+    crate::web::reserved::is_reserved(first)
+}
 
 /// The framework routes a restricted host still serves (`host-check-service`, Commerce F87): the static files a page
-/// there loads (the preview frame's scripts, styles and libraries).
-const STATIC_ROUTES: [&str; 6] = ["js", "css", "libs", "images", "static", "assets"];
+/// there loads (the preview frame's scripts, styles and libraries), [`crate::web::reserved::Kind::Static`].
+fn static_route(first: &str) -> bool {
+    crate::web::reserved::is_static(first)
+}
 
 fn normalize_host(host: &str) -> String {
     host.trim().trim_end_matches('.').to_ascii_lowercase()
@@ -97,13 +71,7 @@ pub fn is_site_host(factory: &ExecutionContextFactory, host: &str) -> bool {
     !host.is_empty() && hosts(factory).contains(&host)
 }
 
-/// Whether `first`, the first segment of a request path, always belongs to the framework ([`FRAMEWORK_ROUTES`]) and
-/// never to a public site's pages.
-pub fn is_framework_route(first: &str) -> bool {
-    FRAMEWORK_ROUTES.contains(&first)
-}
-
-/// Whether a request for a framework route (a [`FRAMEWORK_ROUTES`] path that is not one of the [`STATIC_ROUTES`], or a
+/// Whether a request for a framework route (a reserved path, [`crate::web::reserved`], that is not a static one, or a
 /// path a servlet other than the screens' takes, `servlet_route`) is refused on its host: a `<public-site>` of the host
 /// names a `host-check-service`, which is called with the site, host and path and answers `restricted` true (a site's
 /// theme preview host, Commerce F87). Such a host serves its site and static files only, so nobody signs in to the
@@ -123,10 +91,10 @@ pub(super) fn refuses_framework_route(
         return true;
     }
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if !servlet_route && !FRAMEWORK_ROUTES.contains(&first) {
+    if !servlet_route && !framework_route(first) {
         return false;
     }
-    if !servlet_route && STATIC_ROUTES.contains(&first) && screen_path_first(&request.path) == first {
+    if !servlet_route && static_route(first) && screen_path_first(&request.path) == first {
         return false;
     }
     match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
@@ -163,9 +131,9 @@ pub(super) fn screen_path_names(path: &str) -> Vec<String> {
     names
 }
 
-/// Whether `first`, the first name of a screen path, is one of the shared static file routes ([`STATIC_ROUTES`]).
+/// Whether `first`, the first name of a screen path, is one of the shared static file routes ([`static_route`]).
 pub(super) fn is_static_route(first: &str) -> bool {
-    STATIC_ROUTES.contains(&first)
+    static_route(first)
 }
 
 /// [`refuses_framework_route`] for a framework route on the request's host, over `conf`.
@@ -253,7 +221,7 @@ fn resolve_conf(conf: &MNode, request: &WebRequest) -> Result<Option<PublicSiteR
     // Authentication, API, libraries and token routes keep their framework handlers on every host but one whose
     // `host-check-service` restricts it (`refuses_framework_route`, checked before any servlet or token route runs).
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if FRAMEWORK_ROUTES.contains(&first) {
+    if framework_route(first) {
         return Ok(None);
     }
     // A path under a site's named mount (`/forum`) on a host no site names is concealed. A mount at the root claims

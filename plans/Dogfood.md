@@ -156,6 +156,14 @@ and a restore that has been tried.
 
 ## 4. Topology and deployment
 
+How moqui.org is deployed is not decided, and the work does not depend on it: whether it sits behind a front node or
+an edge node ([Edge-Node2](Edge-Node2.md)), on one node or a cluster with pools, is open (the user's direction, Nov 14,
+2026). Everything here is generic framework and app functionality that works in every supported topology; what
+follows sketches one node to fix scope, not a deployment. Decided with the user the same day, for clusters and pools:
+`local` and `remote` repositories need storage every member mounts (`git-server shared-storage`, else refused); a host
+that refuses framework routes still serves git, LFS and the CI runner paths; CI runner requests are limited per token,
+not per address; the reserved first path segments are one framework list that the apps read.
+
 **The public group server.** One production instance (Maximal) with mr-mantle, mr-pass and mr-boss:
 
 ```

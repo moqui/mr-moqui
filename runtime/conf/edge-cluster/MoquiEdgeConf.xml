@@ -71,7 +71,10 @@
     <default-property name="smtp_internet" value="true"/>
     <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
     <default-property name="edge_mail_relay_port" value="10025"/>
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+    <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
+        trusts on that mail: smtp_authserv_id, else smtp_hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"
+            authserv-id="${smtp_authserv_id ?: smtp_hostname}"/>
 
     <!-- Chat bridges and SMS: a network's webhook URL is the cluster's name, /channels/{chatBridgeId}/webhook; any member
         takes it and queues it once by its idempotency key. MMS files are rows, served by any member. -->
@@ -102,5 +105,6 @@
         all. Balancing a pairing's pool of local members is the same on every member, as its hash is over the same
         list. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
-            sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"/>
+            sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"
+            forward-idle-seconds="120" forward-head-seconds="3600" ssh-tunnels="256"/>
 </moqui-conf>

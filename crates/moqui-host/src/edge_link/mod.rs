@@ -456,8 +456,15 @@ pub struct EdgeConfig {
     pub xmpp_tls_tunnel: Option<std::net::SocketAddr>,
     /// The page a terminate host answers with while its node's link is down (`edge_offline_page`, else the default).
     pub offline_page: std::sync::Arc<str>,
-    /// How long opening a tunnel or forwarding a request head down a link may take.
+    /// How long opening a tunnel, or a member's connection taking a forwarded request, may take.
     pub open_timeout: Duration,
+    /// A forwarded request: the longest gap in its body as it goes down a link, and the longest wait for its answer's
+    /// head once its body is all sent (`<edge forward-idle-seconds forward-head-seconds>`, [`web::Waits`]).
+    pub forward_idle: Duration,
+    pub forward_head: Duration,
+    /// SSH connections piped at once by the conf's SSH tunnel port, and by each SSH port of a pairing
+    /// (`<edge ssh-tunnels>`).
+    pub max_ssh_tunnels: usize,
     /// This node has the front set (plans/Edge-Node2.md §4.3): it passes passthrough hosts' connections down links. An
     /// edge node behind a front node (`node_role=edge`) does not.
     pub front: bool,
@@ -489,6 +496,9 @@ impl EdgeConfig {
             xmpp_tls_tunnel: tunnel_bind(TUNNEL_PORTS[2].0, TUNNEL_PORTS[2].1, TUNNEL_PORTS[2].2),
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
+            forward_idle: moqui_core::edge::conf::DEFAULT_FORWARD_IDLE,
+            forward_head: moqui_core::edge::conf::DEFAULT_FORWARD_HEAD,
+            max_ssh_tunnels: moqui_core::edge::conf::DEFAULT_SSH_TUNNELS,
             front: moqui_core::edge::node_role_kind().has_front(),
             link_url: moqui_lib::env::get_prop_or_env(moqui_core::cluster::EDGE_LINK_URL_PROPERTY)
                 .trim()
