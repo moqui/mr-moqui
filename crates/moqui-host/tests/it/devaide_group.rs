@@ -940,6 +940,18 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     assert_eq!(json(&checks, "statuses")[0]["state"], "failure", "{checks:?}");
     assert_eq!(json(&checks, "statuses")[0]["context"], "ci/test", "{checks:?}");
 
+    // a reviewer's suggestion quotes code of the diff, which an agent may not have while its authors have not signed
+    let (status, _, body) = exchange(
+        address,
+        &http_request(
+            "POST",
+            &threads_path,
+            &[("api_key", &viewer_key), ("Content-Type", "application/json")],
+            r#"{"body": "Try:\n```suggestion\nlet leaked = 1;\n```", "path": "README.md", "newLine": 1}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{body}");
+
     // P13 the hosting tool, as an agent calls it: its reads under the read fence write nothing and mark the server's
     // text as untrusted; a person's act is not offered; the diff of a merge request by an author who has not signed is
     // refused; a write's card shows the text and where it goes; the write is refused in a sim, as the Workspace's is
@@ -956,6 +968,8 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         assert!(one.contains("A viewer's fix"), "{one}");
         let threads = read(serde_json::json!({"action": "threads", "root": "my-site", "number": number})).unwrap();
         assert!(threads.contains("Is this the right file?"), "{threads}");
+        assert!(threads.contains("without the code of its diff"), "{threads}");
+        assert!(threads.contains("Try:") && !threads.contains("leaked"), "{threads}");
         let checks = read(serde_json::json!({"action": "checks", "root": "my-site", "commit": proposed_head})).unwrap();
         assert!(checks.contains("ci/test") && checks.contains("failure"), "{checks}");
         // the proposal's commits are by setup@example.com, whom the stub's agreement does not know as signed
@@ -1109,6 +1123,30 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     // P13 worktrees: two agents' sessions work in two worktrees of my-site; each session's files are its own
     // worktree's; a worktree with uncommitted changes is removed only when they are discarded, and its branch stays
     const WT: &str = "org.moqui.devaide.WorktreeServices.";
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        for (id, user) in [
+            ("CONV1", "EX_JOHN_DOE"),
+            ("CONV2", "EX_JOHN_DOE"),
+            ("CONVX", "DEV_VIEWER"),
+        ] {
+            let mut row = facade.make_value("moqui.agent.AgentConversation").unwrap();
+            row.set("conversationId", Value::string(id));
+            row.set("userId", Value::string(user));
+            row.create(&facade).unwrap();
+        }
+    }
+    // a session's worktree is for one of the caller's own conversations
+    let theirs = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}create#Worktree"),
+        &[("rootId", "my-site"), ("conversationId", "CONVX")],
+    );
+    assert!(matches!(&theirs, Err(err) if err.contains("of yours")), "{theirs:?}");
     let one = call(
         &factory,
         "john.doe",
@@ -1141,7 +1179,44 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             of_none.starts_with(std::fs::canonicalize(&site).unwrap()),
             "{of_none:?}"
         );
+        // session one reaches neither session two's worktree nor, by its path, the main tree
+        let into_two = dev_aide::agent::session_file("CONV1", &format!("{two_id}:service/mysite/Things.xml"));
+        assert!(
+            matches!(&into_two, Err(err) if err.contains("another session")),
+            "{into_two:?}"
+        );
+        let by_path = format!(
+            "{}/service/mysite/Things.xml",
+            std::fs::canonicalize(&site).unwrap().display()
+        );
+        assert!(dev_aide::agent::session_file("CONV1", &by_path)
+            .unwrap()
+            .starts_with(&one_dir));
+        // the hosting tool in a worktree session reads the main tree's hosted repository, under the read fence
+        let fenced = moqui_core::entity::fence::enter("tool hosting");
+        let listed =
+            dev_aide::agent::hosting::read(&serde_json::json!({"action": "merge_requests", "root": one_id})).unwrap();
+        assert!(listed.contains("A viewer's fix"), "{listed}");
+        assert!(fenced.violations().is_empty(), "{:?}", fenced.violations());
     }
+    {
+        // another user's worktree is never their session's, whatever conversation it names
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("dev.viewer").unwrap();
+        let theirs = dev_aide::agent::session_file("CONV1", "my-site:service/mysite/Things.xml").unwrap();
+        assert!(!theirs.starts_with(&one_dir), "{theirs:?}");
+    }
+    let not_theirs = call(
+        &factory,
+        "dev.viewer",
+        &format!("{WT}remove#Worktree"),
+        &[("rootId", &two_id)],
+    );
+    assert!(
+        matches!(&not_theirs, Err(err) if err.contains("another user's")),
+        "{not_theirs:?}"
+    );
     call(
         &factory,
         "john.doe",
@@ -1211,6 +1286,78 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     assert_eq!(job["matrixKeys"], serde_json::json!(["postgres", "mysql"]), "{jobs:?}");
     assert_eq!(job["secrets"], serde_json::json!(["DEPLOY_KEY"]), "{jobs:?}");
     assert!(text(&jobs, "note").contains("not in the job's image"), "{jobs:?}");
+    let mysql = job["combinations"][1].clone();
+    assert!(mysql["script"].as_str().unwrap().contains("--db mysql"), "{mysql}");
+    let digest = mysql["digest"].as_str().unwrap().to_string();
+    let run = |digest: &str| -> Vec<(&'static str, String)> {
+        vec![
+            ("rootId", "my-site".into()),
+            ("pipeline", "check".into()),
+            ("job", "db".into()),
+            ("matrixKey", "mysql".into()),
+            ("digest", digest.to_string()),
+        ]
+    };
+    // a script other than the one shown is refused
+    let stale = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.LocalRunServices.start#LocalRun",
+        &[
+            ("rootId", "my-site"),
+            ("pipeline", "check"),
+            ("job", "db"),
+            ("matrixKey", "mysql"),
+            ("digest", "0000"),
+        ],
+    );
+    assert!(matches!(&stale, Err(err) if err.contains("changed since")), "{stale:?}");
+    // never from an agent's fence or a sim
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let parameters: BTreeMap<String, Value> = run(&digest)
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), Value::string(value)))
+            .collect();
+        for sim in [false, true] {
+            let _fence = if sim {
+                moqui_core::entity::fence::enter_sim("try_service of a test")
+            } else {
+                moqui_core::entity::fence::enter("tool try_service")
+            };
+            let started = moqui_core::service::sync("org.moqui.devaide.LocalRunServices.start#LocalRun", &parameters);
+            let errors = context.message().errors().join("; ");
+            context.message().clear_errors();
+            assert!(
+                started.is_err() || !errors.is_empty(),
+                "a local run from a fence (sim {sim})"
+            );
+        }
+    }
+    // never from a header login
+    let body = format!("rootId=my-site&pipeline=check&job=db&matrixKey=mysql&digest={digest}");
+    let (_, _, answer) = exchange(
+        address,
+        &http_request(
+            "POST",
+            "/apps/dev/Workspace/startLocalRun",
+            &[
+                ("api_key", &john_key),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            &body,
+        ),
+    );
+    assert!(answer.contains("logged in by a header"), "{answer}");
+    assert!(
+        std::fs::read_dir(gate.runtime.join("tmp/dev-aide-run"))
+            .map(|dir| dir.count())
+            .unwrap_or(0)
+            == 0,
+        "no script was written"
+    );
     std::fs::remove_file(site.join("ci.xml")).unwrap();
 
     // Remove takes back what Connect set

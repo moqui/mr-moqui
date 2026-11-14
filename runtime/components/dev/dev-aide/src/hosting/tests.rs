@@ -493,17 +493,53 @@ fn the_hosting_tool_offers_no_persons_act_and_marks_the_servers_text() {
 /// that does not decide the agreement has none to keep.
 #[test]
 fn an_unsigned_author_is_one_the_server_requires_and_has_not_signed() {
-    use super::agreement::unsigned_in;
+    use super::agreement::{unsigned_in, unsigned_or_undecided};
     assert!(unsigned_in(&json!({"known": true, "required": true, "signed": false})));
     assert!(!unsigned_in(&json!({"known": true, "required": true, "signed": true})));
     assert!(!unsigned_in(
         &json!({"known": true, "required": false, "signed": false})
     ));
     assert!(!unsigned_in(&json!({"known": false})));
+    // a repository an application keeps has each author decided: its known false is a check that did not answer
+    assert!(unsigned_or_undecided(&json!({"known": false}), true));
+    assert!(!unsigned_or_undecided(&json!({"known": false}), false));
+    assert!(!unsigned_or_undecided(
+        &json!({"known": true, "required": true, "signed": true}),
+        true
+    ));
     let emails = super::threads::author_emails(&json!({"commitList": [
-        {"authorEmail": "Ann@Example.com"}, {"authorEmail": "ann@example.com"}, {"authorEmail": "bo@example.com"},
-        {"authorEmail": ""}]}));
-    assert_eq!(emails, ["Ann@Example.com", "bo@example.com"]);
+        {"authorEmail": "Ann@Example.com"}, {"authorEmail": "ann@example.com"}, {"authorEmail": "bo@example.com"}]}));
+    assert_eq!(emails.unwrap(), ["Ann@Example.com", "bo@example.com"]);
+}
+
+/// The authors of a merge request are all named, or an agent gets no diff: no list, a cut list, a commit with no author
+/// email, more than 20 authors.
+#[test]
+fn a_diff_needs_every_author_named() {
+    use super::threads::author_emails;
+    assert!(author_emails(&json!({})).is_err());
+    assert!(author_emails(&json!({"commitList": [{"authorEmail": "a@x"}], "commitsTruncated": true})).is_err());
+    assert!(author_emails(&json!({"commitList": [{"authorEmail": "a@x"}], "aheadBy": 2})).is_err());
+    assert!(author_emails(&json!({"commitList": [{"authorEmail": "a@x"}], "aheadBy": 1})).is_ok());
+    assert!(author_emails(&json!({"commitList": [{"authorEmail": "a@x"}, {"authorEmail": " "}]})).is_err());
+    let many: Vec<serde_json::Value> = (0..21).map(|n| json!({"authorEmail": format!("a{n}@x")})).collect();
+    assert!(author_emails(&json!({"commitList": many}))
+        .unwrap_err()
+        .contains("more than 20"));
+    let twenty: Vec<serde_json::Value> = (0..20).map(|n| json!({"authorEmail": format!("a{n}@x")})).collect();
+    assert_eq!(author_emails(&json!({"commitList": twenty})).unwrap().len(), 20);
+}
+
+/// The threads of a diff an agent may not have keep their words, not the diff's code.
+#[test]
+fn threads_of_an_unsigned_diff_lose_its_code() {
+    let threads = json!([{"threadId": "1", "lineText": "let secret = 1;", "comments": [
+        {"body": "Rename this:\n```suggestion\nlet leaked = 2;\n```\n> let secret = 1;\nThanks"}]}]);
+    let stripped = super::threads::without_diff(&threads);
+    assert!(stripped[0]["lineText"].is_null());
+    let body = stripped[0]["comments"][0]["body"].as_str().unwrap();
+    assert!(body.contains("Rename this:") && body.contains("Thanks"), "{body}");
+    assert!(!body.contains("leaked") && !body.contains("secret"), "{body}");
 }
 
 /// An issue's id goes into the server's path only as an id.

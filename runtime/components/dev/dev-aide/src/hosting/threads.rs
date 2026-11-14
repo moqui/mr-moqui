@@ -380,26 +380,89 @@ fn get_merge_request_changes(
         made["reason"].as_str().map_or(Value::Null, Value::string),
     );
     if crate::workspace::flag(parameters, "checkAuthors") {
-        let emails = author_emails(made);
-        let unsigned = super::agreement::unsigned_authors(&hosted, &emails)?;
-        out.insert("unsignedAuthors".into(), json_value(&unsigned));
+        // every author named, each one's agreement decided: else the diff is not an agent's (21.8)
+        match author_emails(made) {
+            Ok(emails) => {
+                let unsigned = super::agreement::unsigned_authors(&hosted, &emails)?;
+                out.insert("unsignedAuthors".into(), json_value(&unsigned));
+            }
+            Err(why) => {
+                out.insert("authorsRefusal".into(), Value::string(why));
+            }
+        }
     }
     Ok(out)
 }
 
-/// The distinct author emails of a merge request's commits (`commitList`), at most 20: whose agreement an agent's
-/// read of the diff asks about.
-#[must_use]
-pub fn author_emails(changes: &Json) -> Vec<String> {
+/// The most authors of a merge request whose agreement an agent's read asks about, one request each.
+pub const MAX_AUTHORS: usize = 20;
+
+/// The distinct author emails of a merge request's commits (`commitList`), or why they cannot all be named: no list,
+/// a list the server cut (`commitsTruncated`, or fewer commits than `aheadBy`), a commit with no author email, or more
+/// than [`MAX_AUTHORS`] authors. An agent is given the diff only when every author is named and has signed.
+///
+/// # Errors
+///
+/// Why the authors are not all known.
+pub fn author_emails(changes: &Json) -> Result<Vec<String>, String> {
+    let Some(commits) = changes["commitList"].as_array() else {
+        return Err("the server named none of its commits".into());
+    };
+    let ahead = changes["aheadBy"]
+        .as_u64()
+        .and_then(|ahead| usize::try_from(ahead).ok());
+    if changes["commitsTruncated"].as_bool() == Some(true) || ahead.is_some_and(|ahead| ahead > commits.len()) {
+        return Err("the server named only some of its commits".into());
+    }
     let mut emails: Vec<String> = Vec::new();
-    for commit in changes["commitList"].as_array().into_iter().flatten() {
+    for commit in commits {
         let email = commit["authorEmail"].as_str().unwrap_or("").trim();
-        if !email.is_empty() && !emails.iter().any(|have| have.eq_ignore_ascii_case(email)) {
+        if email.is_empty() {
+            return Err("a commit has no author email".into());
+        }
+        if !emails.iter().any(|have| have.eq_ignore_ascii_case(email)) {
             emails.push(email.to_string());
         }
     }
-    emails.truncate(20);
-    emails
+    if emails.len() > MAX_AUTHORS {
+        return Err(format!("it has more than {MAX_AUTHORS} authors"));
+    }
+    Ok(emails)
+}
+
+/// Threads of a merge request whose diff an agent may not have: each without the code of the diff (its line's text,
+/// fenced code and quoted lines in the comments, a suggestion block among them).
+#[must_use]
+pub fn without_diff(threads: &Json) -> Json {
+    let strip = |body: &str| -> String {
+        let mut out = Vec::new();
+        let mut fenced = false;
+        for line in body.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                if !fenced {
+                    out.push("(code left out)");
+                }
+                fenced = !fenced;
+                continue;
+            }
+            if fenced || trimmed.starts_with('>') || line.starts_with("    ") || line.starts_with('\t') {
+                continue;
+            }
+            out.push(line);
+        }
+        out.join("\n")
+    };
+    let mut threads = threads.clone();
+    for thread in threads.as_array_mut().into_iter().flatten() {
+        thread["lineText"] = Json::Null;
+        for comment in thread["comments"].as_array_mut().into_iter().flatten() {
+            if let Some(body) = comment["body"].as_str() {
+                comment["body"] = Json::String(strip(body));
+            }
+        }
+    }
+    threads
 }
 
 fn json_text(first: &Json, second: &Json) -> Value {

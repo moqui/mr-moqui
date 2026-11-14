@@ -74,6 +74,10 @@ pub struct Root {
     /// The Assist conversation whose tools are rooted in this worktree.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// Who made the worktree: only their session's tools are rooted in it, and only they (or an administrator) remove
+    /// it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_user_id: Option<String>,
 }
 
 fn path_string<S: serde::Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
@@ -158,7 +162,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
     let mut publish: BTreeMap<PathBuf, (Option<String>, bool)> = BTreeMap::new();
     let mut hosted: BTreeMap<PathBuf, serde_json::Value> = BTreeMap::new();
     // a worktree root's main tree and conversation (21.8)
-    let mut worktrees: BTreeMap<PathBuf, (PathBuf, Option<String>)> = BTreeMap::new();
+    let mut worktrees: BTreeMap<PathBuf, (PathBuf, Option<String>, Option<String>)> = BTreeMap::new();
     for (location, label) in &settings.roots {
         let path = canonical(location);
         if path.is_dir() {
@@ -212,6 +216,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                         (
                             canonical(Path::new(&text("worktreeOf"))),
                             Some(text("conversationId")).filter(|id| !id.is_empty()),
+                            Some(text("worktreeUserId")).filter(|id| !id.is_empty()),
                         ),
                     );
                 }
@@ -271,19 +276,21 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 hosted,
                 worktree_of: None,
                 conversation_id: None,
+                worktree_user_id: None,
                 kind,
                 path,
             }
         })
         .collect();
     // a worktree has its main tree's components at the same places, and is upstream as that tree is
-    for (path, (main_path, conversation)) in worktrees {
+    for (path, (main_path, conversation, user)) in worktrees {
         let Some(main) = all.iter().find(|root| root.path == main_path).cloned() else {
             continue;
         };
         if let Some(root) = all.iter_mut().find(|root| root.path == path) {
             root.worktree_of = Some(main.id.clone());
             root.conversation_id = conversation;
+            root.worktree_user_id = user;
             root.components = main.components.clone();
             root.upstream = main.upstream;
             root.read_only = root.read_only || main.read_only;

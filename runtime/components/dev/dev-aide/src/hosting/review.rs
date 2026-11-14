@@ -247,6 +247,7 @@ const PER_USER: [&str; 2] = ["access", "agreement"];
 /// The root's hosted repository, as last resolved, through the current user's connection to its server, with the
 /// user's own rights when they resolved it.
 pub(crate) fn hosted(context: &Context, root: &Root) -> Option<Hosted> {
+    let root = main_tree(context, root);
     let row = crate::roots::root_row(&context.facade, &root.path)?;
     if field(&row, "hostedServerId").is_empty() {
         return None;
@@ -275,6 +276,15 @@ pub(crate) fn hosted(context: &Context, root: &Root) -> Option<Hosted> {
     })
 }
 
+/// The working tree whose hosted repository a root has: a worktree of an agent's session (21.8) shares its main
+/// tree's repository and remotes, which keep it.
+fn main_tree<'a>(context: &'a Context, root: &'a Root) -> &'a Root {
+    root.worktree_of
+        .as_deref()
+        .and_then(|main| context.root(main).ok())
+        .unwrap_or(root)
+}
+
 /// The root's remotes, origin first.
 fn remotes(context: &Context, root: &Root) -> Vec<(String, String)> {
     let mut remotes = crate::git::parse_remotes(&context.git().read(&root.path, &["remote", "-v"]).unwrap_or_default());
@@ -285,6 +295,7 @@ fn remotes(context: &Context, root: &Root) -> Vec<(String, String)> {
 /// Resolve the root's remotes on the connected servers: the first a server knows is kept on the root (or nothing, when
 /// none is). The repository as the server answered, with its server and remote.
 pub(crate) fn resolve(context: &Context, root: &Root) -> Result<Option<Json>, LibError> {
+    let root = main_tree(context, root);
     let servers = Server::all(&context.facade, &current_user());
     let mut tried = Vec::new();
     for (remote, url) in remotes(context, root) {

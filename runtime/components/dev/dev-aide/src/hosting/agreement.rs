@@ -142,16 +142,30 @@ pub(crate) fn author_signed(hosted: &super::review::Hosted, email: &str) -> Resu
 
 /// The authors of `emails` who have not signed the hosted repository's agreement where the server decides it
 /// (`known` and `required`): an agent is not given the diff of a merge request of theirs (plans/design-dev-aide.md
-/// 21.8, Dogfood §10). A server that does not decide the agreement (`known` false) has none to keep.
+/// 21.8, Dogfood §10). A repository an application keeps must have each author decided: there `known` false is a
+/// check that did not answer (the server says so when its agreement hook fails), never a pass. A framework repository
+/// whose server decides no agreement has none to keep.
 pub(crate) fn unsigned_authors(hosted: &super::review::Hosted, emails: &[String]) -> Result<Vec<String>, LibError> {
+    let kept = hosted.via() != super::review::Via::Framework
+        || !hosted.repository["keptBy"]["application"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty();
     let mut unsigned = Vec::new();
     for email in emails {
         let answer = author_signed(hosted, email)?;
-        if unsigned_in(&answer) {
+        if unsigned_or_undecided(&answer, kept) {
             unsigned.push(email.clone());
         }
     }
     Ok(unsigned)
+}
+
+/// Whether an agreement answer keeps an author's diff from an agent: not signed where signing is required, or, for a
+/// repository an application keeps (`kept`), not decided at all.
+#[must_use]
+pub fn unsigned_or_undecided(answer: &Json, kept: bool) -> bool {
+    unsigned_in(answer) || (kept && answer["known"].as_bool() != Some(true))
 }
 
 /// Whether an agreement answer says the author has not signed where signing is required.

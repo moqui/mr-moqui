@@ -53,7 +53,7 @@ pub(crate) fn context(least: Tier) -> Result<Context, ToolError> {
 pub(crate) fn session_context(ctx: &TurnContext<'_>, least: Tier) -> Result<Context, ToolError> {
     let mut context = context(least)?;
     if let Some(run) = ctx.run {
-        context.redirect = crate::worktree::redirects(&context.roots, &run.conversation_id);
+        context.redirect = crate::worktree::redirects(&context.roots, &run.conversation_id, &ctx.user.user_id);
     }
     Ok(context)
 }
@@ -66,7 +66,8 @@ pub(crate) fn session_context(ctx: &TurnContext<'_>, least: Tier) -> Result<Cont
 /// Why the name leads nowhere.
 pub fn session_file(conversation_id: &str, named: &str) -> Result<PathBuf, String> {
     let mut context = context(Tier::View).map_err(|error| error.instruction)?;
-    context.redirect = crate::worktree::redirects(&context.roots, conversation_id);
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    context.redirect = crate::worktree::redirects(&context.roots, conversation_id, &user);
     file(&context, named)
         .map(|found| found.path)
         .map_err(|error| error.instruction)
@@ -81,7 +82,17 @@ pub(crate) fn session_root(context: &Context, id: &str) -> Result<String, ToolEr
     let root = context
         .root(id)
         .map_err(|err| ToolError::new("no_root", err.to_string()))?;
-    Ok(redirected(context, root).id.clone())
+    let root = redirected(context, root);
+    session_allows(context, root)?;
+    Ok(root.id.clone())
+}
+
+/// Refuse a root a session with worktrees may not reach (`crate::worktree::session_refusal`).
+fn session_allows(context: &Context, root: &Root) -> Result<(), ToolError> {
+    match crate::worktree::session_refusal(&context.roots, &context.redirect, root) {
+        Some(why) => Err(ToolError::new("not_this_session", why)),
+        None => Ok(()),
+    }
 }
 
 /// `root`, or the session's worktree of it.
@@ -140,6 +151,7 @@ pub(crate) fn file<'a>(context: &'a Context, named: &str) -> Result<NamedFile<'a
     };
     // in a session with a worktree of this root, the worktree's file at the same place
     let root = redirected(context, root);
+    session_allows(context, root)?;
     let resolved = context
         .resolve(root, &relative)
         .map_err(|err| ToolError::new("bad_path", err.to_string()))?;

@@ -169,6 +169,8 @@ pub fn script(job: &LocalJob, dir: &Path) -> String {
         "# This machine and this shell's user, not the job's image ({}); its secrets are not set.\n",
         one_line(&job.image)
     ));
+    // the script is gone when it ends, however it ends
+    out.push_str("trap 'rm -f -- \"$0\"' EXIT\n");
     out.push_str(&format!("cd {} || exit 1\n", quoted(&dir.display().to_string())));
     let mut env: Vec<(String, String)> = vec![
         ("CI".into(), "true".into()),
@@ -247,7 +249,7 @@ fn get_local_jobs(
                             keys.push(json!(job.matrix_key));
                         }
                         if let Some(combinations) = have["combinations"].as_array_mut() {
-                            combinations.push(serde_json::to_value(job).unwrap_or_default());
+                            combinations.push(combination(job, &root.path));
                         }
                     }
                     None => {
@@ -258,7 +260,7 @@ fn get_local_jobs(
                             json!([job.matrix_key])
                         };
                         // each combination as it runs (its steps and variables with the matrix values in them)
-                        entry["combinations"] = json!([serde_json::to_value(job).unwrap_or_default()]);
+                        entry["combinations"] = json!([combination(job, &root.path)]);
                         listed.push(entry);
                     }
                 }
@@ -273,11 +275,59 @@ fn get_local_jobs(
     Ok(out)
 }
 
-/// Where a local run's script goes: the runtime's `tmp`, which no root reaches.
+/// A combination as the page shows it before it runs: the job, the script it runs whole, and that script's digest,
+/// which `start#LocalRun` holds the script to.
+fn combination(job: &LocalJob, dir: &Path) -> serde_json::Value {
+    let text = script(job, dir);
+    let mut value = serde_json::to_value(job).unwrap_or_default();
+    value["digest"] = json!(digest(&text));
+    value["script"] = json!(text);
+    value
+}
+
+/// The digest of a script: what the user saw is what runs.
+#[must_use]
+pub fn digest(script: &str) -> String {
+    crate::workspace::sha256(script.as_bytes())
+}
+
+/// Why a local run does not start: the script rebuilt now is not the one the user saw (`ci.xml` or the job changed
+/// between the page and Run).
+#[must_use]
+pub fn digest_refusal(script: &str, seen: &str) -> Option<String> {
+    (seen.trim().is_empty() || digest(script) != seen.trim())
+        .then(|| format!("{CI_FILE} changed since the job was shown: show it again, then run what it shows"))
+}
+
+/// Where a local run's script goes: the runtime's `tmp`, which no root reaches, in a directory of the server's OS
+/// user alone (0700), the script readable by it alone (0600).
 fn script_path(runtime: &Path) -> Result<PathBuf, LibError> {
     let dir = runtime.join("tmp").join("dev-aide-run");
     std::fs::create_dir_all(&dir).map_err(|err| LibError::new(format!("{}: {err}", dir.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|err| LibError::new(format!("{}: {err}", dir.display())))?;
+    }
     Ok(dir.join(format!("{}.sh", moqui_core::user::random_string(12)?)))
+}
+
+/// Write a script readable by the server's OS user alone, never over a file that is there.
+fn write_script(path: &Path, text: &str) -> Result<(), LibError> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|err| LibError::new(format!("{}: {err}", path.display())))?;
+    file.write_all(text.as_bytes())
+        .map_err(|err| LibError::new(format!("{}: {err}", path.display())))
 }
 
 /// `start#LocalRun`: the job's script written, and a new host session of the Terminal opened in the working tree with
@@ -313,9 +363,12 @@ fn start_local_run(
             }
         ))
     })?;
+    let body = script(job, &root.path);
+    if let Some(why) = digest_refusal(&body, &text(parameters, "digest")) {
+        return Err(LibError::new(why));
+    }
     let path = script_path(context.factory.runtime_dir())?;
-    std::fs::write(&path, script(job, &root.path))
-        .map_err(|err| LibError::new(format!("{}: {err}", path.display())))?;
+    write_script(&path, &body)?;
     let title = if job.matrix_key.is_empty() {
         format!("Run locally: {}/{}", job.pipeline, job.job)
     } else {
@@ -326,6 +379,8 @@ fn start_local_run(
         "org.moqui.terminal.TerminalServices.open#TerminalSession",
         &[
             ("kind", "host".to_string()),
+            // the server user's shell: a profile the conf or the user names never stands in for it
+            ("profileName", "shell".to_string()),
             ("directory", root.path.display().to_string()),
             ("title", title),
             ("input", input),

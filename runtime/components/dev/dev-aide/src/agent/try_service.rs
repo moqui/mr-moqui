@@ -88,9 +88,9 @@ impl AgentTool for TryServiceTool {
     }
 }
 
-/// Why `service` is not tried in the sim, if it is not: a service of the Dev AIDE's own that is not read-only. Those
-/// write files, run git and call a group server, none of which goes into the sim's overlay; the fence refuses them
-/// as well (`workspace::unfenced`), and this says so before anything runs.
+/// Why `service` is not tried in the sim, if it is not: a service of the Dev AIDE's own that is not read-only, or any
+/// of the Terminal's. Those write files, run git, call a group server or start programs, none of which goes into the
+/// sim's overlay; the fence refuses them as well (`workspace::unfenced`), and this says so before anything runs.
 #[must_use]
 pub fn sim_refusal(service: &str) -> Option<String> {
     let info = moqui_core::service::info::service_detail(service);
@@ -104,6 +104,12 @@ pub fn sim_refusal(service: &str) -> Option<String> {
         info.as_ref().and_then(|info| info.get("readOnly")),
         Some(Value::Bool(true))
     );
+    // the Terminal's services start programs on the host, which nothing undoes: none runs from a sim, read-only or not
+    if service.starts_with("org.moqui.terminal.") || text("location").starts_with("moqui_host::term::") {
+        return Some(format!(
+            "{service} is a Terminal service that starts programs on the host: the sim cannot hold that"
+        ));
+    }
     // one not found is judged by its name: never let through unread
     let own = service.starts_with("org.moqui.devaide.") || text("location").starts_with("dev_aide::");
     (own && !read_only).then(|| {

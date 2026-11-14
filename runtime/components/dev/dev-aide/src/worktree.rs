@@ -38,6 +38,9 @@ use crate::workspace::{flag, json_value, text, Context};
 /// it, `confine::WORKTREES`).
 pub const DIR: &str = crate::confine::WORKTREES;
 
+/// An Assist conversation, whose user a session's worktree must be.
+const CONVERSATION: &str = "moqui.agent.AgentConversation";
+
 /// What the session panel says of every worktree (question 19).
 pub const NOT_LOADED: &str = "A worktree is not loaded: its files are checked and committed here, and merged or \
     proposed from its branch, but the running server keeps the main tree's. A session that needs to run what it changes \
@@ -92,18 +95,60 @@ pub fn removal_refusal(label: &str, porcelain: &str, discard: bool) -> Option<St
     })
 }
 
-/// The worktree roots of an agent's conversation, each as (the main root's id, the worktree root's id): the tools of
-/// that session use the worktree in place of the main tree.
+/// The worktree roots of an agent's conversation that `user_id` made, each as (the main root's id, the worktree root's
+/// id): the tools of that session use the worktree in place of the main tree. Another user's worktree is never a
+/// session's, whatever conversation it names.
 #[must_use]
-pub fn redirects(roots: &[Root], conversation_id: &str) -> Vec<(String, String)> {
-    if conversation_id.is_empty() {
+pub fn redirects(roots: &[Root], conversation_id: &str, user_id: &str) -> Vec<(String, String)> {
+    if conversation_id.is_empty() || user_id.is_empty() {
         return Vec::new();
     }
     roots
         .iter()
         .filter(|root| root.conversation_id.as_deref() == Some(conversation_id))
+        .filter(|root| root.worktree_user_id.as_deref() == Some(user_id))
         .filter_map(|root| root.worktree_of.clone().map(|main| (main, root.id.clone())))
         .collect()
+}
+
+/// Why a session with worktrees (`redirect`) may not reach `root`: another worktree (not one of the session's), or a
+/// root inside a tree the session has a worktree of (a nested repository of the running checkout), which is the live
+/// tree the worktree stands in for. `None` when it may, and always outside a session with worktrees.
+#[must_use]
+pub fn session_refusal(roots: &[Root], redirect: &[(String, String)], root: &Root) -> Option<String> {
+    if redirect.is_empty() || redirect.iter().any(|(_, worktree)| *worktree == root.id) {
+        return None;
+    }
+    if root.worktree_of.is_some() {
+        return Some(format!("{} is a worktree of another session", root.label));
+    }
+    let inside_main = redirect.iter().any(|(main, _)| {
+        roots
+            .iter()
+            .find(|found| found.id == *main)
+            .is_some_and(|main| crate::confine::inside(&root.path, &main.path))
+    });
+    inside_main.then(|| {
+        format!(
+            "{} is in the tree this session has a worktree of: work in the worktree",
+            root.label
+        )
+    })
+}
+
+/// Whether a location is in the runtime's worktrees directory: the only place `remove#Worktree` removes.
+#[must_use]
+pub fn in_worktrees(runtime: &Path, location: &Path) -> bool {
+    let worktrees = runtime.join(DIR);
+    let worktrees = std::fs::canonicalize(&worktrees).unwrap_or(worktrees);
+    location != worktrees && crate::confine::inside(location, &worktrees)
+}
+
+/// Whether the current user may remove a worktree: the one who made it, or an administrator.
+fn may_remove(root: &Root) -> bool {
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    (!user.is_empty() && root.worktree_user_id.as_deref() == Some(user.as_str()))
+        || moqui_core::user::is_in_group("ADMIN").unwrap_or(false)
 }
 
 fn root_json(context: &Context, root: &Root) -> serde_json::Value {
@@ -166,6 +211,19 @@ fn create_worktree(
         )));
     }
     let conversation = text(parameters, "conversationId");
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    if !conversation.is_empty() {
+        // a session's worktree is for one of the caller's own conversations, never another user's
+        let owner = context
+            .facade
+            .find(CONVERSATION)?
+            .eq("conversationId", Value::string(&conversation))
+            .one()?
+            .and_then(|row| row.get("userId").map(moqui_lib::object::to_plain_string));
+        if owner.as_deref() != Some(user.as_str()) || user.is_empty() {
+            return Err(LibError::new(format!("No Assist conversation {conversation} of yours")));
+        }
+    }
     let tag = if conversation.is_empty() {
         moqui_core::user::random_string(8)?
     } else {
@@ -212,10 +270,7 @@ fn create_worktree(
     row.set("label", Value::string(&label));
     row.set("worktreeOf", Value::string(main.path.display().to_string()));
     row.set("worktreeBranch", Value::string(&branch));
-    row.set(
-        "worktreeUserId",
-        Value::string(moqui_core::user::current_user_id().ok().flatten().unwrap_or_default()),
-    );
+    row.set("worktreeUserId", Value::string(&user));
     if !conversation.is_empty() {
         row.set("conversationId", Value::string(&conversation));
     }
@@ -253,6 +308,18 @@ fn remove_worktree(
         return Err(LibError::new(format!("{} is not a worktree of a session", root.label)));
     };
     let main = context.root(main_id)?;
+    if !may_remove(root) {
+        return Err(LibError::new(format!(
+            "{} is another user's worktree: they remove it, or an administrator",
+            root.label
+        )));
+    }
+    if !in_worktrees(context.factory.runtime_dir(), &root.path) {
+        return Err(LibError::new(format!(
+            "{} is not in runtime/{DIR}: only a session's worktree there is removed",
+            root.label
+        )));
+    }
     let discard = flag(parameters, "discardChanges");
     let porcelain = context.git().read(&root.path, &["status", "--porcelain"])?;
     if let Some(why) = removal_refusal(&root.label, &porcelain, discard) {

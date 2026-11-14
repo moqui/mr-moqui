@@ -86,13 +86,15 @@
     // Run locally (21.5): the combination of a job a local run takes (its matrix key, the first by default), as text
     // lines to show: its commands in order and its variables; a secret is named, never set.
     pure.localRunLines = (job, matrixKey) => {
-        if (!job) return { steps: [], env: [], secrets: [] };
+        if (!job) return { steps: [], env: [], secrets: [], script: "", digest: "" };
         const combos = job.combinations || [job];
         const combo = combos.find((item) => item.matrixKey === matrixKey) || combos[0] || job;
         return {
             steps: (combo.steps || []).map((step, index) => ({ seq: index + 1, name: step.name || "", run: step.run || "", continueOnError: !!step.continueOnError })),
             env: (combo.env || []).map((pair) => pair[0] + "=" + pair[1]),
-            secrets: (job.secrets || []).slice()
+            secrets: (job.secrets || []).slice(),
+            // the script that runs, whole, and its digest, which the run is held to
+            script: combo.script || "", digest: combo.digest || ""
         };
     };
     pure.stateColor = (state) => (state === "failure" ? "negative" : state === "pending" ? "warning" : state === "success" ? "positive" : "grey");
@@ -603,7 +605,9 @@
             startLocal() {
                 const local = this.local;
                 if (!local) return;
-                this.ws.post("startLocalRun", { rootId: this.ws.rootId, pipeline: local.job.pipeline, job: local.job.job, matrixKey: local.matrixKey }).then((answer) => {
+                const lines = pure.localRunLines(local.job, local.matrixKey);
+                this.ws.post("startLocalRun", { rootId: this.ws.rootId, pipeline: local.job.pipeline, job: local.job.job, matrixKey: local.matrixKey,
+                    digest: lines.digest }).then((answer) => {
                     if (!answer.sessionId) return;
                     const terminal = moqui.terminal;
                     if (terminal && terminal.refresh && terminal.showSomewhere) terminal.refresh().then(() => terminal.showSomewhere(answer.sessionId));
@@ -642,6 +646,8 @@
         <code class="m-dev-mono q-ml-xs">{{step.run}}</code><span v-if="step.continueOnError" class="m-muted"> (continues on error)</span></div>
       <div v-if="localLines.env.length" class="text-caption m-muted">Variables: <code class="m-dev-mono">{{localLines.env.join('  ')}}</code></div>
       <div v-if="localLines.secrets.length" class="text-caption">Not set (secrets are never passed): {{localLines.secrets.join(', ')}}</div>
+      <q-expansion-item dense dense-toggle label="The script that runs" header-class="text-caption q-px-none" id="DevLocalScript">
+        <pre class="m-dev-mono q-ma-none scroll text-caption" style="max-height: 30vh; white-space: pre-wrap">{{localLines.script}}</pre></q-expansion-item>
       <div class="row q-gutter-x-sm q-mt-xs">
         <q-btn dense unelevated no-caps color="primary" size="sm" label="Run in a terminal" @click="startLocal" id="DevRunLocallyStart"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Cancel" @click="local = null; localJobs = null"></q-btn></div>

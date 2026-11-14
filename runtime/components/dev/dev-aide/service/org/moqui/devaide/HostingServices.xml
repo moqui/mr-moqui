@@ -237,7 +237,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="diffRefused" type="Boolean"/>
             <parameter name="reason"/>
             <parameter name="unsignedAuthors" type="List"><description>With checkAuthors: the authors who have not
-                signed where the server requires it</description></parameter>
+                signed where the server requires it (or, for a repository an application keeps, whose agreement the
+                server did not decide)</description></parameter>
+            <parameter name="authorsRefusal"><description>With checkAuthors: why the authors are not all known (no
+                commit list, a cut list, a commit with no author email, more than 20 authors); the diff is then not an
+                agent's</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="MergeRequestFile" type="rust" location="dev_aide::hosting::threads::get_merge_request_file" allow-remote="false" read-only="true">

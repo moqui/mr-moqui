@@ -213,12 +213,15 @@ fn find_terminal_sessions(_parameters: &BTreeMap<String, Value>, _facade: &Entit
 
 /// `open#TerminalSession`: a new session of `kind` at `cols` by `rows`; answers `sessionId` and the session.
 fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let Some(kind) = Kind::parse(&text(parameters, "kind")) else {
+        return refuse(NOT_AVAILABLE, "That terminal is not available here");
+    };
+    if let Some(why) = opening_refusal(kind, &text(parameters, "input"))? {
+        return refuse(NOT_AVAILABLE, why);
+    }
     let username = match username() {
         Ok(username) => username,
         Err(refused) => return refused,
-    };
-    let Some(kind) = Kind::parse(&text(parameters, "kind")) else {
-        return refuse(NOT_AVAILABLE, "That terminal is not available here");
     };
     let factory = factory()?;
     let registry = Registry::of(&factory);
@@ -272,6 +275,33 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
         }
         Err(reason) => refuse("limit", &reason),
     }
+}
+
+/// The most of a host session's first input (`input`): a command line, not a program.
+pub(crate) const MAX_INPUT: usize = 4096;
+
+/// Why `open#TerminalSession` takes no `input`: over [`MAX_INPUT`] bytes, or a NUL in it.
+pub(crate) fn input_refusal(input: &str) -> Option<&'static str> {
+    if input.len() > MAX_INPUT {
+        Some("A terminal's first input is a command line of at most 4096 bytes")
+    } else if input.contains('\0') {
+        Some("A terminal's first input has no NUL")
+    } else {
+        None
+    }
+}
+
+/// What refuses an opening before anything else is asked: a command line or a program on the host runs for real, so
+/// never under an agent's fence or in a sim (the fence's error); an `input` that is not a short command line.
+fn opening_refusal(kind: Kind, input: &str) -> Result<Option<&'static str>, LibError> {
+    if kind != Kind::Apps {
+        moqui_core::entity::fence::check_effect(
+            moqui_core::entity::fence::Effect::Process,
+            &format!("open#TerminalSession {}", kind.as_str()),
+        )
+        .map_err(|err| LibError::new(err.to_string()))?;
+    }
+    Ok(input_refusal(input))
 }
 
 /// A command line, with its audit row.
@@ -551,3 +581,7 @@ fn close_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &Entity
     session.end("the session was ended");
     Ok(BTreeMap::new())
 }
+
+#[cfg(test)]
+#[path = "services_tests.rs"]
+mod tests;

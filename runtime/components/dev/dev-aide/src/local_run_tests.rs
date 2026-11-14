@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use super::{jobs_of, pick, quoted, script};
+use super::{digest, digest_refusal, jobs_of, pick, quoted, script};
 
 const CI: &str = r#"<ci>
     <pipeline name="check" on="push merge-request">
@@ -91,4 +91,19 @@ fn a_bad_ci_file_says_its_line() {
     let error =
         jobs_of("<ci><pipeline name=\"p\" on=\"push\"><job name=\"j\" image=\"i\"/></pipeline></ci>").unwrap_err();
     assert!(error.starts_with("ci.xml line "), "{error}");
+}
+
+/// A run is held to the script the page showed: one rebuilt to something else is refused; the script removes itself.
+#[test]
+fn a_local_run_runs_only_the_script_that_was_shown() {
+    let jobs = jobs_of(CI).unwrap();
+    let unit = pick(&jobs, "check", "unit", "").unwrap();
+    let shown = script(unit, Path::new("/w"));
+    assert!(shown.contains("trap 'rm -f -- \"$0\"' EXIT"), "{shown}");
+    assert!(digest_refusal(&shown, &digest(&shown)).is_none());
+    let changed = script(pick(&jobs, "check", "db", "").unwrap(), Path::new("/w"));
+    assert!(digest_refusal(&changed, &digest(&shown))
+        .unwrap()
+        .contains("changed since"));
+    assert!(digest_refusal(&shown, "").is_some());
 }

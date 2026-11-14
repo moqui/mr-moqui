@@ -295,6 +295,18 @@ pub fn read(args: &Json) -> Result<String, ToolError> {
             if out["threadsAvailable"] == false {
                 return Ok(format!("The server keeps no review threads for !{number} of {root}."));
             }
+            // a thread quotes its line, and a comment may quote the diff (a suggestion): not of a diff an agent may
+            // not have
+            let (_, refusal) = gate(&root, &number)?;
+            if refusal.is_some() {
+                return Ok(as_data(
+                    &format!(
+                        "The review threads of !{number} of {root}, without the code of its diff (its authors have \
+                         not signed the contributor agreement)"
+                    ),
+                    &crate::hosting::threads::without_diff(&out["threads"]),
+                ));
+            }
             Ok(as_data(
                 &format!("The review threads of !{number} of {root}"),
                 &out["threads"],
@@ -343,24 +355,38 @@ pub fn read(args: &Json) -> Result<String, ToolError> {
 
 /// The changes of a merge request: its files (or one file at base and head), only when every author of its commits
 /// has signed the repository's agreement where the server requires it, and the server gives the diff.
-fn changes(args: &Json, root: &str) -> Result<String, ToolError> {
-    let number = number(args)?;
+/// The changes of a merge request with its authors' agreement asked, and why an agent may not have its diff: an author
+/// who has not signed (or whose agreement the server did not decide), authors not all named, or the server's refusal.
+fn gate(root: &str, number: &str) -> Result<(Json, Option<String>), ToolError> {
     let out = service(
         "get#MergeRequestChanges",
         &[
             ("rootId", root.to_string()),
-            ("mergeRequestNum", number.clone()),
+            ("mergeRequestNum", number.to_string()),
             ("checkAuthors", "true".to_string()),
         ],
     )?;
     let unsigned = out["unsignedAuthors"].as_array().is_some_and(|list| !list.is_empty());
-    if unsigned || out["diffRefused"] == true {
+    let unnamed = out["authorsRefusal"].as_str().filter(|why| !why.is_empty());
+    let refusal = if unsigned || out["diffRefused"] == true {
+        Some("its authors have not signed the repository's contributor agreement".to_string())
+    } else {
+        unnamed.map(|why| format!("its authors' agreement is not known ({why})"))
+    };
+    Ok((out, refusal))
+}
+
+fn changes(args: &Json, root: &str) -> Result<String, ToolError> {
+    let number = number(args)?;
+    let (out, refusal) = gate(root, &number)?;
+    if let Some(why) = refusal {
         // nothing of the diff: not its files, not its commits
         return Err(ToolError::new(
             "unsigned",
             format!(
-                "The authors have not signed the repository's contributor agreement, so the changes of !{number} are \
-                 not given to an agent (its description is: action merge_request)."
+                "The authors have not signed, or are not all known to have signed, the repository's contributor \
+                 agreement ({why}), so the changes of !{number} are not given to an agent (its description is: \
+                 action merge_request)."
             ),
         ));
     }
