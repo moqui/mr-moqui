@@ -47,7 +47,12 @@ along with this software (see the LICENSE.md file). If not, see
             password in it; http and internal addresses only with git-server webhook-private-network) or ssh, which
             needs hostKeyFingerprint. refPattern: comma separated patterns of branches and tags, every branch and tag
             when empty. An empty credential keeps the one stored; it is kept encrypted and never returned. A new or
-            re-enabled mirror is pushed soon. Needs the update right on the repository, or authorization disabled.</description>
+            re-enabled mirror is pushed soon. A change of where the credential goes (the url's scheme, host or port, its
+            user or username, hostKeyFingerprint) needs the credential again in the same call, or clearCredential. Who
+            gives the credential (or makes the mirror) is createdByUserId: a push of a mirror whose giver no longer has
+            the delete right pauses it (enabled N) without using the credential, unless it was stored with
+            authorization disabled (storedAuthzDisabled). Needs the delete right on the repository (as its webhooks
+            do), or authorization disabled.</description>
         <in-parameters>
             <parameter name="mirrorId"/>
             <parameter name="repositoryId" required="true"/>
@@ -66,12 +71,12 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="mirrorId"/></out-parameters>
     </service>
     <service verb="delete" noun="GitRepositoryMirror" type="rust" location="moqui_git::service::mirror::delete_mirror">
-        <description>Delete a push mirror. Needs the update right on its repository, or authorization disabled.</description>
+        <description>Delete a push mirror. Needs the delete right on its repository, or authorization disabled.</description>
         <in-parameters><parameter name="mirrorId" required="true"/></in-parameters>
         <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
     </service>
     <service verb="find" noun="GitRepositoryMirrors" type="rust" location="moqui_git::service::mirror::find_mirrors">
-        <description>The push mirrors of a repository, each with hasCredential and never the credential. Needs the update
+        <description>The push mirrors of a repository, each with hasCredential and never the credential. Needs the delete
             right on the repository, or authorization disabled.</description>
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters>
@@ -83,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="push" noun="GitRepositoryMirror" type="rust" location="moqui_git::service::mirror::push_mirror_now">
         <description>Push a mirror soon (on the service pool; else the queue's next run), whatever its back-off. While a
             push of it runs, on any cluster member, an error whose message starts with "GitMirrorBusy: ". Needs the
-            update right on its repository, or authorization disabled.</description>
+            delete right on its repository, or authorization disabled.</description>
         <in-parameters><parameter name="mirrorId" required="true"/></in-parameters>
         <out-parameters><parameter name="queued" type="Boolean"/></out-parameters>
     </service>
@@ -113,10 +118,14 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Fetch refs of another server into a repository of any store, over https (http and internal
             addresses only with git-server webhook-private-network), each local ref forced to the remote's value. Local
             refs only under refs/merge-requests/, refs/heads/ and refs/tags/. The objects come in as a push's do (one
-            pack, each object within git-server max-object-size, checked to be whole); the rules of hidden merge
-            requests do not hold them back. A branch or tag moves as a fetch's does (its pre events, a GitUpdate and
-            the post events); a merge request's ref moves with no event. Needs the update right on the repository, or
-            authorization disabled. The password is never logged and is taken out of every error.</description>
+            pack, each object within git-server max-object-size, checked to be whole) and, with authorization on, are
+            held to a push's reachability rules: the haves are the refs a reader reads, a ref's new value the pack did
+            not bring is the caller's, and what the pack builds on is what the caller reads. A branch or tag moves as a
+            push's does (with authorization on its branch rules, then its pre events, a GitUpdate and the post events);
+            a merge request's ref moves with no event, with authorization disabled, or else only as the first head of an
+            imported merge request, which records it. Asks git-server outbound-check-service first (kind fetch). Needs
+            the delete right on the repository (as a push mirror), or authorization disabled. The password is never
+            logged and is taken out of every error.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="remoteUrl" required="true"><description>https://host/owner/repo.git, no credential in it</description></parameter>
@@ -821,13 +830,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="check" noun="GitOutbound" type="interface">
         <description>The service git-server outbound-check-service names: asked before a repository's webhook
-            deliveries are queued (once per push or event, when it has webhooks that take it) and before its push
-            mirror pushes (pushMirrorRemoteId and each GitRepositoryMirror), with authorization off. allowed false (or N) holds them: nothing is queued, and the push
+            deliveries are queued (once per push or event, when it has webhooks that take it), before its push
+            mirror pushes (pushMirrorRemoteId and each GitRepositoryMirror) and before fetch#GitRefs reaches another
+            server for it, with authorization off. allowed false (or N) holds them: nothing is queued, and the push
             mirror records the message as its error. An application that hides or suspends a repository answers false
             for it. A service that fails holds them too. Deliveries already queued are still sent.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
-            <parameter name="kind" required="true"><description>webhook or push-mirror</description></parameter>
+            <parameter name="kind" required="true"><description>webhook, push-mirror or fetch</description></parameter>
             <parameter name="event"><description>The webhook event (push, merge_request...); empty for a push
                 mirror</description></parameter>
         </in-parameters>

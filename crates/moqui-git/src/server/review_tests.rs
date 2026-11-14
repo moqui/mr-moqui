@@ -520,13 +520,13 @@ fn pkt(line: &[u8]) -> Vec<u8> {
 }
 
 /// One object of a pack made by hand: whole, or a delta against an object the pack does not hold.
-enum Packed {
+pub(crate) enum Packed {
     Whole(gix::objs::Kind, Vec<u8>),
     RefDelta(gix::ObjectId, Vec<u8>),
 }
 
 /// A pack of `objects`, as a client that writes its own sends it.
-fn pack_of(objects: &[Packed]) -> Vec<u8> {
+pub(crate) fn pack_of(objects: &[Packed]) -> Vec<u8> {
     use std::io::Write;
     let mut pack = b"PACK".to_vec();
     pack.extend_from_slice(&2u32.to_be_bytes());
@@ -562,12 +562,12 @@ fn pack_of(objects: &[Packed]) -> Vec<u8> {
     pack
 }
 
-fn commit_data(tree: &gix::ObjectId, parent: &str, message: &str) -> Vec<u8> {
+pub(crate) fn commit_data(tree: &gix::ObjectId, parent: &str, message: &str) -> Vec<u8> {
     let who = "Other <other@example.com> 1700000000 +0000";
     format!("tree {tree}\nparent {parent}\nauthor {who}\ncommitter {who}\n\n{message}\n").into_bytes()
 }
 
-fn tree_data(entries: &[(&str, gix::ObjectId)]) -> Vec<u8> {
+pub(crate) fn tree_data(entries: &[(&str, gix::ObjectId)]) -> Vec<u8> {
     let mut data = Vec::new();
     for (name, id) in entries {
         data.extend_from_slice(format!("100644 {name}").as_bytes());
@@ -577,7 +577,7 @@ fn tree_data(entries: &[(&str, gix::ObjectId)]) -> Vec<u8> {
     data
 }
 
-fn id_of(kind: gix::objs::Kind, data: &[u8]) -> gix::ObjectId {
+pub(crate) fn id_of(kind: gix::objs::Kind, data: &[u8]) -> gix::ObjectId {
     crate::store::object_id(kind, data).unwrap()
 }
 
@@ -770,13 +770,13 @@ fn tag_data(target: &gix::ObjectId, name: &str) -> Vec<u8> {
         .into_bytes()
 }
 
-fn commit_files(fixture: &Fixture, user: &str, repository: &str, extra: &[(&str, Value)]) -> String {
+pub(crate) fn commit_files(fixture: &Fixture, user: &str, repository: &str, extra: &[(&str, Value)]) -> String {
     let mut parameters = vec![("repositoryId", s(repository))];
     parameters.extend(extra.iter().cloned());
     get(&ok(fixture, user, &git("commit#GitFiles"), &parameters), "commitId").to_string()
 }
 
-fn file_map(pairs: &[(&str, &str)]) -> Value {
+pub(crate) fn file_map(pairs: &[(&str, &str)]) -> Value {
     Value::Map(
         pairs
             .iter()
@@ -1381,8 +1381,10 @@ fn a_merge_request_page_is_a_full_url_or_a_path_under_the_public_url() {
 }
 
 /// An imported merge request (plans/Dogfood.md DG8) keeps the number, state, dates and author it is given, has its
-/// head when the commit is here and none when it is not, and fires nothing: no webhook delivery, where one opened by
-/// a user is told to the repository's webhooks. Only the repository's administrator (or the application) imports.
+/// head when the commit is here and none when it is not (the application's import; an administrator's names a head
+/// they read, or none), and fires nothing: no webhook delivery, where one opened by a user is told to the repository's
+/// webhooks. Only the repository's administrator (or the application) imports, and the importer counts as an author:
+/// their approval is refused, and one recorded anyway does not count.
 #[test]
 fn an_imported_merge_request_keeps_its_state_and_fires_nothing() {
     let fixture = fixture_with(
@@ -1455,7 +1457,24 @@ fn an_imported_merge_request_keeps_its_state_and_fires_nothing() {
     let (_, errors) = imported(WRITER, "7", &side, "GmrMerged");
     assert!(errors.trim().is_empty(), "{errors}");
     let missing = "0123456789012345678901234567890123456789";
+    // an administrator's head is a commit they read: one that is not here is refused as one that is another's
     let (_, errors) = imported(WRITER, "8", missing, "GmrClosed");
+    assert!(errors.contains("that you read"), "{errors}");
+    let (_, errors) = internal(
+        &fixture,
+        WRITER,
+        &review("create#MergeRequest"),
+        &[
+            ("repositoryId", s("imp")),
+            ("title", s("Pull request")),
+            ("imported", s("true")),
+            ("pushedForReview", s("true")),
+            ("headCommitId", s(missing)),
+            ("mergeRequestNum", s("8")),
+            ("statusId", s("GmrClosed")),
+            ("authorUserId", s(READER)),
+        ],
+    );
     assert!(errors.trim().is_empty(), "{errors}");
     let rows = merge_requests(&fixture, "imp");
     assert_eq!(rows.len(), 2);
@@ -1504,6 +1523,36 @@ fn an_imported_merge_request_keeps_its_state_and_fires_nothing() {
     let (_, errors) = imported(READER, "9", &side, "GmrOpen");
     assert!(errors.contains("may not import"), "{errors}");
     assert_eq!(merge_requests(&fixture, "imp").len(), 2);
+
+    // the importer of an open one does not approve it, and an approval of theirs recorded anyway does not count
+    let (opened, errors) = imported(WRITER, "10", &side, "GmrOpen");
+    assert!(errors.trim().is_empty(), "{errors}");
+    let open_id = get(&opened, "mergeRequestId").to_string();
+    assert_eq!(field(&merge_requests(&fixture, "imp")[2], "importedByUserId"), WRITER);
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        &review("submit#MergeRequestReview"),
+        &[("mergeRequestId", s(&open_id)), ("decision", s("approve"))],
+    );
+    assert!(errors.contains("do not approve your own"), "{errors}");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, "moqui.resource.GitMergeRequestReviewer").unwrap();
+        row.set("mergeRequestId", s(&open_id));
+        row.set("userId", s(WRITER));
+        row.set("statusId", s("GmrrApproved"));
+        row.set("reviewedCommitId", s(&side));
+        row.create(&fixture.entity).unwrap();
+    }
+    let approvals = ok(
+        &fixture,
+        WRITER,
+        &review("get#MergeRequestApprovals"),
+        &[("mergeRequestId", s(&open_id))],
+    );
+    assert_eq!(text_of(approvals.get("approvalCount").unwrap()), "0", "{approvals:?}");
 
     // one opened by a user is told to the webhooks (the delivery is sent on the service pool, which a test factory
     // does not run: that error is not the create's)

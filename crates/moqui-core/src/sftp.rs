@@ -264,8 +264,12 @@ fn connector() -> Result<Arc<dyn SftpConnector>, Error> {
 }
 
 /// `host`, `host:port`, `[v6]`, or `[v6]:port`. A host with more than one colon and no brackets is an IPv6 address
-/// without a port.
-fn split_host_port(text: &str, default_port: u16) -> Result<(String, u16), Error> {
+/// without a port. Also how a git push mirror's ssh host is read, so its address check and its connection agree.
+///
+/// # Errors
+///
+/// A port that is not a number, or a bracket that is not closed.
+pub fn split_host_port(text: &str, default_port: u16) -> Result<(String, u16), Error> {
     let parse_port = |port: &str| {
         port.trim()
             .parse::<u16>()

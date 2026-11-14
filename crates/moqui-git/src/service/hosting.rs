@@ -1893,24 +1893,27 @@ fn test_webhook(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// The users whose approval of merge request `mr_id` counts toward the branch rules' required approvals: approved
 /// (of `head` when the rules dismiss stale approvals) by a user who may push to repository `id` (update), decided as
 /// that user now. A viewer's review is a comment, not an approval, and an approval stops counting when its reviewer
-/// loses the push right.
+/// loses the push right. Its author's and its importer's (`importedByUserId`, who counts as an author) never count.
 fn counted_approvals(
     facade: &EntityFacade,
     id: &str,
-    mr_id: &str,
+    request: &EntityValue,
     head: Option<&str>,
 ) -> Result<Vec<String>, LibError> {
+    let mr_id = field(request, "mergeRequestId").unwrap_or_default();
+    let authors = [field(request, "authorUserId"), field(request, "importedByUserId")];
     let approved: Vec<String> = {
         let _rows = rows_guard();
         facade
             .find(GIT_MERGE_REQUEST_REVIEWER)?
-            .eq("mergeRequestId", Value::string(mr_id))
+            .eq("mergeRequestId", Value::string(&mr_id))
             .eq("statusId", Value::string("GmrrApproved"))
             .order_by("userId", false)
             .list()?
             .iter()
             .filter(|reviewer| head.is_none() || field(reviewer, "reviewedCommitId").as_deref() == head)
             .filter_map(|reviewer| field(reviewer, "userId"))
+            .filter(|user| !authors.iter().flatten().any(|author| author == user))
             .collect()
     };
     Ok(approved
@@ -1957,7 +1960,7 @@ fn get_merge_request_approvals(parameters: &Parameters, facade: &EntityFacade) -
         .iter()
         .any(|rule| rule.dismiss_stale_approvals);
     let head = field(&row, "headCommitId").unwrap_or_default();
-    let users = counted_approvals(facade, &id, &mr_id, dismiss.then_some(head.as_str()))?;
+    let users = counted_approvals(facade, &id, &row, dismiss.then_some(head.as_str()))?;
     Ok(out([
         ("approvalCount", Value::I64(users.len() as i64)),
         (
@@ -2066,7 +2069,7 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     let found = rules::rules_for(facade, &id, &format!("refs/heads/{target}"))?;
     let dismiss = found.iter().any(|rule| rule.dismiss_stale_approvals);
-    let approvals = counted_approvals(facade, &id, &mr_id, dismiss.then(|| head.to_string()).as_deref())?.len();
+    let approvals = counted_approvals(facade, &id, &row, dismiss.then(|| head.to_string()).as_deref())?.len();
     let successful: Vec<String> = latest_statuses(facade, &id, &[head.to_string()])?
         .values()
         .flatten()

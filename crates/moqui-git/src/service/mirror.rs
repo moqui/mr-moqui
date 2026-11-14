@@ -14,9 +14,9 @@
 
 //! The push mirror services of `org.moqui.git.GitServices` ([`crate::mirror`]) and `fetch#GitRefs`
 //! ([`crate::fetch_refs`]): store, find, delete and push a `GitRepositoryMirror`, the queue's run, and what the
-//! post-receive rule asks for. Each needs the update right on the repository unless authorization is disabled; the
-//! credential is written, never read back (`hasCredential`). Guide: docs/interfaces/Git-Hosting.md, "Push mirrors" and
-//! "Fetching refs".
+//! post-receive rule asks for. Each needs the delete right on the repository (as its webhooks and branch rules do)
+//! unless authorization is disabled; the credential is written, never read back (`hasCredential`), and is given again
+//! when where it goes changes. Guide: docs/interfaces/Git-Hosting.md, "Push mirrors" and "Fetching refs".
 
 use std::collections::BTreeMap;
 
@@ -45,20 +45,21 @@ fn authz_disabled() -> bool {
     ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false)
 }
 
-/// The provider when the current user may change repository `id` (the update right) or authorization is disabled;
-/// otherwise the error recorded, as one not found to a user who may not view it.
-fn updatable(id: &str) -> Option<GitProvider> {
+/// The provider when the current user administers repository `id` (the delete right, as for its webhooks and branch
+/// rules: a mirror's credential and a fetch's reach out of the server) or authorization is disabled; otherwise the
+/// error recorded, as one not found to a user who may not view it.
+fn administered(id: &str) -> Option<GitProvider> {
     let parameters: Parameters = [("repositoryId".to_string(), Value::string(id))].into_iter().collect();
     let (provider, id) = provider_and_id(&parameters, true)?;
     if provider.definition(&id).is_err() {
         add_error(format!("repository {id} not found"));
         return None;
     }
-    if authz_disabled() || super::hosting::may(&id, "update") {
+    if authz_disabled() || super::hosting::may(&id, mirror::RIGHT) {
         return Some(provider);
     }
     if super::hosting::may(&id, "view") {
-        add_error(format!("you may not change the push mirrors of {id}"));
+        add_error(format!("you may not change the push mirrors or fetch the refs of {id}"));
     } else {
         add_error(format!("repository {id} not found"));
     }
@@ -93,14 +94,18 @@ fn yes_no(parameters: &Parameters, key: &str) -> Result<Option<&'static str>, St
 
 /// `store#GitRepositoryMirror`: create a mirror (no `mirrorId`) or change one; an empty credential keeps the one
 /// stored. `clearRefPattern` empties the patterns (every branch and tag) and `clearCredential` the username and the
-/// credential, as a null parameter is not told from one left out. A new or re-enabled mirror is pushed soon (its
+/// credential, as a null parameter is not told from one left out. A change of where the credential goes (the URL's
+/// scheme, host and port, its user or `username`, the host key) needs the credential again in the same call, or
+/// `clearCredential`: a user who may edit the mirror does not send the stored credential to a host of their own. Who
+/// gives a credential (or makes the mirror) is its `createdByUserId`, whose right its pushes are held to unless it was
+/// given with authorization disabled (`storedAuthzDisabled`). A new or re-enabled mirror is pushed soon (its
 /// `nextAttemptDate` is now). Out: `mirrorId`.
 fn store_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(repository_id) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
         return none();
     };
-    let Some(_provider) = updatable(&repository_id) else {
+    let Some(_provider) = administered(&repository_id) else {
         return none();
     };
     let existing = match text(parameters, "mirrorId") {
@@ -161,6 +166,26 @@ fn store_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error("credential is at most 16 KB");
         return none();
     }
+    if let Some(row) = &existing {
+        let username_now = if parameters.contains_key("username") {
+            text(parameters, "username")
+        } else {
+            field(row, "username")
+        };
+        let moved = mirror::credential_target(&field(row, "url").unwrap_or_default())
+            != mirror::credential_target(&url)
+            || username_now != field(row, "username")
+            || fingerprint != field(row, "hostKeyFingerprint");
+        if moved && field(row, "credential").is_some() && credential.is_none() && !clear_credential {
+            add_error(
+                "the mirror's credential goes only where it was given for: with a new host, user or host key give the \
+                 credential again (credential) or clear it (clearCredential)",
+            );
+            return none();
+        }
+    }
+    // read before the rows' guard turns authorization off
+    let by_application = authz_disabled();
     let _rows = rows_guard();
     let was_enabled = existing
         .as_ref()
@@ -172,13 +197,6 @@ fn store_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
             let mut row = EntityValue::make(facade, GIT_REPOSITORY_MIRROR)?;
             row.set_sequenced_id_primary(facade)?;
             row.set("repositoryId", Value::string(&repository_id));
-            row.set(
-                "createdByUserId",
-                moqui_core::user::current_user_id()
-                    .ok()
-                    .flatten()
-                    .map_or(Value::Null, Value::string),
-            );
             row.set("createdDate", moqui_core::user::now_value());
             row.set("attemptCount", Value::I64(0));
             row
@@ -200,8 +218,24 @@ fn store_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if let Some(value) = enabled.or(creating.then_some("Y")) {
         row.set("enabled", Value::string(value));
     }
+    let given = credential.is_some() && !clear_credential;
     if let Some(credential) = credential.filter(|_| !clear_credential) {
         row.set("credential", Value::string(credential));
+    }
+    // the credential rides on the right of who gave it: checked again at each push (crate::mirror)
+    if creating || given {
+        row.set(
+            "createdByUserId",
+            moqui_core::user::current_user_id()
+                .ok()
+                .flatten()
+                .filter(|user| !user.is_empty())
+                .map_or(Value::Null, Value::string),
+        );
+        row.set(
+            "storedAuthzDisabled",
+            Value::string(if by_application { "Y" } else { "N" }),
+        );
     }
     let now_enabled = enabled.map_or(was_enabled, |value| value == "Y");
     if now_enabled && (creating || !was_enabled) {
@@ -224,7 +258,7 @@ fn delete_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(row) = mirror_row(facade, &mirror_id)? else {
         return Ok(out([("deleted", Value::Bool(false))]));
     };
-    if updatable(&field(&row, "repositoryId").unwrap_or_default()).is_none() {
+    if administered(&field(&row, "repositoryId").unwrap_or_default()).is_none() {
         return none();
     }
     let _rows = rows_guard();
@@ -241,7 +275,7 @@ fn find_mirrors(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error("repositoryId is required");
         return none();
     };
-    if updatable(&repository_id).is_none() {
+    if administered(&repository_id).is_none() {
         return none();
     }
     let _rows = rows_guard();
@@ -270,6 +304,7 @@ fn find_mirrors(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 "nextAttemptDate",
                 "attemptCount",
                 "createdByUserId",
+                "storedAuthzDisabled",
                 "createdDate",
             ] {
                 entry.insert(name.to_string(), row.get(name).cloned().unwrap_or(Value::Null));
@@ -295,7 +330,7 @@ fn push_mirror_now(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error(format!("no push mirror {mirror_id}"));
         return none();
     };
-    let Some(provider) = updatable(&field(&row, "repositoryId").unwrap_or_default()) else {
+    let Some(provider) = administered(&field(&row, "repositoryId").unwrap_or_default()) else {
         return none();
     };
     match provider.mirror_busy(&mirror_id) {
@@ -364,7 +399,7 @@ fn fetch_refs(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         add_error("repositoryId is required");
         return none();
     };
-    let Some(provider) = updatable(&repository_id) else {
+    let Some(provider) = administered(&repository_id) else {
         return none();
     };
     let Some(remote_url) = text(parameters, "remoteUrl") else {

@@ -965,7 +965,8 @@ impl russh::server::Handler for Connection {
                     "no active UserSshKey {fingerprint} for {username}"
                 )));
             }
-            moqui_core::user::internal_login_user(&username)?;
+            // a person's sign-in, as a password's: it clears a sign-out elsewhere (hasLoggedOut)
+            moqui_core::user::login_ssh_key_user(&username)?;
             ssh_permissions()
         })
         .await;

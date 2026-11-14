@@ -311,6 +311,42 @@ impl Session<'_> {
     }
 }
 
+impl crate::GitProvider {
+    /// The current user as a pusher of `repo` would be checked, for objects that come into it another way
+    /// (`fetch#GitRefs`, [`crate::fetch_refs`]).
+    fn checks_of<'a>(&'a self, repo: &'a crate::Repo) -> Session<'a> {
+        Session {
+            provider: self,
+            repo,
+            transport: "internal",
+            client: String::new(),
+        }
+    }
+
+    /// Whether `id`, the new value of a ref that a fetch did not bring, is the current user's to point a ref at, as
+    /// for a push ([`Session::own_value`]): an object the store holds is not enough.
+    pub(crate) fn own_value_in(&self, repo: &crate::Repo, id: &ObjectId) -> Result<bool, Error> {
+        self.checks_of(repo).own_value(id)
+    }
+
+    /// One object outside a fetched pack that the pack builds on or names (a parent, a tree's entry, a thin pack's
+    /// delta base) and the current user may not, as for a push ([`Session::own_history`],
+    /// [`Session::foreign_object`]): so a server that sends a pack built on a hidden merge request's objects does not
+    /// make them readable through the refs it moves.
+    pub(crate) fn foreign_in_pack(
+        &self,
+        repo: &crate::Repo,
+        received: &super::pack_in::Quarantine<'_>,
+    ) -> Result<Option<ObjectId>, Error> {
+        let checks = self.checks_of(repo);
+        let linked = received.linked();
+        match checks.own_history(&linked)? {
+            Some(foreign) => Ok(Some(foreign)),
+            None => checks.foreign_object(&received.named(), &[], &linked),
+        }
+    }
+}
+
 /// A merge request's page from `merge-request-url` filled in: a full URL (`http://` or `https://`) as given, so an
 /// application may point it at its pages on another host or under a mount; anything else is a path under the public
 /// base URL (`git-server public-url`).

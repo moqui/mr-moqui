@@ -518,8 +518,10 @@ impl Renewals {
                         );
                     }
                 }
-                // a lease marked lost (by a check, or above) is not renewed again: its row is let go, so the other
-                // members can take it and a re-entry here takes it anew
+                // a lease marked lost (by a check, or above) is not renewed again; its row is kept until it lapses at
+                // its time, not let go now: a writer that passed its check just before the loss may still be writing
+                // under it, and the time left is that write's margin. Then the other members take it, and a re-entry
+                // here takes it anew.
                 let lost: Vec<u64> = entries
                     .iter()
                     .filter(|(_, entry)| {
@@ -530,10 +532,8 @@ impl Renewals {
                     .map(|(id, _)| *id)
                     .collect();
                 if !lost.is_empty() {
-                    let gone: Vec<Renewal> = lost.iter().filter_map(|id| entries.remove(id)).collect();
-                    drop(entries);
-                    for entry in gone {
-                        release_lost(&entry.entity, &entry.name, &entry.holder);
+                    for id in &lost {
+                        entries.remove(id);
                     }
                     continue;
                 }
@@ -619,13 +619,10 @@ impl Renewals {
             state.valid.store(false, Ordering::Release);
             tracing::error!(lease = %name, "a git lease went unrenewed for nearly its time: its writes stop");
         }
-        // marked lost while this renewal ran (by the loop, by a check) or just now: a renewal that went through
-        // anyway does not keep the row held for a holder whose writes have stopped
+        // marked lost while this renewal ran (by the loop, by a check) or just now: renewed no more, and its row
+        // lapses at its time (the margin of a write that passed its check before the loss)
         let lost = !state.valid.load(Ordering::Acquire) && !state.released.load(Ordering::Acquire);
         let keep = keep && !lost;
-        if lost {
-            release_lost(entity, name, holder);
-        }
         {
             let mut entries = moqui_lib::sync::lock(&self.entries);
             if keep {
@@ -640,20 +637,6 @@ impl Renewals {
             }
         }
         self.changed.notify_all();
-    }
-}
-
-/// Let go of the row of a lease marked lost, on the condition that this holder still has it (another member may have
-/// taken it over already). A failure is logged: the row lapses at its time.
-fn release_lost(entity: &EntityFacade, name: &str, holder: &str) {
-    let released = update(
-        entity,
-        name,
-        vec![("holderId", Value::Null), ("leaseUntil", Value::Null)],
-        Condition::equals("holderId", Value::string(holder)),
-    );
-    if let Err(err) = released {
-        tracing::warn!(lease = %name, "a lost git lease was not let go (it lapses): {err}");
     }
 }
 

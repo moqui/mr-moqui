@@ -157,29 +157,37 @@ fn a_renewal_held_by_the_database_does_not_lose_the_other_leases() {
     assert!(lost.message().starts_with("GitLeaseLost: "), "{lost}");
 }
 
-/// A lease marked lost is renewed no more and its row is let go, though its holder has not dropped it yet: another
-/// member takes it, where a renewal that went on would keep it held for a holder whose writes have stopped.
+/// A lease marked lost is renewed no more, and its row is kept until it lapses at its time rather than let go at once:
+/// a writer that passed its check just before the loss may still be writing, and the rest of the lease's time is that
+/// write's margin. Then another member takes it, where a renewal that went on would keep it held for a holder whose
+/// writes have stopped.
 #[test]
-fn a_lost_lease_is_renewed_no_more_and_its_row_is_let_go() {
+fn a_lost_lease_is_renewed_no_more_and_its_row_lapses_at_its_time() {
     let entity = moqui_core::testing::open();
-    let ttl = Duration::from_millis(600);
+    let ttl = Duration::from_millis(3_000);
     let lease = try_take(&entity, "t:lost-renewed", ttl).unwrap().expect("free");
-    std::thread::sleep(Duration::from_millis(250));
-    lease.check().expect("held and renewed");
+    let taken = std::time::Instant::now();
     // as the renewer or a check finds it: lost
     lease
         .held
         .state
         .valid
         .store(false, std::sync::atomic::Ordering::Release);
+    // past the renewer's first look (a third of the time): not renewed, and not let go either
+    std::thread::sleep(Duration::from_millis(1_500));
+    assert!(
+        !free_elsewhere(&entity, "t:lost-renewed"),
+        "the row of a lost lease is kept until its time"
+    );
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while !free_elsewhere(&entity, "t:lost-renewed") {
         assert!(
             std::time::Instant::now() < deadline,
-            "the row of a lost lease is still held"
+            "a lost lease was renewed past its time"
         );
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(100));
     }
+    assert!(taken.elapsed() >= Duration::from_millis(2_500), "{:?}", taken.elapsed());
     assert!(lease.check().is_err());
     drop(lease);
 }

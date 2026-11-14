@@ -426,6 +426,18 @@ pub fn internal_login_queued_user(username: &str) -> Result<(), Error> {
     internal_login(username, true, false).1
 }
 
+/// The sign-in of a person by an SSH key the host checked to be theirs (an active `UserSshKey`): [`internal_login_user`]
+/// as a person's sign-in, which clears the account's `hasLoggedOut` as a password or a login key does, so a sign-out
+/// elsewhere earlier does not end the sessions this sign-in starts. The operations of the session after it borrow the
+/// login ([`internal_login_user`], [`logout_local`]) and leave the flag as it is.
+///
+/// # Errors
+///
+/// Returns an error when the account is unknown, disabled, terminated, a display account, or needs a password change.
+pub fn login_ssh_key_user(username: &str) -> Result<(), Error> {
+    internal_login(username, false, true).1
+}
+
 /// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person
 /// and nothing signs it in. Only a device credential runs as it, for one request at a time (`user/device.rs`).
 pub(crate) fn is_display_account(account: &EntityValue) -> bool {
