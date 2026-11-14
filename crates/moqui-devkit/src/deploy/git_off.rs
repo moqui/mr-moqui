@@ -99,6 +99,28 @@ pub fn update(factory: &Arc<ExecutionContextFactory>, name: &str, data_types: &[
     deploy(factory, name, Mode::Now, data_types)
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttestedDeploy {
+    pub component: String,
+    pub commit: String,
+    pub status: String,
+    pub deployment_id: String,
+    pub report: Option<LoadReport>,
+}
+
+/// # Errors
+///
+/// Always: this build has no git.
+pub fn deploy_attested(
+    _factory: &Arc<ExecutionContextFactory>,
+    _attestation_text: &str,
+    _signature: &str,
+    _data_types: &[String],
+) -> Result<AttestedDeploy, String> {
+    Err(NO_GIT.to_string())
+}
+
 /// No component is kept in a repository in this build: nothing to apply.
 pub fn install(_factory: &Arc<ExecutionContextFactory>) {}
 

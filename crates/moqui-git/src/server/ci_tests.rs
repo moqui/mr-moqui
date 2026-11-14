@@ -2386,7 +2386,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         &[
             ("repositoryId", s("app")),
             ("name", s("staging")),
-            ("token", s("target-token")),
+            ("token", s("target-token-0123456789")),
         ],
     );
     let environment_id = to_plain_string(&environment["environmentId"]);
@@ -2453,7 +2453,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         &[("repositoryId", s("app"))],
     );
     let shown = format!("{:?}", environments["environmentList"]);
-    assert!(shown.contains("staging") && !shown.contains("target-token"), "{shown}");
+    assert!(shown.contains("staging") && !shown.contains("target-token-0123456789"), "{shown}");
     let (_, errors) = call(
         &fixture,
         WRITER,
@@ -3317,3 +3317,6 @@ fn a_run_artifact_is_kept_by_its_service_and_read_at_its_location() {
         assert!(resources.open("ci-artifact://A-1/out.txt").unwrap().is_none());
     }
 }
+
+#[path = "ci_deploy_tests.rs"]
+mod deploy;

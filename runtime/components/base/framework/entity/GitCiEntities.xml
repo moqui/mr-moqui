@@ -210,23 +210,35 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_CI_SECRET_OWNER"><index-field name="ownerId"/><index-field name="name"/></index>
     </entity>
     <entity entity-name="GitCiEnvironment" package="moqui.resource" use="nontransactional" cache="never">
-        <description>A place a repository deploys to, which scopes secrets. The target, the pipeline that must have
-            passed and the approval are for deployments (plans/Dogfood.md §8.6, DG10).</description>
+        <description>A place a repository deploys to, which scopes secrets. For deployments (plans/Dogfood.md §8.6,
+            docs/interfaces/Pipelines.md "Deployments"): the target instance and the token it issued, the pipeline
+            that must pass for a commit, and who approves.</description>
         <field name="environmentId" type="id" is-pk="true"/>
         <field name="repositoryId" type="id"/>
         <field name="ownerId" type="id-long"/>
         <field name="name" type="text-medium"/>
-        <field name="targetUrl" type="text-medium"/>
-        <field name="targetToken" type="text-long" encrypt="true"/>
-        <field name="requiredPipeline" type="text-medium"/>
+        <field name="targetUrl" type="text-medium"><description>The target instance's base URL (https; http only to a
+            loopback IP literal); a deployment posts to its Component-Deploy REST</description></field>
+        <field name="targetToken" type="text-long" encrypt="true"><description>The secret the target issued (its
+            component-deploy attestation-secret): it signs each deployment's attestation and is never sent or read
+            back</description></field>
+        <field name="cloneUrl" type="text-medium"><description>The URL the target fetches the repository from; the
+            repository's public clone URL when empty</description></field>
+        <field name="requiredPipeline" type="text-medium"><description>The pipeline (with the deploy event) that must
+            pass for a commit before it deploys</description></field>
         <field name="approvalRequired" type="text-indicator"><description>Y: its secrets go only to a run someone
-            approved</description></field>
+            approved, and a deployment waits for an approver once its pipeline passed</description></field>
+        <field name="approverGroupId" type="id"><description>The user group whose members approve; a maintainer of
+            the repository (the delete right) when empty. Never the requester.</description></field>
         <field name="allowedRefs" type="text-medium"><description>Branch patterns (* is any run of characters; one
-            that starts with refs/ is a full ref) whose runs get its secrets besides those of protected refs,
-            separated by spaces. A merge request's run never does.</description></field>
+            that starts with refs/ is a full ref) whose runs get its secrets besides those of protected refs, and
+            which deploy to it besides protected branches, separated by spaces. A merge request's run never does.</description></field>
         <field name="lastCommitId" type="text-short"/>
+        <field name="lastDeploymentId" type="id"/>
         <field name="lastDeployDate" type="date-time"/>
         <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" title="Approver" related="moqui.security.UserGroup">
+            <key-map field-name="approverGroupId" related="userGroupId"/></relationship>
         <index name="GIT_CI_ENV_NAME"><index-field name="repositoryId"/><index-field name="name"/></index>
     </entity>
     <entity entity-name="GitRunnerPool" package="moqui.resource" use="nontransactional" cache="never">
@@ -292,22 +304,42 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_USAGE_OWNER"><index-field name="ownerId"/><index-field name="periodKey"/></index>
     </entity>
     <entity entity-name="GitDeployment" package="moqui.resource" use="nontransactional" cache="never">
-        <description>A commit asked to be deployed to an environment (plans/Dogfood.md §8.6). The engine queues the
-            environment's pipeline with the deploy event; the approval, the deploy step and the gate are DG10.</description>
+        <description>A commit asked to be deployed to an environment (plans/Dogfood.md §8.6, docs/interfaces/Pipelines.md
+            "Deployments"): the environment's pipeline runs for it with the deploy event; once that passed, an approver
+            approves when the environment requires it; then the deploy step posts an attestation of the passed run,
+            signed with the environment's token, to the target's Component-Deploy REST.</description>
         <field name="deploymentId" type="id" is-pk="true"/>
-        <field name="environmentId" type="id"/>
         <field name="repositoryId" type="id"/>
+        <field name="environmentId" type="id"/>
+        <field name="environmentName" type="text-medium"/>
         <field name="commitId" type="text-short"/>
-        <field name="pipelineRunId" type="id"/>
-        <field name="statusId" type="text-short"><description>running, waiting, approved, refused, deployed or failed</description></field>
+        <field name="refName" type="text-medium"><description>The branch deployed (refs/heads/...); the commit was its
+            head when asked for, and the target deploys it only while it still is</description></field>
+        <field name="componentName" type="text-medium"><description>The component.xml name at the commit, set by the
+            deploy step</description></field>
+        <field name="pipelineRunId" type="id"><description>The run of the environment's pipeline with the deploy event</description></field>
+        <field name="statusId" type="text-short" enable-audit-log="true"><description>requested, waiting-pipeline,
+            waiting-approval, deploying, deployed, failed, refused or cancelled</description></field>
         <field name="requestedByUserId" type="id"/>
-        <field name="decidedByUserId" type="id"/>
+        <field name="approvedByUserId" type="id"/>
+        <field name="approvedDate" type="date-time"/>
+        <field name="refusedByUserId" type="id"/>
+        <field name="deployResult" type="text-long"><description>What the target answered, as JSON (status,
+            component, commitId, problems)</description></field>
+        <field name="errorText" type="text-long"><description>Why it failed, was refused or cancelled; never a
+            secret</description></field>
         <field name="createdDate" type="date-time"/>
-        <field name="decidedDate" type="date-time"/>
+        <field name="startedDate" type="date-time"><description>When the deploy step began</description></field>
         <field name="finishedDate" type="date-time"/>
-        <field name="resultText" type="text-long"/>
-        <relationship type="one" related="moqui.resource.GitCiEnvironment"/>
+        <relationship type="one-nofk" related="moqui.resource.GitCiEnvironment"/>
         <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" related="moqui.resource.GitPipelineRun"/>
         <index name="GIT_DEPLOY_ENV"><index-field name="environmentId"/><index-field name="createdDate"/></index>
+        <index name="GIT_DEPLOY_REPO"><index-field name="repositoryId"/><index-field name="createdDate"/></index>
+        <index name="GIT_DEPLOY_RUN"><index-field name="pipelineRunId"/></index>
+        <seed-data>
+            <moqui.security.user.NotificationTopic topic="GitDeployment" description="A deployment waits for approval or ended"
+                    typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y"/>
+        </seed-data>
     </entity>
 </entities>

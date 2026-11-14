@@ -4810,6 +4810,7 @@ dependencies = [
  "moqui-lib",
  "moqui-report",
  "rust_xlsxwriter",
+ "serde",
  "serde_json",
  "sha2 0.11.1",
  "tar",

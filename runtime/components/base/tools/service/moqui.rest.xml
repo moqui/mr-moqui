@@ -356,6 +356,14 @@ along with this software (see the LICENSE.md file). If not, see
         <resource name="keyRevoke"><method type="post"><service name="org.moqui.impl.UserServices.revoke#UserHeldKey"/></method></resource>
     </resource>
 
+    <!-- A source server's deploy step (docs/tools/Component-Deploy.md "The gate"): no session; the attestation, signed
+        with the secret this server issued, is checked by the service itself. -->
+    <resource name="components" description="Attested component deploys">
+        <resource name="deploy" require-authentication="false">
+            <method type="post" require-authentication="false"><service name="org.moqui.dev.ComponentServices.deploy#AttestedComponent"/></method>
+        </resource>
+    </resource>
+
     <!-- The artifact index of a project an admin allowed (DevArtifactProject), read only, on any instance
         (plans/design-dev-aide.md 7.4): for the AIDE_READ permission (AIDE_READ_API in the framework's
         DevToolsSecurityData.xml). Each answer has the index's indexStamp. Rebuilding stays on dev instances. -->

@@ -18,6 +18,9 @@
         sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
         (docs/tools/Component-Deploy.md). -->
     <default-property name="component_deploy_enabled" value=""/>
+    <!-- The secret this server issued to a source server for attested deploys (component-deploy attestation-secret):
+        at least 16 characters, set in runtime/.env; empty takes none. -->
+    <default-property name="component_deploy_attestation_key" value=""/>
 
     <!-- Locale and Time Zone Properties -->
     <default-property name="default_locale" value="en_US"/>
@@ -1366,7 +1369,8 @@
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
             container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
             container-tmp-mb="1024" container-workspace-mb="4096" max-services="4" schedule-min-minutes="15"
-            pool-token-days="7" max-repository-upload-bytes="0" max-owner-upload-bytes="0"/>
+            pool-token-days="7" max-repository-upload-bytes="0" max-owner-upload-bytes="0"
+            deploy-timeout-seconds="600" deploy-private-network="false"/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
@@ -1478,6 +1482,15 @@
         account's data for offline use. A build embeds its own in its runtime conf (device-mode personal for a person's
         own device, shared for a hot desk or point of sale); choose has the sign-in ask. The server does not read it. -->
     <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+
+    <!-- Deploying a component on this server (docs/tools/Component-Deploy.md "The gate"). attestation-secret is the
+        secret this server issued to a source server (the token of the source's environment): with it,
+        deploy#AttestedComponent (REST POST /rest/s1/moqui/components/deploy) takes a deploy whose attestation, signed
+        with it and at most max-age-seconds old, says the commit passed the environment's pipeline. With
+        require-passed-run true, deploy#Component, update#Component and load#Component refuse anything else: a deploy
+        from this server's own pages needs such an attestation too. -->
+    <component-deploy require-passed-run="false" attestation-secret="${component_deploy_attestation_key}"
+            max-age-seconds="300"/>
 
     <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
     <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"

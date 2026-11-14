@@ -18,7 +18,9 @@
 //! the server: the engine ([`engine`]) starts a container through the pool's host type ([`driver`]) or leaves the job
 //! for a registered runner ([`registered`]), and the runner (`moqui ci-run`, [`runner`]) talks to the runner REST
 //! ([`runner_http`]) with a job token ([`token`]) that also reads the repository at the job's commit. What an untrusted
-//! run may have is decided in [`trust`]. The application's services are in [`service`].
+//! run may have is decided in [`trust`]. A deployment ([`deploy`]) runs an environment's pipeline with the deploy event
+//! and posts an attestation of the passed run ([`attest`]) to its target. The application's services are in
+//! [`service`].
 
 use std::collections::BTreeMap;
 
@@ -28,7 +30,9 @@ use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{EntityFacade, EntityValue};
 
 pub mod artifact;
+pub mod attest;
 pub mod builtin;
+pub mod deploy;
 pub mod driver;
 pub mod engine;
 pub mod file;

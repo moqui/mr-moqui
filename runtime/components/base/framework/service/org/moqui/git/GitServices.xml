@@ -831,15 +831,15 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="GitOutbound" type="interface">
         <description>The service git-server outbound-check-service names: asked before a repository's webhook
             deliveries are queued (once per push or event, when it has webhooks that take it), before its push
-            mirror pushes (pushMirrorRemoteId and each GitRepositoryMirror) and before fetch#GitRefs reaches another
-            server for it, with authorization off. allowed false (or N) holds them: nothing is queued, and the push
+            mirror pushes (pushMirrorRemoteId and each GitRepositoryMirror), before fetch#GitRefs reaches another
+            server for it and before a deployment calls its environment's target, with authorization off. allowed false (or N) holds them: nothing is queued, and the push
             mirror records the message as its error. An application that hides or suspends a repository answers false
             for it. A service that fails holds them too. Deliveries already queued are still sent.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
-            <parameter name="kind" required="true"><description>webhook, push-mirror or fetch</description></parameter>
-            <parameter name="event"><description>The webhook event (push, merge_request...); empty for a push
-                mirror</description></parameter>
+            <parameter name="kind" required="true"><description>webhook, push-mirror, fetch or deploy</description></parameter>
+            <parameter name="event"><description>The webhook event (push, merge_request...), the deployment's
+                environment; empty for a push mirror</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="allowed" type="Boolean"/>

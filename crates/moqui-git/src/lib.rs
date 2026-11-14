@@ -130,12 +130,14 @@ pub(crate) fn setting(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// What a repository sends out of the server: its webhooks' deliveries and its push mirror's pushes.
+/// What a repository sends out of the server: its webhooks' deliveries, its push mirror's pushes, a fetch with a
+/// credential, and a deployment's call to its target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Outbound {
     Webhook,
     PushMirror,
     Fetch,
+    Deploy,
 }
 
 impl Outbound {
@@ -144,15 +146,17 @@ impl Outbound {
             Self::Webhook => "webhook",
             Self::PushMirror => "push-mirror",
             Self::Fetch => "fetch",
+            Self::Deploy => "deploy",
         }
     }
 }
 
 /// Ask the conf's `git-server` `outbound-check-service` whether repository `repository_id` may send `kind` out now
 /// (docs/interfaces/Git-Hosting.md, "Outbound check"): before a webhook delivery is queued, before a push mirror
-/// pushes and before `fetch#GitRefs` reaches another server with a credential, so an application that hides or
-/// suspends a repository stops what it would tell or copy elsewhere. In `repositoryId`, `kind` (`webhook`,
-/// `push-mirror` or `fetch`) and `event` (the webhook event, empty for a push); out `allowed`
+/// pushes, before `fetch#GitRefs` reaches another server with a credential and before a deployment calls its target,
+/// so an application that hides or suspends a repository stops what it would tell or copy elsewhere. In
+/// `repositoryId`, `kind` (`webhook`, `push-mirror`, `fetch` or `deploy`) and `event` (the webhook event, the
+/// deployment's environment, empty for a push); out `allowed`
 /// (false or N refuses) and `message`. With no service, allowed; a service that fails refuses (its errors are its
 /// answer). Called with authorization disabled. Why not, when refused.
 pub(crate) fn outbound_allowed(repository_id: &str, kind: Outbound, event: &str) -> Result<(), String> {

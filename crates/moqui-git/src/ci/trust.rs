@@ -121,14 +121,20 @@ pub(crate) fn environment_allows(environment: &EntityValue, run: &EntityValue) -
     if is_yes(run, "protectedRef") {
         return true;
     }
-    let ref_name = field(run, "refName").unwrap_or_default();
+    allowed_ref(environment, &field(run, "refName").unwrap_or_default())
+}
+
+/// Whether the environment's `allowedRefs` names `ref_name` (a full ref): a pattern that starts with `refs/` is
+/// matched against the ref, any other against a branch's name. Its secrets go to such a ref's runs, and a deployment
+/// of such a branch is taken, besides those of protected refs.
+pub(crate) fn allowed_ref(environment: &EntityValue, ref_name: &str) -> bool {
     let branch = ref_name.strip_prefix("refs/heads/");
     field(environment, "allowedRefs")
         .unwrap_or_default()
         .split_whitespace()
         .any(|pattern| {
             if pattern.starts_with("refs/") {
-                crate::rules::glob(pattern, &ref_name)
+                crate::rules::glob(pattern, ref_name)
             } else {
                 branch.is_some_and(|branch| crate::rules::glob(pattern, branch))
             }
@@ -171,7 +177,7 @@ pub(crate) fn approval_environments<'a>(
     Ok(names)
 }
 
-fn environment_named(
+pub(crate) fn environment_named(
     entity: &EntityFacade,
     repository: &str,
     owner: Option<&str>,

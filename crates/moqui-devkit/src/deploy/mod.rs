@@ -14,7 +14,8 @@
 
 //! Components and conf on a running server (plans/archive/Component-Deploy.md): the conf reload's services, and the loading
 //! of a component without a restart. The conf reload itself is `moqui_core::context::conf_reload`; this crate holds
-//! what uses the reload pipeline ([`crate::reload`]). Guide: docs/tools/Component-Deploy.md.
+//! what uses the reload pipeline ([`crate::reload`]). The gate ([`require_passed_run`]) keeps a server to commits a
+//! source server attests passed their pipeline (`git::deploy_attested`). Guide: docs/tools/Component-Deploy.md.
 
 pub mod conf_edit;
 #[cfg(feature = "git")]
@@ -26,3 +27,14 @@ pub mod load;
 pub mod services;
 
 pub(crate) use services::register;
+
+/// Whether this server deploys a commit only with an attestation that it passed its environment's pipeline: the
+/// conf's `component-deploy` `require-passed-run` (docs/tools/Component-Deploy.md "The gate"). Then `deploy#Component`
+/// and `update#Component` refuse an unattested commit, and `load#Component` (a directory, no commit) refuses.
+pub fn require_passed_run(factory: &moqui_core::context::ExecutionContextFactory) -> bool {
+    factory.conf_flag("component-deploy", "require-passed-run", false)
+}
+
+/// What the gate says of a deploy that is not attested while it is on.
+pub const GATE_REFUSAL: &str = "this server deploys a commit only with an attestation that it passed its \
+     environment's pipeline (component-deploy require-passed-run): deploy it from its repository's environment";

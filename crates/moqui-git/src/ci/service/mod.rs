@@ -38,6 +38,7 @@ use super::{
 use crate::values::map;
 use crate::GitProvider;
 
+mod deploys;
 mod pools;
 mod secrets;
 
@@ -69,6 +70,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, approve_pipeline_run)?;
     pools::register(map)?;
     secrets::register(map)?;
+    deploys::register(map)?;
     rust_service!(map, get_runner_usage)?;
     rust_service!(map, delete_repository_runs)?;
     Ok(())
@@ -437,15 +439,22 @@ fn start_queued_job_runs(_parameters: &Parameters, facade: &EntityFacade) -> Out
     ]))
 }
 
-/// `end#OverdueJobRuns`: the job that ends runs past their time and removes what they left. Out: `timedOutCount`,
-/// `lostCount`, `unclaimedCount`, `removedCount`.
+/// `end#OverdueJobRuns`: the job that ends runs past their time and removes what they left, and starts again a
+/// deploy step left waiting (or fails one that never ended). Out: `timedOutCount`, `lostCount`, `unclaimedCount`,
+/// `removedCount`, `deployStartedCount`, `deployFailedCount`.
 fn end_overdue_job_runs(_parameters: &Parameters, facade: &EntityFacade) -> Out {
     let ended = engine::end_overdue(facade, super::now_millis())?;
+    let (deploy_started, deploy_failed) = super::deploy::resume(facade, super::now_millis()).unwrap_or_else(|err| {
+        tracing::error!("waiting deploy steps were not looked at: {err}");
+        (0, 0)
+    });
     Ok(out([
         ("timedOutCount", int(i64::try_from(ended.timed_out).unwrap_or(0))),
         ("lostCount", int(i64::try_from(ended.lost).unwrap_or(0))),
         ("unclaimedCount", int(i64::try_from(ended.unclaimed).unwrap_or(0))),
         ("removedCount", int(ended.removed)),
+        ("deployStartedCount", int(i64::try_from(deploy_started).unwrap_or(0))),
+        ("deployFailedCount", int(i64::try_from(deploy_failed).unwrap_or(0))),
     ]))
 }
 
