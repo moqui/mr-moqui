@@ -144,6 +144,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 |---|---|---|---|---|---|
 | One dev instance | Developing on your machine | `conf/` (`MoquiDevConf.xml`) | Maximal with the dev tools (the default) | Embedded Postgres | [Quick start](#develop-on-your-machine) |
 | One production server | One business or one site | `conf/` (`MoquiProductionConf.xml`) | Maximal (`--release`) | Embedded Postgres, or an external server | [One production server](#one-production-server) |
+| One server, several sites by host name | Separate sites on sub-domains or related domains, each host with its own root screen | `conf/` (`MoquiSitesConf.xml`) | Maximal (`--release`) | As one production server | [Several sites by host name](#several-sites-by-host-name) |
 | Cluster | More capacity, or a member that can fail | [`conf/local-cluster/`](../runtime/conf/local-cluster/README.md) | Enterprise (`--enterprise`) | One external Postgres for all members | [Cluster](#cluster) |
 | PASS servers with a BOSS server or cluster | Public sites (forum, members) with no business data on the public machines | [`conf/pass/`](../runtime/conf/pass/README.md) | PASS: any server package, Lite is the smallest. BOSS: Maximal or Enterprise | Each PASS server its own; BOSS its own | [PASS](#pass-servers-with-a-boss-server-or-cluster) |
 | Dev instances with a dev group server | A team: shared repositories, tasks and models | [`conf/dev-group/`](../runtime/conf/dev-group/README.md) | Laptops: Dev. Group server: Maximal or Enterprise | Each its own | [Dev group](#dev-instances-with-a-dev-group-server) |
@@ -788,6 +789,51 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
 | SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
+
+## Several sites by host name
+
+One server can answer several host names with a different root screen for each, as Moqui Java does: separate sites
+on sub-domains or related domains, such as a forum and a shop beside the business's own apps. It is not the default:
+every host gets `webroot.xml`, the apps on paths under it, until a `root-screen` names another root for a host.
+`conf/MoquiSitesConf.xml` is a working example (it uses mr-pass for the two public hosts).
+
+```xml
+<webapp name="webroot">
+    <root-screen host="forum\.example\.org" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
+    <root-screen host="(www\.)?example\.com" location="component://example-site/screen/ExampleSite.xml" framework-routes="include"/>
+</webapp>
+```
+
+- **Host.** A regular expression matched against the whole `Host` header, without its port, in lower case. The first
+  that matches wins; `.*` (`webroot.xml`, in MoquiDefaultConf.xml) is the fallback.
+- **The root screen** is a thin wrapper: a home page and the pages of its site, or one app at its root. Files beside it
+  (`ExampleSite/` beside `ExampleSite.xml`) are served as `webroot/` is for `webroot.xml`. The shared `/js`, `/css`,
+  `/libs` and `/images` come from `webroot.xml` when the wrapper's directory has no such file, and so do the error
+  screens.
+- **`framework-routes`** says what else the host gets. A conf whose `root-screen` patterns cannot be read (a pattern
+  that is not a valid regex) refuses the framework's routes on every host until it is fixed:
+
+  | Value | The host serves |
+  |---|---|
+  | not set | The root's own screens and the shared static files. The token routes, the servlets and the sockets answer as on every host (Moqui Java's behaviour) |
+  | `include` | The root's own screens first, then `webroot.xml`'s for a first path name the root does not have: the shell (`/qapps`), sign-in, the apps, `/rest`, the PWA files and Web Push |
+  | `refuse` | The root's own screens and the shared static files only. `/Login`, `/apps`, `/qapps`, `/rest`, the token routes, the servlets, the sockets, `/dav`, `/health`, `/metrics` and the gRPC services of the HTTPS listener are Not Found there, so nobody signs in to the framework on the host. Git at a public site's page URL is the one exception, on a host that is also a `public-site`'s. Use it for a public site |
+
+- **Links.** A link made in a request to such a host keeps that host, with the webapp's scheme and port: only a host a
+  `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
+  `webapp_http_host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
+  apps, which that host does not serve.
+- **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. A
+  deployment's own sites share accounts through SSO; mr-pass's Account does that for PASS sites. A server that is the
+  sign-in provider for its own other hosts is later work.
+- **Per origin.** Each host is its own origin: CORS, the service worker, the PWA manifest and Web Push subscriptions
+  are each host's.
+- **Public sites.** An mr-pass host has its `public-site` (the site id and the app at `/`) and a `root-screen` naming
+  the same `Pass.xml` with `framework-routes="refuse"`. The site id is bound by the conf, never by a request
+  ([mr-pass Deployment](../runtime/components/addon/mr-pass/docs/Deployment.md)).
+- **Each host** needs a DNS record and a certificate for its name ([Certificates](#certificates)). Behind an edge node
+  each is an `EdgeHost` of the pairing, added on the local node's System › Edge Node, passthrough or terminate
+  ([A local server with an edge node](#a-local-server-with-an-edge-node)).
 
 ## Public demo server
 

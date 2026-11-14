@@ -362,6 +362,12 @@ pub(crate) async fn listen(
     // XMPP over WebSocket and its file uploads, while the XMPP server runs (xmpp_domain)
     #[cfg(feature = "xmpp")]
     let app = crate::xmpp::routes(app, &factory);
+    // a host whose root screen refuses the framework's routes (root-screen framework-routes="refuse", a site of its
+    // own, plans/Edge-Node2.md §4.2) gets none of the routes above; the screens' fallback decides the rest
+    let app = app.route_layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&factory),
+        refuse_on_site_host,
+    ));
     let app = app.fallback(dispatch_screen);
     // Every request owns its SERVER span across the asynchronous response.
     let request_telemetry = RequestTelemetry {
@@ -418,10 +424,17 @@ pub(crate) async fn listen(
     let https_grpc = web_grpc.as_ref().map(|(_, names)| names.clone());
     #[cfg(not(feature = "grpc"))]
     let https_grpc: Option<String> = None;
+    // a host whose root screen refuses the framework's routes gets no gRPC service either (plans/Edge-Node2.md §4.2)
     #[cfg(feature = "grpc")]
-    let web = WebApp {
-        grpc: web_grpc.map(|(routes, _)| routes),
-        ..web
+    let web = {
+        let factory = Arc::clone(&grpc_factory);
+        WebApp {
+            grpc: web_grpc.map(|(routes, _)| routes),
+            refusing_host: Some(Arc::new(move |host: &str| {
+                moqui_core::screen::info::host_refuses_framework_routes(&factory, host)
+            })),
+            ..web
+        }
     };
     let edge = started.acceptor;
     let in_process =
@@ -1182,6 +1195,34 @@ pub(crate) fn internal_error(detail: &str) -> Response {
     );
     tracing::error!("request failed, error id {id}: {detail}");
     plain(500, &format!("internal error, id {id}"))
+}
+
+/// A route of the host (a socket, `/dav`, `/health`...) on a host whose `webroot` root screen says
+/// `framework-routes="refuse"` is Not Found. Git at a public site's page URL (Smithy at a host's root,
+/// [`crate::git_http::page_request`]) still reaches the git server on a public site's host; a request to `/git/` there
+/// does not.
+async fn refuse_on_site_host(
+    State(factory): State<Arc<ExecutionContextFactory>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| request.uri().host())
+        .unwrap_or("");
+    // only git at a page's URL, marked where it was rewritten to /git/ (http::serve), never a request to /git/ itself
+    #[cfg(feature = "git")]
+    let git_page = request.extensions().get::<crate::git_http::GitPageRequest>().is_some();
+    #[cfg(not(feature = "git"))]
+    let git_page = false;
+    if !git_page && moqui_core::screen::info::host_refuses_framework_routes(&factory, host) {
+        let mut response = Response::new(axum::body::Body::from("Not found"));
+        *response.status_mut() = axum::http::StatusCode::NOT_FOUND;
+        return response;
+    }
+    next.run(request).await
 }
 
 /// A request `serve_request` marked for an edge node's terminate forward goes down its node's link instead of to the

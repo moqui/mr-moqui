@@ -18,6 +18,10 @@ pub(super) struct PublicSiteRoute {
     pub screen_parameters: std::collections::BTreeMap<String, Value>,
 }
 
+/// The parameter that names the site a request was routed to, bound by the conf ([`parameters`]); a request that
+/// was not routed has none, whatever it sends.
+pub(super) const BOUND_SITE_PARAMETER: &str = "resolvedSiteId";
+
 /// First path segments that always belong to the framework, never to a public site.
 const FRAMEWORK_ROUTES: [&str; 29] = [
     "apps",
@@ -111,6 +115,13 @@ pub(super) fn refuses_framework_route(
     request: &WebRequest,
     servlet_route: bool,
 ) -> bool {
+    // a host whose root-screen says framework-routes="refuse" serves its root's screens and the static files only: no
+    // token route or servlet (its root has none of the framework's screens, so those are Not Found already)
+    if (servlet_route || super::token_route::find(factory, &request.path).is_some())
+        && super::info::host_refuses_framework_routes(factory, request.header("host").unwrap_or(""))
+    {
+        return true;
+    }
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
     if !servlet_route && !FRAMEWORK_ROUTES.contains(&first) {
         return false;
@@ -130,10 +141,15 @@ pub(super) fn refuses_framework_route(
     }
 }
 
-/// The first name of the screen path a request path resolves to, as the screen URL reads it
-/// (`url::cleanup_path_names`, Java's `cleanupPathNameList`): empty names, `.` and `~name=value` drop, `..` pops.
+/// The first name of the screen path a request path resolves to ([`screen_path_names`]).
 fn screen_path_first(path: &str) -> String {
-    let mut names: Vec<&str> = Vec::new();
+    screen_path_names(path).into_iter().next().unwrap_or_default()
+}
+
+/// The names of the screen path a request path resolves to, as the screen URL reads it (`url::cleanup_path_names`,
+/// Java's `cleanupPathNameList`): empty names, `.` and `~name=value` drop, `..` pops.
+pub(super) fn screen_path_names(path: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
     for name in path.split('/') {
         match name {
             "" | "." => {}
@@ -141,10 +157,15 @@ fn screen_path_first(path: &str) -> String {
                 names.pop();
             }
             _ if name.starts_with('~') => {}
-            _ => names.push(name),
+            _ => names.push(name.to_string()),
         }
     }
-    names.first().map_or_else(String::new, |name| (*name).to_string())
+    names
+}
+
+/// Whether `first`, the first name of a screen path, is one of the shared static file routes ([`STATIC_ROUTES`]).
+pub(super) fn is_static_route(first: &str) -> bool {
+    STATIC_ROUTES.contains(&first)
 }
 
 /// [`refuses_framework_route`] for a framework route on the request's host, over `conf`.
@@ -209,16 +230,22 @@ fn request_host(request: &WebRequest) -> String {
         .unwrap_or_default()
 }
 
+/// The public site route of a request: the site's root, the screen path under it and the site the conf binds, for a
+/// path under a mount of a `public-site` of the request's host. None for any other request.
+///
+/// # Errors
+///
+/// A path under a named mount on a host no site names, or one the site's resolver does not find, is Not Found; an
+/// incomplete `public-site` is Unavailable.
 pub(super) fn resolve(
     factory: &ExecutionContextFactory,
     request: &WebRequest,
-    current_root: &str,
 ) -> Result<Option<PublicSiteRoute>, Error> {
     let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
-    resolve_conf(&conf, request, current_root)
+    resolve_conf(&conf, request)
 }
 
-fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Result<Option<PublicSiteRoute>, Error> {
+fn resolve_conf(conf: &MNode, request: &WebRequest) -> Result<Option<PublicSiteRoute>, Error> {
     let Some(list) = conf.first_named("webapp-list") else {
         return Ok(None);
     };
@@ -256,9 +283,6 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
             }
             let site_id = route.attribute("site-id").unwrap_or_default().to_string();
             let root = route.attribute("screen-location").unwrap_or_default().to_string();
-            if root == current_root {
-                return Ok(None);
-            }
             if site_id.is_empty() || root.is_empty() {
                 return Err(Error::of_kind(
                     ErrorKind::Unavailable,
@@ -361,7 +385,7 @@ pub(super) fn parameters(
         }
     }
     out.insert("siteId".to_string(), Value::string(&route.site_id));
-    out.insert("resolvedSiteId".to_string(), Value::string(&route.site_id));
+    out.insert(BOUND_SITE_PARAMETER.to_string(), Value::string(&route.site_id));
     out
 }
 
@@ -375,9 +399,7 @@ mod tests {
     fn public_route_binds_host_site_and_path() {
         let mut request = WebRequest::new("GET", "/forum/Topics");
         request.headers.insert("host".into(), "forum.test:8080".into());
-        let route = resolve_conf(&conf(), &request, "webroot")
-            .expect("route")
-            .expect("matched");
+        let route = resolve_conf(&conf(), &request).expect("route").expect("matched");
         assert_eq!(route.path, "/Forum/Topics");
         let injected = std::collections::BTreeMap::from([("siteId".into(), Value::string("OTHER"))]);
         assert_eq!(
@@ -390,22 +412,22 @@ mod tests {
         let mut request = WebRequest::new("GET", "/forum/../account/Settings");
         request.headers.insert("host".into(), "Forum.Test.".into());
         assert_eq!(
-            resolve_conf(&conf(), &request, "webroot").expect_err("parent").kind(),
+            resolve_conf(&conf(), &request).expect_err("parent").kind(),
             ErrorKind::NotFound
         );
         let mut request = WebRequest::new("GET", "/forum/Topics");
         request.headers.insert("host".into(), "Forum.Test.".into());
-        assert!(resolve_conf(&conf(), &request, "webroot").expect("route").is_some());
+        assert!(resolve_conf(&conf(), &request).expect("route").is_some());
     }
     #[test]
     fn unknown_public_host_is_concealed_and_framework_paths_remain_available() {
         let request = WebRequest::new("GET", "/forum");
         assert_eq!(
-            resolve_conf(&conf(), &request, "webroot").expect_err("host").kind(),
+            resolve_conf(&conf(), &request).expect_err("host").kind(),
             ErrorKind::NotFound
         );
         let request = WebRequest::new("GET", "/rest/s1/pass");
-        assert!(resolve_conf(&conf(), &request, "webroot").expect("framework").is_none());
+        assert!(resolve_conf(&conf(), &request).expect("framework").is_none());
     }
     #[test]
     fn a_site_mounted_at_the_root_never_takes_the_status_probes() {
@@ -416,14 +438,14 @@ mod tests {
                 request.headers.insert("host".into(), "forum.test".into());
                 request.raw_query = query.map(str::to_string);
                 assert!(
-                    resolve_conf(&conf, &request, "webroot").expect(path).is_none(),
+                    resolve_conf(&conf, &request).expect(path).is_none(),
                     "{path} stays the status handler's"
                 );
             }
         }
         let mut request = WebRequest::new("GET", "/Topics");
         request.headers.insert("host".into(), "forum.test".into());
-        assert!(resolve_conf(&conf, &request, "webroot").expect("site").is_some());
+        assert!(resolve_conf(&conf, &request).expect("site").is_some());
     }
     fn root_and_forum() -> MNode {
         MNode::parse_shared("test", r#"<moqui-conf><webapp-list><webapp name="webroot"><public-site host="shop.test" site-id="SHOP" screen-location="component://mr-shop/screen/Shop.xml"><mount path="/" screen="Store"/></public-site><public-site host="forum.test" site-id="SITE_A" screen-location="component://mr-pass/screen/Pass.xml"><mount path="/forum" screen="Forum"/></public-site></webapp></webapp-list></moqui-conf>"#).expect("conf")
@@ -443,36 +465,34 @@ mod tests {
             WebRequest::new("GET", "/Login2"),
         ] {
             assert!(
-                resolve_conf(&conf, &request, "webroot").expect("webapp").is_none(),
+                resolve_conf(&conf, &request).expect("webapp").is_none(),
                 "{} stays the webapp's",
                 request.path
             );
         }
         // the root mount's own host still routes, its paths and its root
-        let route = resolve_conf(&conf, &on("Shop.Test:8443", "/p/Widget"), "webroot")
+        let route = resolve_conf(&conf, &on("Shop.Test:8443", "/p/Widget"))
             .expect("route")
             .expect("shop");
         assert_eq!(
             (route.site_id.as_str(), route.path.as_str()),
             ("SHOP", "/Store/p/Widget")
         );
-        assert!(resolve_conf(&conf, &on("shop.test", "/"), "webroot")
-            .expect("route")
-            .is_some());
+        assert!(resolve_conf(&conf, &on("shop.test", "/")).expect("route").is_some());
         // on the shop's host a named mount of another site's is the shop's path
-        let route = resolve_conf(&conf, &on("shop.test", "/forum"), "webroot")
+        let route = resolve_conf(&conf, &on("shop.test", "/forum"))
             .expect("route")
             .expect("shop");
         assert_eq!(route.site_id, "SHOP");
         // framework paths stay reserved on the shop's host and elsewhere
         for host in ["shop.test", "boss.test"] {
             for path in ["/apps/Boss", "/rest/s1/pass", "/Login", "/status"] {
-                assert!(resolve_conf(&conf, &on(host, path), "webroot").expect(path).is_none());
+                assert!(resolve_conf(&conf, &on(host, path)).expect(path).is_none());
             }
         }
         // a named mount on a host no site names is still concealed
         assert_eq!(
-            resolve_conf(&conf, &on("boss.test", "/forum/Topics"), "webroot")
+            resolve_conf(&conf, &on("boss.test", "/forum/Topics"))
                 .expect_err("concealed")
                 .kind(),
             ErrorKind::NotFound

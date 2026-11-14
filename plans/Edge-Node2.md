@@ -1,6 +1,6 @@
 # Edge Node 2: domains, pools, edge clusters and the front
 
-Status 2026-11-13: plan; E13 is built ([§5](#5-phases)), the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
+Status 2026-11-13: plan; E13 (example confs) and E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) are built ([§5](#5-phases)), the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
 with E0–E10 and E12 built: the link, web access, delegate, queue and replicate, mr-pass on gRPC, mail, chat webhooks,
 calls, SIP, the XMPP tunnel, the attach wizard and the all-in-one node. This plan carries what that one left open
 ([§2](#2-open-from-edge-node)) and adds what larger deployments need, from the user's notes and answers of Nov 12,
@@ -113,7 +113,7 @@ sets it apart ([§4.9](#49-example-confs-for-each-topology)).
 | Topology | Use it for | Conf directory | State |
 |---|---|---|---|
 | One node | Development, one production server, the demo | `conf/` itself | Built |
-| One node, several sites by host name | Separate sites on sub-domains or related domains, one server | `conf/` (`MoquiSitesConf.xml`) | E14 |
+| One node, several sites by host name | Separate sites on sub-domains or related domains, one server | `conf/` (`MoquiSitesConf.xml`) | Built (E14) |
 | PASS servers with a BOSS authority | Public sites with no business data on the public machines, direct REST or gRPC | `conf/pass/` | Built, with its confs (E13) |
 | Dev instances with a group server | A team | `conf/dev-group/` | Built, with its confs (E13) |
 | A local node with an edge node | A server in the office or at home with a public presence; the desktop and mobile apps as its clients | `conf/edge/` | Built, with its confs (E13); the apps' exit checks are open |
@@ -232,6 +232,44 @@ test:
 
 **Deliverable.** A working example, `conf/MoquiSitesConf.xml`, a section in Run-Deploy, and mr-pass's Deployment.md
 for the per-app hosts.
+
+**Built (E14, 2026-11-13).** `root-screen` has a `framework-routes` attribute (not in Java) for what a host gets beside
+its root's own screens: not set as Java (the routes outside the screens answer on every host), `include` (the default
+root's screens for a first path name the host's root does not have) or `refuse` (its root's screens and the shared
+static files only). The checks, as found and as built:
+1. **The shell.** A wrapper root had none of `webroot.xml`'s transitions or subscreens. Rather than copy them into each
+   wrapper (`transition-include` by name, and the always-actions the framework's screens need), `include` serves a
+   path the wrapper does not have under `webroot.xml` as the request's root, so `/qapps`, `/shellData`, `/Login` and the
+   apps are `webroot.xml`'s with their own links. The providers outside an apps root come from the default root
+   (`info::default_root`), not a root asked for with an empty host.
+2. **Static files.** `/js`, `/css`, `/libs` and `/images` come from the default root when the wrapper's directory has no
+   such file, in every mode; the wrapper's own files first.
+3. **Framework routes.** `refuse` refuses the token routes and the servlets in `public_site::refuses_framework_route`
+   (no service call), the host routes (sockets, `/dav`, `/health`, `/metrics`, the LLM and channel routes) by a
+   `route_layer` in `http.rs`, and the HTTPS listener's gRPC services (`grpc_routes` sends the call to the router). Git
+   at a public site's page URL still passes on a public site's host, by the `GitPageRequest` mark the rewrite sets; a
+   request to `/git/` there does not. A conf with an invalid host pattern refuses (fails closed). `/Login`, `/apps`,
+   `/rest` and the rest of `webroot.xml` are not in the wrapper's tree, so they are Not Found already.
+4. **Error screens.** The error screen of the host's own root, else the default root's.
+5. **Links.** `ec.web.getWebappRootUrl` in a request uses the request's host only when the whole header is a plain
+   host name with at most a numeric port, a `root-screen` pattern other than `.*` names it and that root does not
+   refuse the framework's routes (`info::link_host`, one normalized value checked and written), with the conf's scheme
+   and port; outside a request it is the conf's (the earlier test keeps that meaning for any other host).
+6. **Sessions.** There was no cookie domain; the served test checks the cookie stays host-only.
+7. **Per origin.** CORS already took the request's own origin; the service worker, manifest and Web Push work per
+   origin with `include` (the served test checks `sw.js`'s scope header and the manifest on a wrapper host).
+8. **Tools.** `all_root_screen_locations` listed every root already; it now lists each once. The artifact index reads
+   every component file, so a wrapper's screens are in it; an absolute link in them still resolves from `webroot.xml`.
+9. **Behind an edge node.** Docs only (Run-Deploy).
+10. **mr-pass.** No wrapper screen per app: `Pass.xml` is every PASS host's root, named by a `root-screen` with
+    `refuse`, and the host's `public-site` binds the site and puts the app at `/`. Routing a site whose root is also the
+    host's root needed a fix: a public site's path is now routed once, with no "already under the site's root" guard
+    (which skipped the binding), and a request no site route takes has its `resolvedSiteId` parameter dropped, so the
+    site is never the request's.
+
+Tests: `screen::tests::hosts` and `webapp_root_url_keeps_a_root_screen_host_of_the_request` (moqui-core),
+`root_hosts::a_wrapper_root_serves_its_host_by_its_framework_routes` (moqui-host, served); acceptance
+`root_hosts::two_hosts_with_two_root_screens` and mr-pass's `client/SiteHostsHttp` (with `SiteHostsFixtures`).
 
 ### 4.3 The front option set
 
@@ -574,7 +612,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 | Phase | What | Acceptance |
 |---|---|---|
 | **E13** | Example confs for the topologies built today, in their directories, with MoquiEdgeConf.xml and MoquiAllInOneConf.xml moved; the conf test; Run-Deploy's sections cut down to them. Each later phase adds its directory. **Built 2026-11-13**: `edge`, `all-in-one`, `pass`, `dev-group` and `local-cluster`, each node started from its conf; the edge node's backup job runs by `embedded_db_backup_scheduled`; the test is `moqui-devkit`'s `runtime_conf_tests` ([§4.9](#49-example-confs-for-each-topology), As built) | Each built topology starts from its directory's files by its README. Run-Deploy names a directory for every topology. The test loads every conf |
-| **E14** | Root screens by host name: the ten checks of [§4.2](#42-root-screens-by-host-name), what they find fixed, the example conf and the mr-pass wrapper roots | A served instance answers two host names with two root screens: the shell, static files, sign-in, errors and links right on each, each host with its own session. mr-pass serves the Forum and the Shop each at the root of its own host |
+| **E14** | Built 2026-11-13. Root screens by host name: the ten checks of [§4.2](#42-root-screens-by-host-name), what they find fixed, the example conf and the mr-pass per-app hosts (`Pass.xml` as each host's root) | A served instance answers two host names with two root screens: the shell, static files, sign-in, errors and links right on each, each host with its own session. mr-pass serves the Forum and the Shop each at the root of its own host |
 | **E15** | Certificates: the screen and the ACME client ([§4.8](#48-certificates-and-acme)) | A node with no certificate for a name serves no HTTPS for it and asks nobody. From the screen an edge node gets a certificate for a terminate host, and a local node one for a passthrough name through the tunnel. Both renew by the job. A file put in `runtime/cert` shows beside them |
 | **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |
 | **E17** | The front option set and the `node_role` values (`front`, `front_edge`, `edge`); pools: the member list in memory and its report, admission, balancing by protocol with sticky sessions, health and drain, the outbox and replication from a pool; failover to a standby with its notice and Deliver again since; web protection's rules per domain, shared bans and view; the Balancing screen | Two members of a cluster link and share a host name's requests evenly; a browser session stays on one member, and moves when it stops, still signed in. Clients shows a cluster member that is live but not linked. A node on another database with the same key is refused while a member is linked. With the local node stopped, a standby started by hand takes over its names and gets the queued items once; the first machine, started again, is refused. A drained member finishes its requests and gets no new ones |

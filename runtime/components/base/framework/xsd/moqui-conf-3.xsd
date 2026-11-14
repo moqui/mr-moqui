@@ -457,6 +457,19 @@ along with this software (see the LICENSE.md file). If not, see
                         <xs:annotation><xs:documentation>A pattern to match the host name against (from ServletRequest.getServerName())</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="location" type="xs:string" use="required">
                         <xs:annotation><xs:documentation>The location of the root screen XML file</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="framework-routes">
+                        <xs:annotation><xs:documentation>What a host's own root screen serves beside its screens (not in
+                            Java; docs/Run-Deploy.md, "Several sites by host name"). Not set: its own screens, and the shared
+                            static files (/js, /css, /libs, /images) of the default root (host ".*") when its directory has no
+                            such file; the routes outside the screens (token routes, servlets, sockets) answer as on every
+                            host. include: its own screens first, then the default root's for a first path name it does not
+                            have (the shell, sign-in, the apps, /rest, the error screens). refuse: its own screens and the
+                            shared static files only; the token routes, the servlets and the host's own routes (sockets,
+                            /dav, /health, /metrics...) are Not Found on the host.</xs:documentation></xs:annotation>
+                        <xs:simpleType><xs:restriction base="xs:token">
+                            <xs:enumeration value="include"/>
+                            <xs:enumeration value="refuse"/>
+                        </xs:restriction></xs:simpleType></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="error-screen"><xs:complexType>
                     <xs:attribute name="error" use="required"><xs:simpleType><xs:restriction base="xs:token">

@@ -199,8 +199,10 @@ fn render(call: &mut Call<'_>) -> Result<Ret, HostError> {
             } else {
                 webapp_name.as_str()
             };
-            let location = crate::screen::info::root_screen_for_host(&factory, &text("rootScreenFromHost"), webapp)
-                .map_err(|err| HostError::message(err.message()))?;
+            // the host's root, or the default root for a path it leaves to it (framework-routes, a shared file)
+            let location =
+                crate::screen::root_for_request(&factory, &text("rootScreenFromHost"), webapp, &text("screenPath"))
+                    .map_err(|err| HostError::message(err.message()))?;
             render = render.root_screen(location);
         }
         if !text("renderMode").is_empty() {

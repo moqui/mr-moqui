@@ -840,6 +840,49 @@ fn webapp_root_url_is_the_conf_webapp_and_never_the_host_header() {
     assert_eq!(value("ec.web.getWebappRootUrl(false, false)"), conf);
 }
 
+/// A full URL made in a request to a host a `root-screen` names keeps the request's host, with the conf's scheme and
+/// port (plans/Edge-Node2.md §4.2); any other host, an odd host, a host whose root refuses the framework's routes and a
+/// link made outside a request keep the conf's.
+#[test]
+fn webapp_root_url_keeps_a_root_screen_host_of_the_request() {
+    let context = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="erp.example" http-port="8080"
+            https-host="erp.example" https-port="8443">
+            <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
+            <root-screen host="public\.sites\.example" location="component://webroot/screen/webroot.xml" framework-routes="refuse"/>
+            <root-screen host="shop\.example|.*\.sites\.example" location="component://webroot/screen/webroot.xml"/>
+        </webapp></webapp-list></moqui-conf>"#,
+    );
+    let _entered = context.enter();
+    let conf = context.factory().webapp_root_url("webroot");
+    assert_eq!(conf, "http://erp.example:8080");
+    let full = || {
+        crate::script::eval_value("ec.web.getWebappRootUrl(true, null)")
+            .map(|value| moqui_lib::object::to_plain_string(&value))
+            .unwrap()
+    };
+    let _web = crate::web::install(BTreeMap::new());
+    // outside a request (a job, a mail): the conf's
+    assert_eq!(crate::web::webapp_root_url("webroot", true, None), conf);
+    for (host, expected) in [
+        ("Shop.Example:9999", "http://shop.example:8080"),
+        ("forum.sites.example", "http://forum.sites.example:8080"),
+        ("attacker.example", "http://erp.example:8080"),
+        ("evil.example/x.sites.example", "http://erp.example:8080"),
+        // the port part must be digits: the whole header is the value checked and written, never a part of it
+        ("shop.example:@evil.com", "http://erp.example:8080"),
+        ("shop.example:x", "http://erp.example:8080"),
+        // a host whose root refuses the framework's routes: the conf's, where the apps are
+        ("public.sites.example", "http://erp.example:8080"),
+    ] {
+        let mut request = WebRequest::new("GET", "/");
+        request.set_header("host", host);
+        crate::web::set_request_info(&request);
+        crate::web::set_host(host);
+        assert_eq!(full(), expected, "{host}");
+    }
+}
+
 #[test]
 fn script_send_error_follows_accept() {
     let context = ExecutionContextFactory::test_context();
@@ -1083,6 +1126,7 @@ mod forms;
 mod frame;
 mod gate;
 mod golden;
+mod hosts;
 mod html;
 mod markdown;
 mod menu;

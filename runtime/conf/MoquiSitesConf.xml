@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- One production server, several sites by host name (docs/Run-Deploy.md, "Several sites by host name";
+    plans/Edge-Node2.md §4.2). Each host a root-screen names gets that root screen in place of webroot.xml; every other
+    host gets webroot.xml, the apps on paths under it, as on one production server. Here the business's own host keeps
+    the apps, and mr-pass serves its Forum at the root of forum.example.org and its Shop at the root of shop.example.com,
+    each on Pass.xml with the framework's routes refused (mr-pass's docs/Deployment.md, "Several sites by host name").
+    Needs mr-pass (./moq component-get mr-pass); without it, leave out the root-screen and public-site elements of the
+    two PASS hosts.
+
+    A root-screen's host is a regular expression matched against the whole Host header, its port left off and in lower
+    case; the first that matches wins, and ".*" (MoquiDefaultConf.xml's webroot.xml) is the fallback. Its
+    framework-routes says what the host gets beside its root's own screens:
+      (not set)  its root's screens, and the shared static files (/js, /css, /libs, /images) of webroot.xml when its root
+                 has no such file; the token routes, the servlets and the sockets answer as on every host (Moqui Java's)
+      include    its root's screens first, then webroot.xml's for a first path name the root does not have: the shell
+                 (/qapps), sign-in (/Login), the apps, /rest, the error screens, the PWA files
+      refuse     its root's screens and the shared static files only; /Login, /apps, /qapps, /rest, the token routes,
+                 the servlets, the sockets, /dav, /health, /metrics and the HTTPS listener's gRPC services are Not
+                 Found on the host (git at a public site's page URL still answers on a public-site host)
+    An error screen the root does not have is webroot.xml's. A link made in a request to a host a root-screen names
+    uses that host (with the webapp's scheme and port), unless its root refuses the framework's routes; one made on a
+    refuse host or outside a request (mail, a job) uses webapp_http_host.
+    The session cookie is the host's alone: a person signs in to each host. PASS sites share accounts through PASS's
+    Account and its SSO.
+
+    Each host needs a DNS record and a certificate for its name (runtime/cert, docs/Run-Deploy.md, Certificates); behind
+    an edge node each is an EdgeHost of the pairing (System › Edge Node). -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <webapp-list>
+        <webapp name="webroot">
+            <!-- The PASS hosts: Pass.xml is mr-pass's site root, and the public-site below binds the site and puts one app
+                at "/". The site id is the operator's, set here and at the authority (mantle.public.SiteServices), never
+                taken from a request. -->
+            <root-screen host="forum\.example\.org" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
+            <root-screen host="shop\.example\.com" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
+
+            <!-- A site of your own beside the apps: its own root screen (a home page and pages of its own), with the shell,
+                sign-in and the apps of webroot.xml on the same host:
+            <root-screen host="(www\.)?example\.com" location="component://example-site/screen/ExampleSite.xml" framework-routes="include"/>
+            -->
+
+            <public-site host="forum.example.org" site-id="FORUM_SITE" screen-location="component://mr-pass/screen/Pass.xml"
+                    resolver-service="pass.RouteServices.resolve#Route">
+                <mount path="/" screen="Forum"/>
+                <mount path="/account" screen="Account"/>
+                <mount path="/members" screen="Members"/>
+            </public-site>
+            <public-site host="shop.example.com" site-id="SHOP_SITE" screen-location="component://mr-pass/screen/Pass.xml"
+                    resolver-service="pass.RouteServices.resolve#Route">
+                <mount path="/" screen="Shop"/>
+                <mount path="/account" screen="Account"/>
+                <mount path="/support" screen="Support"/>
+            </public-site>
+        </webapp>
+    </webapp-list>
+</moqui-conf>

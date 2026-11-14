@@ -27,12 +27,61 @@ use crate::context::{Error, ExecutionContextFactory};
 /// How deep the walk goes before it stops, against a screen that mounts an ancestor.
 const MAX_DEPTH: usize = 24;
 
-/// The `root-screen` elements of each `webapp` in the merged conf, read once per conf generation: the webapp name,
-/// then each element's `host` (empty when absent) and `location`. The error when the conf does not parse.
+/// The `root-screen` elements of each `webapp` in the merged conf, read once per conf generation. The error when the
+/// conf does not parse.
 struct RootScreens(Result<Vec<WebappRoots>, String>);
 
-/// A webapp's name and its `root-screen` `host` and `location` pairs.
-type WebappRoots = (String, Vec<(String, Option<String>)>);
+/// A webapp's name and its `root-screen` elements in conf order.
+type WebappRoots = (String, Vec<RootEntry>);
+
+/// One `root-screen`: its `host` pattern (empty when absent), `location` and `framework-routes`.
+struct RootEntry {
+    host: String,
+    location: Option<String>,
+    framework_routes: FrameworkRoutes,
+}
+
+/// What a host's root screen serves beside its own screens: the `root-screen` `framework-routes` attribute
+/// (plans/Edge-Node2.md §4.2, docs/Run-Deploy.md "Several sites by host name").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FrameworkRoutes {
+    /// Not set, as Moqui Java: the root's own screens. The shared static files (`/js`, `/css`, `/libs`, `/images`) come
+    /// from the default root when the root's directory has no such file, and the routes outside the screens (the token
+    /// routes, the servlets, the sockets) answer as on every host.
+    #[default]
+    Own,
+    /// `include`: the root's own screens first, then the default root's for a first path name the root does not have:
+    /// the shell and its transitions, sign-in, the apps, `/rest`, the error screens and the files beside it.
+    Include,
+    /// `refuse`: the root's own screens and the shared static files only. The token routes, the servlets other than
+    /// the screens' and the host's own routes (the sockets, `/dav`, `/health`, `/metrics` and the rest) are Not Found on
+    /// the host, as on a public site's restricted host.
+    Refuse,
+}
+
+impl FrameworkRoutes {
+    fn of(text: &str) -> Self {
+        match text.trim() {
+            "include" => Self::Include,
+            "refuse" => Self::Refuse,
+            other => {
+                if !other.is_empty() {
+                    tracing::error!("root-screen framework-routes=\"{other}\" is not include or refuse; using neither");
+                }
+                Self::Own
+            }
+        }
+    }
+}
+
+/// The root screen a host gets ([`root_for_host`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRoot {
+    pub location: String,
+    pub framework_routes: FrameworkRoutes,
+    /// The `.*` fallback answered: no other pattern named the host.
+    pub fallback: bool,
+}
 
 fn root_screens(factory: &ExecutionContextFactory) -> std::sync::Arc<RootScreens> {
     factory.conf_derived(|factory| {
@@ -46,7 +95,11 @@ fn root_screens(factory: &ExecutionContextFactory) -> std::sync::Arc<RootScreens
                 let roots = webapp
                     .children_named("root-screen")
                     .iter()
-                    .map(|root| (root.attribute("host").unwrap_or_default(), root.attribute("location")))
+                    .map(|root| RootEntry {
+                        host: root.attribute("host").unwrap_or_default(),
+                        location: root.attribute("location"),
+                        framework_routes: FrameworkRoutes::of(&root.attribute("framework-routes").unwrap_or_default()),
+                    })
                     .collect();
                 webapps.push((webapp.attribute("name").unwrap_or_default(), roots));
             }
@@ -55,15 +108,21 @@ fn root_screens(factory: &ExecutionContextFactory) -> std::sync::Arc<RootScreens
     })
 }
 
-/// The `root-screen` locations of every `webapp` in the conf, in conf order.
+/// The `root-screen` locations of every `webapp` in the conf, in conf order, each once (two hosts may share a root).
 pub fn all_root_screen_locations(factory: &ExecutionContextFactory) -> Vec<String> {
     let Ok(webapps) = &root_screens(factory).0 else {
         return Vec::new();
     };
-    webapps
+    let mut out: Vec<String> = Vec::new();
+    for location in webapps
         .iter()
-        .flat_map(|(_, roots)| roots.iter().filter_map(|(_, location)| location.clone()))
-        .collect()
+        .flat_map(|(_, roots)| roots.iter().filter_map(|root| root.location.clone()))
+    {
+        if !location.is_empty() && !out.contains(&location) {
+            out.push(location);
+        }
+    }
+    out
 }
 
 /// The `root-screen` location for `host` in webapp `webapp_name`.
@@ -76,32 +135,135 @@ pub fn all_root_screen_locations(factory: &ExecutionContextFactory) -> Vec<Strin
 ///
 /// Returns an error when the webapp is missing, no pattern matches, or a host regex is invalid.
 pub fn root_screen_for_host(factory: &ExecutionContextFactory, host: &str, webapp_name: &str) -> Result<String, Error> {
-    let host = crate::web::host_without_port(host);
+    root_for_host(factory, host, webapp_name).map(|root| root.location)
+}
+
+/// [`root_screen_for_host`] with the root's `framework-routes` and whether the `.*` fallback answered.
+///
+/// # Errors
+///
+/// As [`root_screen_for_host`].
+pub fn root_for_host(factory: &ExecutionContextFactory, host: &str, webapp_name: &str) -> Result<HostRoot, Error> {
+    // a host name is the same in any case and with its root's trailing dot ("Forum.Example.org." is forum.example.org)
+    let host = crate::web::host_without_port(host)
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let host = host.as_str();
     let screens = root_screens(factory);
     let webapps = screens.0.as_ref().map_err(|err| Error::new(err.clone()))?;
     let Some((_, roots)) = webapps.iter().find(|(name, _)| name == webapp_name) else {
         return Err(Error::new(format!("Could not find webapp {webapp_name}")));
     };
+    let not_found = || Error::new(format!("Could not find root screen for host: {host}"));
     let mut wildcard = None;
-    for (pattern, location) in roots {
-        if pattern == ".*" {
-            wildcard = location.as_deref();
+    for root in roots {
+        if root.host == ".*" {
+            wildcard = Some(root);
             continue;
         }
-        if pattern.is_empty() {
+        if root.host.is_empty() {
             continue;
         }
-        if moqui_lib::object::regex_full_match(host, pattern)? {
-            return location
+        if moqui_lib::object::regex_full_match(host, &root.host)? {
+            let location = root
+                .location
                 .clone()
                 .filter(|text| !text.is_empty())
-                .ok_or_else(|| Error::new(format!("Could not find root screen for host: {host}")));
+                .ok_or_else(not_found)?;
+            return Ok(HostRoot {
+                location,
+                framework_routes: root.framework_routes,
+                fallback: false,
+            });
         }
     }
-    wildcard
+    let root = wildcard.ok_or_else(not_found)?;
+    let location = root
+        .location
+        .clone()
         .filter(|text| !text.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| Error::new(format!("Could not find root screen for host: {host}")))
+        .ok_or_else(not_found)?;
+    Ok(HostRoot {
+        location,
+        framework_routes: root.framework_routes,
+        fallback: true,
+    })
+}
+
+/// The `webroot` webapp's default root, its `.*` `root-screen` (`webroot.xml` in the default conf): what a wrapper
+/// root falls back to for the shared static files, the error screens and, with `framework-routes="include"`, the
+/// framework's screens. [`super::ROOT_SCREEN`] when the conf names none.
+pub fn default_root(factory: &ExecutionContextFactory) -> String {
+    let screens = root_screens(factory);
+    screens
+        .0
+        .as_ref()
+        .ok()
+        .and_then(|webapps| webapps.iter().find(|(name, _)| name == "webroot"))
+        .and_then(|(_, roots)| roots.iter().find(|root| root.host == ".*"))
+        .and_then(|root| root.location.clone())
+        .filter(|location| !location.is_empty())
+        .unwrap_or_else(|| super::ROOT_SCREEN.to_string())
+}
+
+/// The host a link made in a request to `host` (a `Host` header) may use ([`crate::web::webapp_root_url`]): the header
+/// as a plain DNS name, its `:port` (digits only) left off, a trailing dot trimmed and in lower case, when a
+/// `root-screen` pattern of `webapp_name` other than `.*` names it and that root does not refuse the framework's routes
+/// (a link from it is often to the apps, which such a host does not serve). None for anything else: a header that is
+/// not `name` or `name:digits` (`shop.example:@evil.test`), a name with any character but letters, digits, `-` and `.`,
+/// so a broad pattern such as `.*\.example\.com` never makes `evil.test/x.example.com` a link's host, and a host no
+/// valid pattern names. The value returned is the one checked.
+pub fn link_host(factory: &ExecutionContextFactory, host: &str, webapp_name: &str) -> Option<String> {
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) => name,
+        Some(_) => return None,
+        None => host,
+    };
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.');
+    if !plain {
+        return None;
+    }
+    root_for_host(factory, &name, webapp_name)
+        .is_ok_and(|root| !root.fallback && root.framework_routes != FrameworkRoutes::Refuse)
+        .then_some(name)
+}
+
+/// Whether the `webroot` root screen of `host` (a `Host` header) says `framework-routes="refuse"`: the host serves its
+/// root's screens and the shared static files, and none of the framework's other routes ([`FrameworkRoutes::Refuse`]).
+/// The host's own routes (the sockets, `/dav`, `/health`...) ask this before they answer. A conf whose root screens
+/// cannot be read (a host pattern that is not a valid regex) refuses on every host: the check guards a security
+/// boundary. A conf with no root screen for the host refuses nothing.
+pub fn host_refuses_framework_routes(factory: &ExecutionContextFactory, host: &str) -> bool {
+    match root_for_host(factory, host, "webroot") {
+        Ok(root) => root.framework_routes == FrameworkRoutes::Refuse,
+        // no root screen for the host (a conf with none) refuses nothing; one that cannot be read refuses
+        Err(err) if unreadable_roots(factory, "webroot") => {
+            tracing::error!("Root screen of host {host}: {err}; refusing the framework's routes there");
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Whether the `root-screen` elements of `webapp_name` cannot be read: the conf does not parse, or a host pattern is
+/// not a valid regex.
+fn unreadable_roots(factory: &ExecutionContextFactory, webapp_name: &str) -> bool {
+    let screens = root_screens(factory);
+    let Ok(webapps) = &screens.0 else {
+        return true;
+    };
+    webapps
+        .iter()
+        .filter(|(name, _)| name == webapp_name)
+        .flat_map(|(_, roots)| roots.iter())
+        .any(|root| {
+            !root.host.is_empty() && root.host != ".*" && moqui_lib::object::regex_full_match("", &root.host).is_err()
+        })
 }
 
 #[derive(Default)]
@@ -198,7 +360,7 @@ pub fn transition_info(
         .map(|(name, required, has_default)| {
             (
                 name.clone(),
-                Value::Map(moqui_lib::object::ValueMap::from_iter([ 
+                Value::Map(moqui_lib::object::ValueMap::from_iter([
                     ("name".to_string(), Value::string(name)),
                     ("required".to_string(), Value::Bool(required)),
                     ("hasDefault".to_string(), Value::Bool(has_default)),
@@ -206,13 +368,19 @@ pub fn transition_info(
             )
         })
         .collect();
-    Ok(Value::Map(moqui_lib::object::ValueMap::from_iter([ 
+    Ok(Value::Map(moqui_lib::object::ValueMap::from_iter([
         ("location".to_string(), Value::string(location)),
         ("name".to_string(), Value::string(name)),
         ("method".to_string(), Value::string(method.to_ascii_lowercase())),
         ("path".to_string(), Value::string(format!("{path}/{name}"))),
-        ("serviceName".to_string(), transition.single_service.as_deref().map_or(Value::Null, Value::string)),
-        ("pathParameters".to_string(), Value::List(transition.path_parameters.iter().map(Value::string).collect())),
+        (
+            "serviceName".to_string(),
+            transition.single_service.as_deref().map_or(Value::Null, Value::string),
+        ),
+        (
+            "pathParameters".to_string(),
+            Value::List(transition.path_parameters.iter().map(Value::string).collect()),
+        ),
         ("parameterMap".to_string(), Value::Map(parameters)),
     ])))
 }

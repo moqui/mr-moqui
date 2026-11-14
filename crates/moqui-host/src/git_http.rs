@@ -114,6 +114,12 @@ async fn feed(mut body: axum::body::Body, tx: mpsc::Sender<Chunk>, limit: u64, i
     }
 }
 
+/// The mark of a request that was git's at a page's URL on a public-site host and is served as its `/git/` request
+/// (`http::serve`): a host that refuses the framework's routes still passes it to the git handler, and nothing else
+/// under `/git/` (plans/Edge-Node2.md §4.2).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GitPageRequest;
+
 /// The `/git/...` path a request at a page's URL on a public-site host is served at, when it is git's (plans/Dogfood.md
 /// D4: the page URL itself clones): `GET <path>/info/refs?service=git-upload-pack` (or `git-receive-pack`), `POST
 /// <path>/git-upload-pack` or `git-receive-pack`, and Git LFS under `<path>.git/info/lfs/`, each with or without

@@ -45,6 +45,11 @@ use crate::guard::Guard;
 #[cfg(feature = "git")]
 pub(crate) type SiteHost = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// Whether a `Host` header names a host whose root screen refuses the framework's routes
+/// (`moqui_core::screen::info::host_refuses_framework_routes`).
+#[cfg(feature = "grpc")]
+pub(crate) type RefusingHost = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// What a request is served with: the router, and the limits and web protection in front of it. The listeners and the
 /// edge link's down connection share it (plans/archive/Edge-Node.md §5.3).
 #[derive(Clone)]
@@ -62,6 +67,10 @@ pub(crate) struct WebApp {
     /// that are on), which a gRPC call goes to instead of the router.
     #[cfg(feature = "grpc")]
     pub grpc: Option<tonic::service::Routes>,
+    /// Whether a host refuses the framework's routes, the gRPC services among them: a call to such a host goes to the
+    /// router, which answers Not Found (plans/Edge-Node2.md §4.2).
+    #[cfg(feature = "grpc")]
+    pub refusing_host: Option<RefusingHost>,
 }
 
 impl WebApp {
@@ -75,6 +84,8 @@ impl WebApp {
             site_host: None,
             #[cfg(feature = "grpc")]
             grpc: None,
+            #[cfg(feature = "grpc")]
+            refusing_host: None,
         }
     }
 }
@@ -464,6 +475,16 @@ fn grpc_routes<B>(web: &WebApp, request: &http::Request<B>) -> Option<tonic::ser
     if web.edge.as_ref().is_some_and(|front| front.target(request).is_some()) {
         return None;
     }
+    if let Some(refusing) = &web.refusing_host {
+        let host = request
+            .uri()
+            .host()
+            .or_else(|| request.headers().get(header::HOST).and_then(|value| value.to_str().ok()))
+            .unwrap_or("");
+        if refusing(host) {
+            return None;
+        }
+    }
     Some(routes.clone())
 }
 
@@ -564,6 +585,7 @@ where
             Some(uri) => match web.guard.check_served_path(client, uri.path()) {
                 Ok(()) => {
                     *request.uri_mut() = uri;
+                    request.extensions_mut().insert(crate::git_http::GitPageRequest);
                     None
                 }
                 Err(refused) => Some(*refused.response),

@@ -98,6 +98,7 @@ mod report_documents;
 mod report_monitoring;
 mod report_schedule_lock;
 mod resources;
+mod root_hosts;
 #[cfg(feature = "rtc")]
 mod rtc;
 mod screen_stream;
