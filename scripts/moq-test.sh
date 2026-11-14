@@ -90,11 +90,15 @@ mkdir -p "$R/target/release" "$R/runtime/components/base/framework/data" "$R/run
     "$R/runtime/install/postgres/18.6.0" "$R/runtime/db/install/18.6.0" "$R/runtime/log" "$R/runtime/tmp" "$R/runtime/opensearch/data/nodes" "$R/runtime/opensearch/logs"
 cp "$SRC/moq" "$R/moq"
 chmod +x "$R/moq"
+mkdir -p "$R/crates/moqui-embedded" "$R/.cargo"
+cp "$SRC/crates/moqui-embedded/archive-excludes.txt" "$R/crates/moqui-embedded/"
+cp "$SRC/.cargo/config.toml" "$R/.cargo/"
 cat >"$R/target/release/moqui" <<'EOF'
 #!/bin/sh
 # moqui stub: records its arguments and env, and fakes save-db / load-save.
 echo "stub: $* conf=${MOQUI_CONF:-}" >>"$(dirname "$0")/calls.log"
 case $1 in
+    embedded) [ "$2" = checksum ] && echo "0000000000000000000000000000000000000000000000000000000000000000  runtime" ;;
     save-db) echo "dump of $2" >"$3" ;;
     load-save) [ -f "$3" ] || exit 3; mkdir -p "$2/data"; cp "$3" "$2/data/restored" ;;
 esac
@@ -185,6 +189,16 @@ check "build --enterprise" 0 'cargo build --profile enterprise --no-default-feat
 check "build two packages" 1 'ask for two packages' -- dry "$M" build --release --enterprise
 check "build passes cargo args" 0 'moqui --features x$' -- dry "$M" build --debug -- --features x
 check "run --enterprise" 0 'target/enterprise/moqui$' -- dry "$M" run --enterprise
+check "build --embed" 0 'features maximal\\?,devtools\\?,embed-production -p moqui$' -- dry "$M" build --embed production
+check "build --embed=all with the programs" 0 'features lite\\?,embed-all\\?,embed-opensearch\\?,embed-chromium -p moqui$' -- \
+    dry env MOQUI_OPENSEARCH_ARCHIVE=/x MOQUI_CHROMIUM_ARCHIVE=/y "$M" build --lite --embed=all --embed-opensearch --embed-chromium
+check "build --embed framework adds no feature" 0 'features enterprise -p moqui$' -- dry "$M" build --enterprise --embed framework
+check "build --embed needs a known level" 1 'takes framework, production or all' -- dry "$M" build --embed most
+check "build two embed levels" 1 'ask for two levels' -- dry "$M" build --embed all --embed production
+check "run --embed" 0 'embed-production -p moqui$' -- dry "$M" run --embed production
+check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
+    env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+check "complete build --embed" 0 '^production$' -- "$M" __complete 3 build --embed p
 rm -f "$R/cargo.log"
 check "run --debug builds first" 0 '' -- "$M" run --debug
 check "cargo saw the debug build" 0 'cargo: build --profile dev --no-default-features --features maximal,devtools -p moqui$' -- cat "$R/cargo.log"
@@ -857,6 +871,13 @@ if have zip && have unzip && have tar && have gzip; then
     : >"$R/runtime/components/base/fw-z/screen/plan/Keep.xml"
     : >"$R/runtime/components/test/tc/component.xml"
     : >"$R/runtime/components/dev/dv/component.xml"
+    # the names archive-excludes.txt lists, which the runtime built into the binary leaves out too
+    mkdir -p "$R/runtime/components/base/fw-z/target/debug" "$R/runtime/components/base/fw-z/script/__pycache__" \
+        "$R/runtime/components/base/fw-z/src/target"
+    : >"$R/runtime/components/base/fw-z/target/debug/out"
+    : >"$R/runtime/components/base/fw-z/script/__pycache__/x.pyc"
+    : >"$R/runtime/components/base/fw-z/src/target/Keep.rs"
+    : >"$R/runtime/components/base/fw-z/screen/Edit.xml~"
     check "archive default name" 0 "Created $O/mr-moqui-[0-9]{8}\.zip .*expands to mr-moqui-[0-9]{8}/" -- \
         sh -c "cd '$O' && '$M' archive"
     # the name moq gave it, so a run across midnight checks the day moq saw
@@ -881,8 +902,10 @@ if have zip && have unzip && have tar && have gzip; then
         done
         check "$kind keeps a deeper test directory" 0 '' -- grep -qF " $top/components/base/fw-z/service/z/test/Keep.xml" <<<"$list"
         check "$kind keeps a deeper plan directory" 0 '' -- grep -qF " $top/components/base/fw-z/screen/plan/Keep.xml" <<<"$list"
+        check "$kind keeps a deeper target directory" 0 '' -- grep -qF " $top/components/base/fw-z/src/target/Keep.rs" <<<"$list"
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
-            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/; do
+            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/ \
+            fw-z/target/ __pycache__ 'Edit\.xml~'; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done
         rm -rf "$O/x"
@@ -946,6 +969,18 @@ if have zip && have unzip && have tar && have gzip; then
     kill "$live" 2>/dev/null
     wait "$live" 2>/dev/null
     rm -f "$R/runtime/db/embedded/data/postmaster.pid"
+    rm -f "$R/cargo.log"
+    check "archive --binary" 0 "Created $O/bin/moqui-[0-9]{8}\.gz .*production runtime built in" -- \
+        sh -c "mkdir -p '$O/bin' && '$M' archive --binary '$O/bin/'"
+    check "archive --binary builds with the production runtime" 0 'embed-production -p moqui$' -- cat "$R/cargo.log"
+    bin_gz=$(ls "$O/bin/"moqui-*.gz)
+    check "archive --binary gzips the binary" 0 '' -- sh -c "gzip -dc '$bin_gz' | cmp - '$R/target/release/moqui'"
+    check "archive --binary writes its checksums" 0 '  runtime$' -- cat "${bin_gz%.gz}.sha256"
+    check "archive --binary checksum of the .gz" 0 "  $(basename "$bin_gz")\$" -- cat "${bin_gz%.gz}.sha256"
+    check "archive --binary exists" 1 'there already; -f replaces them' -- "$M" archive --binary "$bin_gz"
+    check "archive --binary --with-tests builds all" 0 'embed-all' -- \
+        sh -c "'$M' archive --binary --with-tests -f '$O/bin/all.gz' && cat '$R/cargo.log'"
+    check "archive --binary refuses --tgz" 1 'writes the binary alone' -- "$M" archive --binary --tgz
     check "alias add-runtime" 0 './moq archive' -- "$M" add-runtime --help
     check "complete archive" 0 '^--tgz$' -- "$M" __complete 2 archive --t
 else

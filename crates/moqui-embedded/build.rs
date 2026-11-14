@@ -22,7 +22,7 @@
 //! Cargo watches each packed top-level entry of a component, not the component as a whole, so an edit to a component's
 //! tests (or its `.git`) does not pack again; a new top-level directory in a component, or a new component, is packed
 //! once anything else changes, or when `MOQUI_EMBED_COMPONENTS` (which `./moq build` sets to the runtime's component
-//! directories) changes.
+//! directories) changes. The runtime is the repository's, or the one `MOQUI_EMBED_RUNTIME` names.
 
 #[allow(dead_code)]
 #[path = "src/select.rs"]
@@ -32,7 +32,11 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let runtime = manifest.join("../../runtime");
+    // `./moq build --embed production|all` names the runtime it uses (MOQUI_RUNTIME), as `./moq archive` would pack it
+    println!("cargo:rerun-if-env-changed=MOQUI_EMBED_RUNTIME");
+    let runtime = std::env::var_os("MOQUI_EMBED_RUNTIME")
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| manifest.join("../../runtime"), PathBuf::from);
     let level = select::Level::from_features(
         std::env::var_os("CARGO_FEATURE_PRODUCTION").is_some(),
         std::env::var_os("CARGO_FEATURE_ALL").is_some(),
