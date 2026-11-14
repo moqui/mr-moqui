@@ -26,6 +26,14 @@
 //! the bytes read so far go down that node's link ([`super::tunnel`], plans/archive/Edge-Node.md §5.3). The server name of a
 //! passthrough host whose node is not linked closes the connection.
 //!
+//! **On a front node** (plans/Edge-Node2.md §4.7) an edge member's link name (`EdgeHostLinkName`, [`link_names`]) is
+//! read before the ALPN: a local node's link to that member, dialed at the name, goes down its tunnel with its ALPN and
+//! client certificate untouched. A link name goes to its one member, never another; while that member is not linked
+//! it is refused, and a connection to it that offers no link or ACME ALPN is refused. A link ALPN with any other server
+//! name, an ordinary passthrough host's too, is the front's own link. On any other node the ALPN is read first, as before (an edge
+//! node takes its local nodes' links whatever name they dial). A link that came that way down an edge member's own
+//! front link is taken by [`EdgeServer::take_link`].
+//!
 //! **Pools** (plans/Edge-Node2.md §4.4, §4.5). A pairing is one local node or one cluster of them: every member links
 //! with the pairing's key and names its own instance id in its Hello. The registry keeps the live links by pairing and
 //! member; the pairing's one generation counter numbers every member's connections, a new member's link sits beside
@@ -75,6 +83,15 @@ use super::{
 };
 use crate::tls_pin::{hex, public_key_sha256, Pin, PinVerifier};
 
+/// What [`EdgeServer::stale_links`] finds: the pairings no longer active, and the links (pairing, member) whose key is
+/// forgotten or another.
+type StaleLinks = (Vec<String>, Vec<(String, String)>);
+
+/// What a front node answers a call of the edge set's: the queue, replication, a delegated call, PASS
+/// (plans/Edge-Node2.md §4.7).
+pub(crate) const FRONT_REFUSES: &str =
+    "this is a front node (node_role front): it has no queue, replication, delegated calls, calls or PASS";
+
 /// The HTTPS listener's hand-off to the link on an edge node.
 pub(crate) struct Acceptor {
     /// `moqui-edge/1`: the link key's certificate.
@@ -121,6 +138,10 @@ pub(crate) fn acceptor(
             return None;
         }
     };
+    // a link a front node passes through to this node's own front link takes the same settings (EdgeServer::take_link)
+    if let Some(factory) = server.factory.upgrade() {
+        *lock(&factory.extension(|_| LinkTls::default()).0) = Some((Arc::clone(&link), Arc::clone(&pairing)));
+    }
     tracing::info!(
         "Edge node: taking edge links on the HTTPS listener (link key {})",
         identity.fingerprint
@@ -132,22 +153,43 @@ pub(crate) fn acceptor(
     }))
 }
 
+/// The link's TLS settings, `moqui-edge/1` then `moqui-edge-pair/1`, kept on the factory while the listener runs.
+#[derive(Default)]
+struct LinkTls(Mutex<Option<(Arc<rustls::ServerConfig>, Arc<rustls::ServerConfig>)>>);
+
+/// Whether a ClientHello offers one of the link's ALPN protocols.
+pub(crate) fn offers_link(accepted: &rustls::server::Accepted) -> bool {
+    accepted
+        .client_hello()
+        .alpn()
+        .is_some_and(|mut offered| offered.any(|protocol| protocol == ALPN || protocol == ALPN_PAIR))
+}
+
 /// The most a ClientHello may take. It is read whole before any TLS settings are picked, and a passthrough tunnel
 /// replays it whole.
 const MAX_HELLO: usize = 64 * 1024;
+
+/// The bytes under a link connection's TLS: a TCP connection to this node's listener, or a passthrough tunnel a front
+/// node sent down this node's own front link (plans/Edge-Node2.md §4.7).
+pub(crate) trait LinkStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> LinkStream for S {}
+
+pub(crate) type LinkIo = Box<dyn LinkStream>;
 
 /// A connection the link takes over from the listener. It is moved once, from the accept to its serve, so the
 /// stream is not boxed; [`Secured`] then has two variants of a size.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Handoff {
     /// An up, down, check or pairing connection, after its handshake.
-    Link(TlsStream<TcpStream>),
+    Link(TlsStream<LinkIo>),
     /// A passthrough host's connection before any handshake, with the bytes read from it so far (the ClientHello),
-    /// for its node's link.
+    /// for its node's link: to the member an edge member's link name names, else to its pool.
     Passthrough {
         stream: TcpStream,
         hello: Vec<u8>,
         node: String,
+        member: Option<String>,
     },
 }
 
@@ -158,7 +200,7 @@ pub(crate) enum Secured {
 }
 
 /// Read the ClientHello from `stream`: rustls's view of it, and every byte read, which a passthrough tunnel replays.
-async fn read_hello<S>(stream: &mut S) -> std::io::Result<(rustls::server::Accepted, Vec<u8>)>
+pub(crate) async fn read_hello<S>(stream: &mut S) -> std::io::Result<(rustls::server::Accepted, Vec<u8>)>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -200,7 +242,9 @@ where
 
 impl Acceptor {
     /// The start of a connection to the HTTPS listener: the link's settings when the client offers one of the link's
-    /// ALPN protocols, a passthrough host's link when its server name is one, `http` otherwise.
+    /// ALPN protocols, a passthrough host's link when its server name is one, `http` otherwise. On a front node the
+    /// server name comes first (plans/Edge-Node2.md §4.7): a passthrough host, an edge member's link name among them,
+    /// goes down its tunnel whatever ALPN the client offers.
     pub(crate) async fn accept(
         &self,
         mut stream: TcpStream,
@@ -221,6 +265,9 @@ impl Acceptor {
                 client_hello.server_name().map(str::to_string),
             )
         };
+        let passthrough = server_name
+            .as_deref()
+            .and_then(|name| self.server.passthrough_route(name));
         let config = if link {
             Some(&self.link)
         } else if pairing {
@@ -228,26 +275,46 @@ impl Acceptor {
         } else {
             None
         };
-        if let Some(config) = config {
+        // on a front node an edge member's link name is picked by its name before the ALPN (plans/Edge-Node2.md §4.7);
+        // any other passthrough host comes after, so a pairing that claims a name the front is dialed at takes no
+        // other pairing's links
+        let front_only = self.server.config.front && !self.server.config.edge;
+        let link_name = front_only && passthrough.as_ref().is_some_and(|(_, member)| member.is_some());
+        if let Some(config) = config.filter(|_| !link_name) {
+            let stream: LinkIo = Box::new(stream);
             let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
             let stream = start.into_stream(Arc::clone(config)).await?;
             return Ok(Secured::Link(Handoff::Link(stream)));
         }
-        // the front set's (plans/Edge-Node2.md §4.3): an edge node behind a front passes no host through
-        let passthrough = server_name
-            .as_deref()
-            .filter(|_| self.server.config.front)
-            .and_then(|name| self.server.hosts.route(name))
-            .filter(|route| route.mode == hosts::Mode::Passthrough);
-        if let Some(Route { node, .. }) = passthrough {
-            if !self.server.takes_work(&node) {
+        if let Some((node, member)) = passthrough {
+            // a link name carries links, their pairing and an ACME challenge only: nothing else is let through to it
+            if member.is_some() && !(link || pairing || acme) {
+                self.server.count("moqui.edgelink.refused", super::TUNNEL_HTTPS);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("the link name of a member of {node}, offered no link ALPN"),
+                ));
+            }
+            let open = match &member {
+                Some(member) => self.server.member_linked(&node, member),
+                None => self.server.takes_work(&node),
+            };
+            if !open {
                 self.server.count("moqui.edgelink.refused", super::TUNNEL_HTTPS);
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotConnected,
-                    format!("a passthrough host of {node}, whose link is down"),
+                    match &member {
+                        Some(member) => format!("the link name of {node} member {member}, which is not linked"),
+                        None => format!("a passthrough host of {node}, whose link is down"),
+                    },
                 ));
             }
-            return Ok(Secured::Link(Handoff::Passthrough { stream, hello, node }));
+            return Ok(Secured::Link(Handoff::Passthrough {
+                stream,
+                hello,
+                node,
+                member,
+            }));
         }
         // an ACME challenge for a name this node ends TLS for itself; a passthrough name's went down its tunnel above
         if acme {
@@ -261,8 +328,21 @@ impl Acceptor {
     pub(crate) async fn serve(&self, handoff: Handoff, remote: SocketAddr) {
         match handoff {
             Handoff::Link(stream) => Arc::clone(&self.server).serve(stream, remote).await,
-            Handoff::Passthrough { stream, hello, node } => {
-                super::tunnel::passthrough(Arc::clone(&self.server), stream, hello, &node, remote).await;
+            Handoff::Passthrough {
+                stream,
+                hello,
+                node,
+                member,
+            } => {
+                super::tunnel::passthrough(
+                    Arc::clone(&self.server),
+                    stream,
+                    hello,
+                    &node,
+                    member.as_deref(),
+                    remote,
+                )
+                .await;
             }
         }
     }
@@ -557,6 +637,26 @@ impl EdgeServer {
         server
     }
 
+    /// The node a connection whose server name is `name` passes through to: a passthrough host's, on a node with the
+    /// front set (plans/Edge-Node2.md §4.3); an edge node behind a front passes no host through.
+    pub(crate) fn passthrough_node(&self, name: &str) -> Option<String> {
+        self.passthrough_route(name)
+            .filter(|(_, member)| member.is_none())
+            .map(|(node, _)| node)
+    }
+
+    /// [`Self::passthrough_node`] with an edge member's link name too (plans/Edge-Node2.md §4.7): the pairing, and the
+    /// one member a link name goes to.
+    pub(crate) fn passthrough_route(&self, name: &str) -> Option<(String, Option<String>)> {
+        if !self.config.front {
+            return None;
+        }
+        self.hosts
+            .route(name)
+            .filter(|route| route.mode == hosts::Mode::Passthrough)
+            .map(|Route { node, member, .. }| (node, member.map(|member| member.to_string())))
+    }
+
     /// The fingerprint of this node's link key: public, what local nodes pin.
     pub(crate) fn link_fingerprint(&self) -> &str {
         &self.link_fingerprint
@@ -789,6 +889,11 @@ impl EdgeServer {
         hello
             .capabilities
             .retain(|area| area != super::offer::CALLS_AREA && area != super::offer::SIP_AREA);
+        // so a node pairing with a front keeps it as its front pairing, and a front pairing reaches a front
+        // (plans/Edge-Node2.md §4.7)
+        if let Some(factory) = self.factory.upgrade() {
+            hello.node_role = moqui_core::edge::settings(&factory).role.as_str().to_string();
+        }
         // the media node and SIP are the edge set's (plans/Edge-Node2.md §4.3): a front node offers neither
         let edge_set = self
             .factory
@@ -1087,7 +1192,7 @@ impl EdgeServer {
 
     /// The links this edge member holds whose pairing is no longer active, or whose member's pinned key is forgotten
     /// or another (plans/Edge-Node2.md §4.6): what another member did and this one may not have heard.
-    fn stale_links(&self, factory: &ExecutionContextFactory) -> Result<(Vec<String>, Vec<(String, String)>), Error> {
+    fn stale_links(&self, factory: &ExecutionContextFactory) -> Result<StaleLinks, Error> {
         let held: Vec<(String, Vec<(String, String)>)> = {
             let registry = lock(&self.registry);
             registry
@@ -1400,7 +1505,7 @@ impl EdgeServer {
         lock(&self.pair_attempts).allowed(ip, Instant::now(), self.config.pair_window, self.config.pair_attempts)
     }
 
-    async fn serve(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr) {
+    async fn serve(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr) {
         let (fingerprint, alpn) = {
             let tls = stream.get_ref().1;
             let fingerprint = tls
@@ -1437,7 +1542,7 @@ impl EdgeServer {
 
     /// A check connection (no key) or a pairing connection (the new key's fingerprint): a few calls, for a short time,
     /// two streams at a time.
-    async fn serve_pairing(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, key: Option<String>) {
+    async fn serve_pairing(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, key: Option<String>) {
         if write_answer(&mut stream, Answer::Ok, "").await.is_err() {
             return;
         }
@@ -1456,7 +1561,7 @@ impl EdgeServer {
         self.serve_h2(stream, link_server(service), None, limits).await;
     }
 
-    async fn serve_up(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, key: Option<String>) {
+    async fn serve_up(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, key: Option<String>) {
         const NOT_PAIRED: &str = "this node's key is not paired with this edge node, or was revoked; pair again";
         let Some(fingerprint) = key else {
             let message = "a link needs this node's client certificate";
@@ -1527,7 +1632,7 @@ impl EdgeServer {
     /// Serve `service` on an HTTP/2 connection until it ends, `closed` signals, the listener stops, or a limit is hit.
     async fn serve_h2<S>(
         &self,
-        stream: TlsStream<TcpStream>,
+        stream: TlsStream<LinkIo>,
         service: S,
         closed: Option<watch::Receiver<bool>>,
         limits: Limits,
@@ -1592,7 +1697,7 @@ impl EdgeServer {
         }
     }
 
-    async fn serve_down(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, key: Option<String>) {
+    async fn serve_down(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, key: Option<String>) {
         let mut raw = [0_u8; 8 + super::DOWN_TOKEN];
         let read = tokio::time::timeout(self.config.handshake_timeout, stream.read_exact(&mut raw)).await;
         if !matches!(read, Ok(Ok(_))) {
@@ -1714,6 +1819,8 @@ impl EdgeServer {
         let states = lock(&self.registry)
             .link(&node, &member)
             .map(|link| link.state_watch.subscribe());
+        // a front node has no queue (plans/Edge-Node2.md §4.7)
+        let edge_set = self.config.edge;
         let delivery = tokio::spawn({
             let factory = Weak::clone(&self.factory);
             let (node, owner) = (
@@ -1722,7 +1829,9 @@ impl EdgeServer {
             );
             let telemetry = Arc::clone(&self.telemetry);
             async move {
-                let Some(mut states) = states else { return };
+                let Some(mut states) = states.filter(|_| edge_set) else {
+                    return;
+                };
                 loop {
                     if states.wait_for(|state| state.takes_work()).await.is_err() {
                         return;
@@ -1791,6 +1900,9 @@ impl EdgeServer {
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) fn pass_link(&self, site: &str, session: &str) -> Result<Picked, Error> {
+        if !self.config.edge {
+            return Err(Error::new(FRONT_REFUSES));
+        }
         let affinity = match session.trim() {
             "" => Affinity::Fewest,
             handle => Affinity::Key(handle),
@@ -1879,6 +1991,82 @@ impl EdgeServer {
         })
     }
 
+    /// Whether member `member` of pairing `node` is linked with its down connection open: where its link name's
+    /// connections go (plans/Edge-Node2.md §4.7), whatever its state, as a link to it is not balanced work.
+    pub(crate) fn member_linked(&self, node: &str, member: &str) -> bool {
+        lock(&self.registry)
+            .link(node, member)
+            .is_some_and(|link| link.down.as_ref().is_some_and(|down| !down.send.is_closed()))
+    }
+
+    /// The link of member `member` of pairing `node`, as [`Self::member_linked`] says, never another member: where a
+    /// connection to its link name goes (plans/Edge-Node2.md §4.7). [`OFFLINE`] while it is not linked.
+    ///
+    /// [`OFFLINE`]: moqui_core::edge::OFFLINE
+    pub(crate) fn link_to_member(&self, node: &str, member: &str) -> Result<Picked, Error> {
+        let offline = || Error::new(format!("{}: {node} member {member}", moqui_core::edge::OFFLINE));
+        let mut registry = lock(&self.registry);
+        let pool = registry.pools.get_mut(node).ok_or_else(offline)?;
+        let (generation, send) = pool
+            .members
+            .get(member)
+            .and_then(|link| {
+                let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
+                Some((link.generation, down.send.clone()))
+            })
+            .ok_or_else(offline)?;
+        let health = Arc::clone(pool.health.entry(member.to_string()).or_default());
+        drop(registry);
+        Ok(Picked {
+            node: node.to_string(),
+            member: member.to_string(),
+            generation,
+            send,
+            flight: Flight::start(health, self.balance.clone()),
+        })
+    }
+
+    /// Take a link connection that came down this node's own front link (plans/Edge-Node2.md §4.7): a front node passed
+    /// a local node's link, dialed at this edge member's link name, through untouched, its ClientHello read already
+    /// (`accepted`). Served as a link to this node's listener from `remote`, the client the front named. False when
+    /// this node's listener has no link settings (it takes no links).
+    pub(crate) async fn take_link<S>(
+        self: Arc<Self>,
+        accepted: rustls::server::Accepted,
+        stream: S,
+        remote: SocketAddr,
+    ) -> bool
+    where
+        S: LinkStream,
+    {
+        let Some(factory) = self.factory.upgrade() else {
+            return false;
+        };
+        let Some((link, pairing)) = lock(&factory.extension(|_| LinkTls::default()).0).clone() else {
+            return false;
+        };
+        drop(factory);
+        let config = if accepted
+            .client_hello()
+            .alpn()
+            .is_some_and(|mut offered| offered.any(|protocol| protocol == ALPN))
+        {
+            link
+        } else {
+            pairing
+        };
+        let stream: LinkIo = Box::new(stream);
+        let handshake = tokio_rustls::StartHandshake::from_parts(accepted, stream).into_stream(config);
+        match tokio::time::timeout(self.config.handshake_timeout, handshake).await {
+            Ok(Ok(stream)) => {
+                self.serve(stream, remote).await;
+            }
+            Ok(Err(err)) => tracing::debug!("Edge link from {remote} through the front: TLS failed: {err}"),
+            Err(_) => tracing::debug!("Edge link from {remote} through the front: TLS timed out"),
+        }
+        true
+    }
+
     /// A Ping down the down connection of a member of `node` ([`Self::link_of`]): its round trip.
     pub(crate) async fn ping_local(&self, node: &str) -> Result<Duration, String> {
         let picked = self
@@ -1930,6 +2118,9 @@ impl EdgeServer {
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
+        if !self.config.edge {
+            return Err(Error::new(FRONT_REFUSES));
+        }
         // of the pool, by the call's conversation, so one call's events reach one member (plans/Edge-Node2.md §4.4)
         let conversation = balance::conversation(&call.parameters);
         let affinity = conversation.as_deref().map_or(Affinity::Fewest, Affinity::Key);
@@ -2377,22 +2568,20 @@ impl LinkService {
                         // with the pairing's row locked: another edge member that admitted a link of this pairing
                         // since has written its row in the same lock
                         let now = server.read_elsewhere(factory, &key)?;
-                        if now.members.iter().any(|other| *other == id) {
+                        if now.members.contains(&id) {
                             return Ok(Some(true));
                         }
                         Ok((!now.members.iter().any(|other| !seen.contains(other))).then_some(false))
                     };
                     let write_own = || server.write_links(factory);
-                    store::claim_key(
-                        factory,
-                        &key,
-                        &id,
-                        &fingerprint,
-                        wanted_takeover,
-                        &keep,
-                        recheck,
-                        write_own,
-                    )
+                    let claim = store::KeyClaim {
+                        node: &key,
+                        member: &id,
+                        member_key: &fingerprint,
+                        takeover: wanted_takeover,
+                        keep: &keep,
+                    };
+                    store::claim_key(factory, &claim, recheck, write_own)
                 })
                 .await
         };
@@ -2464,6 +2653,15 @@ impl LinkService {
             });
         }
         Ok(token)
+    }
+
+    /// Refused on a front node, which has no queue, replication or PASS (plans/Edge-Node2.md §4.7).
+    fn edge_set(&self) -> Result<(), Status> {
+        if self.server.config.edge {
+            Ok(())
+        } else {
+            Err(Status::failed_precondition(FRONT_REFUSES))
+        }
     }
 
     /// The key of a check (`None`) or pairing connection, counting the call against the connection's limit.
@@ -2606,6 +2804,8 @@ impl Link for LinkService {
         let down_token = self.admit(node, &member, &member_key, &local, state).await?;
         self.server
             .note_status(node, &member, generation, request.status.as_ref());
+        // an edge member's own link name, passed through to it alone on a front (plans/Edge-Node2.md §4.7)
+        link_names::claim(&self.server, node, &member, &local.node_role, &local.link_url).await;
         let key = node.to_string();
         let saved_member = member.clone();
         let saved = self
@@ -2671,6 +2871,7 @@ impl Link for LinkService {
         if !self.helloed.load(Ordering::Acquire) {
             return Err(Status::failed_precondition("Hello first"));
         }
+        self.edge_set()?;
         let item = super::queue::from_proto(request.into_inner().item.unwrap_or_default());
         let applied = super::queue::receive(&self.server.factory, node, item).await;
         Ok(Response::new(super::queue::reply(&applied)))
@@ -2684,6 +2885,7 @@ impl Link for LinkService {
         if !self.helloed.load(Ordering::Acquire) {
             return Err(Status::failed_precondition("Hello first"));
         }
+        self.edge_set()?;
         // the up connection is the generation; the chunks' own is not checked again
         let reply = super::queue::receive_content(&self.server.factory, node, request.into_inner(), |_| Ok(())).await?;
         Ok(Response::new(reply))
@@ -2696,7 +2898,8 @@ impl Link for LinkService {
         }
         // the up connection is the generation; each message's own is not checked again. Only what this node may send
         // is taken, its frames' replies addressed to itself (E7), each stamped with the node (E12)
-        let take = super::signal::edge_takes(node, member);
+        // a front node takes a web protection ban only: it has no calls (plans/Edge-Node2.md §4.7)
+        let take = super::signal::edge_takes(node, member, self.server.config.edge);
         let reply = super::signal::receive(request.into_inner(), |_| Ok(()), take).await?;
         Ok(Response::new(reply))
     }
@@ -2706,6 +2909,7 @@ impl Link for LinkService {
         if !self.helloed.load(Ordering::Acquire) {
             return Err(Status::failed_precondition("Hello first"));
         }
+        self.edge_set()?;
         let batch = super::replicate::batch_of(request.into_inner());
         let set = batch.set_name.clone();
         let key = node.to_string();
@@ -2833,6 +3037,9 @@ pub(crate) fn tell_links(factory: &ExecutionContextFactory, op: LinkOp) {
         moqui_core::edge::cluster_state::tell_links(&facade, &[op]);
     }
 }
+
+#[path = "link_names.rs"]
+mod link_names;
 
 #[cfg(test)]
 #[path = "accept_tests.rs"]

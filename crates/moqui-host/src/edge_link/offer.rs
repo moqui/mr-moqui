@@ -354,11 +354,14 @@ const OWN: &str = "the edge node answers for this name itself";
 
 /// The names no local node's setup may claim, nor their subdomains: the edge node's public names and the server's
 /// own host names (`moqui_core::edge::claims::own_host_names`: its web host, SMTP (MX) host, bounce domain, the host
-/// of its chat address and its mr-pass sites' hosts; on an all-in-one node its XMPP and SIP domains too). A name the
+/// of its chat address and its mr-pass sites' hosts; on an all-in-one node its XMPP and SIP domains too), and the host of
+/// its own `edge_link_url`, where nodes dial it for their links. A name the
 /// operator gives a node on Edge Clients is not checked against them.
-fn reserved_names(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
+pub(crate) fn reserved_names(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let mut names: Vec<String> = config.public_names.clone();
     names.extend(moqui_core::edge::claims::own_host_names(factory));
+    // the name this node is dialed at for its links (its edge_link_url): no pairing's host may take them (§4.7)
+    names.extend(moqui_core::edge::claims::url_host(&config.link_url));
     names.retain(|name| !name.trim().is_empty());
     names
 }
@@ -568,7 +571,11 @@ pub(crate) fn configure(
             }
             results.push(result);
         }
-        for old in all.iter().filter(|held| held.paired_node_id == node) {
+        // an edge member's link name is kept from its Hello, not its pairing's Configure (plans/Edge-Node2.md §4.7)
+        let own = all
+            .iter()
+            .filter(|held| held.paired_node_id == node && held.mode_enum_id != moqui_core::edge::HOST_LINK_NAME);
+        for old in own {
             if kept.contains(&old.host_name) || checked.hosts.iter().any(|host| host.host_name == old.host_name) {
                 continue;
             }

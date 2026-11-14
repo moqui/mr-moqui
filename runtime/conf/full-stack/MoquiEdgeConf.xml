@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A member of the full stack's edge cluster (conf/full-stack/README.md; plans/Edge-Node2.md §3, §4.6, §4.7): every
+    member runs this conf, on one external database, behind a front node. It is conf/edge-cluster/MoquiEdgeConf.xml with
+    the front before it: that conf's comments say what each area does in an edge cluster, and this one what the front
+    changes. The members serve the mr-pass sites with the local cluster as their authority, the mail edge, chat
+    webhooks and MMS files, the media and TURN of calls, SIP, and the queue, delegated calls and replication of their
+    local nodes. The front node is the only address visitors and mail servers reach for the names; the members' own
+    addresses are for media, TURN and SIP, and for the members to reach each other.
+    Each member dials the front: the cluster pairs with it once (on one member, System › Edge Node, Pair with a front
+    node), which writes front_node_url, front_node_key, front_node_pin and front_node_id; the lines are copied to every
+    member's .env, as the rest of it is. The front pools the members as one pairing and balances over the live ones.
+    Use the Maximal package with an external database, or Enterprise; the runtime has the base components and mr-pass
+    (./moq component-get edge), the same on each member. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <!-- front_edge: the front and edge sets, so the members forward their local nodes' own host names (the apps, as
+        erp.example.com) to them, and the front gets those names from the members; a local node has one pairing, with
+        the edge cluster. edge: the edge set alone, so the members forward no web access and bind no tunnel port, and
+        each local node pairs with the front too, for its names, XMPP domain and ports (a second pairing). Either way the
+        members give the front their own sites' hosts as terminate hosts. -->
+    <default-property name="node_role" value="front_edge"/>
+    <!-- each member's own web protection counts by the client the front names on its link; the front's protection comes
+        first, and a ban started here is shared with the other members and told up to the front -->
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- The shared database and the shared .env, as in conf/edge-cluster: entity_ds_* the same on every member, and the
+        secrets the first member's first start makes (session_cookie_key, cluster_tls_cert, cluster_tls_key,
+        entity_ds_crypt_pass, edge_link_key, turn_auth_secret, mail_dkim_key, acme_account_key), with the front
+        pairing's lines once it is made. Back the database up with its own tools. -->
+    <default-property name="entity_ds_db_conf" value="postgres"/>
+    <default-property name="cluster_transport" value=""/>
+    <default-property name="cluster_protocol" value=""/>
+
+    <!-- The links (.env, each member's own): edge_link_url, https://(this member's link name), such as
+        https://edge1.example.com, with an address record at the front's address, not the member's. The member names it
+        in the Hello of its front link, and the front passes that name's connections through to it alone, so a local
+        node dials it there, by the front, and the member needs no inbound port for links: it dials out to the front.
+        Its first certificate cannot come through the front: a member with no certificate starts no link server, and an
+        ACME standby listener takes no links. Give webapp_http_host (below) a certificate first, by System ›
+        Certificates with ACME at a member (its own 443, the name at the members' addresses) or a copied one in
+        runtime/cert; the AcmeCertificate rows are shared, so every member writes it. After that a link name can be set
+        up with ACME too (the challenge then passes through the front); it needs one only if a local node pairs at it.
+        The front is then a single point for the links too: while it is down the local nodes' queue, delegated calls and
+        replication stop with the web. An edge_link_url at a name of the member's own address (443 open on it) keeps
+        the links up without the front. cluster_base_url, https://(its private address):8444,
+        open between the members only. Never copy runtime/db: each member keeps its own instance id, member key, and
+        the front's member list there.
+        The shared names (.env): webapp_http_host, the cluster's own name for its System app and for pairing, with an
+        address record at each member's own address (not the front's); edge_public_addresses, the
+        front's public addresses, which the wizard checks a local node's host names against, since the names point at
+        the front. -->
+
+    <!-- PASS: mr-pass on every member, its local cluster the authority down the link (pass_backend_url edge:). Each
+        site's host is the root of mr-pass's Pass.xml, with the framework's routes refused there, and the member gives
+        the host to the front as a terminate host, so a browser stays on one member, sticky by the session cookie.
+        pass_backend_web_url (.env): the authority's web address through the stack, one of the local cluster's host
+        names, for the SSO front channel. Change the example hosts and site ids to yours; they must match the sites'
+        hosts and mounts at the authority (mantle.public.SiteServices.create#Site, store#Mounts). mr-pass's
+        docs/Deployment.md, Full stack. -->
+    <default-property name="pass_backend_url" value="edge:"/>
+    <webapp-list>
+        <webapp name="webroot">
+            <root-screen host="forum\.example\.org" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
+            <root-screen host="shop\.example\.com" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
+            <public-site host="forum.example.org" site-id="FORUM_SITE" screen-location="component://mr-pass/screen/Pass.xml"
+                    resolver-service="pass.RouteServices.resolve#Route">
+                <mount path="/" screen="Forum"/>
+                <mount path="/account" screen="Account"/>
+            </public-site>
+            <public-site host="shop.example.com" site-id="SHOP_SITE" screen-location="component://mr-pass/screen/Pass.xml"
+                    resolver-service="pass.RouteServices.resolve#Route">
+                <mount path="/" screen="Shop"/>
+                <mount path="/account" screen="Account"/>
+            </public-site>
+        </webapp>
+    </webapp-list>
+
+    <!-- Mail: the mail edge, as in conf/edge-cluster, with port 25 on the front. The front passes each connection on its
+        port 25 (an EdgePort row of kind smtp for this cluster's pairing) down a live member's front link with a PROXY
+        header naming the client, and the member's SMTP listener serves it in process, as from that client: the limits
+        per address, STARTTLS with the member's web certificate, SPF, DKIM, DMARC and ARC, and RCPT TO
+        from the shared copies. The PROXY header is read only on that path, because it came over the member's own
+        link; the listener's own port reads none unless proxy-protocol is on. The listener must run to take them:
+        smtp_listen_port in .env, open as port 25 for a second MX record at the members, or on loopback
+        (smtp_listen_host=127.0.0.1) when nothing else is to reach it. Mail out leaves from each member's own address,
+        DKIM-signed: smtp_hostname per member, the name its address's reverse DNS gives, and the SPF of each domain lists
+        every member's address (ip4:, not the wizard's v=spf1 mx, which would name the front). MX records name the
+        front, and STARTTLS ends on the member, so the MX name's certificate goes on every member. The front relays the
+        bytes: MTA-STS for the domains keeps senders on TLS. -->
+    <default-property name="edge_mail_mta" value="moqui"/>
+    <default-property name="smtp_internet" value="true"/>
+    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
+    <default-property name="edge_mail_relay_port" value="10025"/>
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+
+    <!-- Chat bridges and SMS: a network's webhook URL is a name through the front, as /channels/{chatBridgeId}/webhook on
+        the member's chat address (channels_public_url on the local node), which the member gives the front as a
+        terminate host; any member takes it and queues it once. -->
+    <default-property name="channels_webhooks_enabled" value="true"/>
+
+    <!-- Calls and SIP, as in conf/edge-cluster, never through the front: rtc_public_address, turn_public_host and
+        sip_public_address per member in .env, each at the member's own public address (turn_public_host a name with its
+        own address record, not the front's), with UDP 10000, UDP and TCP 3478 and the relay range, and the SIP ports,
+        open on each member. SRV records for SIP name every member.
+        XMPP and SSH (.env, as in conf/edge-cluster): front_edge members listen on the tunnel ports at their own
+        addresses, with SRV records naming each member; edge members bind none, and the front's ports take each local
+        node's XMPP domain by its front pairing. -->
+    <default-property name="rtc_media_port" value="10000"/>
+    <default-property name="rtc_media_host" value="0.0.0.0"/>
+    <default-property name="turn_port" value="3478"/>
+    <default-property name="call_recording_segment_mb" value="16"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- The queue and balancing of the local cluster's members, as in conf/edge-cluster. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
+            sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"/>
+</moqui-conf>

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A front node (conf/front/README.md; plans/Edge-Node2.md §4.3, §4.7): the front option set alone, node_role front.
+    It faces browsers and balances the nodes behind it, which pair with it and dial it: web access by host name
+    (terminate or passthrough, with the client's address passed on), TCP ports sent to a pairing, load balancing over a
+    pairing's members with sticky sessions and health, web protection, TLS and certificates, and the offline page. It
+    has none of the edge set: no mail, call media, TURN, SIP, XMPP server, queue, delegated calls, replication or
+    mr-pass, and it starts none of them even with their ports set. Its database holds only its pairings, host names,
+    ports and certificates; it holds no business data.
+    It is deployed two ways, with this conf for both: before a local cluster (conf/front, each member running
+    conf/front/MoquiLocalConf.xml), for load balancing and web protection with no edge node; and before an edge cluster
+    (conf/full-stack), whose members are its pool and forward to their local nodes.
+    Build, archive and run with the release flag of ./moq: Maximal (embedded Postgres is enough), or Enterprise with an
+    external database. The runtime needs the base components only. Per-host settings go in .env. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <!-- takes links from the nodes behind it on the HTTPS listener, told from browsers by ALPN; its Hello names the role
+        front and offers web access and ports only, so a node pairing with it keeps it as its front pairing
+        (front_node_url, front_node_key, front_node_pin and front_node_id) and the wizard there shows only those.
+        System › Edge Clients makes pairing codes and shows the pairings, their members and names. A front node dials no
+        other node. -->
+    <default-property name="node_role" value="front"/>
+    <!-- rate limits, connection limits and bans by client address, run before anything goes down a link: the nodes
+        behind it see the client's address, and a ban they start (failed sign-ins) is told up the link, so this node
+        refuses that client for the pairing's own names (System › Security › Web Protection). With a proxy before this
+        node, name it in webapp_trusted_proxies (.env): a client-ip-header with no trusted proxies is ignored. -->
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- The link and web access (.env): webapp_http_host, this node's own public name, where nodes pair and its System
+        app is. The HTTPS listener needs a WebPKI certificate in runtime/cert for it, which a node checks when it pairs;
+        no TLS-terminating proxy before this node, since the links need ALPN and client certificates end to end. Bind
+        443 (docs/Run-Deploy.md, Listen ports and URL ports): the listener binds webapp_https_listen_port, 8443 by
+        default. The links use this node's own key, edge_link_key, generated into .env at the first start; a changed key
+        means every node behind it must pair again. edge_public_addresses: this node's public IPv4 and IPv6 addresses,
+        comma-separated, which the wizard checks the host names' A and AAAA records against.
+        A host name's mode is set by the node behind that gives it. Passthrough: this node reads the name before any TLS
+        and passes the connection down a member's link with a PROXY header; the member ends the TLS with its own
+        certificate, and this node sees nothing of the content. Terminate: this node ends the TLS with its certificate
+        for the name and forwards each request, so it sees the session cookie and keeps a browser on one member; while
+        no member is linked it shows an offline page (503), the page at edge_offline_page when set. Certificates for
+        terminate names go in runtime/cert, or System › Certificates sets a name up with ACME (TLS-ALPN-01): a
+        passthrough name's challenge goes down the tunnel to the node that ends its TLS. -->
+
+    <!-- Ports (.env and rows): edge_ssh_tunnel_port (and edge_ssh_tunnel_host) takes SSH connections for the one active
+        pairing's SSH server; with several pairings each gets a port of its own, a moqui.edge.EdgePort row (System › Edge
+        Clients › Ports). The XMPP ports, for every pairing's XMPP domain by its name:
+                                     <default-property name="edge_xmpp_port" value="5222"/>
+                                     <default-property name="edge_xmpp_tls_port" value="5223"/>
+        (and edge_xmpp_host). Mail: port 25 as an EdgePort row of kind smtp (only on a front node; on edge_smtp_tunnel_host,
+        every address when empty; at most 128 connections at once), each connection passed to the SMTP listener of a member of that pairing's pool with a PROXY header
+        naming the client, which ends the STARTTLS and makes every check itself: before an edge cluster its members,
+        the mail edge (conf/full-stack); before a local cluster its members, when they take mail from the internet
+        themselves (conf/front/MoquiLocalConf.xml). Each port is balanced over the pairing's live members, sticky by the
+        client's address. -->
+
+    <!-- Not here: call media, TURN and SIP never go through a front. Calls and phones reach the edge members' own
+        addresses (conf/full-stack), or a local cluster's own media nodes. -->
+
+    <!-- Web protection's rules per host (plans/Edge-Node2.md §4.3): a rate-limit, client-rule, path-rule or
+        user-agent-rule with host applies to that host's requests on top of the rules without one, so one site can be
+        stricter than another. In the webroot webapp of this conf, for example:
+            <web-protection>
+                <rate-limit name="shop-checkout" host="shop.example.com" path="/checkout/**" methods="POST"
+                        requests="5" seconds="60" burst="10"/>
+                <path-rule name="forum-admin" host="forum.example.org" action="deny" path="/admin/**"/>
+            </web-protection>
+        Bans count every host's events and are shared with this node's cluster members. -->
+
+    <!-- Backups: this node's pairings, host names, ports and ACME certificates are rows; losing them means pairing
+        every node again. The nightly backup_EmbeddedDatabase_daily job is paused in the seed data; this sets it running
+        at each boot (docs/Run-Deploy.md, Backups: its mirror, keeping a copy off this host). It backs up the embedded
+        database only: back an external one up with its own tools. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- Balancing a pairing's pool (plans/Edge-Node2.md §4.4): a terminate host's requests stay on the member their
+        session cookie hashes to (sticky-cookie, the session cookie; a host's own on Edge Clients › Domains), a
+        passthrough host's connections and the ports' on the member of the client's address; a member whose requests
+        fail or time out set-aside-failures times in a row gets no new work for set-aside-seconds. A front keeps no
+        queue, so the queue's attributes are not used. Several front nodes are a cluster of their own: the same .env on
+        one external database, each with its own edge_link_url, and every node behind them links to each member. -->
+    <edge sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"/>
+</moqui-conf>

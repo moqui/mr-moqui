@@ -65,7 +65,10 @@ along with this software (see the LICENSE.md file). If not, see
         const list = (items) => Array.from(items || []).join(', ')
         edge = {edgeName: out.edgeName || '', fingerprint: out.fingerprint || '',
             versionText: (out.binaryVersion || '') + (out.linkVersion ? ' · ' + L('link') + ' ' + out.linkVersion : ''),
-            publicNamesText: list(out.publicNames), featuresText: list(out.features)}
+            publicNamesText: list(out.publicNames), featuresText: list(out.features),
+            // where the pairing goes follows the node's role (plans/Edge-Node2.md §4.7)
+            roleText: out.edgeRole === 'front' ? L("A front node: kept as this node's front pairing, for web access and ports only")
+                : out.edgeRole ? L('An edge node') + ' (' + out.edgeRole + ')' : L('An edge node')}
         pair = {url: url, expectFingerprint: out.fingerprint || ''}
     ]]></script></actions>
     <widgets>
@@ -95,11 +98,13 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-single name="EdgeReview" map="edge">
                     <field name="edgeName"><default-field title="Name"><display/></default-field></field>
                     <field name="versionText"><default-field title="Version"><display/></default-field></field>
+                    <field name="roleText"><default-field title="Role"><display/></default-field></field>
                     <field name="fingerprint"><default-field title="Link key fingerprint" tooltip="The SHA-256 of the edge node's link key, the key its links use"><display/></default-field></field>
                     <field name="publicNamesText"><default-field title="Public names"><display/></default-field></field>
                     <field name="featuresText"><default-field title="Features"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="edgeName"/><field-ref name="versionText"/></field-row>
+                        <field-ref name="roleText"/>
                         <field-ref name="fingerprint"/>
                         <field-row><field-ref name="publicNamesText"/><field-ref name="featuresText"/></field-row>
                     </field-layout>

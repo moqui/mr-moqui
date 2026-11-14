@@ -14,7 +14,7 @@
 
 //! The TCP ports an edge node pipes to one pairing (plans/Edge-Node2.md §4.1 "SSH", §4.10 "Ports", E16): the
 //! `moqui.edge.EdgePort` rows the System app sets, each a port, the pairing its connections go to, and the tunnel's
-//! kind (SSH, XMPP with STARTTLS or direct TLS). They change while the node runs: [`add`] and [`remove`] write a row
+//! kind (SSH, XMPP with STARTTLS or direct TLS, and on a front node SMTP: §4.7, E19). They change while the node runs: [`add`] and [`remove`] write a row
 //! and say so ([`changed`]), and the host's edge link opens or closes the port's listener within seconds, telling how
 //! it went ([`set_states`], [`states`]).
 //!
@@ -35,9 +35,29 @@ use crate::entity::EntityFacade;
 const PORT: &str = "moqui.edge.EdgePort";
 const CLIENT: &str = "moqui.edge.EdgeClient";
 
-/// The kinds of tunnel a port row may be: to the node's SSH server, or its XMPP server by STARTTLS or direct TLS (the
-/// edge link's tunnel kinds).
-pub const KINDS: [&str; 3] = ["ssh", "xmpp", "xmpps"];
+/// The kinds of tunnel a port row may be: to the node's SSH server, its XMPP server by STARTTLS or direct TLS, or its
+/// SMTP listener (the edge link's tunnel kinds).
+pub const KINDS: [&str; 4] = ["ssh", "xmpp", "xmpps", SMTP];
+
+/// The kind of a front node's mail port (plans/Edge-Node2.md §4.7, E19): port 25 passed to an edge cluster's mail edge,
+/// a member of the pairing's pool by the client's address, behind a PROXY v2 header naming the client. Only on a front
+/// node (`node_role=front`): a node with the edge set takes mail itself.
+pub const SMTP: &str = "smtp";
+
+/// The listeners of the edge set, which a front node never starts (`super::front_refuses`): on a front their usual
+/// ports are free for a row, so its port 25 can go to an edge cluster.
+const FRONT_NEVER: [&str; 10] = [
+    "smtp_listen_port",
+    "edge_mail_relay_port",
+    "xmpp_port",
+    "xmpp_tls_port",
+    "sip_port",
+    "sip_tls_port",
+    "turn_port",
+    "turn_tls_port",
+    "rtc_media_port",
+    "rtc_media_tcp_port",
+];
 
 /// The properties of this node's own listeners, whose ports no row may take, each with its port when the property is
 /// unset (0 for none): a row never takes a service's usual port, set or not.
@@ -148,14 +168,18 @@ pub fn list(facade: &EntityFacade, paired_node_id: Option<&str>) -> Result<Vec<E
 }
 
 /// What of this node's own takes `port`, when something does: a listener's property (set, or unset with that port as
-/// its default), a mail or XMPP port, or a range of its own sockets.
-pub fn reserved(port: u16) -> Option<String> {
-    reserved_in(port, moqui_lib::env::get_prop_or_env)
+/// its default), a mail or XMPP port, or a range of its own sockets. On a front node (`front`) the edge set's
+/// listeners and ranges are none of its own ([`FRONT_NEVER`]).
+pub fn reserved(port: u16, front: bool) -> Option<String> {
+    reserved_in(port, front, moqui_lib::env::get_prop_or_env)
 }
 
 /// [`reserved`] with the properties `property` gives.
-fn reserved_in(port: u16, property: impl Fn(&str) -> String) -> Option<String> {
+fn reserved_in(port: u16, front: bool, property: impl Fn(&str) -> String) -> Option<String> {
     for (name, default) in OWN_PORTS {
+        if front && FRONT_NEVER.contains(&name) {
+            continue;
+        }
         let set = property(name);
         let taken = match set.trim() {
             "" => default != 0 && default == port,
@@ -168,7 +192,7 @@ fn reserved_in(port: u16, property: impl Fn(&str) -> String) -> Option<String> {
     if let Some((_, what)) = WELL_KNOWN.iter().find(|(known, _)| *known == port) {
         return Some((*what).to_string());
     }
-    for (name, default) in OWN_RANGES {
+    for (name, default) in OWN_RANGES.iter().filter(|_| !front) {
         let set = property(name);
         let range = if set.trim().is_empty() {
             default.to_string()
@@ -190,8 +214,9 @@ fn reserved_in(port: u16, property: impl Fn(&str) -> String) -> Option<String> {
 ///
 /// # Errors
 ///
-/// Refuses a port that is not one, a kind that is not one of [`KINDS`], a pairing that is not active, a port of this
-/// node's own listeners ([`reserved`]) and a port another row has; returns the entity facade's error.
+/// Refuses a port that is not one, a kind that is not one of [`KINDS`], [`SMTP`] on a node that is not a front node, a
+/// pairing that is not active, a port of this node's own listeners ([`reserved`]) and a port another row has; returns
+/// the entity facade's error.
 pub fn add(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
@@ -210,6 +235,13 @@ pub fn add(
     if !KINDS.contains(&kind.as_str()) {
         return Err(Error::new(format!("tunnelKind must be one of {}", KINDS.join(", "))));
     }
+    let front = super::settings(factory).role == super::NodeRole::Front;
+    if kind == SMTP && !front {
+        return Err(Error::new(
+            "an smtp port is a front node's (node_role front, plans/Edge-Node2.md §4.7): a node with the edge set takes \
+             mail on its own SMTP listener",
+        ));
+    }
     let node = paired_node_id.trim();
     let active = facade
         .find(CLIENT)?
@@ -220,7 +252,7 @@ pub fn add(
     if node.is_empty() || active == 0 {
         return Err(Error::new(format!("{node} is not an active paired node")));
     }
-    if let Some(what) = reserved(port) {
+    if let Some(what) = reserved(port, front) {
         return Err(Error::new(format!("port {port} is this node's own ({what})")));
     }
     let wanted = EdgePort {

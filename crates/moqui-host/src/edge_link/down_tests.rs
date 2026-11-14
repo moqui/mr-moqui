@@ -66,6 +66,7 @@ fn local(label: &str) -> (LocalWeb, tokio_rustls::TlsConnector, tokio::sync::wat
             shutdown,
         },
         factory: Weak::new(),
+        relay: None,
     };
     (web, connector, stop)
 }
@@ -247,7 +248,12 @@ async fn a_passthrough_tunnel_is_from_the_client_its_proxy_header_names() {
         open(&mut send, TUNNEL_SSH).await.err(),
         Some(http::StatusCode::NOT_FOUND)
     );
-    assert_eq!(open(&mut send, "smtp").await.err(), Some(http::StatusCode::BAD_REQUEST));
+    // an SMTP tunnel is taken only on an edge-set node's front link (plans/Edge-Node2.md §4.7): this one relays nothing
+    assert_eq!(open(&mut send, "smtp").await.err(), Some(http::StatusCode::NOT_FOUND));
+    assert_eq!(
+        open(&mut send, "telnet").await.err(),
+        Some(http::StatusCode::BAD_REQUEST)
+    );
 }
 
 #[tokio::test]

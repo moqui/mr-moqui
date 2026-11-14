@@ -296,6 +296,47 @@ pub async fn connect_up(config: &LocalConfig) -> Result<UpLink, LinkError> {
     connect_up_with(config, &prepared).await
 }
 
+/// Send an empty queued item up `up`'s connection and answer what the other end said: for a test of what a front node
+/// refuses (plans/Edge-Node2.md §4.7).
+#[doc(hidden)]
+pub async fn try_deliver(up: &UpLink) -> Result<(), String> {
+    let mut client = up.client.clone();
+    let request = DeliverRequest {
+        generation: up.generation,
+        item: Some(Default::default()),
+    };
+    client
+        .deliver(request)
+        .await
+        .map(drop)
+        .map_err(|status| status.message().to_string())
+}
+
+/// Send a replication batch and a queued item's content up `up`'s connection, and answer what the other end said of
+/// each: for a test of what a front node refuses (plans/Edge-Node2.md §4.7).
+#[doc(hidden)]
+pub async fn try_replicate_and_content(up: &UpLink) -> (Result<(), String>, Result<(), String>) {
+    let mut client = up.client.clone();
+    let batch = super::proto::ReplicateRequest {
+        set_name: "groups".to_string(),
+        epoch: "e1".to_string(),
+        seq: 1,
+        ..Default::default()
+    };
+    let replicated = client
+        .replicate(batch)
+        .await
+        .map(drop)
+        .map_err(|status| status.message().to_string());
+    let chunks = super::queue::content_chunks(up.generation, "item-1", b"content");
+    let content = client
+        .put_content(chunks)
+        .await
+        .map(drop)
+        .map_err(|status| status.message().to_string());
+    (replicated, content)
+}
+
 /// Dial a down connection of `generation` and read the edge node's answer, then close it: for a test of the edge node's
 /// generation check.
 #[doc(hidden)]
@@ -333,8 +374,17 @@ async fn connect_up_with(config: &LocalConfig, prepared: &Prepared) -> Result<Up
     });
     let mut client = super::link_client(send);
     let (_, status) = member_status(&pool_member(config), false).await;
+    let mut said = hello(&config.instance_id, &config.node_name, &[], &[]);
+    // an edge member names its own link address to its front, which passes it through to it (plans/Edge-Node2.md §4.7)
+    if config.front {
+        said.link_url.clone_from(&config.link_url);
+        // and its role, so the front keeps the name only from a node with the edge set
+        if let Some(factory) = config.web.as_ref().and_then(|web| web.factory().upgrade()) {
+            said.node_role = moqui_core::edge::settings(&factory).role.as_str().to_string();
+        }
+    }
     let request = HelloRequest {
-        hello: Some(hello(&config.instance_id, &config.node_name, &[], &[])),
+        hello: Some(said),
         status: Some(status),
         member_key: key.public(),
         member_proof: key.prove(&binding),
@@ -526,6 +576,12 @@ impl LocalService {
     }
 }
 
+/// The server a down connection's queue, delegated calls and PASS calls run on: none on a front pairing's link, which
+/// carries web access and ports only (plans/Edge-Node2.md §4.7), so a front cannot hand this node work.
+fn work_factory(factory: Option<Weak<ExecutionContextFactory>>, front: bool) -> Option<Weak<ExecutionContextFactory>> {
+    factory.filter(|_| !front)
+}
+
 /// An open down connection, served until it closes or is dropped.
 struct DownLink {
     ended: watch::Receiver<bool>,
@@ -552,10 +608,11 @@ async fn connect_down(
     role.extend_from_slice(token);
     let stream = dial_role(prepared, config.connect_timeout, &role).await?;
     let factory = config.web.as_ref().map(super::down::LocalWeb::factory);
+    let work = work_factory(factory.clone(), config.front);
     let link = LocalLinkServer::new(LocalService {
         current: Arc::clone(current),
         hello: hello(&config.instance_id, &config.node_name, &[], &[]),
-        factory: factory.clone(),
+        factory: work.clone(),
         edge_node: edge_node.to_string(),
         member: pool_member(config),
         stopping: Arc::clone(stopping),
@@ -565,7 +622,7 @@ async fn connect_down(
     // the PASS authority for the edge node's mr-pass, the link its client (plans/archive/Edge-Node.md §5.5); it runs on the
     // server's factory, so only with a web app
     let mut grpc = tonic::service::Routes::new(link);
-    if let Some(factory) = factory {
+    if let Some(factory) = work {
         grpc = grpc.add_service(crate::pass_authority::link_server(factory));
     }
     // the link's calls, and this node's web app and tunnels (plans/archive/Edge-Node.md §5.3)
@@ -945,9 +1002,11 @@ impl Dialer {
         prepare(&config)?;
         let timeout = config.connect_timeout;
         // replication notes writes from now on, and keeps its notes across links and dialers (plans/archive/Edge-Node.md §5.2)
+        // not for a front pairing, which carries none (plans/Edge-Node2.md §4.7)
         let replica = config
             .web
             .as_ref()
+            .filter(|_| !config.front)
             .and_then(|web| web.factory().upgrade())
             .and_then(|factory| {
                 let settings = moqui_core::edge::settings(&factory);
@@ -1000,7 +1059,7 @@ impl Dialer {
         for (key, shared, retired) in self.cluster.each() {
             let status = lock(&shared.status).clone();
             reconnects += status.reconnects;
-            let carries_work = work == Some(shared.serial);
+            let carries_work = work == Some(shared.serial) && !self.cluster.config.front;
             let rank = if carries_work {
                 0
             } else if status.state == LinkState::Linked {
@@ -1058,7 +1117,7 @@ impl Dialer {
 
     /// Send the edge node this node's part of the setup (the link's Configure).
     pub async fn configure(&self, setup: &EdgeSetup) -> Result<Configured, String> {
-        let configured = configure_on(self.up_client(), setup, self.timeout).await?;
+        let configured = configure_on(self.up_client(), setup, self.timeout, self.cluster.config.front).await?;
         self.note_configured(&configured);
         Ok(configured)
     }
@@ -1137,14 +1196,19 @@ pub(crate) async fn offer_on(client: Option<LinkClient>, timeout: Duration) -> R
     }
 }
 
-/// Send `setup` on `client`'s up connection.
+/// Send `setup` on `client`'s up connection; to a front node (`front`, plans/Edge-Node2.md §4.7) without this node's
+/// SIP domain, which is its edge pairing's.
 pub(crate) async fn configure_on(
     client: Option<LinkClient>,
     setup: &EdgeSetup,
     timeout: Duration,
+    front: bool,
 ) -> Result<Configured, String> {
     let mut client = client.ok_or_else(|| NOT_UP.to_string())?;
-    let request = super::offer::request_of(setup);
+    let mut request = super::offer::request_of(setup);
+    if front {
+        request.sip_domain.clear();
+    }
     match tokio::time::timeout(timeout, client.configure(request)).await {
         Ok(Ok(reply)) => Ok(super::offer::configured_of(reply.into_inner())),
         Ok(Err(status)) => Err(format!("the edge node refused the setup: {}", status.message())),
@@ -1212,10 +1276,34 @@ const STOPPING_TOLD: Duration = Duration::from_secs(1);
 /// How often a member that is starting pings, so its link says it is live soon after it is.
 const STARTING_PING: Duration = Duration::from_millis(500);
 
+/// Whether the node a link reached has the role its pairing expects (plans/Edge-Node2.md §4.7): a front pairing's
+/// ([`LocalConfig::front`]) a front node, an edge pairing's any other. A pairing whose node changed its role is refused,
+/// so the operator pairs again and the pairing lands where it belongs.
+pub(crate) fn role_matches(config: &LocalConfig, role: &str) -> Result<(), String> {
+    let front = role == moqui_core::edge::NodeRole::Front.as_str();
+    match (config.front, front) {
+        (true, false) => Err(format!(
+            "the node at {} is not a front node (its role is {}), and this is the front pairing: pair with it again",
+            config.url,
+            if role.is_empty() { "not told" } else { role }
+        )),
+        (false, true) => Err(format!(
+            "the node at {} is a front node, and this pairing is for an edge node: pair with it again, which keeps it \
+             as this node's front pairing",
+            config.url
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// The pairing the edge node keys this node by, as its Hello answer said (plans/Edge-Node2.md §4.4): this server's
 /// queue rows and receipts are kept by it from now (`moqui_core::edge::queue::set_pairing_id`). When `edge_node_pairing`
 /// says another, or nothing, that is logged as an error and the runtime's `.env` is written again with this one.
 fn note_pairing(config: &LocalConfig, pairing: &str) {
+    // the queue's rows are the edge pairing's: a front node keys this node too, but carries none of them
+    if config.front {
+        return;
+    }
     let Some(factory) = config.web.as_ref().and_then(|web| web.factory().upgrade()) else {
         return;
     };
@@ -1396,6 +1484,8 @@ async fn link_once(
         if let Some(misdirected) = super::misdirected(expected.as_deref(), &up.edge.instance_id) {
             return Err(LinkError::Failed(misdirected));
         }
+        // a front pairing reaches a front node, an edge pairing anything else (plans/Edge-Node2.md §4.7)
+        role_matches(&config, &up.edge.role).map_err(LinkError::Refused)?;
         check_peer(&cluster, &config, expected.as_deref(), &up.edge.instance_id)
             .await
             .map_err(LinkError::Refused)?;
@@ -1462,7 +1552,8 @@ async fn link_once(
     let mut next_ping = tokio::time::Instant::now();
     let member = pool_member(&config);
     loop {
-        let carries = *work_rx.borrow_and_update() == Some(shared.serial);
+        // a front pairing's links carry no work (plans/Edge-Node2.md §4.7)
+        let carries = *work_rx.borrow_and_update() == Some(shared.serial) && !config.front;
         if carries && work.is_none() {
             tracing::info!("The edge link to {} carries this node's work up", config.url);
             work = Some(Work::start(
@@ -1582,7 +1673,13 @@ struct MediaRows {
 
 impl MediaRows {
     fn start(config: &LocalConfig, up: &UpLink, shared: &Arc<Shared>) -> Self {
-        let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) else {
+        // a front node is no media node or SIP node, and has no TURN (plans/Edge-Node2.md §4.7)
+        let Some(factory) = config
+            .web
+            .as_ref()
+            .filter(|_| !config.front)
+            .map(super::down::LocalWeb::factory)
+        else {
             return Self { task: None };
         };
         let Some(role) = factory.upgrade().map(|factory| {
@@ -1855,3 +1952,7 @@ enum Event {
 pub(crate) fn is_linked(dialer: &Dialer) -> bool {
     dialer.cluster.each().iter().any(|(_, shared, _)| shared.linked())
 }
+
+#[cfg(test)]
+#[path = "dial_tests.rs"]
+mod tests;

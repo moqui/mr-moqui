@@ -239,3 +239,59 @@ fn a_link_whose_listener_is_off_is_not_started_and_serves_nothing_in_memory() {
     assert!(crate::edge::serving_link().is_some());
     crate::edge::clear_edge_link();
 }
+
+#[test]
+fn the_front_pairing_is_a_row_per_front_link_or_one_from_what_pairing_wrote() {
+    let field = |rows: &[Value], at: usize, name: &str| match &rows[at] {
+        Value::Map(row) => row[name].clone(),
+        other => panic!("{other:?}"),
+    };
+    // none without a front pairing
+    assert!(front_rows(None, " ", "").is_empty());
+    // a front pairing alone, by the properties pairing wrote
+    assert!(front_only(" ", "https://front.test"));
+    assert!(!front_only("https://edge.test", "https://front.test"));
+    assert!(!front_only("", ""));
+    // the link not running here: what pairing wrote, not started
+    let rows = front_rows(None, " https://front.test ", "front-1");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(to_plain_string(&field(&rows, 0, "url")), "https://front.test");
+    assert_eq!(to_plain_string(&field(&rows, 0, "instanceId")), "front-1");
+    assert_eq!(to_plain_string(&field(&rows, 0, "state")), "notStarted");
+    assert_eq!(field(&rows, 0, "lastConnectDate"), Value::Null);
+    // a link to each member of the front's cluster, each with the front's name and pinned fingerprint
+    let mut front = LinkStatus {
+        state: LinkState::Linked,
+        url: "https://front.test".to_string(),
+        ..LinkStatus::default()
+    };
+    front.peer.name = "front.test".to_string();
+    front.peer.fingerprint = "ef".repeat(32);
+    let one = front_rows(Some(&front), "https://ignored.test", "");
+    assert_eq!(one.len(), 1, "a link with no member list is one row");
+    assert_eq!(to_plain_string(&field(&one, 0, "state")), "linked");
+    assert_eq!(to_plain_string(&field(&one, 0, "frontName")), "front.test");
+    front.members = vec![
+        crate::edge::EdgeMemberLink {
+            instance_id: "front-1".to_string(),
+            url: "https://front.test".to_string(),
+            state: LinkState::Linked,
+            rtt_ms: Some(1.5),
+            ..Default::default()
+        },
+        crate::edge::EdgeMemberLink {
+            instance_id: "front-2".to_string(),
+            url: "https://front2.test".to_string(),
+            state: LinkState::Retrying,
+            last_error: "refused".to_string(),
+            ..Default::default()
+        },
+    ];
+    let rows = front_rows(Some(&front), "", "");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(field(&rows, 0, "rttMs"), Value::F64(1.5));
+    assert_eq!(to_plain_string(&field(&rows, 1, "instanceId")), "front-2");
+    assert_eq!(to_plain_string(&field(&rows, 1, "state")), "retrying");
+    assert_eq!(to_plain_string(&field(&rows, 1, "lastError")), "refused");
+    assert_eq!(to_plain_string(&field(&rows, 1, "fingerprint")), "ef".repeat(32));
+}

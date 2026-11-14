@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Edge Clients › Ports (plans/Edge-Node2.md §4.1 "SSH", §4.10 Ports): the TCP ports whose connections go down one
     pairing's link each, as a byte tunnel to its SSH server (ssh) or its XMPP server (xmpp with STARTTLS, xmpps with
-    direct TLS), from the moqui.edge.EdgePort rows (org.moqui.edge.EdgeServices.get#EdgePorts, add#EdgePort,
+    direct TLS), and on a front node to its SMTP listener (smtp, with a PROXY header naming the client, §4.7), from the moqui.edge.EdgePort rows (org.moqui.edge.EdgeServices.get#EdgePorts, add#EdgePort,
     remove#EdgePort). This node listens on a port within seconds of adding it and stops when it is removed; the list
     says whether each listens now, and why not. A port of this node's own listeners, and one another row has, is
     refused. The conf's own tunnel ports (edge_ssh_tunnel_port, edge_xmpp_port, edge_xmpp_tls_port) are apart: the SSH
@@ -42,6 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
         const L = (text) => ec.l10n.localize(text)
         portList = []
         nodeOptions = []
+        kindOptions = []
         portsError = ''
         if (!isEdge) return
         let portsOut = {}
@@ -56,7 +57,9 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.popErrors()
         }
         if (portsError) return
-        const kinds = {ssh: L('SSH'), xmpp: L('XMPP, STARTTLS'), xmpps: L('XMPP, direct TLS')}
+        const kinds = {ssh: L('SSH'), xmpp: L('XMPP, STARTTLS'), xmpps: L('XMPP, direct TLS'), smtp: L('SMTP')}
+        kindOptions = Object.entries(kinds).filter(([kind]) => kind !== 'smtp' || frontNode)
+            .map(([kind, text]) => ({kind, text}))
         portList = Array.from(portsOut.portList || []).map((port) => {
             const [stateLabel, stateColor] = port.listening ? [L('Listening'), 'positive']
                 : port.errorText ? [L('Not listening'), 'negative'] : [L('Waiting'), 'grey']
@@ -79,16 +82,14 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="pairedNodeId"><default-field title="Local node"><drop-down>
                         <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
                     </drop-down></default-field></field>
-                    <field name="tunnelKind"><default-field title="To" tooltip="SSH goes to the node's SSH server. XMPP goes to its XMPP server, which ends the TLS: STARTTLS on a port like 5222, direct TLS on one like 5223"><drop-down no-current-selected-key="ssh">
-                        <option key="ssh" text="SSH"/>
-                        <option key="xmpp" text="XMPP, STARTTLS"/>
-                        <option key="xmpps" text="XMPP, direct TLS"/>
+                    <field name="tunnelKind"><default-field title="To" tooltip="SSH goes to the node's SSH server. XMPP goes to its XMPP server, which ends the TLS: STARTTLS on a port like 5222, direct TLS on one like 5223. On a front node, SMTP (port 25) goes to the SMTP listener of a member of the pool, an edge cluster's mail edge, with the client's address"><drop-down no-current-selected-key="ssh">
+                        <list-options list="kindOptions" key="${kind}" text="${text}"/>
                     </drop-down></default-field></field>
                     <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                 </form-single>
             </container-dialog>
         </box-toolbar><box-body-nopad>
-            <label type="p" style="m-muted q-pa-sm q-mb-none" text="TCP ports whose connections go to one local node each, unopened: to its SSH server, or to its XMPP server, which ends the TLS. A port of its own suits a client that cannot name the node, such as SSH."/>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="TCP ports whose connections go to one local node each, unopened: to its SSH server, or to its XMPP server, which ends the TLS; on a front node, mail to an edge cluster's SMTP listener. A port of its own suits a client that cannot name the node, such as SSH."/>
             <form-list name="PortList" list="portList" skip-form="true" paginate="false">
                 <field name="port"><default-field title="Port"><display style="text-weight-medium"/></default-field></field>
                 <field name="nodeId"><default-field title="Local node"><display/></default-field></field>

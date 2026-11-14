@@ -60,6 +60,8 @@ mod edge_cluster;
 mod edge_cluster_state;
 mod edge_domains;
 mod edge_domains_comms;
+mod edge_front;
+mod edge_front_ports;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;

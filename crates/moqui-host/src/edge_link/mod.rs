@@ -63,6 +63,7 @@ pub(crate) mod accept;
 pub(crate) mod balance;
 pub mod dial;
 pub(crate) mod down;
+mod front;
 pub(crate) mod hook;
 pub(crate) mod hosts;
 pub mod member_key;
@@ -115,8 +116,8 @@ pub(crate) const CLIENT_HEADER: &str = "x-moqui-edge-client";
 pub(crate) const PROTO_HEADER: &str = "x-moqui-edge-proto";
 /// The `:protocol` of an extended CONNECT (RFC 8441) that opens a byte tunnel down the link.
 pub(crate) const TUNNEL_PROTOCOL: &str = "moqui-tunnel";
-/// The request header that names a tunnel's kind: [`TUNNEL_HTTPS`], [`TUNNEL_SSH`], [`TUNNEL_XMPP`] or
-/// [`TUNNEL_XMPPS`]. The local node picks the listener; the edge node never names an address.
+/// The request header that names a tunnel's kind: [`TUNNEL_HTTPS`], [`TUNNEL_SSH`], [`TUNNEL_XMPP`],
+/// [`TUNNEL_XMPPS`] or [`TUNNEL_SMTP`]. The local node picks the listener; the edge node never names an address.
 pub(crate) const TUNNEL_HEADER: &str = "x-moqui-tunnel";
 /// A passthrough connection: a PROXY v2 header with the client's address, then the client's TLS, which the local node
 /// ends with its own certificate.
@@ -128,6 +129,9 @@ pub(crate) const TUNNEL_SSH: &str = "ssh";
 pub(crate) const TUNNEL_XMPP: &str = "xmpp";
 /// A connection to the edge node's direct TLS XMPP port (`edge_xmpp_tls_port`, 5223, XEP-0368), likewise.
 pub(crate) const TUNNEL_XMPPS: &str = "xmpps";
+/// A connection to a front node's SMTP port (an `EdgePort` row, plans/Edge-Node2.md §4.7): a PROXY v2 header with the
+/// client's address, then the client's SMTP, which the edge member's own SMTP listener serves (its mail edge).
+pub(crate) const TUNNEL_SMTP: &str = moqui_core::edge::ports::SMTP;
 
 /// The `:authority` of the link's gRPC requests. The connection is already the right one, so it only has to be a
 /// valid URI.
@@ -278,6 +282,8 @@ pub(crate) fn hello(
         sip_tls_address: String::new(),
         sip_domain: String::new(),
         sip_registrar: false,
+        node_role: String::new(),
+        link_url: String::new(),
     }
 }
 
@@ -332,6 +338,7 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
         sip_tls_address: hello.sip_tls_address.clone(),
         sip_domain: hello.sip_domain.clone(),
         sip_registrar: hello.sip_registrar,
+        role: hello.node_role.clone(),
         compatible: checked.is_ok(),
         message: checked.err().unwrap_or_default(),
     }
@@ -461,6 +468,9 @@ pub struct EdgeConfig {
     /// This node has the front set (plans/Edge-Node2.md §4.3): it passes passthrough hosts' connections down links. An
     /// edge node behind a front node (`node_role=edge`) does not.
     pub front: bool,
+    /// This node has the edge set (plans/Edge-Node2.md §4.3): the queue, delegated calls, replication, call signaling
+    /// and PASS go over its links. A front node (`node_role=front`) has none of them and refuses each.
+    pub edge: bool,
     /// Where local nodes dial this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6); empty when
     /// they dial only the URL they paired with.
     pub link_url: String,
@@ -490,6 +500,7 @@ impl EdgeConfig {
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
             front: moqui_core::edge::node_role_kind().has_front(),
+            edge: moqui_core::edge::node_role_kind().has_edge(),
             link_url: moqui_lib::env::get_prop_or_env(moqui_core::cluster::EDGE_LINK_URL_PROPERTY)
                 .trim()
                 .to_string(),
@@ -543,7 +554,8 @@ fn tunnel_address(port_name: &str, host_name: &str, what: &str) -> Option<Result
 /// The tunnel ports an edge or all-in-one node will bind, for the port check before the framework is built; none on
 /// a node that takes no links.
 pub(crate) fn tunnel_targets() -> Vec<crate::port_check::Target> {
-    if !moqui_core::edge::node_role_kind().takes_links() {
+    // the ports are the front set's (plans/Edge-Node2.md §4.3): an edge node behind a front binds none
+    if !moqui_core::edge::node_role_kind().has_front() {
         return Vec::new();
     }
     TUNNEL_PORTS
@@ -605,6 +617,14 @@ pub struct LocalConfig {
     /// tunnels ([`local_web`]). With none, a forwarded request is answered 503 and a tunnel refused, and the link
     /// carries no queue, delegated calls or replication (their server is the web app's).
     pub web: Option<LocalWeb>,
+    /// The node dialed is a front node (plans/Edge-Node2.md §4.7): this is the front pairing (`front_node_*`), whose
+    /// links carry web access and ports only. No outbox, replication, call or SIP rows or TURN secret go up them, and
+    /// the down connection takes no queued item, delegated call or PASS call. A link whose Hello names another role
+    /// than the pairing expects is refused, so pair again.
+    pub front: bool,
+    /// On the front pairing of a node that takes links (plans/Edge-Node2.md §4.7): its own `edge_link_url`, which its
+    /// Hello names, so the front passes that name's connections (its local nodes' links) through to this member.
+    pub link_url: String,
 }
 
 impl LocalConfig {
@@ -627,6 +647,8 @@ impl LocalConfig {
             ping_every: Duration::from_secs(15),
             connect_timeout: Duration::from_secs(10),
             web: None,
+            front: false,
+            link_url: String::new(),
         }
     }
 
@@ -644,6 +666,30 @@ impl LocalConfig {
             instance_id,
         );
         config.edge_id = get(moqui_core::edge::NODE_ID);
+        let host = get("webapp_http_host");
+        if !host.is_empty() {
+            config.node_name = host;
+        }
+        Some(config)
+    }
+
+    /// The front pairing's from the properties (`front_node_url`, `front_node_key`, `front_node_pin`,
+    /// `front_node_id`; plans/Edge-Node2.md §4.7), or `None` when `front_node_url` is not set.
+    pub(crate) fn front_from_properties(instance_id: &str) -> Option<Self> {
+        let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+        let url = get(moqui_core::edge::FRONT_URL);
+        if url.is_empty() {
+            return None;
+        }
+        let mut config = Self::new(
+            &url,
+            &get(moqui_core::edge::FRONT_KEY),
+            &get(moqui_core::edge::FRONT_PIN),
+            instance_id,
+        );
+        config.edge_id = get(moqui_core::edge::FRONT_ID);
+        config.front = true;
+        config.link_url = get(moqui_core::cluster::EDGE_LINK_URL_PROPERTY);
         let host = get("webapp_http_host");
         if !host.is_empty() {
             config.node_name = host;
@@ -669,6 +715,8 @@ impl std::fmt::Debug for LocalConfig {
             .field("ping_every", &self.ping_every)
             .field("connect_timeout", &self.connect_timeout)
             .field("web", &self.web.is_some())
+            .field("front", &self.front)
+            .field("link_url", &self.link_url)
             .finish()
     }
 }

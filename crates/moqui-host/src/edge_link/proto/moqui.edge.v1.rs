@@ -48,6 +48,16 @@ pub struct Hello {
     pub sip_domain: ::prost::alloc::string::String,
     #[prost(bool, tag = "14")]
     pub sip_registrar: bool,
+    /// The edge node's node_role (front, front_edge, edge, all-in-one; plans/Edge-Node2.md §4.3): a local node keeps a
+    /// pairing with a front node as its front pairing, whose link carries web access and ports only (§4.7). Empty from a
+    /// node before E19.
+    #[prost(string, tag = "15")]
+    pub node_role: ::prost::alloc::string::String,
+    /// A node with the edge set's, in the Hello of its link to its front node (plans/Edge-Node2.md §4.7): its own
+    /// edge_link_url, where its local nodes dial it. The front passes its host's connections through untouched to this
+    /// member alone, so their links reach it. Empty from any other node.
+    #[prost(string, tag = "16")]
+    pub link_url: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}

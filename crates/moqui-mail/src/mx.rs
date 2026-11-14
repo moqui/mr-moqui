@@ -328,7 +328,8 @@ fn flight() -> &'static Mutex<Flight> {
 /// ends it. It delivers only the rows [`record`] made for a paired node's `mailOut` items: an all-in-one node's own
 /// mail goes out by its `EmailServer` as on a normal node, never through these rows, so it is not delivered twice.
 pub fn start(factory: &Arc<ExecutionContextFactory>) {
-    if !moqui_core::edge::settings(factory).takes_links() || mta() != Mta::Moqui || factory.entity().is_none() {
+    // a front node has no mail (plans/Edge-Node2.md §4.7)
+    if !moqui_core::edge::settings(factory).role.has_edge() || mta() != Mta::Moqui || factory.entity().is_none() {
         return;
     }
     if factory.extension(|_| Started::default()).0.swap(true, Ordering::SeqCst) {

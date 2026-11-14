@@ -23,7 +23,7 @@ use std::time::Duration;
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::{EdgeClientInfo, EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
+use super::{EdgeClientInfo, EdgeHostInfo, HOST_LINK_NAME, HOST_PASSTHROUGH, HOST_TERMINATE};
 use crate::context::ExecutionContext;
 use crate::entity::{EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
@@ -163,8 +163,14 @@ pub fn add(facade: &EntityFacade, host: &EdgeHostInfo) -> Result<EdgeHostInfo, E
             .find(HOST)?
             .eq("hostName", Value::string(&name))
             .for_update(true)
-            .one()?
-            .map(|row| text(&row, "pairedNodeId"));
+            .one()?;
+        if let Some(row) = existing
+            .as_ref()
+            .filter(|row| text(row, "modeEnumId") == HOST_LINK_NAME)
+        {
+            return Err(link_name_held(&name, &text(row, "pairedNodeId"), node));
+        }
+        let existing = existing.map(|row| text(&row, "pairedNodeId"));
         save(facade, &name, node, &host.mode_enum_id, cookie, existing)?;
         Ok(EdgeHostInfo {
             host_name: name.clone(),
@@ -214,11 +220,13 @@ fn save(
                 .eq("hostName", Value::string(name))
                 .for_update(true)
                 .one()?
-                .map(|row| text(&row, "pairedNodeId"))
             else {
                 return Err(Error::new(format!("{name} changed while it was saved; try again")));
             };
-            holder
+            if text(&holder, "modeEnumId") == HOST_LINK_NAME {
+                return Err(link_name_held(name, &text(&holder, "pairedNodeId"), node));
+            }
+            text(&holder, "pairedNodeId")
         }
     };
     if holder != node {
@@ -232,6 +240,148 @@ fn save(
     }
     update.update(facade)?;
     Ok(())
+}
+
+/// The refusal of a host name that is an edge member's link name (plans/Edge-Node2.md §4.7): another pairing's gets the
+/// generic [`super::claims::HELD_BY_ANOTHER`], the pairing's own says what it is.
+fn link_name_held(name: &str, holder: &str, node: &str) -> Error {
+    if holder == node {
+        Error::new(format!(
+            "{name} is the link name of a member of this pairing, which the front keeps from its Hello"
+        ))
+    } else {
+        Error::new(format!("{name}: {}", super::claims::HELD_BY_ANOTHER))
+    }
+}
+
+/// An edge member's own link name on a front node (plans/Edge-Node2.md §4.7): an `EdgeHost` row in [`HOST_LINK_NAME`]
+/// mode, whose connections pass through to that member alone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkName {
+    pub host_name: String,
+    pub paired_node_id: String,
+    /// The member's instance id.
+    pub member_id: String,
+}
+
+/// The link names, by name.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn link_names(facade: &EntityFacade) -> Result<Vec<LinkName>, Error> {
+    transaction(facade, false, || {
+        let rows = facade
+            .find(HOST)?
+            .eq("modeEnumId", Value::string(HOST_LINK_NAME))
+            .order_by("hostName", false)
+            .list()?;
+        Ok(rows
+            .iter()
+            .map(|row| LinkName {
+                host_name: text(row, "hostName"),
+                paired_node_id: text(row, "pairedNodeId"),
+                member_id: text(row, "memberId"),
+            })
+            .collect())
+    })
+}
+
+/// What [`claim_link_name`] did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkClaim {
+    /// A row changed: the caller loads its table again.
+    pub changed: bool,
+    /// The name was another member's of the pairing, now this one's: a member back with another instance id, or two
+    /// members sending one `edge_link_url`, which flip it back and forth.
+    pub moved_from: Option<String>,
+}
+
+/// Keep `name` as member `member`'s link name for pairing `node` (plans/Edge-Node2.md §4.7), from the member's Hello
+/// on a front node, in a transaction of its own: a new name is inserted only while it is free, a link name of the
+/// pairing moves to `member` (a member that came back with another instance id), and the member's other link names go.
+/// A name no member sends any more stays until it is removed on Domains.
+///
+/// # Errors
+///
+/// Refuses a name that is not a DNS name, a pairing that is not active, a name another pairing has (the generic
+/// [`super::claims::HELD_BY_ANOTHER`]) and a name the pairing has as a host name of its own; returns the entity facade's
+/// error.
+pub fn claim_link_name(facade: &EntityFacade, name: &str, node: &str, member: &str) -> Result<LinkClaim, Error> {
+    let name = normalize(name).ok_or_else(|| Error::new(format!("{} is not a host name", name.trim())))?;
+    let (node, member) = (node.trim(), member.trim());
+    if member.is_empty() {
+        return Err(Error::new("a link name needs its member"));
+    }
+    transaction(facade, true, || {
+        let active = facade
+            .find(CLIENT)?
+            .eq("pairedNodeId", Value::string(node))
+            .one()?
+            .is_some_and(|row| text(&row, "statusId") == ACTIVE);
+        if node.is_empty() || !active {
+            return Err(Error::new(format!(
+                "no node {node} is paired with this front node, or it was revoked"
+            )));
+        }
+        let read = || {
+            facade
+                .find(HOST)?
+                .eq("hostName", Value::string(&name))
+                .for_update(true)
+                .one()
+        };
+        let mut existing = read()?;
+        let mut claim = LinkClaim::default();
+        if existing.is_none() {
+            let mut row = facade.make_value(HOST)?;
+            row.set("hostName", Value::string(&name));
+            row.set("pairedNodeId", Value::string(node));
+            row.set("modeEnumId", Value::string(HOST_LINK_NAME));
+            row.set("memberId", Value::string(member));
+            row.set("createdDate", crate::user::now_value());
+            if row.create_if_missing(facade)? {
+                claim.changed = true;
+            } else {
+                existing = read()?;
+                if existing.is_none() {
+                    return Err(Error::new(format!("{name} changed while it was saved; try again")));
+                }
+            }
+        }
+        if let Some(row) = existing {
+            if text(&row, "pairedNodeId") != node {
+                return Err(Error::new(format!("{name}: {}", super::claims::HELD_BY_ANOTHER)));
+            }
+            if text(&row, "modeEnumId") != HOST_LINK_NAME {
+                return Err(Error::new(format!(
+                    "{name} is a host name of this pairing, not a link name: remove it first"
+                )));
+            }
+            let holder = text(&row, "memberId");
+            if holder != member {
+                let mut update = facade.make_value(HOST)?;
+                update.set("hostName", Value::string(&name));
+                update.set("memberId", Value::string(member));
+                update.update(facade)?;
+                claim.changed = true;
+                claim.moved_from = Some(holder).filter(|holder| !holder.is_empty());
+            }
+        }
+        let others = facade
+            .find(HOST)?
+            .eq("pairedNodeId", Value::string(node))
+            .eq("modeEnumId", Value::string(HOST_LINK_NAME))
+            .eq("memberId", Value::string(member))
+            .list()?;
+        for other in others.iter().filter(|row| text(row, "hostName") != name) {
+            let mut row = facade.make_value(HOST)?;
+            row.set("hostName", Value::string(text(other, "hostName")));
+            row.delete(facade)?;
+            claim.changed = true;
+        }
+        Ok(claim)
+    })
 }
 
 /// Remove a name, in a transaction of its own; false when there was none.

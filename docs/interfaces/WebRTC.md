@@ -301,6 +301,10 @@ the edge node is not a member of the local node's cluster:
   replication sender of a clustered local node from its link to that member, and keeps each member's TURN secret (the
   same for all, as they share `turn_auth_secret` and the pairing row). A call's legs are all on the member its call
   chose, and its signaling goes over the link to that member. Cascading between edge members is later work.
+- **Not through a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19): a front node is no media node and
+  takes no call signaling, so a front pairing keeps no `CallMediaNode` row. Before an edge cluster
+  ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) the edge members' `rtc_public_address` and media ports are
+  their own; a local cluster behind a front alone has its own media nodes.
 - **An all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) registers its own `CallMediaNode` for its
   own calls and is also the local node's media node. Rooms of the local node's calls are keyed by node and call, and
   the link stamps the sending node (`linkNode`) on each message, so the two sides' calls never meet. Recordings and

@@ -99,13 +99,12 @@ pub(crate) fn start(
             "node_role is set (front, front_edge, edge or all-in-one), but this binary has no edge link (the edge feature: Maximal or Enterprise)"
         );
     }
-    if !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)
-        .trim()
-        .is_empty()
-    {
-        tracing::error!(
-            "edge_node_url is set, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
-        );
+    for name in [moqui_core::edge::NODE_URL, moqui_core::edge::FRONT_URL] {
+        if !moqui_lib::env::get_prop_or_env(name).trim().is_empty() {
+            tracing::error!(
+                "{name} is set, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
+            );
+        }
     }
     moqui_core::startup::integration(factory, "Edge link", moqui_core::startup::State::NotBuilt);
     moqui_core::startup::listener(factory, "Edge tunnels", moqui_core::startup::State::NotBuilt);

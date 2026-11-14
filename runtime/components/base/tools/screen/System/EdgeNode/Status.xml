@@ -32,7 +32,10 @@ along with this software (see the LICENSE.md file). If not, see
     set with the link not running in this process. Edge cluster (plans/Edge-Node2.md §4.6; get#LinkStatus
     edgeMemberList), when the edge node is a cluster of more than one: this node's link to each member, with its state,
     address, round trip, last connect, links lost, and which one carries this node's work up; the Link box above is of
-    that one. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
+    that one. Paired with a front node alone (plans/Edge-Node2.md §4.7; get#LinkStatus frontOnly, as a member of a
+    local cluster behind a front node, conf/front): the link box is of the front, Setup shows its host names and XMPP and
+    says the rest is this node's own, and there is no queue or replication, which a front pairing carries none of. With
+    both pairings, the Front node box shows the front's link beside the edge one. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
@@ -67,6 +70,12 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="unpairFront">
+        <service-call name="org.moqui.edge.EdgeServices.unpair#EdgeNode" in-map="{front: true}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Unpaired: the link to the front node is closed</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
@@ -78,6 +87,10 @@ along with this software (see the LICENSE.md file). If not, see
         // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
         isEdge = running && link.takesLinks === true
         paired = running && !isEdge && state !== 'unpaired'
+        // paired with a front node alone: web access and ports, nothing of the edge set (plans/Edge-Node2.md §4.7)
+        // by what pairing wrote, not the front's role, which is empty until its link first comes up
+        frontOnly = paired && link.frontOnly === true
+        withQueue = paired && !frontOnly
         unpaired = running && !isEdge && state === 'unpaired'
         const states = {connecting: [L('Connecting'), 'info'], linked: [L('Linked'), 'positive'], retrying: [L('Retrying'), 'warning'],
             refused: [L('Refused'), 'negative']}
@@ -111,11 +124,26 @@ along with this software (see the LICENSE.md file). If not, see
                 reconnectsText: String(member.reconnects ?? 0), noteText: notes.join('; ')}
         })
         edgeCluster = edgeMemberList.length > 1
+        // the front pairing (plans/Edge-Node2.md §4.7): beside the edge pairing on a local node (a node paired with a
+        // front alone shows it above, as its only link), and an edge node's only one
+        const frontOf = link.frontState && !link.frontOnly
+            ? {state: link.frontState, url: link.frontUrl, name: link.frontName, lastError: link.frontLastError}
+            : (isEdge && state !== 'unpaired' ? {state, url: link.url, name: link.edgeName, lastError: link.lastError} : null)
+        hasFront = !!frontOf
+        const [frontStateLabel] = frontOf ? (states[frontOf.state] || [frontOf.state]) : ['']
+        const frontBeside = !!link.frontState && !link.frontOnly
+        const frontConnect = !frontOf ? null : frontBeside ? link.frontLastConnectDate : link.lastConnectDate
+        front = frontOf ? {name: frontOf.name || frontOf.url || L('Front node'), url: frontOf.url || '',
+            stateLabel: frontStateLabel, lastError: frontOf.lastError || '',
+            fingerprint: (frontBeside ? link.frontFingerprint : link.fingerprint) || '',
+            lastConnectText: frontConnect ? ec.l10n.format(frontConnect, '') : L('Not yet')} : {}
+        // an edge node dials a front node too; a front node dials none
+        pairsFront = isEdge && link.nodeRole !== 'front' && !hasFront
         // the queue and replication (plans/archive/Edge-Node.md §5.2): this node's own rows and state, with or without the
         // link; a probe (Practices-App-Dev §4), so a failure shows on the page instead of failing it
         let work = {}
         queueError = ''
-        if (paired) {
+        if (withQueue) {
             ec.message.pushErrors()
             try {
                 work = ec.service.sync().name('org.moqui.edge.EdgeServices.get#QueueStatus').call() || {}
@@ -140,7 +168,7 @@ along with this software (see the LICENSE.md file). If not, see
             lastAckText: set.lastAckDate ? ec.l10n.format(set.lastAckDate, '') : L('Not yet')}))
         // this member and its cluster (plans/Edge-Node2.md §4.4): every member links, so each shows its own; also with the
         // link not running here, as long as this node is paired by its .env
-        const pairedByEnv = !!String(System.getProperty('edge_node_url') || '').trim()
+        const pairedByEnv = ['edge_node_url', 'front_node_url'].some((name) => !!String(System.getProperty(name) || '').trim())
         ownCluster = !notBuilt && link.takesLinks !== true && (paired || (notStarted && pairedByEnv))
         clusterError = ''
         let clusterOut = {}
@@ -158,7 +186,9 @@ along with this software (see the LICENSE.md file). If not, see
         draining = clusterOut.state === 'draining'
         // draining the only live member takes the pairing's names offline at the edge node
         aloneLive = !Array.from(clusterOut.memberList || []).some((member) => member.live && !member.own)
-        ownMember = {instanceId: clusterOut.instanceId || '', pairingId: clusterOut.pairingId || L('Not written yet'),
+        // a front pairing has no pairing id: the front knows the cluster by its members' ids
+        ownMember = {instanceId: clusterOut.instanceId || '',
+            pairingId: clusterOut.pairingId || (frontOnly ? L('None: a front pairing') : L('Not written yet')),
             stateLabel: memberStates[clusterOut.state] || clusterOut.state || ''}
         clusterList = Array.from(clusterOut.memberList || []).map((member) => ({
             instanceId: member.instanceId + (member.own ? ' (' + L('this node') + ')' : ''),
@@ -234,6 +264,11 @@ along with this software (see the LICENSE.md file). If not, see
                 chatText: chatUrl ? chatUrl + '/channels/(bridge)/webhook' : L('Not set'),
                 passText: sites ? ec.resource.expand('${sites}, as PASS client ${client}', '', {sites, client}) : L('Not set'),
                 xmppText, callsText, sipText}
+            // a front node takes web access and ports only: the rest stays this node's own
+            if (frontOnly) {
+                const own = L("Not through a front node: this node's own")
+                Object.assign(setup, {mailText: own, chatText: own, passText: own, callsText: own, sipText: own})
+            }
         }
     ]]></script></actions>
     <widgets>
@@ -253,13 +288,33 @@ along with this software (see the LICENSE.md file). If not, see
             <container-box><box-header title="Edge node"/><box-body>
                 <label type="p" text="This node is an edge node. Local nodes pair with it in Edge Clients."/>
                 <link url="../../EdgeClients" text="Edge clients" icon="sym_o_lan"/>
+                <section name="PairFront" condition="pairsFront"><widgets>
+                    <label type="p" text="Behind a front node, this node pairs with it and dials it, and gives it its sites and its local nodes' names." style="m-muted"/>
+                    <link url="../Pair" text="Pair with a front node" icon="sym_o_add_link"/>
+                </widgets></section>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="Front" condition="hasFront"><widgets>
+            <container-box><box-header title="Front node"/><box-body>
+                <label type="p" text="${front.name}: ${front.stateLabel}"/>
+                <label type="div" text="${front.url}" style="text-caption m-muted"/>
+                <label type="div" text="Last connect ${front.lastConnectText}" style="text-caption m-muted"/>
+                <section name="FrontPin" condition="front.fingerprint"><widgets>
+                    <label type="div" text="Link key fingerprint ${front.fingerprint}" style="text-caption m-muted"/>
+                </widgets></section>
+                <label type="p" text="Web access and ports go through the front node; the rest of the edge node's work does not. Media, TURN and SIP are never through a front." style="m-muted"/>
+                <section name="FrontError" condition="front.lastError"><widgets>
+                    <label type="p" text="${front.lastError}" style="text-warning"/>
+                </widgets></section>
+                <link url="unpairFront" link-type="hidden-form" text="Unpair front" icon="sym_o_link_off" btn-type="danger"
+                        confirmation="Unpair from the front node ${front.name}? Its link closes on both sides, and pairing again needs a new code."/>
             </box-body></container-box>
         </widgets></section>
 
         <section name="Unpaired" condition="unpaired"><widgets>
             <container-box><box-header title="Edge node"/><box-body>
                 <label type="p" text="This node is not paired with an edge node. An edge node is a small server in the cloud that gives this node a public presence. This node dials out to it and keeps one link open, so it needs no open port or fixed address."/>
-                <label type="p" text="Make a pairing code on the edge node, in System, Edge Clients, then pair with it here." style="m-muted"/>
+                <label type="p" text="Make a pairing code on the edge node, in System, Edge Clients, then pair with it here. A front node, which gives web access and ports only, pairs the same way: the pairing goes where its role says." style="m-muted"/>
                 <link url="../Pair" text="Pair with an edge node" icon="sym_o_add_link" btn-type="primary"/>
             </box-body></container-box>
         </widgets></section>
@@ -358,6 +413,12 @@ along with this software (see the LICENSE.md file). If not, see
                     </field-layout>
                 </form-single>
             </box-body></container-box>
+            <section name="FrontOnly" condition="frontOnly"><widgets>
+                <container-box><box-header title="Front node"/><box-body>
+                    <label type="p" style="m-muted q-mb-none" text="This node is paired with a front node, which gives it web access by host name and ports, balanced over its cluster's live members, behind its web protection. Nothing else goes over that link: no queue, replication, mail, chat, PASS, calls or phones."/>
+                </box-body></container-box>
+            </widgets></section>
+            <section name="QueueBox" condition="withQueue"><widgets>
             <container-box><box-header title="Queue and replication"/><box-toolbar>
                 <link url="pauseDelivery" link-type="hidden-form" text="Pause delivery" icon="sym_o_pause"
                         condition="!queuePaused" parameter-map="{paused:'true'}"
@@ -422,6 +483,7 @@ along with this software (see the LICENSE.md file). If not, see
                             text="No replicated sets in this node's edge conf, or none since the link started."/>
                 </widgets></section>
             </box-body-nopad></container-box>
+            </widgets></section>
         </widgets></section>
 
         <section name="OwnCluster" condition="ownCluster"><widgets>

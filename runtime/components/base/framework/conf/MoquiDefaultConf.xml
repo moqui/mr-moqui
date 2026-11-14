@@ -505,13 +505,16 @@
         each connection goes down the link of the node whose domain it names (the TLS server name, or the stream's to),
         whose XMPP server ends its TLS. A port of one paired node each, SSH or XMPP, is a moqui.edge.EdgePort row
         (System › Edge Clients › Ports; plans/Edge-Node2.md §4.1). On a node that takes links, edge_call_legs_per_pairing
-        is the most call legs of one paired node on its media node at once (200; 0 for no cap). -->
+        is the most call legs of one paired node on its media node at once (200; 0 for no cap). On a front node an
+        EdgePort row of kind smtp (port 25 before an edge cluster, plans/Edge-Node2.md §4.7) listens on
+        edge_smtp_tunnel_host (empty for every address). -->
     <default-property name="edge_offline_page" value=""/>
     <default-property name="edge_ssh_tunnel_port" value=""/>
     <default-property name="edge_ssh_tunnel_host" value=""/>
     <default-property name="edge_xmpp_port" value=""/>
     <default-property name="edge_xmpp_tls_port" value=""/>
     <default-property name="edge_xmpp_host" value=""/>
+    <default-property name="edge_smtp_tunnel_host" value=""/>
     <default-property name="edge_call_legs_per_pairing" value=""/>
     <default-property name="entity_add_missing_runtime" value="false"/>
     <default-property name="entity_add_missing_startup" value="true"/>

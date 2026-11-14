@@ -267,6 +267,19 @@ pub(crate) enum Claimed {
     Changed,
 }
 
+/// Each member id of a pairing with its pinned key's fingerprint (`EdgeClient.memberKeys`).
+pub(crate) type PinnedKeys = Vec<(String, String)>;
+
+/// What [`claim_key`] claims: member `member`'s key `member_key` on pairing `node`, as a takeover when `takeover`,
+/// keeping the pins of `keep`.
+pub(crate) struct KeyClaim<'a> {
+    pub node: &'a str,
+    pub member: &'a str,
+    pub member_key: &'a str,
+    pub takeover: bool,
+    pub keep: &'a [String],
+}
+
 /// Claim member `member`'s key for its id on pairing `node`'s row, read for update, in one transaction committed
 /// before the link registers (plans/Edge-Node2.md §4.11). In the same transaction, so two edge members of a cluster
 /// admitting at once see each other (§4.6): `recheck` reads the other edge members' links again (`None`: another member
@@ -274,14 +287,17 @@ pub(crate) enum Claimed {
 /// writes this edge member's row with the link.
 pub(crate) fn claim_key(
     factory: &ExecutionContextFactory,
-    node: &str,
-    member: &str,
-    member_key: &str,
-    takeover: bool,
-    keep: &[String],
+    claim: &KeyClaim<'_>,
     recheck: impl FnOnce() -> Result<Option<bool>, Error>,
     write_own: impl FnOnce() -> Result<(), Error>,
 ) -> Result<Claimed, Error> {
+    let KeyClaim {
+        node,
+        member,
+        member_key,
+        takeover,
+        keep,
+    } = *claim;
     let facade = facade(factory)?;
     committed(&facade, CLIENT, || {
         let Some(row) = facade
@@ -316,7 +332,7 @@ pub(crate) fn claim_key(
 pub(crate) fn pairing_state(
     factory: &ExecutionContextFactory,
     node: &str,
-) -> Result<Option<(bool, Vec<(String, String)>)>, Error> {
+) -> Result<Option<(bool, PinnedKeys)>, Error> {
     let facade = facade(factory)?;
     transaction(&facade, CLIENT, || {
         let row = facade

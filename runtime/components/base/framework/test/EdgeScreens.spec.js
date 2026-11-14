@@ -10,8 +10,9 @@
 // tab is rendered once in qvt and once in tui (their state chips are render-mode sections), with all of its checks on
 // that render; Domains shows each host's sticky cookie, and Balancing the conf's defaults. Edge cluster (plans/Edge-Node2.md
 // §4.6) lists this node's own cluster from its rows with each member's link address, one that is not https marked as
-// not used, the member holding the SIP trunk lock (none once its lease lapsed), and get#EdgeCluster refuses on a node
-// that takes no links. No link runs under moqui test: node_role is set to front_edge around each step, the pairings
+// not used, the member holding the SIP trunk lock (none once its lease lapsed), the front node it is paired with from
+// what pairing wrote (plans/Edge-Node2.md §4.7; none without), and get#EdgeCluster refuses on a node that takes no
+// links. No link runs under moqui test: node_role is set to front_edge around each step, the pairings
 // are rows, and no member is linked. A local node's links to each edge member (System › Edge Node, Edge cluster) need
 // a running link: their rows are get#LinkStatus's edgeMemberList, shaped in moqui-core's service::edge tests.
 // Run: ./moq test framework --spec EdgeScreens
@@ -35,6 +36,10 @@ const LOCK = "moqui.edge.EdgeSenderLock"
 // a member of this node's cluster that stopped a day ago, with its link address
 const EDGE2 = "edge-screens-spec-edge2"
 const EDGE2_URL = "https://edge2.edge-screens-spec.example.test"
+// the front node this node's cluster is paired with, as pairing writes it to .env
+const FRONT_URL = "https://front.edge-screens-spec.example.test"
+// the front's member ids, as pairing writes them
+const FRONT_ID = "edge-screens-spec-front,edge-screens-spec-front2"
 const STANDBY = "edge-screens-spec-standby"
 const FIRST = "edge-screens-spec-first"
 const SETUP_A = {
@@ -324,6 +329,8 @@ feature("a tunnel port goes to one active pairing, never on this node's own port
                 own: invoke("add#EdgePort", {port: "443", pairedNodeId: B, tunnelKind: "xmpps"}),
                 revoked: invoke("add#EdgePort", {port: XMPP_PORT, pairedNodeId: R, tunnelKind: "xmpp"}),
                 kind: invoke("add#EdgePort", {port: XMPP_PORT, pairedNodeId: B, tunnelKind: "telnet"}),
+                // an smtp port is a front node's (plans/Edge-Node2.md §4.7): this node is none
+                smtp: invoke("add#EdgePort", {port: XMPP_PORT, pairedNodeId: B, tunnelKind: "smtp"}),
                 xmpp: invoke("add#EdgePort", {port: XMPP_PORT, pairedNodeId: B, tunnelKind: "xmpp"}),
                 listB: invoke("get#EdgePorts", {pairedNodeId: B}),
                 qvt: render("john.doe", "apps/system/EdgeClients/Ports", {}, null, "qvt"),
@@ -345,6 +352,7 @@ feature("a tunnel port goes to one active pairing, never on this node's own port
         out.own.error.includes("this node's own")
         out.revoked.error.includes("not an active paired node")
         out.kind.error.includes("tunnelKind")
+        out.smtp.error.includes("front node's")
         out.xmpp.error === ""
         out.listB.portList.length === 1
         out.listB.portList[0].tunnelKind === "xmpp"
@@ -540,11 +548,13 @@ feature("Edge cluster lists this node's cluster with each member's link address,
         sys(() => ec.entity.makeValue(LOCK).setAll({lockName: "sipTrunks", instanceId: own,
             leaseExpireDate: new Date(Date.now() + 600000), claimedDate: new Date()}).createOrUpdate())
         // this node's own address is not https, so its Hello answer would send none
-        context.out = edge(() => withProperty("edge_link_url", "http://edge1.edge-screens-spec.example.test", () => ({
-            cluster: invoke("get#EdgeCluster"),
-            qvt: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "qvt"),
-            tui: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "tui")
-        })))
+        // paired with a front node by its .env, the link not running here
+        context.out = edge(() => withProperty("edge_link_url", "http://edge1.edge-screens-spec.example.test", () =>
+            withProperty("front_node_url", FRONT_URL, () => withProperty("front_node_id", FRONT_ID, () => ({
+                cluster: invoke("get#EdgeCluster"),
+                qvt: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "qvt"),
+                tui: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "tui")
+            })))))
         // a lapsed lease registers nothing
         sys(() => ec.entity.makeValue(LOCK).setAll({lockName: "sipTrunks", leaseExpireDate: new Date(Date.now() - 60000)}).update())
         context.lapsed = edge(() => invoke("get#EdgeCluster"))
@@ -565,6 +575,12 @@ feature("Edge cluster lists this node's cluster with each member's link address,
         own.registersTrunks === true
         other.registersTrunks === false
         context.lapsed.memberList.every((member) => member.registersTrunks === false)
+        // the front pairing from .env, one row not started here; none without it
+        out.cluster.frontList.length === 1
+        out.cluster.frontList[0].url === FRONT_URL
+        out.cluster.frontList[0].instanceId === FRONT_ID
+        out.cluster.frontList[0].state === "notStarted"
+        context.lapsed.frontList.length === 0
         other.heartbeatAgeMs > 3600000
         const {qvt, tui} = out
         qvt.status === 200
@@ -579,6 +595,10 @@ feature("Edge cluster lists this node's cluster with each member's link address,
         qvt.text.includes("so it needs no link address")
         !qvt.text.includes("Members with no link address")
         !qvt.text.includes("could not be read")
+        qvt.text.includes("Front node")
+        qvt.text.includes(FRONT_URL)
+        qvt.text.includes("Not started here")
+        !qvt.text.includes("No front node. Behind one")
         // the tui template of the live chip
         tui.status === 200
         tui.errors === ""
@@ -586,6 +606,7 @@ feature("Edge cluster lists this node's cluster with each member's link address,
         tui.text.includes("(this node)")
         tui.text.includes("Stopped")
         tui.text.includes(EDGE2_URL)
+        tui.text.includes("edge-screens-spec-front, edge-screens-spec-front2")
         context.plain.error.includes("only a node that takes links")
     }
 })

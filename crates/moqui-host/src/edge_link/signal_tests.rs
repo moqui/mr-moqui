@@ -26,7 +26,7 @@ fn message(body: serde_json::Value) -> TopicMessage {
 
 #[test]
 fn an_edge_node_takes_from_a_local_node_only_its_frames_and_controls() {
-    let take = edge_takes("local-1", "local-1");
+    let take = edge_takes("local-1", "local-1", true);
     // a frame whose replies would go to another node
     let forged = message(serde_json::json!({"target": "edge-1", "kind": "frame", "origin": "local-2", "socketId": 7}));
     assert!(take(RTC_SIGNAL, &forged).is_err_and(|err| err.contains("another origin")));
@@ -42,7 +42,7 @@ fn an_edge_node_takes_from_a_local_node_only_its_frames_and_controls() {
 
 #[test]
 fn an_edge_node_refuses_a_message_that_already_names_a_node() {
-    let take = edge_takes("local-1", "local-1");
+    let take = edge_takes("local-1", "local-1", true);
     for kind in ["frame", "control", "sip"] {
         let forged = message(
             serde_json::json!({"target": "edge-1", "kind": kind, "origin": "local-1",
@@ -85,7 +85,7 @@ fn a_local_node_takes_from_its_edge_node_only_replies() {
 /// replies for the leg go down b's down connection with b as their target, and a's route stays when b's goes.
 #[test]
 fn call_signaling_reaches_the_member_whose_socket_bound_the_leg() {
-    let take = edge_takes("pool-1", "member-b");
+    let take = edge_takes("pool-1", "member-b", true);
     for origin in ["member-a", "pool-1", "member-b@pool-1"] {
         let forged = message(serde_json::json!({"target": "edge-1", "kind": "frame", "origin": origin}));
         assert!(
@@ -127,15 +127,34 @@ fn call_signaling_reaches_the_member_whose_socket_bound_the_leg() {
 #[test]
 fn web_bans_cross_the_link_marked_with_where_they_came_from() {
     let ban = message(serde_json::json!({"kind": "ban", "address": "203.0.113.9", "seconds": 60, "from": "m-1"}));
-    assert!(edge_takes("local-1", "local-1")(moqui_core::notify::WEB_BAN, &ban).is_ok());
+    assert!(edge_takes("local-1", "local-1", true)(moqui_core::notify::WEB_BAN, &ban).is_ok());
     assert!(local_takes("edge-1")(moqui_core::notify::WEB_BAN, &ban).is_err());
     let other = message(serde_json::json!({"kind": "control", "address": "203.0.113.9"}));
-    assert!(edge_takes("local-1", "local-1")(moqui_core::notify::WEB_BAN, &other).is_err_and(|err| err.contains("of kind")));
+    assert!(
+        edge_takes("local-1", "local-1", true)(moqui_core::notify::WEB_BAN, &other)
+            .is_err_and(|err| err.contains("of kind"))
+    );
     assert!(local_takes("edge-1")(moqui_core::notify::WEB_BAN, &other).is_err());
     // a ban that names a node already is refused, as any message
     let forged = message(serde_json::json!({"kind": "ban", "address": "203.0.113.9", "linkNode": "local-2"}));
-    assert!(edge_takes("local-1", "local-1")(moqui_core::notify::WEB_BAN, &forged).is_err_and(|err| err.contains("already names")));
+    assert!(
+        edge_takes("local-1", "local-1", true)(moqui_core::notify::WEB_BAN, &forged)
+            .is_err_and(|err| err.contains("already names"))
+    );
     // and a local node's message on another topic is not taken
     let frame = message(serde_json::json!({"kind": "frame", "origin": "local-1"}));
-    assert!(edge_takes("local-1", "local-1")("session-end", &frame).is_err());
+    assert!(edge_takes("local-1", "local-1", true)("session-end", &frame).is_err());
+}
+
+/// A front node has no calls (plans/Edge-Node2.md §4.7): a ban from a node behind it is taken, its call signaling not.
+#[test]
+fn a_front_node_takes_a_ban_and_no_call_signaling() {
+    let ban = message(serde_json::json!({"kind": "ban", "address": "203.0.113.9", "seconds": 60, "from": "m-1"}));
+    assert!(edge_takes("edge-pool", "edge-1", false)(moqui_core::notify::WEB_BAN, &ban).is_ok());
+    // the same control is looked at by an edge node (and refused there for naming a node), and not at all by a front
+    let control = message(serde_json::json!({"kind": "control", "linkNode": "other"}));
+    assert!(edge_takes("edge-pool", "edge-1", false)(RTC_SIGNAL, &control).is_err_and(|err| err.contains("on rtc")));
+    assert!(
+        edge_takes("edge-pool", "edge-1", true)(RTC_SIGNAL, &control).is_err_and(|err| err.contains("already names"))
+    );
 }

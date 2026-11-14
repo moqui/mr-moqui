@@ -23,6 +23,7 @@ fn a_route_is_found_by_any_spelling_of_its_name() {
             node: "local-1".to_string(),
             mode: Mode::Terminate,
             sticky_cookie: None,
+            member: None,
         },
     );
     let route = hosts.route("ERP.example.com:443").unwrap();
@@ -31,6 +32,7 @@ fn a_route_is_found_by_any_spelling_of_its_name() {
     assert!(hosts.route("other.example.com").is_none());
     assert!(hosts.route("").is_none());
     assert_eq!(Mode::from_enum(HOST_PASSTHROUGH), Some(Mode::Passthrough));
+    assert_eq!(Mode::from_enum(HOST_LINK_NAME), Some(Mode::Passthrough));
     assert_eq!(Mode::from_enum("EdgeHostOther"), None);
 }
 

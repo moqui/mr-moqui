@@ -57,6 +57,14 @@ message Hello {
   // verifiers for that realm and rings them only with it on (E8).
   string sip_domain = 13;
   bool sip_registrar = 14;
+  // The edge node's node_role (front, front_edge, edge, all-in-one; plans/Edge-Node2.md §4.3): a local node keeps a
+  // pairing with a front node as its front pairing, whose link carries web access and ports only (§4.7). Empty from a
+  // node before E19.
+  string node_role = 15;
+  // A node with the edge set's, in the Hello of its link to its front node (plans/Edge-Node2.md §4.7): its own
+  // edge_link_url, where its local nodes dial it. The front passes its host's connections through untouched to this
+  // member alone, so their links reach it. Empty from any other node.
+  string link_url = 16;
 }
 
 message ProbeRequest {}

@@ -35,6 +35,8 @@ const MAX_URL: usize = moqui_core::edge::cluster_list::MAX_LINK_URL;
 pub(crate) const PAIRED_URL_AFTER: u32 = 2;
 /// The file under the runtime directory that keeps the list.
 const FILE: &str = "db/edge_members";
+/// The front pairing's list (plans/Edge-Node2.md §4.7).
+const FRONT_FILE: &str = "db/front_members";
 
 /// One member of an edge cluster as its list names it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -273,10 +275,19 @@ pub(crate) fn file(runtime: &Path) -> PathBuf {
     runtime.join(FILE)
 }
 
+/// Where the front pairing's list is kept under `runtime` (plans/Edge-Node2.md §4.7): apart from the edge pairing's.
+pub(crate) fn front_file(runtime: &Path) -> PathBuf {
+    runtime.join(FRONT_FILE)
+}
+
 /// Remove the list kept under `runtime`, at unpairing; logged when it fails.
 pub(crate) fn forget(runtime: &Path) {
-    let path = file(runtime);
-    match std::fs::remove_file(&path) {
+    forget_at(&file(runtime));
+}
+
+/// Remove the list kept at `path`, at unpairing; logged when it fails.
+pub(crate) fn forget_at(path: &Path) {
+    match std::fs::remove_file(path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => tracing::error!("Unpaired, but {} was not removed: {err}", path.display()),

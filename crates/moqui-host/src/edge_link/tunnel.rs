@@ -29,10 +29,16 @@
 //!   its pairings' domains ([`xmpp_to_pairing`]), so one pair of ports serves every domain.
 //! - **A port per pairing** ([`watch_rows`], E16): each `moqui.edge.EdgePort` row, an SSH or XMPP port whose
 //!   connections go to its pairing only, opened and closed as the System app sets the rows.
+//! - **SMTP on a front node** ([`super::TUNNEL_SMTP`], plans/Edge-Node2.md §4.7, E19): an `EdgePort` row of kind `smtp`,
+//!   on a front node only (port 25 before an edge cluster): a PROXY v2 header with the client's address goes first,
+//!   then the client's SMTP, which the member's own SMTP listener serves as its mail edge. The member takes the client
+//!   from that header only because it came down its own front link (`crate::smtp::serve_tunneled`); its own port never
+//!   reads one unless its conf says so.
 //!
 //! Each tunnel goes to one member of the pairing's pool, by the client's address (an IPv6 one by its /64,
 //! plans/Edge-Node2.md §4.4): a client's connections stay on one member, whose XMPP sessions and SSH host key are its
-//! own. A tunnel that is not opened counts toward setting its member aside.
+//! own. A tunnel that is not opened counts toward setting its member aside. A passthrough tunnel for an edge member's
+//! link name on a front goes to that member alone ([`super::accept`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -46,24 +52,36 @@ use tokio::net::TcpStream;
 
 use super::accept::EdgeServer;
 use super::balance::Affinity;
-use super::{CLIENT_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS};
+use super::{
+    CLIENT_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SMTP, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS,
+};
 
 /// SSH connections piped at once.
 const MAX_SSH_TUNNELS: usize = 64;
+/// SMTP connections piped at once through a front's mail port: other mail servers' deliveries, short-lived; each
+/// member's own SMTP limits apply behind it.
+const MAX_SMTP_TUNNELS: usize = 128;
 /// XMPP client connections piped at once, STARTTLS and direct TLS together. Clients stay connected, so this is a good
 /// part of what a link may hold (768 tunnels and WebSockets); the local node's own limits apply behind it.
 const MAX_XMPP_TUNNELS: usize = 256;
 
-/// Open a tunnel of `kind` down `node`'s link for `client`, to the member of its pool the client's address chooses.
+/// Open a tunnel of `kind` down `node`'s link for `client`, to the member of its pool the client's address chooses, or
+/// to `member` alone (an edge member's link name, plans/Edge-Node2.md §4.7).
 async fn open(
     server: &EdgeServer,
     node: &str,
+    member: Option<&str>,
     kind: &'static str,
     client: SocketAddr,
 ) -> Result<TokioIo<hyper::upgrade::Upgraded>, String> {
-    let picked = server
-        .link_of(node, Affinity::Address(client.ip()))
-        .map_err(|_| format!("{node} is not linked"))?;
+    let picked = match member {
+        Some(member) => server
+            .link_to_member(node, member)
+            .map_err(|_| format!("{node} member {member} is not linked"))?,
+        None => server
+            .link_of(node, Affinity::Address(client.ip()))
+            .map_err(|_| format!("{node} is not linked"))?,
+    };
     let mut send = picked.send.clone();
     let request = http::Request::builder()
         .method(http::Method::CONNECT)
@@ -128,21 +146,57 @@ where
 }
 
 /// A passthrough host's connection from `remote`, whose first bytes, `hello`, were read already: down `node`'s link
-/// behind a PROXY v2 header.
+/// behind a PROXY v2 header, to `member` alone for an edge member's link name (plans/Edge-Node2.md §4.7).
 pub(crate) async fn passthrough(
     server: Arc<EdgeServer>,
     stream: TcpStream,
     hello: Vec<u8>,
     node: &str,
+    member: Option<&str>,
     remote: SocketAddr,
 ) {
     let local = stream
         .local_addr()
         .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
-    let Some(_active) = server.opened(node, TUNNEL_HTTPS) else {
+    relay_to(server, stream, hello, (node, member), remote, local).await;
+}
+
+/// [`passthrough`] on any stream, whose address on this node is `local`: also a passthrough tunnel a front node sent
+/// down this node's own link, for a passthrough host of a node linked here (plans/Edge-Node2.md §4.7, `down.rs`).
+pub(crate) async fn relay_passthrough<S>(
+    server: Arc<EdgeServer>,
+    stream: S,
+    hello: Vec<u8>,
+    node: &str,
+    remote: SocketAddr,
+    local: SocketAddr,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    relay_to(server, stream, hello, (node, None), remote, local).await;
+}
+
+/// [`relay_passthrough`] to `node`'s pool, or to one member of it.
+async fn relay_to<S>(
+    server: Arc<EdgeServer>,
+    stream: S,
+    hello: Vec<u8>,
+    (node, member): (&str, Option<&str>),
+    remote: SocketAddr,
+    local: SocketAddr,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    // a link name's tunnels have a budget of their own, so a flood of a pairing's passthrough hosts leaves its members'
+    // links room (plans/Edge-Node2.md §4.7)
+    let budget = match member {
+        Some(member) => format!("{node} link name of {member}"),
+        None => node.to_string(),
+    };
+    let Some(_active) = server.opened(&budget, TUNNEL_HTTPS) else {
         return;
     };
-    let tunnel = match open(&server, node, TUNNEL_HTTPS, remote).await {
+    let tunnel = match open(&server, node, member, TUNNEL_HTTPS, remote).await {
         Ok(tunnel) => tunnel,
         Err(err) => {
             server.count("moqui.edgelink.refused", TUNNEL_HTTPS);
@@ -345,18 +399,18 @@ pub(crate) fn ports(config: &super::EdgeConfig) -> Vec<TunnelPort> {
 
 /// The tunnel kind of a row's `tunnelKind`.
 fn row_kind(kind: &str) -> Option<&'static str> {
-    [TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS]
+    [TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS, TUNNEL_SMTP]
         .into_iter()
         .find(|known| *known == kind)
 }
 
-/// Where a row's port listens: on `edge_ssh_tunnel_host` for SSH and `edge_xmpp_host` for XMPP, every address while
-/// it is empty.
+/// Where a row's port listens: on `edge_ssh_tunnel_host` for SSH, `edge_smtp_tunnel_host` for SMTP and
+/// `edge_xmpp_host` for XMPP, every address while it is empty.
 fn row_bind(kind: &str, port: u16) -> Result<SocketAddr, String> {
-    let host_name = if kind == TUNNEL_SSH {
-        "edge_ssh_tunnel_host"
-    } else {
-        "edge_xmpp_host"
+    let host_name = match kind {
+        TUNNEL_SSH => "edge_ssh_tunnel_host",
+        TUNNEL_SMTP => "edge_smtp_tunnel_host",
+        _ => "edge_xmpp_host",
     };
     let host = moqui_lib::env::get_prop_or_env(host_name);
     let ip = match host.trim() {
@@ -478,18 +532,25 @@ fn reconcile(
             },
         );
     }
+    // an SMTP port is a front node's alone (plans/Edge-Node2.md §4.7): a node with the edge set takes mail itself
+    let front_only = server.config().front && !server.config().edge;
     for row in rows {
         if running.contains_key(&row.port) {
             continue;
         }
         let started = row_kind(&row.tunnel_kind)
             .ok_or_else(|| format!("{} is not a tunnel kind", row.tunnel_kind))
-            .and_then(|kind| Ok((kind, row_bind(kind, row.port)?)))
+            .and_then(|kind| {
+                if kind == TUNNEL_SMTP && !front_only {
+                    return Err("an smtp port is a front node's (node_role front)".to_string());
+                }
+                Ok((kind, row_bind(kind, row.port)?))
+            })
             .and_then(|(kind, bind)| {
-                let max = if kind == TUNNEL_SSH {
-                    MAX_SSH_TUNNELS
-                } else {
-                    MAX_XMPP_TUNNELS
+                let max = match kind {
+                    TUNNEL_SSH => MAX_SSH_TUNNELS,
+                    TUNNEL_SMTP => MAX_SMTP_TUNNELS,
+                    _ => MAX_XMPP_TUNNELS,
                 };
                 let (stop, stopped) = tokio::sync::watch::channel(false);
                 let port = TunnelPort {
@@ -698,10 +759,17 @@ async fn connection(
     let Some(_active) = server.opened(&node, kind) else {
         return;
     };
-    let mut tunnel = match open(server, &node, kind, remote).await {
+    let mut tunnel = match open(server, &node, None, kind, remote).await {
         Ok(tunnel) => tunnel,
         Err(err) => return refused(err),
     };
+    // SMTP: the client's address first, which the member's SMTP listener reads only off its own link
+    if kind == TUNNEL_SMTP {
+        let local = stream
+            .local_addr()
+            .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
+        first = [crate::proxy_header::v2(remote, local), first].concat();
+    }
     if !first.is_empty() && (tunnel.write_all(&first).await.is_err() || tunnel.flush().await.is_err()) {
         return;
     }
@@ -733,7 +801,7 @@ pub(crate) async fn xmpp_to_pairing(
     let Some(_active) = server.opened(&node, kind) else {
         return true;
     };
-    let mut tunnel = match open(&server, &node, kind, remote).await {
+    let mut tunnel = match open(&server, &node, None, kind, remote).await {
         Ok(tunnel) => tunnel,
         Err(err) => {
             server.count("moqui.edgelink.refused", kind);

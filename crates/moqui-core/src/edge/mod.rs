@@ -68,6 +68,17 @@ pub const NODE_ID: &str = "edge_node_id";
 /// the local node its queue rows and receipts, so every member of a pool, and a standby that takes over, is the same
 /// pairing. A node paired before E17 has none, and is its own instance id.
 pub const NODE_PAIRING: &str = "edge_node_pairing";
+/// A node's link properties for its front node (plans/Edge-Node2.md §4.7), in `runtime/.env`, written by pairing with a
+/// node whose Hello names the role `front` and removed by unpairing it: a second pairing beside `edge_node_*`. A local
+/// node pairs with the front for its web names when its edge cluster's members are `edge` (they forward no web access),
+/// and an edge node (`front_edge` or `edge`) pairs with the front that faces its visitors. Over this pairing go web
+/// access and ports only.
+pub const FRONT_URL: &str = "front_node_url";
+pub const FRONT_KEY: &str = "front_node_key";
+pub const FRONT_PIN: &str = "front_node_pin";
+/// The front node's instance ids, learned on pinned links, as [`NODE_ID`] is for the edge pairing: a web protection
+/// ban goes up to them too.
+pub const FRONT_ID: &str = "front_node_id";
 /// An edge node's long-lived link key (a generated secret), which its up and down connections present instead of the
 /// web certificate, so a renewed web certificate does not break a link.
 pub const LINK_KEY: &str = "edge_link_key";
@@ -76,6 +87,26 @@ pub const LINK_KEY: &str = "edge_link_key";
 pub const HOST_PASSTHROUGH: &str = "EdgeHostPassthrough";
 /// A host whose TLS the edge node ends, forwarding each request down the link as HTTP/2 (§5.3).
 pub const HOST_TERMINATE: &str = "EdgeHostTerminate";
+/// On a front node, an edge member's own link name (plans/Edge-Node2.md §4.7): passed through untouched, as a
+/// passthrough host, but to that one member of its pairing (`EdgeHost.memberId`), never balanced. The front writes it
+/// from the member's Hello; Configure and the System app do not set it.
+pub const HOST_LINK_NAME: &str = "EdgeHostLinkName";
+
+/// Why a front node starts none of the edge set's services (plans/Edge-Node2.md §4.7): call media and TURN, SIP, the
+/// SMTP listener and MX delivery, an XMPP server; the startup report shows each off with it.
+pub const FRONT_ONLY: &str = "a front node (node_role front) has only the front set";
+
+/// Whether `factory`'s node is a front node, logging once per area named in `what` that its setting is ignored when
+/// `configured`: the start of an edge set's service asks it (plans/Edge-Node2.md §4.7).
+pub fn front_refuses(factory: &crate::context::ExecutionContextFactory, what: &str, configured: bool) -> bool {
+    if !settings(factory).role.front_only() {
+        return false;
+    }
+    if configured {
+        tracing::warn!("{what} is set on a front node (node_role front), which has only the front set: not started");
+    }
+    true
+}
 
 /// `node_role`, trimmed and lowercase.
 pub fn node_role() -> String {
@@ -91,15 +122,16 @@ pub enum NodeRole {
     /// A normal node (`node_role` empty): its own data, and a local node when paired with an edge node.
     #[default]
     Normal,
-    /// A front node (`node_role=front`, E19 finishes it): the front set alone. Its Hello offers only web access and
-    /// ports.
+    /// A front node (`node_role=front`, plans/Edge-Node2.md §4.7): the front set alone. Its Hello offers only web
+    /// access and ports; it starts none of the edge set's services and refuses the edge set's calls on its links, and
+    /// dials no other node.
     Front,
     /// An edge node as built before E17 (`node_role=front_edge`): both sets, so it balances a local cluster with no
     /// other node. No business data of its own.
     FrontEdge,
     /// An edge node behind a front node (`node_role=edge`): the edge set alone. It takes its local nodes' links for
-    /// the queue, delegate, replicate, comms and PASS, and forwards no web access itself; its sites and ports are
-    /// reached through the front.
+    /// the queue, delegate, replicate, comms and PASS, and forwards no web access itself and binds no ports; its sites
+    /// are reached through the front, which it dials (`front_node_url`).
     Edge,
     /// An all-in-one node (`node_role=all-in-one`, E12): a full server with both sets, which also takes the links of
     /// paired local nodes and routes each item by its owner ([`owner`]).
@@ -161,10 +193,22 @@ impl NodeRole {
         matches!(self, Self::FrontEdge | Self::Edge | Self::AllInOne)
     }
 
-    /// The edge end of a link: every role but a normal node's. It accepts links, runs the [`queue`]'s receiving side
-    /// and sends the listed services' calls of a paired node's items down the link.
+    /// The edge end of a link: every role but a normal node's. It accepts links; with the edge set it runs the
+    /// [`queue`]'s receiving side and sends the listed services' calls of a paired node's items down the link.
     pub fn takes_links(self) -> bool {
         self != Self::Normal
+    }
+
+    /// A front node (`front`): the front set alone, with no mail, media, SIP, queue, replication or mr-pass
+    /// (plans/Edge-Node2.md §4.7).
+    pub fn front_only(self) -> bool {
+        self == Self::Front
+    }
+
+    /// The node may dial a front node (plans/Edge-Node2.md §4.7, §4.11): every role but `front`. A normal node's link
+    /// to its front is its second pairing; a node with the edge set dials its front as well as taking links.
+    pub fn dials_front(self) -> bool {
+        self != Self::Front
     }
 }
 
@@ -240,6 +284,9 @@ pub struct EdgeInfo {
     /// realm, and its phones ring only with the registrar on.
     pub sip_domain: String,
     pub sip_registrar: bool,
+    /// Its `node_role` as its Hello names it (`front`, `front_edge`, `edge`, `all-in-one`); empty from a node before
+    /// E19. Pairing with a `front` keeps the pairing as this node's front pairing ([`FRONT_URL`]).
+    pub role: String,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.
@@ -450,6 +497,16 @@ pub trait EdgeLink: Send + Sync {
     /// On a node that takes links: the members of its cluster with their link addresses, live or not, as its Hello
     /// answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
     fn edge_cluster(&self) -> Result<Vec<EdgeClusterMember>, Error> {
+        Err(Error::new(NOT_BUILT))
+    }
+    /// The node's link to its front node, its second pairing ([`FRONT_URL`], plans/Edge-Node2.md §4.7); `None` when
+    /// it has none.
+    fn front_status(&self) -> Option<LinkStatus> {
+        None
+    }
+    /// Tell the front node to revoke this node's key (when it can be reached), close that link and remove
+    /// `front_node_*`.
+    fn unpair_front(&self) -> Result<(), Error> {
         Err(Error::new(NOT_BUILT))
     }
     /// On a local node: its state changed (drained or resumed here), so its links tell the edge node now rather than

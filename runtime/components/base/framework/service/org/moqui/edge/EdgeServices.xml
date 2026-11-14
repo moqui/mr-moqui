@@ -70,6 +70,20 @@ along with this software (see the LICENSE.md file). If not, see
                     <parameter name="retired" type="Boolean"/>
                 </parameter>
             </parameter>
+            <parameter name="edgeRole"><description>The role the node at the other end of the link named in its Hello
+                (front, front_edge, edge, all-in-one); empty from a node before E19.</description></parameter>
+            <parameter name="frontState"><description>When this node has a front pairing beside its edge pairing
+                (front_node_url, plans/Edge-Node2.md §4.7): that link's state, and its URL, the front node's name and
+                fingerprint, its last error and when it last came up. A node paired with a front alone shows it in the
+                fields above too.</description></parameter>
+            <parameter name="frontOnly" type="Boolean"><description>This node is paired with a front node alone:
+                front_node_url set and edge_node_url not (plans/Edge-Node2.md §4.7). From the properties, so it holds
+                before the front's link first comes up, while edgeRole is still empty.</description></parameter>
+            <parameter name="frontUrl"/>
+            <parameter name="frontName"/>
+            <parameter name="frontFingerprint"/>
+            <parameter name="frontLastError"/>
+            <parameter name="frontLastConnectDate" type="Timestamp"/>
         </out-parameters>
     </service>
 
@@ -93,6 +107,18 @@ along with this software (see the LICENSE.md file). If not, see
                     lock row sipTrunks (moqui.edge.EdgeSenderLock) while its lease lasts by the database's clock; of the
                     members' SIP engines, only that one registers them.</description></parameter>
             </parameter></parameter>
+            <parameter name="frontList" type="List"><description>The front node this node is paired with
+                (front_node_url, plans/Edge-Node2.md §4.7), which every member of its cluster dials with the shared
+                .env: its link to each member of the front's cluster, else the one link, with the front's name and the
+                pinned fingerprint of its link key. Where the link is not running, or its front dialer is not, one row
+                from front_node_url and front_node_id (the front's member ids, comma-separated) with state
+                notStarted. Empty with no front pairing.</description>
+                <parameter name="front" type="Map">
+                    <parameter name="instanceId"/><parameter name="url"/><parameter name="state"/>
+                    <parameter name="rttMs" type="Double"/><parameter name="lastConnectDate" type="Timestamp"/>
+                    <parameter name="lastError"/><parameter name="frontName"/><parameter name="fingerprint"/>
+                </parameter>
+            </parameter>
         </out-parameters>
     </service>
 
@@ -111,6 +137,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="features" type="List"/>
             <parameter name="capabilities" type="List"/>
             <parameter name="publicNames" type="List"/>
+            <parameter name="edgeRole"><description>The node's role as its Hello names it (front, front_edge, edge,
+                all-in-one): pairing with a front node keeps it as this node's front pairing (plans/Edge-Node2.md
+                §4.7).</description></parameter>
             <parameter name="compatible" type="Boolean"/>
             <parameter name="message"/>
         </out-parameters>
@@ -137,6 +166,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="features" type="List"/>
             <parameter name="capabilities" type="List"/>
             <parameter name="publicNames" type="List"/>
+            <parameter name="edgeRole"><description>The node's role as its Hello names it (front, front_edge, edge,
+                all-in-one): pairing with a front node keeps it as this node's front pairing (plans/Edge-Node2.md
+                §4.7).</description></parameter>
             <parameter name="compatible" type="Boolean"/>
             <parameter name="message"/>
         </out-parameters>
@@ -145,7 +177,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="unpair" noun="EdgeNode" type="rust" location="moqui_core::service::edge::unpair_edge_node"
             allow-remote="false" transaction="ignore">
         <description>Tell the edge node to revoke this node's key (when the link is up), close the link and remove
-            edge_node_url, edge_node_key and edge_node_pin from runtime/.env.</description>
+            edge_node_url, edge_node_key and edge_node_pin from runtime/.env. With front true, the front pairing's
+            instead (front_node_*, plans/Edge-Node2.md §4.7); a node paired with a front alone unpairs it either way.</description>
+        <in-parameters><parameter name="front" type="Boolean" default-value="false"/></in-parameters>
     </service>
 
     <service verb="create" noun="PairingCode" type="rust" location="moqui_core::service::edge::create_pairing_code"
@@ -397,6 +431,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="hostName"/><parameter name="pairedNodeId"/><parameter name="modeEnumId"/>
                 <parameter name="stickyCookie"><description>The cookie its requests are sticky by; empty for the edge
                     conf's sticky-cookie.</description></parameter>
+                <parameter name="memberId"><description>For EdgeHostLinkName on a front node: the edge member whose own
+                    link name it is, the one member its connections go to (plans/Edge-Node2.md §4.7).</description></parameter>
             </parameter></parameter>
         </out-parameters>
     </service>
@@ -431,7 +467,7 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false">
         <description>On an edge node: the TCP ports whose connections go down one paired local node's link each
             (moqui.edge.EdgePort, plans/Edge-Node2.md §4.10 Ports), of one node with pairedNodeId. Each has port,
-            pairedNodeId, tunnelKind (ssh, xmpp or xmpps), listening, and errorText when it does not listen.</description>
+            pairedNodeId, tunnelKind (ssh, xmpp, xmpps or smtp), listening, and errorText when it does not listen.</description>
         <in-parameters><parameter name="pairedNodeId"/></in-parameters>
         <out-parameters><parameter name="portList" type="List"/></out-parameters>
     </service>
@@ -439,9 +475,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="add" noun="EdgePort" type="rust" location="moqui_core::service::edge::add_edge_port"
             allow-remote="false">
         <description>On an edge node: a TCP port whose connections go down an active paired local node's link, to its
-            SSH server (tunnelKind ssh) or its XMPP server (xmpp for STARTTLS, xmpps for direct TLS). A port of this
-            node's own listeners (its conf's tunnel ports included), and one another row has, are refused; the same
-            row again is no change. The edge node listens on it within seconds (get#EdgePorts tells how it
+            SSH server (tunnelKind ssh) or its XMPP server (xmpp for STARTTLS, xmpps for direct TLS); on a front node
+            (node_role front) also smtp, to the SMTP listener of a member of the pairing's pool with a PROXY header
+            naming the client (port 25 before an edge cluster, plans/Edge-Node2.md §4.7), refused on any other node. A
+            port of this node's own listeners (its conf's tunnel ports included; on a front node not those of the edge
+            set, which it never starts), and one another row has, are refused; the same row again is no change. The edge node listens on it within seconds (get#EdgePorts tells how it
             went).</description>
         <in-parameters>
             <parameter name="port" required="true"/>

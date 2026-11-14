@@ -437,6 +437,10 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     use moqui_core::startup::{listener, State};
     let settings = match settings_from(&moqui_lib::env::get_prop_or_env) {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "sip_port", true) => {
+            listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
+            return None;
+        }
         Ok(Some(settings)) => settings,
         Ok(None) => {
             listener(factory, LISTENER, State::off("sip_port and sip_tls_port are not set"));

@@ -27,6 +27,8 @@ names and the commands ([Run-Deploy, Choose a topology](../../docs/Run-Deploy.md
 | [`local-cluster/`](local-cluster/README.md) | A local cluster, behind your own load balancer or an edge node |
 | [`local-failover/`](local-failover/README.md) | A local node with a standby |
 | [`edge-cluster/`](edge-cluster/README.md) | An edge cluster: several edge nodes on one database, each local node linked to every one |
+| [`front/`](front/README.md) | A front node before a local cluster: load balancing and web protection, none of the edge node's comms |
+| [`full-stack/`](full-stack/README.md) | The full stack: a front node, an edge cluster with mr-pass's sites, a local cluster as their authority |
 
 `crates/moqui-devkit/src/runtime_conf_tests.rs` checks that every conf here, in the directories too, parses, merges
 over the default conf and passes the schema.

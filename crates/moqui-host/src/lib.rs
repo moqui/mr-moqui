@@ -1973,6 +1973,12 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
         listener(factory, smtp::LISTENER, State::Skipped(busy));
         return None;
     }
+    // a front node's port 25 is a TCP port to its pool, never this listener (plans/Edge-Node2.md §4.7)
+    let configured = !moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty();
+    if moqui_core::edge::front_refuses(factory, "smtp_listen_port", configured) {
+        listener(factory, smtp::LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
+        return None;
+    }
     match smtp::start(factory) {
         Ok(Some(server)) => {
             listener(factory, smtp::LISTENER, State::On(format!("tcp {}", server.address())));

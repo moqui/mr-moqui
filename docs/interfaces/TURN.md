@@ -98,6 +98,11 @@ DNS list checks its A and AAAA records against the edge node's addresses or its 
 for each member its links reach and signs each member's TURN URLs for the calls whose media is there; every member
 reads the active pairings from the shared rows, so a revoke ends a pairing's TURN access on all of them.
 
+**Not through a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19). A front node runs no TURN and passes
+no UDP: before an edge cluster ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) each edge member's
+`turn_public_host` is a name with an address record at that member's own address, not the front's, and its TURN ports
+are open on it. A front pairing carries no TURN secret.
+
 **Revoking a local node ends its TURN access.** Within a second or two of the revoke the edge node's TURN refuses every
 username of that pairing and closes its relays, with no new `turn_auth_secret`; the other pairings go on. A pairing's
 secret makes credentials for its own pairing only: one signed for another pairing's name fails. A call's legs on an
