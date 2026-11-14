@@ -26,7 +26,7 @@
 #[cfg(test)]
 mod access_tests;
 #[cfg(test)]
-mod hosting_tests;
+pub(crate) mod hosting_tests;
 pub mod lfs;
 pub(crate) mod pack_in;
 pub(crate) mod pack_out;
@@ -39,8 +39,9 @@ mod push_tests;
 pub(crate) mod receive;
 #[cfg(test)]
 mod repository_tests;
+pub(crate) mod review;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 pub(crate) mod upload;
 
 use std::collections::HashSet;
@@ -74,6 +75,12 @@ pub(crate) fn short_ref(name: &str) -> &str {
     super::browse::short_name(name)
 }
 
+/// Whether a merge request opened by a push for review or a proposal starts hidden (`git-server`
+/// `review-start-hidden`), for an application that holds what a new account sends until it has looked at it.
+pub(crate) fn review_starts_hidden() -> bool {
+    crate::setting("review-start-hidden") == "true"
+}
+
 /// One ref of an advertisement.
 #[derive(Clone, Debug)]
 pub(crate) struct AdvertisedRef {
@@ -83,6 +90,12 @@ pub(crate) struct AdvertisedRef {
     pub peeled: Option<ObjectId>,
 }
 
+/// Whether pushes to `refs/for/<branch>` are taken, from a user who may view and not push too: `git-server`
+/// `review-push`, on unless it is `false`.
+pub(crate) fn review_push_enabled() -> bool {
+    crate::setting("review-push") != "false"
+}
+
 /// The refs a conversation starts from, read once: what is fetched is what was advertised.
 #[derive(Clone, Debug)]
 pub(crate) struct Advertised {
@@ -90,7 +103,11 @@ pub(crate) struct Advertised {
     pub head: Option<ObjectId>,
     /// The default branch's full ref name, what `HEAD` points to.
     pub branch_ref: String,
+    /// The branches and tags.
     pub refs: Vec<AdvertisedRef>,
+    /// The heads of the merge requests that are not hidden (`refs/merge-requests/<n>/head`): never advertised,
+    /// listed by protocol v2 for a prefix that names them, and fetched by id.
+    pub review: Vec<AdvertisedRef>,
 }
 
 fn peel_tag(store: &dyn GitStore, id: &ObjectId) -> Result<Option<ObjectId>, Error> {
@@ -110,10 +127,20 @@ fn peel_tag(store: &dyn GitStore, id: &ObjectId) -> Result<Option<ObjectId>, Err
     Ok(peeled)
 }
 
-pub(crate) fn advertised(store: &dyn GitStore, branch: &str) -> Result<Advertised, Error> {
+/// The advertisement of `readable`, the refs a reader reads ([`GitProvider::readable_refs`]).
+pub(crate) fn advertised(
+    store: &dyn GitStore,
+    branch: &str,
+    readable: Vec<(String, ObjectId)>,
+) -> Result<Advertised, Error> {
     let branch_ref = super::ops::branch_ref(branch);
     let mut refs = Vec::new();
-    for (name, id) in store.list_refs("refs/")? {
+    let mut review = Vec::new();
+    for (name, id) in readable {
+        if name.starts_with(crate::reach::MERGE_REQUEST_REFS) {
+            review.push(AdvertisedRef { name, id, peeled: None });
+            continue;
+        }
         refs.push(AdvertisedRef {
             peeled: peel_tag(store, &id)?,
             name,
@@ -121,6 +148,7 @@ pub(crate) fn advertised(store: &dyn GitStore, branch: &str) -> Result<Advertise
         });
     }
     Ok(Advertised {
+        review,
         head: refs
             .iter()
             .find(|reference| reference.name == branch_ref)
@@ -664,7 +692,11 @@ fn open(provider: &GitProvider, id: &str, service: GitService) -> Result<Arc<Rep
         if repo.definition.archived {
             return Err(Refusal::Forbidden(format!("repository {id} is archived and read only")));
         }
-        if !may_push(id) {
+        // a user who may only view pushes for review (refs/for/<branch>), when the server takes that; by the
+        // repository's own rights, not a drive's: a drive's viewer has nothing to offer for review
+        let for_review =
+            || review_push_enabled() && moqui_core::user::authorize_own(GIT_ARTIFACT_TYPE, id, "view").is_ok();
+        if !may_push(id) && !for_review() {
             return Err(Refusal::Forbidden(format!("you may not push to repository {id}")));
         }
     }
@@ -785,11 +817,27 @@ pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn H
         match request.service {
             GitService::UploadPack if v2 => {
                 let advertised = session.advertised()?;
-                upload::serve_v2(repo.store.as_ref(), &advertised, body, out, true, pack_threads())
+                upload::serve_v2(
+                    repo.store.as_ref(),
+                    &advertised,
+                    &session.wanted(),
+                    body,
+                    out,
+                    true,
+                    pack_threads(),
+                )
             }
             GitService::UploadPack => {
                 let advertised = session.advertised()?;
-                upload::upload_v0(repo.store.as_ref(), &advertised, body, out, true, pack_threads())
+                upload::upload_v0(
+                    repo.store.as_ref(),
+                    &advertised,
+                    &session.wanted(),
+                    body,
+                    out,
+                    true,
+                    pack_threads(),
+                )
             }
             GitService::ReceivePack => session.push(body, out),
         }
@@ -862,6 +910,7 @@ pub fn serve_ssh(
                 upload::serve_v2(
                     repo.store.as_ref(),
                     &advertised,
+                    &session.wanted(),
                     &mut input,
                     output,
                     false,
@@ -875,6 +924,7 @@ pub fn serve_ssh(
                 upload::upload_v0(
                     repo.store.as_ref(),
                     &advertised,
+                    &session.wanted(),
                     &mut input,
                     output,
                     false,
@@ -911,8 +961,15 @@ struct Session<'a> {
 }
 
 impl Session<'_> {
+    /// The branches and tags, and the heads of the merge requests a reader may fetch.
     fn advertised(&self) -> Result<Advertised, Error> {
-        advertised(self.repo.store.as_ref(), &self.repo.definition.branch)
+        let readable = self.provider.readable_refs(self.repo)?.readable;
+        advertised(self.repo.store.as_ref(), &self.repo.definition.branch, readable)
+    }
+
+    /// Which objects a fetch may want by id: the commits the readable refs reach.
+    fn wanted(&self) -> impl Fn(&[ObjectId]) -> Result<HashSet<ObjectId>, Error> + '_ {
+        |ids: &[ObjectId]| self.provider.reachable_of(self.repo, ids)
     }
 
     fn quarantine_dir(&self) -> std::path::PathBuf {
@@ -936,13 +993,31 @@ impl Session<'_> {
     /// Whether a command may be made, against the repository with the pushed objects over it: its name, its old
     /// value, what it points to, and the user's authorization for what it does. How it changes the ref: create, update
     /// (a fast-forward), force or delete.
-    fn check_command(&self, view: &dyn GitStore, command: &receive::Command) -> Result<&'static str, String> {
+    fn check_command(
+        &self,
+        view: &dyn GitStore,
+        pack: Option<&pack_in::Quarantine<'_>>,
+        command: &receive::Command,
+    ) -> Result<&'static str, String> {
         let id = &self.repo.definition.id;
         let name = command.name.as_str();
-        if gix::validate::reference::name(name.as_bytes().as_bstr()).is_err()
-            || !(name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
-        {
-            return Err("funny refname: only branches (refs/heads/) and tags (refs/tags/) can be pushed".into());
+        let valid = gix::validate::reference::name(name.as_bytes().as_bstr()).is_ok();
+        // a new value the push did not send must be the repository's own history, not only an object of its store
+        if let Some(new) = command.new.filter(|new| !pack.is_some_and(|pack| pack.holds(new))) {
+            match self.own_history(&[new]) {
+                Ok(None) => {}
+                Ok(Some(_)) => return Err(format!("missing necessary objects: {new}")),
+                Err(err) => return Err(err.message().to_string()),
+            }
+        }
+        if let (true, Some(target)) = (valid, name.strip_prefix(crate::reach::REVIEW_REFS)) {
+            return self.check_review(view, command, target).map(|()| "create");
+        }
+        if !valid || !(name.starts_with("refs/heads/") || name.starts_with("refs/tags/")) {
+            return Err(
+                "funny refname: only branches (refs/heads/), tags (refs/tags/) and reviews (refs/for/) can be pushed"
+                    .into(),
+            );
         }
         let current = view.read_ref(name).map_err(|err| err.message().to_string())?;
         if current != command.old {
@@ -982,6 +1057,10 @@ impl Session<'_> {
         permitted(id, action).then_some(()).ok_or(()).map_err(|()| {
             if action == "delete" && command.new.is_some() {
                 format!("non-fast-forward: forcing a ref needs the delete permission on {id}")
+            } else if !may_push(id) && review_push_enabled() {
+                format!(
+                    "permission denied: {action} on repository {id}; push to refs/for/<branch> to open a merge request"
+                )
             } else {
                 format!("permission denied: {action} on repository {id}")
             }
@@ -1001,7 +1080,8 @@ impl Session<'_> {
             name,
             super::rules::RefChangeKind::parse(change),
             &super::rules::current_user_in,
-        )?;
+        )
+        .map_err(|reason| format!("GitProtectedBranch: {reason}"))?;
         Ok(change)
     }
 
@@ -1021,8 +1101,27 @@ impl Session<'_> {
         let mut quarantine = None;
         if needs_pack {
             let dir = self.quarantine_dir();
-            match pack_in::receive(store, &mut input, &dir, max_object_size(), pack_threads()) {
+            // a user with no push right brings at most what one push for review may: the rest is not read
+            let cap: u64 = crate::number_setting("review-max-push-bytes", 50 * 1024 * 1024);
+            let (received, cut) = if cap > 0 && !may_push(&definition.id) {
+                let mut limited = BufReader::new((&mut input).take(cap.saturating_add(1)));
+                let received = pack_in::receive(store, &mut limited, &dir, max_object_size(), pack_threads());
+                (received, limited.get_ref().limit() == 0)
+            } else {
+                let received = pack_in::receive(store, &mut input, &dir, max_object_size(), pack_threads());
+                (received, false)
+            };
+            match received {
                 Ok(received) => quarantine = Some(received),
+                // cut off at the cap: said as the cap, not as a broken pack
+                Err(_) if cut => {
+                    let reason = format!(
+                        "GitReviewPushTooLarge: a push for review is at most {cap} bytes (push to a fork for more)"
+                    );
+                    tracing::info!(repository = %definition.id, "a push for review was cut off at {cap} bytes");
+                    let results = vec![Err(reason.clone()); request.commands.len()];
+                    return receive::report(out, &request, Err(reason), &results);
+                }
                 Err(err) => {
                     tracing::warn!(repository = %definition.id, "a pushed pack was refused: {err}");
                     let results = vec![Err("unpacker error".to_string()); request.commands.len()];
@@ -1038,26 +1137,73 @@ impl Session<'_> {
                 for result in &mut results {
                     *result = Err("missing necessary objects".into());
                 }
+            } else {
+                // the commits the pushed ones build on: the repository's own, not another's of its store
+                let linked = received.linked();
+                let review_targets: Vec<String> = request
+                    .commands
+                    .iter()
+                    .filter_map(|command| command.name.strip_prefix(crate::reach::REVIEW_REFS))
+                    .map(str::to_string)
+                    .collect();
+                let foreign = self.own_history(&linked).and_then(|foreign| match foreign {
+                    Some(foreign) => Ok(Some(foreign)),
+                    // then the trees, blobs and delta bases it names: files of commits the pusher reads
+                    None => self.foreign_object(&received.named(), &review_targets, &linked),
+                });
+                match foreign {
+                    Ok(None) => {}
+                    Ok(Some(foreign)) => {
+                        tracing::warn!(repository = %definition.id, "a push builds on {foreign}, which no ref here reaches");
+                        receive::message(
+                            out,
+                            &request,
+                            &format!("the push is missing object {foreign}, which a pushed object refers to"),
+                        )?;
+                        for result in &mut results {
+                            *result = Err("missing necessary objects".into());
+                        }
+                    }
+                    Err(err) => {
+                        for result in &mut results {
+                            *result = Err(err.message().to_string());
+                        }
+                    }
+                }
             }
         }
-        let origin = events::UpdateOrigin {
+        let for_review = |index: usize| request.commands[index].name.starts_with(crate::reach::REVIEW_REFS);
+        let pack_bytes = quarantine.as_ref().map_or(0, pack_in::Quarantine::pack_bytes);
+        // a user with no push right sends objects only for review, within the server's caps
+        let capped = (0..request.commands.len()).any(for_review) && !may_push(&definition.id);
+        let over_cap = if capped {
+            self.provider.review_cap(pack_bytes)
+        } else {
+            None
+        };
+        let mut origin = events::UpdateOrigin {
             source: "push",
             transport: self.transport,
             user_id: current_user(),
             remote_address: Some(self.client.clone()).filter(|client| !client.is_empty()),
             push_options: request.options.clone(),
-            pack_bytes: quarantine.as_ref().map_or(0, pack_in::Quarantine::pack_bytes),
+            pack_bytes,
+            review_push: false,
         };
         let refs: Vec<events::RefUpdate> = {
             let view: &dyn GitStore = match &quarantine {
                 Some(received) => received,
                 None => store,
             };
-            for (command, result) in request.commands.iter().zip(results.iter_mut()) {
+            for (index, (command, result)) in request.commands.iter().zip(results.iter_mut()).enumerate() {
                 if result.is_ok() {
-                    *result = self.check_command(view, command);
+                    *result = self.check_command(view, quarantine.as_ref(), command);
+                }
+                if let (true, true, Some(reason)) = (result.is_ok(), for_review(index), &over_cap) {
+                    *result = Err(reason.clone());
                 }
             }
+            origin.review_push = capped && (0..results.len()).any(|index| for_review(index) && results[index].is_ok());
             let refs: Vec<events::RefUpdate> = request
                 .commands
                 .iter()
@@ -1103,6 +1249,8 @@ impl Session<'_> {
             }
         }
         let accepted: Vec<usize> = (0..results.len()).filter(|index| results[*index].is_ok()).collect();
+        // what a rule refused is not counted toward the account's cap
+        origin.review_push = capped && accepted.iter().any(|index| for_review(*index));
         let recorded: Vec<(events::RefUpdate, String)> = refs
             .iter()
             .zip(&results)
@@ -1139,6 +1287,8 @@ impl Session<'_> {
                     }
                 }
                 Ok(()) => {
+                    // a ref for review is no ref of the repository: its merge request's head is set after
+                    let accepted: Vec<usize> = accepted.iter().copied().filter(|index| !for_review(*index)).collect();
                     let edits: Vec<RefEdit> = accepted
                         .iter()
                         .map(|index| {
@@ -1150,7 +1300,12 @@ impl Session<'_> {
                             }
                         })
                         .collect();
-                    match store.update_refs(&edits, request.has("atomic")) {
+                    let moved = if edits.is_empty() {
+                        Ok(Vec::new())
+                    } else {
+                        store.update_refs(&edits, request.has("atomic"))
+                    };
+                    match moved {
                         Ok(outcomes) => {
                             for (index, outcome) in accepted.iter().zip(outcomes) {
                                 match outcome {
@@ -1173,6 +1328,23 @@ impl Session<'_> {
             }
         }
         drop(quarantine);
+        // outside the lock: the merge request services take it to set the head's ref
+        for index in (0..results.len()).filter(|index| for_review(*index)) {
+            if results[index].is_err() {
+                continue;
+            }
+            match self.propose(&request.commands[index], &request.options) {
+                Ok(lines) => {
+                    for line in lines {
+                        receive::message(out, &request, &line)?;
+                    }
+                }
+                Err(reason) => {
+                    tracing::warn!(repository = %definition.id, "a push for review opened no merge request: {reason}");
+                    results[index] = Err(reason);
+                }
+            }
+        }
         let results: Vec<Result<(), String>> = results.into_iter().map(|result| result.map(|_| ())).collect();
         if results.iter().any(Result::is_ok) {
             self.updated(&request, &results, &refs_before);

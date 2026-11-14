@@ -1262,6 +1262,17 @@
         gc#GitRepositories deletes unreachable objects not written or referenced in the last gc-prune-days days (at
         least 1), keeps the commits of the last gc-reflog-days days of changes (a force push can be undone), and passes
         over a repository of more than gc-max-objects objects.
+        Push to review (docs/interfaces/Git-Hosting.md, Push to review): with review-push a user who may view a
+        repository pushes refs/for/[branch], which opens or updates a merge request, and nothing else; one with no
+        push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap). With
+        review-start-hidden such a merge request starts hidden, until the application shows it.
+        merge-request-url is the page told to the client ({repositoryPath}, {repositoryId}, {mergeRequestNum},
+        {mergeRequestId}; after public-url when it starts with /). A commit is read or fetched by its id only when a
+        ref reaches it, from at most reach-max-commits commits kept in memory per repository; get#GitCommitRefs reads
+        at most contains-max-commits. Commit status contexts that start with one of reserved-status-contexts (comma
+        separated; none by default, a hosting application sets agreement/,ci/) are written with authorization
+        disabled only. The head ref of a merge request closed unmerged is deleted review-ref-retention-days after. committer-name and committer-email are the committer
+        of a commit#GitFiles commit whose author the application gives.
     -->
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
@@ -1273,7 +1284,10 @@
             archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"
             archive-max-concurrent="2"
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
-            db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"/>
+            db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"
+            review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
+            merge-request-url="" reach-max-commits="1000000" contains-max-commits="200000"
+            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the

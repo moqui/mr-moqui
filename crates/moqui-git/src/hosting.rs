@@ -30,7 +30,7 @@ use super::merge::{self, Mergeability, Merged, Method, Overlay};
 use super::ops::{self, Author, CommitDetails};
 use super::revwalk::new_commits;
 use super::rules::{self, RefChangeKind};
-use super::store::{RefEdit, RefOutcome};
+use super::store::{GitStore, RefEdit, RefOutcome};
 use super::{GitProvider, Repo, RepositoryKind};
 use moqui_core::context::Error;
 
@@ -100,6 +100,25 @@ pub(crate) enum MergeOutcome {
         reason: String,
         conflicts: Vec<String>,
     },
+}
+
+/// How the branch rules apply to a ref write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefRules {
+    /// As to a push: a protected ref refuses what its rules do not allow.
+    Direct,
+    /// A merge through a merge request: a fast-forward of the target passes.
+    MergeRequest,
+    /// Not checked: an application's own write, asked for with authorization disabled.
+    Bypass,
+}
+
+/// Whether `name` is a branch's or a tag's full ref name that git takes (no `..`, no control characters, no
+/// trailing `.lock`, and the rest of `git check-ref-format`).
+pub(crate) fn valid_ref_name(name: &str) -> bool {
+    use gix::bstr::ByteSlice;
+    (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+        && gix::validate::reference::name(name.as_bytes().as_bstr()).is_ok()
 }
 
 fn kind_of(mode: gix::objs::tree::EntryMode) -> &'static str {
@@ -224,20 +243,37 @@ impl GitProvider {
     }
 
     /// Compare `head` against `base` (both revisions). With `diffs` each file's line diff (else only its change);
-    /// with `mergeable` a trial merge of head into base. `None` when either names no commit.
+    /// with `mergeable` a trial merge of head into base. `None` when either names no commit. `head` is a revision
+    /// of `head_repository` when one is given (another repository of the fork network, which the caller may view):
+    /// the two are then read as one store.
     pub(crate) fn compare(
         &self,
         repository_id: &str,
         base: &str,
         head: &str,
+        head_repository: Option<&str>,
         diffs: bool,
         mergeable: bool,
     ) -> Result<Option<Comparison>, Error> {
         let repo = self.repo(repository_id)?;
-        let store = repo.store.as_ref();
+        let other = match head_repository.filter(|other| *other != repository_id) {
+            Some(other) => Some(self.repo(other)?),
+            None => None,
+        };
+        let union;
+        let store: &dyn GitStore = match &other {
+            Some(other) => {
+                union = super::store::Union {
+                    first: repo.store.as_ref(),
+                    second: other.store.as_ref(),
+                };
+                &union
+            }
+            None => repo.store.as_ref(),
+        };
         let (Some(base_id), Some(head_id)) = (
             self.resolve_commit(repository_id, base)?,
-            self.resolve_commit(repository_id, head)?,
+            self.resolve_commit(head_repository.unwrap_or(repository_id), head)?,
         ) else {
             return Ok(None);
         };
@@ -293,15 +329,16 @@ impl GitProvider {
         }))
     }
 
-    /// Write refs as one change under the repository's lock: the branch rules (a direct change, unless it is a merge
-    /// through a merge request), the pre events of source `write` (an error refuses the change), the change recorded
-    /// as a `GitUpdate` with its post events scheduled. The objects of `overlay` are written to the store first. Each
-    /// ref's outcome, in order: refused with why. An archived or mirror repository refuses every ref.
+    /// Write refs as one change under the repository's lock: the branch rules as `rules` says, the pre events of
+    /// source `write` (an error refuses the change), the change recorded as a `GitUpdate` with its post events
+    /// scheduled. The objects of `overlay` are written to the store first. Each ref's outcome, in order: refused with
+    /// why. An archived or mirror repository refuses every ref, and a ref made or moved must be a branch or tag with
+    /// a name git takes: every ref a service writes comes through here.
     pub(crate) fn write_refs(
         &self,
         repository_id: &str,
         writes: &[RefWrite],
-        through_merge_request: bool,
+        rules: RefRules,
         overlay: Option<&Overlay<'_>>,
     ) -> Result<Vec<Result<(), String>>, Error> {
         let repo = self.repo(repository_id)?;
@@ -349,12 +386,19 @@ impl GitProvider {
                 results.push(Err("the default branch cannot be deleted".to_string()));
                 continue;
             }
+            if write.new.is_some() && !valid_ref_name(&write.name) {
+                results.push(Err(format!(
+                    "GitBadRefName: {} is not a valid branch or tag name",
+                    short_name(&write.name)
+                )));
+                continue;
+            }
             let found = rules::rules_for(&entity, repository_id, &write.name)?;
             let change = RefChangeKind::parse(change_type);
-            let checked = if through_merge_request && change == RefChangeKind::Update {
-                Ok(())
-            } else {
-                rules::check_direct(&found, &write.name, change, &rules::current_user_in)
+            let checked = match rules {
+                RefRules::Bypass => Ok(()),
+                RefRules::MergeRequest if change == RefChangeKind::Update => Ok(()),
+                _ => rules::check_direct(&found, &write.name, change, &rules::current_user_in),
             };
             results.push(checked);
         }
@@ -525,7 +569,8 @@ impl GitProvider {
     }
 
     /// Merge `source` (a revision) into the branch `target`, by `method`. With `check_only` a trial merge that changes
-    /// nothing. The merge's commits are by the current user (a squash's author `squash_author` when given); the target
+    /// nothing. `source_label` is what the source is called in a merge commit's message when the revision is not a
+    /// branch's name (the head ref of a merge request from a fork). The merge's commits are by the current user (a squash's author `squash_author` when given); the target
     /// moves through [`Self::write_refs`], so the branch rules and gitECA events run as for a push.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn merge_refs(
@@ -538,6 +583,7 @@ impl GitProvider {
         squash_author: Option<Author>,
         check_only: bool,
         through_merge_request: bool,
+        source_label: Option<&str>,
     ) -> Result<MergeOutcome, Error> {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
@@ -565,7 +611,7 @@ impl GitProvider {
         }
         let committer = self.author();
         let overlay = Overlay::new(store);
-        let source_name = short_name(source).to_string();
+        let source_name = source_label.unwrap_or_else(|| short_name(source)).to_string();
         let target_name = short_name(&target_ref).to_string();
         let request = merge::MergeRequest {
             method,
@@ -597,7 +643,11 @@ impl GitProvider {
                 expected: Some(target_id),
                 new: Some(merged.head),
             }],
-            through_merge_request,
+            if through_merge_request {
+                RefRules::MergeRequest
+            } else {
+                RefRules::Direct
+            },
             Some(&overlay),
         )?;
         match written.into_iter().next() {

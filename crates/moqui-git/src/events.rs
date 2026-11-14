@@ -94,6 +94,8 @@ pub(crate) struct UpdateOrigin {
     /// The bytes of the pack a push sent, as it is kept in quarantine (a thin pack completed); 0 with no pack (only
     /// deletes) and for a change that is not a push. A pre-receive rule's `packBytes`, for a quota.
     pub pack_bytes: u64,
+    /// A push to `refs/for/*` by a user with no push right: its bytes count toward the account's cap.
+    pub review_push: bool,
 }
 
 fn id_text(id: Option<ObjectId>) -> Value {
@@ -156,6 +158,15 @@ impl GitProvider {
                     if !origin.push_options.is_empty() {
                         update.set("pushOptions", Value::string(origin.push_options.join("\n")));
                     }
+                    if origin.pack_bytes > 0 {
+                        update.set(
+                            "packBytes",
+                            Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
+                        );
+                    }
+                    if origin.review_push {
+                        update.set("reviewPush", Value::string("Y"));
+                    }
                     update.set("ecaStatus", Value::string(status));
                     update.create(&entity)?;
                     for (reference, result) in refs {
@@ -179,6 +190,153 @@ impl GitProvider {
                 None
             }
         }
+    }
+
+    /// The bytes of the packs `user_id` pushed for review with no push right in the last `window_millis`, over
+    /// every repository (`GitUpdate.reviewPush`): what `git-server` `review-max-account-bytes` caps. A failure to
+    /// read them is logged and counts as none.
+    pub(crate) fn review_bytes_of(&self, user_id: &str, window_millis: i64) -> u64 {
+        let _rows = rows_guard();
+        let read = (|| -> Result<u64, Error> {
+            let since = moqui_lib::object::basic_convert(&Value::I64(now_millis() - window_millis), "Timestamp").value;
+            let rows = self
+                .entity()?
+                .find(GIT_UPDATE)?
+                .eq("userId", Value::string(user_id))
+                .eq("reviewPush", Value::string("Y"))
+                .condition(moqui_core::entity::Condition::greater_equal("updateDate", since))
+                .select_field("packBytes")
+                .list()?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| super::long(row.get("packBytes")))
+                .map(|bytes| u64::try_from(bytes).unwrap_or(0))
+                .sum())
+        })();
+        read.unwrap_or_else(|err| {
+            tracing::error!(user = user_id, "pushes for review not counted: {err}");
+            0
+        })
+    }
+
+    /// Why `bytes` more pushed for review by the current user, who has no push right, is over the server's caps
+    /// (`git-server` `review-max-push-bytes`, 50 MiB a push, and `review-max-account-bytes`, 200 MiB an account a
+    /// day over every repository; 0 is no cap): the objects go into the target's store, for anyone who may view it.
+    pub(crate) fn review_cap(&self, bytes: u64) -> Option<String> {
+        const MIB: u64 = 1024 * 1024;
+        let per_push: u64 = super::number_setting("review-max-push-bytes", 50 * MIB);
+        if per_push > 0 && bytes > per_push {
+            return Some(format!(
+                "GitReviewPushTooLarge: the change is {bytes} bytes; one for review is at most {per_push} (push to \
+                 a fork for more)"
+            ));
+        }
+        let per_account: u64 = super::number_setting("review-max-account-bytes", 200 * MIB);
+        if per_account > 0 {
+            let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+            let used = self.review_bytes_of(&user, 24 * 60 * 60 * 1000);
+            if used.saturating_add(bytes) > per_account {
+                return Some(format!(
+                    "GitReviewQuota: {used} bytes sent for review in the last day; with this change that is over \
+                     the {per_account} an account may send for review in a day"
+                ));
+            }
+        }
+        None
+    }
+
+    /// Keep who brought the commits a change is the first to bring (`GitCommitPush`, for `get#GitCommitPushers`):
+    /// those its new refs reach and the refs before did not, at most `git-server` `eca-max-commits`. A commit a
+    /// change before this one brought keeps that change's user.
+    fn record_pushers(
+        &self,
+        update: &EntityValue,
+        repository_id: &str,
+        user_id: &str,
+        store: &dyn GitStore,
+        made: &[RefUpdate],
+    ) -> Result<(), Error> {
+        const GIT_COMMIT_PUSH: &str = "moqui.resource.GitCommitPush";
+        let entity = self.entity()?;
+        if !entity.table_ready(GIT_COMMIT_PUSH) {
+            return Ok(());
+        }
+        let tips: Vec<ObjectId> = made
+            .iter()
+            .filter_map(|reference| reference.new)
+            .filter_map(|id| peel_to_commit(store, &id).ok().flatten())
+            .collect();
+        if tips.is_empty() {
+            return Ok(());
+        }
+        let hidden: Vec<ObjectId> = text(update.get("priorTips"))
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
+            .collect();
+        let commits = revwalk::new_commits(store, &tips, &hidden)?;
+        let ids: Vec<String> = commits
+            .iter()
+            .rev()
+            .take(max_commits())
+            .map(|commit| commit.id.to_string())
+            .collect();
+        let _rows = rows_guard();
+        for chunk in ids.chunks(500) {
+            let known: HashSet<String> = entity
+                .find(GIT_COMMIT_PUSH)?
+                .eq("repositoryId", Value::string(repository_id))
+                .condition(moqui_core::entity::Condition::is_in(
+                    "commitId",
+                    chunk.iter().map(Value::string).collect(),
+                ))
+                .select_field("commitId")
+                .list()?
+                .iter()
+                .filter_map(|row| text(row.get("commitId")))
+                .collect();
+            for id in chunk.iter().filter(|id| !known.contains(*id)) {
+                let mut row = EntityValue::make(&entity, GIT_COMMIT_PUSH)?;
+                row.set("repositoryId", Value::string(repository_id));
+                row.set("commitId", Value::string(id));
+                row.set("userId", Value::string(user_id));
+                row.set("updateId", update.get("updateId").cloned().unwrap_or(Value::Null));
+                row.set("pushDate", update.get("updateDate").cloned().unwrap_or(Value::Null));
+                row.create(&entity)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The heads of the current user's open merge requests pushed for review in a repository.
+    pub(crate) fn own_review_heads(&self, repo: &super::Repo) -> Result<Vec<ObjectId>, Error> {
+        let Some(user) = moqui_core::user::current_user_id()
+            .ok()
+            .flatten()
+            .filter(|user| !user.is_empty())
+        else {
+            return Ok(Vec::new());
+        };
+        let _rows = rows_guard();
+        let rows = self
+            .entity()?
+            .find("moqui.resource.GitMergeRequest")?
+            .eq("repositoryId", Value::string(&repo.definition.id))
+            .eq("authorUserId", Value::string(user))
+            .eq("pushedForReview", Value::string("Y"))
+            .condition(moqui_core::entity::Condition::is_in(
+                "statusId",
+                vec![Value::string("GmrDraft"), Value::string("GmrOpen")],
+            ))
+            .select_field("mergeRequestNum")
+            .list()?;
+        let mut heads = Vec::new();
+        for row in rows.iter() {
+            if let Some(num) = super::long(row.get("mergeRequestNum")) {
+                heads.extend(repo.store.read_ref(&super::reach::merge_request_ref(num))?);
+            }
+        }
+        Ok(heads)
     }
 
     /// Record a push's refs before they change.
@@ -582,6 +740,12 @@ impl GitProvider {
                 change_type: text(row.get("changeType")).unwrap_or_default(),
             })
             .collect();
+        // who brought the new commits, whatever rules listen: one that fails is logged and the events still run
+        if let Some(user_id) = text(update.get("userId")) {
+            if let Err(err) = self.record_pushers(update, &repository_id, &user_id, store, &made) {
+                tracing::error!(repository = %repository_id, "the pushers of new commits were not kept: {err}");
+            }
+        }
         let entity = self.entity()?;
         let transactions = entity.transactions_for(GIT_UPDATE)?;
         let mut base = BTreeMap::new();
@@ -794,7 +958,11 @@ fn ref_value(reference: &RefUpdate, branch_ref: &str) -> Value {
 }
 
 fn ref_fields(reference: &RefUpdate, branch_ref: &str) -> Vec<(&'static str, Value)> {
+    // a push for review (refs/for/<branch>): the branch it is for
+    let review_target = reference.name.strip_prefix(super::reach::REVIEW_REFS);
     vec![
+        ("forReview", Value::Bool(review_target.is_some())),
+        ("targetBranch", review_target.map_or(Value::Null, Value::string)),
         ("refName", Value::string(&reference.name)),
         ("refType", Value::string(RefKind::of(&reference.name).name())),
         ("shortName", Value::string(short_name(&reference.name))),
@@ -902,6 +1070,14 @@ pub(crate) fn pre_receive(
     base.insert(
         "packBytes".to_string(),
         Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
+    );
+    base.insert(
+        "forReview".to_string(),
+        Value::Bool(
+            candidates
+                .iter()
+                .any(|index| refs[*index].name.starts_with(super::reach::REVIEW_REFS)),
+        ),
     );
     base.insert(
         "refUpdates".to_string(),

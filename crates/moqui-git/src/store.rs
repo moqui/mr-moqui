@@ -424,6 +424,51 @@ pub(crate) trait GitStore: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// Two stores read as one, for a comparison across two repositories of a fork network whose objects are apart (a
+/// `local` fork and its parent): an object is the first's, else the second's. Refs are the first's; nothing is
+/// written.
+#[derive(Debug)]
+pub(crate) struct Union<'a> {
+    pub first: &'a dyn GitStore,
+    pub second: &'a dyn GitStore,
+}
+
+impl GitStore for Union<'_> {
+    fn find(&self, id: &ObjectId) -> Result<Option<(Kind, Vec<u8>)>, Error> {
+        match self.first.find(id)? {
+            Some(found) => Ok(Some(found)),
+            None => self.second.find(id),
+        }
+    }
+
+    fn object_size(&self, id: &ObjectId) -> Result<Option<u64>, Error> {
+        match self.first.object_size(id)? {
+            Some(size) => Ok(Some(size)),
+            None => self.second.object_size(id),
+        }
+    }
+
+    fn find_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<ObjectId>, Error> {
+        self.first.find_prefix(prefix, limit)
+    }
+
+    fn write(&self, _kind: Kind, _data: &[u8]) -> Result<ObjectId, Error> {
+        Err(Error::new("two git repositories read as one are not written"))
+    }
+
+    fn read_ref(&self, name: &str) -> Result<Option<ObjectId>, Error> {
+        self.first.read_ref(name)
+    }
+
+    fn list_refs(&self, prefix: &str) -> Result<Vec<(String, ObjectId)>, Error> {
+        self.first.list_refs(prefix)
+    }
+
+    fn update_refs(&self, _edits: &[RefEdit], _atomic: bool) -> Result<Vec<RefOutcome>, Error> {
+        Err(Error::new("two git repositories read as one are not written"))
+    }
+}
+
 /// Whether `text` is a usable object id prefix: hex digits, 4 to 40 of them.
 pub(crate) fn is_hex_prefix(text: &str) -> bool {
     (4..=40).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_hexdigit())

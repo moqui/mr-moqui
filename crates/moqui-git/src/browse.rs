@@ -100,6 +100,10 @@ impl GitProvider {
         let store = repo.store.as_ref();
         let mut refs = Vec::new();
         for (name, target) in store.list_refs(prefix)? {
+            // the heads of merge requests are not branches or tags: get#MergeRequest gives each
+            if name.starts_with(super::reach::MERGE_REQUEST_REFS) {
+                continue;
+            }
             let tag = match store.find(&target)? {
                 Some((Kind::Tag, _)) => Some(ops::tag_details(store, &target)?),
                 _ => None,
@@ -123,13 +127,71 @@ impl GitProvider {
         })
     }
 
-    /// The commit a revision names (see [`ops::resolve_revision`]), with tags peeled.
+    /// The commit a revision names (see [`ops::resolve_revision`]), with tags peeled. A revision that is an object
+    /// id, or the start of one, names a commit only when a ref the repository's readers read reaches it
+    /// ([`super::reach`]): its store may hold the commits of other repositories of its fork network and the heads of
+    /// hidden merge requests. The head ref of a hidden merge request names nothing either.
     pub(crate) fn resolve_commit(&self, repository_id: &str, revision: &str) -> Result<Option<ObjectId>, Error> {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
-        match ops::resolve_revision(store, &repo.definition.branch, revision)? {
-            Some(id) => revwalk::peel_to_commit(store, &id),
-            None => Ok(None),
+        let revision = revision.trim();
+        let by_name = if revision.is_empty() || revision == "HEAD" {
+            store.read_ref(&ops::branch_ref(&repo.definition.branch))?
+        } else if revision.starts_with("refs/") {
+            match store.read_ref(revision)? {
+                Some(_)
+                    if revision.starts_with(super::reach::MERGE_REQUEST_REFS)
+                        && !super::reach::hidden_included()
+                        && self.hidden_heads(repository_id)?.contains(revision) =>
+                {
+                    return Ok(None)
+                }
+                found => found,
+            }
+        } else {
+            let mut found = store.read_ref(&ops::branch_ref(revision))?;
+            if found.is_none() {
+                found = store.read_ref(&format!("refs/tags/{revision}"))?;
+            }
+            found
+        };
+        if let Some(id) = by_name {
+            return revwalk::peel_to_commit(store, &id);
+        }
+        if revision.starts_with("refs/") {
+            return Ok(None);
+        }
+        if revision.len() == 40 {
+            return match ObjectId::from_hex(revision.as_bytes()) {
+                Ok(id) => match revwalk::peel_to_commit(store, &id)? {
+                    Some(commit) if self.readable_by_id(&repo, &commit)? => Ok(Some(commit)),
+                    _ => Ok(None),
+                },
+                Err(_) => Ok(None),
+            };
+        }
+        if !super::store::is_hex_prefix(revision) {
+            return Ok(None);
+        }
+        // the start of an id: of a commit the refs reach, so the answer (also "more than one") tells nothing of
+        // what else is in the store
+        let found = self.reachable_prefix(&repo, revision, 2)?;
+        match found.as_slice() {
+            [id] => Ok(Some(*id)),
+            [] if repo.definition.network.is_none() => {
+                // in a repository alone in its store, a commit its refs have left, for who may read those
+                match ops::resolve_revision(store, &repo.definition.branch, revision) {
+                    Ok(Some(id)) => match revwalk::peel_to_commit(store, &id)? {
+                        Some(commit) if self.readable_by_id(&repo, &commit)? => Ok(Some(commit)),
+                        _ => Ok(None),
+                    },
+                    _ => Ok(None),
+                }
+            }
+            [] => Ok(None),
+            _ => Err(Error::new(format!(
+                "{revision} names more than one commit; give more digits"
+            ))),
         }
     }
 

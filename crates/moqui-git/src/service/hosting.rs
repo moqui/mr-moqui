@@ -25,13 +25,14 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use super::{
-    add_error, add_message, change_value, count, flag, number, out, path_segments, provider_and_id, text, viewable,
+    add_error, add_message, add_refusal, change_value, count, flag, hidden_guard, number, out, path_segments,
+    provider_and_id, text, viewable,
 };
 use moqui_core::context::ExecutionContext;
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::rust_service;
 
-use crate::hosting::{MergeOutcome, RefWrite};
+use crate::hosting::{MergeOutcome, RefRules, RefWrite};
 use crate::merge::{Mergeability, Method};
 use crate::rules::{self, BranchRule};
 use crate::server::path::GIT_PATH_REDIRECT;
@@ -334,9 +335,13 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `find#GitUpdates`: a repository's push log, newest first, each with its refs. Out: `updateList`,
 /// `updateListCount`.
 fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some((_, id)) = viewable(parameters) else {
+    let Some((provider, id)) = viewable(parameters) else {
         return none();
     };
+    // the whole log is for who may push: a reader is told no address, and no object id that no ref reaches now (the
+    // old tip of a forced or deleted branch, the head of a hidden or replaced push for review), which would be a
+    // name to ask the store by
+    let whole = may(&id, "update");
     let (index, size) = page(parameters);
     let _rows = rows_guard();
     let mut find = facade
@@ -358,30 +363,60 @@ fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
         .map(Value::string)
         .collect();
     let mut refs: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut withheld: HashSet<String> = HashSet::new();
     if !ids.is_empty() {
-        for row in facade
+        let ref_rows = facade
             .find(crate::events::GIT_UPDATE_REF)?
             .condition(Condition::is_in("updateId", ids))
             .order_by("refName", false)
-            .list()?
-            .iter()
-        {
+            .list()?;
+        let reached: Option<HashSet<String>> = if whole {
+            None
+        } else {
+            let named: Vec<ObjectId> = ref_rows
+                .iter()
+                .flat_map(|row| [field(row, "oldObjectId"), field(row, "newObjectId")])
+                .flatten()
+                .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
+                .collect();
+            let repo = provider.repo(&id)?;
+            Some(
+                provider
+                    .reachable_of(&repo, &named)?
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect(),
+            )
+        };
+        let shown = |row: &EntityValue, name: &str| match (&reached, field(row, name)) {
+            (Some(reached), Some(hex)) if !reached.contains(&hex) => Value::Null,
+            (_, hex) => opt(hex),
+        };
+        for row in ref_rows.iter() {
             let name = field(row, "refName").unwrap_or_default();
-            refs.entry(field(row, "updateId").unwrap_or_default())
-                .or_default()
-                .push(map([
-                    ("refName", Value::string(&name)),
-                    ("shortName", Value::string(crate::browse::short_name(&name))),
-                    ("changeType", field_value(row, "changeType")),
-                    ("oldObjectId", field_value(row, "oldObjectId")),
-                    ("newObjectId", field_value(row, "newObjectId")),
-                    ("result", field_value(row, "result")),
-                ]));
+            let update_id = field(row, "updateId").unwrap_or_default();
+            let new = shown(row, "newObjectId");
+            if name.starts_with(crate::reach::REVIEW_REFS) && matches!(new, Value::Null) && reached.is_some() {
+                // a push for review whose head a reader does not read: not its row either
+                withheld.insert(update_id);
+                continue;
+            }
+            refs.entry(update_id).or_default().push(map([
+                ("refName", Value::string(&name)),
+                ("shortName", Value::string(crate::browse::short_name(&name))),
+                ("changeType", field_value(row, "changeType")),
+                ("oldObjectId", shown(row, "oldObjectId")),
+                ("newObjectId", new),
+                ("result", field_value(row, "result")),
+            ]));
         }
     }
+    // an update is left out only when all of its refs were
+    withheld.retain(|update_id| !refs.contains_key(update_id));
     let mut users: HashMap<String, Option<String>> = HashMap::new();
     let list: Vec<Value> = rows
         .iter()
+        .filter(|row| !withheld.contains(&field(row, "updateId").unwrap_or_default()))
         .map(|row| {
             let update_id = field(row, "updateId").unwrap_or_default();
             let user_id = field(row, "userId");
@@ -397,7 +432,14 @@ fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 ("transport", field_value(row, "transport")),
                 ("userId", opt(user_id)),
                 ("username", opt(username)),
-                ("remoteAddress", field_value(row, "remoteAddress")),
+                (
+                    "remoteAddress",
+                    if whole {
+                        field_value(row, "remoteAddress")
+                    } else {
+                        Value::Null
+                    },
+                ),
                 ("updateDate", field_value(row, "updateDate")),
                 ("ecaStatus", field_value(row, "ecaStatus")),
                 ("ecaError", field_value(row, "ecaError")),
@@ -436,6 +478,7 @@ fn get_tree(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     let Some((provider, id)) = viewable(parameters) else {
         return none();
     };
+    let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "revision").unwrap_or_default();
     match provider.tree(&id, &revision, &path_segments(parameters, "path")) {
         Ok(Some(listing)) => Ok(out([
@@ -489,9 +532,7 @@ fn full_ref(name: &str, ref_type: Option<&str>) -> String {
 }
 
 fn valid_ref(name: &str) -> bool {
-    use gix::bstr::ByteSlice;
-    (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
-        && gix::validate::reference::name(name.as_bytes().as_bstr()).is_ok()
+    crate::hosting::valid_ref_name(name)
 }
 
 /// `create#GitRef`: a branch, or a tag (annotated when a message is given), at a revision. Needs create. Out:
@@ -529,7 +570,7 @@ fn create_ref(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                 expected: None,
                 new: Some(target),
             }],
-            false,
+            RefRules::Direct,
             None,
         )?;
         Ok(match written.into_iter().next() {
@@ -545,11 +586,11 @@ fn create_ref(parameters: &Parameters, _facade: &EntityFacade) -> Out {
             ("commitId", Value::string(commit.to_string())),
         ])),
         Ok(Err(reason)) => {
-            add_error(reason);
+            add_refusal(reason);
             none()
         }
         Err(err) => {
-            add_error(err.message());
+            add_refusal(err.message());
             none()
         }
     }
@@ -585,7 +626,7 @@ fn delete_ref(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                 expected: Some(current),
                 new: None,
             }],
-            false,
+            RefRules::Direct,
             None,
         )?;
         Ok(written.into_iter().next().unwrap_or(Err("no ref written".into())))
@@ -593,11 +634,11 @@ fn delete_ref(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     match outcome {
         Ok(Ok(())) => none(),
         Ok(Err(reason)) => {
-            add_error(reason);
+            add_refusal(reason);
             none()
         }
         Err(err) => {
-            add_error(err.message());
+            add_refusal(err.message());
             none()
         }
     }
@@ -633,7 +674,30 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         return none();
     };
     let with_diffs = flag(parameters, "withDiffs");
-    match provider.compare(&id, &base, &head, with_diffs, flag(parameters, "checkMergeable")) {
+    let _hidden = hidden_guard(parameters);
+    // the head in another repository of the fork network, which the user may view too
+    let head_repository = text(parameters, "headRepositoryId").filter(|other| *other != id);
+    if let Some(other) = &head_repository {
+        let network = |repository: &str| provider.definition(repository).ok().and_then(|found| found.network);
+        if !may(other, "view") || network(other).is_none() {
+            add_error(format!("repository {other} not found"));
+            return none();
+        }
+        if network(other) != network(&id) {
+            add_error(format!(
+                "GitNotInNetwork: {other} and {id} are not forks of one repository"
+            ));
+            return none();
+        }
+    }
+    match provider.compare(
+        &id,
+        &base,
+        &head,
+        head_repository.as_deref(),
+        with_diffs,
+        flag(parameters, "checkMergeable"),
+    ) {
         Ok(Some(compared)) => {
             let (mut insertions, mut deletions) = (0, 0);
             let files: Vec<Value> = compared
@@ -710,6 +774,7 @@ fn merge_refs(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         return none();
     };
     let message = text(parameters, "message");
+    let _hidden = hidden_guard(parameters);
     match provider.merge_refs(
         &id,
         &source,
@@ -719,6 +784,7 @@ fn merge_refs(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         None,
         check_only,
         false,
+        None,
     ) {
         Ok(outcome) => Ok(merge_out(outcome)),
         Err(err) => {
@@ -741,7 +807,7 @@ fn merge_out(outcome: MergeOutcome) -> BTreeMap<String, Value> {
             ("conflictPaths", Value::List(Vec::new())),
         ]),
         MergeOutcome::Refused { reason, conflicts } => {
-            add_error(reason);
+            add_refusal(reason);
             out([
                 ("mergeable", Value::Bool(false)),
                 (
@@ -1094,6 +1160,23 @@ fn create_commit_status(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error("state must be pending, success, failure or error");
         return none();
     }
+    // the contexts a hosting application keeps for the system (git-server reserved-status-contexts: an agreement
+    // check, its CI engine) are written with authorization disabled only, so a required check is not met by a user
+    // with a push right posting it. None by default: an outside CI posts ci/... with a user's token
+    let context = text(parameters, "context").unwrap_or_default();
+    let reserved = crate::setting("reserved-status-contexts");
+    let reserved = reserved
+        .split(',')
+        .map(str::trim)
+        .find(|prefix| !prefix.is_empty() && context.starts_with(prefix));
+    if let Some(prefix) = reserved {
+        if !ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) {
+            add_error(format!(
+                "GitReservedContext: the status contexts that start with {prefix} are written by the system only"
+            ));
+            return none();
+        }
+    }
     let Some(revision) = text(parameters, "commitId") else {
         add_error("commitId is required");
         return none();
@@ -1346,7 +1429,7 @@ fn queue_webhook_push(parameters: &Parameters, facade: &EntityFacade) -> Out {
         let mut commits = Vec::new();
         let mut total = 0;
         if let Some(new) = new.as_deref().filter(|_| event == "push") {
-            let range = provider.compare(&id, old.as_deref().unwrap_or(""), new, false, false);
+            let range = provider.compare(&id, old.as_deref().unwrap_or(""), new, None, false, false);
             if let (Some(_), Ok(Some(compared))) = (&old, &range) {
                 total = compared.ahead;
                 commits = compared.commits.iter().rev().take(20).rev().cloned().collect();
@@ -1775,8 +1858,31 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
             return none();
         }
     }
+    if field(&row, "hiddenDate").is_some() {
+        add_error(format!(
+            "merge request {mr_id} is hidden, and does not merge until it is shown"
+        ));
+        return none();
+    }
     let source = field(&row, "sourceRef").unwrap_or_default();
     let target = field(&row, "targetRef").unwrap_or_default();
+    // the head of one from a fork or pushed for review is its own ref in this repository; a branch's is the branch
+    let source_repository = field(&row, "sourceRepositoryId").filter(|other| *other != id);
+    let pushed = field(&row, "pushedForReview").as_deref() == Some("Y");
+    let num = field(&row, "mergeRequestNum").unwrap_or_default();
+    let (source_revision, source_label) = if pushed {
+        (
+            format!("{}{num}/head", crate::reach::MERGE_REQUEST_REFS),
+            format!("merge request !{num}"),
+        )
+    } else if let Some(other) = &source_repository {
+        (
+            format!("{}{num}/head", crate::reach::MERGE_REQUEST_REFS),
+            format!("{}:{source}", crate::server::path::path_of(other)),
+        )
+    } else {
+        (format!("refs/heads/{source}"), source.clone())
+    };
     let repository = repository_row(facade, &id)?;
     let method_id = text(parameters, "mergeMethodEnumId")
         .or_else(|| field(&row, "mergeMethodEnumId"))
@@ -1790,10 +1896,10 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error(format!("{method_id} is not a merge method"));
         return none();
     };
-    let head = match provider.ref_of(&id, &format!("refs/heads/{source}")) {
+    let head = match provider.ref_of(&id, &source_revision) {
         Ok(Some((_, head))) => head,
         Ok(None) => {
-            add_error(format!("the source branch {source} is gone"));
+            add_error(format!("GitNoSuchRef: the source {source_label} is gone"));
             return none();
         }
         Err(err) => {
@@ -1824,15 +1930,17 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     let author = field(&row, "authorUserId").map(|user| provider.author_for_user(&user));
     let message = text(parameters, "message");
+    // exactly the commit the approvals and checks were counted for: a source that moves meanwhile is not merged
     let outcome = match provider.merge_refs(
         &id,
-        &format!("refs/heads/{source}"),
+        &head.to_string(),
         &target,
         method,
         message.as_deref(),
         author,
         false,
         true,
+        Some(&source_label),
     ) {
         Ok(outcome) => outcome,
         Err(err) => {
@@ -1864,15 +1972,21 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     let delete_source = tri(parameters, "deleteSourceBranch")
         .unwrap_or_else(|| field(&row, "deleteSourceBranch").as_deref() == Some("Y"));
-    if delete_source {
+    // the source branch goes only where there is one, and in a fork only with the right to delete there
+    let source_home = source_repository.clone().unwrap_or_else(|| id.clone());
+    if delete_source && !pushed && source_repository.is_some() && !may(&source_home, "delete") {
+        add_message(format!(
+            "The source branch {source} was kept: deleting it needs the delete right on {source_home}"
+        ));
+    } else if delete_source && !pushed {
         let deleted = provider.write_refs(
-            &id,
+            &source_home,
             &[RefWrite {
                 name: format!("refs/heads/{source}"),
                 expected: Some(head),
                 new: None,
             }],
-            false,
+            RefRules::Direct,
             None,
         );
         match deleted.map(|results| results.into_iter().next()) {

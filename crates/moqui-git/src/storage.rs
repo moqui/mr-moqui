@@ -39,6 +39,7 @@ const GIT_WEBHOOK: &str = "moqui.resource.GitWebhook";
 const GIT_BRANCH_RULE: &str = "moqui.resource.GitBranchRule";
 const GIT_MERGE_REQUEST: &str = "moqui.resource.GitMergeRequest";
 const GIT_MERGE_REQUEST_REVIEWER: &str = "moqui.resource.GitMergeRequestReviewer";
+const GIT_COMMIT_PUSH: &str = "moqui.resource.GitCommitPush";
 const RESOURCE_DRIVE: &str = "moqui.resource.ResourceDrive";
 
 /// Ids in one `IN` list.
@@ -163,6 +164,7 @@ fn delete_rows_of(entity: &EntityFacade, repository_id: &str) -> Result<(), Erro
         GIT_WEBHOOK,
         GIT_BRANCH_RULE,
         GIT_LFS_LOCK,
+        GIT_COMMIT_PUSH,
     ] {
         delete_where(entity, name, &of_repository)?;
     }
@@ -199,18 +201,34 @@ impl GitProvider {
     pub(crate) fn usage(&self, repository_ids: &[String]) -> Result<Vec<Usage>, Error> {
         let _rows = rows_guard();
         let entity = self.entity()?;
-        let mut objects: HashMap<String, (u64, u64)> = HashMap::new();
+        // one that is not there, or whose row does not read, is left out; the others are still answered
+        let definitions: Vec<super::Definition> = repository_ids
+            .iter()
+            .filter_map(|id| self.definition(id).ok())
+            .collect();
+        // the object rows of a fork network are the root's: a fork's are those it added, the root's the others
+        let mut stores: Vec<String> = definitions
+            .iter()
+            .filter(|definition| definition.kind == RepositoryKind::Db)
+            .map(|definition| definition.objects_id().to_string())
+            .collect();
+        stores.sort();
+        stores.dedup();
+        let mut objects: HashMap<(String, Option<String>), (u64, u64)> = HashMap::new();
         let mut lfs: HashMap<String, (u64, u64)> = HashMap::new();
-        for chunk in repository_ids.chunks(ID_BATCH) {
+        for chunk in stores.chunks(ID_BATCH) {
             let ids: Vec<Value> = chunk.iter().map(Value::string).collect();
             if entity.table_ready(GIT_OBJECT) {
                 let rows = entity
                     .find(GIT_OBJECT_USAGE)?
-                    .condition(Condition::is_in("repositoryId", ids.clone()))
+                    .condition(Condition::is_in("repositoryId", ids))
                     .list()?;
                 for row in rows.iter() {
                     let found = objects
-                        .entry(text(row.get("repositoryId")).unwrap_or_default())
+                        .entry((
+                            text(row.get("repositoryId")).unwrap_or_default(),
+                            text(row.get("addedRepositoryId")),
+                        ))
                         .or_default();
                     found.0 += as_u64(row.get("objectCount"));
                     // an object kept as a content blob has no data in its row: its content is what is stored
@@ -220,6 +238,9 @@ impl GitProvider {
                     };
                 }
             }
+        }
+        for chunk in repository_ids.chunks(ID_BATCH) {
+            let ids: Vec<Value> = chunk.iter().map(Value::string).collect();
             if entity.table_ready(GIT_LFS_OBJECT) {
                 let rows = entity
                     .find(GIT_LFS_OBJECT_USAGE)?
@@ -235,15 +256,16 @@ impl GitProvider {
             }
         }
         let mut usages = Vec::with_capacity(repository_ids.len());
-        for id in repository_ids {
-            // one that is not there, or whose row does not read, is left out; the others are still answered
-            let Ok(definition) = self.definition(id) else {
-                continue;
-            };
+        for definition in &definitions {
+            let id = &definition.id;
             let (lfs_object_count, lfs_bytes) = lfs.get(id).copied().unwrap_or_default();
             let (kind, stored_bytes, object_count) = match definition.kind {
                 RepositoryKind::Db => {
-                    let (count, bytes) = objects.get(id).copied().unwrap_or_default();
+                    let key = (
+                        definition.objects_id().to_string(),
+                        definition.is_fork().then(|| id.clone()),
+                    );
+                    let (count, bytes) = objects.get(&key).copied().unwrap_or_default();
                     ("db", bytes, Some(count))
                 }
                 RepositoryKind::Local => ("local", directory_bytes(&definition.path), None),
@@ -441,7 +463,8 @@ impl GitProvider {
         };
         let transactions = entity.transactions_for(GIT_REPOSITORY)?;
         let in_transaction = transactions.in_transaction();
-        if self.mark_going(&entity, repository_id)? {
+        let marked = self.mark_going(&entity, repository_id)?;
+        if marked {
             self.refresh(repository_id);
             if in_transaction {
                 let (provider, id) = (self.clone(), repository_id.to_string());
@@ -452,6 +475,33 @@ impl GitProvider {
             // no push or write of this process stores while the rows go; one that waited reads the mark next
             let lock = self.lock_of(repository_id);
             let _writer = moqui_lib::sync::lock(&lock);
+            // a repository others were forked from keeps their objects (a db network's rows are its own; a local
+            // fork reads its directory): it goes after its forks, or stays, archived. Looked for under the mark and
+            // the lock, which a fork being made takes too, so none is made after this
+            let forks = self.forks_of(repository_id)?;
+            if !forks.is_empty() {
+                if marked && !in_transaction {
+                    self.unmark_going(repository_id);
+                }
+                let mut shown: Vec<&str> = forks.iter().take(5).map(String::as_str).collect();
+                if forks.len() > shown.len() {
+                    shown.push("...");
+                }
+                return Err(Error::new(format!(
+                    "GitHasForks: git repository {repository_id} has forks ({}), which share its objects: delete \
+                     them first, or archive it",
+                    shown.join(", ")
+                )));
+            }
+            // merge requests of other repositories that follow a branch of this one keep the head they have: an id
+            // used again must not feed them
+            if entity.table_ready(GIT_MERGE_REQUEST) {
+                entity
+                    .find(GIT_MERGE_REQUEST)?
+                    .eq("sourceRepositoryId", Value::string(repository_id))
+                    .condition(Condition::is_null("sourceDetachedDate"))
+                    .update_all([("sourceDetachedDate".to_string(), moqui_core::user::now_value())])?;
+            }
             delete_rows_of(&entity, repository_id)?;
             if entity.table_ready(GIT_PATH_REDIRECT) {
                 entity
@@ -459,10 +509,15 @@ impl GitProvider {
                     .eq("repositoryId", Value::string(repository_id))
                     .delete_all()?;
             }
+            if definition.kind == RepositoryKind::Db && definition.is_fork() {
+                // its objects are the network's rows: they stay, as nobody's, until a collection lets them go
+                self.disown_objects(definition.objects_id(), repository_id)?;
+            }
             let mut row = EntityValue::make(&entity, GIT_REPOSITORY)?;
             row.set("repositoryId", Value::string(repository_id));
             row.delete(&entity)?;
         }
+        self.forget_reached(repository_id);
 
         // what this process remembers of it: a repository made later with this id starts with nothing
         self.refresh(repository_id);

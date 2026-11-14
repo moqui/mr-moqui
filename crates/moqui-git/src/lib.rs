@@ -37,6 +37,8 @@ pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;
 pub(crate) mod events;
+pub(crate) mod file_commit;
+pub(crate) mod fork;
 pub(crate) mod fs;
 pub mod gc;
 pub(crate) mod hosting;
@@ -44,6 +46,7 @@ pub(crate) mod index;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
 pub(crate) mod ops;
+pub(crate) mod reach;
 pub(crate) mod revwalk;
 pub(crate) mod rules;
 pub mod server;
@@ -181,6 +184,20 @@ pub(crate) struct Definition {
     pub credentials: fs::Credentials,
     /// The row has an `archivedDate`: pushes, ref writes, merges and writes are refused.
     pub archived: bool,
+    /// The root of the fork network this repository is in (`forkNetworkId`): its own id on the root.
+    pub network: Option<String>,
+}
+
+impl Definition {
+    /// The id the objects of a `db` repository are stored under: the root of its fork network, else its own.
+    pub(crate) fn objects_id(&self) -> &str {
+        self.network.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Whether the repository is a fork: in a network whose root is another repository.
+    pub(crate) fn is_fork(&self) -> bool {
+        self.network.as_deref().is_some_and(|network| network != self.id)
+    }
 }
 
 /// The repository rows changing in transactions not yet ended (an open repository of one is not kept, as each thread
@@ -229,6 +246,8 @@ struct Inner {
     archives_building: std::sync::atomic::AtomicUsize,
     /// Parsed `.gitattributes` files, by blob.
     attributes: attributes::RulesCache,
+    /// The commits each repository's refs reach, for reads by id (`reach`).
+    reach: reach::ReachCache,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
     indexes: Mutex<BoundedMap<String, Arc<Mutex<BranchIndex>>>>,
 }
@@ -305,6 +324,7 @@ impl GitProvider {
                 objects: std::sync::OnceLock::new(),
                 archives_building: std::sync::atomic::AtomicUsize::new(0),
                 attributes: attributes::rules_cache(),
+                reach: Mutex::new(reach::ReachSets::default()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
         }
@@ -361,6 +381,7 @@ impl GitProvider {
                 token: text(row.get("accessToken")),
             },
             archived: text(row.get("archivedDate")).is_some(),
+            network: text(row.get("forkNetworkId")),
         })
     }
 
@@ -376,7 +397,7 @@ impl GitProvider {
                 Box::new(fs::FsStore::open(&definition.path)?)
             }
             RepositoryKind::Local => Box::new(fs::FsStore::init(&definition.path, &definition.branch)?),
-            RepositoryKind::Db => Box::new(db::DbStore::new(self.entity()?, &definition.id, self.objects())),
+            RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &definition, self.objects())),
         };
         Ok(Repo { definition, store })
     }
@@ -683,7 +704,11 @@ impl GitProvider {
     fn commit_named(&self, repo: &Repo, path: &[String], name: &str) -> Result<Option<ObjectId>, Error> {
         let name = name.trim();
         if name.len() == 40 {
-            return Ok(ObjectId::from_hex(name.as_bytes()).ok());
+            // by its id only when a ref of this repository reaches it: the store may be a fork network's
+            return match ObjectId::from_hex(name.as_bytes()) {
+                Ok(id) if self.reachable(repo, &id)? => Ok(Some(id)),
+                _ => Ok(None),
+            };
         }
         if name.len() < 7 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Ok(None);
@@ -1221,7 +1246,7 @@ impl GitProvider {
             }
             let other = self.definition(other)?;
             let store: Box<dyn GitStore> = match other.kind {
-                RepositoryKind::Db => Box::new(db::DbStore::new(self.entity()?, &other.id, self.objects())),
+                RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &other, self.objects())),
                 _ => Box::new(fs::FsStore::open(&other.path)?),
             };
             (store, other.branch)
@@ -1734,11 +1759,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
         }
         let store = repo.store.as_ref();
         let name = version_name.trim();
-        let commit_id = if name.len() == 40 {
-            ObjectId::from_hex(name.as_bytes()).ok()
-        } else {
-            self.commit_named(&repo, &path, name)?
-        };
+        let commit_id = self.commit_named(&repo, &path, name)?;
         let not_found = || Error::new(format!("version {version_name} not found: {location}"));
         let commit_id = commit_id.ok_or_else(not_found)?;
         if store.find(&commit_id)?.is_none() {

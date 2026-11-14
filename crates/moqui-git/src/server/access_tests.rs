@@ -311,14 +311,17 @@ fn a_request_with_no_credentials_reads_what_anyone_may_view() {
     let (status, _, body) = refs(&base, "pub-code.git", "git-upload-pack", Some(&stranger));
     assert_eq!(status, 200, "{body}");
 
-    // a push with no credentials asks for a login, on a public repository too; the stranger's is forbidden
+    // a push with no credentials asks for a login, on a public repository too; the stranger, who may view it, is
+    // answered, and may push for review only (each other ref is refused: review_tests)
     for path in ["pub-code.git", "guarded.git", "nosuch.git"] {
         let (status, headers, body) = refs(&base, path, "git-receive-pack", None);
         assert_eq!(status, 401, "{path}: {body}");
         assert!(headers.contains_key("www-authenticate"), "{headers:?}");
     }
     let (status, _, body) = refs(&base, "pub-code.git", "git-receive-pack", Some(&stranger));
-    assert_eq!(status, 403, "{body}");
+    assert_eq!(status, 200, "{body}");
+    let (status, _, body) = refs(&base, "guarded.git", "git-receive-pack", Some(&stranger));
+    assert_eq!(status, 404, "{body}");
     let anon = fixture.dir.join("anon-v2");
     write_file(&anon, "more.txt", "more\n");
     git_ok(&anon, &home, &["add", "."]);

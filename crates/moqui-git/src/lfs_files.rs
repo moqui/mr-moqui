@@ -41,7 +41,7 @@ pub(super) enum FileContent<'a> {
 
 impl GitProvider {
     /// Whether the file at `path` is an LFS file by the attributes at the branch head.
-    fn lfs_tracked(&self, repo: &Repo, path: &[String]) -> Result<bool, Error> {
+    pub(super) fn lfs_tracked(&self, repo: &Repo, path: &[String]) -> Result<bool, Error> {
         let Some(head) = Self::head(repo)? else {
             return Ok(false);
         };
@@ -69,31 +69,32 @@ impl GitProvider {
                 u64::MAX,
             )?,
         };
-        self.link_lfs(&repo.definition.id, &info)?;
+        self.link_lfs(&repo.definition.id, &info.id, info.size)?;
         repo.store
             .write(Kind::Blob, pointer_text(&info.id, info.size).as_bytes())
     }
 
-    /// Make the content `info` an LFS object of the repository, when it is not one yet.
-    pub(super) fn link_lfs(&self, repository_id: &str, info: &BlobInfo) -> Result<(), Error> {
+    /// Make the content `oid`, of `size` bytes, an LFS object of the repository, when it is not one yet (whether it
+    /// was not): the application's upload check is asked as for an upload, and its refusal is the error.
+    pub(super) fn link_lfs(&self, repository_id: &str, oid: &str, size: u64) -> Result<bool, Error> {
         let _rows = super::rows_guard();
         let entity = self.entity()?;
         let linked = entity
             .find(GIT_LFS_OBJECT)?
             .eq("repositoryId", Value::string(repository_id))
-            .eq("oid", Value::string(&info.id))
+            .eq("oid", Value::string(oid))
             .one()?
             .is_some();
         if linked {
-            return Ok(());
+            return Ok(false);
         }
         // new to the repository: the application's check is asked as for an upload by git-lfs, before and after
-        let object = [(info.id.clone(), info.size)];
+        let object = [(oid.to_string(), size)];
         crate::server::lfs::check_upload(repository_id, &object, Asked::Before).map_err(Error::new)?;
         let mut row = EntityValue::make(&entity, GIT_LFS_OBJECT)?;
         row.set("repositoryId", Value::string(repository_id));
-        row.set("oid", Value::string(&info.id));
-        row.set("objectSize", Value::I64(i64::try_from(info.size).unwrap_or(i64::MAX)));
+        row.set("oid", Value::string(oid));
+        row.set("objectSize", Value::I64(i64::try_from(size).unwrap_or(i64::MAX)));
         if let Some(user) = moqui_core::user::current_user_id().ok().flatten() {
             row.set("uploadedByUserId", Value::string(user));
         }
@@ -103,7 +104,7 @@ impl GitProvider {
             row.delete(&entity)?;
             return Err(Error::new(refusal));
         }
-        Ok(())
+        Ok(true)
     }
 
     /// The LFS content the git object `blob` names, when it is a pointer whose content the repository has.

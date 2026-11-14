@@ -110,12 +110,16 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="revision"><description>A branch or tag name, a full ref name, or a commit id or prefix;
-                the default branch when empty</description></parameter>
+                the default branch when empty. An id (or a prefix) names a commit only when a branch, a tag or the head
+                of a merge request that is not hidden reaches it: the repository's store may hold more (its fork
+                network's commits), which are answered as not there. The same in every get#Git* service.</description></parameter>
             <parameter name="path"><description>Only the commits that changed this path against their first
                 parent</description></parameter>
             <parameter name="afterCommitId"><description>Start after this commit: the last commitId of the previous
                 page</description></parameter>
             <parameter name="limit" type="Integer" default="50"><description>At most 500</description></parameter>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="commitList" type="List"><description>Maps: commitId, shortId, treeId, parentIds,
@@ -133,6 +137,8 @@ along with this software (see the LICENSE.md file). If not, see
                 digits, or a branch or tag name</description></parameter>
             <parameter name="stats" type="Boolean" default="true"><description>Count inserted and deleted lines of
                 each file</description></parameter>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="commit" type="Map"><description>As each map of get#GitLog commitList</description></parameter>
@@ -149,6 +155,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId" required="true"/>
             <parameter name="path"/>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="fileDiffList" type="List"><description>Maps as get#GitCommit fileList, with unifiedDiff
@@ -162,6 +170,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repositoryId" required="true"/>
             <parameter name="revision"/>
             <parameter name="path" required="true"/>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="size" type="Integer"/>
@@ -182,17 +192,121 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repositoryPath"><description>What the URLs carry: the repositoryPath, else the id</description></parameter>
         </out-parameters>
     </service>
-    <service verb="commit" noun="GitFiles" type="rust" location="moqui_git::service::commit_files">
-        <description>Commit files on the default branch of a local or db repository in one commit, with a message, as
-            the current user (with the Moqui-User-Id trailer). Needs AT_GIT_REPOSITORY update on the repository. A
-            gitECA rule with source write sees it.</description>
+    <service verb="commit" noun="GitFiles" type="rust" location="moqui_git::service::commit::commit_files">
+        <description>Commit files of a local or db repository in one commit, with a message, as the current user (with
+            the Moqui-User-Id trailer): what a page that edits a file saves with. Where it goes: the default branch, or
+            branch (needs AT_GIT_REPOSITORY update); newBranch, made at branch's head (needs create); or with
+            asProposal no branch at all: the commit becomes the head of the user's merge request into branch, opened
+            or updated as by a push to refs/for/[branch] (view is enough; propose#MergeRequest), within the server's
+            caps for a user with no push right (git-server review-max-push-bytes and review-max-account-bytes), and
+            with no file kept in Git LFS. A branch moves as a push moves it: the branch rules are checked (a protected
+            branch refuses with GitProtectedBranch), the pre events of gitECA rules of source write may refuse, the
+            change is in the push log and the post events follow. Files: fileMap (path to its text or bytes),
+            removePaths, renameMap (old path to new: a file or a directory, in the same commit as edits of it).
+            expectedBlobIds is path to the blob the edit began from (from get#GitTree's objectId; empty text: no file
+            there): when the path has another blob now nothing is committed, and the answer has no error but conflict
+            true, errorCode GitFileChanged and conflictList, each path with expectedBlobId and currentBlobId, so a
+            page shows both texts. authorName and authorEmail are the commit's author, given by the application with
+            authorization disabled (an account's name and its confirmed address; a caller does not say who a commit
+            is by), and the committer is then the server (git-server committer-name and committer-email). A proposal
+            runs the pre events of gitECA rules as a push to refs/for/[branch] does (source push, transport
+            internal). With authorization disabled and bypassBranchRules the branch rules are not checked. Refusals start with a code (docs/interfaces/Git-Hosting.md, Error codes):
+            GitProtectedBranch, GitRefExists, GitArchived, GitNoSuchRef, GitStaleRef, GitReviewPushTooLarge,
+            GitReviewQuota.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="message" required="true" allow-html="any"/>
             <parameter name="fileMap" type="Map" allow-html="any"><description>Path to its new text (or bytes)</description></parameter>
             <parameter name="removePaths" type="List"/>
+            <parameter name="renameMap" type="Map"><description>Old path to new path</description></parameter>
+            <parameter name="fileLocationMap" type="Map"><description>Path to a resource location whose bytes are its
+                content (a staged upload): read as the server, so given with authorization disabled only</description></parameter>
+            <parameter name="branch"><description>The branch committed to, or the one a new branch or a proposal starts
+                from and is for; the default branch when empty</description></parameter>
+            <parameter name="newBranch"><description>Make this branch at branch's head and commit to it</description></parameter>
+            <parameter name="asProposal" type="Boolean" default="false"/>
+            <parameter name="mergeRequestId"><description>With asProposal: the user's open proposal to give the commit to;
+                else the one of the same target and topic, else a new one</description></parameter>
+            <parameter name="topic"/>
+            <parameter name="title" allow-html="any"><description>With asProposal: the merge request's title; the
+                message's first line when empty</description></parameter>
+            <parameter name="description" allow-html="any"/>
+            <parameter name="draft" type="Boolean" default="false"/>
+            <parameter name="expectedBlobIds" type="Map"><description>Path to the blob id the edit began from</description></parameter>
+            <parameter name="authorName"><description>With authorization disabled only, as authorEmail</description></parameter>
+            <parameter name="authorEmail"/>
+            <parameter name="bypassBranchRules" type="Boolean" default="false"><description>Do not check the branch
+                rules: an application's own write to a protected branch (release notes). With authorization disabled
+                only; ignored otherwise</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="commitId"><description>Empty when nothing changed</description></parameter></out-parameters>
+        <out-parameters>
+            <parameter name="commitId"><description>Empty when nothing changed, or on a conflict</description></parameter>
+            <parameter name="refName"><description>The ref that has the commit: the branch, or the merge request's head</description></parameter>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="errorCode"><description>GitFileChanged with conflict</description></parameter>
+            <parameter name="conflictList" type="List"><description>Maps: path, expectedBlobId, currentBlobId</description></parameter>
+            <parameter name="mergeRequestId"/>
+            <parameter name="mergeRequestNum" type="Integer"/>
+            <parameter name="mergeRequestCreated" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="fork" noun="GitRepository" type="rust" location="moqui_git::service::review::fork_repository">
+        <description>Make repositoryId a fork of sourceRepositoryId, a local or db repository the current user may view:
+            a new repository of the same kind, in the source's fork network (forkNetworkId, the root's id, set on the
+            source too when it had none; forkOfRepositoryId names the source), with the source's branches and tags as
+            they are now as its own refs, its default branch, and its Git LFS objects. It shares the source's objects:
+            a db fork has no object rows of its own (the network's are the root's rows, and what a fork adds is marked
+            for its usage), a local fork reads the source's objects directory (objects/info/alternates) and keeps its
+            new objects in its own directory (runtime/git/[repositoryId]). What a repository's readers read by id is
+            decided by its refs, so a fork's commits are not read through its parent or the other way round. The
+            service only checks view of the source: who may fork, into which id and repositoryPath, how many forks an
+            account has and how wide the fork is seen are the application's rules, checked before it calls and set
+            after (set#GitRepositoryPath, its own access records). Refused with GitRepositoryExists for an id in
+            use. A repository with forks is not deleted (delete#GitRepository, GitHasForks).</description>
+        <in-parameters>
+            <parameter name="sourceRepositoryId" required="true"/>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="description"/>
+            <parameter name="localPath"><description>For a local fork: its directory, as GitRepository.localPath (under
+                the runtime directory unless absolute); runtime/git/[repositoryId] when empty. With authorization
+                disabled only</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="forkNetworkId"/>
+            <parameter name="refCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitCommitRefs" type="rust" location="moqui_git::service::review::get_commit_refs">
+        <description>The branches and tags that contain a commit (it is their head or an ancestor of it), for a
+            commit's page. At most limit refs are asked, the default branch first, then the other branches and the
+            tags by name, and at most git-server contains-max-commits (200,000) commits are read; truncated when
+            there were more of either. Nothing out when the revision names no commit a reader reads.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="commitId" required="true"/>
+            <parameter name="limit" type="Integer" default="50"><description>At most 500</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"/>
+            <parameter name="refList" type="List"><description>Maps: refName, refType, shortName, isDefaultBranch</description></parameter>
+            <parameter name="truncated" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitCommitPushers" type="rust" location="moqui_git::service::review::get_commit_pushers">
+        <description>Who brought commits to a repository: for each of commitIdList (full ids, at most 500) the user of
+            the first push or write whose refs reached it (moqui.resource.GitCommitPush, read by its key; written with
+            each change's events, at most git-server eca-max-commits commits a change). No entry for a commit that
+            came by a mirror fetch or an import, or before pushers were kept, and none for a commit the caller does not
+            read by id. For viewers.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="commitId"/>
+            <parameter name="commitIdList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="pusherList" type="List"><description>Maps: commitId, userId, username, updateId, pushDate</description></parameter>
+        </out-parameters>
     </service>
 
     <!-- The storage of db and local repositories (docs/interfaces/Git-Hosting.md, Storage) -->
@@ -329,7 +443,10 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="find" noun="GitUpdates" type="rust" location="moqui_git::service::hosting::find_updates">
         <description>The push log of a repository, newest first: every push (accepted or not), mirror fetch, import and
-            write through Moqui, each with its refs and the state of its gitECA rules. For its viewers.</description>
+            write through Moqui, each with its refs and the state of its gitECA rules. For its viewers; a user without
+            the update right is given no remoteAddress, no object id that no readable ref reaches now (the old value of
+            a forced or deleted branch), and no row of a push to refs/for/ whose head is not read (a hidden merge
+            request's).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="source"><description>push, fetch, import or write</description></parameter>
@@ -351,6 +468,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repositoryId" required="true"/>
             <parameter name="revision"><description>A branch, tag or commit; the default branch when empty</description></parameter>
             <parameter name="path"><description>The directory; the root when empty</description></parameter>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="commitId"/>
@@ -460,6 +579,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="head" required="true"><description>The source</description></parameter>
             <parameter name="withDiffs" type="Boolean" default="false"/>
             <parameter name="checkMergeable" type="Boolean" default="false"/>
+            <parameter name="headRepositoryId"><description>The repository head is a revision of: another one of the
+                fork network of repositoryId, which the user may view too (a fork compared with its parent). Empty:
+                repositoryId</description></parameter>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="baseCommitId"/>
@@ -495,6 +619,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="method" default-value="GmmMerge"/>
             <parameter name="message" allow-html="any"><description>Of a merge commit or squash; a default when empty</description></parameter>
             <parameter name="checkOnly" type="Boolean" default="false"/>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
+                merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="commitId"><description>The target's new head</description></parameter>
@@ -545,8 +671,10 @@ along with this software (see the LICENSE.md file). If not, see
             content blobs of its large and LFS objects, which gc#ContentBlobs collects when no other repository has
             them, and webhook deliveries already queued. Refused: a repository that holds a drive (delete the drive),
             and one a row of another component still refers to through a foreign key (the application removes its own
-            rows first: Mantle's project links, a Smithy repository). Whether a repository with open merge requests,
-            forks or release assets may go is the application's rule.</description>
+            rows first: Mantle's project links, a Smithy repository). A repository others were forked from
+            is refused too (GitHasForks: its forks read its objects; delete them first, or archive it); a fork is
+            deleted alone, its objects staying the network's until a collection lets go of those no ref reaches.
+            Whether a repository with open merge requests or release assets may go is the application's rule.</description>
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="directoryRemoved" type="Boolean"/>
