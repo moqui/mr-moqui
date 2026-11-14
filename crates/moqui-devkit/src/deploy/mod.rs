@@ -18,6 +18,7 @@
 //! source server attests passed their pipeline (`git::deploy_attested`). Guide: docs/tools/Component-Deploy.md.
 
 pub mod conf_edit;
+pub mod gate;
 #[cfg(feature = "git")]
 pub mod git;
 #[cfg(not(feature = "git"))]
@@ -29,10 +30,11 @@ pub mod services;
 pub(crate) use services::register;
 
 /// Whether this server deploys a commit only with an attestation that it passed its environment's pipeline: the
-/// conf's `component-deploy` `require-passed-run` (docs/tools/Component-Deploy.md "The gate"). Then `deploy#Component`
-/// and `update#Component` refuse an unattested commit, and `load#Component` (a directory, no commit) refuses.
+/// conf's `component-deploy` `require-passed-run` as it was at start ([`gate::conf`]; docs/tools/Component-Deploy.md
+/// "The gate"). Then `deploy#Component` and `update#Component` refuse an unattested commit, `load#Component` (a
+/// directory, no commit) refuses, and a start or another cluster member writes only an attested commit.
 pub fn require_passed_run(factory: &moqui_core::context::ExecutionContextFactory) -> bool {
-    factory.conf_flag("component-deploy", "require-passed-run", false)
+    gate::conf(factory).require_passed_run
 }
 
 /// What the gate says of a deploy that is not attested while it is on.

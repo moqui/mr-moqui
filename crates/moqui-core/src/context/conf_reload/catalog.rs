@@ -277,7 +277,12 @@ pub static CATALOG: &[Unit] = &[
     single("resource-watch", Class::Live),
     single("dev-reload", Class::Restart("the file watcher starts at boot")),
     single("dev-aide", Class::Live).attrs(&[("shared", BOOT)]),
-    single("component-deploy", Class::Live),
+    // the gate is read once at start, so a conf editor of a running server does not turn it off or point it at another
+    // secret or repository (docs/tools/Component-Deploy.md "The gate")
+    single(
+        "component-deploy",
+        Class::Restart("the gate, its secret and its allow entries are read once at start"),
+    ),
     // read by the desktop and mobile apps, not the server
     single("client-conf", Class::Live),
     sequence(

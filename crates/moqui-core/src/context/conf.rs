@@ -261,6 +261,9 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "dev-aide",
         // a client's settings (plans/Mobile-Desktop.md §6, MD4): read by the desktop and mobile apps, not the server
         "client-conf",
+        // attested deploys and the gate (docs/tools/Component-Deploy.md): a runtime conf's allow entries replace the
+        // default's (none)
+        "component-deploy",
     ] {
         base.merge_single_child(over, name);
     }

@@ -67,7 +67,13 @@ pub(crate) fn update_where(
     }
     params.extend(statement.params);
     Ok(match commit {
-        Commit::Caller => moqui_core::entity::exec::execute_tx(&tx, &statement.sql, &params)?,
+        Commit::Caller => {
+            // In a transaction-cache frame the caller's entity writes are held until its commit, and this statement
+            // reads none of them (a row made just before matches nothing) and changes rows the frame keeps: write the
+            // held rows first and forget what the frame read, as raw SQL in a frame does (plans/archive/TX-Cache.md D1)
+            moqui_core::entity::cache::flush_before_sql(entity, &tx)?;
+            moqui_core::entity::exec::execute_tx(&tx, &statement.sql, &params)?
+        }
         Commit::Own => tx.with_reserve(|conn| conn.execute(&statement.sql, &params))?,
         Commit::OwnWithin(limit) => tx.with_reserve(|conn| {
             conn.set_read_timeout(Some(limit))?;

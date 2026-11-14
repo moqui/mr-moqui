@@ -233,6 +233,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="allowedRefs" type="text-medium"><description>Branch patterns (* is any run of characters; one
             that starts with refs/ is a full ref) whose runs get its secrets besides those of protected refs, and
             which deploy to it besides protected branches, separated by spaces. A merge request's run never does.</description></field>
+        <field name="dataTypes" type="text-medium"><description>The data types the target loads of a deployed component's
+            data files, comma separated; signed in the attestation. Empty for the target's defaults.</description></field>
         <field name="lastCommitId" type="text-short"/>
         <field name="lastDeploymentId" type="id"/>
         <field name="lastDeployDate" type="date-time"/>
@@ -321,6 +323,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="statusId" type="text-short" enable-audit-log="true"><description>requested, waiting-pipeline,
             waiting-approval, deploying, deployed, failed, refused or cancelled</description></field>
         <field name="requestedByUserId" type="id"/>
+        <field name="approvalRequired" type="text-indicator"><description>Y: it waits for decide#GitDeployment once
+            its pipeline passed, because its environment requires approval or its branch is one no branch rule
+            protects (named by allowedRefs only); set when asked for</description></field>
         <field name="approvedByUserId" type="id"/>
         <field name="approvedDate" type="date-time"/>
         <field name="refusedByUserId" type="id"/>

@@ -26,6 +26,7 @@ use super::*;
 use crate::ci::{attest, deploy};
 
 const TOKEN: &str = "the-target-issued-this-0123456789";
+const FORGED_TOKEN: &str = "not-what-the-target-issued-0123456789";
 const DEPLOYMENTS: &str = "org.moqui.git.GitCiServices";
 
 /// What the fake target was sent: the whole request, and the attestation when it verified.
@@ -40,6 +41,7 @@ struct Received {
 fn fake_target(secret: &'static str) -> (String, Arc<Mutex<Vec<Received>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let own = base.clone();
     let received: Arc<Mutex<Vec<Received>>> = Arc::default();
     let kept = Arc::clone(&received);
     std::thread::spawn(move || {
@@ -69,7 +71,10 @@ fn fake_target(secret: &'static str) -> (String, Arc<Mutex<Vec<Received>>>) {
                 json["signature"].as_str().unwrap_or_default(),
                 crate::ci::now_millis(),
                 300_000,
-            );
+            )
+            .and_then(|attestation| {
+                attest::check_audience(&attestation, std::slice::from_ref(&own)).map(|()| attestation)
+            });
             let (status, answer) = match &verified {
                 Ok(attestation) => (
                     "200 OK",
@@ -108,8 +113,22 @@ const SITE_CI: &str = r#"<ci>
     </pipeline>
 </ci>"#;
 
+/// Protect main of `repository`: pushed to by its writers only.
+fn protect_main(fixture: &Fixture, repository: &str) {
+    ok(
+        fixture,
+        WRITER,
+        "org.moqui.git.GitServices.store#GitBranchRule",
+        &[
+            ("repositoryId", s(repository)),
+            ("refPattern", s("main")),
+            ("pushUserGroupId", s("GIT_WRITERS")),
+        ],
+    );
+}
+
 /// A fixture whose deploy calls may reach loopback, and the repository `site`: a component with the release pipeline,
-/// pushed to main and to feature by the writer. The work tree and main's commit.
+/// pushed to main (protected) by the writer. The work tree and main's commit.
 fn site(name: &str) -> (Fixture, String, Work, String) {
     let fixture = ci_fixture(name, "success", r#"deploy-private-network="true""#);
     let base = http_server(fixture.context.factory());
@@ -120,6 +139,7 @@ fn site(name: &str) -> (Fixture, String, Work, String) {
         &[("component.xml", r#"<component name="site"/>"#), ("ci.xml", SITE_CI)],
         "main",
     );
+    protect_main(&fixture, "site");
     {
         let _entered = fixture.context.enter();
         let _authz = fixture.context.disable_authz();
@@ -248,6 +268,11 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
     let id = requested_and_run(&fixture, "success");
     let row = deployment(&fixture, &id);
     assert_eq!(text(&row, "statusId"), deploy::DEPLOYING, "{}", text(&row, "errorText"));
+    assert_eq!(
+        text(&row, "approvalRequired"),
+        "N",
+        "main is protected and no approval is required"
+    );
     assert!(received.lock().unwrap().is_empty(), "nothing is sent before the step");
     step(&fixture, &id);
     let row = deployment(&fixture, &id);
@@ -291,6 +316,9 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
         "{}",
         attestation.repository_url
     );
+    // addressed to the target it was posted to, the environment's data types signed with it (none named)
+    assert_eq!(attestation.audience, attest::base_url(&target));
+    assert!(attestation.data_types.is_empty());
     assert!(
         sent[0].request.starts_with("POST /rest/s1/moqui/components/deploy "),
         "{}",
@@ -314,6 +342,16 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
         assert!(!answer.contains(TOKEN), "{answer}");
     }
     assert!(format!("{environments:?}").contains("hasToken"));
+    // the target's and clone URLs to a maintainer only
+    assert!(format!("{environments:?}").contains(&target));
+    let read = ok(
+        &fixture,
+        READER,
+        &format!("{DEPLOYMENTS}.find#CiEnvironments"),
+        &[("repositoryId", s("site"))],
+    );
+    assert!(!format!("{read:?}").contains("127.0.0.1"), "{read:?}");
+    assert!(format!("{read:?}").contains("prod"));
     let environment = rows(
         &fixture,
         "moqui.resource.GitCiEnvironment",
@@ -362,7 +400,7 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
         &[
             ("repositoryId", s("site")),
             ("environmentId", s(&environment_id)),
-            ("token", s("not-what-the-target-issued-00")),
+            ("token", s(FORGED_TOKEN)),
         ],
     );
     let forged = requested_and_run(&fixture, "success");
@@ -374,8 +412,275 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
         "{}",
         text(&row, "errorText")
     );
-    assert!(!format!("{row:?}").contains("not-what-the-target-issued-00"));
+    assert!(!format!("{row:?}").contains(FORGED_TOKEN));
     assert!(received.lock().unwrap()[1].attestation.is_none());
+    // the target's words are on the row for a maintainer, not on the public status nor for a reader
+    assert_eq!(statuses(&fixture, "site", &commit)["deploy/prod"].1, "Deploy failed");
+    let get = format!("{DEPLOYMENTS}.get#GitDeployment");
+    let got = ok(&fixture, WRITER, &get, &[("deploymentId", s(&forged))]);
+    assert!(format!("{got:?}").contains("signature does not verify"));
+    let got = ok(&fixture, READER, &get, &[("deploymentId", s(&forged))]);
+    assert!(!format!("{got:?}").contains("signature"), "{got:?}");
+    let found = ok(
+        &fixture,
+        READER,
+        &format!("{DEPLOYMENTS}.find#GitDeployments"),
+        &[("repositoryId", s("site"))],
+    );
+    assert!(!format!("{found:?}").contains("signature"), "{found:?}");
+    // paged in the database, with the count of all
+    let page = |index: i64| {
+        ok(
+            &fixture,
+            READER,
+            &format!("{DEPLOYMENTS}.find#GitDeployments"),
+            &[
+                ("repositoryId", s("site")),
+                ("pageSize", Value::I64(1)),
+                ("pageIndex", Value::I64(index)),
+            ],
+        )
+    };
+    let (first, second) = (page(0), page(1));
+    assert_eq!(first["deploymentCount"], Value::I64(2));
+    let ids = |answer: &BTreeMap<String, Value>| match &answer["deploymentList"] {
+        Value::List(list) => list
+            .iter()
+            .map(|row| match row {
+                Value::Map(row) => to_plain_string(&row["deploymentId"]),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    assert_eq!((ids(&first), ids(&second)), (vec![forged.clone()], vec![id.clone()]));
+}
+
+/// decide#GitDeployment is the one approval step: a run an approver approved (its job in the environment) does not
+/// approve the deployment; and a branch no rule protects, deployed because allowedRefs names it, waits for an approver
+/// though the environment requires none.
+#[test]
+fn an_approved_run_still_waits_for_decide_and_an_unprotected_branch_waits_for_an_approver() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, work, _commit) = site("ci-deploy-decide");
+    let (target, received) = fake_target(TOKEN);
+    let environment_id = environment(&fixture, &target, TOKEN, false);
+    let request = format!("{DEPLOYMENTS}.request#GitDeployment");
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{DEPLOYMENTS}.store#CiEnvironment"),
+        &[
+            ("repositoryId", s("site")),
+            ("environmentId", s(&environment_id)),
+            ("allowedRefs", s("main feature")),
+        ],
+    );
+    // feature: named by allowedRefs, protected by no rule
+    work.push(&fixture, &[("notes.txt", "a feature")], "feature");
+    let out = ok(
+        &fixture,
+        WRITER,
+        &request,
+        &[
+            ("repositoryId", s("site")),
+            ("environment", s("prod")),
+            ("refName", s("feature")),
+        ],
+    );
+    let unprotected = to_plain_string(&out["deploymentId"]);
+    assert_eq!(text(&deployment(&fixture, &unprotected), "approvalRequired"), "Y");
+    start(&fixture);
+    let job = job_named(&fixture, &to_plain_string(&out["pipelineRunId"]), "build");
+    {
+        let _entered = fixture.context.enter();
+        let outcome = engine::Outcome {
+            status: "success",
+            exit_code: Some(0),
+            message: None,
+        };
+        assert!(engine::finish_job(&fixture.entity, &text(&job, "jobRunId"), &outcome).unwrap());
+    }
+    assert_eq!(
+        text(&deployment(&fixture, &unprotected), "statusId"),
+        deploy::WAITING_APPROVAL
+    );
+
+    // an environment that requires approval, whose pipeline's job is in it: the run waits for its own approval
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{DEPLOYMENTS}.store#CiEnvironment"),
+        &[
+            ("repositoryId", s("site")),
+            ("environmentId", s(&environment_id)),
+            ("approvalRequired", Value::Bool(true)),
+        ],
+    );
+    let in_environment = SITE_CI.replace(r#"pool="linux">"#, r#"pool="linux" environment="prod">"#);
+    work.push(&fixture, &[("ci.xml", &in_environment)], "main");
+    let out = ok(
+        &fixture,
+        WRITER,
+        &request,
+        &[("repositoryId", s("site")), ("environment", s("prod"))],
+    );
+    let id = to_plain_string(&out["deploymentId"]);
+    let run_id = to_plain_string(&out["pipelineRunId"]);
+    let run = rows(&fixture, "moqui.resource.GitPipelineRun", &[("pipelineRunId", &run_id)]).remove(0);
+    assert_eq!(
+        text(&run, "approvalState"),
+        "waiting",
+        "{}",
+        text(&run, "statusMessage")
+    );
+    ok(
+        &fixture,
+        "git.second",
+        "org.moqui.git.GitCiServices.approve#PipelineRun",
+        &[("pipelineRunId", s(&run_id))],
+    );
+    start(&fixture);
+    let job = job_named(&fixture, &run_id, "build");
+    assert_eq!(text(&job, "statusId"), "running", "{}", text(&job, "statusMessage"));
+    {
+        let _entered = fixture.context.enter();
+        let outcome = engine::Outcome {
+            status: "success",
+            exit_code: Some(0),
+            message: None,
+        };
+        assert!(engine::finish_job(&fixture.entity, &text(&job, "jobRunId"), &outcome).unwrap());
+    }
+    let row = deployment(&fixture, &id);
+    assert_eq!(
+        (text(&row, "statusId"), text(&row, "approvedByUserId")),
+        (deploy::WAITING_APPROVAL.into(), String::new()),
+        "the run's approval is not the deployment's"
+    );
+    ok(
+        &fixture,
+        "git.second",
+        &format!("{DEPLOYMENTS}.decide#GitDeployment"),
+        &[("deploymentId", s(&id)), ("decision", s("approve"))],
+    );
+    assert_eq!(text(&deployment(&fixture, &id), "statusId"), deploy::DEPLOYING);
+    assert!(received.lock().unwrap().is_empty());
+}
+
+/// The deploy step is claimed by one conditional update: two steps of one deployment at once call the target once.
+/// `resume` starts a step nobody took, and fails one that began past its time and never ended.
+#[test]
+fn the_deploy_step_is_claimed_once_and_resume_starts_or_ends_a_step() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, commit) = site("ci-deploy-step");
+    let (target, received) = fake_target(TOKEN);
+    environment(&fixture, &target, TOKEN, false);
+    let id = requested_and_run(&fixture, "success");
+    let factory = Arc::clone(fixture.context.factory());
+    let steps: Vec<_> = (0..4)
+        .map(|_| {
+            let factory = Arc::clone(&factory);
+            let id = id.clone();
+            std::thread::spawn(move || {
+                let context = factory.new_context();
+                let _entered = context.enter();
+                deploy::step(&factory.entity().unwrap(), &id).unwrap();
+            })
+        })
+        .collect();
+    for step in steps {
+        step.join().unwrap();
+    }
+    assert_eq!(received.lock().unwrap().len(), 1, "one call of the target");
+    assert_eq!(text(&deployment(&fixture, &id), "statusId"), deploy::DEPLOYED);
+
+    // a step nobody took (the server stopped before its thread ran): resume starts it
+    let waiting = requested_and_run(&fixture, "success");
+    let now = crate::ci::now_millis();
+    {
+        let _entered = fixture.context.enter();
+        assert_eq!(deploy::resume(&fixture.entity, now + 120_000).unwrap(), (1, 0));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while text(&deployment(&fixture, &waiting), "statusId") == deploy::DEPLOYING && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(text(&deployment(&fixture, &waiting), "statusId"), deploy::DEPLOYED);
+    assert_eq!(received.lock().unwrap().len(), 2);
+
+    // a step that began and never ended (the server stopped while it ran): failed past its time, said generically
+    let stuck = requested_and_run(&fixture, "success");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = deployment(&fixture, &stuck);
+        row.set("startedDate", moqui_core::user::stamp_value(now));
+        row.update(&fixture.entity).unwrap();
+        assert_eq!(deploy::resume(&fixture.entity, now + 16 * 60_000).unwrap(), (0, 1));
+    }
+    let row = deployment(&fixture, &stuck);
+    assert_eq!(text(&row, "statusId"), deploy::FAILED);
+    assert!(
+        text(&row, "errorText").contains("never ended"),
+        "{}",
+        text(&row, "errorText")
+    );
+    assert_eq!(statuses(&fixture, "site", &commit)["deploy/prod"].1, "Deploy failed");
+    assert_eq!(received.lock().unwrap().len(), 2);
+}
+
+/// An environment refuses a clone URL with credentials in it, an approver group that does not exist and a token
+/// shorter than 32 characters.
+#[test]
+fn an_environment_refuses_a_clone_url_with_credentials_an_unknown_group_and_a_short_token() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, _commit) = site("ci-deploy-environment");
+    let store = format!("{DEPLOYMENTS}.store#CiEnvironment");
+    let stored = |more: &[(&str, Value)]| {
+        let mut parameters = vec![
+            ("repositoryId", s("site")),
+            ("name", s("prod")),
+            ("targetUrl", s("https://target.example.com")),
+        ];
+        parameters.extend(more.iter().cloned());
+        call(&fixture, WRITER, &store, &parameters).1
+    };
+    for url in [
+        "https://user:secret@source.example.com/site.git",
+        "https://token@source.example.com/site.git",
+    ] {
+        let errors = stored(&[("cloneUrl", s(url))]);
+        assert!(errors.contains("no user or password"), "{url}: {errors}");
+        assert!(!errors.contains("secret@"), "{errors}");
+    }
+    let errors = stored(&[("approverGroupId", s("NO_SUCH_GROUP"))]);
+    assert!(errors.contains("no user group NO_SUCH_GROUP"), "{errors}");
+    let errors = stored(&[("token", s("only-31-characters-long-0123456"))]);
+    assert!(errors.contains("at least 32 characters"), "{errors}");
+    assert!(stored(&[
+        ("cloneUrl", s("ssh://git@source.example.com/site.git")),
+        ("token", s(TOKEN)),
+        ("dataTypes", s("seed, seed-initial")),
+    ])
+    .is_empty());
+    let found = ok(
+        &fixture,
+        WRITER,
+        &format!("{DEPLOYMENTS}.find#CiEnvironments"),
+        &[("repositoryId", s("site"))],
+    );
+    assert!(format!("{found:?}").contains("seed, seed-initial"), "{found:?}");
 }
 
 #[test]
@@ -493,6 +798,7 @@ fn a_repository_that_is_not_a_component_is_not_deployable_here() {
     define(&fixture, "site", "db");
     let work = Work::new(&fixture, &base, WRITER, "site");
     work.push(&fixture, &[("Cargo.toml", "[workspace]"), ("ci.xml", SITE_CI)], "main");
+    protect_main(&fixture, "site");
     let (target, received) = fake_target(TOKEN);
     environment(&fixture, &target, TOKEN, false);
     let id = requested_and_run(&fixture, "success");
@@ -505,4 +811,105 @@ fn a_repository_that_is_not_a_component_is_not_deployable_here() {
         text(&row, "errorText")
     );
     assert!(received.lock().unwrap().is_empty());
+}
+
+/// Call `name` as `user` inside a transaction with the transaction cache on (as `service_tx_cache` makes an
+/// operation's transaction once an XML service runs in it), so its entity writes are held until the commit.
+fn call_cached(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
+    let _entered = fixture.context.enter();
+    moqui_core::user::internal_login_user(user).unwrap();
+    let parameters: BTreeMap<String, Value> = parameters
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), value.clone()))
+        .collect();
+    let options = moqui_core::service::call::CallOptions {
+        use_transaction_cache: Some(true),
+        ..moqui_core::service::call::CallOptions::default()
+    };
+    let out = moqui_core::service::call::sync_with(name, &parameters, &options).unwrap();
+    let errors = moqui_core::context::ExecutionContext::with_current(|ec| {
+        let text = ec.message().errors_text().join("\n");
+        ec.message().clear();
+        text
+    })
+    .unwrap_or_default();
+    moqui_core::user::logout().unwrap();
+    assert!(errors.trim().is_empty(), "{name}: {errors}");
+    out
+}
+
+/// A deployment's moves are right inside a transaction with the transaction cache on: its row is written before the
+/// conditional updates that move it (they are SQL of their own, which reads no held row), so a request leaves it
+/// waiting for its pipeline as it answers, and a refusal ends it refused, its notice saying so.
+#[test]
+fn a_deployment_moves_on_inside_a_cached_transaction() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, _commit) = site("ci-deploy-cached");
+    let (target, _received) = fake_target(TOKEN);
+    environment(&fixture, &target, TOKEN, true);
+    let out = call_cached(
+        &fixture,
+        WRITER,
+        &format!("{DEPLOYMENTS}.request#GitDeployment"),
+        &[("repositoryId", s("site")), ("environment", s("prod"))],
+    );
+    assert_eq!(to_plain_string(&out["statusId"]), deploy::WAITING_PIPELINE, "{out:?}");
+    let id = to_plain_string(&out["deploymentId"]);
+    let run_id = to_plain_string(&out["pipelineRunId"]);
+    let row = deployment(&fixture, &id);
+    assert_eq!(
+        (text(&row, "statusId"), text(&row, "pipelineRunId")),
+        (deploy::WAITING_PIPELINE.into(), run_id.clone())
+    );
+    // its run passes: it waits for approval; refused in a cached transaction, it ends refused, and so does its notice
+    start(&fixture);
+    let job = job_named(&fixture, &run_id, "build");
+    {
+        let _entered = fixture.context.enter();
+        let outcome = engine::Outcome {
+            status: "success",
+            exit_code: Some(0),
+            message: None,
+        };
+        assert!(engine::finish_job(&fixture.entity, &text(&job, "jobRunId"), &outcome).unwrap());
+    }
+    assert_eq!(text(&deployment(&fixture, &id), "statusId"), deploy::WAITING_APPROVAL);
+    let out = call_cached(
+        &fixture,
+        "git.second",
+        &format!("{DEPLOYMENTS}.decide#GitDeployment"),
+        &[
+            ("deploymentId", s(&id)),
+            ("decision", s("refuse")),
+            ("reason", s("not today")),
+        ],
+    );
+    assert_eq!(to_plain_string(&out["statusId"]), deploy::REFUSED);
+    assert_eq!(text(&deployment(&fixture, &id), "statusId"), deploy::REFUSED);
+    let notices = rows(
+        &fixture,
+        "moqui.security.user.NotificationMessage",
+        &[("topic", deploy::TOPIC)],
+    );
+    let refused: Vec<String> = notices
+        .iter()
+        .map(|notice| text(notice, "messageJson"))
+        .filter(|json| json.contains(&id) && json.contains(deploy::REFUSED))
+        .collect();
+    assert!(
+        !refused.is_empty(),
+        "the refusal's notice carries its final state: {notices:?}"
+    );
+    let titles: Vec<String> = notices.iter().map(|notice| text(notice, "titleText")).collect();
+    for (title, json) in titles
+        .iter()
+        .zip(notices.iter().map(|notice| text(notice, "messageJson")))
+    {
+        if title.contains("was refused") {
+            assert!(json.contains(deploy::REFUSED), "{title}: {json}");
+        }
+    }
 }

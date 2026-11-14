@@ -143,7 +143,8 @@ would see. A view built in code (a data document, a REST query view) reads its m
 **What writes the held rows early** (an early flush, which costs a batch of its own): a view read that cannot be
 shadowed so (another database, a member with a full-text field or an encrypted key, more than 500 held rows of its members),
 a `distinct` or `having` find of an entity that cannot be shadowed so (the held writes up to that
-entity's last); raw SQL (`run_sql`); a `no-tx-cache` service joining (after which the transaction writes
+entity's last); raw SQL (`run_sql`, and the conditional updates of the git and CI rows, which also make the
+transaction forget what it read, as the statement may change it); a `no-tx-cache` service joining (after which the transaction writes
 through and keeps what it read); more than 10,000 held writes. Do work that reads a document of the rows a service
 wrote (a search index) after the commit (`registerOnCommit`).
 

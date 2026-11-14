@@ -131,13 +131,27 @@ along with this software (see the LICENSE.md file). If not, see
             files in place, loaded and its data loaded at the next start), failed, or removed (left out at the next
             start).</description></field>
         <field name="lastReport" type="text-very-long"/>
-        <field name="attestedDeploymentId" type="id"><description>The source server's deployment of the last attested
-            deploy (component-deploy, docs/tools/Component-Deploy.md "The gate")</description></field>
-        <field name="attestedDate" type="date-time"><description>When that attestation was issued: an attestation
-            issued at or before it is refused, so none is replayed</description></field>
         <field name="changedDate" type="date-time"/>
         <field name="changedByUserId" type="id"/>
         <relationship type="one-nofk" related="moqui.resource.GitRepository" short-alias="gitRepository"/>
+    </entity>
+    <!-- The last attestation a component took (docs/tools/Component-Deploy.md "The gate"), kept apart from
+        DeployedComponent so a discarded or removed component keeps it: an attestation issued at or before issuedDate is
+        refused, so none is replayed and none rolls back to an older attested commit. Claimed by one conditional update
+        before the deploy. -->
+    <entity entity-name="DeployedComponentAttestation" package="moqui.server" use="nontransactional" cache="never">
+        <field name="componentName" type="text-medium" is-pk="true"/>
+        <field name="issuedDate" type="date-time"><description>When the source signed the attestation taken last</description></field>
+        <field name="deploymentId" type="id"><description>The source server's deployment</description></field>
+        <field name="commitId" type="text-short"><description>The commit it attests: the only one another cluster
+            member applies for it under require-passed-run</description></field>
+        <field name="deployedCommitId" type="text-short"><description>The commit an attested deploy put in place: the
+            only one a start writes from the database under require-passed-run</description></field>
+        <field name="repositoryUrl" type="text-medium"/>
+        <field name="branch" type="text-medium"/>
+        <field name="environment" type="text-medium"/>
+        <field name="source" type="text-medium"/>
+        <field name="takenDate" type="date-time"/>
     </entity>
     <entity entity-name="DeployedComponentHistory" package="moqui.server" use="nontransactional" cache="never">
         <field name="componentName" type="text-medium" is-pk="true"/>

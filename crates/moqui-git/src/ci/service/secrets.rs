@@ -254,7 +254,8 @@ fn delete_ci_secret(parameters: &Parameters, facade: &EntityFacade) -> Out {
 }
 
 /// `find#CiEnvironments`: the environments of a repository (the caller views it) or an owner. Out:
-/// `environmentList`, without the target's token.
+/// `environmentList`, without the target's token; the target and clone URLs only to a maintainer (the delete right)
+/// or the application, since they name the instances a repository deploys to.
 fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let scope = match (text(parameters, "repositoryId"), text(parameters, "ownerId")) {
         (Some(repository), None) if may(&repository, "view") => (Some(repository), None),
@@ -267,6 +268,11 @@ fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
             None => return none(),
         },
     };
+    let maintainer = match &scope.0 {
+        Some(repository) => may(repository, "delete"),
+        // an owner's are read by the application only (scope_of)
+        None => true,
+    };
     let _rows = crate::rows_guard();
     let environments: Vec<Value> = scoped(facade, CI_ENVIRONMENT, &scope)?
         .order_by("name", false)
@@ -274,11 +280,20 @@ fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
         .iter()
         .map(|row| {
             let copy = |name: &'static str| (name, field_value(row, name));
+            let maintainers = |name: &'static str| {
+                let value = if maintainer {
+                    field_value(row, name)
+                } else {
+                    Value::Null
+                };
+                (name, value)
+            };
             map([
                 copy("environmentId"),
                 copy("name"),
-                copy("targetUrl"),
-                copy("cloneUrl"),
+                maintainers("targetUrl"),
+                maintainers("cloneUrl"),
+                copy("dataTypes"),
                 copy("requiredPipeline"),
                 ("approvalRequired", Value::Bool(is_yes(row, "approvalRequired"))),
                 copy("approverGroupId"),
@@ -346,6 +361,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         "requiredPipeline",
         "allowedRefs",
         "approverGroupId",
+        "dataTypes",
     ] {
         if parameters.contains_key(field_name) {
             row.set(field_name, opt(text(parameters, field_name)));
@@ -356,10 +372,8 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         if let Some(url) = field(&row, field_name) {
             let checked = if field_name == "targetUrl" {
                 crate::ci::deploy::endpoint(&url).map(|_| ())
-            } else if url.starts_with("https://") || url.starts_with("ssh://") {
-                Ok(())
             } else {
-                Err("the clone URL must be https:// or ssh://".to_string())
+                crate::ci::deploy::check_clone_url(&url)
             };
             if let Err(why) = checked {
                 add_error(why);

@@ -199,10 +199,16 @@ pub(super) fn clear_holds() {
 }
 
 /// Before raw SQL in the active frame of `tx`: its held rows go to the database first (an early flush), since the
-/// statement reads or writes the tables without them.
+/// statement reads or writes the tables without them; and what the frame read is forgotten, since the statement may
+/// change any of it (a frame that held no write keeps its reads through the flush, and would answer a later find with
+/// the row as it was before the statement).
 pub fn flush_before_sql(facade: &EntityFacade, tx: &TransactionManager) -> Result<(), Error> {
     match tx.cache_frame() {
-        Some((token, CacheMode::Hold)) => flush_early(facade, tx, token, FlushCause::RawSql, ""),
+        Some((token, CacheMode::Hold)) => {
+            flush_early(facade, tx, token, FlushCause::RawSql, "")?;
+            forget_reads(token, None);
+            Ok(())
+        }
         // The statement may change any row the frame read.
         Some((token, CacheMode::ReadThrough)) => {
             forget_reads(token, None);

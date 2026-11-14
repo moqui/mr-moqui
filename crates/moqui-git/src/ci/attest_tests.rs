@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{sign, verify, Attestation, Refusal, KIND};
+use super::{base_url, check_audience, sign, verify, Attestation, Refusal, KIND, MIN_SECRET, VERSION};
 
 const SECRET: &str = "a-target-issued-secret-0123456789";
 const NOW: i64 = 1_800_000_000_000;
@@ -21,7 +21,8 @@ const MAX_AGE: i64 = 300_000;
 pub(crate) fn attestation(issued_at: i64) -> Attestation {
     Attestation {
         kind: KIND.to_string(),
-        v: 1,
+        v: VERSION,
+        audience: "https://target.example.com".to_string(),
         repository_url: "https://source.example.com/git/site.git".to_string(),
         ref_name: "refs/heads/main".to_string(),
         commit_id: "0123456789abcdef0123456789abcdef01234567".to_string(),
@@ -34,6 +35,7 @@ pub(crate) fn attestation(issued_at: i64) -> Attestation {
         deployment_id: "D100".to_string(),
         issued_at,
         source: "https://source.example.com".to_string(),
+        data_types: Vec::new(),
     }
 }
 
@@ -112,4 +114,62 @@ fn a_good_attestation_verifies_and_a_forged_altered_stale_or_unpassed_one_does_n
         Err(Refusal::NoSecret)
     );
     assert!(sign("short", &attestation(NOW)).is_err());
+}
+
+/// v2: an attestation names the target it is for (`audience`), which the target compares with its own public URLs,
+/// and a v1 one (no audience, unsigned data types) is not taken; a secret is at least 32 characters.
+#[test]
+fn an_attestation_is_addressed_to_its_target_and_an_older_version_is_not_taken() {
+    let good = attestation(NOW);
+    assert!(check_audience(&good, &["https://target.example.com/".to_string()]).is_ok());
+    assert!(check_audience(&good, &["HTTPS://Target.Example.com:443".to_string()]).is_ok());
+    assert_eq!(
+        check_audience(&good, &["https://other.example.com".to_string()]),
+        Err(Refusal::Audience)
+    );
+    assert_eq!(
+        check_audience(&good, &[]),
+        Err(Refusal::Audience),
+        "a target that cannot tell"
+    );
+    assert_eq!(base_url("http://127.0.0.1:80/"), "http://127.0.0.1");
+    assert_eq!(base_url("http://127.0.0.1:8080/moqui"), "http://127.0.0.1:8080/moqui");
+
+    let mut old = attestation(NOW);
+    old.v = 1;
+    let old = sign(SECRET, &old).unwrap();
+    assert!(matches!(
+        verify(SECRET, &old.text, &old.signature, NOW, MAX_AGE),
+        Err(Refusal::Malformed(_))
+    ));
+    let mut nowhere = attestation(NOW);
+    nowhere.audience = String::new();
+    let nowhere = sign(SECRET, &nowhere).unwrap();
+    assert!(matches!(
+        verify(SECRET, &nowhere.text, &nowhere.signature, NOW, MAX_AGE),
+        Err(Refusal::Malformed(_))
+    ));
+    // the data types are signed: changed, the signature fails
+    let mut typed = attestation(NOW);
+    typed.data_types = vec!["seed".to_string()];
+    let typed = sign(SECRET, &typed).unwrap();
+    assert_eq!(
+        verify(SECRET, &typed.text, &typed.signature, NOW, MAX_AGE)
+            .unwrap()
+            .data_types,
+        ["seed"]
+    );
+    let widened = typed.text.replace("[\"seed\"]", "[\"seed\",\"demo\"]");
+    assert_ne!(widened, typed.text);
+    assert_eq!(
+        verify(SECRET, &widened, &typed.signature, NOW, MAX_AGE),
+        Err(Refusal::Signature)
+    );
+    let short = "x".repeat(MIN_SECRET - 1);
+    assert_eq!(MIN_SECRET, 32);
+    assert!(sign(&short, &attestation(NOW)).is_err());
+    assert_eq!(
+        verify(&short, &typed.text, &typed.signature, NOW, MAX_AGE),
+        Err(Refusal::NoSecret)
+    );
 }

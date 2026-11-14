@@ -123,6 +123,36 @@ pub fn provider(factory: &ExecutionContextFactory) -> Option<GitProvider> {
     factory.extension(|_| Slot::default()).0.get().cloned()
 }
 
+/// A cluster-wide lock on a name: a `GitLease` ([`lease`]), renewed while held and let go when dropped (a member that
+/// stops lets it lapse). For another crate's work that one member at a time does: moqui-devkit's attested deploy of a
+/// component, from its replay check to its record (docs/tools/Component-Deploy.md "The gate").
+pub struct NamedLock(#[allow(dead_code)] lease::Lease);
+
+/// Take the cluster-wide lock `name` ([`NamedLock`]), waiting up to `wait` for another holder to let it go.
+///
+/// # Errors
+///
+/// `GitLeaseBusy` when another holds it past `wait`, and a lease row that cannot be read or written.
+pub fn lock_named(entity: &EntityFacade, name: &str, wait: std::time::Duration) -> Result<NamedLock, Error> {
+    lease::take(entity, name, lease::TTL, wait).map(NamedLock)
+}
+
+/// One conditional `UPDATE entity_name SET fields WHERE condition`, a statement of its own committed at once, so of
+/// two members only one changes the row: how many rows changed. For another crate's claim of a row (moqui-devkit's
+/// attestation records).
+///
+/// # Errors
+///
+/// When the statement fails.
+pub fn claim_where(
+    entity: &EntityFacade,
+    entity_name: &str,
+    fields: &[(&str, Value)],
+    condition: &moqui_core::entity::Condition,
+) -> Result<u64, Error> {
+    conditional::update_where(entity, entity_name, fields, condition, conditional::Commit::Own)
+}
+
 /// An attribute of the conf's `git-server` element in the current context's factory, `${}` expanded and trimmed; empty
 /// when there is no current context or the conf leaves it out.
 pub(crate) fn setting(name: &str) -> String {
