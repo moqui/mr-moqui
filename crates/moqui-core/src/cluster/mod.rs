@@ -1552,10 +1552,13 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
 
 /// The database server's time in epoch milliseconds, else this host's.
 pub(crate) fn db_now(facade: &EntityFacade) -> i64 {
+    // the statement the database's dialect takes (Oracle FROM DUAL, DB2 and Derby VALUES)
     let read = facade
-        .transactions_for(MEMBER)
+        .with_group(MEMBER, |_, dialect, _, tx| {
+            Ok((dialect.current_timestamp_sql(), tx.clone()))
+        })
         .map_err(Error::from)
-        .and_then(|tx| with_reserve_tx(&tx, |conn| conn.query("SELECT CURRENT_TIMESTAMP", &[])).map_err(Error::from));
+        .and_then(|(sql, tx)| with_reserve_tx(&tx, |conn| conn.query(sql, &[])).map_err(Error::from));
     read.ok()
         .and_then(|rows| {
             rows.first()

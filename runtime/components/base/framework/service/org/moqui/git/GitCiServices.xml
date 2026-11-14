@@ -142,7 +142,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="failedTestList" type="List"><description>Maps: testSeq, suiteName, testName, filePath,
                 lineNumber, message, durationMillis</description></parameter>
             <parameter name="artifactList" type="List"><description>Maps: artifactId, jobRunId, artifactKind (artifact
-                or report), name, path, sizeBytes, sha256, keep, expireDate, createdDate, fileName</description></parameter>
+                or report), name, path, sizeBytes, sha256, keep, expireDate, createdDate, fileName, location (its ci-artifact:// location)</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="JobLog" type="rust" location="moqui_git::ci::service::get_job_log">
@@ -208,10 +208,28 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Send an artifact (a tar.gz) or a report of a run as this request's response, streamed from its
             content blob a window at a time with Range, ETag and If-Range, as ec.web.sendResourceResponse sends a
             file: for a screen's download transition, with nothing copied to a file. Read as get#RunArtifact is; a
-            cache is not found. inline sends it to show (a report's HTML) instead of as an attachment.</description>
+            cache is not found. inline shows a passive file (an image, a PDF, plain text, JSON) instead of sending it as
+            an attachment; an active one (HTML, SVG, XML, JavaScript) is still an attachment unless inlineActive is set
+            too. Shown inline it is sandboxed (Content-Security-Policy: sandbox, X-Content-Type-Options: nosniff).</description>
         <in-parameters>
             <parameter name="artifactId" required="true"/>
             <parameter name="inline" type="Boolean" default-value="false"/>
+            <parameter name="inlineActive" type="Boolean" default-value="false"><description>With inline, show an
+                HTML, SVG, XML or JavaScript file too. A job's output is whatever its commit's scripts wrote, so set
+                this only for a run whose commits the application trusts: it is shown on the application's host
+                (sandboxed, so no script runs, but it can look like one of the application's pages).</description></parameter>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="artifact" type="Map"/></out-parameters>
+    </service>
+    <service verb="set" noun="RunArtifactKeep" type="rust" location="moqui_git::ci::service::set_run_artifact_keep">
+        <description>Keep an artifact or a report of a run past its expiry (keep true: a release's, which the daily
+            retention then leaves), or let it expire again (false). It still counts toward the storage caps. Needs the
+            update right on the repository, or authorization disabled; a hidden run's is found as get#RunArtifact finds
+            it. A cache is not found.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="keep" type="Boolean" required="true"/>
             <parameter name="includeHidden" type="Boolean"/>
         </in-parameters>
         <out-parameters><parameter name="artifact" type="Map"/></out-parameters>

@@ -283,6 +283,22 @@ pub(crate) fn claim_job(
         return Ok(None);
     }
     super::audit_status(entity, JOB_RUN, &job_run_id, "queued", &fields);
+    // the writes after the claim are each committed as they go (a start pass is outside any transaction): one that
+    // fails gives the job back to the queue, its token never handed out, so a job is never left running with no one
+    // to run it, and a run already moved to running with a queued job is a state it has anyway
+    match claimed_after(entity, run, &job_run_id, now) {
+        Ok(()) => Ok(Some(plain)),
+        Err(err) => {
+            unclaim(entity, &job_run_id);
+            Err(err)
+        }
+    }
+}
+
+/// What [`claim_job`] writes once the job is claimed: the rollback hook of a caller's transaction, the run started,
+/// the job's commit status.
+fn claimed_after(entity: &EntityFacade, run: &EntityValue, job_run_id: &str, now: i64) -> Result<(), Error> {
+    let job_run_id = job_run_id.to_string();
     // a caller's transaction that rolls back gives the job back to the queue (when it is still this claim's)
     if let Ok(transactions) = entity.transactions_for(JOB_RUN) {
         if transactions.in_transaction() {
@@ -309,14 +325,14 @@ pub(crate) fn claim_job(
     if let Some(job) = super::one(entity, JOB_RUN, "jobRunId", &job_run_id)? {
         status::write_job(entity, run, &job, "Running");
     }
-    Ok(Some(plain))
+    Ok(())
 }
 
-/// Give a job whose claim's transaction rolled back to the queue again, while it is still running with no result: its
-/// claim was committed on its own ([`claim_job`]). Its token's hash stays until the next claim replaces it, so a runner
-/// that got the token in an answer sent before the rollback is told the job is gone (410), not that the token is
-/// unknown. A container start is never in a caller's transaction ([`start_queued`]), so no running container's job
-/// is queued again.
+/// Give a job whose claim's transaction rolled back, or whose claim failed after the job was claimed, to the queue
+/// again, while it is still running with no result: its claim was committed on its own ([`claim_job`]). Its token's
+/// hash stays until the next claim replaces it, so a runner that got the token in an answer sent before the rollback is
+/// told the job is gone (410), not that the token is unknown. A container start is never in a caller's transaction
+/// ([`start_queued`]), so no running container's job is queued again.
 fn unclaim(entity: &EntityFacade, job_run_id: &str) {
     let fields = [
         ("statusId", Value::string("queued")),
@@ -415,24 +431,49 @@ pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
     let _outside = Suspended::of(entity)?;
     // the claims one pass at a time in this process; the containers are started after, outside it, so a host that
     // is slow to start one (an image to pull) holds no other start
-    let (mut done, claimed) = {
+    let (done, claimed) = {
         let _turn = moqui_lib::sync::lock(&STARTS);
         claim_queued(entity)?
     };
+    Ok(start_claimed(entity, claimed, done))
+}
+
+/// Start the containers of the jobs a pass claimed, each only while its job still runs; what was done, added to `done`.
+pub(crate) fn start_claimed(entity: &EntityFacade, claimed: Vec<Claimed>, mut done: Started) -> Started {
     let _rows = crate::rows_guard();
     for start in claimed {
         let job_run_id = field(&start.job, "jobRunId").unwrap_or_default();
+        // a cancel between the claim and here ended the job: no container is started for it
+        match super::one(entity, JOB_RUN, "jobRunId", &job_run_id) {
+            Ok(Some(job)) if field(&job, "statusId").as_deref() == Some("running") => {}
+            Ok(_) => continue,
+            // not read: started as claimed (its cancel, if any, removes the container it finds)
+            Err(err) => {
+                tracing::warn!(job = %job_run_id, "a claimed job run was not read again before its start: {err}");
+            }
+        }
         let spec = run_spec(&start.job, &start.pool, &start.url, &start.token);
         let outcome = match driver::start(entity, &start.host_id, &spec) {
+            // kept only while the job still runs: one cancelled as its container started has its container removed
+            // here, since its cancel found no container to remove
             Ok(instance_ref) => set_fields(
                 entity,
                 JOB_RUN,
                 "jobRunId",
                 &job_run_id,
-                None,
-                vec![("instanceRef", Value::string(instance_ref))],
+                Some("running"),
+                vec![("instanceRef", Value::string(&instance_ref))],
             )
-            .map(|_| done.started += 1),
+            .map(|kept| {
+                if kept {
+                    done.started += 1;
+                } else if let Err(err) = driver::remove(entity, &start.host_id, &instance_ref, &job_run_id) {
+                    tracing::warn!(
+                        job = %job_run_id,
+                        "the container of a job cancelled as it started was not removed (the cleanup will): {err}"
+                    );
+                }
+            }),
             Err(err) => {
                 // the errors are the host's answer, kept on the job (taken from the message facade by the driver)
                 done.refused += 1;
@@ -448,7 +489,7 @@ pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
             tracing::error!(job = %job_run_id, "a queued job run was not started: {err}");
         }
     }
-    Ok(done)
+    done
 }
 
 /// The caller's transaction suspended until this is dropped, when it is resumed.
@@ -477,7 +518,7 @@ impl Drop for Suspended {
 }
 
 /// A job claimed by a start pass, whose container is to be started.
-struct Claimed {
+pub(crate) struct Claimed {
     job: EntityValue,
     pool: EntityValue,
     host_id: String,
@@ -497,7 +538,7 @@ fn images_of(job: &EntityValue) -> Vec<String> {
 
 /// The claims of a start pass: the queued jobs of container pools, oldest first, up to each pool's limit; what is
 /// refused ended as errors.
-fn claim_queued(entity: &EntityFacade) -> Result<(Started, Vec<Claimed>), Error> {
+pub(crate) fn claim_queued(entity: &EntityFacade) -> Result<(Started, Vec<Claimed>), Error> {
     let _rows = crate::rows_guard();
     let mut done = Started::default();
     let mut claimed_jobs: Vec<Claimed> = Vec::new();

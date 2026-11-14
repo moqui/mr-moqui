@@ -102,6 +102,8 @@ fn construct(factory: &Arc<ExecutionContextFactory>) -> Result<Arc<dyn moqui_cor
         .0
         .set(provider.clone())
         .map_err(|_| Error::new("the git resource scheme is installed twice"))?;
+    // a CI run's artifacts and reports as locations, so every transport that sends a file sends one (ci/location.rs)
+    resources.install_provider(ci::location::SCHEME, Arc::new(ci::location::ArtifactLocations))?;
     Ok(Arc::new(provider))
 }
 
@@ -1105,6 +1107,8 @@ impl GitProvider {
                 } else {
                     None
                 },
+                // and again right before the refs move, after the long network read
+                &|| lease::check(shared.as_ref()),
             )
         };
         self.refresh(repository_id);
@@ -1472,7 +1476,15 @@ impl GitProvider {
                 "git-import-{repository_id}-{}",
                 jiff::Timestamp::now().as_millisecond()
             ));
-            fs::fetch(&path, &source, &definition.branch, &definition.credentials, false, None)?;
+            fs::fetch(
+                &path,
+                &source,
+                &definition.branch,
+                &definition.credentials,
+                false,
+                None,
+                &|| Ok(()),
+            )?;
             scratch = Some(path.clone());
             (Box::new(fs::FsStore::open(&path)?), definition.branch.clone())
         };

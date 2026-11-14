@@ -83,9 +83,9 @@ pub struct EdgeSettings {
     /// (`forward-head-seconds`). An upload whose answer comes once it is stored is bounded by neither while it moves.
     pub forward_idle: Duration,
     pub forward_head: Duration,
-    /// The longest wait for the answer's head of a forwarded request with no body (`forward-first-byte-seconds`, at
-    /// most `forward-head-seconds`): short, so a GET or HEAD a hung member holds goes once more to another member and
-    /// the hung one is set aside before the client gives up.
+    /// The longest wait for the answer's head of a forwarded GET or HEAD with no body (`forward-first-byte-seconds`,
+    /// at most `forward-head-seconds`): short, so one a hung member holds goes once more to another member and the
+    /// hung one is set aside before the client gives up. Any other request waits `forward_head`.
     pub forward_first_byte: Duration,
     /// SSH connections an SSH tunnel port pipes at once (`ssh-tunnels`), at least 1 and at most [`MAX_SSH_TUNNELS`].
     pub ssh_tunnels: usize,

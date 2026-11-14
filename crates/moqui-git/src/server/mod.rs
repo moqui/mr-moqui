@@ -401,6 +401,8 @@ enum Refusal {
     Unavailable(String),
     /// Too many requests with no credentials are served now: 503 with `Retry-After`.
     Busy(String),
+    /// A credential that was good and is no longer (the job token of a job that ended): 410, no failed sign-in.
+    Gone(String),
 }
 
 /// What a request with no credentials is told, whatever the reason: nothing of the answer tells a repository that is
@@ -459,7 +461,8 @@ impl Refusal {
             | Self::Forbidden(text)
             | Self::NotFound(text)
             | Self::Unavailable(text)
-            | Self::Busy(text) => text,
+            | Self::Busy(text)
+            | Self::Gone(text) => text,
         }
     }
 }
@@ -741,6 +744,7 @@ fn refuse_http(out: &mut dyn HttpResponder, refusal: &Refusal) {
         Refusal::Unauthenticated(_) => 401,
         Refusal::Forbidden(_) => 403,
         Refusal::NotFound(_) => 404,
+        Refusal::Gone(_) => 410,
         Refusal::Unavailable(_) | Refusal::Busy(_) => 503,
     };
     let mut headers = vec![("Content-Type", "text/plain; charset=utf-8".to_string())];

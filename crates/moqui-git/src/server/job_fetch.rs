@@ -134,12 +134,20 @@ pub(super) fn serve(request: &GitHttpRequest, job_token: &str, body: &mut dyn Re
         let entity = factory()?
             .entity()
             .ok_or_else(|| Refusal::Unavailable("no entity facade".into()))?;
-        let auth = token::job_of(&entity, job_token)
+        // a job that ended (cancelled, timed out) is 410 and no failed sign-in, as the runner REST answers it: a
+        // runner fetching after a cancel is no guesser; only a token this server never made counts as one
+        let auth = match token::job_token(&entity, job_token)
             .map_err(|err| Refusal::Unavailable(err.message().to_string()))?
-            .ok_or_else(|| {
+        {
+            token::JobToken::Running(auth) => auth,
+            token::JobToken::Ended => {
+                return Err(Refusal::Gone("the job token's job has ended".into()));
+            }
+            token::JobToken::Unknown => {
                 moqui_core::web::note_auth_failure();
-                Refusal::Unauthenticated("the job token is not valid: its job has ended".into())
-            })?;
+                return Err(Refusal::Unauthenticated("the job token is not valid".into()));
+            }
+        };
         moqui_core::web::note_token_verified();
         if request.service != GitService::UploadPack {
             return Err(Refusal::Forbidden("a job token does not push".into()));

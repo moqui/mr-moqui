@@ -1142,9 +1142,11 @@ member when it is a GET or HEAD with no body, or when it was never sent; nothing
 stops moves only its own clients, and they stay signed in: sessions are rows in the pool's database. The defaults are
 the `<edge>` element's `sticky-cookie`, `set-aside-failures` and `set-aside-seconds`. A forwarded request waits for its
 answer while its body keeps moving, a gap of `forward-idle-seconds` (120) at most, and then `forward-head-seconds`
-(3600) once it is all sent, so an upload answered once it is stored (Git LFS, CI artifacts) is not cut off. A request
-with no body waits `forward-first-byte-seconds` (30) for its answer's head, so a GET held by a hung member goes to
-another and the hung one is set aside. The edge node's own `request-timeout` does not apply to a request it forwards;
+(3600) once it is all sent, so an upload answered once it is stored (Git LFS, CI artifacts) is not cut off. A GET or
+HEAD with no body waits `forward-first-byte-seconds` (30) for its answer's head, so one held by a hung member goes to
+another and the hung one is set aside; a first-byte timeout that goes to no other member (there is none, or it was the
+second try) is not counted against the member, and any other request with no body (a POST) is never sent again and
+waits `forward-head-seconds`. The edge node's own `request-timeout` does not apply to a request it forwards;
 the member's does. System › Edge Clients › Balancing shows each member's requests in flight and in all and whether it
 is set aside (`get#EdgeBalancing`), and the `moqui.edgelink.requests`, `retries` and `set_asides` counters name the
 pairing and the member.

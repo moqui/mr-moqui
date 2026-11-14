@@ -477,7 +477,14 @@ pub fn serve_download(
         return Ok(Err(logged_unavailable(call, "the authority answered with no file")));
     };
     let location = download["location"].as_str().unwrap_or_default();
-    let opened = match factory.resource().open(location) {
+    // the location is the authority service's answer, never the client's, and that service checked who may have the
+    // file: it is opened with authorization off, so a scheme that checks its reader (`ci-artifact://`, `git://`)
+    // serves it here as `ec.web.sendResourceResponse` serves it in the service's own request
+    let opened = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        factory.resource().open(location)
+    };
+    let opened = match opened {
         Ok(Some(opened)) => opened,
         Ok(None) => return Ok(Err(logged_unavailable(call, "the file is not there"))),
         Err(err) => return Ok(Err(logged_unavailable(call, err.message()))),

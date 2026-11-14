@@ -126,3 +126,79 @@ fn holder_ids_are_unique_and_random() {
     assert_eq!(random.len(), 32, "{one}");
     assert!(random.bytes().all(|byte| byte.is_ascii_hexdigit()));
 }
+
+/// A renewal a test holds back, as a database that does not answer would: renewals of the lease named wait so long.
+static HOLD: std::sync::Mutex<Option<(&'static str, Duration)>> = std::sync::Mutex::new(None);
+
+pub(super) fn hold_renewal(name: &str) {
+    let hold = *moqui_lib::sync::lock(&HOLD);
+    if let Some((held, wait)) = hold {
+        if held == name {
+            std::thread::sleep(wait);
+        }
+    }
+}
+
+/// One renewal the database holds holds no other lease's: each is made on its own, so the other lease stays valid,
+/// and the held one is marked lost once it has gone unrenewed for nearly its time.
+#[test]
+fn a_renewal_held_by_the_database_does_not_lose_the_other_leases() {
+    let entity = moqui_core::testing::open();
+    let ttl = Duration::from_millis(600);
+    *moqui_lib::sync::lock(&HOLD) = Some(("t:held-renewal", Duration::from_secs(3)));
+    let held = try_take(&entity, "t:held-renewal", ttl).unwrap().expect("free");
+    let quick = try_take(&entity, "t:quick-renewal", ttl).unwrap().expect("free");
+    std::thread::sleep(Duration::from_millis(1300));
+    let quick_checked = quick.check();
+    let held_checked = held.check();
+    *moqui_lib::sync::lock(&HOLD) = None;
+    quick_checked.expect("renewed beside the held one");
+    let lost = held_checked.unwrap_err();
+    assert!(lost.message().starts_with("GitLeaseLost: "), "{lost}");
+}
+
+/// A lease taken again on its thread after the outer take was marked lost is taken anew in the database: refused
+/// while another member holds it, held anew (and checked good) once it is free, instead of sharing the lost state.
+#[test]
+fn a_reentry_of_a_lost_lease_takes_it_again_in_the_database() {
+    let entity = moqui_core::testing::open();
+    let outer = try_take(&entity, "t:relost", TTL).unwrap().expect("free");
+    update(
+        &entity,
+        "t:relost",
+        vec![("holderId", Value::string("another-member"))],
+        Condition::is_not_null("holderId"),
+    )
+    .unwrap();
+    assert!(outer.check().is_err(), "lost to another member");
+    assert!(
+        try_take(&entity, "t:relost", TTL).unwrap().is_none(),
+        "not the lost state shared: another member holds it"
+    );
+    update(
+        &entity,
+        "t:relost",
+        vec![("holderId", Value::Null), ("leaseUntil", Value::Null)],
+        Condition::is_not_null("holderId"),
+    )
+    .unwrap();
+    let again = try_take(&entity, "t:relost", TTL).unwrap().expect("free again");
+    again.check().expect("a take of its own");
+    // a later re-entry shares the new take, and the outer one stays lost
+    drop(take(&entity, "t:relost", TTL, Duration::ZERO).unwrap());
+    assert!(outer.check().is_err());
+    drop(outer);
+    again.check().expect("the outer one let go only what it held");
+    assert!(!free_elsewhere(&entity, "t:relost"));
+}
+
+/// A read of the database's clock that fails keeps the offset last read and is not kept; a good one is kept, and an
+/// answer with no time is this host's clock.
+#[test]
+fn a_failed_clock_read_keeps_the_last_offset_and_is_not_cached() {
+    use super::next_offset;
+    assert_eq!(next_offset(Ok(Some(1500)), Some(10)), (1500, true));
+    assert_eq!(next_offset(Ok(None), Some(10)), (0, true));
+    assert_eq!(next_offset(Err("connection refused"), Some(1500)), (1500, false));
+    assert_eq!(next_offset(Err("connection refused"), None), (0, false));
+}

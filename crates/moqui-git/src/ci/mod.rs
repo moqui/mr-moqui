@@ -33,6 +33,7 @@ pub mod driver;
 pub mod engine;
 pub mod file;
 pub mod junit;
+pub(crate) mod location;
 pub mod log;
 pub mod plan;
 pub mod queue;

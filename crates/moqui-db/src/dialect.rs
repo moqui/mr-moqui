@@ -141,6 +141,25 @@ impl Dialect {
     pub fn sql_type(&self, field_type: &str) -> Option<&str> {
         self.sql_types.get(field_type).map(String::as_str)
     }
+
+    /// A statement whose one row and column is the database server's current time: Oracle selects it `FROM DUAL`, DB2
+    /// and Derby have no `SELECT` without a table and use `VALUES`; the others `SELECT CURRENT_TIMESTAMP`. Known by the
+    /// profile's name, or its `lb-name` for a profile of another name.
+    #[must_use]
+    pub fn current_timestamp_sql(&self) -> &'static str {
+        let is = |prefix: &str| {
+            self.name.starts_with(prefix) || self.lb_name.as_deref().is_some_and(|lb| lb.starts_with(prefix))
+        };
+        if is("oracle") {
+            "SELECT CURRENT_TIMESTAMP FROM DUAL"
+        } else if is("db2") {
+            "VALUES CURRENT TIMESTAMP"
+        } else if is("derby") {
+            "VALUES CURRENT_TIMESTAMP"
+        } else {
+            "SELECT CURRENT_TIMESTAMP"
+        }
+    }
 }
 
 /// `<database>` profiles keyed by `name`.
@@ -325,6 +344,25 @@ fn at(node: &MNode, message: impl Into<String>) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_current_timestamp_statement_fits_the_database() {
+        let root = MNode::parse_text(
+            "sample",
+            r#"<moqui-conf><database-list>
+                <database name="oracle"/><database name="db2i" lb-name="db2"/><database name="derby"/>
+                <database name="postgres"/><database name="corp-ora" lb-name="oracle"/>
+            </database-list></moqui-conf>"#,
+        )
+        .unwrap();
+        let dialects = Dialects::load(&root).unwrap();
+        let sql = |name: &str| profile(&dialects, name).current_timestamp_sql();
+        assert_eq!(sql("oracle"), "SELECT CURRENT_TIMESTAMP FROM DUAL");
+        assert_eq!(sql("corp-ora"), "SELECT CURRENT_TIMESTAMP FROM DUAL");
+        assert_eq!(sql("db2i"), "VALUES CURRENT TIMESTAMP");
+        assert_eq!(sql("derby"), "VALUES CURRENT_TIMESTAMP");
+        assert_eq!(sql("postgres"), "SELECT CURRENT_TIMESTAMP");
+    }
 
     fn profile<'a>(dialects: &'a Dialects, name: &str) -> &'a Dialect {
         dialects.get(name).unwrap_or_else(|| panic!("missing database {name}"))

@@ -1004,15 +1004,19 @@ conf through the provider's own factory. On a member **without** shared storage:
 rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:<repositoryId>`, and then the lock of
 its own process (the lease first, so no writer holds the lock while it waits on another member), so two members never
 write the same directory at once: one waits for the other, at most `shared-lock-wait-seconds` (120; then
-`GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed while held (by one thread of the
-process; a lease let go within its first renewal interval costs none) and taken over once it lapses (60 seconds after
-a member that held it stopped); its times are the database's clock, so the members' clocks do not matter. Its holder
+`GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed while held (scheduled by one thread of
+the process, each renewal on a thread of its own and waiting at most a sixth of the lease's time for the database, so
+one renewal the database holds does not lose the others; a lease let go within its first renewal interval costs none)
+and taken over once it lapses (60 seconds after a member that held it stopped); its times are the database's clock
+(read by the statement its dialect takes, every 30 seconds; a read that fails keeps the offset last read, is warned of
+and is tried again at the next use), so the members' clocks do not matter. Its holder
 id is the process and 128 random bits. A lease is fenced: one whose renewal found another holder, or that went
 unrenewed for nearly its time (a lost database connection, a long pause), is lost, and a writer checks its lease right
 before what must happen under it (a ref update, a push's objects taken from quarantine, gc's deletes), renewing it on
 the condition that the row still names it and has not lapsed; a writer that lost it stops with `GitLeaseLost` and
 writes nothing. A lease taken again on its thread shares the first take, and the last of them let go releases it, on
-whatever thread. `fetch#AllGitRepositories` runs on one member at a time (`fetch-due`), and the pushes of a repository
+whatever thread; a take again of one that was lost takes the lease anew in the database. A mirror's fetch stages the
+remote's refs and checks its lease again right before its refs move, after the long network read. `fetch#AllGitRepositories` runs on one member at a time (`fetch-due`), and the pushes of a repository
 to its push mirror take turns across the members (`push-mirror:<repositoryId>`).
 
 What a member keeps in memory of an on-disk repository is checked against the disk on use rather than told of other

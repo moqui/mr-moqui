@@ -1358,7 +1358,8 @@ fn attachment_disposition(file_name: &str) -> String {
 ///
 /// Only an application's own files (`component://`, `classpath://`) shown inline may be kept by a shared cache, as Java
 /// sends every inline resource; anything else (a drive's or a record's file, a temporary zip) is `private, no-store`, so
-/// a proxy or a shared browser keeps no copy of what a user was allowed to read.
+/// a proxy or a shared browser keeps no copy of what a user was allowed to read; such a file is never sniffed, and
+/// shown inline it is sandboxed (`file_headers`).
 pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Option<&str>) {
     let opened = ExecutionContext::with_current(|ec| ec.factory().resource().open(location)).transpose();
     let opened = match opened {
@@ -1405,29 +1406,83 @@ pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Op
     }
 }
 
-/// Send `opened` as this request's response, a file named `file_name` (an attachment unless `inline`), streamed a
-/// window at a time with `Range`, `ETag` and `If-Range` as `sendResourceResponse` sends a resource: for content a
-/// service reads from its own storage (a CI artifact's content blob, `send#RunArtifact`) with its own access check,
-/// so it is not copied to a file first.
+/// How [`send_file_response`] sends a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileDisposition {
+    /// A named attachment, saved and never shown.
+    Attachment,
+    /// Shown in the browser when its type is passive (an image, a PDF, plain text, JSON); a type that can run script
+    /// on the application's origin ([`is_active_content_type`]: HTML, SVG, XML, JavaScript) is still an attachment.
+    Inline,
+    /// Shown even when its type is active: only for content the caller vouches for. It is still sandboxed
+    /// (`Content-Security-Policy: sandbox`, so no script runs and it has an origin of its own), but it is shown on the
+    /// application's host, so a page a job wrote can, for example, look like one of the application's.
+    InlineActive,
+}
+
+/// Whether a file of `content_type` shown in a browser can run script or load a page of its own (HTML, XHTML, SVG,
+/// XML with its style sheets, JavaScript): such a file sent from the application's origin is an attachment unless
+/// the caller opts in ([`FileDisposition`]).
+#[must_use]
+pub fn is_active_content_type(content_type: &str) -> bool {
+    let content_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        content_type.as_str(),
+        "text/html"
+            | "application/xhtml+xml"
+            | "image/svg+xml"
+            | "application/xml"
+            | "text/xml"
+            | "text/xsl"
+            | "application/javascript"
+            | "text/javascript"
+            | "application/ecmascript"
+            | "text/ecmascript"
+    ) || content_type.ends_with("+xml")
+}
+
+/// Send `opened` as this request's response, a file named `file_name` as `disposition` says, streamed a window at a
+/// time with `Range`, `ETag` and `If-Range` as `sendResourceResponse` sends a resource: for content a service reads
+/// from its own storage (a CI artifact's content blob, `send#RunArtifact`) with its own access check, so it is not
+/// copied to a file first. Content shown inline is sandboxed and never sniffed (`respond_file`).
 ///
 /// # Errors
 ///
 /// When the content cannot be read; nothing is sent then, and the caller answers.
-pub fn send_file_response(opened: &crate::context::Opened, file_name: &str, inline: bool) -> Result<(), Error> {
+pub fn send_file_response(
+    opened: &crate::context::Opened,
+    file_name: &str,
+    disposition: FileDisposition,
+) -> Result<(), Error> {
+    let inline = match disposition {
+        FileDisposition::Attachment => false,
+        FileDisposition::Inline => !is_active_content_type(file_content_type(file_name, file_name)),
+        FileDisposition::InlineActive => true,
+    };
     respond_file(opened, file_name, file_name, inline, false)
 }
 
-fn respond_file(
-    opened: &crate::context::Opened,
-    file_name: &str,
-    last: &str,
-    inline: bool,
-    application_file: bool,
-) -> Result<(), Error> {
-    // a type the name does not tell is bytes to save, never sniffed as a page
-    let content_type = moqui_lib::resource::content_type_for_name(file_name)
+/// The type a file is sent with: by its name, else by the location's last segment, else bytes to save.
+fn file_content_type(file_name: &str, last: &str) -> &'static str {
+    moqui_lib::resource::content_type_for_name(file_name)
         .or_else(|| moqui_lib::resource::content_type_for_name(last))
-        .unwrap_or("application/octet-stream");
+        .unwrap_or("application/octet-stream")
+}
+
+/// The headers of a file response: its type, how it is shown, and how it may be kept. A user's file (anything not the
+/// application's own) is never sniffed as another type (`nosniff`), and one shown inline is sandboxed
+/// (`Content-Security-Policy: sandbox`, without `allow-same-origin` or `allow-scripts`): an HTML or SVG file a user
+/// or a CI job wrote runs no script and does not have the application's origin, so it cannot act as the signed-in
+/// viewer (docs/security/Attack-Surface.md). A PDF is not sandboxed, since browsers will not show one in a sandbox and
+/// its viewer has an origin of its own.
+fn file_headers(file_name: &str, last: &str, inline: bool, application_file: bool) -> Vec<(String, String)> {
+    // a type the name does not tell is bytes to save, never sniffed as a page
+    let content_type = file_content_type(file_name, last);
     let mut headers = vec![("Content-Type".to_string(), content_type.to_string())];
     if inline {
         headers.push(("Content-Disposition".to_string(), "inline".to_string()));
@@ -1439,7 +1494,22 @@ fn respond_file(
         apply_conf_headers(None, "web-resource-inline", &mut headers, false);
     } else {
         headers.push(("Cache-Control".to_string(), "private, no-store".to_string()));
+        headers.push(("X-Content-Type-Options".to_string(), "nosniff".to_string()));
+        if inline && content_type != "application/pdf" {
+            headers.push(("Content-Security-Policy".to_string(), "sandbox".to_string()));
+        }
     }
+    headers
+}
+
+fn respond_file(
+    opened: &crate::context::Opened,
+    file_name: &str,
+    last: &str,
+    inline: bool,
+    application_file: bool,
+) -> Result<(), Error> {
+    let headers = file_headers(file_name, last, inline, application_file);
     let conditional = WEB
         .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.clone()))
         .unwrap_or_default();

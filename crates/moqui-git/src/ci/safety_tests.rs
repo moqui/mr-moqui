@@ -397,8 +397,9 @@ fn a_schedule_runs_at_most_once_in_its_minimum_interval() {
 }
 
 /// A pool token with no expiry (made before tokens expired) registers nothing; a runner in a pool with no owner on a
-/// server with a run check gets no job; a retry twice makes one attempt; one runner is reserved by one claim at a time;
-/// and a job of a run that ended is given to no runner.
+/// server with a run check gets no job; a retry twice makes one attempt; a runner left reserved for a job it is not
+/// running (a claim that failed between the reservation and the job's claim) is freed at its next claim; and a job of
+/// a run that ended is given to no runner.
 #[test]
 fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
     let fixture = operator_fixture(
@@ -437,7 +438,8 @@ fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
     assert_eq!(registered::claim(&entity, &own).unwrap(), None);
     run.set("statusId", s("queued"));
     run.update(&entity).unwrap();
-    // a runner already reserved for a job by another claim gets none
+    // a runner left reserved for a job it never ran (still queued: the claim failed after the reservation) is freed
+    // under the pool's lease, where no claim of it is in progress, and gets a job
     let mut taken = super::one(&entity, RUNNER, "runnerId", "RO").unwrap().unwrap();
     taken.set("currentJobRunId", s("J-ELSEWHERE"));
     taken.update(&entity).unwrap();
@@ -450,18 +452,9 @@ fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
             ("statusId", s("queued")),
         ],
     );
-    assert_eq!(
-        registered::claim(&entity, &own).unwrap(),
-        None,
-        "reserved for another claim"
-    );
-    // once that job has ended the runner is free again
-    let mut elsewhere = super::one(&entity, JOB_RUN, "jobRunId", "J-ELSEWHERE")
+    let claimed = registered::claim(&entity, &own)
         .unwrap()
-        .unwrap();
-    elsewhere.set("statusId", s("cancelled"));
-    elsewhere.update(&entity).unwrap();
-    let claimed = registered::claim(&entity, &own).unwrap().expect("free again");
+        .expect("freed and given a job");
     assert_eq!(claimed.job_run_id, "J1");
     assert_eq!(text(&one(&fixture, RUNNER, "runnerId", "RO"), "currentJobRunId"), "J1");
 
