@@ -16,9 +16,9 @@
 //! replicated sets, read once per factory with this node's role, so two servers in one process (a test's edge node and
 //! local node) each keep their own.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use moqui_lib::node::MNode;
@@ -273,40 +273,66 @@ pub(crate) fn delegating() -> bool {
     DELEGATING.load(Ordering::Acquire)
 }
 
-/// The `<edge>` conf of `factory`, read the first time and kept: at boot on an edge node ([`init`]), else when the
-/// host's listeners start, so the role is the one the node started with.
+/// The `<edge>` conf of `factory`, for the role the node booted with ([`init`]), read the first time and kept. A
+/// factory made with no boot (a tool, a test's own) takes the node's role as it is at each call. Settings a test put in
+/// place as the factory's own `EdgeSettings` extension come first.
 pub fn settings(factory: &ExecutionContextFactory) -> Arc<EdgeSettings> {
-    settings_as(factory, super::node_role_kind())
+    if let Some(given) = factory.extension_if_present::<EdgeSettings>() {
+        return given;
+    }
+    let by_role = factory.extension(|_| ByRole::default());
+    let pinned = *by_role.pinned.lock().unwrap_or_else(PoisonError::into_inner);
+    read(factory, &by_role, pinned.unwrap_or_else(super::node_role_kind))
 }
 
-/// At boot, on a node that takes links: read the `<edge>` conf now, so a service it delegates goes to the link from
-/// the first call, before the link is installed or with no listener at all (then failing as offline), and never runs
-/// here.
+/// At boot: hold the node to the role it booted with, so a later change of the `node_role` property (a spec's step
+/// as another role) does not change what this node delegates, queues or replicates. On a node that takes links, read
+/// the `<edge>` conf now, so a service it delegates goes to the link from the first call, before the link is installed
+/// or with no listener at all (then failing as offline), and never runs here.
 pub(crate) fn init(factory: &ExecutionContextFactory) {
     let role = super::node_role_kind();
     if role.takes_links() {
         settings_as(factory, role);
+    } else {
+        let by_role = factory.extension(|_| ByRole::default());
+        *by_role.pinned.lock().unwrap_or_else(PoisonError::into_inner) = Some(role);
     }
 }
 
-/// [`settings`], read for a node of the given role the first time.
+/// The settings read so far, by role, and the role the node is held to once [`settings_as`] named one.
+#[derive(Default)]
+struct ByRole {
+    pinned: Mutex<Option<NodeRole>>,
+    read: Mutex<HashMap<NodeRole, Arc<EdgeSettings>>>,
+}
+
+/// [`settings`] for a node of the given role, which [`settings`] then keeps to: at boot ([`init`]), and in tests.
 pub(super) fn settings_as(factory: &ExecutionContextFactory, role: NodeRole) -> Arc<EdgeSettings> {
-    factory.extension(|factory| {
-        let settings = match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
-            Ok(conf) => EdgeSettings::parse(&conf, role),
-            Err(err) => {
-                tracing::error!("the edge conf could not be read ({err}); nothing is delegated, queued or replicated");
-                EdgeSettings {
-                    role,
-                    ..EdgeSettings::default()
-                }
+    let by_role = factory.extension(|_| ByRole::default());
+    *by_role.pinned.lock().unwrap_or_else(PoisonError::into_inner) = Some(role);
+    read(factory, &by_role, role)
+}
+
+/// The settings of `role`, read from the conf the first time.
+fn read(factory: &ExecutionContextFactory, by_role: &ByRole, role: NodeRole) -> Arc<EdgeSettings> {
+    if let Some(settings) = by_role.read.lock().unwrap_or_else(PoisonError::into_inner).get(&role) {
+        return Arc::clone(settings);
+    }
+    let settings = match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
+        Ok(conf) => EdgeSettings::parse(&conf, role),
+        Err(err) => {
+            tracing::error!("the edge conf could not be read ({err}); nothing is delegated, queued or replicated");
+            EdgeSettings {
+                role,
+                ..EdgeSettings::default()
             }
-        };
-        if settings.takes_links() && !settings.delegates.is_empty() {
-            DELEGATING.store(true, Ordering::Release);
         }
-        settings
-    })
+    };
+    if settings.takes_links() && !settings.delegates.is_empty() {
+        DELEGATING.store(true, Ordering::Release);
+    }
+    let mut kept = by_role.read.lock().unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(kept.entry(role).or_insert_with(|| Arc::new(settings)))
 }
 
 #[cfg(test)]

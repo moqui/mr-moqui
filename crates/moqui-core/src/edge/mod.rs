@@ -117,7 +117,7 @@ pub fn node_role() -> String {
 /// **front** set faces browsers: links taken, web access by host name, TCP ports, balancing, web protection and
 /// certificates. The **edge** set is the rest of an edge node: delegate, queue and replicate, the mail edge, chat
 /// webhooks, the media node and TURN, SIP, mr-pass's sites. Every role but a normal node's takes links.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NodeRole {
     /// A normal node (`node_role` empty): its own data, and a local node when paired with an edge node.
     #[default]

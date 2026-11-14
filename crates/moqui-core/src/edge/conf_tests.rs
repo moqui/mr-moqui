@@ -121,3 +121,24 @@ fn the_balancing_defaults_and_their_conf() {
         (1, Duration::from_secs(30))
     );
 }
+
+/// A spec step run as an edge node (`withProperty("node_role", ...)`) on a node that started as a normal node read the
+/// edge settings first, and every spec after it in that process delegated its calls to a link that was not there. Boot
+/// now holds the node to the role it booted with, whatever is read later for another role.
+#[test]
+fn settings_read_for_another_role_are_not_kept_for_a_normal_node() {
+    let ctx = crate::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><edge><delegate service="a.B.call#Remote"/></edge></moqui-conf>"#,
+    );
+    let factory = ctx.factory();
+    let by_role = factory.extension(|_| ByRole::default());
+    // a step as an edge node: its role's settings, read and kept for that role
+    assert!(read(factory, &by_role, NodeRole::FrontEdge).edge_node());
+    // the role it booted with (no node_role in a unit test): a normal node's settings, delegating nothing
+    let own = settings(factory);
+    assert!(!own.takes_links(), "the step's role was kept: {:?}", own.role);
+    assert!(super::super::delegate::listed("a.B.call#Remote").is_none());
+    // held to another role, as a test does: that role's from then on
+    assert!(settings_as(factory, NodeRole::FrontEdge).edge_node());
+    assert!(settings(factory).edge_node());
+}
