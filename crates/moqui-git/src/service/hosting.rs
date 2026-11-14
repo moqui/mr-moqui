@@ -32,7 +32,7 @@ use moqui_core::context::ExecutionContext;
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::rust_service;
 
-use crate::hosting::{MergeOutcome, RefWrite};
+use crate::hosting::{MergeOutcome, RefRules, RefWrite};
 use crate::merge::{Mergeability, Method};
 use crate::rules::{self, BranchRule};
 use crate::server::path::GIT_PATH_REDIRECT;
@@ -335,9 +335,13 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `find#GitUpdates`: a repository's push log, newest first, each with its refs. Out: `updateList`,
 /// `updateListCount`.
 fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some((_, id)) = viewable(parameters) else {
+    let Some((provider, id)) = viewable(parameters) else {
         return none();
     };
+    // the whole log is for who may push: a reader is told no address, and no object id that no ref reaches now (the
+    // old tip of a forced or deleted branch, the head of a hidden or replaced push for review), which would be a
+    // name to ask the store by
+    let whole = may(&id, "update");
     let (index, size) = page(parameters);
     let _rows = rows_guard();
     let mut find = facade
@@ -359,30 +363,60 @@ fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
         .map(Value::string)
         .collect();
     let mut refs: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut withheld: HashSet<String> = HashSet::new();
     if !ids.is_empty() {
-        for row in facade
+        let ref_rows = facade
             .find(crate::events::GIT_UPDATE_REF)?
             .condition(Condition::is_in("updateId", ids))
             .order_by("refName", false)
-            .list()?
-            .iter()
-        {
+            .list()?;
+        let reached: Option<HashSet<String>> = if whole {
+            None
+        } else {
+            let named: Vec<ObjectId> = ref_rows
+                .iter()
+                .flat_map(|row| [field(row, "oldObjectId"), field(row, "newObjectId")])
+                .flatten()
+                .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
+                .collect();
+            let repo = provider.repo(&id)?;
+            Some(
+                provider
+                    .reachable_of(&repo, &named)?
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect(),
+            )
+        };
+        let shown = |row: &EntityValue, name: &str| match (&reached, field(row, name)) {
+            (Some(reached), Some(hex)) if !reached.contains(&hex) => Value::Null,
+            (_, hex) => opt(hex),
+        };
+        for row in ref_rows.iter() {
             let name = field(row, "refName").unwrap_or_default();
-            refs.entry(field(row, "updateId").unwrap_or_default())
-                .or_default()
-                .push(map([
-                    ("refName", Value::string(&name)),
-                    ("shortName", Value::string(crate::browse::short_name(&name))),
-                    ("changeType", field_value(row, "changeType")),
-                    ("oldObjectId", field_value(row, "oldObjectId")),
-                    ("newObjectId", field_value(row, "newObjectId")),
-                    ("result", field_value(row, "result")),
-                ]));
+            let update_id = field(row, "updateId").unwrap_or_default();
+            let new = shown(row, "newObjectId");
+            if name.starts_with(crate::reach::REVIEW_REFS) && matches!(new, Value::Null) && reached.is_some() {
+                // a push for review whose head a reader does not read: not its row either
+                withheld.insert(update_id);
+                continue;
+            }
+            refs.entry(update_id).or_default().push(map([
+                ("refName", Value::string(&name)),
+                ("shortName", Value::string(crate::browse::short_name(&name))),
+                ("changeType", field_value(row, "changeType")),
+                ("oldObjectId", shown(row, "oldObjectId")),
+                ("newObjectId", new),
+                ("result", field_value(row, "result")),
+            ]));
         }
     }
+    // an update is left out only when all of its refs were
+    withheld.retain(|update_id| !refs.contains_key(update_id));
     let mut users: HashMap<String, Option<String>> = HashMap::new();
     let list: Vec<Value> = rows
         .iter()
+        .filter(|row| !withheld.contains(&field(row, "updateId").unwrap_or_default()))
         .map(|row| {
             let update_id = field(row, "updateId").unwrap_or_default();
             let user_id = field(row, "userId");
@@ -398,7 +432,14 @@ fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 ("transport", field_value(row, "transport")),
                 ("userId", opt(user_id)),
                 ("username", opt(username)),
-                ("remoteAddress", field_value(row, "remoteAddress")),
+                (
+                    "remoteAddress",
+                    if whole {
+                        field_value(row, "remoteAddress")
+                    } else {
+                        Value::Null
+                    },
+                ),
                 ("updateDate", field_value(row, "updateDate")),
                 ("ecaStatus", field_value(row, "ecaStatus")),
                 ("ecaError", field_value(row, "ecaError")),
@@ -491,9 +532,7 @@ fn full_ref(name: &str, ref_type: Option<&str>) -> String {
 }
 
 fn valid_ref(name: &str) -> bool {
-    use gix::bstr::ByteSlice;
-    (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
-        && gix::validate::reference::name(name.as_bytes().as_bstr()).is_ok()
+    crate::hosting::valid_ref_name(name)
 }
 
 /// `create#GitRef`: a branch, or a tag (annotated when a message is given), at a revision. Needs create. Out:
@@ -531,7 +570,7 @@ fn create_ref(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                 expected: None,
                 new: Some(target),
             }],
-            false,
+            RefRules::Direct,
             None,
         )?;
         Ok(match written.into_iter().next() {
@@ -587,7 +626,7 @@ fn delete_ref(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                 expected: Some(current),
                 new: None,
             }],
-            false,
+            RefRules::Direct,
             None,
         )?;
         Ok(written.into_iter().next().unwrap_or(Err("no ref written".into())))
@@ -1121,10 +1160,11 @@ fn create_commit_status(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error("state must be pending, success, failure or error");
         return none();
     }
-    // the system's contexts (the agreement check, the CI engine) are written with authorization disabled only: a
-    // required check no user with a push right can post for themselves
+    // the contexts a hosting application keeps for the system (git-server reserved-status-contexts: an agreement
+    // check, its CI engine) are written with authorization disabled only, so a required check is not met by a user
+    // with a push right posting it. None by default: an outside CI posts ci/... with a user's token
     let context = text(parameters, "context").unwrap_or_default();
-    let reserved = crate::setting_or("reserved-status-contexts", "agreement/,ci/");
+    let reserved = crate::setting("reserved-status-contexts");
     let reserved = reserved
         .split(',')
         .map(str::trim)
@@ -1868,14 +1908,6 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
     };
     let found = rules::rules_for(facade, &id, &format!("refs/heads/{target}"))?;
-    // a protected branch (one a branch rule names) is merged into by who may also change its rules: the delete
-    // right; any other branch by who may push to it
-    if !found.is_empty() && !may(&id, "delete") {
-        add_error(format!(
-            "GitProtectedBranch: merging into the protected branch {target} needs the delete right on repository {id}"
-        ));
-        return none();
-    }
     let dismiss = found.iter().any(|rule| rule.dismiss_stale_approvals);
     let approvals = counted_approvals(facade, &id, &mr_id, dismiss.then(|| head.to_string()).as_deref())?.len();
     let successful: Vec<String> = latest_statuses(facade, &id, &[head.to_string()])?
@@ -1898,9 +1930,10 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     let author = field(&row, "authorUserId").map(|user| provider.author_for_user(&user));
     let message = text(parameters, "message");
+    // exactly the commit the approvals and checks were counted for: a source that moves meanwhile is not merged
     let outcome = match provider.merge_refs(
         &id,
-        &source_revision,
+        &head.to_string(),
         &target,
         method,
         message.as_deref(),
@@ -1953,7 +1986,7 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 expected: Some(head),
                 new: None,
             }],
-            false,
+            RefRules::Direct,
             None,
         );
         match deleted.map(|results| results.into_iter().next()) {

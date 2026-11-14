@@ -295,15 +295,22 @@ impl GitProvider {
                 ..GcReport::default()
             });
         }
+        if !options.dry_run {
+            // first the heads of merge requests closed long ago, so what only they reach can go
+            if let Err(err) = self.release_closed_heads(entity, repository_id) {
+                tracing::error!(repository = %repository_id, "merge request heads not released: {}", err.message());
+            }
+        }
         let run = || match definition.kind {
             RepositoryKind::Local => local::collect(self, entity, &definition, options),
             _ => {
                 let store = DbStore::of(entity.clone(), &definition, self.objects());
                 let mut roots = self.gc_roots(entity, repository_id, &store, options)?;
                 // what the forks' refs reach must be there as the root's own must: the rows are theirs too
-                let network = self.network_roots(repository_id, definition.network.as_deref(), options)?;
-                roots.refs.extend(network.refs);
-                roots.others.extend(network.others);
+                for (_, member) in self.network_roots(repository_id, definition.network.as_deref(), options)? {
+                    roots.refs.extend(member.refs);
+                    roots.others.extend(member.others);
+                }
                 collect(&store, &roots, options)
             }
         };
@@ -327,6 +334,59 @@ impl GitProvider {
             tracing::warn!(repository = %repository_id, "the gc lease was not released: {}", err.message());
         }
         outcome
+    }
+
+    /// Delete `refs/merge-requests/<n>/head` of the repository's merge requests that were closed without merging
+    /// more than `git-server` `review-ref-retention-days` (30; 0 keeps them) ago: what someone who may only view
+    /// pushed for review does not stay in the repository for ever. A reopened one whose source is a branch gets
+    /// its ref back; one pushed for review is pushed again. How many refs were deleted.
+    pub(crate) fn release_closed_heads(&self, entity: &EntityFacade, repository_id: &str) -> Result<usize, Error> {
+        let days: i64 = super::number_setting("review-ref-retention-days", 30);
+        if days <= 0 {
+            return Ok(0);
+        }
+        let repo = self.repo(repository_id)?;
+        let heads: Vec<(String, ObjectId)> = repo.store.list_refs(super::reach::MERGE_REQUEST_REFS)?;
+        if heads.is_empty() {
+            return Ok(0);
+        }
+        let before = basic_convert(&Value::I64(now_millis() - days * DAY_MILLIS), "Timestamp").value;
+        let closed = entity
+            .find("moqui.resource.GitMergeRequest")?
+            .eq("repositoryId", Value::string(repository_id))
+            .eq("statusId", Value::string("GmrClosed"))
+            .condition(Condition::less("closedDate", before))
+            .select_field("mergeRequestNum")
+            .list()?;
+        let mut released = 0;
+        for row in closed.iter() {
+            let Some(num) = super::long(row.get("mergeRequestNum")) else {
+                continue;
+            };
+            let name = super::reach::merge_request_ref(num);
+            let Some((_, current)) = heads.iter().find(|(head, _)| *head == name) else {
+                continue;
+            };
+            // one that is not deleted is logged and the others still go
+            let lock = self.lock_of(repository_id);
+            let _turn = moqui_lib::sync::lock(&lock);
+            let edit = super::store::RefEdit {
+                name: name.clone(),
+                expected: Some(*current),
+                new: None,
+            };
+            match repo.store.update_refs(&[edit], true) {
+                Ok(_) => released += 1,
+                Err(err) => tracing::error!(repository = %repository_id, "{name} not released: {}", err.message()),
+            }
+        }
+        if released > 0 {
+            self.forget_reached(repository_id);
+            if repo.definition.kind != RepositoryKind::Db {
+                self.refresh(repository_id);
+            }
+        }
+        Ok(released)
     }
 
     /// The refs, and the ids of the changes in progress or in the reflog window.

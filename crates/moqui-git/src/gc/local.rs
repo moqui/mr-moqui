@@ -163,7 +163,7 @@ fn pack_objects(pack: &PackFile) -> Result<Vec<(ObjectId, u64)>, Error> {
 /// it reaches that is not there is an error with `strict`, except a parent (a shallow push leaves its parents out) and
 /// a submodule's commit; otherwise it is passed over. An object in `seen` already is not walked again.
 fn reach(
-    store: &FsStore,
+    store: &dyn GitStore,
     repository_id: &str,
     roots: &[ObjectId],
     strict: bool,
@@ -353,14 +353,11 @@ pub(super) fn collect(
     let (roots, packs, loose) = {
         let _turn = moqui_lib::sync::lock(&lock);
         let (packs, loose) = list_files(&objects_dir)?;
-        let mut roots = provider.gc_roots(entity, id, &store, options)?;
-        // a fork reads this directory through its alternates: what its refs reach here stays (what they reach in
-        // the fork's own directory is not here, and is passed over)
-        let network = provider.network_roots(id, definition.network.as_deref(), options)?;
-        roots.others.extend(network.refs);
-        roots.others.extend(network.others);
+        let roots = provider.gc_roots(entity, id, &store, options)?;
         (roots, packs, loose)
     };
+    // the other repositories of the fork network: a fork reads this directory through its alternates
+    let network = provider.network_roots(id, definition.network.as_deref(), options)?;
     let bytes_before: u64 =
         packs.iter().map(|pack| pack.bytes).sum::<u64>() + loose.iter().map(|file| file.bytes).sum::<u64>();
     let repackable = packs.iter().filter(|pack| !pack.keep).count();
@@ -405,6 +402,13 @@ pub(super) fn collect(
     let mut live: HashSet<ObjectId> = HashSet::new();
     reach(&store, id, &roots.refs, true, &mut live)?;
     reach(&store, id, &roots.others, false, &mut live)?;
+    // what each fork's refs reach, walked through the fork's own store: its commits are in its own directory, and
+    // the trees and parents they name may be here and reached by nothing else (a branch deleted here that the fork
+    // built on). What the walk finds in the fork's directory is not here, and is not packed
+    for (member, member_roots) in &network {
+        reach(member.store.as_ref(), id, &member_roots.refs, false, &mut live)?;
+        reach(member.store.as_ref(), id, &member_roots.others, false, &mut live)?;
+    }
     // what is kept loose: what the recent objects reach (beyond the live)
     let mut recent: Vec<ObjectId> = loose
         .iter()

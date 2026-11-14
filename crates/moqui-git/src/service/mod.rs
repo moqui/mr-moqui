@@ -29,7 +29,7 @@ use crate::diff::{FileChange, FileDiff};
 use crate::values::{commit_value, map, opt_text, tag_value, timestamp};
 use crate::{GitProvider, GIT_ARTIFACT_TYPE};
 
-mod commit;
+pub(crate) mod commit;
 #[cfg(test)]
 mod elfinder_tests;
 #[cfg(test)]

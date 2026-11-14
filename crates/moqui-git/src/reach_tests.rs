@@ -124,3 +124,120 @@ fn tips_are_asked_which_of_them_contain_a_commit_within_a_budget() {
 fn merge_request_refs_have_their_number() {
     assert_eq!(merge_request_ref(12), "refs/merge-requests/12/head");
 }
+
+/// A store that counts the objects read from it.
+#[derive(Debug, Default)]
+struct Counted {
+    store: MemoryStore,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl Counted {
+    fn reads(&self) -> usize {
+        self.reads.swap(0, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl GitStore for Counted {
+    fn find(&self, id: &ObjectId) -> Result<Option<(Kind, Vec<u8>)>, Error> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.store.find(id)
+    }
+
+    fn find_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<ObjectId>, Error> {
+        self.store.find_prefix(prefix, limit)
+    }
+
+    fn write(&self, kind: Kind, data: &[u8]) -> Result<ObjectId, Error> {
+        self.store.write(kind, data)
+    }
+
+    fn read_ref(&self, name: &str) -> Result<Option<ObjectId>, Error> {
+        self.store.read_ref(name)
+    }
+
+    fn list_refs(&self, prefix: &str) -> Result<Vec<(String, ObjectId)>, Error> {
+        self.store.list_refs(prefix)
+    }
+
+    fn update_refs(
+        &self,
+        edits: &[crate::store::RefEdit],
+        atomic: bool,
+    ) -> Result<Vec<crate::store::RefOutcome>, Error> {
+        self.store.update_refs(edits, atomic)
+    }
+}
+
+#[test]
+fn a_branch_that_moves_forward_costs_its_new_commits() {
+    let counted = Counted::default();
+    let mut tip = commit(&counted.store, "0", &[]);
+    for at in 1..50 {
+        tip = commit(&counted.store, &at.to_string(), &[tip]);
+    }
+    let mut reached = Reached::default();
+    reached.update(&counted, &tips(&[tip]), 1000).unwrap();
+    assert_eq!(counted.reads(), 50, "the history, once");
+    // a fast-forward by two commits reads those two, and the history is not read again
+    let next = commit(&counted.store, "50", &[tip]);
+    let after = commit(&counted.store, "51", &[next]);
+    reached.update(&counted, &tips(&[after]), 1000).unwrap();
+    assert_eq!(counted.reads(), 2);
+    assert!(reached.contains(&tip) && reached.contains(&after));
+    // a second branch from an old commit reads its own commit
+    let side = commit(&counted.store, "side", &[tip]);
+    reached.update(&counted, &tips(&[after, side]), 1000).unwrap();
+    assert_eq!(counted.reads(), 1);
+    // deleted unmerged: the set is made again
+    reached.update(&counted, &tips(&[after]), 1000).unwrap();
+    assert_eq!(counted.reads(), 52);
+    assert!(!reached.contains(&side));
+    // a prefix is looked up among the reached commits only
+    let hex = side.to_string();
+    assert!(reached.with_prefix(&hex[..9], 2).is_empty());
+    assert_eq!(reached.with_prefix(&after.to_string()[..9], 2), vec![after]);
+    assert_eq!(reached.with_prefix(&after.to_string()[..8], 2), vec![after]);
+}
+
+#[test]
+fn the_sets_of_many_repositories_let_go_of_the_one_used_longest_ago() {
+    let mut sets = ReachSets::default();
+    let first = sets.of("a", 2);
+    sets.of("b", 2);
+    // a is used again, so c takes b's place
+    assert!(Arc::ptr_eq(&first, &sets.of("a", 2)));
+    sets.of("c", 2);
+    assert!(Arc::ptr_eq(&first, &sets.of("a", 2)));
+    assert_eq!(sets.sets.len(), 2);
+    assert!(!sets.sets.contains_key("b"));
+}
+
+#[test]
+fn the_files_of_commits_are_found_and_nothing_else() {
+    let store = MemoryStore::default();
+    let blob = |text: &str| store.write(Kind::Blob, text.as_bytes()).unwrap();
+    let tree = |entries: &[(&str, ObjectId, bool)]| {
+        let mut data = Vec::new();
+        for (name, id, directory) in entries {
+            data.extend_from_slice(if *directory { b"40000 " } else { b"100644 " });
+            data.extend_from_slice(name.as_bytes());
+            data.push(0);
+            data.extend_from_slice(id.as_bytes());
+        }
+        store.write(Kind::Tree, &data).unwrap()
+    };
+    let commit_of = |tree: ObjectId| {
+        let data = format!("tree {tree}\nauthor A <a@example.com> 1 +0000\ncommitter A <a@example.com> 1 +0000\n\nx\n");
+        store.write(Kind::Commit, data.as_bytes()).unwrap()
+    };
+    let (a, b, secret) = (blob("a"), blob("b"), blob("secret"));
+    let sub = tree(&[("b.txt", b, false)]);
+    let public = commit_of(tree(&[("a.txt", a, false), ("sub", sub, true)]));
+    let private = commit_of(tree(&[("secret.txt", secret, false)]));
+    let wanted: HashSet<ObjectId> = [a, b, sub, secret, private].into_iter().collect();
+    let found = objects_within(&store, &[public], &wanted, 100).unwrap();
+    assert_eq!(found, [a, b, sub].into_iter().collect());
+    // within its budget of trees
+    assert!(!objects_within(&store, &[public], &wanted, 1).unwrap().contains(&b));
+}

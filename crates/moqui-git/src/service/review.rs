@@ -45,6 +45,7 @@ const MAX_PUSHER_IDS: usize = 500;
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, fork_repository)?;
     rust_service!(map, sync_merge_request_head)?;
+    rust_service!(map, detach_merge_request_source)?;
     rust_service!(map, set_merge_request_hidden)?;
     rust_service!(map, get_commit_refs)?;
     rust_service!(map, get_commit_pushers)?;
@@ -111,8 +112,38 @@ fn fork_repository(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     ]))
 }
 
+/// The merge request `mr_id`, or the error recorded.
+fn merge_request(facade: &EntityFacade, mr_id: &str) -> Result<Option<EntityValue>, moqui_lib::error::Error> {
+    let row = {
+        let _rows = rows_guard();
+        facade
+            .find(GIT_MERGE_REQUEST)?
+            .eq("mergeRequestId", Value::string(mr_id))
+            .one()?
+    };
+    if row.is_none() {
+        add_error(format!("no merge request {mr_id}"));
+    }
+    Ok(row)
+}
+
+fn set_detached(facade: &EntityFacade, mr_id: &str) -> Result<(), moqui_lib::error::Error> {
+    let _rows = rows_guard();
+    facade
+        .find(GIT_MERGE_REQUEST)?
+        .eq("mergeRequestId", Value::string(mr_id))
+        .update_all([("sourceDetachedDate".to_string(), moqui_core::user::now_value())])?;
+    Ok(())
+}
+
 /// `sync#MergeRequestHead`: keep `refs/merge-requests/<num>/head` of a merge request's repository at its source's
-/// head. Out: `headCommitId` (empty while a source branch is gone), `headRef`. With authorization disabled only.
+/// head. Out: `headCommitId` (empty while a source branch is gone), `headRef`, `startHidden`, `sourceDetached`. With
+/// authorization disabled only.
+///
+/// An open one follows its source: the branch of its repository; the branch of a fork, while its author may still
+/// update the fork and the source is not detached (else the head stays, and the merge request is marked detached);
+/// or `headCommitId` for one pushed for review. One that is merged, or was closed within the retention time, only
+/// gets its ref back when it has none (a merge request from before the refs were kept), from its recorded head.
 fn sync_merge_request_head(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if !authz_disabled() {
         add_error("sync#MergeRequestHead is called by the merge request services only");
@@ -122,15 +153,7 @@ fn sync_merge_request_head(parameters: &Parameters, facade: &EntityFacade) -> Ou
         add_error("mergeRequestId is required");
         return none();
     };
-    let row = {
-        let _rows = rows_guard();
-        facade
-            .find(GIT_MERGE_REQUEST)?
-            .eq("mergeRequestId", Value::string(&mr_id))
-            .one()?
-    };
-    let Some(row) = row else {
-        add_error(format!("no merge request {mr_id}"));
+    let Some(row) = merge_request(facade, &mr_id)? else {
         return none();
     };
     let mut scoped = parameters.clone();
@@ -147,39 +170,94 @@ fn sync_merge_request_head(parameters: &Parameters, facade: &EntityFacade) -> Ou
     };
     let head_ref = merge_request_ref(num);
     let pushed = field(&row, "pushedForReview").as_deref() == Some("Y");
-    let source_repository = field(&row, "sourceRepositoryId").unwrap_or_else(|| id.clone());
+    let fork = field(&row, "sourceRepositoryId").filter(|source| *source != id);
+    let status = field(&row, "statusId").unwrap_or_default();
+    let open = matches!(status.as_str(), "GmrDraft" | "GmrOpen");
+    let mut detached = field(&row, "sourceDetachedDate").is_some();
     let outcome = (|| -> Result<Option<ObjectId>, moqui_core::context::Error> {
+        let repo = provider.repo(&id)?;
+        let store = repo.store.as_ref();
+        let current = store.read_ref(&head_ref)?;
+        let commit_of = |hex: &str| -> Result<Option<ObjectId>, moqui_core::context::Error> {
+            let Ok(head) = ObjectId::from_hex(hex.trim().as_bytes()) else {
+                return Ok(None);
+            };
+            Ok(matches!(store.find(&head)?, Some((gix::objs::Kind::Commit, _))).then_some(head))
+        };
+        if !open {
+            // only what a merge request from before the refs were kept lacks: its recorded head, while that is a
+            // commit of the store and the ref was not released (GitProvider::release_closed_heads)
+            let days: i64 = crate::number_setting("review-ref-retention-days", 30);
+            let kept = status == "GmrMerged"
+                || days <= 0
+                || row.get("closedDate").is_none_or(|closed| {
+                    let cutoff = moqui_lib::object::basic_convert(
+                        &Value::I64(jiff::Timestamp::now().as_millisecond() - days * 24 * 60 * 60 * 1000),
+                        "Timestamp",
+                    )
+                    .value;
+                    moqui_lib::object::compare_obj(closed, &cutoff).is_ok_and(|order| order.is_gt())
+                });
+            if current.is_none() && kept {
+                if let Some(head) = field(&row, "headCommitId")
+                    .map(|hex| commit_of(&hex))
+                    .transpose()?
+                    .flatten()
+                {
+                    provider.set_merge_request_head(&id, num, head)?;
+                    return Ok(Some(head));
+                }
+            }
+            return Ok(current);
+        }
         let head = if pushed {
             match text(parameters, "headCommitId") {
-                Some(given) => {
-                    let head = ObjectId::from_hex(given.trim().as_bytes())
-                        .map_err(|_| moqui_core::context::Error::new(format!("{given} is not a commit id")))?;
-                    // a commit of the store: the caller says it is the pusher's own
-                    match provider.repo(&id)?.store.find(&head)? {
-                        Some((gix::objs::Kind::Commit, _)) => Some(head),
-                        _ => {
-                            return Err(moqui_core::context::Error::new(format!(
-                                "{given} is not a commit of repository {id}"
-                            )))
-                        }
-                    }
+                // a commit of the store: the caller says it is the pusher's own
+                Some(given) => Some(commit_of(&given)?.ok_or_else(|| {
+                    moqui_core::context::Error::new(format!("{given} is not a commit of repository {id}"))
+                })?),
+                None => current,
+            }
+        } else if let Some(source) = &fork {
+            // a fork's branch is followed while the author may still write there: a branch someone only read
+            // once must not keep bringing its owner's later commits here
+            let author = field(&row, "authorUserId").unwrap_or_default();
+            if !detached {
+                let may_still =
+                    moqui_core::user::as_user(&author, || super::hosting::may(source, "update")).unwrap_or(false);
+                if !may_still {
+                    set_detached(facade, &mr_id).map_err(|err| moqui_core::context::Error::new(err.to_string()))?;
+                    detached = true;
                 }
-                None => provider.ref_of(&id, &head_ref)?.map(|(_, head)| head),
+            }
+            if detached {
+                current
+            } else {
+                let source_ref = format!("refs/heads/{}", field(&row, "sourceRef").unwrap_or_default());
+                match provider.ref_of(source, &source_ref) {
+                    Ok(found) => found.map(|(_, head)| head),
+                    // a fork that was deleted: the head stays where it was
+                    Err(err) if err.message().contains("is not defined") => current,
+                    Err(err) => return Err(err),
+                }
             }
         } else {
             let source_ref = format!("refs/heads/{}", field(&row, "sourceRef").unwrap_or_default());
-            match provider.ref_of(&source_repository, &source_ref) {
-                Ok(found) => found.map(|(_, head)| head),
-                // a fork that was deleted: the head stays where it was
-                Err(err) if err.message().contains("is not defined") => None,
-                Err(err) => return Err(err),
-            }
+            provider.ref_of(&id, &source_ref)?.map(|(_, head)| head)
         };
         let Some(head) = head else {
             return Ok(None);
         };
-        provider.share_objects(&source_repository, &id, head)?;
-        provider.set_merge_request_head(&id, num, head)?;
+        if current != Some(head) {
+            if let Some(source) = &fork {
+                provider.share_objects(source, &id, head)?;
+                // the files it adds that are kept in LFS become the target's too, within its quota
+                let target = field(&row, "targetRef").unwrap_or_default();
+                let base = store.read_ref(&crate::ops::branch_ref(&target))?;
+                provider.share_lfs(source, &id, base, head)?;
+            }
+            provider.set_merge_request_head(&id, num, head)?;
+        }
         Ok(Some(head))
     })();
     match outcome {
@@ -189,12 +267,49 @@ fn sync_merge_request_head(parameters: &Parameters, facade: &EntityFacade) -> Ou
                 head.map_or(Value::Null, |head| Value::string(head.to_string())),
             ),
             ("headRef", Value::string(head_ref)),
+            (
+                "startHidden",
+                Value::Bool(crate::server::review_starts_hidden() && (pushed || fork.is_some())),
+            ),
+            ("sourceDetached", Value::Bool(detached)),
         ])),
         Err(err) => {
             add_refusal(err.message());
             none()
         }
     }
+}
+
+/// `detach#MergeRequestSource`: a merge request from a fork's branch stops following the branch and keeps the head
+/// it has (`sourceDetachedDate`). By a user with the delete right on the source repository (its owner), the
+/// merge request's author, or with authorization disabled. Out: `sourceDetachedDate`.
+fn detach_merge_request_source(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    let Some(mr_id) = text(parameters, "mergeRequestId") else {
+        add_error("mergeRequestId is required");
+        return none();
+    };
+    let Some(row) = merge_request(facade, &mr_id)? else {
+        return none();
+    };
+    let Some(source) = field(&row, "sourceRepositoryId") else {
+        add_error(format!("merge request {mr_id} is not from another repository"));
+        return none();
+    };
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let author = field(&row, "authorUserId").is_some_and(|author| !user.is_empty() && author == user);
+    if !author && !authz_disabled() && !super::hosting::may(&source, "delete") {
+        add_error(format!("no merge request {mr_id}"));
+        return none();
+    }
+    if field(&row, "sourceDetachedDate").is_none() {
+        set_detached(facade, &mr_id)?;
+    }
+    let row = merge_request(facade, &mr_id)?;
+    Ok(out([(
+        "sourceDetachedDate",
+        row.and_then(|row| row.get("sourceDetachedDate").cloned())
+            .unwrap_or(Value::Null),
+    )]))
 }
 
 /// `set#MergeRequestHidden`: hide a merge request's head from fetches and reads by id, or show it again. Out:
@@ -324,7 +439,7 @@ fn get_commit_refs(parameters: &Parameters, _facade: &EntityFacade) -> Out {
 /// `userId`, `username`, `updateId`, `pushDate`), with no entry for a commit that came by a mirror fetch or an
 /// import, or before pushers were kept.
 fn get_commit_pushers(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some((_, id)) = viewable(parameters) else {
+    let Some((provider, id)) = viewable(parameters) else {
         return none();
     };
     let mut ids = list_param(parameters, "commitIdList");
@@ -337,6 +452,17 @@ fn get_commit_pushers(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error(format!("at most {MAX_PUSHER_IDS} commits in one call"));
         return none();
     }
+    // of the commits the caller reads by id: who pushed a commit says that it is there
+    let repo = provider.repo(&id)?;
+    let mut readable = Vec::new();
+    for hex in ids {
+        if let Ok(commit) = ObjectId::from_hex(hex.as_bytes()) {
+            if provider.readable_by_id(&repo, &commit)? {
+                readable.push(hex);
+            }
+        }
+    }
+    let ids = readable;
     if ids.is_empty() {
         return Ok(out([("pusherList", Value::List(Vec::new()))]));
     }

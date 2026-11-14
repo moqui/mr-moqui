@@ -26,9 +26,7 @@
 #[cfg(test)]
 mod access_tests;
 #[cfg(test)]
-mod commit_tests;
-#[cfg(test)]
-mod hosting_tests;
+pub(crate) mod hosting_tests;
 pub mod lfs;
 pub(crate) mod pack_in;
 pub(crate) mod pack_out;
@@ -41,10 +39,9 @@ mod push_tests;
 pub(crate) mod receive;
 #[cfg(test)]
 mod repository_tests;
+pub(crate) mod review;
 #[cfg(test)]
-mod review_tests;
-#[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 pub(crate) mod upload;
 
 use std::collections::HashSet;
@@ -975,137 +972,6 @@ impl Session<'_> {
         |ids: &[ObjectId]| self.provider.reachable_of(self.repo, ids)
     }
 
-    /// Whether an object a push names without sending it (a ref's new value, the parent of a pushed commit) is the
-    /// repository's own to build on: a commit its readable refs reach, or not a commit at all. That the store has
-    /// it is not enough, as the store is shared with the fork network and holds hidden merge requests.
-    fn own_history(&self, ids: &[ObjectId]) -> Result<Option<ObjectId>, Error> {
-        let store = self.repo.store.as_ref();
-        let reached = self.provider.reachable_of(self.repo, ids)?;
-        for id in ids.iter().filter(|id| !reached.contains(*id)) {
-            match revwalk::peel_to_commit(store, id)? {
-                Some(commit) if commit == *id || !self.provider.reachable(self.repo, &commit)? => {
-                    return Ok(Some(*id));
-                }
-                _ => {}
-            }
-        }
-        Ok(None)
-    }
-
-    /// Whether a push to `refs/for/<target>` may be made: the server takes them, the branch is there, and the push
-    /// brings a commit the branch does not have. View is enough; the caps are checked apart ([`Self::review_cap`]).
-    fn check_review(&self, view: &dyn GitStore, command: &receive::Command, target: &str) -> Result<(), String> {
-        if !review_push_enabled() {
-            return Err("pushes for review (refs/for/) are off on this server".into());
-        }
-        let Some(new) = command.new else {
-            return Err("a ref for review is not deleted: close the merge request".into());
-        };
-        let failed = |err: Error| err.message().to_string();
-        let Some(target_head) = view.read_ref(&super::ops::branch_ref(target)).map_err(failed)? else {
-            return Err(format!("GitNoSuchRef: no branch {target} to review for"));
-        };
-        match view.find(&new).map_err(failed)?.map(|(kind, _)| kind) {
-            None => return Err(format!("missing necessary objects: {new}")),
-            Some(Kind::Commit) => {}
-            Some(kind) => return Err(format!("a review is of a commit, and {new} is a {kind}")),
-        }
-        if revwalk::is_ancestor(view, &new, &target_head).map_err(failed)? {
-            return Err(format!("no new commits: {target} already has {new}"));
-        }
-        Ok(())
-    }
-
-    /// After a push to `refs/for/<target>` stored its objects: open the user's merge request for the branch and
-    /// topic, or give the open one its new head (`propose#MergeRequest`), from the push options `topic=`, `title=`,
-    /// `description=` and `draft`. What to tell the client; a refusal is the ref's.
-    fn propose(&self, command: &receive::Command, options: &[String]) -> Result<Vec<String>, String> {
-        let id = &self.repo.definition.id;
-        let store = self.repo.store.as_ref();
-        let (Some(target), Some(new)) = (command.name.strip_prefix(crate::reach::REVIEW_REFS), command.new) else {
-            return Err("not a ref for review".into());
-        };
-        let option = |name: &str| {
-            options
-                .iter()
-                .find_map(|option| option.strip_prefix(name)?.strip_prefix('='))
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        };
-        let mut parameters = std::collections::BTreeMap::new();
-        parameters.insert("repositoryId".to_string(), Value::string(id));
-        parameters.insert("targetRef".to_string(), Value::string(target));
-        parameters.insert("headCommitId".to_string(), Value::string(new.to_string()));
-        for (parameter, name) in [("topic", "topic"), ("title", "title"), ("description", "description")] {
-            if let Some(value) = option(name) {
-                parameters.insert(parameter.to_string(), Value::string(value));
-            }
-        }
-        if options.iter().any(|option| option.trim() == "draft") {
-            parameters.insert("draft".to_string(), Value::Bool(true));
-        }
-        if review_starts_hidden() {
-            parameters.insert("hidden".to_string(), Value::Bool(true));
-        }
-        // the title and text a new merge request has when the push names none: its first commit's
-        let target_head = store
-            .read_ref(&super::ops::branch_ref(target))
-            .ok()
-            .flatten()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let first = revwalk::new_commits(store, &[new], &target_head)
-            .ok()
-            .and_then(|commits| commits.last().map(|commit| commit.id))
-            .unwrap_or(new);
-        if let Ok(details) = super::ops::commit_details(store, &first) {
-            parameters.insert("defaultTitle".to_string(), Value::string(details.summary()));
-            let body = details
-                .message
-                .split_once('\n')
-                .map(|(_, body)| body.trim().to_string())
-                .unwrap_or_default();
-            if !body.is_empty() {
-                parameters.insert("defaultDescription".to_string(), Value::string(body));
-            }
-        }
-        let call = moqui_core::service::call::CallOptions {
-            disable_authz: true,
-            ..Default::default()
-        };
-        let out = moqui_core::service::call::sync_checked(
-            "org.moqui.git.GitReviewServices.propose#MergeRequest",
-            &parameters,
-            &call,
-        )
-        .map_err(|err| {
-            ExecutionContext::with_current(|ec| ec.message().clear_errors());
-            err.message().to_string()
-        })?;
-        let text = |name: &str| {
-            out.get(name)
-                .map(moqui_lib::object::to_plain_string)
-                .unwrap_or_default()
-        };
-        let (num, request_id) = (text("mergeRequestNum"), text("mergeRequestId"));
-        let verb = if text("created") == "true" { "opened" } else { "updated" };
-        let mut lines = vec![format!("merge request !{num} {verb} for {target} ({request_id})")];
-        let template = crate::setting("merge-request-url");
-        if !template.is_empty() {
-            let url = template
-                .replace("{repositoryPath}", &path::path_of(id))
-                .replace("{repositoryId}", id)
-                .replace("{mergeRequestNum}", &num)
-                .replace("{mergeRequestId}", &request_id);
-            lines.push(if url.starts_with('/') {
-                format!("  {}{url}", public_base_url())
-            } else {
-                format!("  {url}")
-            });
-        }
-        Ok(lines)
-    }
-
     fn quarantine_dir(&self) -> std::path::PathBuf {
         let name = format!(
             "incoming-{}-{}",
@@ -1235,8 +1101,27 @@ impl Session<'_> {
         let mut quarantine = None;
         if needs_pack {
             let dir = self.quarantine_dir();
-            match pack_in::receive(store, &mut input, &dir, max_object_size(), pack_threads()) {
+            // a user with no push right brings at most what one push for review may: the rest is not read
+            let cap: u64 = crate::number_setting("review-max-push-bytes", 50 * 1024 * 1024);
+            let (received, cut) = if cap > 0 && !may_push(&definition.id) {
+                let mut limited = BufReader::new((&mut input).take(cap.saturating_add(1)));
+                let received = pack_in::receive(store, &mut limited, &dir, max_object_size(), pack_threads());
+                (received, limited.get_ref().limit() == 0)
+            } else {
+                let received = pack_in::receive(store, &mut input, &dir, max_object_size(), pack_threads());
+                (received, false)
+            };
+            match received {
                 Ok(received) => quarantine = Some(received),
+                // cut off at the cap: said as the cap, not as a broken pack
+                Err(_) if cut => {
+                    let reason = format!(
+                        "GitReviewPushTooLarge: a push for review is at most {cap} bytes (push to a fork for more)"
+                    );
+                    tracing::info!(repository = %definition.id, "a push for review was cut off at {cap} bytes");
+                    let results = vec![Err(reason.clone()); request.commands.len()];
+                    return receive::report(out, &request, Err(reason), &results);
+                }
                 Err(err) => {
                     tracing::warn!(repository = %definition.id, "a pushed pack was refused: {err}");
                     let results = vec![Err("unpacker error".to_string()); request.commands.len()];
@@ -1254,7 +1139,19 @@ impl Session<'_> {
                 }
             } else {
                 // the commits the pushed ones build on: the repository's own, not another's of its store
-                match self.own_history(&received.linked()) {
+                let linked = received.linked();
+                let review_targets: Vec<String> = request
+                    .commands
+                    .iter()
+                    .filter_map(|command| command.name.strip_prefix(crate::reach::REVIEW_REFS))
+                    .map(str::to_string)
+                    .collect();
+                let foreign = self.own_history(&linked).and_then(|foreign| match foreign {
+                    Some(foreign) => Ok(Some(foreign)),
+                    // then the trees, blobs and delta bases it names: files of commits the pusher reads
+                    None => self.foreign_object(&received.named(), &review_targets, &linked),
+                });
+                match foreign {
                     Ok(None) => {}
                     Ok(Some(foreign)) => {
                         tracing::warn!(repository = %definition.id, "a push builds on {foreign}, which no ref here reaches");

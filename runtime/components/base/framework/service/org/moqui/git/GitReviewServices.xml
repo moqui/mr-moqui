@@ -25,7 +25,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="MergeRequest">
         <description>Open a merge request into a target branch (the default branch when empty), as the current user:
             of a source branch of the same repository, by a user who may push to it; or of a branch of another
-            repository of the target's fork network (sourceRepositoryId), by a user who may view both. A draft is not
+            repository of the target's fork network (sourceRepositoryId), by a user who may view the target and has
+            the update right on the source: the branch is followed while that holds (sync#MergeRequestHead), and with
+            git-server review-start-hidden such a merge request starts hidden, as one pushed for review does. A draft is not
             merged until it is marked ready. Its number is the repository's next from 1; its head is kept at
             refs/merge-requests/[mergeRequestNum]/head, and its merge base and mergeability are read now. Only one open
             request per source and target. Each reviewer asked for must be able to view the repository. Webhooks get a
@@ -85,6 +87,8 @@ along with this software (see the LICENSE.md file). If not, see
                     const sourceAccess = ec.service.sync().name('org.moqui.git.GitServices.get#GitRepositoryAccess').parameters({repositoryId: sourceRepoId}).call()
                     if (!sourceRepo || !sourceAccess || !sourceAccess.canView) {
                         ec.message.addError(ec.resource.expand('Repository ${repositoryId} not found', '', {repositoryId: sourceRepoId})); return }
+                    // its branch is followed from then on, so only who may write there offers it
+                    if (!sourceAccess.canUpdate) { ec.message.addError(ec.resource.expand('You may not push to ${repositoryId}', '', {repositoryId: sourceRepoId})); return }
                     if (!repo.forkNetworkId || sourceRepo.forkNetworkId !== repo.forkNetworkId) {
                         ec.message.addError('GitNotInNetwork: ' + sourceRepoId + ' and ' + repositoryId + ' are not forks of one repository'); return }
                 } else {
@@ -140,12 +144,15 @@ along with this software (see the LICENSE.md file). If not, see
                     mergeMethodEnumId: mergeMethodEnumId || null, deleteSourceBranch: deleteSourceBranch && !pushed ? 'Y' : 'N'}, true, null, null)
                 mr.create()
                 // the head's own ref, with the objects of a fork brought to this repository; then what it changes
-                ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequestHead')
+                const synced = ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequestHead')
                         .parameters({mergeRequestId: mr.mergeRequestId, headCommitId: pushed ? headCommitId : null}).disableAuthz().call()
                 if (ec.message.hasError()) return
+                // one from a fork, as one pushed for review, starts hidden where the server says so (review-start-hidden)
+                const startHidden = !!hidden || !!(synced && synced.startHidden)
+                if (startHidden && !mr.hiddenDate) { mr.hiddenDate = now; mr.update() }
                 let compare = ec.service.sync().name('org.moqui.git.GitServices.get#GitCompare')
-                        .parameters({repositoryId, base: 'refs/heads/' + target, head: headRef, checkMergeable: true, includeHidden: !!hidden})
-                if (hidden) compare = compare.disableAuthz()
+                        .parameters({repositoryId, base: 'refs/heads/' + target, head: headRef, checkMergeable: true, includeHidden: startHidden})
+                if (startHidden) compare = compare.disableAuthz()
                 const checked = compare.call()
                 if (ec.message.hasError()) return
                 if (!checked || !checked.headCommitId) { ec.message.addError('The source of the merge request names no commit'); return }
@@ -245,8 +252,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="sync" noun="MergeRequestHead" type="rust" location="moqui_git::service::review::sync_merge_request_head">
         <description>Keep refs/merge-requests/[mergeRequestNum]/head of a merge request's repository at its source's
             head: the source branch's (of the same repository, or of sourceRepositoryId, whose objects the repository
-            does not have are copied to it first), or headCommitId for one pushed for review (a commit of the
-            repository's store; without it the ref stays as it is). The ref moves without a GitUpdate: it is no branch.
+            does not have are copied to it first, and whose LFS objects among the files it adds become the
+            repository's too, through its upload check), or headCommitId for one pushed for review (a commit of the
+            repository's store; without it the ref stays as it is). A fork's branch is followed only while the author
+            has the update right on the fork and the source is not detached (detach#MergeRequestSource); else the
+            head stays and sourceDetachedDate is set. For one that is merged, or closed within git-server
+            review-ref-retention-days, a missing ref is set from its recorded head (a merge request from before these
+            refs were kept). The ref moves without a GitUpdate: it is no branch.
             With authorization disabled only: for create#MergeRequest, propose#MergeRequest and sync#MergeRequest.</description>
         <in-parameters>
             <parameter name="mergeRequestId" required="true"/>
@@ -255,7 +267,20 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="headCommitId"><description>The head now; empty while the source branch is gone</description></parameter>
             <parameter name="headRef"/>
+            <parameter name="startHidden" type="Boolean"><description>git-server review-start-hidden says a new merge
+                request of this kind (pushed for review, or from a fork) starts hidden</description></parameter>
+            <parameter name="sourceDetached" type="Boolean"/>
         </out-parameters>
+    </service>
+    <service verb="detach" noun="MergeRequestSource" type="rust" location="moqui_git::service::review::detach_merge_request_source">
+        <description>A merge request from a fork's branch stops following the branch (sourceDetachedDate) and keeps
+            the head it has: later pushes to the branch no longer reach the target repository. By a user with the
+            delete right on the source repository (its owner), by the merge request's author, or with authorization
+            disabled. sync#MergeRequestHead does the same by itself when the author no longer has the update right on
+            the source, and delete#GitRepository of the source does it for every merge request that follows it. It is
+            not undone: the author opens another merge request.</description>
+        <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
+        <out-parameters><parameter name="sourceDetachedDate" type="Timestamp"/></out-parameters>
     </service>
     <service verb="set" noun="MergeRequestHidden" type="rust" location="moqui_git::service::review::set_merge_request_hidden">
         <description>Hide a merge request's commits while the application holds its text (hiddenDate), or show them
@@ -275,7 +300,7 @@ along with this software (see the LICENSE.md file). If not, see
             (with their names, whether their approval is of the current head, and whether it counts: only approvals of
             users who may push count, get#MergeRequestApprovals), the head's checks, the target's
             branch rules and what keeps it from merging now (missing), and what the current user may do (canMerge: update
-            on the repository, and delete when a branch rule names the target). A hidden one (set#MergeRequestHidden)
+            on the repository). A hidden one (set#MergeRequestHidden)
             is answered only with authorization disabled.</description>
         <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
         <out-parameters>
@@ -298,6 +323,11 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
                 // a hidden one is the application's to show: it asks with authorization disabled
                 if (mr.hiddenDate && !ec.artifactExecution.authzDisabled()) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                if (!['GmrDraft', 'GmrOpen'].includes(mr.statusId)) {
+                    // one from before the head refs were kept gets its ref from its recorded head, so its commits and checks are read
+                    ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequestHead').parameters({mergeRequestId}).disableAuthz().call()
+                    if (ec.message.hasError()) ec.message.clearErrors()
+                }
                 const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', mr.repositoryId).disableAuthz().one()
                 const nameOf = (userId) => {
                     const account = userId ? ec.entity.find('moqui.security.UserAccount').condition('userId', userId).useCache(true).disableAuthz().one() : null
@@ -342,10 +372,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (allowed.length && !allowed.includes(mergeMethodEnumId)) missingList.push('The branch rules allow ' + allowed.join(', '))
                 canEdit = !!ec.user.userId && (ec.user.userId === mr.authorUserId || access.canUpdate) && ['GmrDraft', 'GmrOpen'].includes(mr.statusId)
                 if (mr.hiddenDate) missingList.push('It is hidden')
-                // a protected target (one a branch rule names) is merged into with the delete right, any other with update
-                const mayMerge = rules.protected ? !!access.canDelete : !!access.canUpdate
-                canMerge = mayMerge && missingList.length === 0
-                if (!mayMerge) missingList.push(rules.protected ? 'Merging into a protected branch needs the delete right' : 'You may not push to the target')
+                canMerge = !!access.canUpdate && missingList.length === 0
+                if (!access.canUpdate) missingList.push('You may not push to the target')
             ]]></script>
         </actions>
     </service>
@@ -539,7 +567,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Merge an open merge request by its method (the one given, else its own, else the repository's
             default) once the target's branch rules are met: the approvals required (of the current head when the rule
             dismisses stale ones; only those of users who may push count), the required checks successful on the head, a method they allow. Needs update on the
-            repository; refused on a conflict. The request becomes merged with the target's new head; its source branch
+            repository; refused on a conflict. What merges is the head the approvals and checks were counted for, by
+            its id: a source that moves meanwhile is not merged. The request becomes merged with the target's new head; its source branch
             is deleted when asked (kept, with a message, when its branch rules refuse). Webhooks get a merge_request
             event (merged).</description>
         <in-parameters>
@@ -689,6 +718,11 @@ along with this software (see the LICENSE.md file). If not, see
                 const internal = ec.artifactExecution.authzDisabled()
                 if (mr.hiddenDate && !internal) { ec.message.addError('No merge request ' + mergeRequestId); return }
                 const open = ['GmrDraft', 'GmrOpen'].includes(mr.statusId)
+                if (!open) {
+                    // one from before the head refs were kept gets its ref from its recorded head, so its commits are read
+                    ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequestHead').parameters({mergeRequestId}).disableAuthz().call()
+                    if (ec.message.hasError()) ec.message.clearErrors()
+                }
                 // the head of one from a fork or pushed for review is its own ref; a branch's is the branch
                 const ownHead = mr.pushedForReview === 'Y' || !!mr.sourceRepositoryId
                 const sourceHead = ownHead ? 'refs/merge-requests/' + mr.mergeRequestNum + '/head' : 'refs/heads/' + mr.sourceRef

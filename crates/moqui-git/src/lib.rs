@@ -111,14 +111,6 @@ pub(crate) fn setting(name: &str) -> String {
 }
 
 /// [`setting`] as a number, or `default` when it is empty or not one.
-/// An attribute of the conf's `git-server`, or `default` when the conf does not have the attribute at all: for one
-/// whose empty value means something (no reserved contexts).
-pub(crate) fn setting_or(name: &str, default: &str) -> String {
-    moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().conf_setting_if_set("git-server", name))
-        .flatten()
-        .unwrap_or_else(|| default.to_string())
-}
-
 pub(crate) fn number_setting<T: std::str::FromStr>(name: &str, default: T) -> T {
     setting(name).parse().unwrap_or(default)
 }
@@ -332,7 +324,7 @@ impl GitProvider {
                 objects: std::sync::OnceLock::new(),
                 archives_building: std::sync::atomic::AtomicUsize::new(0),
                 attributes: attributes::rules_cache(),
-                reach: Mutex::new(HashMap::new()),
+                reach: Mutex::new(reach::ReachSets::default()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
         }
@@ -712,7 +704,11 @@ impl GitProvider {
     fn commit_named(&self, repo: &Repo, path: &[String], name: &str) -> Result<Option<ObjectId>, Error> {
         let name = name.trim();
         if name.len() == 40 {
-            return Ok(ObjectId::from_hex(name.as_bytes()).ok());
+            // by its id only when a ref of this repository reaches it: the store may be a fork network's
+            return match ObjectId::from_hex(name.as_bytes()) {
+                Ok(id) if self.reachable(repo, &id)? => Ok(Some(id)),
+                _ => Ok(None),
+            };
         }
         if name.len() < 7 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Ok(None);
@@ -1763,11 +1759,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
         }
         let store = repo.store.as_ref();
         let name = version_name.trim();
-        let commit_id = if name.len() == 40 {
-            ObjectId::from_hex(name.as_bytes()).ok()
-        } else {
-            self.commit_named(&repo, &path, name)?
-        };
+        let commit_id = self.commit_named(&repo, &path, name)?;
         let not_found = || Error::new(format!("version {version_name} not found: {location}"));
         let commit_id = commit_id.ok_or_else(not_found)?;
         if store.find(&commit_id)?.is_none() {

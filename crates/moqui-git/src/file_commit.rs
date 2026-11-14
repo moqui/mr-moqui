@@ -47,6 +47,8 @@ pub(crate) struct FileCommit<'a> {
     /// The user has no push right (a proposal by a reader): no file kept in Git LFS is stored, and the bytes count
     /// as pushed for review.
     pub viewer: bool,
+    /// The branch rules are not checked: an application's own write (release notes on a protected branch).
+    pub bypass_rules: bool,
 }
 
 /// A path whose blob is not the one an edit began from.
@@ -121,6 +123,15 @@ impl GitProvider {
             )));
         }
         let store = repo.store.as_ref();
+        // a new branch's name, before anything is stored or a store is asked for it
+        if let Some(new_branch) = request.new_branch {
+            let name = ops::branch_ref(new_branch.strip_prefix("refs/heads/").unwrap_or(new_branch));
+            if !super::hosting::valid_ref_name(&name) {
+                return Ok(FileCommitOutcome::Refused(format!(
+                    "GitBadRefName: {new_branch} is not a valid branch or tag name"
+                )));
+            }
+        }
         let branch = request
             .branch
             .map(|branch| branch.strip_prefix("refs/heads/").unwrap_or(branch))
@@ -242,11 +253,12 @@ impl GitProvider {
             &merge::with_user_trailer(request.message, &author),
         )?;
         if request.proposal {
-            // no ref moves: the merge request's head is set by propose#MergeRequest. A write, for the push log and
-            // the rules that follow one, named as a push for review names it
+            // no ref moves: the merge request's head is set by propose#MergeRequest. It is a push for review made
+            // through a service, and is checked and recorded as one: the pre events of source push with the ref
+            // refs/for/<branch> (transport internal), so a rule that gates pushes for review gates proposals too
             let prior = store.list_refs("refs/")?;
             let origin = events::UpdateOrigin {
-                source: "write",
+                source: "push",
                 transport: "internal",
                 user_id: user_id(),
                 pack_bytes: request.puts.iter().map(|(_, bytes)| bytes.len() as u64).sum(),
@@ -258,6 +270,26 @@ impl GitProvider {
                 old: None,
                 new: Some(commit),
             };
+            let candidate = events::RefUpdate {
+                name: change.name.clone(),
+                old: None,
+                new: Some(commit),
+                change_type: "create".to_string(),
+            };
+            let decided = events::pre_receive(
+                store,
+                repository_id,
+                &repo.definition.branch,
+                &origin,
+                std::slice::from_ref(&candidate),
+                &[0],
+            );
+            for message in &decided.messages {
+                moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message(message.clone()));
+            }
+            if let Some(reason) = decided.refused.as_ref().or_else(|| decided.refused_refs.get(&0)) {
+                return Ok(FileCommitOutcome::Refused(format!("declined: {reason}")));
+            }
             self.record_update(repository_id, &origin, store, &prior, &[change]);
             return Ok(FileCommitOutcome::Proposed {
                 commit,
@@ -281,7 +313,11 @@ impl GitProvider {
                 expected,
                 new: Some(commit),
             }],
-            false,
+            if request.bypass_rules {
+                super::hosting::RefRules::Bypass
+            } else {
+                super::hosting::RefRules::Direct
+            },
             None,
         )?;
         Ok(match written.into_iter().next() {

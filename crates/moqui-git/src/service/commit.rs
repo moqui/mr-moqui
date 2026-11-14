@@ -169,6 +169,13 @@ fn commit_files(
             return none();
         }
     };
+    let internal = ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false);
+    // who a commit is by is the caller's own account, unless the application says (an account's display name and
+    // confirmed address): a user does not write commits in another's name through a page
+    if author.is_some() && !internal {
+        add_error("authorName and authorEmail are given only with authorization disabled");
+        return none();
+    }
     if let Some((name, email)) = &author {
         // a signature's fields end at these: git's own rule
         if [name, email].iter().any(|part| part.contains(['<', '>', '\n'])) {
@@ -197,6 +204,8 @@ fn commit_files(
         expected: &expected,
         author: author.as_ref().map(|(name, email)| (name.as_str(), email.as_str())),
         viewer,
+        // an application's own write past the rules of a branch (release notes on a protected default branch)
+        bypass_rules: internal && flag(parameters, "bypassBranchRules"),
     };
     let outcome = match provider.commit_change(&id, &request) {
         Ok(outcome) => outcome,
@@ -304,3 +313,7 @@ fn commit_files(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "commit_tests.rs"]
+pub(crate) mod tests;

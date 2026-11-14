@@ -455,20 +455,6 @@ impl GitProvider {
                 )));
             }
         }
-        // a repository others were forked from keeps their objects (a db network's rows are its own; a local fork
-        // reads its directory): it goes after its forks, or stays, archived
-        let forks = self.forks_of(repository_id)?;
-        if !forks.is_empty() {
-            let mut shown: Vec<&str> = forks.iter().take(5).map(String::as_str).collect();
-            if forks.len() > shown.len() {
-                shown.push("...");
-            }
-            return Err(Error::new(format!(
-                "GitHasForks: git repository {repository_id} has forks ({}), which share its objects: delete them \
-                 first, or archive it",
-                shown.join(", ")
-            )));
-        }
         let directory = match definition.kind {
             RepositoryKind::Db => Directory::None,
             RepositoryKind::Local | RepositoryKind::Remote => {
@@ -477,7 +463,8 @@ impl GitProvider {
         };
         let transactions = entity.transactions_for(GIT_REPOSITORY)?;
         let in_transaction = transactions.in_transaction();
-        if self.mark_going(&entity, repository_id)? {
+        let marked = self.mark_going(&entity, repository_id)?;
+        if marked {
             self.refresh(repository_id);
             if in_transaction {
                 let (provider, id) = (self.clone(), repository_id.to_string());
@@ -488,6 +475,33 @@ impl GitProvider {
             // no push or write of this process stores while the rows go; one that waited reads the mark next
             let lock = self.lock_of(repository_id);
             let _writer = moqui_lib::sync::lock(&lock);
+            // a repository others were forked from keeps their objects (a db network's rows are its own; a local
+            // fork reads its directory): it goes after its forks, or stays, archived. Looked for under the mark and
+            // the lock, which a fork being made takes too, so none is made after this
+            let forks = self.forks_of(repository_id)?;
+            if !forks.is_empty() {
+                if marked && !in_transaction {
+                    self.unmark_going(repository_id);
+                }
+                let mut shown: Vec<&str> = forks.iter().take(5).map(String::as_str).collect();
+                if forks.len() > shown.len() {
+                    shown.push("...");
+                }
+                return Err(Error::new(format!(
+                    "GitHasForks: git repository {repository_id} has forks ({}), which share its objects: delete \
+                     them first, or archive it",
+                    shown.join(", ")
+                )));
+            }
+            // merge requests of other repositories that follow a branch of this one keep the head they have: an id
+            // used again must not feed them
+            if entity.table_ready(GIT_MERGE_REQUEST) {
+                entity
+                    .find(GIT_MERGE_REQUEST)?
+                    .eq("sourceRepositoryId", Value::string(repository_id))
+                    .condition(Condition::is_null("sourceDetachedDate"))
+                    .update_all([("sourceDetachedDate".to_string(), moqui_core::user::now_value())])?;
+            }
             delete_rows_of(&entity, repository_id)?;
             if entity.table_ready(GIT_PATH_REDIRECT) {
                 entity
@@ -496,7 +510,7 @@ impl GitProvider {
                     .delete_all()?;
             }
             if definition.kind == RepositoryKind::Db && definition.is_fork() {
-                // its objects are the network's rows: they stay, as the root's, until a collection lets them go
+                // its objects are the network's rows: they stay, as nobody's, until a collection lets them go
                 self.disown_objects(definition.objects_id(), repository_id)?;
             }
             let mut row = EntityValue::make(&entity, GIT_REPOSITORY)?;

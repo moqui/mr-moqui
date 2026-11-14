@@ -36,6 +36,23 @@ use moqui_lib::object::Value;
 
 const GIT_LFS_OBJECT: &str = "moqui.resource.GitLfsObject";
 
+/// `GitObject.addedRepositoryId` of the rows a fork that was deleted added: counted in no repository's usage.
+pub(crate) const DELETED_FORK: &str = "_DELETED_FORK_";
+
+/// `to` as a path relative to the directory `from` (both absolute, with links followed).
+fn relative_path(from: &std::path::Path, to: &std::path::Path) -> std::path::PathBuf {
+    let (from, to): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut relative = std::path::PathBuf::new();
+    for _ in common..from.len() {
+        relative.push("..");
+    }
+    for part in &to[common..] {
+        relative.push(part);
+    }
+    relative
+}
+
 /// The refs a fork starts with: its parent's branches and tags as they are now.
 const FORKED: [&str; 2] = ["refs/heads/", "refs/tags/"];
 
@@ -94,6 +111,15 @@ impl GitProvider {
         }
         let entity = self.entity()?;
         let network = source.definition.objects_id().to_string();
+        // with the source's writers and its delete: a source that is going (delete#GitRepository marks it archived
+        // first, and then looks for forks under this lock) or archived is not forked
+        let lock = self.lock_of(source_id);
+        let _turn = moqui_lib::sync::lock(&lock);
+        if self.definition(source_id)?.archived {
+            return Err(Error::new(format!(
+                "GitArchived: git repository {source_id} is archived or being deleted, and is not forked"
+            )));
+        }
         {
             let _rows = rows_guard();
             if entity
@@ -158,7 +184,10 @@ impl GitProvider {
                 std::fs::create_dir_all(parent)
                     .map_err(|err| Error::new(format!("cannot create {}: {err}", parent.display())))?;
             }
-            std::fs::write(&alternates, format!("{}\n", objects.display()))
+            // relative to the fork's own objects directory, as git reads it, so the two move together
+            let own = std::fs::canonicalize(fork.path.join("objects"))
+                .map_err(|err| Error::new(format!("the objects of the new git repository {repository_id}: {err}")))?;
+            std::fs::write(&alternates, format!("{}\n", relative_path(&own, &objects).display()))
                 .map_err(|err| Error::new(format!("cannot write {}: {err}", alternates.display())))?;
         }
         let opened = self.open(fork)?;
@@ -199,14 +228,91 @@ impl GitProvider {
             .eq("repositoryId", Value::string(from))
             .list()?;
         for row in rows.iter() {
-            let mut copy = EntityValue::make(&entity, GIT_LFS_OBJECT)?;
-            for field in ["oid", "objectSize", "uploadedByUserId", "uploadedDate"] {
-                copy.set(field, row.get(field).cloned().unwrap_or(Value::Null));
+            // one row that is not written is logged and the others still are: its file reads as its pointer
+            let copied = (|| -> Result<(), Error> {
+                let mut copy = EntityValue::make(&entity, GIT_LFS_OBJECT)?;
+                for field in ["oid", "objectSize", "uploadedByUserId", "uploadedDate"] {
+                    copy.set(field, row.get(field).cloned().unwrap_or(Value::Null));
+                }
+                copy.set("repositoryId", Value::string(to));
+                copy.create(&entity)?;
+                Ok(())
+            })();
+            if let Err(err) = copied {
+                tracing::error!(
+                    repository = to,
+                    "the LFS object {} of {from} was not given to its fork: {err}",
+                    text(row.get("oid")).unwrap_or_default()
+                );
             }
-            copy.set("repositoryId", Value::string(to));
-            copy.create(&entity)?;
         }
         Ok(())
+    }
+
+    /// Make the LFS objects that the commit `head` adds over the branches of repository `to` objects of `to` too,
+    /// when repository `from` has them: the pointers among the files `head` changes from its merge base with
+    /// `base`, at most 5,000 files. Each goes through the upload check an upload of it would
+    /// (`lfs-upload-check-service`), so a quota holds; a refusal is the error. How many were linked.
+    pub(crate) fn share_lfs(
+        &self,
+        from: &str,
+        to: &str,
+        base: Option<ObjectId>,
+        head: ObjectId,
+    ) -> Result<usize, Error> {
+        use super::server::lfs::{pointer, MAX_POINTER};
+        if from == to {
+            return Ok(0);
+        }
+        let entity = self.entity()?;
+        let has_any = {
+            let _rows = rows_guard();
+            entity.table_ready(GIT_LFS_OBJECT)
+                && entity
+                    .find(GIT_LFS_OBJECT)?
+                    .eq("repositoryId", Value::string(from))
+                    .limit(1)
+                    .list()?
+                    .iter()
+                    .next()
+                    .is_some()
+        };
+        if !has_any {
+            return Ok(0);
+        }
+        let target = self.repo(to)?;
+        let store = target.store.as_ref();
+        let from_tree = match base {
+            Some(base) => match super::merge::merge_base(store, &base, &head)? {
+                Some(common) => Some(super::ops::read_commit(store, &common)?.tree),
+                None => None,
+            },
+            None => None,
+        };
+        let to_tree = super::ops::read_commit(store, &head)?.tree;
+        let changes = super::diff::tree_changes(store, from_tree.as_ref(), Some(&to_tree))?;
+        let mut linked = 0;
+        for change in changes.iter().take(5000) {
+            let Some((mode, blob)) = change.new else { continue };
+            if mode.is_tree() || store.object_size(&blob)?.is_none_or(|size| size > MAX_POINTER) {
+                continue;
+            }
+            let Some((_, data)) = store.find(&blob)? else { continue };
+            let Some((oid, size)) = pointer(&data) else { continue };
+            let held = {
+                let _rows = rows_guard();
+                entity
+                    .find(GIT_LFS_OBJECT)?
+                    .eq("repositoryId", Value::string(from))
+                    .eq("oid", Value::string(&oid))
+                    .one()?
+                    .is_some()
+            };
+            if held && self.link_lfs(to, &oid, size)? {
+                linked += 1;
+            }
+        }
+        Ok(linked)
     }
 
     /// Bring the commit `head` of repository `from` and what it reaches to repository `to`, when `to` does not have
@@ -278,8 +384,9 @@ impl GitProvider {
         )))
     }
 
-    /// The object rows a deleted fork added become the root's, so a usage counts them to a repository that is
-    /// there until a collection lets go of those no ref reaches.
+    /// The object rows a deleted fork added are nobody's ([`DELETED_FORK`]) until a collection lets go of those no
+    /// ref reaches: not the root's, whose owner did not store them, and not those of a repository made later with
+    /// the fork's id.
     pub(crate) fn disown_objects(&self, network: &str, repository_id: &str) -> Result<(), Error> {
         let _rows = rows_guard();
         let entity = self.entity()?;
@@ -290,24 +397,23 @@ impl GitProvider {
             .find(super::db::GIT_OBJECT)?
             .eq("repositoryId", Value::string(network))
             .eq("addedRepositoryId", Value::string(repository_id))
-            .update_all([("addedRepositoryId".to_string(), Value::Null)])?;
+            .update_all([("addedRepositoryId".to_string(), Value::string(DELETED_FORK))])?;
         Ok(())
     }
 
-    /// The ids a collection of repository `repository_id` must also keep: what the refs of the other repositories of
-    /// its fork network point to, and the ids of their changes in progress and of the reflog window, as
-    /// [`GitProvider::gc_roots`] reads them for one repository. They share its objects (a `db` network's rows, a
-    /// `local` parent's directory through alternates). Empty for a repository in no network.
+    /// What a collection of repository `repository_id` must also keep: for each other repository of its fork
+    /// network, that repository and the ids its refs point to, with those of its changes in progress and of the
+    /// reflog window, as [`GitProvider::gc_roots`] reads them. They share its objects (a `db` network's rows, a
+    /// `local` parent's directory through alternates), and what a member reaches is walked through that member's
+    /// own store: a fork's commits are in its own directory, and reach into its parent's. Empty for a repository in
+    /// no network.
     pub(crate) fn network_roots(
         &self,
         repository_id: &str,
         network: Option<&str>,
         options: &super::gc::GcOptions,
-    ) -> Result<super::gc::Roots, Error> {
-        let mut roots = super::gc::Roots {
-            refs: Vec::new(),
-            others: Vec::new(),
-        };
+    ) -> Result<Vec<(std::sync::Arc<super::Repo>, super::gc::Roots)>, Error> {
+        let mut roots = Vec::new();
         let Some(network) = network else {
             return Ok(roots);
         };
@@ -325,9 +431,12 @@ impl GitProvider {
                 ))
             })?;
             let found = self.gc_roots(&entity, &member, repo.store.as_ref(), options)?;
-            roots.refs.extend(found.refs);
-            roots.others.extend(found.others);
+            roots.push((repo, found));
         }
         Ok(roots)
     }
 }
+
+#[cfg(test)]
+#[path = "fork_tests.rs"]
+mod tests;

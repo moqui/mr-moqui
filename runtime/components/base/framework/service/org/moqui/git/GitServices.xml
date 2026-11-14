@@ -206,9 +206,11 @@ along with this software (see the LICENSE.md file). If not, see
             expectedBlobIds is path to the blob the edit began from (from get#GitTree's objectId; empty text: no file
             there): when the path has another blob now nothing is committed, and the answer has no error but conflict
             true, errorCode GitFileChanged and conflictList, each path with expectedBlobId and currentBlobId, so a
-            page shows both texts. authorName and authorEmail are the commit's author, given by the application (an
-            account's name and its confirmed address); the committer is then the server (git-server committer-name
-            and committer-email). Refusals start with a code (docs/interfaces/Git-Hosting.md, Error codes):
+            page shows both texts. authorName and authorEmail are the commit's author, given by the application with
+            authorization disabled (an account's name and its confirmed address; a caller does not say who a commit
+            is by), and the committer is then the server (git-server committer-name and committer-email). A proposal
+            runs the pre events of gitECA rules as a push to refs/for/[branch] does (source push, transport
+            internal). With authorization disabled and bypassBranchRules the branch rules are not checked. Refusals start with a code (docs/interfaces/Git-Hosting.md, Error codes):
             GitProtectedBranch, GitRefExists, GitArchived, GitNoSuchRef, GitStaleRef, GitReviewPushTooLarge,
             GitReviewQuota.</description>
         <in-parameters>
@@ -231,8 +233,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="description" allow-html="any"/>
             <parameter name="draft" type="Boolean" default="false"/>
             <parameter name="expectedBlobIds" type="Map"><description>Path to the blob id the edit began from</description></parameter>
-            <parameter name="authorName" allow-html="any"/>
-            <parameter name="authorEmail" allow-html="any"/>
+            <parameter name="authorName"><description>With authorization disabled only, as authorEmail</description></parameter>
+            <parameter name="authorEmail"/>
+            <parameter name="bypassBranchRules" type="Boolean" default="false"><description>Do not check the branch
+                rules: an application's own write to a protected branch (release notes). With authorization disabled
+                only; ignored otherwise</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="commitId"><description>Empty when nothing changed, or on a conflict</description></parameter>
@@ -292,7 +297,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Who brought commits to a repository: for each of commitIdList (full ids, at most 500) the user of
             the first push or write whose refs reached it (moqui.resource.GitCommitPush, read by its key; written with
             each change's events, at most git-server eca-max-commits commits a change). No entry for a commit that
-            came by a mirror fetch or an import, or before pushers were kept. For viewers.</description>
+            came by a mirror fetch or an import, or before pushers were kept, and none for a commit the caller does not
+            read by id. For viewers.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId"/>
@@ -437,7 +443,10 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="find" noun="GitUpdates" type="rust" location="moqui_git::service::hosting::find_updates">
         <description>The push log of a repository, newest first: every push (accepted or not), mirror fetch, import and
-            write through Moqui, each with its refs and the state of its gitECA rules. For its viewers.</description>
+            write through Moqui, each with its refs and the state of its gitECA rules. For its viewers; a user without
+            the update right is given no remoteAddress, no object id that no readable ref reaches now (the old value of
+            a forced or deleted branch), and no row of a push to refs/for/ whose head is not read (a hidden merge
+            request's).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="source"><description>push, fetch, import or write</description></parameter>

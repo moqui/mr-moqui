@@ -308,6 +308,37 @@ impl GitProvider {
         Ok(())
     }
 
+    /// The heads of the current user's open merge requests pushed for review in a repository.
+    pub(crate) fn own_review_heads(&self, repo: &super::Repo) -> Result<Vec<ObjectId>, Error> {
+        let Some(user) = moqui_core::user::current_user_id()
+            .ok()
+            .flatten()
+            .filter(|user| !user.is_empty())
+        else {
+            return Ok(Vec::new());
+        };
+        let _rows = rows_guard();
+        let rows = self
+            .entity()?
+            .find("moqui.resource.GitMergeRequest")?
+            .eq("repositoryId", Value::string(&repo.definition.id))
+            .eq("authorUserId", Value::string(user))
+            .eq("pushedForReview", Value::string("Y"))
+            .condition(moqui_core::entity::Condition::is_in(
+                "statusId",
+                vec![Value::string("GmrDraft"), Value::string("GmrOpen")],
+            ))
+            .select_field("mergeRequestNum")
+            .list()?;
+        let mut heads = Vec::new();
+        for row in rows.iter() {
+            if let Some(num) = super::long(row.get("mergeRequestNum")) {
+                heads.extend(repo.store.read_ref(&super::reach::merge_request_ref(num))?);
+            }
+        }
+        Ok(heads)
+    }
+
     /// Record a push's refs before they change.
     pub(crate) fn begin_update(
         &self,

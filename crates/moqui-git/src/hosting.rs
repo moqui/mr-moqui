@@ -102,6 +102,25 @@ pub(crate) enum MergeOutcome {
     },
 }
 
+/// How the branch rules apply to a ref write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefRules {
+    /// As to a push: a protected ref refuses what its rules do not allow.
+    Direct,
+    /// A merge through a merge request: a fast-forward of the target passes.
+    MergeRequest,
+    /// Not checked: an application's own write, asked for with authorization disabled.
+    Bypass,
+}
+
+/// Whether `name` is a branch's or a tag's full ref name that git takes (no `..`, no control characters, no
+/// trailing `.lock`, and the rest of `git check-ref-format`).
+pub(crate) fn valid_ref_name(name: &str) -> bool {
+    use gix::bstr::ByteSlice;
+    (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+        && gix::validate::reference::name(name.as_bytes().as_bstr()).is_ok()
+}
+
 fn kind_of(mode: gix::objs::tree::EntryMode) -> &'static str {
     use gix::objs::tree::EntryKind;
     match mode.kind() {
@@ -310,15 +329,16 @@ impl GitProvider {
         }))
     }
 
-    /// Write refs as one change under the repository's lock: the branch rules (a direct change, unless it is a merge
-    /// through a merge request), the pre events of source `write` (an error refuses the change), the change recorded
-    /// as a `GitUpdate` with its post events scheduled. The objects of `overlay` are written to the store first. Each
-    /// ref's outcome, in order: refused with why. An archived or mirror repository refuses every ref.
+    /// Write refs as one change under the repository's lock: the branch rules as `rules` says, the pre events of
+    /// source `write` (an error refuses the change), the change recorded as a `GitUpdate` with its post events
+    /// scheduled. The objects of `overlay` are written to the store first. Each ref's outcome, in order: refused with
+    /// why. An archived or mirror repository refuses every ref, and a ref made or moved must be a branch or tag with
+    /// a name git takes: every ref a service writes comes through here.
     pub(crate) fn write_refs(
         &self,
         repository_id: &str,
         writes: &[RefWrite],
-        through_merge_request: bool,
+        rules: RefRules,
         overlay: Option<&Overlay<'_>>,
     ) -> Result<Vec<Result<(), String>>, Error> {
         let repo = self.repo(repository_id)?;
@@ -366,12 +386,19 @@ impl GitProvider {
                 results.push(Err("the default branch cannot be deleted".to_string()));
                 continue;
             }
+            if write.new.is_some() && !valid_ref_name(&write.name) {
+                results.push(Err(format!(
+                    "GitBadRefName: {} is not a valid branch or tag name",
+                    short_name(&write.name)
+                )));
+                continue;
+            }
             let found = rules::rules_for(&entity, repository_id, &write.name)?;
             let change = RefChangeKind::parse(change_type);
-            let checked = if through_merge_request && change == RefChangeKind::Update {
-                Ok(())
-            } else {
-                rules::check_direct(&found, &write.name, change, &rules::current_user_in)
+            let checked = match rules {
+                RefRules::Bypass => Ok(()),
+                RefRules::MergeRequest if change == RefChangeKind::Update => Ok(()),
+                _ => rules::check_direct(&found, &write.name, change, &rules::current_user_in),
             };
             results.push(checked);
         }
@@ -616,7 +643,11 @@ impl GitProvider {
                 expected: Some(target_id),
                 new: Some(merged.head),
             }],
-            through_merge_request,
+            if through_merge_request {
+                RefRules::MergeRequest
+            } else {
+                RefRules::Direct
+            },
             Some(&overlay),
         )?;
         match written.into_iter().next() {

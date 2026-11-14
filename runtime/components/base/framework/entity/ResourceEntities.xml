@@ -344,6 +344,9 @@ along with this software (see the LICENSE.md file). If not, see
             under refs/merge-requests/[mergeRequestNum]/head only</description></field>
         <field name="reviewTopic" type="text-short"><description>The topic of a push for review (-o topic=): a later
             push of the same author, target and topic updates this merge request</description></field>
+        <field name="sourceDetachedDate" type="date-time"><description>Set when a merge request from another repository's
+            branch stopped following it (detach#MergeRequestSource; the author lost the update right there; the source
+            was deleted): it keeps the head it had</description></field>
         <field name="hiddenDate" type="date-time"><description>Set by the application while it holds the merge
             request's text: its refs/merge-requests head is fetched by nobody and its commits are not read by id
             through the services (set#MergeRequestHidden)</description></field>

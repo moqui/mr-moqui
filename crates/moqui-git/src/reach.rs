@@ -43,7 +43,7 @@ pub(crate) const REVIEW_REFS: &str = "refs/for/";
 /// A hit is answered from the set without reading the refs again for this long.
 const FRESH: Duration = Duration::from_secs(2);
 
-/// At most this many repositories' sets are kept; one more forgets them all.
+/// At most this many repositories' sets are kept; one more lets go of the one used longest ago.
 const MAX_REPOSITORIES: usize = 128;
 
 const DEFAULT_MAX_COMMITS: usize = 1_000_000;
@@ -88,22 +88,8 @@ impl Reached {
         self.commits.contains_key(id)
     }
 
-    /// Bring the set to what `tips` reach. A tip that went away is still reached when a commit of the set has it as
-    /// a parent (the branch moved forward, or was merged before it was deleted): every commit of the set is then
-    /// still an ancestor of a tip. Otherwise the set is made again.
-    fn update(&mut self, store: &dyn GitStore, tips: &HashSet<ObjectId>, limit: usize) -> Result<(), Error> {
-        if self.read.is_some() && self.tips == *tips {
-            self.read = Some(Instant::now());
-            return Ok(());
-        }
-        let gone = self
-            .tips
-            .iter()
-            .any(|tip| !tips.contains(tip) && !self.commits.get(tip).copied().unwrap_or(false));
-        if gone || self.full {
-            self.commits.clear();
-            self.full = false;
-        }
+    /// Add `tips` and what they reach to the set, walking back from each to the commits already in it.
+    fn walk(&mut self, store: &dyn GitStore, tips: &HashSet<ObjectId>, limit: usize) -> Result<(), Error> {
         let mut pending: Vec<ObjectId> = Vec::new();
         for tip in tips {
             if !self.commits.contains_key(tip) {
@@ -135,9 +121,60 @@ impl Reached {
                 Ok(())
             })?;
         }
+        Ok(())
+    }
+
+    /// Bring the set to what `tips` reach. The new tips are walked first, back to the commits already known. A tip
+    /// that went away is then still reached when a commit of the set has it as a parent (the branch moved forward,
+    /// which the walk of its new tip just found, or was merged before it was deleted): every commit of the set is
+    /// still an ancestor of a tip, and nothing more is read. Otherwise (a deleted branch that was not merged, a
+    /// forced one) the set is made again from the tips.
+    fn update(&mut self, store: &dyn GitStore, tips: &HashSet<ObjectId>, limit: usize) -> Result<(), Error> {
+        if self.read.is_some() && self.tips == *tips {
+            self.read = Some(Instant::now());
+            return Ok(());
+        }
+        if self.full {
+            self.commits.clear();
+            self.full = false;
+        }
+        self.walk(store, tips, limit)?;
+        let gone = self
+            .tips
+            .iter()
+            .any(|tip| !tips.contains(tip) && !self.commits.get(tip).copied().unwrap_or(false));
+        if gone {
+            self.commits.clear();
+            self.full = false;
+            self.walk(store, tips, limit)?;
+        }
         self.tips.clone_from(tips);
         self.read = Some(Instant::now());
         Ok(())
+    }
+
+    /// The commits of the set whose ids start with the hex digits `prefix`, at most `limit` of them.
+    fn with_prefix(&self, prefix: &str, limit: usize) -> Vec<ObjectId> {
+        let prefix = prefix.to_ascii_lowercase();
+        let whole = prefix.len() / 2;
+        let Ok(bytes) = (0..whole)
+            .map(|at| u8::from_str_radix(&prefix[at * 2..at * 2 + 2], 16))
+            .collect::<Result<Vec<u8>, _>>()
+        else {
+            return Vec::new();
+        };
+        let odd = prefix
+            .get(whole * 2..)
+            .and_then(|digit| u8::from_str_radix(digit, 16).ok());
+        self.commits
+            .keys()
+            .filter(|id| {
+                let id = id.as_bytes();
+                id.starts_with(&bytes) && odd.is_none_or(|nibble| id.get(whole).is_some_and(|byte| byte >> 4 == nibble))
+            })
+            .take(limit)
+            .copied()
+            .collect()
     }
 
     /// The commit a ref target names, remembered for a target that is not a commit of the set.
@@ -168,8 +205,41 @@ pub(crate) struct Refs {
     pub hidden: Vec<(String, ObjectId)>,
 }
 
+/// The sets of the repositories read by id on this node: at most [`MAX_REPOSITORIES`], the one used longest ago
+/// going first.
+#[derive(Debug, Default)]
+pub(crate) struct ReachSets {
+    sets: HashMap<String, (Arc<Mutex<Reached>>, u64)>,
+    used: u64,
+}
+
+impl ReachSets {
+    fn of(&mut self, repository_id: &str, most: usize) -> Arc<Mutex<Reached>> {
+        self.used += 1;
+        let used = self.used;
+        if let Some((set, last)) = self.sets.get_mut(repository_id) {
+            *last = used;
+            return Arc::clone(set);
+        }
+        while self.sets.len() >= most.max(1) {
+            let Some(oldest) = self
+                .sets
+                .iter()
+                .min_by_key(|(_, (_, last))| *last)
+                .map(|(id, _)| id.clone())
+            else {
+                break;
+            };
+            self.sets.remove(&oldest);
+        }
+        let set = Arc::new(Mutex::new(Reached::default()));
+        self.sets.insert(repository_id.to_string(), (Arc::clone(&set), used));
+        set
+    }
+}
+
 /// The sets of the repositories read by id on this node.
-pub(crate) type ReachCache = Mutex<HashMap<String, Arc<Mutex<Reached>>>>;
+pub(crate) type ReachCache = Mutex<ReachSets>;
 
 thread_local! {
     /// Set while a service asked for with authorization disabled reads the heads of hidden merge requests too.
@@ -236,16 +306,12 @@ impl GitProvider {
     }
 
     fn reached(&self, repository_id: &str) -> Arc<Mutex<Reached>> {
-        let mut cache = moqui_lib::sync::lock(&self.inner.reach);
-        if cache.len() >= MAX_REPOSITORIES && !cache.contains_key(repository_id) {
-            cache.clear();
-        }
-        Arc::clone(cache.entry(repository_id.to_string()).or_default())
+        moqui_lib::sync::lock(&self.inner.reach).of(repository_id, MAX_REPOSITORIES)
     }
 
     /// Forget what the refs of a repository reach, when it is deleted or its storage replaced.
     pub(crate) fn forget_reached(&self, repository_id: &str) {
-        moqui_lib::sync::lock(&self.inner.reach).remove(repository_id);
+        moqui_lib::sync::lock(&self.inner.reach).sets.remove(repository_id);
     }
 
     /// Which of `ids` are commits a ref the repository's readers read reaches (see the module): what a read by id,
@@ -294,6 +360,111 @@ impl GitProvider {
     pub(crate) fn reachable(&self, repo: &Repo, id: &ObjectId) -> Result<bool, Error> {
         Ok(self.reachable_of(repo, &[*id])?.contains(id))
     }
+
+    /// The commits the repository's readable refs reach whose ids start with the hex digits `prefix`, at most
+    /// `limit`: a prefix is looked up among these only, so it says nothing of what else the store holds.
+    pub(crate) fn reachable_prefix(&self, repo: &Repo, prefix: &str, limit: usize) -> Result<Vec<ObjectId>, Error> {
+        // bring the set up to date
+        self.reachable_of(repo, &[ObjectId::null(gix::hash::Kind::Sha1)])?;
+        let entry = self.reached(&repo.definition.id);
+        let reached = moqui_lib::sync::lock(&entry);
+        Ok(reached.with_prefix(prefix, limit))
+    }
+
+    /// Whether the current user reads the commit `id` of the repository by its id: one its readable refs reach; and,
+    /// in a repository that is in no fork network, any commit of its store for a user with the update right (the
+    /// commits of a deleted or forced branch, which the pages of who works in the repository still show), but for
+    /// what a hidden merge request's head reaches. In a fork network the store is other repositories' too, so only
+    /// the refs decide.
+    pub(crate) fn readable_by_id(&self, repo: &Repo, id: &ObjectId) -> Result<bool, Error> {
+        if self.reachable(repo, id)? {
+            return Ok(true);
+        }
+        if repo.definition.network.is_some() || !super::server::permitted(&repo.definition.id, "update") {
+            return Ok(false);
+        }
+        let store = repo.store.as_ref();
+        if !matches!(store.find(id)?, Some((Kind::Commit, _))) {
+            return Ok(false);
+        }
+        for (_, head) in self.readable_refs(repo)?.hidden {
+            if let Some(head) = super::revwalk::peel_to_commit(store, &head)? {
+                if super::revwalk::is_ancestor(store, id, &head).unwrap_or(false) {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// The trees (and tree of each commit) that one walk of [`objects_within`] reads at most.
+pub(crate) const WITHIN_MAX_TREES: usize = 1_000_000;
+
+/// Which of `wanted` are the commits `roots`, their trees, or trees and blobs within those trees (the files of
+/// those commits, not of their history): what a reader of those commits reads anyway. The walk stops when all are
+/// found, and after `budget` trees.
+pub(crate) fn objects_within(
+    store: &dyn GitStore,
+    roots: &[ObjectId],
+    wanted: &HashSet<ObjectId>,
+    budget: usize,
+) -> Result<HashSet<ObjectId>, Error> {
+    let mut found: HashSet<ObjectId> = HashSet::new();
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    let mut trees: Vec<ObjectId> = Vec::new();
+    for chunk in roots.chunks(BATCH) {
+        store.find_many(chunk, &mut |id, kind, data| {
+            if kind != Kind::Commit {
+                return Ok(());
+            }
+            if wanted.contains(&id) {
+                found.insert(id);
+            }
+            let tree = data
+                .strip_prefix(b"tree ")
+                .and_then(|rest| rest.get(..40))
+                .and_then(|hex| ObjectId::from_hex(hex).ok());
+            if let Some(tree) = tree {
+                if seen.insert(tree) {
+                    trees.push(tree);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    let mut read = 0;
+    while !trees.is_empty() && found.len() < wanted.len() && read < budget {
+        let at = trees.len().saturating_sub(BATCH);
+        let batch = trees.split_off(at);
+        read += batch.len();
+        for id in &batch {
+            if wanted.contains(id) {
+                found.insert(*id);
+            }
+        }
+        store.find_many(&batch, &mut |id, kind, data| {
+            if kind != Kind::Tree {
+                return Ok(());
+            }
+            let tree = gix::objs::TreeRef::from_bytes(data, super::ops::HASH)
+                .map_err(|err| Error::new(format!("git tree {id}: {err}")))?;
+            for entry in tree.entries {
+                if entry.mode.is_commit() {
+                    continue;
+                }
+                let object = entry.oid.to_owned();
+                if wanted.contains(&object) {
+                    found.insert(object);
+                }
+                if entry.mode.is_tree() && seen.insert(object) {
+                    trees.push(object);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    Ok(found)
 }
 
 /// Whether the commit `tip` is `target` or has it as an ancestor, reading at most `budget` commits (what is read is

@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 
 use moqui_lib::object::Value;
 
-use super::hosting_tests::{call, entry, framework_rules, get, grant_entities, list, ok, s, text_of};
-use super::tests::{create, define, fixture_in, head_of, settled, user, Fixture, READER, WRITER};
+use crate::server::hosting_tests::{call, entry, framework_rules_with, get, grant_entities, list, ok, s, text_of};
+use crate::server::tests::{create, define, fixture_with, head_of, settled, user, Fixture, READER, WRITER};
 use moqui_core::context::ExecutionContext;
 use moqui_core::entity::EntityValue;
 
@@ -52,7 +52,7 @@ fn files(pairs: &[(&str, &str)]) -> Value {
 
 /// Call a service as `user` with authorization disabled, as an application's own service does: its result and the
 /// errors it left.
-pub(super) fn internal(
+pub(crate) fn internal(
     fixture: &Fixture,
     user: &str,
     name: &str,
@@ -144,9 +144,20 @@ fn developer(fixture: &Fixture) {
 }
 
 fn commits_and_what_is_asked_of_them(kind: &str) {
-    let fixture = fixture_in(&format!("commit-{kind}"), moqui_core::context::framework_dir());
+    // a hosting application's settings: the system's status contexts, and a rule of its own for pushes for review
+    let fixture = fixture_with(
+        &format!("commit-{kind}"),
+        moqui_core::context::framework_dir(),
+        r#"<git-server reserved-status-contexts="agreement/,ci/"/>"#,
+    );
     grant_entities(&fixture);
-    framework_rules(&fixture);
+    framework_rules_with(
+        &fixture,
+        r#"<giteca rule-name="HeldForReview" event="pre-receive">
+            <condition><expression>forReview &amp;&amp; newCommits.some(c => c.summary.startsWith('BLOCK'))</expression></condition>
+            <actions><message error="true">not taken for review</message></actions>
+        </giteca>"#,
+    );
     developer(&fixture);
     define(&fixture, "site", kind);
     let head = |name: &str| head_of(&fixture, "site", &format!("refs/heads/{name}"));
@@ -178,17 +189,20 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
         &git("create#GitRef"),
         &[("repositoryId", s("site")), ("refName", s("dev"))],
     );
-    let on_dev = committed(
-        &fixture,
-        WRITER,
-        &[
-            ("branch", s("dev")),
-            ("message", s("On dev")),
-            ("fileMap", files(&[("docs/a.md", "one\ndev\n")])),
-            ("authorName", s("Ada Author")),
-            ("authorEmail", s("ada@example.com")),
-        ],
-    );
+    let by_ada = [
+        ("repositoryId", s("site")),
+        ("branch", s("dev")),
+        ("message", s("On dev")),
+        ("fileMap", files(&[("docs/a.md", "one\ndev\n")])),
+        ("authorName", s("Ada Author")),
+        ("authorEmail", s("ada@example.com")),
+    ];
+    // who a commit is by is the application's to say, not a caller's
+    let (_, errors) = call(&fixture, WRITER, &git("commit#GitFiles"), &by_ada);
+    assert!(errors.contains("authorization disabled"), "{errors}");
+    assert_eq!(head("dev").as_deref(), Some(c1.as_str()));
+    let (on_dev, errors) = internal(&fixture, WRITER, &git("commit#GitFiles"), &by_ada);
+    assert!(errors.trim().is_empty(), "{errors}");
     let dev_commit = get(&on_dev, "commitId").to_string();
     assert_eq!(head("dev").as_deref(), Some(dev_commit.as_str()));
     assert_eq!(head("main").as_deref(), Some(c1.as_str()));
@@ -227,6 +241,59 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
     assert_eq!(head("main").as_deref(), Some(c1.as_str()));
     let (_, errors) = commit(&fixture, WRITER, &patch);
     assert!(errors.contains("GitRefExists"), "{errors}");
+    // a name git does not take makes no ref
+    for name in ["bad..name", "ends.lock", "has space", "refs/heads/../x", "-dash/~1"] {
+        let (_, errors) = commit(
+            &fixture,
+            WRITER,
+            &[
+                ("newBranch", s(name)),
+                ("message", s("No")),
+                ("fileMap", files(&[("b.txt", "no\n")])),
+            ],
+        );
+        assert!(errors.contains("GitBadRefName"), "{name}: {errors}");
+    }
+    let branches = ok(
+        &fixture,
+        READER,
+        &git("get#GitRefs"),
+        &[("repositoryId", s("site")), ("refType", s("branch"))],
+    );
+    assert_eq!(list(&branches, "refList").len(), 3, "main, dev and patch-1");
+
+    // a commit of a branch that is gone: in a repository alone in its store, read by id by who may push
+    let gone = committed(
+        &fixture,
+        WRITER,
+        &[
+            ("newBranch", s("gone")),
+            ("message", s("Gone")),
+            ("fileMap", files(&[("g.txt", "g\n")])),
+        ],
+    );
+    let gone = get(&gone, "commitId").to_string();
+    ok(
+        &fixture,
+        WRITER,
+        &git("delete#GitRef"),
+        &[("repositoryId", s("site")), ("refName", s("gone"))],
+    );
+    let reads = |user: &str, commit: &str| {
+        let out = ok(
+            &fixture,
+            user,
+            &git("get#GitCommit"),
+            &[
+                ("repositoryId", s("site")),
+                ("commitId", s(commit)),
+                ("stats", s("false")),
+            ],
+        );
+        out.contains_key("commit")
+    };
+    assert!(reads(WRITER, &gone) && reads(WRITER, &gone[..12]));
+    assert!(!reads(READER, &gone) && !reads(READER, &gone[..12]));
 
     // the blob an edit began from: the same one commits, another is a conflict that says what is there now
     let tree = ok(
@@ -332,6 +399,31 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
     );
     assert!(errors.contains("GitProtectedBranch"), "{errors}");
     assert_eq!(head("main"), main_before_rule);
+    // an application's own write passes them when it says so, with authorization disabled; a caller's does not
+    let past = [
+        ("repositoryId", s("site")),
+        ("message", s("Release notes")),
+        ("fileMap", files(&[("CHANGELOG.md", "1.0\n")])),
+        ("bypassBranchRules", s("true")),
+    ];
+    let (_, errors) = call(&fixture, WRITER, &git("commit#GitFiles"), &past);
+    assert!(errors.contains("GitProtectedBranch"), "{errors}");
+    let (noted, errors) = internal(&fixture, WRITER, &git("commit#GitFiles"), &past);
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(head("main").as_deref(), Some(get(&noted, "commitId")));
+    let main_before_rule = head("main");
+
+    // a proposal meets the rules a push for review meets
+    let (_, errors) = commit(
+        &fixture,
+        READER,
+        &[
+            ("asProposal", s("true")),
+            ("message", s("BLOCK this")),
+            ("fileMap", files(&[("guide/a.md", "blocked\n")])),
+        ],
+    );
+    assert!(errors.contains("not taken for review"), "{errors}");
 
     // a proposal by a reader: no branch, the commit the head of a merge request; again, the same one
     let proposed = committed(
@@ -418,7 +510,13 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
             ("repositoryId", s("site")),
             (
                 "commitIdList",
-                Value::List(vec![s(&c1), s(&proposal), s("0".repeat(40).as_str())]),
+                // the proposal's first commit is its head no more: who pushed it is not told either
+                Value::List(vec![
+                    s(&c1),
+                    s(&proposal),
+                    s(get(&again, "commitId")),
+                    s("0".repeat(40).as_str()),
+                ]),
             ),
         ],
     );
@@ -428,7 +526,7 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
         .collect();
     assert_eq!(by_commit.len(), 2, "{by_commit:?}");
     assert_eq!(by_commit[&c1], WRITER);
-    assert_eq!(by_commit[&proposal], READER);
+    assert_eq!(by_commit[get(&again, "commitId")], READER);
 
     // a merge request with a given number, for an import: only with authorization disabled, and only a free one
     let numbered = [
@@ -490,7 +588,7 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
     }
     ok(&fixture, WRITER, &git("create#GitCommitStatus"), &status("lint"));
 
-    // merging: update is enough for a branch with no rule, a protected one needs delete
+    // merging needs the update right, into a branch with rules too; what merges is the head that was checked
     let into_dev = ok(
         &fixture,
         DEVELOPER,
@@ -498,7 +596,7 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
         &[("mergeRequestId", s(get(&next, "mergeRequestId")))],
     );
     assert!(!get(&into_dev, "commitId").is_empty());
-    committed(
+    let clean_commit = committed(
         &fixture,
         WRITER,
         &[
@@ -527,22 +625,12 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
         );
         text_of(out.get("canMerge").unwrap())
     };
-    assert_eq!(asked(DEVELOPER), "false");
-    assert_eq!(asked(WRITER), "true");
-    let (_, errors) = call(
-        &fixture,
-        DEVELOPER,
-        &review("merge#MergeRequest"),
-        &[("mergeRequestId", s(&clean_request))],
-    );
-    assert!(
-        errors.contains("GitProtectedBranch") && errors.contains("delete right"),
-        "{errors}"
-    );
+    assert_eq!(asked(DEVELOPER), "true");
+    assert_eq!(asked(READER), "false");
     settled(&fixture);
     let merged = ok(
         &fixture,
-        WRITER,
+        DEVELOPER,
         &review("merge#MergeRequest"),
         &[("mergeRequestId", s(&clean_request))],
     );
@@ -551,6 +639,42 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
     // the merge request of dev, whose number was given, is still there
     assert!(!dev_request.is_empty());
     settled(&fixture);
+
+    // a merge request from before the head refs were kept: its ref comes back from its recorded head when it is read
+    let clean_num = text_of(clean.get("mergeRequestNum").unwrap());
+    let head_ref = format!("refs/merge-requests/{clean_num}/head");
+    {
+        let _entered = fixture.context.enter();
+        let provider = crate::provider(fixture.context.factory()).unwrap();
+        let repo = provider.repo("site").unwrap();
+        let current = repo.store.read_ref(&head_ref).unwrap();
+        assert_eq!(
+            current.map(|id| id.to_string()).as_deref(),
+            Some(get(&clean_commit, "commitId"))
+        );
+        repo.store
+            .update_refs(
+                &[crate::store::RefEdit {
+                    name: head_ref.clone(),
+                    expected: current,
+                    new: None,
+                }],
+                true,
+            )
+            .unwrap();
+    }
+    assert_eq!(head_of(&fixture, "site", &head_ref), None);
+    let diff = ok(
+        &fixture,
+        READER,
+        &review("get#MergeRequestDiff"),
+        &[("mergeRequestId", s(&clean_request)), ("withDiffs", s("false"))],
+    );
+    assert_eq!(list(&diff, "commitList").len(), 1);
+    assert_eq!(
+        head_of(&fixture, "site", &head_ref).as_deref(),
+        Some(get(&clean_commit, "commitId"))
+    );
 }
 
 #[test]

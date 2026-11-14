@@ -1269,8 +1269,9 @@
         merge-request-url is the page told to the client ({repositoryPath}, {repositoryId}, {mergeRequestNum},
         {mergeRequestId}; after public-url when it starts with /). A commit is read or fetched by its id only when a
         ref reaches it, from at most reach-max-commits commits kept in memory per repository; get#GitCommitRefs reads
-        at most contains-max-commits. Commit status contexts that start with one of reserved-status-contexts are
-        written with authorization disabled only (empty: none). committer-name and committer-email are the committer
+        at most contains-max-commits. Commit status contexts that start with one of reserved-status-contexts (comma
+        separated; none by default, a hosting application sets agreement/,ci/) are written with authorization
+        disabled only. The head ref of a merge request closed unmerged is deleted review-ref-retention-days after. committer-name and committer-email are the committer
         of a commit#GitFiles commit whose author the application gives.
     -->
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
@@ -1286,7 +1287,7 @@
             db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"
             review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
             merge-request-url="" reach-max-commits="1000000" contains-max-commits="200000"
-            reserved-status-contexts="agreement/,ci/" committer-name="" committer-email=""/>
+            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
