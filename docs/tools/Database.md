@@ -159,15 +159,18 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   the status line says how many there are. Save document makes a version of everything up to then; Discard takes
   every unsaved edit back, everyone's. A version saved outside CalcGrid (a definition restored, a git pull) begins the
   log again from it.
-- **Refresh** reads the data sheets again and calculates. **XLSX** downloads the workbook as it is, data and
-  calculated values.
+- **Refresh** reads the data sheets again and calculates. When a data sheet has as many rows as before, its rows are
+  replaced in the open workbook and only what reads them is calculated again. **XLSX** downloads the workbook as it
+  is, data and calculated values, with the document's charts as Excel charts on a sheet named Charts; a scheduled
+  export holds them too.
 - **A document** (Save document, Documents) is a report definition of type `calcgrid`: the data sheets' sources,
   the charts, and the workbook without its data. No row of a data sheet is stored, no value calculated from one, and
   none of the data's texts; opening reads the data again as the user who opens it. Its versions and sharing are the
   definitions' ([Monitoring](Monitoring.md#the-dashboards-app)); it is at most 8 MB.
 - **Formulas over a data sheet** name its columns (`=SUM(Enumeration[sequenceNum])`): the sheet is a table named for
-  it. Every formula is calculated again on a refresh, so many sums over a large sheet are slow: the toolbar shows the
-  time when it is over a quarter of a second.
+  it. An edit calculates only the formulas that read what it changed, and what reads those; inserting or deleting rows
+  or columns, and a refresh with another number of rows, calculate every formula. The toolbar shows the time when it
+  is over a quarter of a second, and how much of the server's memory the open workbook takes.
 - **In the terminal** (`moqui tui`, over SSH, the browser's terminal): the grid's list of records has a link to Calc,
   and `?mode=calc` (or a document's `definitionId`) shows the workbook as a sheet, the `calcgrid` component
   ([TUI](../ui/TUI.md#components)): the cells that fit, the formula bar, the sheet tabs and who else has it open,

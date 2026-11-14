@@ -28,7 +28,7 @@ use moqui_core::context::Error;
 use moqui_core::workbook::ironcalc::base::types::{
     Alignment, Cell, HorizontalAlignment, Style, Table, TableColumn, TableStyleInfo, VerticalAlignment, Workbook,
 };
-use moqui_core::workbook::ironcalc::base::Model;
+use moqui_core::workbook::ironcalc::base::{Model, UserModel};
 use serde_json::{json, Value as Json};
 
 /// The data rows a stored data sheet keeps, empty, so ranges over the data have rows to stretch from.
@@ -157,13 +157,8 @@ struct Styles {
 }
 
 impl Styles {
-    fn of(workbook: &mut Workbook) -> Self {
-        let mut index = |style: &Style| {
-            workbook
-                .styles
-                .get_style_index(style)
-                .unwrap_or_else(|| workbook.styles.create_new_style(style))
-        };
+    /// The styles of a header, a date, a time and a time stamp.
+    fn specs() -> [Style; 4] {
         let mut header = Style::default();
         header.font.b = true;
         let format = |format: &str| Style {
@@ -175,13 +170,141 @@ impl Styles {
             }),
             ..Style::default()
         };
+        [
+            header,
+            format("yyyy-mm-dd"),
+            format("hh:mm:ss"),
+            format("yyyy-mm-dd hh:mm:ss"),
+        ]
+    }
+
+    fn of(workbook: &mut Workbook) -> Self {
+        let [header, date, time, date_time] = Self::specs().map(|style| {
+            workbook
+                .styles
+                .get_style_index(&style)
+                .unwrap_or_else(|| workbook.styles.create_new_style(&style))
+        });
         Self {
-            header: index(&header),
-            date: index(&format("yyyy-mm-dd")),
-            time: index(&format("hh:mm:ss")),
-            date_time: index(&format("yyyy-mm-dd hh:mm:ss")),
+            header,
+            date,
+            time,
+            date_time,
         }
     }
+
+    /// The styles a fill made, if the workbook has them all.
+    fn found(workbook: &Workbook) -> Option<Self> {
+        let [header, date, time, date_time] = Self::specs().map(|style| workbook.styles.get_style_index(&style));
+        Some(Self {
+            header: header?,
+            date: date?,
+            time: time?,
+            date_time: date_time?,
+        })
+    }
+}
+
+/// The cells of a data row, with their column, and how wide each column shows (`widths`, in characters, grown).
+fn row_cells(
+    cells: &[CellData],
+    styles: &Styles,
+    shared: &mut impl FnMut(&str) -> i32,
+    widths: &mut [usize],
+) -> Vec<(i32, Cell)> {
+    cells
+        .iter()
+        .enumerate()
+        .filter_map(|(column, cell)| {
+            let (made, shown) = match cell {
+                CellData::Empty => return None,
+                CellData::Text(text) => (
+                    Cell::SharedString {
+                        si: shared(text),
+                        s: 0,
+                    },
+                    text.chars().count(),
+                ),
+                CellData::Number(number) => (Cell::NumberCell { v: *number, s: 0 }, 10),
+                CellData::Bool(flag) => (Cell::BooleanCell { v: *flag, s: 0 }, 5),
+                CellData::Date(number) => (
+                    Cell::NumberCell {
+                        v: *number,
+                        s: styles.date,
+                    },
+                    10,
+                ),
+                CellData::Time(number) => (
+                    Cell::NumberCell {
+                        v: *number,
+                        s: styles.time,
+                    },
+                    8,
+                ),
+                CellData::DateTime(number) => (
+                    Cell::NumberCell {
+                        v: *number,
+                        s: styles.date_time,
+                    },
+                    19,
+                ),
+            };
+            if let Some(width) = widths.get_mut(column) {
+                *width = (*width).max(shown);
+            }
+            Some((i32::try_from(column + 1).unwrap_or(i32::MAX), made))
+        })
+        .collect()
+}
+
+/// Replace the rows of each data sheet of an open workbook with `sheets`' rows, in place, when that can be done: each
+/// sheet is there, with the columns it has now and the styles a fill made, and has as many rows as before (the caller
+/// sees to that, so nothing moves and only what reads the rows needs evaluating). Gives false, having changed nothing,
+/// when it cannot be done: the workbook is then made again ([`fill`]).
+///
+/// # Errors
+///
+/// Returns the engine's error.
+pub fn refill(model: &mut UserModel<'static>, sheets: &[SheetRows]) -> Result<bool, Error> {
+    let Some(styles) = Styles::found(&model.get_model().workbook) else {
+        return Ok(false);
+    };
+    let mut indexes = Vec::with_capacity(sheets.len());
+    for sheet in sheets {
+        let Some(index) = sheet_index(model.get_model(), &sheet.name) else {
+            return Ok(false);
+        };
+        let columns = i32::try_from(sheet.columns.len()).unwrap_or(i32::MAX);
+        let header_is = |column: i32, expected: &str| {
+            model
+                .get_model()
+                .get_formatted_cell_value(index, 1, column)
+                .is_ok_and(|text| text == expected)
+        };
+        let same_header = sheet
+            .columns
+            .iter()
+            .enumerate()
+            .all(|(at, name)| header_is(i32::try_from(at + 1).unwrap_or(i32::MAX), name))
+            && header_is(columns + 1, "");
+        if !same_header {
+            return Ok(false);
+        }
+        indexes.push(index);
+    }
+    for (sheet, index) in sheets.iter().zip(indexes) {
+        let mut widths = vec![0; sheet.columns.len()];
+        let rows: Vec<Vec<(i32, Cell)>> = sheet
+            .rows
+            .iter()
+            .map(|cells| row_cells(cells, &styles, &mut |text| model.intern_shared_string(text), &mut widths))
+            .collect();
+        let count = i32::try_from(sheet.rows.len()).map_err(|_| Error::new("Too many rows for a sheet"))?;
+        model
+            .replace_rows(index, 2, count.max(STUB_ROWS), rows)
+            .map_err(engine)?;
+    }
+    Ok(true)
 }
 
 /// Fill each data sheet of `model` with its rows, adding a sheet the workbook does not have, and give the model made
@@ -252,49 +375,7 @@ pub fn fill(mut model: Model<'static>, sheets: &[SheetRows]) -> Result<Model<'st
             .collect();
         worksheet.sheet_data.set_row(1, header);
         for (row, cells) in sheet.rows.iter().enumerate() {
-            let written: Vec<(i32, Cell)> = cells
-                .iter()
-                .enumerate()
-                .filter_map(|(column, cell)| {
-                    let (made, shown) = match cell {
-                        CellData::Empty => return None,
-                        CellData::Text(text) => (
-                            Cell::SharedString {
-                                si: shared(text, &mut all),
-                                s: 0,
-                            },
-                            text.chars().count(),
-                        ),
-                        CellData::Number(number) => (Cell::NumberCell { v: *number, s: 0 }, 10),
-                        CellData::Bool(flag) => (Cell::BooleanCell { v: *flag, s: 0 }, 5),
-                        CellData::Date(number) => (
-                            Cell::NumberCell {
-                                v: *number,
-                                s: styles.date,
-                            },
-                            10,
-                        ),
-                        CellData::Time(number) => (
-                            Cell::NumberCell {
-                                v: *number,
-                                s: styles.time,
-                            },
-                            8,
-                        ),
-                        CellData::DateTime(number) => (
-                            Cell::NumberCell {
-                                v: *number,
-                                s: styles.date_time,
-                            },
-                            19,
-                        ),
-                    };
-                    if let Some(width) = widths.get_mut(column) {
-                        *width = (*width).max(shown);
-                    }
-                    Some((i32::try_from(column + 1).unwrap_or(i32::MAX), made))
-                })
-                .collect();
+            let written = row_cells(cells, &styles, &mut |text| shared(text, &mut all), &mut widths);
             worksheet
                 .sheet_data
                 .set_row(i32::try_from(row + 2).unwrap_or(i32::MAX), written);

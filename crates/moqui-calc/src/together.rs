@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
+use moqui_core::workbook::ironcalc::base::expressions::types::Area;
 use moqui_lib::sync::lock;
 use serde_json::{json, Value as Json};
 
@@ -79,7 +80,7 @@ fn follow(room: &mut Room, rows: &[LogRow], head: &log::Head) -> Result<(), Erro
 /// Bring every room of `definition_id` on this server up to the log: what the host does when any server announces an
 /// edit. The ids of the rooms that changed, and of those dropped (their viewers open the document again).
 #[must_use]
-pub fn catch_up_document(factory: &ExecutionContextFactory, definition_id: &str) -> (Vec<String>, Vec<String>) {
+pub fn catch_up_document(factory: &ExecutionContextFactory, definition_id: &str) -> (Vec<Followed>, Vec<String>) {
     let rooms = Rooms::of(factory);
     let Some(facade) = factory.entity() else {
         return (Vec::new(), Vec::new());
@@ -87,8 +88,13 @@ pub fn catch_up_document(factory: &ExecutionContextFactory, definition_id: &str)
     let (mut changed, mut dropped) = (Vec::new(), Vec::new());
     for room in rooms.document_rooms(definition_id) {
         let mut held = lock(&room);
+        let from = held.seq;
         match catch_up(&facade, &mut held) {
-            Ok(true) => changed.push(held.id.clone()),
+            Ok(true) => changed.push(Followed {
+                room: held.id.clone(),
+                from,
+                changed: held.changed().map(<[_]>::to_vec),
+            }),
             Ok(false) => {}
             Err(err) => {
                 tracing::info!(room = %held.id, error = %err, "A CalcGrid room is opened anew");
@@ -100,6 +106,33 @@ pub fn catch_up_document(factory: &ExecutionContextFactory, definition_id: &str)
         rooms.drop_room(id);
     }
     (changed, dropped)
+}
+
+/// A room that followed the document's log ([`catch_up_document`]): the edit it was at before, and what the
+/// evaluation after changed, when the edits followed changed values only.
+pub struct Followed {
+    pub room: String,
+    pub from: i64,
+    pub changed: Option<Vec<Area>>,
+}
+
+/// Changed areas as a view reads them: a list of maps of sheet, row, column, width and height.
+#[must_use]
+pub fn areas_json(areas: &[Area]) -> Json {
+    Json::Array(
+        areas
+            .iter()
+            .map(|area| {
+                json!({
+                    "sheet": area.sheet,
+                    "row": area.row,
+                    "column": area.column,
+                    "width": area.width,
+                    "height": area.height,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// What an edit of a shared room did: the log's edit it is, and the refusal that stopped it part way.

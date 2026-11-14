@@ -44,6 +44,8 @@
             <parameter name="charts" type="List"><description>Each chart of the document (title, type, categories, series)
                 with labels and each series' data read from the ranges it names, or its error.</description></parameter>
             <parameter name="evaluateMs" type="Double"/>
+            <parameter name="memoryBytes" type="Long"><description>What the open workbook takes in the server's memory: its cells, texts and
+                the record of what each formula reads (the engine's estimate).</description></parameter>
             <parameter name="truncated" type="List"><description>The data sheets whose source had more than maxDataRows rows.</description></parameter>
             <parameter name="maxDataRows" type="Long"/>
             <parameter name="canUndo" type="Boolean"/>
@@ -89,6 +91,7 @@
             <parameter name="sheets" type="List"/>
             <parameter name="charts" type="List"/>
             <parameter name="evaluateMs" type="Double"/>
+            <parameter name="memoryBytes" type="Long"/>
             <parameter name="truncated" type="List"/>
             <parameter name="maxDataRows" type="Long"/>
             <parameter name="canUndo" type="Boolean"/>
@@ -179,10 +182,14 @@
             <parameter name="sheets" type="List"/>
             <parameter name="charts" type="List"/>
             <parameter name="evaluateMs" type="Double"/>
+            <parameter name="memoryBytes" type="Long"/>
             <parameter name="truncated" type="List"/>
             <parameter name="maxDataRows" type="Long"/>
             <parameter name="canUndo" type="Boolean"/>
             <parameter name="canRedo" type="Boolean"/>
+            <parameter name="changed" type="List"><description>When the edits changed values only (input, paste, clear,
+                fill), the areas they and the evaluation changed, each a map of sheet, row, column, width and height: a
+                view reads those cells again and keeps the rest. Absent when anything may have changed.</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="CalcCellContent" type="rust" location="moqui_calc::service::get_calc_cell_content" transaction="ignore">
@@ -228,6 +235,7 @@
             <parameter name="sheets" type="List"/>
             <parameter name="charts" type="List"/>
             <parameter name="evaluateMs" type="Double"/>
+            <parameter name="memoryBytes" type="Long"/>
             <parameter name="truncated" type="List"/>
             <parameter name="maxDataRows" type="Long"/>
             <parameter name="canUndo" type="Boolean"/>
@@ -251,6 +259,7 @@
             <parameter name="sheets" type="List"/>
             <parameter name="charts" type="List"/>
             <parameter name="evaluateMs" type="Double"/>
+            <parameter name="memoryBytes" type="Long"/>
             <parameter name="truncated" type="List"/>
             <parameter name="maxDataRows" type="Long"/>
             <parameter name="canUndo" type="Boolean"/>

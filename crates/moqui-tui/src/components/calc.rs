@@ -67,6 +67,30 @@ struct Editing {
 }
 
 /// What the component keeps in its state's `local`.
+/// Whether an edit's answer says that the edit changed none of the cells the view holds, which then stay: it changed
+/// values only (the answer has `changed`), it is the view's own edit alone (the room did not follow another's edit
+/// first), and no area it changed is on the rows of the view's block or its frozen rows, on the sheet shown.
+fn changed_outside_block(view: &View, answer: &Value) -> bool {
+    let Some(changed) = answer["changed"].as_array() else {
+        return false;
+    };
+    if answer["shared"] == true && answer["seq"].as_i64() != Some(view.seq + 1) {
+        return false;
+    }
+    let number = |value: &Value| value.as_i64().unwrap_or(0);
+    let (top, height) = (number(&view.block["row"]), number(&view.block["height"]));
+    if height <= 0 {
+        return false;
+    }
+    let frozen_rows = i64::from(view.frozen_counts().0);
+    changed.iter().all(|area| {
+        let first = number(&area["row"]);
+        let last = first + number(&area["height"]) - 1;
+        area["sheet"].as_i64() != Some(i64::from(view.sheet))
+            || ((last < top || first >= top + height) && first > frozen_rows)
+    })
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct View {
@@ -744,6 +768,7 @@ impl Component for CalcGrid {
         }
         if value["roomId"].is_string() && value["sheets"].is_array() {
             let functions = view.room["functions"].clone();
+            let kept = changed_outside_block(&view, &value);
             view.room = value;
             if !view.room["functions"].is_array() {
                 view.room["functions"] = functions;
@@ -754,8 +779,8 @@ impl Component for CalcGrid {
                 view.show_sheet(first);
             }
             view.need_state = false;
-            view.need_cells = true;
-            view.need_frozen = view.frozen_counts().0 > 0;
+            view.need_cells = !kept;
+            view.need_frozen = !kept && view.frozen_counts().0 > 0;
             view.need_content = true;
         } else if value.get("content").is_some() {
             view.content = value["content"].as_str().unwrap_or("").to_string();
