@@ -24,7 +24,7 @@ use std::sync::Mutex;
 
 use moqui_lib::object::{to_plain_string, Value};
 
-use moqui_core::context::{Error, ExecutionContext};
+use moqui_core::context::Error;
 use moqui_core::entity::{EntityFacade, EntityValue};
 
 use super::file::{CiFile, Event, Pipeline};
@@ -220,8 +220,7 @@ fn decide(request: &RunRequest, pipeline: &str, trusted: bool, job_count: usize)
             runner_pool_id: None,
         },
         Some(Err(err)) => {
-            // the errors are the check's answer, not the event's failure
-            ExecutionContext::with_current(|ec| ec.message().clear_errors());
+            // the errors are the check's answer, not the event's failure (taken from the message facade by call_hook)
             Decision {
                 decision: "refuse".to_string(),
                 trusted: false,
@@ -252,6 +251,44 @@ fn decide(request: &RunRequest, pipeline: &str, trusted: bool, job_count: usize)
                 runner_pool_id: text("runnerPoolId"),
             }
         }
+    }
+}
+
+/// Whether an ended run may run a job again: not one that was refused or never approved, and not one the
+/// application's check (`git-ci` `run-check-service`) would now refuse, hold for approval, or trust less. Why not.
+pub(crate) fn check_again(run: &EntityValue) -> Result<(), String> {
+    let run_id = field(run, "pipelineRunId").unwrap_or_default();
+    match field(run, "approvalState").as_deref() {
+        Some("refused") => return Err(format!("pipeline run {run_id} was refused and is not run again")),
+        Some("waiting") => return Err(format!("pipeline run {run_id} was never approved")),
+        _ => {}
+    }
+    let event = Event::parse(&field(run, "event").unwrap_or_default()).unwrap_or(Event::Manual);
+    let mut request = RunRequest::new(
+        &field(run, "repositoryId").unwrap_or_default(),
+        event,
+        &field(run, "refName").unwrap_or_default(),
+        &field(run, "commitId").unwrap_or_default(),
+    );
+    request.user_id = moqui_core::user::current_user_id().ok().flatten();
+    request.merge_request_id = field(run, "mergeRequestId");
+    request.source_repository_id = field(run, "sourceRepositoryId");
+    request.retry_of_run_id = Some(run_id.clone());
+    let trusted = super::is_yes(run, "trusted");
+    let decided = decide(&request, &field(run, "pipelineName").unwrap_or_default(), trusted, 1);
+    match decided.decision.as_str() {
+        "allow" if decided.trusted == trusted => Ok(()),
+        "allow" => Err(format!(
+            "the run check no longer trusts pipeline run {run_id}: run the pipeline again"
+        )),
+        "wait" => Err(format!(
+            "the run check holds pipeline run {run_id} for approval: {}",
+            decided.message.unwrap_or_default()
+        )),
+        _ => Err(format!(
+            "the run check refuses pipeline run {run_id}: {}",
+            decided.message.unwrap_or_default()
+        )),
     }
 }
 
@@ -452,7 +489,7 @@ fn queue_pipeline(
         ),
         _ => (
             "error",
-            "none",
+            "refused",
             decided
                 .message
                 .clone()
@@ -640,8 +677,10 @@ pub fn queue_due(provider: &GitProvider, entity: &EntityFacade, now: i64) -> Res
             continue;
         };
         let last = super::millis(row, "lastCheckDate").unwrap_or(now);
+        // at most one run every git-ci schedule-min-minutes (15), whatever the cron says
+        let min_millis = i64::try_from(super::number_setting("schedule-min-minutes", 15)).unwrap_or(15) * 60_000;
         let due = match moqui_core::service::info::next_cron_execution(&cron, last) {
-            Ok(next) => next.is_some_and(|next| next <= now),
+            Ok(next) => next.is_some_and(|next| next <= now) && now - last >= min_millis,
             Err(err) => {
                 tracing::error!(repository = %repository, pipeline = %pipeline, "a pipeline's cron does not parse: {err}");
                 false

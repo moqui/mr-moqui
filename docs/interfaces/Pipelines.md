@@ -120,13 +120,17 @@ not.
 - **`cache`**: a directory kept between runs by key. `${hash:FILE}` in the key is the SHA-256 of a file of the
   checkout. It is restored before the first step, and saved after the last when the job succeeded and nothing is
   stored under the key. Caches are per repository and apart for protected refs: a run for a protected ref reads only
-  caches such a run wrote; any other run reads both.
+  caches such a run wrote, an untrusted run never reads them (a build with secrets may have filled one), and another
+  trusted run reads both. A key with a `/` outside its `${hash:...}` parts, or longer than 200 characters once each
+  hash is its 16 digits, is an error of the file.
 - **`artifact`**: files uploaded when the steps have run, also of a failed job, as one tar.gz download with a size, a
   checksum and an expiry (`retention-days`).
 - **`report`**: JUnit XML files. Each is a download, and each failed test becomes a row with its suite, name, file,
   line and message (`moqui test --junit` writes such files; the file and line come from the test case's attributes,
   else from the first `path:line` of the failure's text).
 - **`service`**: a container beside the job (a database), reached by its name as a host name, removed with the job.
+  At most `git-ci` `max-services` (4) a job; its image must be one the pool allows, as the job's is, and it is kept in
+  as the job's container is ([runners and drivers](#runners-and-drivers)).
 - **`secret`**: a secret the job asks for, as an environment variable ([secrets](#secrets)).
 
 A path (`cache`, `artifact`, `report`) is inside the checkout; `*` in a segment is any run of characters of one name.
@@ -156,6 +160,11 @@ Each job run writes a `GitCommitStatus` of the run's commit with the context `ci
 `ci/<pipeline>/<job> (value, value)` for a matrix job: `pending` when it is queued (or waits for approval), then
 `success`, `failure` (a step failed, or a job it needs did not succeed) or `error` (timed out, cancelled, no pool, a
 refused run). A branch rule's `requiredStatusContexts` names the contexts a merge needs, as for outside CI. The
+contexts a merge request's run writes are those its **head's** `ci.xml` defines, as the run reads the file at the
+head: a merge request can drop or rename a job, and then its context is never written, so the merge waits, but it can
+also write a context the target branch's pipeline does not have. Name in `requiredStatusContexts` the contexts the
+target branch's pipeline defines (the engine does not read the target's file to decide which are required; the
+branch rule's list is what decides). The
 status's target is the run's page: what `git-ci` `run-url-service` answers
 (`org.moqui.git.GitCiServices.get#PipelineRunUrl`), else the `run-url` template with `{repositoryId}`,
 `{repositoryPath}`, `{pipelineRunId}`, `{runNum}` and `{jobRunId}`.
@@ -185,26 +194,40 @@ right. An untrusted run:
   `approve#PipelineRun` is called by a user with the update right, or with authorization disabled. Approved, it is
   still untrusted.
 
+A run refused by the check (`approvalState` `refused`) or never approved is not run again: `retry#JobRun` refuses
+it, and for any other ended run asks the check again (with the run's event, ref, commit and the caller), so a run
+the check would now refuse, hold or trust less is not run again either. The new attempt keeps the pool the old one
+ran in (`runnerPoolId`).
+
 Before any run is queued the engine asks the service `git-ci` `run-check-service` names, with authorization
 disabled, as the LFS upload check is asked (`org.moqui.git.GitCiServices.check#PipelineRun` is its interface). It
 answers `decision`: `allow` (an untrusted run may start with no approval), `wait` (hold a trusted run too, for a
 quota) or `refuse` (an `error` run whose statuses carry the `message`; an error the service leaves refuses too). It
 may lower `trusted` and never raise it, and may name the `ownerId` the run's secrets and usage count under and the
 `runnerPoolId` its jobs use. With no service, or no decision, a trusted run is allowed and an untrusted one waits.
+**A server whose accounts sign themselves up sets `run-check-service`**: with none, any account's push to its own
+repository is a trusted run (it has the update right there), so the application decides whether a public account's
+own repository runs without approval, and names each run's owner.
+
+A scheduled pipeline runs at most once in `git-ci` `schedule-min-minutes` (15), whatever its cron says.
 
 The engine never runs a step on the server.
 
 ## Secrets
 
 A `GitCiSecret` is a repository's, or an owner's that the application names (a group, an account; the run's
-`ownerId`). Its value is encrypted, written through `store#CiSecret` and never read back by a service. A job is given
-a secret it asks for only when its run is trusted and the secret's scope is met:
+`ownerId`). Its value is encrypted, written through `store#CiSecret` and never read back by a service. The secrets
+and environments of a repository are managed (`find#CiSecrets`, `store#`, `delete#CiSecret`, `store#`,
+`delete#CiEnvironment`) by a user with the **delete** right on it (a maintainer), not the update right a developer
+who pushes has, or with authorization disabled; an owner's with authorization disabled only. A secret moved to another
+scope or environment takes a new value: its old one was given for the old scope. A job is given a secret it asks for
+only when its run is trusted and the secret's scope is met:
 
 | Scope | Given when |
 | --- | --- |
-| `protected` | The run's ref is named by a branch rule (a protected branch or tag). Never for a merge request's run. |
+| `protected` | The run's ref is protected: a branch rule that names it keeps direct pushes to a push group (`pushUserGroupId`) or to merge requests (`requireMergeRequest`). A rule that only forbids a force push or a delete protects nothing. Never for a merge request's run. |
 | `tags` | The run's ref is a protected tag. |
-| `environment` | The job's `environment` is the secret's environment. |
+| `environment` | The job's `environment` is the secret's environment, and the environment allows the run: never a merge request's run; a run of a protected ref, or of a branch its `allowedRefs` names; with `approvalRequired`, only an approved run. |
 
 A secret that is not given leaves its variable unset. Its value is masked (`***`) in the job's log as the lines are
 stored, whole and line by line for a value of several lines; a value under four characters is not masked. A step can
@@ -219,12 +242,16 @@ A runner is never the server, nor on its machine or its network. A pool (`GitRun
 | --- | --- |
 | `poolName` | What a job's `pool` names; `default` for a job that names none. Two pools may share a name, one trusted and one not. |
 | `poolKind` | `container`: the engine starts a container on `instanceHostId`. `registered`: the pool's runners ask for jobs. |
+| `ownerId` | Whose runs it takes; a shared pool when empty. A pool of `registered` runners has one on a server with `run-check-service` (one with tenants): a runner keeps its machine from one job to the next. A shared pool takes no job of an owner that has its own pool of the job's pool name and trust. |
 | `trusted` | Y: trusted runs only. N: untrusted runs only. |
 | `allowedImages` | Image patterns (`*`). A job whose image none matches is an error; an empty list allows none. |
 | `maxConcurrent`, `maxMinutes` | Jobs at once, and the longest a job runs. |
 | `cpuLimit`, `memoryMb`, `diskMb`, `pidsLimit` | The container's limits. `diskMb` needs a storage driver that takes it. |
-| `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. |
+| `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. Never `host` or `container:...` (refused when the pool is stored, and `none` if a row has one). |
 | `serverUrl` | The URL the pool's runners reach the server by, when it is not `git-ci` `server-url`. |
+
+The pools are an operator's: `find#RunnerPools`, `store#`, `delete#RunnerPool`, `create#RunnerPoolToken` and
+`revoke#Runner` need the `GIT_CI_ADMIN` permission (the `ADMIN` group has it) or authorization disabled.
 
 **Drivers.** An `InstanceHostType` names the services that start a run that ends, inspect it, remove it and clean up
 (`runStartService`, `runInspectService`, `runRemoveService`, `runCleanupService`; the interfaces are
@@ -245,13 +272,31 @@ rootless Podman is the better host for untrusted runs. The server's certificate 
 reaches it.
 
 A job's container is created with: no privilege, every capability dropped, `no-new-privileges`, no host path or
-socket mounted, no port published, the user `git-ci` `container-user` (1000:1000; never root), a read-only root with
-an anonymous volume at `container-workdir` (`/workspace`) and a tmpfs at `/tmp`, the pool's limits and network mode,
-the name `moqui-ci-<jobRunId>` and the labels `moqui.ci.job`, `moqui.ci.run` and `moqui.ci.server`. Its environment is
-the server's URL, the job token and the job run's id; the job's own variables and its secrets are asked for by the
-runner with the token, and are never in the container's definition. An image the host does not have is pulled.
-Service containers are started first on a network of the job's own. The image must have a directory at the working
-directory that the user can write (the volume takes its owner), as `moqui-build` has.
+socket mounted, no port published, an init as process 1 that reaps what a step leaves (so orphans do not use up
+`pidsLimit`), the user `git-ci` `container-user` (1000:1000; root in no form, `0`, `0:x` or `root:x`), a read-only
+root with a sized tmpfs at `/tmp` (`container-tmp-mb`) and the working directory (`container-workdir`, `/workspace`)
+on a tmpfs of `container-workspace-mb` (4096; it counts toward `memoryMb`), or, when the pool sets `diskMb`, on the
+root filesystem `diskMb` sizes, which is then writable: the working directory is never unbounded. Then the pool's
+limits and network mode, the name `moqui-ci-<server id>-<jobRunId>` and the labels `moqui.ci.job`, `moqui.ci.run`
+and `moqui.ci.server`. Its environment is the server's URL, the job token and the job run's id; the job's own
+variables and its secrets are asked for by the runner with the token, and are never in the container's definition.
+
+An image the host does not have is pulled for a trusted pool, one pull at a time a host (others go on), for at most
+five minutes; **an untrusted pool's images are never pulled on demand**: one not on the host is an error, so pull them
+there first. The containers of a start pass are started after its claims, outside the pass's lock, on a thread of
+the engine's own (not the git server's workers), so a slow host holds no other start.
+
+Service containers are started first, kept in as the job's container is (its user, no capabilities, a read-only root
+with a sized tmpfs at `/tmp`, an init, the pool's CPU, memory and swap, pids and disk limits): a service image runs as
+that user and writes under `/tmp` (Postgres with `PGDATA` there). They are on a network of the job's own, named after
+its container, which reaches out only when the pool's `egressRule` is `bridge`: for `none` or a network of the host
+it is internal, and the job's container is put on the pool's network too, so the job's egress is the pool's and a
+service has none. A network of that name already there is an error (another run's), never shared.
+
+The names carry this server's id (`git-ci` `server-id`, else the public URL's host), and a removal or a cleanup
+touches only containers with this server's label, so two servers can share a host. The cleanup leaves a container
+made after it read which jobs run (a job that just started). The image must have a directory at the working directory
+that the user can write when `diskMb` is set, as `moqui-build` has.
 
 **The `fake` host type** starts nothing, records what it was asked (`FakeHosts` in
 `crates/moqui-git/src/ci/driver/fake.rs`) and answers as the host's `hostAddress` says: `success` and `hang` (a
@@ -269,7 +314,15 @@ MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_RUNNER_TOKEN=mqcr_... moq
 
 `register` prints the runner token, once. `poll` asks for a job every few seconds; when its pool has room it is given
 the oldest queued job of the pool with a job token, runs it in a directory of its own, and asks again. A runner runs
-one job at a time, and nothing isolates a job from the machine: use such a pool for trusted runs.
+one job at a time, and nothing isolates a job from the machine: use such a pool for trusted runs, of one owner. Each
+step's process group is killed when the step ends, and after each job `poll` kills every process of the runner's
+user but itself and what it runs under (never as root; `--keep-processes` leaves them), so what a job left running
+does not see the next job: run the runner as a user of its own, which nothing else uses.
+
+A pool token registers runners for `git-ci` `pool-token-days` (7), or the `validDays` of `create#RunnerPoolToken`;
+a new token replaces it, and with `revokeRunners` the pool's runners are revoked too (a token that leaked).
+`revoke#Runner` revokes one runner (`GitRunner.statusId` `revoked`): its token is refused from then on, and the job it
+runs ends as an error.
 
 ## Images
 
@@ -279,7 +332,8 @@ pins with clippy and rustfmt, a C toolchain, git, bash, curl, the libraries the 
 binary (the runner), and an MR Moqui tree at `/opt/moqui` for the built-in pipeline. `--chromium` and `--java` add
 Chromium and a Java runtime. Node is not needed.
 
-The engine builds no image. A pool lists the images it allows, and the host pulls one it does not have. A job's image
+The engine builds no image. A pool lists the images it allows (the job's and its services'), and the host of a
+trusted pool pulls one it does not have; an untrusted pool's host must have it. A job's image
 needs the runner command (`git-ci` `runner-command`, `moqui ci-run`), git and a shell; an image without the `moqui`
 binary cannot run a job yet ([not built](#not-built)).
 
@@ -329,7 +383,9 @@ token in `Authorization: Bearer`, taken only over HTTPS, from loopback, or with 
 Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (410
 after it ended or passed its time; 401 for a token that is not a job token of this server), and counts the job's requests (`runner-max-requests-per-minute`, 429 over it). A JSON body is at most
 `max-log-batch-bytes`; an upload is limited by its kind (`max-artifact-bytes`, `max-report-bytes`,
-`max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts and reports. A cache from an untrusted run is
+`max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches. What a repository and a
+run's owner keep is capped (`max-repository-upload-bytes`, `max-owner-upload-bytes`; 0, no cap): an upload past it is
+refused (`GitCiStorageQuota`) and one that would pass it is cut there. A cache from an untrusted run is
 422. A refusal is its status with `{"error": ...}`. A token that is not valid (401) counts as an authentication failure
 for web protection; an ended job's (410) does not.
 
@@ -403,13 +459,13 @@ run's do once approved, and their token is the only thing that fetches the hidde
 | `run#Pipeline` | update | A pipeline with the manual event, for a branch or tag |
 | `rerun#PipelineRun` | update | A new run for the same commit and event; one that was untrusted for where its commits came from stays so |
 | `cancel#PipelineRun` | update, or the user who asked for the run | A run that has ended is an error |
-| `retry#JobRun` | update | A new attempt of an ended job in its run; the old one is `superseded`, the jobs skipped for it wait again |
+| `retry#JobRun` | update | A new attempt of an ended job in its run, in the pool the old one ran in; the old one is `superseded`, the jobs skipped for it wait again. Not of a refused or never approved run, nor one the run check would now refuse, hold or trust less |
 | `approve#PipelineRun` | update, or authorization disabled | A run that does not wait is an error |
-| `find#CiSecrets`, `store#CiSecret`, `delete#CiSecret` | update for a repository's; authorization disabled for an owner's | Values are written and never read |
+| `find#CiSecrets`, `store#CiSecret`, `delete#CiSecret` | delete (a maintainer) for a repository's; authorization disabled for an owner's | Values are written and never read; a move to another scope or environment needs a new value |
 | `find#CiEnvironments` | view (a repository's) | Without the target's token |
-| `store#CiEnvironment`, `delete#CiEnvironment` | as secrets | Delete is refused while a secret is scoped to it |
-| `find#RunnerPools`, `store#RunnerPool`, `delete#RunnerPool`, `create#RunnerPoolToken` | an operator's (the caller's service authorization), or the application's | |
-| `get#RunnerUsage` | view, or authorization disabled for an owner's | A month's `minutesUsed`, `secondsUsed`, `untrustedMinutesUsed`, `jobCount` |
+| `store#CiEnvironment`, `delete#CiEnvironment` | as secrets | `allowedRefs`, `approvalRequired`; delete is refused while a secret is scoped to it |
+| `find#RunnerPools`, `store#RunnerPool`, `delete#RunnerPool`, `create#RunnerPoolToken`, `revoke#Runner` | `GIT_CI_ADMIN`, or authorization disabled | A token's `validDays` and `revokeRunners` |
+| `get#RunnerUsage` | view, or authorization disabled for an owner's | A month's `minutesUsed`, `secondsUsed`, `untrustedMinutesUsed`, `jobCount`, and the `artifactBytes` and `cacheBytes` stored now, for an application's quota |
 | `delete#RepositoryRuns` | delete, or authorization disabled | Everything the engine keeps of a repository, as `delete#GitRepository` removes it |
 
 **A job's log.** While the job runs `get#JobLog` gives the chunks after `afterChunkSeq` (`chunkList`,
@@ -468,11 +524,13 @@ Each job tolerates one failing piece: a job that cannot be started, checked or e
 | `max-file-bytes`, `max-pipelines`, `max-jobs`, `max-matrix`, `max-steps` | 256 KB, 20, 50, 20, 50 | What a `ci.xml` may hold |
 | `max-timeout-minutes`, `default-timeout-minutes`, `max-fetch-depth` | 360, 60, 50 | |
 | `max-log-bytes`, `max-log-batch-bytes` | 16 MB, 1 MB | A job's log; one runner request |
-| `max-artifact-bytes`, `max-report-bytes`, `max-cache-bytes`, `max-artifacts` | 1 GB, 16 MB, 2 GB, 100 | Uploads |
+| `max-artifact-bytes`, `max-report-bytes`, `max-cache-bytes`, `max-artifacts` | 1 GB, 16 MB, 2 GB, 100 | Uploads (`max-artifacts` counts caches too) |
+| `max-repository-upload-bytes`, `max-owner-upload-bytes` | 0, 0 | What a repository and an owner keep of uploads; 0: no cap |
+| `max-services`, `schedule-min-minutes`, `pool-token-days` | 4, 15, 7 | Services of a job; the least time between a schedule's runs; how long a pool token registers |
 | `artifact-retention-days`, `max-artifact-retention-days`, `log-retention-days`, `cache-retention-days` | 30, 365, 90, 30 | |
 | `lost-seconds`, `queue-timeout-minutes` | 180, 1440 | |
 | `runner-max-requests-per-minute`, `runner-command`, `start-inline` | 1200, `moqui ci-run`, true | |
-| `container-user`, `container-read-only-root`, `container-workdir`, `container-tmp-mb` | 1000:1000, true, `/workspace`, 1024 | A job's container |
+| `container-user`, `container-read-only-root`, `container-workdir`, `container-tmp-mb`, `container-workspace-mb` | 1000:1000, true, `/workspace`, 1024, 4096 | A job's container and its services |
 
 ## Tests
 

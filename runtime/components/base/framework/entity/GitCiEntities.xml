@@ -41,7 +41,8 @@ along with this software (see the LICENSE.md file). If not, see
             merge request, never): a secret of the protected or tags scope is given only then</description></field>
         <field name="hidden" type="text-indicator"><description>Y for a run of a hidden merge request's head: read
             only with authorization disabled, or by the merge request's author</description></field>
-        <field name="approvalState" type="text-short"><description>none, waiting or approved</description></field>
+        <field name="approvalState" type="text-short"><description>none, waiting, approved, or refused (the
+            application's check refused the run: it is not run again)</description></field>
         <field name="approvedByUserId" type="id"/>
         <field name="statusId" type="text-short" enable-audit-log="true"><description>waiting (for approval), queued,
             running, success, failure, error or cancelled</description></field>
@@ -151,6 +152,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="jobRunId" type="id"/>
         <field name="pipelineRunId" type="id"/>
         <field name="repositoryId" type="id"/>
+        <field name="ownerId" type="id-long"><description>The run's owner, whose uploads count toward git-ci
+            max-owner-upload-bytes</description></field>
         <field name="artifactKind" type="text-short"><description>artifact, report or cache</description></field>
         <field name="name" type="text-medium"/>
         <field name="path" type="text-medium"/>
@@ -159,7 +162,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sha256" type="id-long"/>
         <field name="cacheKey" type="text-medium"><description>A cache's key, hashes and matrix values expanded</description></field>
         <field name="protectedRef" type="text-indicator"><description>A cache written by a run for a protected ref:
-            such a run reads only these, and any other run reads both</description></field>
+            such a run reads only these, an untrusted run never these, and another trusted run both</description></field>
         <field name="keep" type="text-indicator"><description>Y: not removed when it expires</description></field>
         <field name="expireDate" type="date-time"/>
         <field name="lastUsedDate" type="date-time"><description>When a cache was last restored</description></field>
@@ -170,6 +173,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_ARTIFACT_JOB"><index-field name="jobRunId"/></index>
         <index name="GIT_ARTIFACT_CACHE"><index-field name="repositoryId"/><index-field name="artifactKind"/><index-field name="cacheKey"/></index>
         <index name="GIT_ARTIFACT_EXPIRE"><index-field name="expireDate"/></index>
+        <index name="GIT_ARTIFACT_OWNER"><index-field name="ownerId"/></index>
     </entity>
     <entity entity-name="GitRunTestFailure" package="moqui.resource" use="nontransactional" cache="never">
         <description>A test that failed in a job, from its JUnit reports.</description>
@@ -186,8 +190,10 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="GitCiSecret" package="moqui.resource" use="nontransactional" cache="never">
         <description>A secret a job may ask for (a secret element in ci.xml), of a repository or of an owner the
             application names (a group, an account). Given only to a job of a trusted run: for the protected scope on
-            a protected branch or tag, for tags on a protected tag, for environment in the job's environment. Its
-            value is never read back by a service.</description>
+            a protected branch or tag (one a branch rule keeps to a push group or to merge requests), for tags on a
+            protected tag, for environment in the job's environment when the environment allows the run (a protected
+            ref or allowedRefs, never a merge request, approved when approvalRequired). Its value is never read back
+            by a service.</description>
         <field name="secretId" type="id" is-pk="true"/>
         <field name="repositoryId" type="id"/>
         <field name="ownerId" type="id-long"/>
@@ -213,7 +219,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="targetUrl" type="text-medium"/>
         <field name="targetToken" type="text-long" encrypt="true"/>
         <field name="requiredPipeline" type="text-medium"/>
-        <field name="approvalRequired" type="text-indicator"/>
+        <field name="approvalRequired" type="text-indicator"><description>Y: its secrets go only to a run someone
+            approved</description></field>
+        <field name="allowedRefs" type="text-medium"><description>Branch patterns (* is any run of characters; one
+            that starts with refs/ is a full ref) whose runs get its secrets besides those of protected refs,
+            separated by spaces. A merge request's run never does.</description></field>
         <field name="lastCommitId" type="text-short"/>
         <field name="lastDeployDate" type="date-time"/>
         <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
@@ -247,6 +257,8 @@ along with this software (see the LICENSE.md file). If not, see
             conf's git-ci server-url, else the public URL, when empty</description></field>
         <field name="registrationTokenHash" type="text-medium"><description>The SHA-256 of the token a runner
             registers with (poolKind registered)</description></field>
+        <field name="registrationTokenExpireDate" type="date-time"><description>After it the token registers
+            nothing (create#RunnerPoolToken validDays, git-ci pool-token-days)</description></field>
         <relationship type="one-nofk" related="moqui.server.instance.InstanceHost"/>
         <index name="GIT_POOL_NAME"><index-field name="poolName"/></index>
     </entity>

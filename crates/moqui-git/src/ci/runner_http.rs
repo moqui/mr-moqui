@@ -431,6 +431,7 @@ fn job_request(
 
 /// Serve one request of the runner REST, in an entered context. A refusal is its status with `{"error": ...}`.
 pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn HttpResponder) {
+    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
     let outcome = (|| -> Result<Option<serde_json::Value>, Refused> {
         let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
             .ok_or_else(|| Refused::new(503, "no execution context"))?;
@@ -486,7 +487,9 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
         Ok(None) => {}
         Err(Refused(status, message)) => {
             // what a service left in the message facade is this request's, and is answered here
-            ExecutionContext::with_current(|ec| ec.message().clear_errors());
+            if let Some(mark) = mark {
+                ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark));
+            }
             respond(out, status, &json!({ "error": message }));
         }
     }

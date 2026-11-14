@@ -265,3 +265,39 @@ fn mr_moquis_own_pipelines_are_valid() {
         );
     }
 }
+
+#[test]
+fn a_job_has_at_most_the_servers_services_and_cache_keys_the_server_stores() {
+    let limits = Limits {
+        max_services: 2,
+        ..Limits::default()
+    };
+    let job = |inner: &str| {
+        format!(
+            r#"<ci><pipeline name="p" on="push"><job name="j" image="i">{inner}<step run="x"/></job></pipeline></ci>"#
+        )
+    };
+    let services = |count: usize| -> String {
+        (0..count)
+            .map(|n| format!(r#"<service name="s{n}" image="postgres:16"/>"#))
+            .collect()
+    };
+    assert!(parse(&job(&services(2)), &limits).is_ok());
+    let error = parse(&job(&services(3)), &limits).unwrap_err().to_string();
+    assert!(error.contains("more than this server's limit of 2 services"), "{error}");
+    // a cache key with no / outside its hashes, at most 200 characters with each hash its 16 digits
+    for good in ["deps-${hash:Cargo.lock}", "deps-${hash:sub/dir/lock.txt}-x", "plain"] {
+        assert!(super::valid_cache_key(good), "{good}");
+        let cache = format!(r#"<cache key="{good}" path="target"/>"#);
+        assert!(parse(&job(&cache), &Limits::default()).is_ok(), "{good}");
+    }
+    let long = "k".repeat(201);
+    for bad in ["deps/linux", "${hash:a}/x", long.as_str(), "${hash:unclosed"] {
+        assert!(!super::valid_cache_key(bad), "{bad}");
+        let cache = format!(r#"<cache key="{bad}" path="target"/>"#);
+        let error = parse(&job(&cache), &Limits::default()).unwrap_err().to_string();
+        assert!(error.contains("cache key"), "{bad}: {error}");
+    }
+    assert!(super::valid_cache_key(&format!("{}${{hash:x}}", "k".repeat(184))));
+    assert!(!super::valid_cache_key(&format!("{}${{hash:x}}", "k".repeat(185))));
+}

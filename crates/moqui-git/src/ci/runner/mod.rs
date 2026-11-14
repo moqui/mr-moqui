@@ -209,16 +209,81 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
 
 /// End a step's process and what it started: the process group on Unix, the process elsewhere.
 fn kill(child: &mut std::process::Child) {
+    end_group(child.id());
+    let _ = child.kill();
+}
+
+/// Kill what is left of a step's process group (on Unix): a step that ended may have left a process running in the
+/// background, which would see the next step's or the next job's environment.
+fn end_group(leader: u32) {
     #[cfg(unix)]
     {
         // the group the shell leads; `kill` is a shell builtin and a program everywhere a shell is
         let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", child.id())])
+            .args(["-KILL", &format!("-{leader}")])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     }
-    let _ = child.kill();
+    #[cfg(not(unix))]
+    let _ = leader;
+}
+
+/// The words a command printed, or nothing when it did not run.
+#[cfg(unix)]
+fn output_of(program: &str, args: &[&str]) -> String {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// Kill every process of this runner's user but the runner and the processes it runs under, between the jobs of a
+/// registered runner (`moqui ci-run poll`): what a job left running, in a group of its own or not, does not see the
+/// next job (docs/interfaces/Pipelines.md, "Registered runners"). Never as root. A runner runs as a user of its own,
+/// which nothing else uses. How many were killed.
+pub fn end_leftovers() -> usize {
+    #[cfg(unix)]
+    {
+        let uid = output_of("id", &["-u"]).trim().to_string();
+        if uid.is_empty() || uid == "0" {
+            return 0;
+        }
+        let mut keep = vec![std::process::id()];
+        let mut pid = std::os::unix::process::parent_id();
+        for _ in 0..64 {
+            if pid <= 1 || keep.contains(&pid) {
+                break;
+            }
+            keep.push(pid);
+            pid = output_of("ps", &["-o", "ppid=", "-p", &pid.to_string()])
+                .trim()
+                .parse()
+                .unwrap_or(0);
+        }
+        let listed = output_of("ps", &["-U", &uid, "-o", "pid="]);
+        let mut killed = 0;
+        for pid in listed.split_whitespace().filter_map(|pid| pid.parse::<u32>().ok()) {
+            if keep.contains(&pid) {
+                continue;
+            }
+            let ended = Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if ended {
+                killed += 1;
+            }
+        }
+        killed
+    }
+    #[cfg(not(unix))]
+    0
 }
 
 /// How a step ended.
@@ -315,6 +380,8 @@ fn run_step(
         let _ = reader.join();
     }
     let status = child.wait().ok();
+    // what the step left in its group goes with it
+    end_group(child.id());
     if let Some(stop) = stopped {
         return Err(stop);
     }

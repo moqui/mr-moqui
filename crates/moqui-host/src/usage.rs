@@ -570,7 +570,7 @@ Options:
 const CI_RUN: &str = "\
 moqui ci-run [--workspace DIR] [--shell SHELL]
 moqui ci-run register [--name NAME] [--platform TEXT]
-moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL]
+moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL] [--keep-processes]
     The runner of a pipeline job (docs/interfaces/Pipelines.md). With no command it runs the one job
     its environment names, as the server starts it in the job's container: it gets the job, checks
     the commit out shallow with git, restores the caches, runs each step with the shell in the
@@ -605,6 +605,9 @@ Options
   --interval SECONDS              poll: the wait between asks with no job (10).
   --work DIR                      poll: where each job gets a directory, removed after it
                                   (moqui-ci in the temporary directory).
+  --keep-processes                poll: leave the processes of the runner's user a job left running;
+                                  by default each is killed after the job (never as root), so a runner
+                                  runs as a user of its own.
 ";
 
 const HELP: &str = "\

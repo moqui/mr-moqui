@@ -38,7 +38,7 @@ use crate::ci::queue::{self, RunRequest};
 use crate::ci::runner::{self, Options, Transport};
 use crate::ci::runner_http::{self, MemoryResponse, RunnerHttpRequest};
 use crate::ci::{artifact, engine, token};
-use crate::service::commit::tests::internal;
+use crate::service::commit::tests::{developer, internal, DEVELOPER};
 use moqui_core::entity::EntityValue;
 
 const SERVICES: &str = "org.moqui.git.GitCiServices";
@@ -81,6 +81,20 @@ fn ci_fixture(name: &str, mode: &str, more_conf: &str) -> Fixture {
     {
         let _entered = fixture.context.enter();
         let _authz = fixture.context.disable_authz();
+        // the writer runs the pools too (an operator); the reader does not
+        create(
+            &fixture.entity,
+            "moqui.security.UserPermission",
+            &[("userPermissionId", crate::ci::service::OPERATOR_PERMISSION)],
+        );
+        let mut grant = EntityValue::make(&fixture.entity, "moqui.security.UserGroupPermission").unwrap();
+        grant.set("userGroupId", s("GIT_WRITERS"));
+        grant.set("userPermissionId", s(crate::ci::service::OPERATOR_PERMISSION));
+        grant.set(
+            "fromDate",
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+        );
+        grant.create(&fixture.entity).unwrap();
         create(
             &fixture.entity,
             "moqui.server.instance.InstanceHostType",
@@ -405,7 +419,12 @@ fn a_push_runs_a_pipeline_on_the_fake_host_to_its_statuses() {
         &fixture,
         WRITER,
         "org.moqui.git.GitServices.store#GitBranchRule",
-        &[("repositoryId", s("app")), ("refPattern", s("main"))],
+        // main is pushed to by its writers only: protected
+        &[
+            ("repositoryId", s("app")),
+            ("refPattern", s("main")),
+            ("pushUserGroupId", s("GIT_WRITERS")),
+        ],
     );
     ok(
         &fixture,
@@ -475,8 +494,10 @@ fn a_push_runs_a_pipeline_on_the_fake_host_to_its_statuses() {
     assert_eq!(to_plain_string(&started.parameters["image"]), "moqui-build:1");
     assert_eq!(
         to_plain_string(&started.parameters["name"]),
-        format!("moqui-ci-{job_run_id}")
+        engine::container_name(&job_run_id)
     );
+    // this server's id is in the name, so two servers on one host never take each other's container
+    assert!(engine::container_name(&job_run_id).ends_with(&format!("-{job_run_id}")));
     assert_eq!(to_plain_string(&started.parameters["cpuLimit"]), "2.5");
     assert_eq!(to_plain_string(&started.parameters["memoryMb"]), "4096");
     assert_eq!(to_plain_string(&started.parameters["networkMode"]), "ci-egress");
@@ -848,7 +869,12 @@ fn an_untrusted_run_waits_for_approval_and_gets_no_secrets_no_cache_writes_and_o
         &fixture,
         WRITER,
         "org.moqui.git.GitServices.store#GitBranchRule",
-        &[("repositoryId", s("app")), ("refPattern", s("main"))],
+        // main is pushed to by its writers only: protected
+        &[
+            ("repositoryId", s("app")),
+            ("refPattern", s("main")),
+            ("pushUserGroupId", s("GIT_WRITERS")),
+        ],
     );
     ok(
         &fixture,
@@ -1072,10 +1098,10 @@ fn an_untrusted_run_waits_for_approval_and_gets_no_secrets_no_cache_writes_and_o
     let got = json_of(&transport.request("GET", "job", &[]));
     assert_eq!(got["trusted"], false);
     assert_eq!(got["secrets"], serde_json::json!({}));
-    // it reads the target branch's cache and writes none
+    // it reads no cache of the protected target branch (a build with secrets may have filled it) and writes none
     let scratch = fixture.dir.join("cache-probe.tar.gz");
     let key = runner::expand_key("deps-${hash:lock.txt}", &work.dir);
-    assert_eq!(transport.download(&format!("caches?key={key}"), &scratch).unwrap(), 200);
+    assert_eq!(transport.download(&format!("caches?key={key}"), &scratch).unwrap(), 404);
     std::fs::write(&scratch, b"poison").unwrap();
     let (status, answer) = transport
         .upload("artifacts?kind=cache&key=poisoned&name=poisoned", &scratch)
@@ -2230,7 +2256,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
     assert_eq!(expire(now + 91 * day).logs, 1);
     assert!(text(&job_named(&fixture, &run_id, "test"), "logBlobId").is_empty());
 
-    // secrets: written by who has the update right, listed without values, scoped
+    // secrets: written by who has the delete right (a maintainer), listed without values, scoped
     let store = format!("{SERVICES}.store#CiSecret");
     let (_, errors) = call(
         &fixture,
@@ -2238,7 +2264,19 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         &store,
         &[("repositoryId", s("app")), ("name", s("KEY")), ("value", s("v"))],
     );
-    assert!(errors.contains("needs the update right"), "{errors}");
+    assert!(errors.contains("needs the delete right"), "{errors}");
+    // a developer, who pushes (the update right), manages no secret or environment
+    developer(&fixture);
+    for (service, parameters) in [
+        ("store#CiSecret", vec![("name", s("KEY")), ("value", s("v"))]),
+        ("find#CiSecrets", vec![]),
+        ("store#CiEnvironment", vec![("name", s("dev"))]),
+    ] {
+        let mut parameters = parameters;
+        parameters.push(("repositoryId", s("app")));
+        let (_, errors) = call(&fixture, DEVELOPER, &format!("{SERVICES}.{service}"), &parameters);
+        assert!(errors.contains("needs the delete right"), "{service}: {errors}");
+    }
     let (_, errors) = call(
         &fixture,
         WRITER,
@@ -2303,7 +2341,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         &format!("{SERVICES}.find#CiSecrets"),
         &[("repositoryId", s("app"))],
     );
-    assert!(errors.contains("needs the update right"), "{errors}");
+    assert!(errors.contains("needs the delete right"), "{errors}");
     let listed = ok(
         &fixture,
         WRITER,
@@ -2329,7 +2367,87 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
     );
     assert!(errors.contains("secrets scoped to it"), "{errors}");
 
+    // a secret moved to another scope or environment takes a new value: the old one was given for the old scope
+    let protected_id = {
+        let listed = ok(
+            &fixture,
+            WRITER,
+            &format!("{SERVICES}.find#CiSecrets"),
+            &[("repositoryId", s("app"))],
+        );
+        let Value::List(secrets) = &listed["secretList"] else {
+            panic!("a list")
+        };
+        secrets
+            .iter()
+            .find_map(|secret| match secret {
+                Value::Map(map) if to_plain_string(&map["scope"]) == "protected" => {
+                    Some(to_plain_string(&map["secretId"]))
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        &store,
+        &[
+            ("repositoryId", s("app")),
+            ("secretId", s(&protected_id)),
+            ("scope", s("environment")),
+            ("environmentId", s(&environment_id)),
+        ],
+    );
+    assert!(errors.contains("needs a new value"), "{errors}");
+
+    // protected means a rule keeps direct pushes to a push group or to merge requests: one that only forbids a
+    // force push or a delete protects nothing a secret needs
+    for (pattern, more) in [
+        ("kept", vec![]),
+        ("grouped", vec![("pushUserGroupId", s("GIT_WRITERS"))]),
+        ("reviewed", vec![("requireMergeRequest", Value::Bool(true))]),
+    ] {
+        let mut parameters = vec![("repositoryId", s("app")), ("refPattern", s(pattern))];
+        parameters.extend(more);
+        ok(
+            &fixture,
+            WRITER,
+            "org.moqui.git.GitServices.store#GitBranchRule",
+            &parameters,
+        );
+    }
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let protected = |name: &str, event: Event| {
+            crate::ci::trust::is_protected(&fixture.entity, "app", event, &format!("refs/heads/{name}")).unwrap()
+        };
+        assert!(!protected("kept", Event::Push));
+        assert!(protected("grouped", Event::Push) && protected("reviewed", Event::Push));
+        assert!(!protected("reviewed", Event::MergeRequest));
+        assert!(!protected("other", Event::Push));
+    }
+
     // which secrets a job is given, by its run and its environment
+    let given_to = |run_fields: &[(&str, &str)], environment: Option<&str>| -> Vec<(String, String)> {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut run = EntityValue::make(&fixture.entity, "moqui.resource.GitPipelineRun").unwrap();
+        run.set("repositoryId", s("app"));
+        for (name, value) in run_fields {
+            run.set(*name, s(value));
+        }
+        let spec = serde_json::json!({
+            "secrets": [{"name": "KEY", "env": "KEY"}, {"name": "TAG_KEY", "env": "TAG"}, {"name": "MISSING", "env": "M"}],
+            "environment": environment,
+        });
+        crate::ci::trust::secrets_for(&fixture.entity, &run, &spec, false)
+            .unwrap()
+            .into_iter()
+            .map(|given| (given.env, given.value))
+            .collect()
+    };
     let given = |trusted: bool, protected: bool, ref_name: &str, environment: Option<&str>| -> Vec<(String, String)> {
         let _entered = fixture.context.enter();
         let _authz = fixture.context.disable_authz();
@@ -2363,12 +2481,62 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         given(true, true, "refs/tags/v1", None),
         [pair("KEY", "protected-value"), pair("TAG", "tag-value")]
     );
-    // in its environment: the environment's secret, on any ref of a trusted run
+    // in its environment: the environment's secret on a protected ref, not on any branch a job names it from
+    assert_eq!(
+        given(true, true, "refs/heads/main", Some("staging")),
+        [pair("KEY", "staging-value")]
+    );
+    assert!(given(true, false, "refs/heads/feature", Some("staging")).is_empty());
+    assert!(given(true, false, "refs/heads/feature", Some("production")).is_empty());
+    // a branch the environment allows gets it too, a merge request's run never, and with approvalRequired only an
+    // approved run
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{SERVICES}.store#CiEnvironment"),
+        &[
+            ("repositoryId", s("app")),
+            ("environmentId", s(&environment_id)),
+            ("allowedRefs", s("feature release/*")),
+        ],
+    );
     assert_eq!(
         given(true, false, "refs/heads/feature", Some("staging")),
         [pair("KEY", "staging-value")]
     );
-    assert!(given(true, false, "refs/heads/feature", Some("production")).is_empty());
+    assert_eq!(
+        given(true, false, "refs/heads/release/2", Some("staging")),
+        [pair("KEY", "staging-value")]
+    );
+    let merge_request = [
+        ("trusted", "Y"),
+        ("protectedRef", "N"),
+        ("refName", "refs/heads/feature"),
+        ("event", "merge-request"),
+        ("mergeRequestId", "MR1"),
+    ];
+    assert!(given_to(&merge_request, Some("staging")).is_empty());
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{SERVICES}.store#CiEnvironment"),
+        &[
+            ("repositoryId", s("app")),
+            ("environmentId", s(&environment_id)),
+            ("approvalRequired", Value::Bool(true)),
+        ],
+    );
+    let on_main = [("trusted", "Y"), ("protectedRef", "Y"), ("refName", "refs/heads/main")];
+    assert!(given_to(&on_main, Some("staging"))
+        .iter()
+        .all(|(_, value)| value != "staging-value"));
+    let approved = [
+        ("trusted", "Y"),
+        ("protectedRef", "Y"),
+        ("refName", "refs/heads/main"),
+        ("approvalState", "approved"),
+    ];
+    assert_eq!(given_to(&approved, Some("staging")), [pair("KEY", "staging-value")]);
 
     // a repository that goes takes its runs with it
     let (_, errors) = call(

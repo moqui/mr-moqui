@@ -48,6 +48,10 @@ pub mod trust;
 #[path = "claim_tests.rs"]
 mod claim_tests;
 
+#[cfg(test)]
+#[path = "safety_tests.rs"]
+mod safety_tests;
+
 pub(crate) const PIPELINE_RUN: &str = "moqui.resource.GitPipelineRun";
 pub(crate) const JOB_RUN: &str = "moqui.resource.GitJobRun";
 pub(crate) const JOB_STEP: &str = "moqui.resource.GitJobStep";
@@ -99,6 +103,7 @@ pub(crate) fn limits() -> file::Limits {
         max_timeout_minutes: small("max-timeout-minutes", default.max_timeout_minutes),
         default_timeout_minutes: small("default-timeout-minutes", default.default_timeout_minutes),
         max_fetch_depth: small("max-fetch-depth", default.max_fetch_depth),
+        max_services: number("max-services", default.max_services),
     }
 }
 
@@ -275,8 +280,22 @@ pub(crate) fn audit_status(entity: &EntityFacade, entity_name: &str, id: &str, w
     }
 }
 
+/// Run `body`, a call whose errors in the message facade are its answer: the errors it left are taken from the facade
+/// (those before it stay) and are its error when it gave none.
+pub(crate) fn with_errors_taken<T>(body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+    let outcome = body();
+    let errors = mark
+        .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
+        .unwrap_or_default();
+    match outcome {
+        Ok(_) if !errors.is_empty() => Err(Error::new(errors.join("\n"))),
+        outcome => outcome,
+    }
+}
+
 /// Call the service the conf names, with authorization disabled, as the LFS upload check is called. `None` when no
-/// service is named.
+/// service is named. Its errors are its answer, not left in the message facade ([`with_errors_taken`]).
 pub(crate) fn call_hook(
     conf_name: &str,
     parameters: BTreeMap<String, Value>,
@@ -289,7 +308,9 @@ pub(crate) fn call_hook(
         disable_authz: true,
         ..moqui_core::service::call::CallOptions::default()
     };
-    Some(moqui_core::service::call::sync_checked(&name, &parameters, &options))
+    Some(with_errors_taken(|| {
+        moqui_core::service::call::sync_checked(&name, &parameters, &options)
+    }))
 }
 
 pub(crate) fn parameters(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<String, Value> {

@@ -15,8 +15,10 @@
 //! The container driver (plans/Dogfood.md D19, F8): the run services of the `docker` host type, over the Docker Engine
 //! API, which Podman serves on its socket too. An `InstanceHost` is reached over a Unix socket (`hostProtocol` `unix`,
 //! `hostAddress` the socket's path), plain HTTP, or HTTPS with a client certificate (`tlsCaCert`, `tlsClientCert`,
-//! `tlsClientKey`). A job's container has no privilege, no capabilities, no host socket and no host path, a non-root
-//! user, a read-only root with a volume at its working directory and a tmpfs at `/tmp`, and the pool's limits
+//! `tlsClientKey`). A job's container, and each of its service containers, has no privilege, no capabilities, no host
+//! socket and no host path, a non-root user, an init that reaps orphans, a read-only root with a sized tmpfs at `/tmp`,
+//! its working directory on a sized tmpfs (or on the root filesystem the pool's `diskMb` sizes), and the pool's
+//! limits. Its names carry this server's id, and what it removes has this server's label
 //! (docs/interfaces/Pipelines.md "Runners and drivers").
 
 use std::collections::BTreeMap;
@@ -33,6 +35,7 @@ use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::rust_service;
 
 use super::super::field;
+use super::network_name;
 
 type Parameters = BTreeMap<String, Value>;
 type Out = Result<BTreeMap<String, Value>, LibError>;
@@ -40,8 +43,12 @@ type Out = Result<BTreeMap<String, Value>, LibError>;
 /// The API version asked for: Docker 19.03 and later, and Podman's compatibility API.
 const API: &str = "/v1.40";
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
-/// An image pull may take this long.
-const PULL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// An image pull may take this long; pulls of one host take turns, and those of other hosts go on.
+const PULL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// The pulls of each host (by its address), one at a time.
+static PULLS: std::sync::Mutex<BTreeMap<String, std::sync::Arc<std::sync::Mutex<()>>>> =
+    std::sync::Mutex::new(BTreeMap::new());
 
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, start_run_docker)?;
@@ -51,13 +58,20 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     Ok(())
 }
 
-/// A container of a listing: its id and its labels.
-type Listed = (String, BTreeMap<String, String>);
+/// A container of a listing.
+struct Listed {
+    id: String,
+    labels: BTreeMap<String, String>,
+    /// When it was made, epoch seconds.
+    created: i64,
+}
 
 /// A connection to a host's API.
 pub struct DockerHost {
     client: RestClient,
     base: String,
+    /// What tells this host from another: its socket path or address.
+    key: String,
 }
 
 impl DockerHost {
@@ -70,6 +84,7 @@ impl DockerHost {
         let address = field(host, "hostAddress")
             .ok_or_else(|| Error::new("the instance host has no hostAddress (a socket path or a host name)"))?;
         let protocol = field(host, "hostProtocol").unwrap_or_else(|| "http".to_string());
+        let key = format!("{protocol}:{address}");
         let mut client = RestClient::new().timeout(CALL_TIMEOUT);
         let base = match protocol.as_str() {
             "unix" => {
@@ -88,12 +103,14 @@ impl DockerHost {
         if let (Some(cert), Some(key)) = (field(host, "tlsClientCert"), field(host, "tlsClientKey")) {
             client = client.client_identity_pem(format!("{}\n{}\n", cert.trim(), key.trim()).into_bytes());
         }
-        Ok(Self { client, base })
+        Ok(Self { client, base, key })
     }
 
     /// A host reached over a Unix socket, with no `InstanceHost` row.
     pub fn unix(socket: impl Into<std::path::PathBuf>) -> Self {
+        let socket = socket.into();
         Self {
+            key: format!("unix:{}", socket.display()),
             client: RestClient::new().timeout(CALL_TIMEOUT).unix_socket(socket),
             base: "http://localhost".to_string(),
         }
@@ -118,7 +135,7 @@ impl DockerHost {
         ]
         .into_iter()
         .collect();
-        let id = self.create(name, &create_body(&parameters, &Hardening::default(), None))?;
+        let id = self.create(name, &create_body(&parameters, &Hardening::default(), None), true)?;
         let outcome = (|| -> Result<Option<i64>, Error> {
             self.start(&id)?;
             let started = std::time::Instant::now();
@@ -173,6 +190,8 @@ impl DockerHost {
     }
 
     fn pull(&self, image: &str) -> Result<(), Error> {
+        let turn = std::sync::Arc::clone(moqui_lib::sync::lock(&PULLS).entry(self.key.clone()).or_default());
+        let _turn = moqui_lib::sync::lock(&turn);
         let (name, tag) = match image.rsplit_once(':') {
             Some((name, tag)) if !tag.contains('/') => (name, tag),
             _ => (image, "latest"),
@@ -193,12 +212,19 @@ impl DockerHost {
         Ok(())
     }
 
-    /// Create a container, pulling its image when the host does not have it. Its id.
-    fn create(&self, name: &str, body: &serde_json::Value) -> Result<String, Error> {
+    /// Create a container, with `pull` pulling its image when the host does not have it. Its id.
+    fn create(&self, name: &str, body: &serde_json::Value, pull: bool) -> Result<String, Error> {
         let path = format!("/containers/create?name={}", encode(name));
         let mut response = self.send(Method::Post, &path, Some(body), CALL_TIMEOUT)?;
         if response.status() == 404 {
-            self.pull(body["Image"].as_str().unwrap_or_default())?;
+            let image = body["Image"].as_str().unwrap_or_default();
+            if !pull {
+                return Err(Error::new(format!(
+                    "the image {image} is not on the host, and the pool takes untrusted runs, whose images are not \
+                     pulled on demand: pull it on the host first"
+                )));
+            }
+            self.pull(image)?;
             response = self.send(Method::Post, &path, Some(body), CALL_TIMEOUT)?;
         }
         if response.status() >= 300 {
@@ -262,22 +288,45 @@ impl DockerHost {
                                     .collect()
                             })
                             .unwrap_or_default();
-                        Some((container["Id"].as_str()?.to_string(), labels))
+                        Some(Listed {
+                            id: container["Id"].as_str()?.to_string(),
+                            labels,
+                            created: container["Created"].as_i64().unwrap_or(0),
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default())
     }
 
-    fn create_network(&self, name: &str, labels: &serde_json::Value) -> Result<(), Error> {
+    /// Make a job's network; `internal` reaches nothing outside it. One there already (409) is an error: it is
+    /// another run's.
+    fn create_network(&self, name: &str, labels: &serde_json::Value, internal: bool) -> Result<(), Error> {
         let response = self.send(
             Method::Post,
             "/networks/create",
-            Some(&json!({"Name": name, "Driver": "bridge", "Labels": labels})),
+            Some(&json!({"Name": name, "Driver": "bridge", "Internal": internal, "Labels": labels})),
             CALL_TIMEOUT,
         )?;
-        if response.status() >= 300 && response.status() != 409 {
+        if response.status() >= 300 {
             return Err(Self::problem(&format!("creating network {name}"), &response));
+        }
+        Ok(())
+    }
+
+    /// Put container `id` on the network `name` too.
+    fn connect_network(&self, name: &str, id: &str) -> Result<(), Error> {
+        let response = self.send(
+            Method::Post,
+            &format!("/networks/{}/connect", encode(name)),
+            Some(&json!({"Container": id})),
+            CALL_TIMEOUT,
+        )?;
+        if response.status() >= 300 {
+            return Err(Self::problem(
+                &format!("connecting container {id} to network {name}"),
+                &response,
+            ));
         }
         Ok(())
     }
@@ -335,14 +384,15 @@ fn number(parameters: &Parameters, key: &str) -> Option<i64> {
 }
 
 /// How a job's container is kept in, beside its pool's limits: the conf's `git-ci` `container-user` (1000:1000; the
-/// image's with `image`), `container-read-only-root` (true), `container-workdir` (/workspace) and
-/// `container-tmp-mb` (1024).
+/// image's with `image`), `container-read-only-root` (true), `container-workdir` (/workspace), `container-tmp-mb`
+/// (1024) and `container-workspace-mb` (4096, the working directory's tmpfs when the pool sets no `diskMb`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hardening {
     pub user: Option<String>,
     pub read_only_root: bool,
     pub workdir: String,
     pub tmp_mb: u64,
+    pub workspace_mb: u64,
 }
 
 impl Default for Hardening {
@@ -352,12 +402,19 @@ impl Default for Hardening {
             read_only_root: true,
             workdir: "/workspace".to_string(),
             tmp_mb: 1024,
+            workspace_mb: 4096,
         }
     }
 }
 
+/// Whether a container user is root in any form: uid 0 or the name root, with or without a group.
+pub fn is_root_user(user: &str) -> bool {
+    let name = user.split(':').next().unwrap_or_default().trim();
+    name.eq_ignore_ascii_case("root") || (!name.is_empty() && name.bytes().all(|byte| byte == b'0'))
+}
+
 impl Hardening {
-    fn from_conf() -> Self {
+    pub fn from_conf() -> Self {
         let default = Self::default();
         let setting = super::super::setting;
         Self {
@@ -365,7 +422,7 @@ impl Hardening {
                 "" => default.user,
                 "image" => None,
                 // never root, whatever the conf says
-                "0" | "root" | "0:0" | "root:root" => default.user,
+                user if is_root_user(user) => default.user,
                 user => Some(user.to_string()),
             },
             read_only_root: setting("container-read-only-root") != "false",
@@ -373,39 +430,44 @@ impl Hardening {
                 .filter(|dir| dir.starts_with('/'))
                 .unwrap_or(default.workdir),
             tmp_mb: super::super::number_setting("container-tmp-mb", default.tmp_mb),
+            workspace_mb: super::super::number_setting("container-workspace-mb", default.workspace_mb),
         }
+    }
+
+    /// The tmpfs options of a mount the container's user writes: owned by it when the user is numeric.
+    fn tmpfs(&self, mb: u64) -> String {
+        let owner = self
+            .user
+            .as_deref()
+            .and_then(|user| {
+                let (uid, gid) = user.split_once(':').unwrap_or((user, user));
+                (uid.bytes().all(|byte| byte.is_ascii_digit()) && gid.bytes().all(|byte| byte.is_ascii_digit()))
+                    .then(|| format!(",uid={uid},gid={gid},mode=0700"))
+            })
+            .unwrap_or_else(|| ",mode=1777".to_string());
+        format!("rw,exec,nosuid,nodev,size={mb}m{owner}")
     }
 }
 
-/// The body of `POST /containers/create` for a job's container, from the parameters of `start#InstanceRun`.
-/// `network` is the job's own network when it has service containers.
-pub fn create_body(parameters: &Parameters, hardening: &Hardening, network: Option<&str>) -> serde_json::Value {
-    let env: Vec<String> = string_pairs(parameters.get("envMap"))
-        .into_iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect();
-    let labels: serde_json::Map<String, serde_json::Value> = string_pairs(parameters.get("labels"))
-        .into_iter()
-        .map(|(name, value)| (name, json!(value)))
-        .collect();
-    let command: Vec<String> = match parameters.get("command") {
-        Some(Value::List(words)) => words.iter().map(to_plain_string).collect(),
-        _ => Vec::new(),
-    };
-    let mut host = json!({
-        "Privileged": false,
-        "CapDrop": ["ALL"],
-        "SecurityOpt": ["no-new-privileges"],
-        "ReadonlyRootfs": hardening.read_only_root,
-        "AutoRemove": false,
-        "PublishAllPorts": false,
-        "Binds": [],
-        "Tmpfs": { "/tmp": format!("rw,exec,nosuid,nodev,size={}m", hardening.tmp_mb) },
-        "NetworkMode": network
-            .map(str::to_string)
-            .or_else(|| text(parameters, "networkMode"))
-            .unwrap_or_else(|| "bridge".to_string()),
-    });
+/// The network mode a pool's `egressRule` asks for: `bridge` when empty, else the mode, but never the host's network
+/// or another container's (`host`, `container:...`), which would be no way in at all: those are `none`.
+pub fn egress_mode(rule: Option<&str>) -> String {
+    match rule.map(str::trim).filter(|rule| !rule.is_empty()) {
+        None => "bridge".to_string(),
+        Some(rule) if !valid_egress(rule) => "none".to_string(),
+        Some(rule) => rule.to_string(),
+    }
+}
+
+/// Whether `rule` may be a pool's `egressRule`: not the host's network, not another container's.
+pub fn valid_egress(rule: &str) -> bool {
+    let rule = rule.trim();
+    !rule.eq_ignore_ascii_case("host") && !rule.to_ascii_lowercase().starts_with("container:")
+}
+
+/// The limits of the pool on a container's host config: CPUs, memory with no swap past it, processes, the root
+/// filesystem's size.
+fn limits(host: &mut serde_json::Value, parameters: &Parameters) {
     if let Some(cpus) = text(parameters, "cpuLimit").and_then(|cpus| cpus.parse::<f64>().ok()) {
         if cpus > 0.0 {
             #[allow(clippy::cast_possible_truncation)]
@@ -424,13 +486,55 @@ pub fn create_body(parameters: &Parameters, hardening: &Hardening, network: Opti
     if let Some(disk) = number(parameters, "diskMb").filter(|disk| *disk > 0) {
         host["StorageOpt"] = json!({ "size": format!("{disk}m") });
     }
+}
+
+/// The body of `POST /containers/create` for a job's container, from the parameters of `start#InstanceRun`.
+/// `network` is the job's own network when it has service containers.
+pub fn create_body(parameters: &Parameters, hardening: &Hardening, network: Option<&str>) -> serde_json::Value {
+    let env: Vec<String> = string_pairs(parameters.get("envMap"))
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    let labels: serde_json::Map<String, serde_json::Value> = string_pairs(parameters.get("labels"))
+        .into_iter()
+        .map(|(name, value)| (name, json!(value)))
+        .collect();
+    let command: Vec<String> = match parameters.get("command") {
+        Some(Value::List(words)) => words.iter().map(to_plain_string).collect(),
+        _ => Vec::new(),
+    };
+    // the working directory (the checkout, the caches and HOME) is bounded: on the root filesystem the pool's diskMb
+    // sizes, which is then writable, else on a tmpfs of container-workspace-mb (it counts toward the memory limit)
+    let sized_root = number(parameters, "diskMb").is_some_and(|disk| disk > 0);
+    let mut tmpfs = serde_json::Map::new();
+    tmpfs.insert("/tmp".to_string(), json!(hardening.tmpfs(hardening.tmp_mb)));
+    if !sized_root {
+        tmpfs.insert(
+            hardening.workdir.clone(),
+            json!(hardening.tmpfs(hardening.workspace_mb)),
+        );
+    }
+    let mut host = json!({
+        "Privileged": false,
+        "CapDrop": ["ALL"],
+        "SecurityOpt": ["no-new-privileges"],
+        "ReadonlyRootfs": hardening.read_only_root && !sized_root,
+        "AutoRemove": false,
+        "PublishAllPorts": false,
+        "Binds": [],
+        // an init as process 1 reaps what a step leaves, so orphans do not use up the pids limit
+        "Init": true,
+        "Tmpfs": tmpfs,
+        "NetworkMode": network
+            .map(str::to_string)
+            .unwrap_or_else(|| egress_mode(text(parameters, "networkMode").as_deref())),
+    });
+    limits(&mut host, parameters);
     let mut body = json!({
         "Image": text(parameters, "image").unwrap_or_default(),
         "Env": env,
         "Labels": labels,
         "WorkingDir": hardening.workdir,
-        // an anonymous volume, removed with the container: the checkout, the caches and HOME
-        "Volumes": { hardening.workdir.clone(): {} },
         "AttachStdin": false,
         "Tty": false,
         "HostConfig": host,
@@ -445,40 +549,45 @@ pub fn create_body(parameters: &Parameters, hardening: &Hardening, network: Opti
 }
 
 /// The body of `POST /containers/create` for a service container beside a job, reached by its name on the job's
-/// network.
+/// network: kept in as the job's own container is (its user, no capabilities, a read-only root with a sized tmpfs at
+/// `/tmp`, an init, the pool's limits). A service image runs as that user and writes under `/tmp`.
 pub fn service_body(
     service: &BTreeMap<String, Value>,
     labels: &serde_json::Value,
     network: &str,
     parameters: &Parameters,
+    hardening: &Hardening,
 ) -> serde_json::Value {
     let env: Vec<String> = string_pairs(service.get("envMap"))
         .into_iter()
         .map(|(name, value)| format!("{name}={value}"))
         .collect();
     let name = service.get("name").map(to_plain_string).unwrap_or_default();
+    let sized_root = number(parameters, "diskMb").is_some_and(|disk| disk > 0);
     let mut host = json!({
         "Privileged": false,
         "CapDrop": ["ALL"],
-        "CapAdd": ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"],
         "SecurityOpt": ["no-new-privileges"],
+        "ReadonlyRootfs": hardening.read_only_root && !sized_root,
         "AutoRemove": false,
+        "PublishAllPorts": false,
         "Binds": [],
+        "Init": true,
+        "Tmpfs": { "/tmp": hardening.tmpfs(hardening.tmp_mb) },
         "NetworkMode": network,
     });
-    if let Some(memory) = number(parameters, "memoryMb").filter(|memory| *memory > 0) {
-        host["Memory"] = json!(memory * 1024 * 1024);
-    }
-    if let Some(pids) = number(parameters, "pidsLimit").filter(|pids| *pids > 0) {
-        host["PidsLimit"] = json!(pids);
-    }
-    json!({
+    limits(&mut host, parameters);
+    let mut body = json!({
         "Image": service.get("image").map(to_plain_string).unwrap_or_default(),
         "Env": env,
         "Labels": labels,
         "HostConfig": host,
         "NetworkingConfig": { "EndpointsConfig": { network: { "Aliases": [name] } } },
-    })
+    });
+    if let Some(user) = &hardening.user {
+        body["User"] = json!(user);
+    }
+    body
 }
 
 fn add_error(message: impl Into<String>) {
@@ -498,11 +607,6 @@ fn connect(parameters: &Parameters, facade: &EntityFacade) -> Option<DockerHost>
             None
         }
     }
-}
-
-/// The network of a job with service containers, by its container's name.
-fn network_name(container: &str) -> String {
-    format!("{container}-net")
 }
 
 /// `start#RunDocker`: create and start a job's container, after its service containers on a network of the job's
@@ -531,25 +635,33 @@ fn start_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
         .collect::<serde_json::Map<String, serde_json::Value>>()
         .into();
     let network = (!services.is_empty()).then(|| network_name(&name));
+    // the job's own network reaches out only when the pool's does (bridge); for none or a network of the host it is
+    // internal, and the job's container is put on the pool's network too, so egress follows the pool
+    let egress = egress_mode(text(parameters, "networkMode").as_deref());
+    let pull = parameters
+        .get("pullImages")
+        .is_some_and(|pull| to_plain_string(pull) == "true");
+    let hardening = Hardening::from_conf();
     let mut made: Vec<String> = Vec::new();
     let started = (|| -> Result<String, Error> {
         if let Some(network) = &network {
-            host.create_network(network, &labels)?;
+            host.create_network(network, &labels, egress != "bridge")?;
             for service in &services {
                 let service_name = service.get("name").map(to_plain_string).unwrap_or_default();
                 let id = host.create(
                     &format!("{name}-{service_name}"),
-                    &service_body(service, &labels, network, parameters),
+                    &service_body(service, &labels, network, parameters, &hardening),
+                    pull,
                 )?;
                 made.push(id.clone());
                 host.start(&id)?;
             }
         }
-        let id = host.create(
-            &name,
-            &create_body(parameters, &Hardening::from_conf(), network.as_deref()),
-        )?;
+        let id = host.create(&name, &create_body(parameters, &hardening, network.as_deref()), pull)?;
         made.push(id.clone());
+        if network.is_some() && egress != "bridge" && egress != "none" {
+            host.connect_network(&egress, &id)?;
+        }
         host.start(&id)?;
         Ok(id)
     })();
@@ -618,11 +730,17 @@ fn remove_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
     };
     let mut ids: Vec<String> = text(parameters, "instanceRef").into_iter().collect();
     if let (Some(label), Some(value)) = (text(parameters, "labelName"), text(parameters, "labelValue")) {
-        match host.list(&[format!("{label}={value}")]) {
+        // only this server's: another server's job run of the same id on a shared host is not this one's
+        let mut filters: Vec<String> = string_pairs(parameters.get("filterLabels"))
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        filters.push(format!("{label}={value}"));
+        match host.list(&filters) {
             Ok(listed) => {
-                for (id, _) in listed {
-                    if !ids.contains(&id) {
-                        ids.push(id);
+                for container in listed {
+                    if !ids.contains(&container.id) {
+                        ids.push(container.id);
                     }
                 }
             }
@@ -635,8 +753,8 @@ fn remove_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
     }
     // the job's network is named after its container, and goes once nothing is on it
-    if let Some(value) = text(parameters, "labelValue") {
-        host.remove_network(&network_name(&super::super::engine::container_name(&value)));
+    if let Some(network) = text(parameters, "networkName") {
+        host.remove_network(&network);
     }
     Ok(BTreeMap::new())
 }
@@ -667,17 +785,21 @@ fn cleanup_runs_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
             return Ok(BTreeMap::new());
         }
     };
+    // one made after the caller read what to keep may be a job that just started
+    let before = number(parameters, "createdBefore");
     let mut removed = 0;
-    for (id, labels) in listed {
-        let Some(job) = labels.get(&label) else { continue };
-        if keep.contains(job) {
+    for container in listed {
+        let Some(job) = container.labels.get(&label) else {
+            continue;
+        };
+        if keep.contains(job) || before.is_some_and(|before| container.created >= before) {
             continue;
         }
         // one container that does not go does not keep the others
-        match host.remove(&id) {
+        match host.remove(&container.id) {
             Ok(()) => {
                 removed += 1;
-                host.remove_network(&network_name(&super::super::engine::container_name(job)));
+                host.remove_network(&network_name(&super::container_name(job)));
             }
             Err(err) => tracing::warn!("a container of an ended job run was not removed: {err}"),
         }

@@ -166,11 +166,13 @@ pub fn pool_of(entity: &EntityFacade, token: &str) -> Result<Option<String>, Err
         return Ok(None);
     }
     let _rows = crate::rows_guard();
+    // a token past its expiry registers nothing
     Ok(entity
         .find(RUNNER_POOL)?
         .eq("registrationTokenHash", Value::string(hash(token)))
         .eq("poolKind", Value::string("registered"))
         .eq("enabled", Value::string("Y"))
         .one()?
+        .filter(|row| millis(row, "registrationTokenExpireDate").is_none_or(|expires| expires > now_millis()))
         .and_then(|row| field(&row, "runnerPoolId")))
 }
