@@ -661,12 +661,11 @@ The listener is the last hop behind an operator-run gateway (`docs/interfaces/Ma
 A permitted gateway can `RCPT TO` a hosted (`EakHosted`) or shared (`EakShared`) address that has no incoming IMAP or POP server. Other recipients are `550`. After `DATA`, the message is stored in that account's Inbox, or Junk when a configured spam header starts with yes or true. That store runs with authorization disabled, including the app `EmailMessage` ECA when Mantle is loaded. There is no relaying. `VRFY` answers `252`. Empty `smtp_authserv_id` keeps every `Authentication-Results` header, including a forged one, and warns at startup. Out of internet mode the listener does not check SPF, DKIM, or DMARC; the gateway does.
 
 An application's mail rule actions run on stored mail with authorization disabled, so mail from anyone reaches them. IronStone
-Sales' lead intake address (`createLead`, Mantle `create#LeadFromEmail`; the request for quote address `createQuoteRequest`
-follows in Sales P8) takes the team from the rule's value or the plus tag of a `To` or `Cc` address (`sales+leads@`), only a team
+Sales' lead intake address (`createLead`, Mantle `create#LeadFromEmail`) takes the team from the rule's value or the plus tag of a `To` or `Cc` address (`sales+leads@`), only a team
 of an organization the rule's owner works for; the message makes a `SalesLeadIntake` row and a lead in that team's queue,
 never a party, the sender's name and address held on the intake until the lead is qualified and blanked after the retention
 days if it never is (`purge#LeadIntakes`); its `Message-ID` is the intake's identity, so the same mail again makes no second
-lead. The mail text decides only the lead's name and description.
+lead. The mail text decides only the lead's name and description. The request for quote address (`createQuoteRequest`, Mantle `create#QuoteRequestFromEmail`) takes the team the same way, its rule's owner holding `SALES_QUOTE_EDIT` when the rule is saved and each time it runs, and makes an `RqtQuote` request in that team's queue with the message and its files on it, never a party (the sender is matched to an account or to the contact of exactly one account of the organization); the same `Message-ID` again makes no second request. A decline is mailed as the system only from such an intake mailbox, or one the rep may send from, to the address the rep previewed, once per request.
 
 `poll#EmailServer` (job `poll_EmailServer_frequent`) is paused. If unpaused, the cron is every 15 minutes, `emailServerId=SYSTEM`, `authenticate="anonymous-all"`. It connects out to the configured IMAP or POP server. `sync#DueEmailAccounts` (job `sync_EmailAccounts_frequent`) is running, every minute, `authenticate="anonymous-all"`, `allow-remote="false"`. IMAP IDLE is on by default (`idle-enabled="true"`, `idle-max` 8) and dials the account's server. It does not listen. Both jobs use the scheduler's authorization-off path.
 
