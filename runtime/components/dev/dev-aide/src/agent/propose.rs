@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 
 use super::check::{problems_of, upstream_problem};
-use super::{context, file, NamedFile};
+use super::{file, session_context, NamedFile};
 use crate::tier::Tier;
 use crate::workspace::{save_text, sha256, Context};
 
@@ -264,7 +264,7 @@ fn propose(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolEr
     if set.files.is_empty() {
         return Err(ToolError::new("no_files", "A change set names at least one file."));
     }
-    let context = context(Tier::Extend)?;
+    let context = session_context(ctx, Tier::Extend)?;
     let prepared = prepare(&context, &set)?;
     // every file is checked first: an error goes back to the model, and nothing is proposed
     let mut problems: Vec<Problem> = Vec::new();
@@ -362,7 +362,7 @@ fn write(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> ToolOutco
         Ok(set) => set,
         Err(err) => return ToolOutcome::Failed(format!("the approved change set does not read: {err}")),
     };
-    let context = match context(Tier::Extend) {
+    let context = match session_context(ctx, Tier::Extend) {
         Ok(context) => context,
         Err(error) => return error.outcome(),
     };

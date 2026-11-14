@@ -56,7 +56,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 
 /// The path of a merge request: the framework's (`{repositories}/{id}/mergeRequests/{n}`) or an application's
 /// (`{restBase}/repositories/{id}/merge-requests/{n}`).
-fn merge_request_path(via: &Via, repositories: &str, repository_id: &str, number: &str) -> String {
+pub(crate) fn merge_request_path(via: &Via, repositories: &str, repository_id: &str, number: &str) -> String {
     let (id, number) = (query_text(repository_id), query_text(number));
     match via {
         Via::Framework => format!("{repositories}/{id}/mergeRequests/{number}"),
@@ -379,7 +379,27 @@ fn get_merge_request_changes(
         "reason".into(),
         made["reason"].as_str().map_or(Value::Null, Value::string),
     );
+    if crate::workspace::flag(parameters, "checkAuthors") {
+        let emails = author_emails(made);
+        let unsigned = super::agreement::unsigned_authors(&hosted, &emails)?;
+        out.insert("unsignedAuthors".into(), json_value(&unsigned));
+    }
     Ok(out)
+}
+
+/// The distinct author emails of a merge request's commits (`commitList`), at most 20: whose agreement an agent's
+/// read of the diff asks about.
+#[must_use]
+pub fn author_emails(changes: &Json) -> Vec<String> {
+    let mut emails: Vec<String> = Vec::new();
+    for commit in changes["commitList"].as_array().into_iter().flatten() {
+        let email = commit["authorEmail"].as_str().unwrap_or("").trim();
+        if !email.is_empty() && !emails.iter().any(|have| have.eq_ignore_ascii_case(email)) {
+            emails.push(email.to_string());
+        }
+    }
+    emails.truncate(20);
+    emails
 }
 
 fn json_text(first: &Json, second: &Json) -> Value {

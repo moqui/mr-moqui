@@ -11,6 +11,8 @@
 /runtime/opensearch*
 /runtime/chromium*
 /runtime/save
+# the Dev AIDE's worktrees for agents' sessions (plans/design-dev-aide.md 21.8)
+/runtime/worktrees
 /myaddons.xml
 /runtime/install
 /runtime/MoquiConf.xml

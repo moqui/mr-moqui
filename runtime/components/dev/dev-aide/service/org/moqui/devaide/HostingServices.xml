@@ -125,6 +125,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repository" type="Map"/>
         </out-parameters>
     </service>
+    <service verb="get" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::get_merge_request" allow-remote="false" read-only="true">
+        <description>One merge request by its number: as the list has it, with its description, head commit,
+            approvals, checks and what keeps it from merging (missing).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="mergeRequest" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="Issue" type="rust" location="dev_aide::hosting::review::get_issue" allow-remote="false" read-only="true">
+        <description>An issue (a work item) on the hosted repository's server by its id: issueId, title, status, type,
+            description, url. The offer's tasks.issuePath with {id}, else Mantle's workEfforts/{id}.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="issueId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="issue" type="Map"/></out-parameters>
+    </service>
     <service verb="open" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::open_merge_request" allow-remote="false">
         <description>Open a merge request of a pushed branch (the current one by default) into the target (the
             repository's default branch by default), titled by the head commit unless given, on the server as the user.
@@ -207,6 +225,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="checkAuthors" type="Boolean"><description>Also ask the agreement of each commit's author
+                (the hosting tool does, and gives an agent no diff of an unsigned one)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="baseCommitId"/>
@@ -216,6 +236,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="threadsAvailable" type="Boolean"/>
             <parameter name="diffRefused" type="Boolean"/>
             <parameter name="reason"/>
+            <parameter name="unsignedAuthors" type="List"><description>With checkAuthors: the authors who have not
+                signed where the server requires it</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="MergeRequestFile" type="rust" location="dev_aide::hosting::threads::get_merge_request_file" allow-remote="false" read-only="true">

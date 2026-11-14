@@ -75,6 +75,9 @@ pub(crate) struct Context {
     pub settings: Settings,
     pub roots: Vec<Root>,
     pub tier: Tier,
+    /// An agent's session with worktrees (21.8): each main root's id and its worktree root's id, which the session's
+    /// tools use in its place. Empty outside an agent's session.
+    pub redirect: Vec<(String, String)>,
 }
 
 impl Context {
@@ -92,6 +95,7 @@ impl Context {
             settings,
             roots,
             tier,
+            redirect: Vec::new(),
         })
     }
 
@@ -492,7 +496,13 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), LibError> {
 
 /// The reload and check of a written file, and its git status, into `out`.
 fn after_write(context: &Context, root: &Root, resolved: &confine::Resolved, text: Option<&str>, out: &mut Parameters) {
-    let report = moqui_devkit::reload_paths(&context.factory, std::slice::from_ref(&resolved.path));
+    // a worktree is not loaded (21.8, question 19): its files are checked, never reloaded into the server
+    let paths = if root.worktree_of.is_some() {
+        &[][..]
+    } else {
+        std::slice::from_ref(&resolved.path)
+    };
+    let report = moqui_devkit::reload_paths(&context.factory, paths);
     let mut problems: Vec<moqui_devkit::Problem> = report.problems().cloned().collect();
     if let Some(text) = text {
         if resolved.relative.ends_with(".xml") {

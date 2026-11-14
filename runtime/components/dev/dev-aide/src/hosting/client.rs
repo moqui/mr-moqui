@@ -277,6 +277,16 @@ pub(crate) fn send(
     if method != moqui_core::outbound::Method::Get {
         crate::workspace::unfenced(moqui_core::entity::fence::Effect::RemoteCall, base)?;
     }
+    // a read of the server under an agent's read fence (the hosting tool, 21.8): only with the tool's permit for this
+    // server's origin above the fence, never in a sim, and only for this GET; every write stays refused
+    let _read = if method == moqui_core::outbound::Method::Get && moqui_core::entity::fence::active() {
+        let origin = crate::vcs::url_prefix(base).unwrap_or_else(|| base.to_string());
+        moqui_core::entity::fence::check_remote(&origin, &format!("GET {base}"))
+            .map_err(|err| LibError::new(err.to_string()))?;
+        Some(moqui_core::entity::fence::lift())
+    } else {
+        None
+    };
     let request = moqui_core::outbound::Request {
         method,
         url,

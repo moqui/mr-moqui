@@ -40,6 +40,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
         resolve_root_hosting,
     )?;
     registry.service_function(moqui_core::service_location!(get_merge_requests), get_merge_requests)?;
+    registry.service_function(moqui_core::service_location!(get_merge_request), get_merge_request)?;
+    registry.service_function(moqui_core::service_location!(get_issue), get_issue)?;
     registry.service_function(moqui_core::service_location!(open_merge_request), open_merge_request)?;
     registry.service_function(moqui_core::service_location!(propose_changes), propose_changes)?;
     registry.service_function(
@@ -432,6 +434,13 @@ pub(crate) fn need_hosted(context: &Context, root: &Root) -> Result<Hosted, LibE
     if let Some(hosted) = hosted(context, root).filter(|hosted| !hosted.repository["access"].is_null()) {
         return Ok(hosted);
     }
+    // an agent's read (the hosting tool, under the read fence) writes nothing: the Workspace resolves it
+    if moqui_core::entity::fence::active() {
+        return Err(LibError::new(format!(
+            "{} has no hosted repository known for you yet: the Workspace finds it (its Merge requests tab, or Fetch)",
+            root.label
+        )));
+    }
     resolve(context, root)?;
     hosted(context, root).ok_or_else(|| {
         LibError::new(format!(
@@ -469,6 +478,109 @@ fn get_merge_requests(
     let mut out = Parameters::new();
     out.insert("mergeRequests".into(), json_value(&items));
     out.insert("repository".into(), json_value(&hosted.repository));
+    Ok(out)
+}
+
+/// `get#MergeRequest`: one merge request of the hosted repository by its number: as the list shows it, with its
+/// description, head, approvals, checks and what keeps it from merging, from the framework's REST or the application's.
+fn get_merge_request(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let _authz = ec.disable_authz();
+    let root = git_root(&context, parameters)?;
+    let hosted = need_hosted(&context, root)?;
+    let number = text(parameters, "mergeRequestNum");
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(LibError::new("a merge request's number is a whole number"));
+    }
+    let path = super::threads::merge_request_path(
+        &hosted.via(),
+        &hosted.server.rest_path("repositories"),
+        &hosted.id(),
+        &number,
+    );
+    let answer = hosted.server.get(&path, &[])?;
+    let made = client::result_of(&answer);
+    // the framework answers the merge request beside its approvals and checks; an application, the merge request
+    let item = if made["mergeRequest"].is_object() {
+        &made["mergeRequest"]
+    } else {
+        made
+    };
+    let mut detail = merge_request_item(item, &hosted.server);
+    let pick = |value: &Json, keys: &[&str]| -> Json {
+        keys.iter()
+            .map(|key| &value[*key])
+            .find(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(Json::Null)
+    };
+    detail["description"] = pick(item, &["description", "body"]);
+    detail["headCommitId"] = pick(item, &["headCommitId"]);
+    detail["approvalCount"] = pick(made, &["approvalCount", "approvals"]);
+    if detail["checkState"].is_null() {
+        detail["checkState"] = pick(made, &["checkState"]);
+    }
+    detail["missing"] = pick(made, &["missingList", "missing"]);
+    let mut out = Parameters::new();
+    out.insert("mergeRequest".into(), json_value(&detail));
+    Ok(out)
+}
+
+/// The REST path of an issue (a work item) on a group server: the offer's `tasks.issuePath` with `{id}`, else
+/// Mantle's work effort (`/rest/s1/mantle/workEfforts/{id}`). `None` for an id that is not one.
+#[must_use]
+pub fn issue_path(template: &str, id: &str) -> Option<String> {
+    let id = id.trim().trim_start_matches('#');
+    if id.is_empty()
+        || id.len() > 60
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    let template = Some(template)
+        .filter(|template| template.starts_with('/') && template.contains("{id}"))
+        .unwrap_or("/rest/s1/mantle/workEfforts/{id}");
+    Some(template.replace("{id}", &query_text(id)))
+}
+
+/// `get#Issue`: an issue (a work item) of the hosted repository's server by its id: its title, status, type and text.
+fn get_issue(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let _authz = ec.disable_authz();
+    let root = git_root(&context, parameters)?;
+    let hosted = need_hosted(&context, root)?;
+    let id = text(parameters, "issueId");
+    let path = issue_path(&hosted.server.offered("tasks.issuePath"), &id)
+        .ok_or_else(|| LibError::new(format!("{id} is not an issue's id")))?;
+    let answer = hosted.server.get(&path, &[])?;
+    let item = client::result_of(&answer);
+    let pick = |keys: &[&str]| -> Json {
+        keys.iter()
+            .map(|key| &item[*key])
+            .find(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(Json::Null)
+    };
+    let issue = json!({
+        "issueId": pick(&["workEffortId", "issueId", "number", "id"]),
+        "title": pick(&["workEffortName", "title", "name"]),
+        "status": pick(&["statusId", "state", "status"]),
+        "type": pick(&["workEffortTypeEnumId", "type"]),
+        "description": pick(&["description", "body", "text"]),
+        "url": page_url(&hosted.server, &pick(&["url", "pageUrl"])),
+    });
+    let mut out = Parameters::new();
+    out.insert("issue".into(), json_value(&issue));
     Ok(out)
 }
 

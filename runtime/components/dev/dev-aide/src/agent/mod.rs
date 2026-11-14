@@ -20,6 +20,7 @@
 
 pub mod artifact;
 pub mod check;
+pub mod hosting;
 pub mod propose;
 pub mod source;
 pub mod try_service;
@@ -28,6 +29,7 @@ pub mod vcs;
 use std::path::{Path, PathBuf};
 
 use moqui_core::context::ExecutionContext;
+use moqui_llm::run::context::TurnContext;
 use moqui_llm::tools::format::ToolError;
 use moqui_llm::tools::ToolOutcome;
 use serde_json::Value as Json;
@@ -44,6 +46,52 @@ pub(crate) fn context(least: Tier) -> Result<Context, ToolError> {
             ToolError::new("not_allowed", err.to_string())
                 .hint("The dev tools need a dev instance, the dev-aide component and a Dev AIDE permission.")
         })
+}
+
+/// [`context`] for a tool call of an agent's session: the conversation's worktrees (21.8, `crate::worktree`) stand in
+/// for their main trees, so the session's file and git tools are rooted in them.
+pub(crate) fn session_context(ctx: &TurnContext<'_>, least: Tier) -> Result<Context, ToolError> {
+    let mut context = context(least)?;
+    if let Some(run) = ctx.run {
+        context.redirect = crate::worktree::redirects(&context.roots, &run.conversation_id);
+    }
+    Ok(context)
+}
+
+/// The file a tool of `conversation_id`'s session reaches by `named` (as `source`, `check` and `propose_edit` name
+/// one): in the session's worktree of its root when it has one. Public for the tests of `moqui-host`; called as the user.
+///
+/// # Errors
+///
+/// Why the name leads nowhere.
+pub fn session_file(conversation_id: &str, named: &str) -> Result<PathBuf, String> {
+    let mut context = context(Tier::View).map_err(|error| error.instruction)?;
+    context.redirect = crate::worktree::redirects(&context.roots, conversation_id);
+    file(&context, named)
+        .map(|found| found.path)
+        .map_err(|error| error.instruction)
+}
+
+/// The root a session's tool works in for the root `id` names: its worktree when the session has one.
+pub(crate) fn session_root(context: &Context, id: &str) -> Result<String, ToolError> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(ToolError::new("no_root", "Name the root."));
+    }
+    let root = context
+        .root(id)
+        .map_err(|err| ToolError::new("no_root", err.to_string()))?;
+    Ok(redirected(context, root).id.clone())
+}
+
+/// `root`, or the session's worktree of it.
+fn redirected<'a>(context: &'a Context, root: &'a Root) -> &'a Root {
+    context
+        .redirect
+        .iter()
+        .find(|(main, _)| *main == root.id)
+        .and_then(|(_, worktree)| context.root(worktree).ok())
+        .unwrap_or(root)
 }
 
 /// A file a tool names: by a component location (`component://my-site/entity/SiteEntities.xml`), an absolute path,
@@ -90,6 +138,8 @@ pub(crate) fn file<'a>(context: &'a Context, named: &str) -> Result<NamedFile<'a
             format!("{named}: name the file as component://<component>/<path>, root:path, or an absolute path."),
         ));
     };
+    // in a session with a worktree of this root, the worktree's file at the same place
+    let root = redirected(context, root);
     let resolved = context
         .resolve(root, &relative)
         .map_err(|err| ToolError::new("bad_path", err.to_string()))?;

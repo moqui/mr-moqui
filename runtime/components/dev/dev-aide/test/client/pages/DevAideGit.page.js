@@ -59,3 +59,16 @@ test("a hunk's label names its lines", () => {
     assert.equal(pure.hunkLabel({ oldStart: 10, oldLines: 1, newStart: 11, newLines: 1 }, true), "staged line 11 (−1 +1)");
     assert.equal(pure.hunkLabel({ oldStart: 3, oldLines: 2, newStart: 2, newLines: 0 }, false), "removed lines near 2 (−2 +0)");
 });
+
+test("Run locally shows the combination it runs, and names a secret without setting it", () => {
+    const job = { pipeline: "check", job: "db", image: "moqui-build", matrixKeys: ["postgres", "mysql"], secrets: ["DEPLOY_KEY"],
+        combinations: [
+            { matrixKey: "postgres", steps: [{ name: null, run: "./moq test --db postgres" }], env: [["MATRIX_DB", "postgres"]] },
+            { matrixKey: "mysql", steps: [{ name: "Test", run: "./moq test --db mysql", continueOnError: true }], env: [["MATRIX_DB", "mysql"]] }] };
+    const mysql = pure.localRunLines(job, "mysql");
+    assert.deepEqual(mysql.steps, [{ seq: 1, name: "Test", run: "./moq test --db mysql", continueOnError: true }]);
+    assert.deepEqual(mysql.env, ["MATRIX_DB=mysql"]);
+    assert.deepEqual(mysql.secrets, ["DEPLOY_KEY"]);
+    assert.equal(pure.localRunLines(job, "").steps[0].run, "./moq test --db postgres");
+    assert.deepEqual(pure.localRunLines(null, "").steps, []);
+});

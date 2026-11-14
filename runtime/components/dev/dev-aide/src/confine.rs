@@ -27,6 +27,9 @@ pub const HIDDEN: &[&str] = &[".git"];
 /// The runtime directories and files no root may reach, relative to the runtime directory.
 pub const DENIED_RUNTIME: &[&str] = &["db", "log", "txlog", "tmp", ".env", "cert"];
 
+/// The runtime directory of the agents' worktrees (plans/design-dev-aide.md 21.8): reached only as their own roots.
+pub const WORKTREES: &str = "worktrees";
+
 /// A path the client may use, inside `root`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resolved {
@@ -98,6 +101,13 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
                     "{relative} is runtime/{denied}, which the dev-aide does not open"
                 )));
             }
+        }
+        // the agents' worktrees are roots of their own (crate::worktree), not files of the tree that holds the runtime
+        let worktrees = runtime.join(WORKTREES);
+        if inside(&canonical, &worktrees) && !inside(root, &worktrees) {
+            return Err(Error::new(format!(
+                "{relative} is in runtime/{WORKTREES}, which are roots of their own"
+            )));
         }
     }
     let real = canonical.strip_prefix(root).map_or_else(

@@ -50,6 +50,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="hostedJson" type="text-very-long"><description>What the server answered of the repository: its path,
             default branch, the user's rights, its merge request settings, who keeps it, the agreement</description></field>
         <field name="hostedDate" type="date-time"/>
+        <field name="worktreeOf" type="text-medium"><description>A worktree of an agent's session (plans/design-dev-aide.md
+            21.8): the location of the working tree it is a worktree of</description></field>
+        <field name="worktreeBranch" type="text-medium"/>
+        <field name="conversationId" type="id"><description>The Assist conversation whose tools are rooted in the
+            worktree</description></field>
+        <field name="worktreeUserId" type="id"><description>Who made the worktree</description></field>
         <index name="DEV_AIDE_ROOT_LOC" unique="true"><index-field name="location"/></index>
     </entity>
     <entity entity-name="DevAideSetting" package="moqui.dev" use="configuration">

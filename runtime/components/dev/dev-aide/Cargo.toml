@@ -16,6 +16,8 @@ moqui-core = { workspace = true }
 # The development tools the dev-aide serves: reload, check, the artifact index (plans/archive/Crate-Split.md).
 moqui-devkit = { workspace = true }
 moqui-llm = { workspace = true }
+# The CI file's parser and planner, for Run locally (src/local_run.rs, plans/design-dev-aide.md 21.5).
+moqui-git = { workspace = true }
 moqui-lib = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
