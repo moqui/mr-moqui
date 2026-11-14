@@ -117,12 +117,11 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     if busy > 0 {
         return Ok(None);
     }
-    let running = entity
-        .find(JOB_RUN)?
-        .eq("statusId", Value::string("running"))
-        .eq("runnerPoolId", Value::string(&pool_id))
-        .count()?;
-    if running >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
+    // the count and the claim under the pool's lease, so two members never both take its last place
+    let Some(_turn) = super::engine::pool_turn(entity, &pool_id)? else {
+        return Ok(None);
+    };
+    if super::engine::running_in(entity, &pool_id)? >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
         return Ok(None);
     }
     let trusted = super::is_yes(&pool, "trusted");

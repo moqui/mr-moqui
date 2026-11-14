@@ -625,6 +625,8 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitReviewRefusals` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | too many of the account's pushes for review and proposals were refused this hour (`review-max-refused`) |
 | `GitReviewPushTooWide` | a push to `refs/for/` | it builds on more commits of the repository than `review-max-built-on` |
 | `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
+| `GitNeedsSharedStorage` | a write, `init#GitRepository`, `fetch#GitRepository`, `fork#GitRepository` | a new `local` or `remote` repository on a cluster member without `git-server` `shared-storage` ([shared storage](#shared-storage-in-a-cluster)) |
+| `GitLeaseBusy` | a push, a write, `fork#GitRepository`, `delete#GitRepository` | another cluster member writes the repository past `shared-lock-wait-seconds` |
 | `KeyInUse` | `UserServices.create#UserSshKey` | the key is an account's already |
 
 Over git the same texts are a ref's reason (`! [remote rejected] main -> main (GitProtectedBranch: protected branch:
@@ -961,6 +963,43 @@ task's branch by the project's `WstBranchPattern`; review comments on a line are
 `CommunicationEventGitAnchor` (`create#ReviewComment`, `resolve#ReviewThread`, `get#ReviewThreads`). A task's Source tab links commits,
 branches and tags by hand; its summary shows them, and the project summary the repositories and tags.
 `Project/GitCommit` shows a commit: its message, people, parents, linked tasks, and each changed file's diff.
+
+## Shared storage in a cluster
+
+A `db` repository is rows of the database every cluster member shares, so it needs nothing in a cluster or behind a
+front or edge node that balances requests over the members of a pool (git over HTTP carries no session cookie and goes
+round robin; SSH goes by the client's address). A `local` or `remote` repository is a directory, of one node unless
+`runtime/git` (and every `localPath`) is on storage every member mounts, which the conf says with `git-server`
+`shared-storage="true"` (`git_shared_storage`).
+
+A node is a cluster member when another member's heartbeat is live in `moqui.server.ClusterMember`, or it is set up to
+be one (`cluster_base_url`, `cluster_transport`). On a member **without** shared storage:
+
+- a new `local` or `remote` repository is refused (`GitNeedsSharedStorage`): the first write or `init#GitRepository`
+  of one whose directory is not there yet, a mirror's first `fetch#GitRepository`, and a fork of a `local`
+  repository. Use kind `db`, or set up shared storage;
+- the ones it has are named at start, each in a warning, and keep working as they did (the node starts; failure
+  tolerance): requests that reach another member for them fail there, and two members' copies would differ, so move
+  them to `db` or to shared storage.
+
+**With** shared storage every writer of an on-disk repository (a push, a ref write, a merge, a `git://` write,
+`commit#GitFiles`, an import, a fetch of a mirror, the merge request heads, the steps of `gc#GitRepositories` that
+rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:<repositoryId>`, as well as the lock of
+its own process, so two members never write the same directory at once: one waits for the other, at most
+`shared-lock-wait-seconds` (120; then `GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed
+while held and taken over once it lapses (60 seconds after a member that held it stopped); its times are the members'
+clocks, which keep within seconds of each other. `fetch#AllGitRepositories` runs on one member at a time (`fetch-due`),
+and the pushes of a repository to its push mirror take turns across the members (`push-mirror:<repositoryId>`).
+
+What a member keeps in memory of an on-disk repository is checked against the disk on use rather than told of other
+members' writes: gix reads the loose refs and `packed-refs` (by its modification time) at each read and looks for a new
+pack on a miss, a branch's path index is brought to the head read then, and the commits the refs reach are read again
+within two seconds. The `GitRepository` row of an open repository is forgotten when another member's write of it
+reaches this one as the cluster's entity cache invalidation.
+
+For every kind, a fork holds its source's lease until the fork's transaction ends, and `delete#GitRepository` marks
+the repository going and looks for forks under it, so a fork on one member and a delete on another never leave a fork
+whose source is gone (`GitHasForks`).
 
 ## Storage of db repositories
 

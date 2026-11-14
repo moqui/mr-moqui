@@ -20,7 +20,10 @@ Contents: [the file](#the-file) · [events](#events) · [jobs](#jobs) · [the bu
    allows. The engine queues nothing while there is no enabled pool, so a server that runs no CI writes no statuses.
 3. The `moqui-build` image on that machine ([images](#images)).
 4. `git-ci` `server-url` when runners reach the server by another URL than the public one, and `run-url` so statuses
-   link to a page.
+   link to a page. A container's runner sends its job token to that URL, so it must be `https` (or loopback, or the
+   server has `git-server` `allow-http`): with neither `server-url` nor the pool's `serverUrl` the engine gives it the
+   git server's public URL (`git-server` `public-url`, else from the webapp's host and port), and a job whose URL
+   would be plain HTTP to another host is not started but ended as an `error` that names the conf to set.
 5. A `ci.xml` in a repository, or a repository that is a Moqui component.
 
 ## The file
@@ -299,7 +302,10 @@ good while that job run is `running` and until its time limit. It authorizes two
   the token learns nothing of what else the store holds.
 - **The runner endpoints of that job run.**
 
-It is cleared when the job ends, by its result, a timeout or a cancel, so it is dead from then on. It is no user's
+It is dead once the job ends, by its result, a timeout or a cancel: only the token of a `running` job within its
+time is taken. Its hash stays on the row, so a runner's late call with it (after a cancel or a timeout, on whichever
+cluster member) is answered **410 Gone**, which `moqui ci-run` takes as "the job is gone" (exit 3) and is no failed
+sign-in for web protection; a token that is malformed or not this server's is 401. It is no user's
 and reaches no service, screen or other REST. `moqui ci-run` does not pass it to the steps' environment; a step runs
 as the runner's user, though, and so could read it from the runner's process, which gives it nothing the job did not
 have.
@@ -320,12 +326,12 @@ token in `Authorization: Bearer`, taken only over HTTPS, from loopback, or with 
 | `POST register` | pool | `{name, platform}`: a new runner, `{runnerId, token}` |
 | `POST claim` | runner | A queued job of the runner's pool, `{jobRunId, token}`, or `{}` |
 
-Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (401
-after), and counts the job's requests (`runner-max-requests-per-minute`, 429 over it). A JSON body is at most
+Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (410
+after it ended or passed its time; 401 for a token that is not a job token of this server), and counts the job's requests (`runner-max-requests-per-minute`, 429 over it). A JSON body is at most
 `max-log-batch-bytes`; an upload is limited by its kind (`max-artifact-bytes`, `max-report-bytes`,
 `max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts and reports. A cache from an untrusted run is
-422. A refusal is its status with `{"error": ...}`. A token that is not valid counts as an authentication failure for
-web protection.
+422. A refusal is its status with `{"error": ...}`. A token that is not valid (401) counts as an authentication failure
+for web protection; an ended job's (410) does not.
 
 ## moqui ci-run
 
@@ -345,7 +351,8 @@ the engine starts it, it:
 7. posts the result.
 
 Its exit code is 0 when the job succeeded, 1 when a step failed, 2 for an error and 3 when the server no longer takes
-the job's calls (cancelled or past its time), on which it stops the step at once. A job whose runner exits with no
+the job's calls (410, or 401 or 403: cancelled or past its time), on which it stops the step at once and tries no call
+again; only a call that does not connect or is answered 5xx is tried again. A job whose runner exits with no
 result is ended by the server ([the engine](#the-engine)).
 
 ## Records
@@ -425,9 +432,17 @@ authorization disabled only), `queue#ScheduledRuns`, `start#QueuedJobRuns`, `end
   first, up to each pool's `maxConcurrent`: it picks the pool (the one the check named, else an enabled pool of the
   job's pool name that takes the run's trust, the owner's before a shared one), checks the image against
   `allowedImages`, makes the job token and calls the host type's start service. A job with no pool, an image that is
-  not allowed, or a host that does not start it is an `error`.
+  not allowed, a runner URL that would be plain HTTP ([set it up](#set-it-up)), or a host that does not start it is
+  an `error`.
+- **Claims are atomic across cluster members.** A job moves from one state to the next by one conditional `UPDATE`
+  (`... WHERE jobRunId = ? AND statusId = ?`) whose row count says whether it applied, so of two members (or two
+  threads) that start, claim, end or skip the same job only one does; the `statusId` audit log is written as an
+  entity update writes it. A start's or a registered runner's claim is a statement of its own, committed at once,
+  and is made under the pool's lease (`moqui.resource.GitLease` `ci-pool:<runnerPoolId>`), held while the pool's
+  running jobs are counted against `maxConcurrent` and one is claimed: a member that counts next counts it, so a pool
+  never goes over its limit. A start whose transaction rolls back after its claim gives the job back to the queue.
 - **Ending.** The runner's result ends a job: its steps left are closed, its log becomes one blob, its usage row is
-  written, its status is written, its token is cleared and its container removed. Then the run moves on: waiting
+  written, its status is written, its token dies and its container is removed. Then the run moves on: waiting
   jobs whose needs all succeeded are queued, those whose need did not are skipped, and when every job has ended the
   run is `success`, else `error`, `failure` or `cancelled`.
 - **Overdue and lost.** `end_OverdueJobRuns_frequent` ends as errors the running jobs past their time limit, the ones
@@ -483,10 +498,6 @@ container through the driver's services, inspects it, and removes it.
 - **Windows registered runners**: steps run with `sh -c`, and a step past its time is killed by process group on
   Unix only.
 - **Egress rules** are the host's: the engine names a network (`egressRule`) and makes none.
-- **Log tailing across a cluster** by notification (see `get#JobLog`).
-- **A pool's limit on a cluster** is counted by the server that starts a job: one start pass runs at a time in a
-  process, and a job is claimed by an update that names its state, which is not one statement on every database. Two
-  servers starting at the same moment can put a pool a job over `maxConcurrent`, or start a second container for a
-  job: only one token is the job's, so the other runner is refused and stops, and its container is removed with the
-  job's.
+- **Log tailing across a cluster** by notification (see `get#JobLog`). The secrets a member masks in a job's log are
+  kept in its memory for five minutes at most, so a job that ended on another member leaves nothing behind.
 - Kubernetes, AWS and other providers' APIs as drivers (Dogfood D19).

@@ -97,7 +97,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="jobSpec" type="text-very-long"><description>The job as planned, JSON: what the runner is given</description></field>
         <field name="instanceHostId" type="id"/>
         <field name="instanceRef" type="text-medium"><description>The container's id on the host</description></field>
-        <field name="tokenHash" type="text-medium"><description>The SHA-256 of the job token; cleared when the job ends</description></field>
+        <field name="tokenHash" type="text-medium"><description>The SHA-256 of the job token. Kept when the job ends, so a late call with it is answered 410 Gone; only the token of a running job within tokenExpireDate is taken</description></field>
         <field name="tokenExpireDate" type="date-time"/>
         <field name="logBlobId" type="id-long"><description>The whole log, once the job has ended</description></field>
         <field name="logBytes" type="number-integer"/>

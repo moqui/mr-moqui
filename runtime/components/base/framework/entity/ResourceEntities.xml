@@ -149,6 +149,18 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="GmmRebase" enumTypeId="GitMergeMethod" enumCode="rebase" sequenceNum="4" description="Rebase"/>
         </seed-data>
     </entity>
+    <entity entity-name="GitLease" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A lease one cluster member holds on a named git resource until leaseUntil, renewed while held
+            (docs/interfaces/Git-Hosting.md, Shared storage in a cluster): repository:[repositoryId] for the writers
+            of a repository on shared storage and for a fork against a delete, fetch-due for the pass of mirror
+            fetches, push-mirror:[repositoryId] for a push to a push mirror, ci-pool:[runnerPoolId] for the starts and
+            claims of a runner pool. Taken by a conditional update committed at once; a lapsed lease (a member that
+            stopped) is taken over. No Java counterpart.</description>
+        <field name="leaseName" type="id-long" is-pk="true"/>
+        <field name="holderId" type="text-medium"><description>The take that holds it (process, time, count); empty when free</description></field>
+        <field name="leaseUntil" type="date-time"/>
+        <field name="takenDate" type="date-time"/>
+    </entity>
     <entity entity-name="GitRepositoryPathRedirect" package="moqui.resource" use="nontransactional">
         <description>A path a repository had before it was renamed or moved (set#GitRepositoryPath): git over HTTP, SSH
             and LFS at the path reaches repositoryId, until another repository takes the path.</description>

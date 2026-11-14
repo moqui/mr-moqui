@@ -44,6 +44,10 @@ pub mod status;
 pub mod token;
 pub mod trust;
 
+#[cfg(test)]
+#[path = "claim_tests.rs"]
+mod claim_tests;
+
 pub(crate) const PIPELINE_RUN: &str = "moqui.resource.GitPipelineRun";
 pub(crate) const JOB_RUN: &str = "moqui.resource.GitJobRun";
 pub(crate) const JOB_STEP: &str = "moqui.resource.GitJobStep";
@@ -148,6 +152,11 @@ pub(crate) fn one(entity: &EntityFacade, entity_name: &str, key: &str, id: &str)
 
 /// Set fields of the row of `entity_name` whose key field `key` is `id`, when `status` is still its `statusId`
 /// (any when `None`). Whether a row changed: a claim another worker made first gives false.
+///
+/// With a `status` this is one conditional `UPDATE ... WHERE key = ? AND statusId = ?` in the caller's transaction,
+/// whose row count says whether it applied, so two members (or two threads) that move the same row from one state
+/// never both do (docs/interfaces/Pipelines.md, "The engine"): a read and an update by key, as `update_all` makes,
+/// let both through. The audit log of `statusId` is written as an entity update writes it.
 pub(crate) fn set_fields(
     entity: &EntityFacade,
     entity_name: &str,
@@ -156,12 +165,114 @@ pub(crate) fn set_fields(
     status: Option<&str>,
     fields: Vec<(&str, Value)>,
 ) -> Result<bool, Error> {
-    let mut find = entity.find(entity_name)?.eq(key, Value::string(id));
-    if let Some(status) = status {
-        find = find.eq("statusId", Value::string(status));
+    let Some(status) = status.filter(|_| !entity.sim_active()) else {
+        let mut find = entity.find(entity_name)?.eq(key, Value::string(id));
+        if let Some(status) = status {
+            find = find.eq("statusId", Value::string(status));
+        }
+        let changed = find.update_all(fields.into_iter().map(|(name, value)| (name.to_string(), value)))?;
+        return Ok(changed > 0);
+    };
+    let changed = update_when(entity, entity_name, key, id, status, &fields, Commit::Caller)?;
+    if changed {
+        audit_status(entity, entity_name, id, status, &fields);
     }
-    let changed = find.update_all(fields.into_iter().map(|(name, value)| (name.to_string(), value)))?;
-    Ok(changed > 0)
+    Ok(changed)
+}
+
+/// Where a conditional update is committed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Commit {
+    /// In the caller's transaction, if any.
+    Caller,
+    /// A statement of its own on a reserve connection, committed at once: a claim other members see before the
+    /// caller's transaction ends.
+    Own,
+}
+
+/// `UPDATE entity SET fields, lastUpdatedStamp WHERE key = id AND statusId = status`: whether the row changed.
+pub(crate) fn update_when(
+    entity: &EntityFacade,
+    entity_name: &str,
+    key: &str,
+    id: &str,
+    status: &str,
+    fields: &[(&str, Value)],
+    commit: Commit,
+) -> Result<bool, Error> {
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals(key, Value::string(id)),
+        moqui_core::entity::Condition::equals("statusId", Value::string(status)),
+    ]);
+    let (statement, tx, stamped) = entity.with_group(entity_name, |definition, dialect, _, tx| {
+        let stamped = definition.has_field("lastUpdatedStamp");
+        let mut names: Vec<&str> = fields.iter().map(|(name, _)| *name).collect();
+        if stamped {
+            names.push("lastUpdatedStamp");
+        }
+        Ok((
+            moqui_db::sql::update(definition, dialect, &names, Some(&condition))?,
+            tx.clone(),
+            stamped,
+        ))
+    })?;
+    let mut params: Vec<Value> = fields.iter().map(|(_, value)| value.clone()).collect();
+    if stamped {
+        let millis = match commit {
+            Commit::Caller => tx.start_time_millis().unwrap_or_else(now_millis),
+            Commit::Own => now_millis(),
+        };
+        params.push(moqui_core::user::stamp_value(millis));
+    }
+    params.extend(statement.params);
+    let count = match commit {
+        Commit::Caller => moqui_core::entity::exec::execute_tx(&tx, &statement.sql, &params)?,
+        Commit::Own => tx.with_reserve(|conn| conn.execute(&statement.sql, &params))?,
+    };
+    Ok(count > 0)
+}
+
+/// The audit log of a `statusId` a conditional update moved from `was`, when the entity audits it (as
+/// `EntityAuditLog` rows an entity update writes). A failure is logged: the move itself is made.
+pub(crate) fn audit_status(entity: &EntityFacade, entity_name: &str, id: &str, was: &str, fields: &[(&str, Value)]) {
+    let Some((_, new)) = fields.iter().find(|(name, _)| *name == "statusId") else {
+        return;
+    };
+    if entity.flags().disable_audit_log {
+        return;
+    }
+    let audited = entity
+        .with_entity(entity_name, |definition, _, _| {
+            Ok(definition
+                .field("statusId")
+                .is_some_and(|field| matches!(field.enable_audit_log.as_deref(), Some("true" | "update"))))
+        })
+        .unwrap_or(false);
+    if !audited {
+        return;
+    }
+    let written = (|| -> Result<(), Error> {
+        let mut row = EntityValue::make(entity, "moqui.entity.EntityAuditLog")?;
+        row.set_sequenced_id_primary(entity)?;
+        row.set("changedEntityName", Value::string(entity_name));
+        row.set("changedFieldName", Value::string("statusId"));
+        row.set("pkPrimaryValue", Value::string(id));
+        row.set("oldValueText", Value::string(was));
+        row.set("newValueText", Value::string(to_plain_string(new)));
+        row.set("changedDate", moqui_core::user::now_value());
+        if let Some(user_id) = moqui_core::user::current_user_id().ok().flatten() {
+            row.set("changedByUserId", Value::string(user_id));
+        }
+        row.create(entity)?;
+        Ok(())
+    })();
+    if let Err(err) = written {
+        tracing::warn!(
+            entity = entity_name,
+            id,
+            "the audit log of a status move was not written: {err}"
+        );
+    }
 }
 
 /// Call the service the conf names, with authorization disabled, as the LFS upload check is called. `None` when no

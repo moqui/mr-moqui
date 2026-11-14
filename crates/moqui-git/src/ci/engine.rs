@@ -27,8 +27,8 @@ use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 
 use super::driver::{self, InstanceState, RunSpec, ServiceSpec};
 use super::{
-    field, int, is_yes, long, millis, now_millis, opt, set_fields, status, token, yes_no, ENDED, JOB_RUN, JOB_STEP,
-    PIPELINE_RUN, RUNNER, RUNNER_POOL, RUNNER_USAGE,
+    field, int, is_yes, long, millis, now_millis, opt, set_fields, status, token, yes_no, Commit, ENDED, JOB_RUN,
+    JOB_STEP, PIPELINE_RUN, RUNNER, RUNNER_POOL, RUNNER_USAGE,
 };
 
 const MINUTE: i64 = 60 * 1000;
@@ -158,6 +158,57 @@ pub fn server_url(pool: &EntityValue) -> String {
         .to_string()
 }
 
+/// The URL a container pool's runners reach this server by ([`server_url`]), when a runner may send its job token
+/// to it: an `https` URL, a loopback one (the runner REST takes a token over plain HTTP from loopback), or any with
+/// `git-server` `allow-http`. Otherwise why the job is not started, naming the conf to set: a runner's calls over
+/// plain HTTP from another address would all be refused.
+pub(crate) fn runner_server_url(pool: &EntityValue) -> Result<String, String> {
+    let url = server_url(pool);
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url.as_str()));
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(inside) => inside.split_once(']').map_or(inside, |(host, _)| host),
+        None => authority.rsplit_once(':').map_or(authority, |(host, _)| host),
+    };
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    if scheme.eq_ignore_ascii_case("https") || loopback || crate::setting("allow-http") == "true" {
+        return Ok(url);
+    }
+    Err(format!(
+        "the runners of pool {} would reach this server at {url}, over plain HTTP, where a job token is refused: set \
+         git-ci server-url (git_ci_server_url), the pool's serverUrl, or git-server public-url (git_public_url) to the \
+         https URL runners reach this server by",
+        field(pool, "poolName").unwrap_or_default()
+    ))
+}
+
+/// The lease of a runner pool's starts and claims (`ci-pool:<runnerPoolId>`), held while its running jobs are counted
+/// and one is claimed; `None` when another member keeps it past a few seconds (its turn comes at the next pass).
+pub(crate) fn pool_turn(entity: &EntityFacade, pool_id: &str) -> Result<Option<crate::lease::Lease>, Error> {
+    match crate::lease::take(
+        entity,
+        &format!("ci-pool:{pool_id}"),
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(5),
+    ) {
+        Ok(lease) => Ok(Some(lease)),
+        Err(err) if err.message().starts_with("GitLeaseBusy") => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// The jobs of a pool running now.
+pub(crate) fn running_in(entity: &EntityFacade, pool_id: &str) -> Result<i64, Error> {
+    Ok(entity
+        .find(JOB_RUN)?
+        .eq("statusId", Value::string("running"))
+        .eq("runnerPoolId", Value::string(pool_id))
+        .count()?)
+}
+
 /// The minutes a job may run: its own, at most its pool's and the server's.
 fn time_limit(job: &EntityValue, pool: &EntityValue) -> i64 {
     let limits = super::limits();
@@ -184,29 +235,35 @@ pub(crate) fn claim_job(
     let (plain, hashed) = token::new_token(token::JOB_PREFIX)?;
     let now = now_millis();
     let minutes = time_limit(job, pool);
-    let claimed = set_fields(
-        entity,
-        JOB_RUN,
-        "jobRunId",
-        &job_run_id,
-        Some("queued"),
-        vec![
-            ("statusId", Value::string("running")),
-            ("runnerPoolId", opt(field(pool, "runnerPoolId"))),
-            ("runnerId", opt(runner_id.map(str::to_string))),
-            (
-                "instanceHostId",
-                opt(field(pool, "instanceHostId").filter(|_| runner_id.is_none())),
-            ),
-            ("timeoutMinutes", int(minutes)),
-            ("tokenHash", Value::string(hashed)),
-            ("tokenExpireDate", moqui_core::user::stamp_value(now + minutes * MINUTE)),
-            ("startedDate", moqui_core::user::stamp_value(now)),
-            ("lastContactDate", moqui_core::user::stamp_value(now)),
-        ],
-    )?;
-    if !claimed {
+    let fields = vec![
+        ("statusId", Value::string("running")),
+        ("runnerPoolId", opt(field(pool, "runnerPoolId"))),
+        ("runnerId", opt(runner_id.map(str::to_string))),
+        (
+            "instanceHostId",
+            opt(field(pool, "instanceHostId").filter(|_| runner_id.is_none())),
+        ),
+        ("timeoutMinutes", int(minutes)),
+        ("tokenHash", Value::string(&hashed)),
+        ("tokenExpireDate", moqui_core::user::stamp_value(now + minutes * MINUTE)),
+        ("startedDate", moqui_core::user::stamp_value(now)),
+        ("lastContactDate", moqui_core::user::stamp_value(now)),
+    ];
+    // a statement of its own, committed before the pool's lease is let go, so the next member to count the pool's
+    // running jobs counts this one (docs/interfaces/Pipelines.md, "The engine")
+    if !super::update_when(entity, JOB_RUN, "jobRunId", &job_run_id, "queued", &fields, Commit::Own)? {
         return Ok(None);
+    }
+    super::audit_status(entity, JOB_RUN, &job_run_id, "queued", &fields);
+    // a caller's transaction that rolls back gives the job back to the queue (when it is still this claim's)
+    if let Ok(transactions) = entity.transactions_for(JOB_RUN) {
+        if transactions.in_transaction() {
+            let (back, id) = (entity.clone(), job_run_id.clone());
+            let added = transactions.on_rollback(move || unclaim(&back, &id));
+            if let Err(err) = added {
+                tracing::warn!(job = %job_run_id, "a claimed job is not given back if its start rolls back: {err}");
+            }
+        }
     }
     if let Some(run_id) = field(run, "pipelineRunId") {
         set_fields(
@@ -227,6 +284,24 @@ pub(crate) fn claim_job(
     Ok(Some(plain))
 }
 
+/// Give a job whose start rolled back to the queue again, while it is still running with no result: its claim was
+/// committed on its own ([`claim_job`]), and no runner got its token.
+fn unclaim(entity: &EntityFacade, job_run_id: &str) {
+    let fields = [
+        ("statusId", Value::string("queued")),
+        ("runnerId", Value::Null),
+        ("instanceHostId", Value::Null),
+        ("tokenHash", Value::Null),
+        ("tokenExpireDate", Value::Null),
+        ("startedDate", Value::Null),
+    ];
+    match super::update_when(entity, JOB_RUN, "jobRunId", job_run_id, "running", &fields, Commit::Own) {
+        Ok(true) => super::audit_status(entity, JOB_RUN, job_run_id, "running", &fields),
+        Ok(false) => {}
+        Err(err) => tracing::error!(job = %job_run_id, "a job whose start rolled back was not queued again: {err}"),
+    }
+}
+
 fn pairs(value: &serde_json::Value) -> Vec<(String, String)> {
     value
         .as_object()
@@ -241,7 +316,7 @@ fn pairs(value: &serde_json::Value) -> Vec<(String, String)> {
 /// The container of a job: the image, the server's URL and the job token in its environment, the pool's limits, and
 /// the labels that tie it to the job run. The job's own variables and its secrets are not here: the runner asks for
 /// them with the token.
-pub fn run_spec(job: &EntityValue, pool: &EntityValue, job_token: &str) -> RunSpec {
+pub fn run_spec(job: &EntityValue, pool: &EntityValue, server_url: &str, job_token: &str) -> RunSpec {
     let job_run_id = field(job, "jobRunId").unwrap_or_default();
     let spec: serde_json::Value =
         serde_json::from_str(&field(job, "jobSpec").unwrap_or_default()).unwrap_or(serde_json::Value::Null);
@@ -253,7 +328,7 @@ pub fn run_spec(job: &EntityValue, pool: &EntityValue, job_token: &str) -> RunSp
         image: field(job, "image").unwrap_or_default(),
         command: command.split_whitespace().map(str::to_string).collect(),
         env: vec![
-            ("MOQUI_CI_SERVER_URL".to_string(), server_url(pool)),
+            ("MOQUI_CI_SERVER_URL".to_string(), server_url.to_string()),
             ("MOQUI_CI_TOKEN".to_string(), job_token.to_string()),
             ("MOQUI_CI_JOB_RUN_ID".to_string(), job_run_id.clone()),
             ("CI".to_string(), "true".to_string()),
@@ -308,7 +383,8 @@ pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
         .order_by("jobRunId", false)
         .limit(500)
         .list()?;
-    let mut running: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    // the pools found full in this pass
+    let mut full: BTreeSet<String> = BTreeSet::new();
     for job in queued.iter() {
         let job_run_id = field(job, "jobRunId").unwrap_or_default();
         // one job that fails to start does not stop the others
@@ -343,16 +419,7 @@ pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
                 return Ok(());
             }
             let pool_id = field(&pool, "runnerPoolId").unwrap_or_default();
-            let count = match running.get(&pool_id) {
-                Some(count) => *count,
-                None => entity
-                    .find(JOB_RUN)?
-                    .eq("statusId", Value::string("running"))
-                    .eq("runnerPoolId", Value::string(&pool_id))
-                    .count()?,
-            };
-            if count >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
-                running.insert(pool_id, count);
+            if full.contains(&pool_id) {
                 return Ok(());
             }
             let Some(host_id) = field(&pool, "instanceHostId") else {
@@ -364,11 +431,28 @@ pub fn start_queued(entity: &EntityFacade) -> Result<Started, Error> {
                 )?;
                 return Ok(());
             };
-            let Some(job_token) = claim_job(entity, &run, job, &pool, None)? else {
+            let url = match runner_server_url(&pool) {
+                Ok(url) => url,
+                Err(why) => {
+                    done.refused += 1;
+                    finish_job(entity, &job_run_id, &Outcome::error(why))?;
+                    return Ok(());
+                }
+            };
+            // the count and the claim under the pool's lease, so two members never both take its last place
+            let Some(turn) = pool_turn(entity, &pool_id)? else {
                 return Ok(());
             };
-            running.insert(pool_id, count + 1);
-            match driver::start(entity, &host_id, &run_spec(job, &pool, &job_token)) {
+            if running_in(entity, &pool_id)? >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
+                full.insert(pool_id);
+                return Ok(());
+            }
+            let claimed = claim_job(entity, &run, job, &pool, None)?;
+            drop(turn);
+            let Some(job_token) = claimed else {
+                return Ok(());
+            };
+            match driver::start(entity, &host_id, &run_spec(job, &pool, &url, &job_token)) {
                 Ok(instance_ref) => {
                     set_fields(
                         entity,
@@ -479,8 +563,8 @@ pub fn finish_job(entity: &EntityFacade, job_run_id: &str, outcome: &Outcome) ->
             ("exitCode", outcome.exit_code.map_or(Value::Null, int)),
             ("statusMessage", opt(outcome.message.clone())),
             ("finishedDate", moqui_core::user::stamp_value(now)),
-            ("tokenHash", Value::Null),
-            ("tokenExpireDate", Value::Null),
+            // the token's hash stays, so a late call with it is told the job is gone (410); only a running job's
+            // token is taken (token::job_token)
             ("minutesUsed", int(minutes)),
         ],
     )?;

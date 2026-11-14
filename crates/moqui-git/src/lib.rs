@@ -44,6 +44,7 @@ pub(crate) mod fs;
 pub mod gc;
 pub(crate) mod hosting;
 pub(crate) mod index;
+pub(crate) mod lease;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
 pub(crate) mod ops;
@@ -52,6 +53,7 @@ pub(crate) mod revwalk;
 pub(crate) mod rules;
 pub mod server;
 pub mod service;
+pub(crate) mod shared;
 pub(crate) mod storage;
 pub(crate) mod store;
 #[cfg(test)]
@@ -90,6 +92,9 @@ fn construct(factory: &Arc<ExecutionContextFactory>) -> Result<Arc<dyn moqui_cor
     let provider = GitProvider::new(resources.entity_slot(), resources.runtime_dir().to_path_buf());
     // archives nobody used for a while, and what a writer that died left (get#GitArchive)
     archive::sweep_at_start(resources.runtime_dir());
+    // on a cluster member: the rows other members write, and the on-disk repositories it cannot share (shared.rs)
+    provider.listen_for_row_changes(factory);
+    provider.warn_unshared_after_start(factory);
     factory
         .extension(|_| Slot::default())
         .0
@@ -262,6 +267,8 @@ struct Inner {
     review_refusals: Mutex<HashMap<String, (i64, u32)>>,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
     indexes: Mutex<BoundedMap<String, Arc<Mutex<BranchIndex>>>>,
+    /// Whether this node is a cluster member, and when that was read ([`GitProvider::clustered`]).
+    clustered: Mutex<Option<(std::time::Instant, bool)>>,
 }
 
 impl std::fmt::Debug for GitProvider {
@@ -339,6 +346,7 @@ impl GitProvider {
                 reach: Mutex::new(reach::ReachSets::default()),
                 review_refusals: Mutex::new(HashMap::new()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
+                clustered: Mutex::new(None),
             }),
         }
     }
@@ -409,7 +417,12 @@ impl GitProvider {
                 }
                 Box::new(fs::FsStore::open(&definition.path)?)
             }
-            RepositoryKind::Local => Box::new(fs::FsStore::init(&definition.path, &definition.branch)?),
+            RepositoryKind::Local => {
+                if !definition.path.join("HEAD").is_file() {
+                    self.may_make_on_disk(&definition.id)?;
+                }
+                Box::new(fs::FsStore::init(&definition.path, &definition.branch)?)
+            }
             RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &definition, self.objects())),
         };
         Ok(Repo { definition, store })
@@ -579,6 +592,7 @@ impl GitProvider {
     ) -> Result<Option<ObjectId>, Error> {
         let lock = self.lock_of(&repo.definition.id);
         let _turn = moqui_lib::sync::lock(&lock);
+        let _shared = self.shared_turn(&repo.definition.id, repo.definition.kind)?;
         // the row as it is now: archived or deleted since the repository was opened, nothing is written
         self.still_writable(&repo.definition.id)?;
         // the refs before, only when a gitECA rule listens for writes
@@ -952,6 +966,10 @@ impl GitProvider {
                 "git repository {repository_id} is not a remote mirror; import#GitRepository copies from another repository"
             )));
         }
+        // the mirror's first fetch makes its directory
+        if !definition.path.join("HEAD").is_file() {
+            self.may_make_on_disk(repository_id)?;
+        }
         let url = definition
             .remote_url
             .clone()
@@ -1003,6 +1021,7 @@ impl GitProvider {
         let outcome = {
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
+            let _shared = self.shared_turn(repository_id, definition.kind)?;
             fs::fetch(
                 &definition.path,
                 &url,
@@ -1072,6 +1091,11 @@ impl GitProvider {
     /// repository is recorded on its row and logged, and the others are still fetched. (fetched, failed) ids.
     pub fn fetch_due(&self) -> Result<(Vec<String>, Vec<String>), Error> {
         let entity = self.entity()?;
+        // one member of a cluster fetches at a time; another's pass that finds it held leaves this one to it
+        let Some(_pass) = lease::try_take(&entity, "fetch-due", lease::TTL)? else {
+            tracing::debug!("the git mirror fetches are being made by another cluster member");
+            return Ok((Vec::new(), Vec::new()));
+        };
         let rows_authz = rows_guard();
         let rows = entity
             .find(GIT_REPOSITORY)?
@@ -1114,6 +1138,13 @@ impl GitProvider {
                 .or_default(),
         );
         let _turn = moqui_lib::sync::lock(&lock);
+        // the pushes of one repository take turns across the cluster's members too
+        let _pushing = lease::take(
+            &self.entity()?,
+            &format!("push-mirror:{repository_id}"),
+            lease::TTL,
+            lease::DEFAULT_WAIT,
+        )?;
         let row = {
             let _rows = rows_guard();
             self.entity()?
@@ -1240,6 +1271,9 @@ impl GitProvider {
         let done = match definition.kind {
             RepositoryKind::Local => {
                 let existed = definition.path.join("HEAD").is_file();
+                if !existed {
+                    self.may_make_on_disk(repository_id)?;
+                }
                 fs::FsStore::init(&definition.path, &definition.branch)?;
                 if existed {
                     format!(
@@ -1386,6 +1420,7 @@ impl GitProvider {
         let repo = self.repo(repository_id)?;
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
+        let _shared = self.shared_turn(repository_id, repo.definition.kind)?;
         self.still_writable(repository_id)?;
         let haves: Vec<ObjectId> = repo.store.list_refs("refs/")?.into_iter().map(|(_, id)| id).collect();
         let count = server::copy_objects(

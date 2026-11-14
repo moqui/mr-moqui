@@ -279,6 +279,10 @@ impl tracing::field::Visit for FieldVisit {
     }
 }
 
+/// Held while an autocommit statement reads and puts back its table, and while a commit replays its writes: each
+/// applies whole, as on a database.
+static AUTOCOMMIT: Mutex<()> = Mutex::new(());
+
 struct MemDriver {
     store: Arc<Mutex<Tables>>,
     tape: Option<Arc<Mutex<Vec<String>>>>,
@@ -421,6 +425,7 @@ impl DbConnection for MemConn {
         };
         let dirty = std::mem::take(&mut self.dirty);
         let changes = std::mem::take(&mut self.changes);
+        let _whole = lock(&AUTOCOMMIT);
         let mut committed = lock(&self.store);
         for table in dirty {
             let current = committed.get(&table).cloned().unwrap_or_default();
@@ -499,6 +504,9 @@ impl MemConn {
             return self.xmin_rows(sql);
         }
         let stmt = parse(sql).map_err(|err| Error::new(format!("{err} sql={sql}")))?;
+        // an autocommit statement reads its table and puts it back: one at a time, as a database applies each
+        // statement whole, so two conditional updates of one row (a claim) never both apply
+        let _whole = self.local.is_none().then(|| lock(&AUTOCOMMIT));
         self.exec(stmt, params)
     }
 

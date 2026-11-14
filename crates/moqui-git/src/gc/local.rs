@@ -352,6 +352,7 @@ pub(super) fn collect(
     let lock = provider.lock_of(id);
     let (roots, packs, loose) = {
         let _turn = moqui_lib::sync::lock(&lock);
+        let _shared = provider.shared_turn(id, definition.kind)?;
         let (packs, loose) = list_files(&objects_dir)?;
         let roots = provider.gc_roots(entity, id, &store, options)?;
         (roots, packs, loose)
@@ -473,6 +474,7 @@ pub(super) fn collect(
     // the files replaced, under the writer lock
     {
         let _turn = moqui_lib::sync::lock(&lock);
+        let _shared = provider.shared_turn(id, definition.kind)?;
         let before: HashSet<ObjectId> = roots.refs.iter().copied().collect();
         let moved: Vec<ObjectId> = store
             .list_refs("refs/")?

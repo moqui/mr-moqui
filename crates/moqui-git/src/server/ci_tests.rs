@@ -624,8 +624,8 @@ fn a_push_runs_a_pipeline_on_the_fake_host_to_its_statuses() {
         .any(|call| call.action == "remove" && to_plain_string(&call.parameters["instanceRef"]) == container));
 
     // the job token is dead: the runner REST and the git server refuse it
-    assert_eq!(transport.request("GET", "job", &[]).status, 401);
-    assert_eq!(transport.request("POST", "log", br#"{"text":"late"}"#).status, 401);
+    assert_eq!(transport.request("GET", "job", &[]).status, 410);
+    assert_eq!(transport.request("POST", "log", br#"{"text":"late"}"#).status, 410);
     let late = fixture.dir.join("late");
     std::fs::create_dir_all(&late).unwrap();
     assert!(runner::http::checkout(&format!("{base}/git/app.git"), &commit, 1, &job_token, &late).is_err());
@@ -1845,7 +1845,7 @@ fn a_job_token_reads_its_commit_of_its_repository_and_nothing_else() {
             .status,
         200
     );
-    assert_eq!(right.request("GET", "job", &[]).status, 401);
+    assert_eq!(right.request("GET", "job", &[]).status, 410);
     assert!(checkout("after-end", &url, &first, 1, &first_token).is_err());
     // the other job's token still works
     assert!(checkout("still", &url, &second, 1, &second_token).is_ok());
@@ -1892,6 +1892,9 @@ fn jobs_past_their_time_and_lost_containers_are_ended_and_cleaned_up() {
     let run_id = text(&only_run(&fixture, "app", &commit), "pipelineRunId");
     assert_eq!(start(&fixture).started, 1);
     let job_run_id = text(&job_named(&fixture, &run_id, "test"), "jobRunId");
+    // kept when the job ends, so a late call is told it is gone (410)
+    let token_hash = text(&job_named(&fixture, &run_id, "test"), "tokenHash");
+    assert!(!token_hash.is_empty());
     let hosts = FakeHosts::of(fixture.context.factory());
     assert_eq!(hosts.containers().len(), 1);
     let end = |now: i64| {
@@ -1912,7 +1915,7 @@ fn jobs_past_their_time_and_lost_containers_are_ended_and_cleaned_up() {
             text(&job, "statusMessage"),
             text(&job, "tokenHash")
         ),
-        ("error".into(), "Timed out after 20 minutes".into(), String::new())
+        ("error".into(), "Timed out after 20 minutes".into(), token_hash.clone())
     );
     assert!(hosts.containers().is_empty());
     assert_eq!(statuses(&fixture, "app", &commit)["ci/check/test"], {

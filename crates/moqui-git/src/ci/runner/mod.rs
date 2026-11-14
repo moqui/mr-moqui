@@ -88,7 +88,7 @@ enum Stop {
 fn check(status: u16, what: &str, answer: &serde_json::Value) -> Result<(), Stop> {
     match status {
         200..=299 => Ok(()),
-        401 | 403 => Err(Stop::Gone),
+        401 | 403 | 410 => Err(Stop::Gone),
         _ => Err(Stop::Error(format!(
             "{what}: {status} {}",
             answer["error"].as_str().unwrap_or_default()
@@ -418,7 +418,7 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
                 log.line(None, &format!("No cache for {key}"))?;
                 missed.push((key, path.to_string()));
             }
-            Ok(401 | 403) => return Err(Stop::Gone),
+            Ok(401 | 403 | 410) => return Err(Stop::Gone),
             Ok(status) => log.line(None, &format!("Cache {key} was not read: {status}"))?,
             Err(err) => log.line(None, &format!("Cache {key} was not read: {err}"))?,
         }
@@ -495,7 +495,7 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
                 &file,
             );
             match sent {
-                Ok((401 | 403, _)) => return Err(Stop::Gone),
+                Ok((401 | 403 | 410, _)) => return Err(Stop::Gone),
                 Ok((200..=299, _)) => {}
                 Ok((status, answer)) => log.line(
                     None,
@@ -528,7 +528,7 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             pairs.push(("retentionDays", days));
         }
         match transport.upload(&format!("artifacts?{}", query(&pairs)), &scratch.0) {
-            Ok((401 | 403, _)) => return Err(Stop::Gone),
+            Ok((401 | 403 | 410, _)) => return Err(Stop::Gone),
             Ok((200..=299, _)) => log.line(None, &format!("Artifact {name} uploaded"))?,
             Ok((status, answer)) => log.line(
                 None,
@@ -559,7 +559,7 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
                 ),
                 &scratch.0,
             ) {
-                Ok((401 | 403, _)) => return Err(Stop::Gone),
+                Ok((401 | 403 | 410, _)) => return Err(Stop::Gone),
                 Ok((200..=299, _)) => log.line(None, &format!("Cache {key} saved from {path}"))?,
                 Ok((status, answer)) => log.line(
                     None,
@@ -592,7 +592,7 @@ pub fn run(transport: &dyn Transport, options: &Options) -> i32 {
     };
     match transport.json("POST", "result", Some(&result)) {
         Ok((200..=299, _)) => code,
-        Ok((401 | 403, _)) => EXIT_GONE,
+        Ok((401 | 403 | 410, _)) => EXIT_GONE,
         Ok((status, answer)) => {
             eprintln!(
                 "moqui ci-run: the result was not posted: {status} {}",

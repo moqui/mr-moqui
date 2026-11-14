@@ -301,6 +301,7 @@ impl GitProvider {
                 // and into one that is not archived or going now (the row read again under the lock)
                 let lock = self.lock_of(repository_id);
                 let _turn = moqui_lib::sync::lock(&lock);
+                let _shared = self.shared_turn(repository_id, repo.definition.kind)?;
                 self.still_writable(repository_id)?;
                 overlay.flush()?;
             }

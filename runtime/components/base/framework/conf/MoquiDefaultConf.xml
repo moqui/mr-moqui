@@ -157,6 +157,8 @@
     <default-property name="git_public_url" value=""/>
     <default-property name="git_lfs_token_key" value="CHANGEME" is-secret="true"/>
     <default-property name="git_lfs_token_key_previous" value="" is-secret="true"/>
+    <!-- true when runtime/git (and every localPath) is on storage every cluster member mounts (git-server shared-storage). -->
+    <default-property name="git_shared_storage" value="false"/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts (smtp-server below). Off while smtp_listen_port is
@@ -1304,6 +1306,10 @@
         separated; none by default, a hosting application sets agreement/,ci/) are written with authorization
         disabled only. The head ref of a merge request closed unmerged is deleted review-ref-retention-days after. committer-name and committer-email are the committer
         of a commit#GitFiles commit whose author the application gives.
+        In a cluster (docs/interfaces/Git-Hosting.md, Shared storage in a cluster) a local or remote repository needs
+        runtime/git on storage every member mounts, said by shared-storage (git_shared_storage); without it a cluster
+        member refuses a new one and warns of the ones it has. With it a push or write waits at most
+        shared-lock-wait-seconds for another member's write to the same repository.
     -->
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
@@ -1320,7 +1326,8 @@
             review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
             review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
             merge-request-url="" reach-max-commits="1000000" contains-max-commits="200000"
-            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
+            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""
+            shared-storage="${git_shared_storage}" shared-lock-wait-seconds="120"/>
 
     <!--
         Pipelines: the CI engine over the hosted repositories (docs/interfaces/Pipelines.md). With enabled empty the
