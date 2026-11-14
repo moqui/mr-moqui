@@ -787,7 +787,8 @@ do, and the framework's own, which queues its [pipeline runs](Pipelines.md#event
 ### Push mirrors
 
 A repository has any number of push mirrors (`moqui.resource.GitRepositoryMirror`, plans/Dogfood.md F6), each kept
-by `org.moqui.git.GitServices` with the update right on the repository (or authorization disabled):
+by `org.moqui.git.GitServices` with the delete right on the repository, as its webhooks and branch rules are (or
+authorization disabled):
 
 | Service | |
 |---|---|
@@ -801,7 +802,15 @@ by `org.moqui.git.GitServices` with the update right on the repository (or autho
   `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
   write access), sent as basic authorization. Or an SSH URL (`git@github.com:owner/repo.git`,
   `ssh://git@host:port/owner/repo.git`) with `hostKeyFingerprint` (`SHA256:...`, required) and a private key or a
-  password in `credential`. The credential is kept encrypted and is never in a log, an error, `lastError` or a URL.
+  password in `credential`. The credential is kept encrypted and is never in a log, an error, `lastError` or a URL
+  (nor is a `Basic` header value). It goes only where it was given for: a change of the URL's scheme, host or port, of
+  its user or `username`, or of `hostKeyFingerprint` needs the credential again in the same call, or
+  `clearCredential` (another path on the same host keeps it).
+- **Whose.** The credential rides on the delete right of who gave it (`createdByUserId`, set when the mirror is made
+  and each time a credential is given): a push of a mirror whose giver no longer has that right pauses it (`enabled`
+  N, `lastResult` `paused`, `lastError` says why) without using the credential, until an administrator gives the
+  credential again and enables it. A mirror stored with authorization disabled (`storedAuthzDisabled` Y, the
+  application's) is not held to it.
 - **What.** `refPattern`: comma-separated patterns of branches and tags (`refs/heads/*`, `main`, `refs/tags/v*`,
   `main:mirror`), every branch and tag when empty; a pattern of other refs (a merge request's head, the framework's
   `refs/moqui-*`) is refused. A push forces each ref the patterns cover to the local value; with `deleteRefs` Y the
@@ -812,14 +821,16 @@ by `org.moqui.git.GitServices` with the update right on the repository (or autho
   re-enabled mirror is due at once. A failure counts (`attemptCount`), is kept (`lastResult`, `lastError`) and puts the
   next try off by 1 minute, doubling to 6 hours; a later change still pushes at once. A success clears them. One push
   of a mirror runs at a time across a cluster (the GitLease `git-mirror:<mirrorId>`): a push asked for while one runs
-  is pushed by that one before it lets go, with the refs as they are then.
+  is pushed by that one before it lets go, with the refs as they are then. A push (up to 30 minutes) checks its lease
+  right before it records its outcome, so one that lost it to another member records nothing.
 - **Told.** The first failure after a success is a notification (topic `GitMirrorFailure`, kept and shown) to the user
   who stored the mirror (`createdByUserId`); an application that wants a repository's owners told subscribes them or
   reads the rows.
 - **Out.** Each push asks the [outbound check](#outbound-check) (`kind` `push-mirror`); a refusal is the push's
   `not pushed: <message>` error. The address rules are the webhooks': no loopback, private or link-local address (by
   name or written out), and no plain `http://`, unless `git-server` `webhook-private-network="true"`; no redirect is
-  followed. HTTPS is git's smart HTTP (`GET info/refs?service=git-receive-pack`, then `POST git-receive-pack`, the
+  followed. An SSH push connects to an address the name resolved to in the one check that all its addresses are
+  public, not to the name again (the host key is pinned). HTTPS is git's smart HTTP (`GET info/refs?service=git-receive-pack`, then `POST git-receive-pack`, the
   request written to a file under `runtime/tmp` and sent from it), with 60 seconds to read the refs (at most 32 MiB)
   and 30 minutes for the push, its report at most 1 MiB. Refused in sim mode.
 
@@ -841,17 +852,28 @@ end, so the mirror's own post-receive hooks finish.
 `GitServices.fetch#GitRefs` (`repositoryId*`, `remoteUrl*`, `username`, `password`, `refMap*`: remote ref → local
 ref) → `fetched` (the local refs written, or already at the remote's value), `problems` brings named refs of another
 server into a repository of any store, over the same smart HTTP client and address rules as a push mirror: one
-`git-upload-pack` request with the commits the repository has (up to 256 ref tips) as haves, one pack back. GitHub's
-importer fetches `refs/pull/<n>/head` to `refs/merge-requests/<n>/head` this way. It needs the update right on the
-repository, or authorization disabled.
+`git-upload-pack` request with the tips of the refs a reader reads (branches, tags, merge request heads that are not
+hidden; up to 256) as haves, one pack back. GitHub's importer fetches `refs/pull/<n>/head` to
+`refs/merge-requests/<n>/head` this way. It needs the delete right on the repository (as a push mirror), or
+authorization disabled, and asks the [outbound check](#outbound-check) first (`kind` `fetch`; a refusal is the error
+`not fetched: <message>`).
 
 - Local refs only under `refs/merge-requests/`, `refs/heads/` and `refs/tags/`; any other (`refs/moqui-*` among
-  them), a remote ref that is not there, and a branch or tag a rule refused are `problems`, and the rest is fetched.
+  them), a remote ref that is not there or that the remote did not send, and a branch or tag a rule refused are
+  `problems`, and the rest is fetched.
 - The objects come in as a push's: into quarantine, each within `max-object-size`, checked to be whole, accepted under
-  the repository's lock and lease. The [reachability](#reachability) rules of hidden merge requests do not hold them
-  back. LFS objects are not fetched (a file in LFS comes as its pointer).
-- A branch or tag moves as a fetch's does (its pre events, then a `GitUpdate` and the post events of the rules that
-  take `source` `fetch`: webhooks, push mirrors; no pipeline); a merge request's ref moves with no event, as the review services move it.
+  the repository's lock and lease. With authorization on the [reachability](#reachability) rules hold as for a push:
+  a ref's new value the pack did not bring must be the caller's (an id the store holds that is not, such as a hidden
+  merge request's head, is asked of the remote as one the store does not hold, and is a problem when the remote does
+  not send it), and what the pack builds on and names outside itself (parents, tree entries, a thin pack's delta
+  bases) must be what the caller reads, else the fetch fails and writes nothing. With authorization disabled (the
+  application's importer) they do not hold it back. LFS objects are not fetched (a file in LFS comes as its pointer).
+- A branch or tag moves as a push's does: the [branch rules](#branch-rules) (with authorization on), its pre events,
+  then a `GitUpdate` and the post events of the rules that take `source` `fetch` (webhooks, push mirrors; no
+  pipeline). A merge request's ref moves with no event, as the review services move it: with authorization disabled
+  any, and with it on only the first head of an [imported](#imported-merge-requests) merge request (no head yet, no
+  ref), which then records it as its `headCommitId`; any other is refused, since a head moved under a merge request
+  would carry its approvals to another commit.
 - The password is sent as basic authorization, never logged, and taken out of every error and problem.
 
 ### Outbound check
@@ -859,8 +881,8 @@ repository, or authorization disabled.
 What a repository sends out of the server, its webhook deliveries and its push mirror's pushes, waits on the
 application when `git-server` `outbound-check-service` names a service (interface `check#GitOutbound`; none by
 default). It is asked, with authorization off, before a push's or an event's deliveries are queued (once, when the
-repository has webhooks that take it) and before a push mirror pushes, with `repositoryId`, `kind` (`webhook` or
-`push-mirror`) and `event`. `allowed` false (or `N`) holds them: no delivery is queued, and the push mirror records
+repository has webhooks that take it), before a push mirror pushes and before `fetch#GitRefs` reaches another server,
+with `repositoryId`, `kind` (`webhook`, `push-mirror` or `fetch`) and `event`. `allowed` false (or `N`) holds them: no delivery is queued, and the push mirror records
 `not pushed: <message>` as its `lastPushMirrorError`. A service that fails holds them too. An application that hides a
 repository from all but its owners (or suspends one) answers false for it, as its run check (`git-ci`
 `run-check-service`, [Pipelines](Pipelines.md)) refuses its runs; deliveries queued before it was hidden are still
@@ -898,7 +920,10 @@ state it has there, by the application (authorization disabled) or the repositor
 (`GitNumberTaken` when taken). Its head is set (`refs/merge-requests/<n>/head`) when `headCommitId` (with
 `pushedForReview`, after [`fetch#GitRefs`](#fetching-refs)) is in the store, or the source branch is there; it is
 compared with the target when the target branch is there; otherwise it is kept with no head (a target or a source that
-is gone is no refusal). Nothing fires: no `queue#MergeRequestEvent`, so no webhook, no pipeline run and no
+is gone is no refusal). An administrator's `headCommitId` must be a commit of the repository they read (one that is
+not there is refused alike); an administrator imports one with no head and then fetches its first head into its ref
+with `fetch#GitRefs`. The importer is kept (`importedByUserId`) and counts as an author: their approval is refused and
+not counted. Nothing fires: no `queue#MergeRequestEvent`, so no webhook, no pipeline run and no
 application handler of it; it does not start hidden unless `hidden` is given.
 
 #### Merge request refs
@@ -1176,8 +1201,8 @@ the process, each renewal on a thread of its own, so one renewal the database ho
 Postgres the renewal's clock read and update each wait at most a sixth of the lease's time, while on MySQL, whose
 client cannot change an open connection's read timeout, they wait up to the datasource's `read-timeout` (600 s by
 default) and the renewer marks the lease lost once it goes stale meanwhile; a lease let go within its first renewal
-interval costs none; a lease marked lost is renewed no more and its row is let go at once, on the condition that its
-holder still has it)
+interval costs none; a lease marked lost is renewed no more, and its row is kept until it lapses at its time, so a write
+that passed its check just before the loss has the rest of the lease's time as its margin)
 and taken over once it lapses (60 seconds after a member that held it stopped); its times are the database's clock
 (read by the statement its dialect takes, every 30 seconds; a read that fails keeps the offset last read, is warned of
 and is tried again at the next use), so the members' clocks do not matter. Its holder

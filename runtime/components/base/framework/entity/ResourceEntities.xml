@@ -338,8 +338,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="deleteRefs" type="text-indicator"><description>Y: refs of the mirror the patterns cover that are gone
             here are deleted there</description></field>
         <field name="enabled" type="text-indicator"><description>N: not pushed</description></field>
-        <field name="createdByUserId" type="id"><description>Who stored it: told when its pushes start to fail
-            (notification topic GitMirrorFailure)</description></field>
+        <field name="createdByUserId" type="id"><description>Who stored it, or last gave its credential: told when its
+            pushes start to fail (notification topic GitMirrorFailure). Its pushes are held to this user's delete right
+            on the repository: one who lost it pauses the mirror (enabled N) instead of using the credential.</description></field>
+        <field name="storedAuthzDisabled" type="text-indicator"><description>Y when it (or its credential) was stored
+            with authorization disabled, by the application: its pushes are not held to createdByUserId's right</description></field>
         <field name="createdDate" type="date-time"/>
         <field name="lastPushDate" type="date-time"><description>When a push last worked</description></field>
         <field name="lastResult" type="text-long"><description>What the last push did, or failed</description></field>
@@ -408,6 +411,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="targetRef" type="text-medium"><description>The target branch name</description></field>
         <field name="statusId" type="id" enable-audit-log="true"/>
         <field name="authorUserId" type="id"/>
+        <field name="importedByUserId" type="id"><description>Who imported it (create#MergeRequest imported) for
+            another author: counted as an author, so their approval does not count; set for an imported one only</description></field>
         <field name="createdDate" type="date-time"/>
         <field name="lastUpdatedDate" type="date-time"/>
         <field name="headCommitId" type="text-short"><description>The source's head when last refreshed</description></field>

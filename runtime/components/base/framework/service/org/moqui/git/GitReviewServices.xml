@@ -40,7 +40,10 @@ along with this software (see the LICENSE.md file). If not, see
             brought from another server in the state it has there (statusId GmrOpen, GmrDraft, GmrMerged or GmrClosed;
             createdDate, mergedDate, closedDate; authorUserId, another account; mergeRequestNum, refused when taken).
             Its head is set when headCommitId (pushed for review) is in the store or the source branch is there, and
-            compared when the target branch is there; otherwise it is kept with no head. Nothing fires: no
+            compared when the target branch is there; otherwise it is kept with no head. With authorization on,
+            headCommitId must be a commit of the repository the importer reads (else refused, whether or not the store
+            holds it); an import with no head gets its first head by fetch#GitRefs into its ref. The importer is kept
+            (importedByUserId) and counts as an author: their approval of it does not count. Nothing fires: no
             merge_request event (so no webhook, no pipeline run and no application handler of
             queue#MergeRequestEvent), and it does not start hidden unless hidden is given.</description>
         <in-parameters>
@@ -99,6 +102,16 @@ along with this software (see the LICENSE.md file). If not, see
                 if (author !== me && !ec.entity.find('moqui.security.UserAccount').condition('userId', author).disableAuthz().one()) {
                     ec.message.addError('No user ' + author); return }
                 if (!access.canView) { ec.message.addError(ec.resource.expand('Repository ${repositoryId} not found', '', {repositoryId})); return }
+                // an administrator's import names a head they read: not a hidden merge request's commit or another fork's
+                // of the store, which the merge request's ref would make readable (one absent is answered alike)
+                if (isImported && pushed && headCommitId && !authzOff) {
+                    const readable = ec.service.sync().name('org.moqui.git.GitServices.get#GitCommit')
+                            .parameters({repositoryId, commitId: headCommitId, stats: false}).call()
+                    const reads = !ec.message.hasError() && !!readable && !!readable.commit && readable.commit.commitId === String(headCommitId)
+                    ec.message.clearErrors()
+                    if (!reads) { ec.message.addError('headCommitId ' + headCommitId + ' is not a commit of ' + repositoryId +
+                            ' that you read: import it with no head and fetch its head into its ref (fetch#GitRefs)'); return }
+                }
                 if (access.archived) { ec.message.addError('GitArchived: ' + ec.resource.expand('Repository ${repositoryId} is archived', '', {repositoryId})); return }
                 const short = (name) => String(name || '').trim().replace(/^refs\/heads\//, '')
                 const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', repositoryId).disableAuthz().one()
@@ -174,6 +187,7 @@ along with this software (see the LICENSE.md file). If not, see
                     sourceRef: pushed ? headRef : source, sourceRepositoryId: sourceRepoId, pushedForReview: pushed ? 'Y' : 'N',
                     reviewTopic: pushed && reviewTopic ? String(reviewTopic) : null,
                     targetRef: target, statusId: isImported ? importedStatus : (draft ? 'GmrDraft' : 'GmrOpen'), authorUserId: author,
+                    importedByUserId: isImported ? me : null,
                     createdDate: created, lastUpdatedDate: created, mergeableEnumId: importedStatus === 'GmrMerged' ? 'GmaMerged' : 'GmaUnchecked', hiddenDate: hidden ? now : null,
                     mergedDate: isImported && importedStatus === 'GmrMerged' ? (mergedDate || closedDate || created) : null,
                     closedDate: isImported && (importedStatus === 'GmrMerged' || importedStatus === 'GmrClosed')
@@ -600,7 +614,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!['GmrDraft', 'GmrOpen'].includes(mr.statusId)) { ec.message.addError(ec.l10n.localize('A merged or closed merge request takes no review')); return }
                 statusId = {approve: 'GmrrApproved', request_changes: 'GmrrChangesRequested', comment: 'GmrrCommented'}[decision]
                 if (!statusId) { ec.message.addError(ec.l10n.localize('The decision is approve, request_changes or comment')); return }
-                if (statusId === 'GmrrApproved' && me === mr.authorUserId) { ec.message.addError(ec.l10n.localize('You do not approve your own merge request')); return }
+                // the importer of one brought from another server counts as its author
+                if (statusId === 'GmrrApproved' && (me === mr.authorUserId || me === mr.importedByUserId)) { ec.message.addError(ec.l10n.localize('You do not approve your own merge request')); return }
                 if (statusId === 'GmrrApproved' && !access.canUpdate) {
                     ec.message.addError(ec.l10n.localize('Approving needs the right to push to the repository: you may comment or request changes')); return }
                 let row = ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition({mergeRequestId, userId: me}).disableAuthz().one()

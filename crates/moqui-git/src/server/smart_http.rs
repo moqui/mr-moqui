@@ -146,12 +146,35 @@ impl Remote<'_> {
     }
 }
 
-/// `text` with `secret`, and the basic header values it could be part of, replaced by `***`.
+/// `text` with `secret`, and any basic authorization value (`Basic <base64>`, which carries it encoded), replaced by
+/// `***`.
 pub(crate) fn redact(text: &str, secret: Option<&str>) -> String {
-    match secret.map(str::trim).filter(|secret| secret.len() >= 3) {
+    let text = match secret.map(str::trim).filter(|secret| secret.len() >= 3) {
         Some(secret) => text.replace(secret, "***"),
         None => text.to_string(),
+    };
+    redact_basic(&text)
+}
+
+/// `text` with the token after each `Basic ` (any case) replaced by `***`.
+fn redact_basic(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(found) = lower[at..].find("basic ") {
+        let start = at + found + "basic ".len();
+        let token = text[start..]
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_'))
+            .count();
+        out.push_str(&text[at..start]);
+        if token > 0 {
+            out.push_str("***");
+        }
+        at = start + token;
     }
+    out.push_str(&text[at..]);
+    out
 }
 
 /// The server's refs and capabilities for `service` (`git-receive-pack` or `git-upload-pack`).

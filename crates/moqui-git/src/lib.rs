@@ -135,6 +135,7 @@ pub(crate) fn setting(name: &str) -> String {
 pub(crate) enum Outbound {
     Webhook,
     PushMirror,
+    Fetch,
 }
 
 impl Outbound {
@@ -142,14 +143,16 @@ impl Outbound {
         match self {
             Self::Webhook => "webhook",
             Self::PushMirror => "push-mirror",
+            Self::Fetch => "fetch",
         }
     }
 }
 
 /// Ask the conf's `git-server` `outbound-check-service` whether repository `repository_id` may send `kind` out now
-/// (docs/interfaces/Git-Hosting.md, "Outbound check"): before a webhook delivery is queued and before a push mirror
-/// pushes, so an application that hides or suspends a repository stops what it would tell or copy elsewhere. In
-/// `repositoryId`, `kind` (`webhook` or `push-mirror`) and `event` (the webhook event, empty for a push); out `allowed`
+/// (docs/interfaces/Git-Hosting.md, "Outbound check"): before a webhook delivery is queued, before a push mirror
+/// pushes and before `fetch#GitRefs` reaches another server with a credential, so an application that hides or
+/// suspends a repository stops what it would tell or copy elsewhere. In `repositoryId`, `kind` (`webhook`,
+/// `push-mirror` or `fetch`) and `event` (the webhook event, empty for a push); out `allowed`
 /// (false or N refuses) and `message`. With no service, allowed; a service that fails refuses (its errors are its
 /// answer). Called with authorization disabled. Why not, when refused.
 pub(crate) fn outbound_allowed(repository_id: &str, kind: Outbound, event: &str) -> Result<(), String> {

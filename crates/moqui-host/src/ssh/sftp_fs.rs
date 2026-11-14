@@ -247,9 +247,11 @@ impl SftpFs {
             }
             Backend::Drives { username } => {
                 on_pool(&self.factory, move |factory| {
+                    // the channel's login borrowed for one operation: its end writes nothing to the account, where
+                    // a logout would sign the person out everywhere (hasLoggedOut)
                     moqui_core::user::internal_login_user(&username)?;
                     let result = job(&Store { factory, drives: true });
-                    let _ = moqui_core::user::logout();
+                    let _ = moqui_core::user::logout_local();
                     result
                 })
                 .await

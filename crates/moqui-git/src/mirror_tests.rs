@@ -385,12 +385,16 @@ const OUTBOUND_CHECK: &str = r#"<services>
         <actions><script><![CDATA[
             allowed = repositoryId !== 'held'
             if (!allowed) message = 'held by its owner (' + kind + ')'
+            // as if another member took the mirror's lease over while this one pushed
+            if (repositoryId === 'stolen') ec.entity.find('moqui.resource.GitLease').condition('leaseName', 'like', 'git-mirror:%')
+                .disableAuthz().updateAll({holderId: 'another-member'})
         ]]></script></actions>
     </service>
 </services>"#;
 
 /// The outbound rules of webhooks hold for mirrors: no plain http and no internal address unless the conf allows
-/// them, and the application's outbound check is asked before each push.
+/// them, and the application's outbound check is asked before each push and each fetch#GitRefs. A push whose lease
+/// another member took over meanwhile records nothing: the lease is checked right before the outcome is written.
 #[test]
 fn mirror_pushes_follow_the_outbound_rules() {
     let fixture = fixture(
@@ -409,7 +413,7 @@ fn mirror_pushes_follow_the_outbound_rules() {
         .unwrap();
         assert!(failures.is_empty(), "{failures:?}");
     }
-    for id in ["held", "open"] {
+    for id in ["held", "open", "stolen"] {
         define(&fixture, id, "db");
         write(&fixture, id, "one\n");
     }
@@ -444,11 +448,42 @@ fn mirror_pushes_follow_the_outbound_rules() {
         error.starts_with("not pushed: held by its owner (push-mirror)"),
         "{error}"
     );
+
+    let (out, _) = store("stolen", "https://127.0.0.1:9/o/r.git");
+    let stolen_id = get(&out, "mirrorId").to_string();
+    let (out, _) = run(&fixture, &stolen_id);
+    assert_eq!(list(&out, "failedIds").len(), 1, "{out:?}");
+    let row = mirror(&fixture, &stolen_id);
+    assert_eq!(
+        (field(&row, "lastError"), field(&row, "attemptCount")),
+        (String::new(), "0".to_string()),
+        "a holder that lost the lease writes nothing"
+    );
+
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        &git("fetch#GitRefs"),
+        &[
+            ("repositoryId", s("held")),
+            ("remoteUrl", s("https://127.0.0.1:9/o/r.git")),
+            (
+                "refMap",
+                Value::Map(
+                    [("refs/heads/main".to_string(), s("refs/heads/x"))]
+                        .into_iter()
+                        .collect(),
+                ),
+            ),
+        ],
+    );
+    assert!(errors.contains("not fetched: held by its owner (fetch)"), "{errors}");
 }
 
 /// fetch#GitRefs brings refs of another server into a db repository under the names given, refuses local refs
-/// outside branches, tags and merge requests (the framework's own among them), names a remote ref that is not there,
-/// and keeps the password out of a failure.
+/// outside branches, tags and merge requests (the framework's own among them) and, with authorization on, a merge
+/// request's head that is not the first of an imported one, names a remote ref that is not there, and keeps the
+/// password out of a failure.
 #[test]
 fn fetch_refs_into_a_db_repository_and_refuse_other_local_refs() {
     if !crate::server::tests::git_available() {
@@ -491,23 +526,20 @@ fn fetch_refs_into_a_db_repository_and_refuse_other_local_refs() {
         &[
             ("refs/heads/pr-1", "refs/merge-requests/1/head"),
             ("refs/heads/main", "refs/heads/imported"),
-            ("refs/heads/gone", "refs/merge-requests/2/head"),
+            ("refs/heads/gone", "refs/heads/gone-here"),
             ("refs/heads/x", "refs/moqui-hidden/x"),
             ("refs/heads/y", "refs/notes/y"),
         ],
     );
     assert!(errors.trim().is_empty(), "{errors}");
     let fetched: Vec<String> = list(&out, "fetched").iter().map(text_of).collect();
-    assert_eq!(
-        fetched,
-        ["refs/merge-requests/1/head", "refs/heads/imported"],
-        "{out:?}"
-    );
+    assert_eq!(fetched, ["refs/heads/imported"], "{out:?}");
     let problems = format!("{:?}", list(&out, "problems"));
+    assert!(problems.contains("refs/merge-requests/1/head is refused"), "{problems}");
     assert!(problems.contains("refs/moqui-hidden/x is refused"), "{problems}");
     assert!(problems.contains("refs/notes/y is refused"), "{problems}");
     assert!(problems.contains("has no refs/heads/gone"), "{problems}");
-    assert_eq!(head(&fixture, "imp", "refs/merge-requests/1/head"), Some(first));
+    assert_eq!(head(&fixture, "imp", "refs/merge-requests/1/head"), None);
     assert_eq!(head(&fixture, "imp", "refs/heads/imported"), Some(second));
     {
         let _entered = fixture.context.enter();
@@ -516,7 +548,7 @@ fn fetch_refs_into_a_db_repository_and_refuse_other_local_refs() {
         assert!(store.find(&second).unwrap().is_some());
     }
     // again: nothing to bring, the refs already there
-    let (out, errors) = fetch(PASSWORD, &[("refs/heads/pr-1", "refs/merge-requests/1/head")]);
+    let (out, errors) = fetch(PASSWORD, &[("refs/heads/main", "refs/heads/imported")]);
     assert!(errors.trim().is_empty(), "{errors}");
     assert_eq!(list(&out, "fetched").len(), 1);
 
@@ -524,4 +556,247 @@ fn fetch_refs_into_a_db_repository_and_refuse_other_local_refs() {
     let (_, errors) = fetch(wrong, &[("refs/heads/main", "refs/heads/again")]);
     assert!(errors.contains("refused the credential"), "{errors}");
     assert!(!errors.contains(wrong), "{errors}");
+}
+
+/// Every basic authorization value is taken out of a message, as the credential is; an ssh mirror connects to an
+/// address its name resolved to, after the one check that every address is public (no second resolution); and the
+/// credential's destination is the scheme, host and port (and an ssh user), whatever the case or the default port.
+#[test]
+fn the_basic_value_is_redacted_and_an_ssh_mirror_connects_by_a_checked_address() {
+    assert_eq!(
+        redact(
+            "sent Authorization: Basic dXNlcjpzM2NyZXQ= and basic Zm9vOmJhcg==.",
+            None
+        ),
+        "sent Authorization: Basic *** and basic ***."
+    );
+    assert_eq!(
+        redact("Basic dXNlcjp0b2tlbi12YWx1ZQ== for token-value", Some("token-value")),
+        "Basic *** for ***"
+    );
+
+    use super::{credential_target, ssh_address};
+    assert_eq!(
+        ssh_address("8.8.8.8:2222", false).unwrap(),
+        ("8.8.8.8".to_string(), 2222)
+    );
+    assert_eq!(ssh_address("8.8.4.4", false).unwrap(), ("8.8.4.4".to_string(), 22));
+    assert_eq!(
+        ssh_address("[2001:4860:4860::8888]:2200", false).unwrap(),
+        ("2001:4860:4860::8888".to_string(), 2200)
+    );
+    assert!(ssh_address("127.0.0.1:22", false).is_err());
+    assert!(ssh_address("[::1]:22", false).is_err());
+    assert!(ssh_address("8.8.8.8:x", false).is_err());
+    assert_eq!(
+        ssh_address("git.internal:2200", true).unwrap(),
+        ("git.internal".to_string(), 2200)
+    );
+
+    assert_eq!(
+        credential_target("https://GitHub.com/o/r.git"),
+        credential_target("https://github.com:443/other/repo.git")
+    );
+    assert_ne!(
+        credential_target("https://github.com/o/r.git"),
+        credential_target("https://github.com.evil.example/o/r.git")
+    );
+    assert_ne!(
+        credential_target("https://github.com/o/r.git"),
+        credential_target("https://github.com:8443/o/r.git")
+    );
+    assert_eq!(
+        credential_target("git@github.com:o/r.git"),
+        credential_target("ssh://git@github.com:22/o/other.git")
+    );
+    assert_ne!(
+        credential_target("git@github.com:o/r.git"),
+        credential_target("other@github.com:o/r.git")
+    );
+}
+
+/// A change of where a mirror's credential goes (another host or port, another user, another host key) needs the
+/// credential again in the same call, or clearCredential: one who may edit the mirror does not send the stored
+/// credential to a host of their own. Another repository path on the same host keeps it.
+#[test]
+fn a_new_destination_needs_the_credential_again() {
+    let fixture = fixture("mirror-destination", "");
+    define(&fixture, "src", "db");
+    let store = |extra: &[(&str, Value)]| {
+        let mut parameters = vec![("repositoryId", s("src"))];
+        parameters.extend(extra.iter().cloned());
+        call(&fixture, WRITER, &git("store#GitRepositoryMirror"), &parameters)
+    };
+    let (out, errors) = store(&[
+        ("url", s("https://github.com/o/r.git")),
+        ("username", s("x-access-token")),
+        ("credential", s("admin-token")),
+    ]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    let id = get(&out, "mirrorId").to_string();
+    let credential = || field(&mirror(&fixture, &id), "credential");
+    let url = || field(&mirror(&fixture, &id), "url");
+    for change in [
+        vec![("url", s("https://attacker.example/o/r.git"))],
+        vec![("url", s("https://github.com:8443/o/r.git"))],
+        vec![("username", s("someone-else"))],
+    ] {
+        let mut parameters = vec![("mirrorId", s(&id))];
+        parameters.extend(change.clone());
+        let (_, errors) = store(&parameters);
+        assert!(
+            errors.contains("goes only where it was given for"),
+            "{change:?}: {errors}"
+        );
+        assert_eq!(
+            (url(), credential()),
+            ("https://github.com/o/r.git".to_string(), "admin-token".to_string())
+        );
+    }
+    // the same host: kept
+    let (_, errors) = store(&[("mirrorId", s(&id)), ("url", s("https://GitHub.com/o/other.git"))]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(credential(), "admin-token");
+    // another host with a credential of its own, or with the stored one cleared
+    let (_, errors) = store(&[
+        ("mirrorId", s(&id)),
+        ("url", s("https://gitlab.example/o/r.git")),
+        ("credential", s("gitlab-token")),
+    ]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(credential(), "gitlab-token");
+    let (_, errors) = store(&[
+        ("mirrorId", s(&id)),
+        ("url", s("https://elsewhere.example/o/r.git")),
+        ("clearCredential", Value::Bool(true)),
+    ]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(credential(), "");
+
+    // an ssh mirror's host key
+    let (out, errors) = store(&[
+        ("url", s("git@github.com:o/r.git")),
+        ("hostKeyFingerprint", s("SHA256:first")),
+        ("credential", s("ssh-password")),
+    ]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    let ssh_id = get(&out, "mirrorId").to_string();
+    let (_, errors) = store(&[("mirrorId", s(&ssh_id)), ("hostKeyFingerprint", s("SHA256:other"))]);
+    assert!(errors.contains("goes only where it was given for"), "{errors}");
+    assert_eq!(field(&mirror(&fixture, &ssh_id), "hostKeyFingerprint"), "SHA256:first");
+}
+
+/// A user with the update right but not the delete right on a repository keeps no push mirror of it and fetches no
+/// refs into it (the right of its webhooks and branch rules); a mirror whose credential was given by a user who has
+/// since lost the delete right is paused at its next push, its credential not used.
+#[test]
+fn mirrors_and_fetches_are_the_administrators() {
+    const UPDATER: &str = "git.updater";
+    const ADMIN: &str = "git.admin";
+    let fixture = fixture("mirror-rights", r#"<git-server webhook-private-network="true"/>"#);
+    define(&fixture, "src", "db");
+    write(&fixture, "src", "one\n");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let entity = &fixture.entity;
+        crate::server::tests::user(entity, UPDATER);
+        crate::server::tests::user(entity, ADMIN);
+        crate::server::tests::create(entity, "moqui.security.UserGroup", &[("userGroupId", "GIT_UPDATERS")]);
+        crate::server::tests::create(
+            entity,
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", "GIT_UPDATERS"),
+                ("userGroupId", "GIT_UPDATERS"),
+                ("artifactGroupId", "GIT_ALL"),
+                ("authzTypeEnumId", "AUTHZT_ALWAYS"),
+                ("authzActionEnumId", "AUTHZA_UPDATE"),
+            ],
+        );
+        for (member, group) in [
+            (UPDATER, "GIT_UPDATERS"),
+            (UPDATER, "GIT_READERS"),
+            (ADMIN, "GIT_WRITERS"),
+        ] {
+            let mut row = moqui_core::entity::EntityValue::make(entity, "moqui.security.UserGroupMember").unwrap();
+            row.set("userId", s(member));
+            row.set("userGroupId", s(group));
+            row.set(
+                "fromDate",
+                moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+            );
+            row.create(entity).unwrap();
+        }
+    }
+    let url = "http://127.0.0.1:9/o/r.git";
+    let ref_map = || {
+        Value::Map(
+            [("refs/heads/main".to_string(), s("refs/heads/x"))]
+                .into_iter()
+                .collect(),
+        )
+    };
+    let (_, errors) = call(
+        &fixture,
+        UPDATER,
+        &git("store#GitRepositoryMirror"),
+        &[
+            ("repositoryId", s("src")),
+            ("url", s(url)),
+            ("credential", s("token-value")),
+        ],
+    );
+    assert!(errors.contains("you may not change the push mirrors"), "{errors}");
+    let (_, errors) = call(
+        &fixture,
+        UPDATER,
+        &git("find#GitRepositoryMirrors"),
+        &[("repositoryId", s("src"))],
+    );
+    assert!(errors.contains("you may not change the push mirrors"), "{errors}");
+    let (_, errors) = call(
+        &fixture,
+        UPDATER,
+        &git("fetch#GitRefs"),
+        &[("repositoryId", s("src")), ("remoteUrl", s(url)), ("refMap", ref_map())],
+    );
+    assert!(errors.contains("fetch the refs"), "{errors}");
+
+    let stored = ok(
+        &fixture,
+        ADMIN,
+        &git("store#GitRepositoryMirror"),
+        &[
+            ("repositoryId", s("src")),
+            ("url", s(url)),
+            ("credential", s("token-value")),
+        ],
+    );
+    let mirror_id = get(&stored, "mirrorId").to_string();
+    assert_eq!(field(&mirror(&fixture, &mirror_id), "createdByUserId"), ADMIN);
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find("moqui.security.UserGroupMember")
+            .unwrap()
+            .eq("userId", s(ADMIN))
+            .delete_all()
+            .unwrap();
+    }
+    let (out, _) = run(&fixture, &mirror_id);
+    assert_eq!(list(&out, "failedIds").len(), 1, "{out:?}");
+    let row = mirror(&fixture, &mirror_id);
+    let error = field(&row, "lastError");
+    assert!(error.contains("no longer administers repository src"), "{error}");
+    assert_eq!(
+        (
+            field(&row, "enabled"),
+            field(&row, "lastResult"),
+            field(&row, "attemptCount")
+        ),
+        ("N".to_string(), "paused".to_string(), "0".to_string())
+    );
 }

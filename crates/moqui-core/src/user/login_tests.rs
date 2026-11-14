@@ -181,6 +181,25 @@ fn a_jobs_login_and_logout_local_leave_has_logged_out_alone() {
     session::reset_session();
 }
 
+/// A person's sign-in by an SSH key the host checked clears `hasLoggedOut`, as a password does; the session's
+/// operations after it (an internal login each, ended by `logout_local`) leave it as it is.
+#[test]
+fn an_ssh_key_sign_in_is_a_persons_and_clears_has_logged_out() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "key.user", "Secret1!", |_| {});
+    let flag = || text(&load_user(&facade, "key.user"), "hasLoggedOut");
+    login_user("key.user", "Secret1!").unwrap();
+    logout().unwrap();
+    assert_eq!(flag(), "Y");
+    login_ssh_key_user("key.user").unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("key.user"));
+    assert_eq!(flag(), "N", "a key sign-in is a person's");
+    logout_local().unwrap();
+    assert_eq!(flag(), "N", "an operation's borrowed login ends without a sign-out");
+    session::reset_session();
+}
+
 #[test]
 fn a_legacy_hash_verifies_and_the_stored_value_becomes_an_argon2_string() {
     let (ctx, facade) = open_ctx();

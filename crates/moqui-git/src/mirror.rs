@@ -21,7 +21,10 @@
 //! `run#GitRepositoryMirrors` works through each minute. One push of a mirror at a time across a cluster (a GitLease of
 //! its own), and a push asked for while one runs is pushed by that one when it ends. The application's outbound check
 //! is asked before each push. A failure is kept on the row (`lastError`, the credential taken out) and the first of a
-//! run of failures is a notification (topic `GitMirrorFailure`) to the user who stored the mirror.
+//! run of failures is a notification (topic `GitMirrorFailure`) to the user who stored the mirror. A mirror is kept
+//! by who administers the repository (the delete right, [`RIGHT`]), and its credential rides on the right of who gave
+//! it: a push of a mirror whose `createdByUserId` no longer has it pauses the mirror instead of using the credential.
+//! The push holds the mirror's lease and checks it again right before it records its outcome.
 
 use moqui_core::context::Error;
 use moqui_core::entity::{Condition, EntityValue};
@@ -35,6 +38,10 @@ pub(crate) const GIT_REPOSITORY_MIRROR: &str = "moqui.resource.GitRepositoryMirr
 
 /// The code a push of a mirror answers with while another push of it runs.
 pub(crate) const BUSY: &str = "GitMirrorBusy";
+
+/// The right on a repository that keeps its push mirrors and fetches refs into it, as for its webhooks and branch
+/// rules: a mirror's credential and a fetch reach out of the server.
+pub(crate) const RIGHT: &str = "delete";
 
 /// The notification topic of a mirror's first failure after a success.
 pub(crate) const FAILURE_TOPIC: &str = "GitMirrorFailure";
@@ -86,6 +93,43 @@ pub(crate) fn parse_mirror_url(url: &str, private_network: bool) -> Result<Mirro
         return Err("the URL has a password in it; give the credential apart".into());
     }
     Ok(MirrorUrl::Ssh(parsed))
+}
+
+/// Where a mirror's credential goes: the scheme, host and port of an https URL, or the user, host and port of an ssh
+/// one, the host in lower case. A change of it needs the credential again (`store#GitRepositoryMirror`).
+pub(crate) fn credential_target(url: &str) -> String {
+    let host_port = |authority: &str, default: u16| match moqui_core::sftp::split_host_port(authority, default) {
+        Ok((host, port)) => format!("{}:{port}", host.to_ascii_lowercase()),
+        Err(_) => authority.to_ascii_lowercase(),
+    };
+    match parse_mirror_url(url, true) {
+        Ok(MirrorUrl::Http(url)) => {
+            let (scheme, rest) = url.split_once("://").unwrap_or(("", url.as_str()));
+            let scheme = scheme.to_ascii_lowercase();
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            let default = if scheme == "https" { 443 } else { 80 };
+            format!("{scheme}://{}", host_port(authority, default))
+        }
+        Ok(MirrorUrl::Ssh(ssh)) => format!("ssh://{}@{}", ssh.user.unwrap_or_default(), host_port(&ssh.host, 22)),
+        Err(_) => url.trim().to_string(),
+    }
+}
+
+/// Where an ssh mirror's push connects, for its URL's `host` (`host`, `host:port`, `[v6]:port`, one parser for the
+/// check and the connection): one of the addresses the name resolves to, each of them public, so a name that resolves
+/// again to an internal address between the check and the connection (DNS rebinding) is not followed; the host key
+/// is pinned, so a connection by address reaches the same server. By name with private networks allowed.
+pub(crate) fn ssh_address(host: &str, private: bool) -> Result<(String, u16), Error> {
+    let (name, port) = moqui_core::sftp::split_host_port(host, 22)?;
+    if private {
+        return Ok((name, port));
+    }
+    let addresses = moqui_lib::net::public_addresses(&name, port)
+        .map_err(|err| Error::new(format!("push mirror {name}: {err}")))?;
+    let address = addresses
+        .first()
+        .ok_or_else(|| Error::new(format!("push mirror {name}: the name has no address")))?;
+    Ok((address.ip().to_string(), address.port()))
 }
 
 /// A mirror's `refPattern`: comma-separated patterns of branches and tags (`refs/heads/*`, `main`, `refs/tags/v*`,
@@ -224,7 +268,7 @@ impl GitProvider {
     /// record the outcome on its row; a push asked for while this one ran is pushed before the lease is let go. What
     /// was done.
     pub fn push_repository_mirror(&self, mirror_id: &str) -> Result<String, Error> {
-        let Some(_lease) = lease::try_take(&self.entity()?, &lease_name(mirror_id), lease::TTL)? else {
+        let Some(lease) = lease::try_take(&self.entity()?, &lease_name(mirror_id), lease::TTL)? else {
             return Err(Error::new(format!("{BUSY}: a push of mirror {mirror_id} is running")));
         };
         let mut done = String::new();
@@ -237,11 +281,20 @@ impl GitProvider {
                 return Ok(format!("push mirror {mirror_id} is not enabled"));
             }
             let repository_id = text(row.get("repositoryId")).unwrap_or_default();
+            if let Some(why) = creator_without_right(&row, &repository_id) {
+                // the credential is not used for a user who no longer administers the repository
+                lease.check()?;
+                self.pause_mirror(mirror_id, &why);
+                return Err(Error::new(why));
+            }
             let credential = text(row.get("credential"));
             let outcome = match outbound_allowed(&repository_id, Outbound::PushMirror, "") {
                 Ok(()) => self.push_mirror_once(&repository_id, &row),
                 Err(why) => Err(Error::new(format!("not pushed: {why}"))),
             };
+            // a push may take up to 30 minutes: the lease is checked right before its outcome is written, so a
+            // holder that lost it to another member does not write over that member's
+            lease.check()?;
             match outcome {
                 Ok(text) => {
                     done = text;
@@ -347,18 +400,9 @@ impl GitProvider {
     ) -> Result<push::PushOutcome, Error> {
         let fingerprint = text(row.get("hostKeyFingerprint"))
             .ok_or_else(|| Error::new("an ssh push mirror needs its hostKeyFingerprint"))?;
-        let (host, port) = match url.host.rsplit_once(':') {
-            Some((host, port)) if !host.ends_with(']') || url.host.starts_with('[') => {
-                (host.to_string(), port.parse::<u16>().unwrap_or(22))
-            }
-            _ => (url.host.clone(), 22),
-        };
-        if !private {
-            moqui_lib::net::public_addresses(&host, port)
-                .map_err(|err| Error::new(format!("push mirror {host}: {err}")))?;
-        }
+        let (address, port) = ssh_address(&url.host, private)?;
         let user = url.user.clone().or(username).unwrap_or_else(|| "git".into());
-        let mut client = moqui_core::sftp::SftpClient::new(&url.host, &user, None)?;
+        let mut client = moqui_core::sftp::SftpClient::new(&address, &user, Some(port))?;
         match credential {
             Some(key) if key.contains("PRIVATE KEY") => {
                 client.public_key_pkcs8(&key, None);
@@ -388,6 +432,31 @@ impl GitProvider {
             tracing::warn!("ending the push to {}: {err}", url.host);
         }
         Ok(pushed)
+    }
+
+    /// Pause a mirror (`enabled` N, nothing due) with why on its row, in a transaction of its own.
+    fn pause_mirror(&self, mirror_id: &str, why: &str) {
+        let paused = (|| -> Result<(), Error> {
+            let entity = self.entity()?;
+            let transactions = entity.transactions_for(GIT_REPOSITORY_MIRROR)?;
+            transactions.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+                let _rows = rows_guard();
+                entity
+                    .find(GIT_REPOSITORY_MIRROR)?
+                    .eq("mirrorId", Value::string(mirror_id))
+                    .update_all([
+                        ("enabled".to_string(), Value::string("N")),
+                        ("lastResult".to_string(), Value::string("paused")),
+                        ("lastError".to_string(), Value::string(kept_text(why))),
+                        ("nextAttemptDate".to_string(), Value::Null),
+                    ])?;
+                Ok(())
+            })?;
+            Ok(())
+        })();
+        if let Err(err) = paused {
+            tracing::error!(mirror = mirror_id, "cannot pause the push mirror: {err}");
+        }
     }
 
     /// Record a push's outcome on the mirror's row, in a transaction of its own. A success clears the error and the
@@ -455,6 +524,23 @@ fn enabled() -> Condition {
         Condition::is_null("enabled"),
         Condition::not_equals("enabled", Value::string("N")),
     ])
+}
+
+/// Why a mirror's credential is not to be used now: the user who gave it (`createdByUserId`) no longer has [`RIGHT`]
+/// on the repository, decided as that user. Not for a mirror stored with authorization disabled (the application's,
+/// `storedAuthzDisabled`) or with no user.
+fn creator_without_right(row: &EntityValue, repository_id: &str) -> Option<String> {
+    if text(row.get("storedAuthzDisabled")).as_deref() == Some("Y") {
+        return None;
+    }
+    let creator = text(row.get("createdByUserId"))?;
+    let may = moqui_core::user::as_user(&creator, || crate::server::permitted(repository_id, RIGHT)).unwrap_or(false);
+    (!may).then(|| {
+        format!(
+            "paused: {creator}, who gave the mirror's credential, no longer administers repository {repository_id}; \
+             an administrator gives the credential again and enables it"
+        )
+    })
 }
 
 fn lease_name(mirror_id: &str) -> String {
