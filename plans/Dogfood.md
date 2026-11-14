@@ -810,7 +810,7 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   repository runs nothing and sends no webhook or mirror push (`check#Outbound`). Done when: a red run keeps the merge
   box closed in the engine's tests (the fake host type, real `git` pushes, the runner in the test's process) and
   Mantle's `SmithyPipelines` (a failed run's required context blocks the merge); one container on a real Docker or Podman socket is the opt-in
-  `ci_docker` test. Not built: deploys (DG10; their records only), a runner for an image without `moqui`, Windows
+  `ci_docker` test. Not built: deploys (DG10), a runner for an image without `moqui`, Windows
   registered runners, the `SmithyPipeline` walk, the phone-width check of the pages. Not shown: `test-framework` in a
   container on another machine, which waits for DG9's runner host.
 - **DG6**, Nov 14, 2026: the forum inside Smithy, the lists, and the moderation layer's part. Mantle: a group's or a
@@ -880,6 +880,40 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   server, forced to match (moqui-git `mirror::`), and `SmithyMirrors`. Not built: a sync in both directions (§9).
   Not shown: the importer against GitHub's live API (never run against GitHub), an SSH mirror end to end, a real SSO
   sign-in round trip with GitHub, and a mirror on GitHub kept current; each is a rehearsal for DG9.
+- **DG10**, Nov 14, 2026: deploy environments and the gate. Framework ([Pipelines](../docs/interfaces/Pipelines.md)
+  "Deployments", [Component-Deploy](../docs/tools/Component-Deploy.md) "The gate"): a `GitCiEnvironment` names its
+  target (`targetUrl`, https or http to a loopback IP literal), the secret the target issued (at least 32 characters,
+  encrypted, never read back and never sent), `cloneUrl`, `requiredPipeline`, `approvalRequired`, `allowedRefs` and
+  `dataTypes`; `request#GitDeployment` (a protected branch or one in `allowedRefs`, at its head) queues the required
+  pipeline with the deploy event through the engine, so the run check decides; when the run passes and an approver
+  (never the requester) has decided (`decide#GitDeployment`), the deploy step, claimed once, reads `component.xml` at
+  the commit, asks the outbound check and posts a signed attestation (v2, HMAC-SHA256 over the repository URL,
+  branch, commit, component, pipeline, run, environment, deployment, audience, data types and time) to the target's
+  `deploy#AttestedComponent`; each move is the status `deploy/<environment>`. The target's `component-deploy`
+  verifies the signature, its age, the audience (one of `public-urls`) and the `allow` entries (component, repository
+  URL, branch), refuses a replay by one conditional claim under a cluster-wide lease, and with
+  `require-passed-run` refuses an unattested deploy, update or load. Mantle: environments with a write-only token and
+  data types, `findDeployments`, `getDeployment`, `requestDeploy` (Developer), `decideDeploy` (a Maintainer, never
+  the requester), `cancelDeploy`, and a notice to Maintainers and Owners of a deployment that waits. PASS: Pipelines'
+  Deployments tab, a deployment's page with Approve, Refuse and Cancel, and the target fields on Settings › Pipelines ›
+  Environments. Differences: **an approved run does not approve its deployment**: `decide#GitDeployment` is the one
+  approval step, and a branch named by `allowedRefs` alone waits for an approver whatever `approvalRequired` says;
+  the gate's whole element is read once at start (restart class), since a reload must not turn it off; a bad
+  signature and a server with no secret are one generic refusal, counted as a failed sign-in; addresses and the
+  target's error text are a Maintainer's, and public statuses say only Deployed, failed, refused or cancelled; Smithy
+  has no approver groups. With an eye to [Vault-Instances](Vault-Instances.md) §4.6, the token is read in one place
+  (`ci::deploy::target_token`) so it can become a vault item, and `decide#` stays the one approval step. Fixed on the
+  way: `component-deploy` was left out of the conf merge, so a runtime conf could not turn the gate on; and inside a
+  transaction with the cache on, a held insert was not seen by the conditional update that moved it (the frame's rows
+  are now written before such SQL). Done when: in moqui-git's tests a request runs its pipeline and the step posts an
+  attestation that a fake loopback target verifies (approval, refusal, cancel, a failed pipeline, an unprotected
+  branch waiting, the step claimed once by four threads, the token in no request, answer or row); in moqui-devkit's
+  the gate refuses unattested, stale, forged, altered, replayed and wrong-audience deploys and takes a good one;
+  Mantle's `SmithyDeployments`, PASS's `SmithyDeploy`. Not built: an owner's environment (a repository's only); a
+  private repository's fetch by the target; a tag or a commit that is not the branch's head; deploying the framework
+  (a new archive or image; it is not deployable here); the hosting REST for deployments. Not shown: a real deploy
+  between two instances, `deploy#AttestedComponent` over HTTP through its REST resource (it is called as that
+  resource calls it, with no user), and moqui.org's demo and production environments, rehearsals for DG9.
 
 ---
 
