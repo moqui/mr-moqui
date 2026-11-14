@@ -18,6 +18,11 @@ publish.workspace = true
 # and test sets.
 production = []
 all = ["production"]
+# The program archives built in, unpacked into the install directory and run as their own processes: OpenSearch and
+# Chromium (src/programs.rs; build.rs finds the archives `./moq opensearch-download` and `./moq chromium-download`
+# keep). Postgres is moqui-drivers' embedded-postgres.
+opensearch = []
+chromium = []
 
 [dependencies]
 flate2 = { workspace = true }

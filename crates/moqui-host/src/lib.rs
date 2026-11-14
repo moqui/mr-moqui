@@ -69,7 +69,9 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+mod embedded_checksum;
 mod embedded_files;
+mod embedded_programs;
 // gRPC clients on HTTP/2 connections of our own: the cluster's, the PASS authority's and the edge link's.
 #[cfg(feature = "grpc")]
 mod grpc_client;
@@ -1242,6 +1244,7 @@ fn load_embedded(
     flags: &LoadFlags,
 ) -> Result<LoadReport, moqui_lib::error::Error> {
     create_dir(runtime_dir)?;
+    embedded_checksum::verify(runtime_dir)?;
     embedded_files::ensure_runtime(runtime_dir, framework_dir)?;
     create_dir(cluster_dir)?;
     let runtime_dir = canonical_dir(runtime_dir)?;
@@ -1643,6 +1646,7 @@ fn boot_server_factory(
 
     let boot_started = std::time::Instant::now();
     create_dir(runtime_dir)?;
+    embedded_checksum::verify(runtime_dir)?;
     embedded_files::ensure_runtime(runtime_dir, framework_dir)?;
     create_dir(cluster_dir)?;
     let runtime_dir = canonical_dir(runtime_dir)?;
@@ -2125,6 +2129,8 @@ pub fn build_features() -> Vec<&'static str> {
         ("edge", cfg!(feature = "edge")),
         ("embed-production", cfg!(feature = "embed-production")),
         ("embed-all", cfg!(feature = "embed-all")),
+        ("embed-opensearch", cfg!(feature = "embed-opensearch")),
+        ("embed-chromium", cfg!(feature = "embed-chromium")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))

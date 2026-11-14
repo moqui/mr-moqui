@@ -31,6 +31,11 @@ maximal = ["enterprise", "embedded-postgres"]
 # the tests, plans and the dev and test sets. In no package; a build option.
 embed-production = ["moqui-embedded/production"]
 embed-all = ["moqui-embedded/all"]
+# The OpenSearch and Chromium archives built in (crates/moqui-embedded/src/programs.rs), unpacked into the install
+# directory and run as their own processes, as the embedded Postgres is (`./moq build --embed-opensearch`,
+# `--embed-chromium`). Each is separate; in no package.
+embed-opensearch = ["moqui-embedded/opensearch"]
+embed-chromium = ["moqui-embedded/chromium"]
 
 # The database drivers (crates/moqui-drivers).
 embedded-postgres = ["postgres", "moqui-drivers/embedded-postgres"]
@@ -100,7 +105,7 @@ channels = ["dep:moqui-channels"]
 # (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp_domain is set. In Maximal,
 # Enterprise and Debug; not Lite.
 xmpp = ["axum", "dep:moqui-xmpp"]
-telemetry = ["moqui-core/telemetry", "dep:flate2"]
+telemetry = ["moqui-core/telemetry"]
 # gRPC (tonic) on HTTP/2: the cluster's transport (src/cluster_grpc/, plans/archive/Cluster.md), with the generated
 # clients and servers of our own .proto files, and the OTLP/gRPC receiver, opened only when
 # <telemetry><receiver grpc-enabled="true"> is set. In every package.
@@ -199,7 +204,10 @@ socket2 = { workspace = true, features = ["all"] }
 sha1 = { workspace = true, optional = true }
 base64 = { workspace = true }
 serde_json = { workspace = true }
-flate2 = { workspace = true, optional = true }
+# The OTLP receiver's gzip (telemetry), and unpacking the OpenSearch and Chromium built in (src/embedded_programs.rs).
+# Both already in the graph.
+flate2 = { workspace = true }
+tar = { workspace = true }
 webpki-roots = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }

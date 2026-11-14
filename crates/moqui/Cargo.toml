@@ -34,6 +34,9 @@ edge = ["moqui-host/edge"]
 # `./moq build --embed production|all`. In no package.
 embed-production = ["moqui-host/embed-production"]
 embed-all = ["moqui-host/embed-all"]
+# The OpenSearch and Chromium archives built in: `./moq build --embed-opensearch`, `--embed-chromium`. In no package.
+embed-opensearch = ["moqui-host/embed-opensearch"]
+embed-chromium = ["moqui-host/embed-chromium"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Maximal (the `./moq build` default) and Debug packages: the framework's file watcher and the

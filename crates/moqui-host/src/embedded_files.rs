@@ -215,7 +215,7 @@ fn log_set_differences(dirs: &[(Set, PathBuf)], differences: Vec<moqui_embedded:
     }
 }
 
-/// `moqui embedded list | diff [path] | extract [dir]`.
+/// `moqui embedded info | list | diff [path] | extract [dir] | checksum [part...] | unpack [program...]`.
 ///
 /// # Errors
 ///
@@ -234,9 +234,63 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
             let framework = moqui_core::context::default_framework_dir(&runtime);
             extract(&runtime, &framework)
         }
-        _ => Err(Error::new(
-            "usage: moqui embedded list | diff [<set>/<path>] | extract [<runtime dir>]",
-        )),
+        [command] if command == "info" => {
+            info();
+            Ok(())
+        }
+        [command, rest @ ..] if command == "checksum" => crate::embedded_checksum::print(rest),
+        [command, rest @ ..] if command == "unpack" => {
+            let (runtime, _) = super::runtime_framework_dirs();
+            crate::embedded_programs::unpack_command(&runtime, rest)
+        }
+        _ => Err(Error::new(USAGE)),
+    }
+}
+
+/// The usage line of `moqui embedded`.
+const USAGE: &str = "usage: moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum \
+                     [--env] [runtime|postgres|opensearch|chromium...] | unpack [postgres|opensearch|chromium|all...]";
+
+/// What is built in: the runtime level with each set's files and size, the built-in components, and the programs
+/// with their versions.
+fn info() {
+    let level = moqui_embedded::level();
+    println!("Runtime level: {}", level.name());
+    for (set, (count, size)) in moqui_embedded::sizes() {
+        println!("  {:<11} {count:>6} files {:>10}", set.name(), human_size(size));
+    }
+    let components = moqui_embedded::components();
+    if !components.is_empty() {
+        println!("Components: {}", components.join(", "));
+    }
+    let program = |name: &str, archive: Option<(usize, &str)>| match archive {
+        Some((len, version)) => println!("{name:<11} {version} ({} archive)", human_size(len as u64)),
+        None => println!("{name:<11} not built in"),
+    };
+    program(
+        "Postgres",
+        crate::db::embedded::archive().map(|(bytes, version)| (bytes.len(), version)),
+    );
+    program(
+        "OpenSearch",
+        moqui_embedded::programs::opensearch().map(|archive| (archive.bytes.len(), archive.version)),
+    );
+    program(
+        "Chromium",
+        moqui_embedded::programs::chromium().map(|archive| (archive.bytes.len(), archive.version)),
+    );
+}
+
+/// `size` bytes in KB, MB or GB, one decimal.
+fn human_size(size: u64) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let size = size as f64;
+    if size >= 1e9 {
+        format!("{:.1} GB", size / 1e9)
+    } else if size >= 1e6 {
+        format!("{:.1} MB", size / 1e6)
+    } else {
+        format!("{:.1} KB", size / 1e3)
     }
 }
 

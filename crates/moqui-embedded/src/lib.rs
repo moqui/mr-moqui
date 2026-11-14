@@ -39,6 +39,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+pub mod programs;
 pub mod select;
 
 pub use select::Level;
