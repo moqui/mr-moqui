@@ -128,6 +128,11 @@ along with this software (see the LICENSE.md file). If not, see
             root's own id on the root once it has a fork, and on each fork. Empty for a repository with no fork. The
             objects of a db network are the GitObject rows of this id; a local fork reads its parent's objects
             directory (objects/info/alternates). docs/interfaces/Git-Hosting.md, Forks.</description></field>
+        <field name="reviewHiddenDate" type="date-time"><description>When a merge request of the repository was first
+            hidden (set#MergeRequestHidden, git-server review-start-hidden). Its store has then held commits its
+            readers were not to read, so from then on a commit is read by its id only when a ref reaches it, for a
+            user with the update right too. Never cleared by the framework. docs/interfaces/Git-Hosting.md,
+            Reachability.</description></field>
         <relationship type="many" related="moqui.resource.GitRef" short-alias="refs"><key-map field-name="repositoryId"/></relationship>
         <relationship type="one" title="PushMirror" related="moqui.service.message.SystemMessageRemote" short-alias="pushMirrorRemote">
             <key-map field-name="pushMirrorRemoteId" related="systemMessageRemoteId"/></relationship>

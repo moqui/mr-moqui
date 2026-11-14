@@ -74,7 +74,7 @@ impl GitProvider {
             username: credentials.username.clone(),
             token: credentials.token.clone(),
         };
-        let outcome = fs::fetch(path, url, branch, &credentials, false)?;
+        let outcome = fs::fetch(path, url, branch, &credentials, false, None)?;
         outcome
             .head
             .map(|head| head.to_string())

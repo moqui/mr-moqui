@@ -251,7 +251,7 @@ The files directly under `org/moqui` hold the interfaces that have kept their Ja
 |---|---|
 | `EmailServices.send#EmailTemplate` | Interface: the parameters of sending a template ([Mail](#mail-orgmoquimail)) |
 | `EmailServices.process#EmailEca` | Interface: what an Email ECA rule's service receives (`emailServerId`, `message`, `fields`, `bodyPartList`, `headers`, `flags`) |
-| `GitServices.process#GitEca` | Interface: what a gitECA rule's service receives (`repositoryId`, `refName`, `oldId`, `newId`, `newCommits`, ...) |
+| `GitServices.process#GitEca` | Interface: what a gitECA rule's service receives (`repositoryId`, `source`, `userId`, `refName`, `oldId`, `newId`, and for the pre events `newCommits`, `newCommitIds`, `newCommitsTruncated`, `forReview`, `packBytes`, `isMerge`, `mergeRequestId`, `mergeMethodEnumId`, `mergeSourceCommitId`) |
 | `ImageServices.convert#Image` | Interface |
 | `SmsServices.send#SmsMessage` | `contactNumber*`, `message*`, `countryCode`, `areaCode`, `fromNumber`, `userId` → `successful`, `messageId`, `errorMessage`, `reasonCode`. Sends a text through the messaging bridge of the system's number |
 
@@ -534,7 +534,8 @@ Repositories kept by the server (in the database, on disk, or a mirror of a remo
 | `GitReviewServices.propose#MergeRequest` | `repositoryId*`, `targetRef*`, `headCommitId*`, `topic`, `title`, `description`, `draft`, `mergeRequestId` → `mergeRequestId`, `mergeRequestNum`, `created`: what a push to `refs/for/<branch>` calls; authorization disabled only |
 | `GitReviewServices.detach#MergeRequestSource` | `mergeRequestId*` → `sourceDetachedDate`: a merge request from a fork stops following the fork's branch; the delete right on the fork, its author, or authorization disabled |
 | `GitReviewServices.set#MergeRequestHidden` | `mergeRequestId*`, `hidden` → `hiddenDate`: its head is not fetched or read by id while hidden; authorization disabled, else the delete right |
-| `GitReviewServices.submit#MergeRequestReview`, `merge#MergeRequest`, `find#MergeRequests` | `mergeRequestId*`, `decision*`, `note` → `statusId`; `commitId`, `conflictPaths` |
+| `GitReviewServices.submit#MergeRequestReview`, `merge#MergeRequest`, `find#MergeRequests` | `mergeRequestId*`, `decision*`, `note` → `statusId`; `mergeMethodEnumId`, `message`, `expectedHeadCommitId` (another head now: `GitStaleRef`), `deleteSourceBranch`, `forceDeleteSourceBranch` (authorization disabled only: a fork's branch) → `commitId`, `conflictPaths` |
+| `GitServices.queue#GitWebhookEvent`, `GitReviewServices.queue#MergeRequestEvent` | `repositoryId*`, `event*`, `action`, `payload`; `mergeRequestId*`, `action*`: an event to the repository's webhooks. The update right on the repository, or authorization disabled |
 
 For files, prefer the resource facade with a `git` location or a git drive ([Resources](#resources-orgmoquiresource)); these services are for the repository itself.
 

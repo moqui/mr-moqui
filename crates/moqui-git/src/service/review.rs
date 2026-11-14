@@ -354,8 +354,21 @@ fn set_merge_request_hidden(parameters: &Parameters, facade: &EntityFacade) -> O
             .eq("mergeRequestId", Value::string(&mr_id))
             .update_all([("hiddenDate".to_string(), date.clone())])?;
     }
+    let was_hidden = field(&row, "hiddenDate").is_some();
+    if hidden || was_hidden {
+        // from the first one on, only the refs of the repository decide what is read by id
+        provider.note_review_hidden(&id)?;
+    }
     // what its refs reach changed: read again on this node at once (another node within its two seconds)
     provider.forget_reached(&id);
+    if !hidden && was_hidden && matches!(field(&row, "statusId").as_deref(), Some("GmrDraft" | "GmrOpen")) {
+        // its webhooks were told nothing while it was hidden: it is opened for them now
+        let shown = merge_request(facade, &mr_id)?;
+        let queued = shown.map(|shown| super::hosting::queue_merge_request_event(facade, &shown, "opened"));
+        if let Some(Err(err)) = queued {
+            tracing::error!(merge_request = %mr_id, "merge request webhooks not queued: {err}");
+        }
+    }
     Ok(out([("hiddenDate", date)]))
 }
 

@@ -248,6 +248,9 @@ struct Inner {
     attributes: attributes::RulesCache,
     /// The commits each repository's refs reach, for reads by id (`reach`).
     reach: reach::ReachCache,
+    /// The pushes for review and proposals of each account with no push right that were refused, by the hour they
+    /// were refused in (`review-max-refused`).
+    review_refusals: Mutex<HashMap<String, (i64, u32)>>,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
     indexes: Mutex<BoundedMap<String, Arc<Mutex<BranchIndex>>>>,
 }
@@ -325,6 +328,7 @@ impl GitProvider {
                 archives_building: std::sync::atomic::AtomicUsize::new(0),
                 attributes: attributes::rules_cache(),
                 reach: Mutex::new(reach::ReachSets::default()),
+                review_refusals: Mutex::new(HashMap::new()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
         }
@@ -569,29 +573,57 @@ impl GitProvider {
         // the row as it is now: archived or deleted since the repository was opened, nothing is written
         self.still_writable(&repo.definition.id)?;
         // the refs before, only when a gitECA rule listens for writes
-        let prior = if moqui_core::service::git_eca::listening_after("write") {
+        let pre = events::pre_listening("write");
+        let prior = if pre || moqui_core::service::git_eca::listening_after("write") {
             repo.store.list_refs("refs/").ok()
         } else {
             None
         };
+        let origin = events::UpdateOrigin {
+            source: "write",
+            transport: "internal",
+            user_id: moqui_core::user::current_user_id().ok().flatten(),
+            ..Default::default()
+        };
+        let name = ops::branch_ref(&repo.definition.branch);
         let committer = self.author();
         let author = self.version_author(&committer);
-        let made = ops::commit_as(repo.store.as_ref(), &repo.definition.branch, &author, &committer, edits)?;
+        let store = repo.store.as_ref();
+        let made = ops::commit_as(
+            store,
+            &repo.definition.branch,
+            &author,
+            &committer,
+            edits,
+            // the pre events of the branch's move: a rule's refusal is the write's error, and the branch stays
+            |old, new| {
+                if !pre {
+                    return Ok(());
+                }
+                let reference = events::RefUpdate {
+                    name: name.clone(),
+                    old,
+                    new: Some(new),
+                    change_type: if old.is_some() { "update" } else { "create" }.to_string(),
+                };
+                events::pre_check(
+                    store,
+                    &repo.definition.id,
+                    &repo.definition.branch,
+                    &origin,
+                    prior.as_deref().unwrap_or_default(),
+                    &reference,
+                )
+            },
+        )?;
         if let Some(id) = made {
             self.log_protected_write(repo, id);
             self.remember_head(&repo.definition.id, Some(id), None);
             if let Some(prior) = prior {
-                let name = ops::branch_ref(&repo.definition.branch);
                 let old = prior
                     .iter()
                     .find(|(candidate, _)| *candidate == name)
                     .map(|(_, id)| *id);
-                let origin = events::UpdateOrigin {
-                    source: "write",
-                    transport: "internal",
-                    user_id: moqui_core::user::current_user_id().ok().flatten(),
-                    ..Default::default()
-                };
                 let change = store::RefChange {
                     name,
                     old,
@@ -924,6 +956,41 @@ impl GitProvider {
             moqui_core::entity::fence::Effect::RemoteCall,
             &format!("fetch of git repository {repository_id}"),
         )?;
+        let origin = events::UpdateOrigin {
+            source: "fetch",
+            transport: "internal",
+            user_id: moqui_core::user::current_user_id().ok().flatten(),
+            ..Default::default()
+        };
+        // the pre events of source fetch, when a rule listens: on the fetched objects, before a branch or tag moves
+        let mut gate = |store: &fs::FsStore, before: &[(String, ObjectId)], changes: &[store::RefChange]| {
+            let refs: Vec<events::RefUpdate> = changes
+                .iter()
+                .map(|change| events::RefUpdate {
+                    name: change.name.clone(),
+                    old: change.old,
+                    new: change.new,
+                    change_type: events::change_type(store, change.old, change.new).to_string(),
+                })
+                .collect();
+            let candidates: Vec<usize> = (0..refs.len()).collect();
+            let decided = events::pre_receive(
+                store,
+                repository_id,
+                &definition.branch,
+                &origin,
+                before,
+                &refs,
+                &candidates,
+            );
+            for message in &decided.messages {
+                moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message(message.clone()));
+            }
+            match decided.refused {
+                Some(reason) => candidates.into_iter().map(|index| (index, reason.clone())).collect(),
+                None => decided.refused_refs.into_iter().collect(),
+            }
+        };
         let outcome = {
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
@@ -933,6 +1000,11 @@ impl GitProvider {
                 &definition.branch,
                 &definition.credentials,
                 true,
+                if events::pre_listening("fetch") {
+                    Some(&mut gate)
+                } else {
+                    None
+                },
             )
         };
         self.refresh(repository_id);
@@ -951,14 +1023,17 @@ impl GitProvider {
                             .join(", ")
                     );
                 }
-                self.remember_head(repository_id, fetched.head, Some(None));
+                // what a rule refused stays as it was: the fetch's error, kept on the row, beside what did move
+                let declined = (!fetched.refused.is_empty()).then(|| {
+                    let refs: Vec<String> = fetched
+                        .refused
+                        .iter()
+                        .map(|(name, reason)| format!("{name}: {reason}"))
+                        .collect();
+                    format!("declined: {}", refs.join("; "))
+                });
+                self.remember_head(repository_id, fetched.head, Some(declined.as_deref()));
                 if let Ok(repo) = self.repo(repository_id) {
-                    let origin = events::UpdateOrigin {
-                        source: "fetch",
-                        transport: "internal",
-                        user_id: moqui_core::user::current_user_id().ok().flatten(),
-                        ..Default::default()
-                    };
                     self.record_update(
                         repository_id,
                         &origin,
@@ -966,6 +1041,9 @@ impl GitProvider {
                         &fetched.before,
                         &fetched.changes,
                     );
+                }
+                if let Some(declined) = declined {
+                    return Err(Error::new(declined));
                 }
                 Ok(fetched.head.map(|id| id.to_string()))
             }
@@ -1273,7 +1351,7 @@ impl GitProvider {
                 "git-import-{repository_id}-{}",
                 jiff::Timestamp::now().as_millisecond()
             ));
-            fs::fetch(&path, &source, &definition.branch, &definition.credentials, false)?;
+            fs::fetch(&path, &source, &definition.branch, &definition.credentials, false, None)?;
             scratch = Some(path.clone());
             (Box::new(fs::FsStore::open(&path)?), definition.branch.clone())
         };
@@ -1311,6 +1389,29 @@ impl GitProvider {
         let name = ops::branch_ref(branch);
         let prior = repo.store.list_refs("refs/")?;
         let current = repo.store.read_ref(&name)?;
+        let origin = events::UpdateOrigin {
+            source: "import",
+            transport: "internal",
+            user_id: moqui_core::user::current_user_id().ok().flatten(),
+            ..Default::default()
+        };
+        if current != Some(head) {
+            // the pre events, on the objects just copied and before the branch moves: a refusal is the import's error
+            let reference = events::RefUpdate {
+                name: name.clone(),
+                old: current,
+                new: Some(head),
+                change_type: events::change_type(repo.store.as_ref(), current, Some(head)).to_string(),
+            };
+            events::pre_check(
+                repo.store.as_ref(),
+                repository_id,
+                &repo.definition.branch,
+                &origin,
+                &prior,
+                &reference,
+            )?;
+        }
         if !repo.store.compare_and_set_ref(&name, current, head)? {
             return Err(Error::new(format!(
                 "branch {branch} of {repository_id} moved during the import"
@@ -1319,12 +1420,6 @@ impl GitProvider {
         drop(_turn);
         self.remember_head(repository_id, Some(head), None);
         if current != Some(head) {
-            let origin = events::UpdateOrigin {
-                source: "import",
-                transport: "internal",
-                user_id: moqui_core::user::current_user_id().ok().flatten(),
-                ..Default::default()
-            };
             let change = store::RefChange {
                 name,
                 old: current,

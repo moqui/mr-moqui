@@ -197,6 +197,8 @@ impl Request {
 /// Which of the client's haves are common, and when the wants are all reachable from them.
 struct Negotiation<'a> {
     store: &'a dyn GitStore,
+    /// Which commits the repository's readers read: a `have` is common only when it is one of them.
+    readable: &'a WantCheck<'a>,
     wants: Vec<ObjectId>,
     /// Common commits, in the order acknowledged.
     haves: Vec<ObjectId>,
@@ -207,9 +209,10 @@ struct Negotiation<'a> {
 }
 
 impl<'a> Negotiation<'a> {
-    fn new(store: &'a dyn GitStore, wants: &[ObjectId]) -> Self {
+    fn new(store: &'a dyn GitStore, readable: &'a WantCheck<'a>, wants: &[ObjectId]) -> Self {
         Self {
             store,
+            readable,
             wants: wants.to_vec(),
             haves: Vec::new(),
             have_set: HashSet::new(),
@@ -218,11 +221,17 @@ impl<'a> Negotiation<'a> {
         }
     }
 
-    /// A `have`: true when this repository has the commit (it is common).
+    /// A `have`: true when it is a commit of this repository that its refs reach (it is common). That the store
+    /// has it is not enough: the store may be a fork network's, or hold a hidden merge request, and an
+    /// acknowledgement would say that an id a client only guessed or was told is there.
     fn have(&mut self, id: ObjectId) -> Result<bool, Error> {
         let Some(commit) = peel_to_commit(self.store, &id)? else {
             return Ok(false);
         };
+        // a client's haves are commits: a tag object's id is not answered through the commit it names
+        if commit != id || (!self.have_set.contains(&commit) && !(self.readable)(&[commit])?.contains(&commit)) {
+            return Ok(false);
+        }
         if self.have_set.insert(commit) {
             self.haves.push(commit);
             let seconds = ops::read_commit(self.store, &commit)?.seconds;
@@ -450,7 +459,7 @@ pub(crate) fn upload_v0(
         MultiAck::None
     };
     let no_done = request.has("no-done") && multi_ack == MultiAck::Detailed;
-    let mut negotiation = Negotiation::new(store, &request.wants);
+    let mut negotiation = Negotiation::new(store, wanted, &request.wants);
     let (mut got_common, mut got_other, mut sent_ready) = (false, false, false);
     let mut last: Option<ObjectId> = None;
     loop {
@@ -651,7 +660,7 @@ fn fetch_v2(
         }
     }
     request.check(advertised, wanted)?;
-    let mut negotiation = Negotiation::new(store, &request.wants);
+    let mut negotiation = Negotiation::new(store, wanted, &request.wants);
     let mut acks = Vec::new();
     for have in haves {
         if negotiation.have(have)? {

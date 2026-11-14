@@ -1002,11 +1002,13 @@ impl Session<'_> {
         let id = &self.repo.definition.id;
         let name = command.name.as_str();
         let valid = gix::validate::reference::name(name.as_bytes().as_bstr()).is_ok();
-        // a new value the push did not send must be the repository's own history, not only an object of its store
+        // a new value the push did not send must be the pusher's to point a ref at (a commit the readable refs
+        // reach, an object one names, a file of such a commit), not only an object of the store; asked first, so
+        // an id that is another's and one that is not there are answered alike whatever the ref and the rights
         if let Some(new) = command.new.filter(|new| !pack.is_some_and(|pack| pack.holds(new))) {
-            match self.own_history(&[new]) {
-                Ok(None) => {}
-                Ok(Some(_)) => return Err(format!("missing necessary objects: {new}")),
+            match self.own_value(&new) {
+                Ok(true) => {}
+                Ok(false) => return Err(format!("missing necessary objects: {new}")),
                 Err(err) => return Err(err.message().to_string()),
             }
         }
@@ -1089,11 +1091,29 @@ impl Session<'_> {
     /// the repository and the ref updates, and the report.
     fn push(&self, input: &mut dyn Read, out: &mut dyn Write) -> Result<(), Error> {
         let mut input = BufReader::new(input);
-        let Some(request) = receive::read_request(&mut input)? else {
-            return Ok(());
-        };
         let store = self.repo.store.as_ref();
         let definition = &self.repo.definition;
+        // a user with no push right pushes for review only: less is read from them, and their refused pushes count
+        let viewer = !may_push(&definition.id);
+        let request = match receive::read_request(&mut input, &receive::RequestLimits::of(viewer)) {
+            Ok(Some(request)) => request,
+            Ok(None) => return Ok(()),
+            Err(err) => {
+                if viewer {
+                    self.provider.note_review_refusal();
+                }
+                return Err(err);
+            }
+        };
+        if let Some(reason) = Some(viewer)
+            .filter(|viewer| *viewer)
+            .and_then(|_| self.provider.review_refusals_over())
+        {
+            // before the pack is read
+            tracing::info!(repository = %definition.id, "a push for review was refused: {reason}");
+            let results = vec![Err(reason.clone()); request.commands.len()];
+            return receive::report(out, &request, Err(reason), &results);
+        }
         let refs_before = store.list_refs("refs/")?;
         // each command's change type while it may still be made, else why not
         let mut results: Vec<Result<&'static str, String>> = vec![Ok("update"); request.commands.len()];
@@ -1103,7 +1123,7 @@ impl Session<'_> {
             let dir = self.quarantine_dir();
             // a user with no push right brings at most what one push for review may: the rest is not read
             let cap: u64 = crate::number_setting("review-max-push-bytes", 50 * 1024 * 1024);
-            let (received, cut) = if cap > 0 && !may_push(&definition.id) {
+            let (received, cut) = if cap > 0 && viewer {
                 let mut limited = BufReader::new((&mut input).take(cap.saturating_add(1)));
                 let received = pack_in::receive(store, &mut limited, &dir, max_object_size(), pack_threads());
                 (received, limited.get_ref().limit() == 0)
@@ -1119,10 +1139,24 @@ impl Session<'_> {
                         "GitReviewPushTooLarge: a push for review is at most {cap} bytes (push to a fork for more)"
                     );
                     tracing::info!(repository = %definition.id, "a push for review was cut off at {cap} bytes");
+                    self.provider.note_review_refusal();
                     let results = vec![Err(reason.clone()); request.commands.len()];
                     return receive::report(out, &request, Err(reason), &results);
                 }
+                // a delta against an object the store does not have: answered as one against an object that is
+                // another's is below (the same message, the same report, the same row of the push log), so a
+                // push does not tell which ids the store holds
+                Err(err) if err.message().starts_with(pack_in::MISSING_OBJECT) => {
+                    tracing::warn!(repository = %definition.id, "a pushed pack is incomplete: {err}");
+                    receive::message(out, &request, err.message())?;
+                    for result in &mut results {
+                        *result = Err("missing necessary objects".into());
+                    }
+                }
                 Err(err) => {
+                    if viewer {
+                        self.provider.note_review_refusal();
+                    }
                     tracing::warn!(repository = %definition.id, "a pushed pack was refused: {err}");
                     let results = vec![Err("unpacker error".to_string()); request.commands.len()];
                     return receive::report(out, &request, Err(err.message().to_string()), &results);
@@ -1158,7 +1192,7 @@ impl Session<'_> {
                         receive::message(
                             out,
                             &request,
-                            &format!("the push is missing object {foreign}, which a pushed object refers to"),
+                            &format!("{}{foreign}, which a pushed object refers to", pack_in::MISSING_OBJECT),
                         )?;
                         for result in &mut results {
                             *result = Err("missing necessary objects".into());
@@ -1175,7 +1209,7 @@ impl Session<'_> {
         let for_review = |index: usize| request.commands[index].name.starts_with(crate::reach::REVIEW_REFS);
         let pack_bytes = quarantine.as_ref().map_or(0, pack_in::Quarantine::pack_bytes);
         // a user with no push right sends objects only for review, within the server's caps
-        let capped = (0..request.commands.len()).any(for_review) && !may_push(&definition.id);
+        let capped = (0..request.commands.len()).any(for_review) && viewer;
         let over_cap = if capped {
             self.provider.review_cap(pack_bytes)
         } else {
@@ -1189,6 +1223,7 @@ impl Session<'_> {
             push_options: request.options.clone(),
             pack_bytes,
             review_push: false,
+            merge: None,
         };
         let refs: Vec<events::RefUpdate> = {
             let view: &dyn GitStore = match &quarantine {
@@ -1223,8 +1258,15 @@ impl Session<'_> {
             // gitECA pre-receive and pre-ref-update rules, on the refs the push may still make
             let candidates: Vec<usize> = (0..results.len()).filter(|index| results[*index].is_ok()).collect();
             if !candidates.is_empty() {
-                let decided =
-                    events::pre_receive(view, &definition.id, &definition.branch, &origin, &refs, &candidates);
+                let decided = events::pre_receive(
+                    view,
+                    &definition.id,
+                    &definition.branch,
+                    &origin,
+                    &refs_before,
+                    &refs,
+                    &candidates,
+                );
                 for message in &decided.messages {
                     receive::message(out, &request, message)?;
                 }
@@ -1348,6 +1390,9 @@ impl Session<'_> {
         let results: Vec<Result<(), String>> = results.into_iter().map(|result| result.map(|_| ())).collect();
         if results.iter().any(Result::is_ok) {
             self.updated(&request, &results, &refs_before);
+        }
+        if viewer && results.iter().any(Result::is_err) {
+            self.provider.note_review_refusal();
         }
         receive::report(out, &request, Ok(()), &results)?;
         if let Some(update_id) = update_id {

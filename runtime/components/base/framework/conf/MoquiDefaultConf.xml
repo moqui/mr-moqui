@@ -1265,7 +1265,12 @@
         Push to review (docs/interfaces/Git-Hosting.md, Push to review): with review-push a user who may view a
         repository pushes refs/for/[branch], which opens or updates a merge request, and nothing else; one with no
         push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap). With
-        review-start-hidden such a merge request starts hidden, until the application shows it.
+        review-start-hidden such a merge request starts hidden, until the application shows it. What the server does
+        for such a user is small: a push's commands, shallow lines and options are at most review-max-commands each
+        in review-max-request-bytes (push-max-commands and push-max-request-bytes for a user who may push), it builds
+        on at most review-max-built-on commits of the repository, at most review-max-trees trees are read to check
+        what it names, and after review-max-refused refused pushes for review or proposals in an hour (per node; 0:
+        no cap) the account sends no more that hour.
         merge-request-url is the page told to the client ({repositoryPath}, {repositoryId}, {mergeRequestNum},
         {mergeRequestId}; after public-url when it starts with /). A commit is read or fetched by its id only when a
         ref reaches it, from at most reach-max-commits commits kept in memory per repository; get#GitCommitRefs reads
@@ -1286,6 +1291,8 @@
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
             db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"
             review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
+            review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
+            review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
             merge-request-url="" reach-max-commits="1000000" contains-max-commits="200000"
             reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
 

@@ -472,6 +472,8 @@ fn a_proposal_starts_hidden_when_the_conf_says_so() {
     assert_eq!(release(), 1);
     assert_eq!(head_of(&fixture, "held", "refs/merge-requests/1/head"), None);
     assert!(!reads_commit(&fixture, READER, "held", commit));
+    // nor by who works in the repository: what was held is not a commit its refs have left
+    assert!(!reads_commit(&fixture, WRITER, "held", commit));
 
     // a merge request from a fork starts hidden too: its commits come from outside as a push for review's do
     ok(
@@ -582,14 +584,31 @@ fn id_of(kind: gix::objs::Kind, data: &[u8]) -> gix::ObjectId {
 /// A push of `new` to `refs/for/main` of the repository `proj` by `user`, as a client of its own writes it: the
 /// client's `shallow` commits, and a pack of `objects`. What the server reported.
 fn push_for_review(base: &str, user: &str, new: &gix::ObjectId, shallow: &[&str], objects: &[Packed]) -> String {
+    push_refs(base, user, &[("refs/for/main", *new)], shallow, objects)
+}
+
+/// A push by `user` to the repository `proj` that makes each ref of `commands` at an id, as a client of its own
+/// writes it: the client's `shallow` commits, and a pack of `objects`. What the server reported.
+fn push_refs(
+    base: &str,
+    user: &str,
+    commands: &[(&str, gix::ObjectId)],
+    shallow: &[&str],
+    objects: &[Packed],
+) -> String {
     let mut body = Vec::new();
     for commit in shallow {
         body.extend(pkt(format!("shallow {commit}\n").as_bytes()));
     }
-    let mut command = format!("{} {new} refs/for/main", "0".repeat(40)).into_bytes();
-    command.push(0);
-    command.extend_from_slice(b"report-status\n");
-    body.extend(pkt(&command));
+    for (index, (name, new)) in commands.iter().enumerate() {
+        let mut command = format!("{} {new} {name}", "0".repeat(40)).into_bytes();
+        if index == 0 {
+            command.push(0);
+            command.extend_from_slice(b"report-status");
+        }
+        command.push(b'\n');
+        body.extend(pkt(&command));
+    }
     body.extend_from_slice(b"0000");
     body.extend(pack_of(objects));
     let authorization = format!(
@@ -743,5 +762,598 @@ fn a_push_names_only_what_its_pusher_reads() {
     assert_eq!(found.len(), 2);
     assert_eq!(field(&found[1], "headCommitId"), fine_commit_id.to_string());
     assert!(!reads_commit(&fixture, OTHER, "proj", &held));
+    settled(&fixture);
+}
+
+fn tag_data(target: &gix::ObjectId, name: &str) -> Vec<u8> {
+    format!("object {target}\ntype commit\ntag {name}\ntagger Other <other@example.com> 1700000000 +0000\n\n{name}\n")
+        .into_bytes()
+}
+
+fn commit_files(fixture: &Fixture, user: &str, repository: &str, extra: &[(&str, Value)]) -> String {
+    let mut parameters = vec![("repositoryId", s(repository))];
+    parameters.extend(extra.iter().cloned());
+    get(&ok(fixture, user, &git("commit#GitFiles"), &parameters), "commitId").to_string()
+}
+
+fn file_map(pairs: &[(&str, &str)]) -> Value {
+    Value::Map(
+        pairs
+            .iter()
+            .map(|(path, text)| ((*path).to_string(), s(text)))
+            .collect(),
+    )
+}
+
+/// The new value of a ref, like everything else a push names and does not bring, is the pusher's to read or the
+/// push is refused, and an object that is another's is answered as one that is not there: for a ref's value, the
+/// base of a delta and a parent the client says its history is cut at.
+#[test]
+fn a_ref_is_made_only_at_what_its_pusher_reads() {
+    use gix::objs::Kind;
+    let fixture = fixture_with("review-values", moqui_core::context::framework_dir(), "");
+    grant_entities(&fixture);
+    framework_rules(&fixture);
+    define(&fixture, "proj", "db");
+    let base = http_server(fixture.context.factory());
+    let main = commit_files(
+        &fixture,
+        WRITER,
+        "proj",
+        &[("message", s("First")), ("fileMap", file_map(&[("a.txt", "one\n")]))],
+    );
+    let main_id = gix::ObjectId::from_hex(main.as_bytes()).unwrap();
+    let public_blob = id_of(Kind::Blob, b"one\n");
+    let main_tree_id = id_of(Kind::Tree, &tree_data(&[("a.txt", public_blob)]));
+
+    // a reader's push for review that the application holds: a commit, its directory, its file, and a tag of it
+    let secret_blob = id_of(Kind::Blob, b"secret\n");
+    let held_tree = tree_data(&[("a.txt", public_blob), ("secret.txt", secret_blob)]);
+    let held_tree_id = id_of(Kind::Tree, &held_tree);
+    let held = commit_data(&held_tree_id, &main, "Held");
+    let held_id = id_of(Kind::Commit, &held);
+    let held_tag = tag_data(&held_id, "held");
+    let held_tag_id = id_of(Kind::Tag, &held_tag);
+    let answer = push_for_review(
+        &base,
+        READER,
+        &held_id,
+        &[],
+        &[
+            Packed::Whole(Kind::Blob, b"secret\n".to_vec()),
+            Packed::Whole(Kind::Tree, held_tree),
+            Packed::Whole(Kind::Commit, held),
+            Packed::Whole(Kind::Tag, held_tag),
+        ],
+    );
+    assert!(answer.contains("ok refs/for/main"), "{answer}");
+    let request_id = field(&merge_requests(&fixture, "proj")[0], "mergeRequestId");
+    ok(
+        &fixture,
+        WRITER,
+        &review("set#MergeRequestHidden"),
+        &[("mergeRequestId", s(&request_id))],
+    );
+    settled(&fixture);
+
+    // a tag at each of them, by a user who may make tags and by one who may not, with no object sent: refused, and
+    // in the words an id that names nothing is refused in
+    let nothing = gix::ObjectId::from_hex(b"1234567890123456789012345678901234567890").unwrap();
+    for user in [WRITER, READER] {
+        let tagged =
+            |id: gix::ObjectId| push_refs(&base, user, &[("refs/tags/x", id)], &[], &[]).replace(&id.to_string(), "ID");
+        let absent = tagged(nothing);
+        assert!(
+            absent.contains("ng refs/tags/x missing necessary objects"),
+            "{user}: {absent}"
+        );
+        for foreign in [secret_blob, held_tree_id, held_tag_id, held_id] {
+            assert_eq!(tagged(foreign), absent, "{user} {foreign}");
+        }
+    }
+    assert_eq!(head_of(&fixture, "proj", "refs/tags/x"), None);
+
+    // what the pusher reads is taken: a file and a directory of the branch, and a tag object under a second name
+    let answer = push_refs(
+        &base,
+        WRITER,
+        &[("refs/tags/file", public_blob), ("refs/tags/dir", main_tree_id)],
+        &[],
+        &[],
+    );
+    assert!(
+        answer.contains("ok refs/tags/file") && answer.contains("ok refs/tags/dir"),
+        "{answer}"
+    );
+    let tag = tag_data(&main_id, "v1");
+    let tag_id = id_of(Kind::Tag, &tag);
+    let answer = push_refs(
+        &base,
+        WRITER,
+        &[("refs/tags/v1", tag_id)],
+        &[],
+        &[Packed::Whole(Kind::Tag, tag)],
+    );
+    assert!(answer.contains("ok refs/tags/v1"), "{answer}");
+    let answer = push_refs(&base, WRITER, &[("refs/tags/v1-again", tag_id)], &[], &[]);
+    assert!(answer.contains("ok refs/tags/v1-again"), "{answer}");
+
+    // a delta against a file the pusher may not read, and against an id that names nothing: one answer
+    let by_delta = |delta_base: gix::ObjectId| {
+        let tree = tree_data(&[("a.txt", public_blob), ("copy.txt", id_of(Kind::Blob, b"secret\nx"))]);
+        let commit = commit_data(&id_of(Kind::Tree, &tree), &main, "By a delta");
+        push_refs(
+            &base,
+            WRITER,
+            &[("refs/heads/copy", id_of(Kind::Commit, &commit))],
+            &[],
+            &[
+                Packed::RefDelta(delta_base, vec![7, 8, 0x90, 7, 1, b'x']),
+                Packed::Whole(Kind::Tree, tree),
+                Packed::Whole(Kind::Commit, commit),
+            ],
+        )
+    };
+    let on_secret = by_delta(secret_blob);
+    assert!(
+        on_secret.contains("unpack ok") && on_secret.contains("ng refs/heads/copy missing necessary objects"),
+        "{on_secret}"
+    );
+    assert_eq!(by_delta(nothing), on_secret);
+    assert_eq!(head_of(&fixture, "proj", "refs/heads/copy"), None);
+
+    // a parent that is not there is no parent, also for a client that says its history is cut at it
+    let orphan = commit_data(&main_tree_id, &nothing.to_string(), "On nothing");
+    let answer = push_refs(
+        &base,
+        WRITER,
+        &[("refs/heads/orphan", id_of(Kind::Commit, &orphan))],
+        &[&nothing.to_string()],
+        &[Packed::Whole(Kind::Commit, orphan)],
+    );
+    assert!(answer.contains("ng refs/heads/orphan"), "{answer}");
+
+    // more refs in one push than a user with no push right names
+    let many: Vec<(String, gix::ObjectId)> = (0..9).map(|n| (format!("refs/for/b{n}"), main_id)).collect();
+    let many: Vec<(&str, gix::ObjectId)> = many.iter().map(|(name, id)| (name.as_str(), *id)).collect();
+    let answer = push_refs(&base, READER, &many, &[], &[]);
+    assert!(answer.contains("GitPushRequestTooLarge"), "{answer}");
+    settled(&fixture);
+
+    // the push log, for a reader: the rows it is given counted, no word of why a push was refused or a rule failed
+    let log = |user: &str| {
+        ok(
+            &fixture,
+            user,
+            &git("find#GitUpdates"),
+            &[("repositoryId", s("proj")), ("pageNoLimit", s("true"))],
+        )
+    };
+    let (whole, given) = (log(WRITER), log(READER));
+    let count = |out: &std::collections::BTreeMap<String, Value>| text_of(out.get("updateListCount").unwrap());
+    assert_eq!(count(&whole), list(&whole, "updateList").len().to_string());
+    assert_eq!(count(&given), list(&given, "updateList").len().to_string());
+    assert!(list(&given, "updateList").len() < list(&whole, "updateList").len());
+    let results = |out: &std::collections::BTreeMap<String, Value>| -> Vec<String> {
+        let mut found = Vec::new();
+        for update in list(out, "updateList") {
+            assert!(
+                user_sees_no_error(out, &whole)
+                    || text_of(crate::server::hosting_tests::entry(update, "ecaError")).is_empty()
+            );
+            if let Value::List(refs) = crate::server::hosting_tests::entry(update, "refList") {
+                for reference in refs {
+                    found.push(text_of(crate::server::hosting_tests::entry(reference, "result")));
+                }
+            }
+        }
+        found
+    };
+    assert!(results(&whole)
+        .iter()
+        .any(|result| result.starts_with("missing necessary objects")));
+    let given_results = results(&given);
+    assert!(
+        given_results.iter().any(|result| result == "refused"),
+        "{given_results:?}"
+    );
+    assert!(
+        given_results
+            .iter()
+            .all(|result| matches!(result.as_str(), "ok" | "pending" | "refused")),
+        "{given_results:?}"
+    );
+}
+
+/// Whether `out` is the whole log (its errors are its reader's to see).
+fn user_sees_no_error(
+    out: &std::collections::BTreeMap<String, Value>,
+    whole: &std::collections::BTreeMap<String, Value>,
+) -> bool {
+    std::ptr::eq(out, whole)
+}
+
+fn webhook_bodies(fixture: &Fixture) -> Vec<String> {
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    fixture
+        .entity
+        .find("moqui.service.message.SystemMessage")
+        .unwrap()
+        .eq("systemMessageTypeId", s("GitWebhook"))
+        .order_by("systemMessageId", false)
+        .list()
+        .unwrap()
+        .iter()
+        .map(|row| field(row, "messageText"))
+        .collect()
+}
+
+/// The commits a repository's refs have left are read by id by who works in it only while nobody could have put a
+/// commit in its store that its readers were not to read: not once it is in a fork network (as its row says now,
+/// whatever this node has open), and not once a merge request of it was hidden. A hidden merge request is its
+/// author's and the application's, for the services that change it and for the repository's webhooks.
+#[test]
+fn a_hidden_merge_request_is_its_authors_and_the_refs_alone_decide_after_it() {
+    let fixture = fixture_with(
+        "review-hidden-rules",
+        moqui_core::context::framework_dir(),
+        r#"<git-server webhook-private-network="true"/>"#,
+    );
+    grant_entities(&fixture);
+    framework_rules(&fixture);
+    define(&fixture, "solo", "db");
+    {
+        moqui_core::testing::seed_status_flows(&fixture.entity);
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        crate::server::tests::create(
+            &fixture.entity,
+            "moqui.service.message.SystemMessageType",
+            &[
+                ("systemMessageTypeId", "GitWebhook"),
+                ("sendServiceName", "org.moqui.git.GitServices.send#GitWebhookDelivery"),
+            ],
+        );
+    }
+    commit_files(
+        &fixture,
+        WRITER,
+        "solo",
+        &[("message", s("First")), ("fileMap", file_map(&[("a.txt", "one\n")]))],
+    );
+    let left = commit_files(
+        &fixture,
+        WRITER,
+        "solo",
+        &[
+            ("message", s("Side")),
+            ("newBranch", s("side")),
+            ("fileMap", file_map(&[("b.txt", "side\n")])),
+        ],
+    );
+    ok(
+        &fixture,
+        WRITER,
+        &git("delete#GitRef"),
+        &[("repositoryId", s("solo")), ("refName", s("side"))],
+    );
+    settled(&fixture);
+    // left by its branch: read by id by who works in the repository, not by a reader
+    assert!(reads_commit(&fixture, WRITER, "solo", &left));
+    assert!(!reads_commit(&fixture, READER, "solo", &left));
+
+    // another node made the repository's first fork: its row says so, the repository this node has open does not
+    let set_network = |network: Value| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let provider = crate::provider(fixture.context.factory()).unwrap();
+        assert!(provider.repo("solo").unwrap().definition.network.is_none());
+        fixture
+            .entity
+            .find(crate::GIT_REPOSITORY)
+            .unwrap()
+            .eq("repositoryId", s("solo"))
+            .update_all([("forkNetworkId".to_string(), network)])
+            .unwrap();
+        assert!(provider.repo("solo").unwrap().definition.network.is_none());
+    };
+    set_network(s("solo"));
+    assert!(!reads_commit(&fixture, WRITER, "solo", &left));
+    set_network(Value::Null);
+    assert!(reads_commit(&fixture, WRITER, "solo", &left));
+
+    // a reader's proposal, which the application hides; and its next one, which replaces the head
+    let propose = |text: &str| {
+        commit_files(
+            &fixture,
+            READER,
+            "solo",
+            &[
+                ("message", s("Proposed")),
+                ("asProposal", s("true")),
+                ("fileMap", file_map(&[("a.txt", text)])),
+            ],
+        )
+    };
+    let first = propose("p1\n");
+    let request_id = field(&merge_requests(&fixture, "solo")[0], "mergeRequestId");
+    ok(
+        &fixture,
+        WRITER,
+        &review("set#MergeRequestHidden"),
+        &[("mergeRequestId", s(&request_id))],
+    );
+    // a webhook of the repository, from here on: it is told nothing of a hidden merge request
+    ok(
+        &fixture,
+        WRITER,
+        &git("store#GitWebhook"),
+        &[
+            ("repositoryId", s("solo")),
+            ("url", s("http://127.0.0.1:9/hook")),
+            ("events", s("merge_request")),
+        ],
+    );
+    let second = propose("p2\n");
+    assert_eq!(field(&merge_requests(&fixture, "solo")[0], "headCommitId"), second);
+    // neither head is read by id, nor what the branch left: from now on the refs alone decide
+    for commit in [&first, &second, &left] {
+        assert!(!reads_commit(&fixture, WRITER, "solo", commit), "{commit}");
+    }
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        &git("create#GitRef"),
+        &[
+            ("repositoryId", s("solo")),
+            ("refName", s("stolen")),
+            ("revision", s(&first)),
+        ],
+    );
+    assert!(errors.contains("names no commit"), "{errors}");
+
+    // a check of the hidden head is the application's to write and to read
+    let status = [
+        ("repositoryId", s("solo")),
+        ("commitId", s(&second)),
+        ("state", s("success")),
+        ("context", s("build")),
+        ("includeHidden", s("true")),
+    ];
+    let (_, errors) = call(&fixture, WRITER, &git("create#GitCommitStatus"), &status);
+    assert!(errors.contains("no commit"), "{errors}");
+    let (_, errors) = call(&fixture, READER, &git("create#GitCommitStatus"), &status);
+    assert!(errors.contains("needs a push right"), "{errors}");
+    let (_, errors) = internal(&fixture, WRITER, &git("create#GitCommitStatus"), &status);
+    assert!(errors.trim().is_empty(), "{errors}");
+    let asked = [
+        ("repositoryId", s("solo")),
+        ("commitIdList", Value::List(vec![s(&second)])),
+        ("includeHidden", s("true")),
+    ];
+    let seen = ok(&fixture, WRITER, &git("get#GitCommitStatuses"), &asked);
+    assert!(list(&seen, "statusList").is_empty());
+    let (seen, errors) = internal(&fixture, WRITER, &git("get#GitCommitStatuses"), &asked);
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(list(&seen, "statusList").len(), 1);
+
+    // to a user who is not its author there is no such merge request, whatever their rights
+    let changes: [(&str, Vec<(&str, Value)>); 6] = [
+        ("update#MergeRequest", vec![("title", s("Mine now"))]),
+        (
+            "set#MergeRequestReviewers",
+            vec![("addUserIdList", Value::List(vec![s(WRITER)]))],
+        ),
+        ("submit#MergeRequestReview", vec![("decision", s("comment"))]),
+        ("get#MergeRequestApprovals", Vec::new()),
+        ("close#MergeRequest", Vec::new()),
+        ("reopen#MergeRequest", Vec::new()),
+    ];
+    for (name, extra) in &changes {
+        let mut parameters = vec![("mergeRequestId", s(&request_id))];
+        parameters.extend(extra.iter().cloned());
+        let (_, errors) = call(&fixture, WRITER, &review(name), &parameters);
+        assert!(errors.to_lowercase().contains("no merge request"), "{name}: {errors}");
+    }
+    // its author changes it; a target that is no branch is refused
+    ok(
+        &fixture,
+        READER,
+        &review("update#MergeRequest"),
+        &[("mergeRequestId", s(&request_id)), ("title", s("Better"))],
+    );
+    let (_, errors) = call(
+        &fixture,
+        READER,
+        &review("update#MergeRequest"),
+        &[("mergeRequestId", s(&request_id)), ("targetRef", s("nosuch"))],
+    );
+    assert!(errors.contains("GitNoSuchRef"), "{errors}");
+    let found = merge_requests(&fixture, "solo");
+    assert_eq!(field(&found[0], "title"), "Better");
+    assert_eq!(field(&found[0], "targetRef"), "main");
+    // the webhook was told nothing of it while it was hidden (a new head, a new title), by the services or by the
+    // event itself; shown, it is opened for the webhook
+    assert!(webhook_bodies(&fixture).is_empty());
+    let event = |action: &str| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let row = fixture
+            .entity
+            .find(MERGE_REQUEST)
+            .unwrap()
+            .eq("mergeRequestId", s(&request_id))
+            .one()
+            .unwrap()
+            .unwrap();
+        let queued = crate::service::hosting::queue_merge_request_event(&fixture.entity, &row, action).unwrap();
+        // the test factory's service pool is idle, so the send that follows a queued delivery leaves an error
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().clear());
+        text_of(queued.get("queuedCount").unwrap())
+    };
+    assert_eq!(event("synchronize"), "0");
+    assert!(webhook_bodies(&fixture).is_empty());
+    let active = |flag: &str| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find("moqui.resource.GitWebhook")
+            .unwrap()
+            .eq("repositoryId", s("solo"))
+            .update_all([("active".to_string(), s(flag))])
+            .unwrap();
+    };
+    // (off while the service shows it: the idle pool's error would take the service's transaction with it)
+    active("N");
+    ok(
+        &fixture,
+        WRITER,
+        &review("set#MergeRequestHidden"),
+        &[("mergeRequestId", s(&request_id)), ("hidden", s("false"))],
+    );
+    active("Y");
+    assert_eq!(event("opened"), "1");
+    let sent = webhook_bodies(&fixture);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].contains(r#""action":"opened""#) && sent[0].contains("Better") && sent[0].contains(&second),
+        "{}",
+        sent[0]
+    );
+    // its head is read as any other; the head it replaced while hidden never is
+    assert!(reads_commit(&fixture, WRITER, "solo", &second));
+    assert!(!reads_commit(&fixture, WRITER, "solo", &first));
+    assert!(!reads_commit(&fixture, WRITER, "solo", &left));
+
+    // closed and its ref let go: its commits are not what a branch left
+    active("N");
+    ok(
+        &fixture,
+        READER,
+        &review("close#MergeRequest"),
+        &[("mergeRequestId", s(&request_id))],
+    );
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let long_ago = moqui_lib::object::basic_convert(
+            &Value::I64(jiff::Timestamp::now().as_millisecond() - 40 * 24 * 60 * 60 * 1000),
+            "Timestamp",
+        )
+        .value;
+        fixture
+            .entity
+            .find(MERGE_REQUEST)
+            .unwrap()
+            .eq("mergeRequestId", s(&request_id))
+            .update_all([("closedDate".to_string(), long_ago)])
+            .unwrap();
+        let released = crate::provider(fixture.context.factory())
+            .unwrap()
+            .release_closed_heads(&fixture.entity, "solo")
+            .unwrap();
+        assert_eq!(released, 1);
+    }
+    assert!(!reads_commit(&fixture, WRITER, "solo", &second));
+    settled(&fixture);
+}
+
+/// What the server does for an account with no push right is small, and its refused pushes are counted: a push
+/// for review builds on few commits, names files within a small walk of the branch, and after too many refusals in
+/// an hour the account sends no more.
+#[test]
+fn what_the_server_does_for_a_reader_is_small_and_counted() {
+    use gix::objs::Kind;
+    let fixture = fixture_with(
+        "review-cost",
+        moqui_core::context::framework_dir(),
+        r#"<git-server review-max-built-on="1" review-max-trees="1" review-max-refused="3"/>"#,
+    );
+    grant_entities(&fixture);
+    framework_rules(&fixture);
+    define(&fixture, "proj", "db");
+    let base = http_server(fixture.context.factory());
+    let first = commit_files(
+        &fixture,
+        WRITER,
+        "proj",
+        &[
+            ("message", s("First")),
+            ("fileMap", file_map(&[("a.txt", "one\n"), ("dir/sub/f.txt", "deep\n")])),
+        ],
+    );
+    let main = commit_files(
+        &fixture,
+        WRITER,
+        "proj",
+        &[("message", s("Second")), ("fileMap", file_map(&[("a.txt", "two\n")]))],
+    );
+    let (top, deep) = (id_of(Kind::Blob, b"two\n"), id_of(Kind::Blob, b"deep\n"));
+
+    // on two commits of the repository, where one is the most
+    let tree = tree_data(&[("a.txt", top), ("b.txt", top)]);
+    let wide = format!(
+        "tree {}\nparent {first}\nparent {main}\nauthor A <a@example.com> 1700000000 +0000\ncommitter A <a@example.com> 1700000000 +0000\n\nWide\n",
+        id_of(Kind::Tree, &tree)
+    )
+    .into_bytes();
+    let answer = push_for_review(
+        &base,
+        READER,
+        &id_of(Kind::Commit, &wide),
+        &[],
+        &[Packed::Whole(Kind::Tree, tree), Packed::Whole(Kind::Commit, wide)],
+    );
+    assert!(answer.contains("GitReviewPushTooWide"), "{answer}");
+
+    // a file two directories down, named and not sent: past the trees read for a reader, within those for a pusher
+    let deep_tree = tree_data(&[("a.txt", top), ("z.txt", deep)]);
+    let deep_commit = commit_data(&id_of(Kind::Tree, &deep_tree), &main, "Names a deep file");
+    let deep_id = id_of(Kind::Commit, &deep_commit);
+    let deep_pack = || {
+        [
+            Packed::Whole(Kind::Tree, deep_tree.clone()),
+            Packed::Whole(Kind::Commit, deep_commit.clone()),
+        ]
+    };
+    let answer = push_for_review(&base, READER, &deep_id, &[], &deep_pack());
+    assert!(
+        answer.contains("ng refs/for/main missing necessary objects"),
+        "{answer}"
+    );
+    let answer = push_refs(&base, WRITER, &[("refs/heads/deep", deep_id)], &[], &deep_pack());
+    assert!(answer.contains("ok refs/heads/deep"), "{answer}");
+
+    // a third refusal, and the account sends no more this hour: by a push, or through the service
+    let fine_tree = tree_data(&[("a.txt", id_of(Kind::Blob, b"three\n"))]);
+    let fine = commit_data(&id_of(Kind::Tree, &fine_tree), &main, "Fine");
+    let fine_id = id_of(Kind::Commit, &fine);
+    let fine_pack = [
+        Packed::Whole(Kind::Blob, b"three\n".to_vec()),
+        Packed::Whole(Kind::Tree, fine_tree),
+        Packed::Whole(Kind::Commit, fine),
+    ];
+    let answer = push_refs(&base, READER, &[("refs/for/nosuch", fine_id)], &[], &fine_pack);
+    assert!(answer.contains("GitNoSuchRef"), "{answer}");
+    let answer = push_for_review(&base, READER, &fine_id, &[], &fine_pack);
+    assert!(
+        answer.contains("GitReviewRefusals") && !answer.contains("ok refs/for/main"),
+        "{answer}"
+    );
+    let (_, errors) = call(
+        &fixture,
+        READER,
+        &git("commit#GitFiles"),
+        &[
+            ("repositoryId", s("proj")),
+            ("asProposal", s("true")),
+            ("message", s("Proposed")),
+            ("fileMap", file_map(&[("a.txt", "four\n")])),
+        ],
+    );
+    assert!(errors.contains("GitReviewRefusals"), "{errors}");
+    assert!(merge_requests(&fixture, "proj").is_empty());
     settled(&fixture);
 }

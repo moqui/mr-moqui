@@ -46,9 +46,23 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="changeType"/>
             <parameter name="isDefaultBranch" type="Boolean"/>
             <parameter name="newCommitIds" type="List"><description>ref-update and pre-ref-update: the commits the ref
-                gained, oldest first</description></parameter>
-            <parameter name="newCommits" type="List"><description>pre-receive: the commits the push adds, oldest first,
-                each a Map as commit</description></parameter>
+                gained (reached from its new id and not from its old one), oldest first; pre-receive: those of
+                every ref of the change, each once. In the pre events a ref that is new gains only what no branch or
+                tag reached before. At most git-server eca-max-commits (10,000)</description></parameter>
+            <parameter name="newCommits" type="List"><description>The pre events: the commits of newCommitIds, each a
+                Map as commit (authorName, authorEmail, committerEmail, ...). For a merge they are the commits the
+                merge makes or brings: the source's and the merge commit, a squash's one commit, a rebase's copies</description></parameter>
+            <parameter name="newCommitsTruncated" type="Boolean"><description>The pre events: there are more new
+                commits than are listed, or they could not be read: a rule that must see every commit refuses</description></parameter>
+            <parameter name="forReview" type="Boolean"><description>The pre events: a ref of the change is
+                refs/for/(branch)</description></parameter>
+            <parameter name="isMerge" type="Boolean"><description>The pre events: the change is a merge made by
+                merge#MergeRequest or merge#GitRefs</description></parameter>
+            <parameter name="mergeRequestId"><description>The pre events of merge#MergeRequest's merge</description></parameter>
+            <parameter name="mergeMethodEnumId"><description>The pre events of a merge: GmmMerge, GmmFastForward,
+                GmmSquash or GmmRebase</description></parameter>
+            <parameter name="mergeSourceCommitId"><description>The pre events of a merge: the source's head, whose
+                commits a squash or a rebase made its own from</description></parameter>
             <parameter name="commit" type="Map"><description>commit event</description>
                 <parameter name="commitId"/>
                 <parameter name="shortId"/>

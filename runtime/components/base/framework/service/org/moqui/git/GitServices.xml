@@ -212,7 +212,8 @@ along with this software (see the LICENSE.md file). If not, see
             runs the pre events of gitECA rules as a push to refs/for/[branch] does (source push, transport
             internal). With authorization disabled and bypassBranchRules the branch rules are not checked. Refusals start with a code (docs/interfaces/Git-Hosting.md, Error codes):
             GitProtectedBranch, GitRefExists, GitArchived, GitNoSuchRef, GitStaleRef, GitReviewPushTooLarge,
-            GitReviewQuota.</description>
+            GitReviewQuota, GitReviewRefusals. The objects are stored only once the change may be made: a refused
+            proposal leaves none.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="message" required="true" allow-html="any"/>
@@ -445,8 +446,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The push log of a repository, newest first: every push (accepted or not), mirror fetch, import and
             write through Moqui, each with its refs and the state of its gitECA rules. For its viewers; a user without
             the update right is given no remoteAddress, no object id that no readable ref reaches now (the old value of
-            a forced or deleted branch), and no row of a push to refs/for/ whose head is not read (a hidden merge
-            request's).</description>
+            a forced or deleted branch), no row of a push to refs/for/ whose head is not read (a hidden merge
+            request's), no ecaError, a ref's result as ok, pending or refused only, and as updateListCount the rows
+            given up to this page, one more while rows may follow (not the size of the log).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="source"><description>push, fetch, import or write</description></parameter>
@@ -826,7 +828,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Commit statuses: outside CI posts them over REST (moqui.rest.xml: git/{repositoryId}/commits/{commitId}/statuses) -->
     <service verb="create" noun="GitCommitStatus" type="rust" location="moqui_git::service::hosting::create_commit_status">
         <description>A check of a commit by outside CI, in GitHub's status shape. Needs a push right on the repository
-            (a CI user with an access token); the commit must be in the repository.</description>
+            (a CI user with an access token); the commit must be one the caller reads in the repository (a branch, a
+            tag, or an id a readable ref reaches: docs/interfaces/Git-Hosting.md, Reachability).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId" required="true"/>
@@ -835,6 +838,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="targetUrl"/>
             <parameter name="target_url"><description>GitHub's name for targetUrl</description></parameter>
             <parameter name="description"/>
+            <parameter name="includeHidden" type="Boolean"><description>The head of a hidden merge request too; with
+                authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="commitStatusId"/>
@@ -853,12 +858,16 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="GitCommitStatuses" type="rust" location="moqui_git::service::hosting::get_commit_statuses">
         <description>The statuses of a commit, or of many: the latest of each context and the combined state (failure
-            when any failed or erred, pending when any is pending, success when all succeeded). For its viewers.</description>
+            when any failed or erred, pending when any is pending, success when all succeeded). For its viewers, of
+            the commits they read by id: any other is answered as a commit with no status.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId"><description>A commit, or a branch or tag</description></parameter>
-            <parameter name="commitIdList" type="List"><description>Full commit ids, for a log page</description></parameter>
+            <parameter name="commitIdList" type="List"><description>Full commit ids, for a log page; one the caller
+                does not read by id is left out</description></parameter>
             <parameter name="allStatuses" type="Boolean" default="false"/>
+            <parameter name="includeHidden" type="Boolean" default="false"><description>The head of a hidden merge
+                request too; with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="state"/>
@@ -1011,7 +1020,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="queue" noun="GitWebhookEvent" type="rust" location="moqui_git::service::hosting::queue_webhook_event">
         <description>Any other event of a repository (merge_request, with an action) to each active webhook that takes
-            it: payload as the body, with event, action, repository and sender.</description>
+            it: payload as the body, with event, action, repository and sender. Needs update on the repository, or
+            authorization disabled: the event is signed with each webhook's secret.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="event" required="true"/>

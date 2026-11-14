@@ -34,7 +34,7 @@ use moqui_core::context::Error;
 use moqui_core::entity::{Condition, EntityValue};
 use moqui_lib::object::Value;
 
-const GIT_LFS_OBJECT: &str = "moqui.resource.GitLfsObject";
+use crate::server::lfs::GIT_LFS_OBJECT;
 
 /// `GitObject.addedRepositoryId` of the rows a fork that was deleted added: counted in no repository's usage.
 pub(crate) const DELETED_FORK: &str = "_DELETED_FORK_";

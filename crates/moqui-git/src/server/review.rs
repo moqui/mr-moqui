@@ -28,21 +28,88 @@ use moqui_core::context::{Error, ExecutionContext};
 use moqui_lib::object::Value;
 
 impl Session<'_> {
-    /// Whether an object a push names without sending it (a ref's new value, the parent of a pushed commit) is the
-    /// repository's own to build on: a commit its readable refs reach, or not a commit at all. That the store has
-    /// it is not enough, as the store is shared with the fork network and holds hidden merge requests.
+    /// One of `ids`, objects a push names without sending them (a ref's new value, the parent of a pushed commit, the
+    /// target of a pushed tag), that is not the repository's own to build on, when there is one: an id the store
+    /// does not have, a commit no readable ref reaches, or a tag object no readable ref names
+    /// ([`Self::ref_named`]). That the store has it is not enough, as the store is shared with the fork network and
+    /// holds hidden merge requests; and one that is not there is answered as one that is another's. A tree or a blob
+    /// passes here: it is checked as a file of a commit the pusher reads ([`Self::foreign_object`],
+    /// [`Self::own_value`]).
     pub(super) fn own_history(&self, ids: &[ObjectId]) -> Result<Option<ObjectId>, Error> {
         let store = self.repo.store.as_ref();
         let reached = self.provider.reachable_of(self.repo, ids)?;
-        for id in ids.iter().filter(|id| !reached.contains(*id)) {
-            match revwalk::peel_to_commit(store, id)? {
-                Some(commit) if commit == *id || !self.provider.reachable(self.repo, &commit)? => {
-                    return Ok(Some(*id));
+        let unreached: Vec<ObjectId> = ids.iter().filter(|id| !reached.contains(*id)).copied().collect();
+        if unreached.is_empty() {
+            return Ok(None);
+        }
+        let mut tags = Vec::new();
+        for chunk in unreached.chunks(500) {
+            let kinds = store.meta_many(chunk)?;
+            for id in chunk {
+                match kinds.get(id).map(|meta| meta.kind) {
+                    None | Some(Kind::Commit) => return Ok(Some(*id)),
+                    Some(Kind::Tag) => tags.push(*id),
+                    Some(Kind::Tree | Kind::Blob) => {}
                 }
-                _ => {}
             }
         }
-        Ok(None)
+        if tags.is_empty() {
+            return Ok(None);
+        }
+        let named = self.ref_named()?;
+        Ok(tags.into_iter().find(|id| !named.contains(id)))
+    }
+
+    /// The objects the refs a reader reads name: each ref's value, and for a tag every tag object down to what it
+    /// tags. A fetch gives them to any reader, so a push may name them.
+    fn ref_named(&self) -> Result<HashSet<ObjectId>, Error> {
+        let store = self.repo.store.as_ref();
+        let refs = self.provider.readable_refs(self.repo)?.readable;
+        let mut named: HashSet<ObjectId> = refs.iter().map(|(_, target)| *target).collect();
+        let tags: Vec<ObjectId> = refs
+            .iter()
+            .filter(|(name, _)| name.starts_with("refs/tags/"))
+            .map(|(_, target)| *target)
+            .collect();
+        for chunk in tags.chunks(500) {
+            // an annotated tag's object is read; a tag of a commit is not
+            let kinds = store.meta_many(chunk)?;
+            for id in chunk {
+                if kinds.get(id).is_none_or(|meta| meta.kind != Kind::Tag) {
+                    continue;
+                }
+                let mut current = *id;
+                for _ in 0..16 {
+                    let Some((Kind::Tag, data)) = store.find(&current)? else {
+                        break;
+                    };
+                    current = gix::objs::TagRef::from_bytes(&data, crate::ops::HASH)
+                        .map_err(|err| Error::new(format!("git tag {current}: {err}")))?
+                        .target();
+                    named.insert(current);
+                }
+            }
+        }
+        Ok(named)
+    }
+
+    /// Whether `new`, the new value of a ref that the push did not bring, is the pusher's to point a ref at: a
+    /// commit the readable refs reach, an object a readable ref names (an annotated tag given a second name), or,
+    /// for a user who may push, a file or directory of a commit the readable refs point to. An id the store does not
+    /// have is answered as one that is another's, before the ref's name or the user's rights are looked at, so the
+    /// answer does not tell the two apart.
+    pub(super) fn own_value(&self, new: &ObjectId) -> Result<bool, Error> {
+        if self.own_history(&[*new])?.is_some() {
+            return Ok(false);
+        }
+        if self.provider.reachable(self.repo, new)? || self.ref_named()?.contains(new) {
+            return Ok(true);
+        }
+        // a tree or a blob: a user with no push right makes no ref of one
+        if !may_push(&self.repo.definition.id) {
+            return Ok(false);
+        }
+        Ok(self.foreign_object(&[*new], &[], &[])?.is_none())
     }
 
     /// Whether a push to `refs/for/<target>` may be made: the server takes them, the branch is there, and the push
@@ -168,11 +235,15 @@ impl Session<'_> {
     /// of a delta): for a user who may push, what the repository's readable refs point to; for one who may not, the
     /// branches its pushes for review are for and the heads of its own open pushes for review. And `built_on`, the
     /// commits the push builds on, which were checked to be the repository's own.
-    fn nameable_roots(&self, review_targets: &[String], built_on: &[ObjectId]) -> Result<Vec<ObjectId>, Error> {
-        let id = &self.repo.definition.id;
+    fn nameable_roots(
+        &self,
+        pusher: bool,
+        review_targets: &[String],
+        built_on: &[ObjectId],
+    ) -> Result<Vec<ObjectId>, Error> {
         let store = self.repo.store.as_ref();
         let mut tips: Vec<ObjectId> = Vec::new();
-        if may_push(id) {
+        if pusher {
             tips.extend(
                 self.provider
                     .readable_refs(self.repo)?
@@ -195,9 +266,17 @@ impl Session<'_> {
 
     /// One of the objects a push names and did not bring (`named`: what its objects refer to outside the pack, and
     /// the bases its thin pack was completed with) that the pusher may not name, when there is one: an object that
-    /// is not a commit the readable refs reach, and is not a file or directory of a commit of
-    /// [`Self::nameable_roots`]. A store shared with a fork network, or holding a hidden merge request, has objects
-    /// the pusher may not read; named in a push they would be read back through it.
+    /// is not a commit the readable refs reach, is not a file or directory of a commit of
+    /// [`Self::nameable_roots`], and is not an object a readable ref names. A store shared with a fork network, or
+    /// holding a hidden merge request, has objects the pusher may not read; named in a push they would be read back
+    /// through it.
+    ///
+    /// The walk is the server's work for whoever pushes, so for a user with no push right it is small: at most
+    /// `git-server` `review-max-built-on` (8) commits built on, and `review-max-trees` (20,000) trees read.
+    ///
+    /// # Errors
+    ///
+    /// `GitReviewPushTooWide` for a push by a user with no push right that builds on more commits than that.
     pub(super) fn foreign_object(
         &self,
         named: &[ObjectId],
@@ -210,10 +289,29 @@ impl Session<'_> {
         if wanted.is_empty() {
             return Ok(None);
         }
+        let pusher = may_push(&self.repo.definition.id);
         let built_on: Vec<ObjectId> = built_on.iter().filter(|id| commits.contains(*id)).copied().collect();
-        let roots = self.nameable_roots(review_targets, &built_on)?;
-        let found = crate::reach::objects_within(store, &roots, &wanted, crate::reach::WITHIN_MAX_TREES)?;
-        Ok(wanted.into_iter().find(|id| !found.contains(id)))
+        let budget = if pusher {
+            crate::reach::WITHIN_MAX_TREES
+        } else {
+            let most: usize = crate::number_setting("review-max-built-on", 8);
+            if built_on.len() > most {
+                return Err(Error::new(format!(
+                    "GitReviewPushTooWide: a push for review builds on at most {most} commits of the repository, \
+                     and this one builds on {}",
+                    built_on.len()
+                )));
+            }
+            crate::number_setting("review-max-trees", 20_000)
+        };
+        let roots = self.nameable_roots(pusher, review_targets, &built_on)?;
+        let found = crate::reach::objects_within(store, &roots, &wanted, budget)?;
+        let mut left: Vec<ObjectId> = wanted.into_iter().filter(|id| !found.contains(id)).collect();
+        if !left.is_empty() {
+            let named = self.ref_named()?;
+            left.retain(|id| !named.contains(id));
+        }
+        Ok(left.into_iter().next())
     }
 }
 

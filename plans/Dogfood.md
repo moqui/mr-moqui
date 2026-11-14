@@ -763,6 +763,25 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   task whose project the pusher is on. Not built: attachments on an issue, a topic made an issue (DG6), reference
   links in commit messages on pages. Not shown or not traced: a hidden task in CalDAV and in follower
   notifications; universal search drops its hit and may still count it; the composer's changes in a browser.
+- **DG4**, Nov 14, 2026: merge requests, forks, push-to-review, editing a file on its page, the agreement.
+  Framework ([Git-Hosting](../docs/interfaces/Git-Hosting.md) "Forks", "Push to review", "Merge request refs",
+  "Commits through Moqui", "Reachability", "The pre events of every write", "Error codes"): a fork network shares
+  its objects (a `db` network's rows by the root's id, a `local` fork by alternates) and a read or a push reaches
+  only what the refs a caller reads reach; `refs/for/<branch>` from an account that may view, kept at
+  `refs/merge-requests/<n>/head`, with caps and hidden requests; merge requests across repositories;
+  `commit#GitFiles` to a branch, a new branch or as a proposal; the pre events fire on every way a ref moves, with
+  the new commits and a merge's method. Mantle: the 21 operations, the conversation as a record topic with line
+  comments as posts, forks, the page edit's three destinations, and the agreement: a commit is an account's own
+  when its address is the account's and the account brought it; one rule guards the default branch and each branch
+  that requires a merge request, however a commit comes; a signature in a merge request counts when its change
+  only adds signature lines. PASS: the merge request pages, Fork, Edit, the Agreement tab; BOSS reads threads of
+  both shapes. Differences: forking a repository that is not public needs Developer, and such a fork is seen only
+  by who sees its parent; a repository's own agreement setting wins over its group's (the group's Owner sees who
+  opted out); signing one's own pushed-for-review request opens a second request; a merge into a branch no rule
+  guards is not checked; the forum's "day" was a second, so daily limits never applied (fixed,
+  `ForumCore.dayKey`). Acceptance: `SmithyContribution` (its commits come by page saves and the proposal service;
+  a real `git push` to a fork and to `refs/for/` is in the framework's git-client tests only). Not built: a
+  GitHub login recorded at sign-in, REST for these (P11), the per-node sets and guards across a cluster.
 
 ---
 

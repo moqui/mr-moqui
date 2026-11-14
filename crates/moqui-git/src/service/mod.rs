@@ -34,6 +34,8 @@ pub(crate) mod commit;
 mod elfinder_tests;
 #[cfg(test)]
 mod files_tests;
+#[cfg(test)]
+mod gate_tests;
 pub mod hosting;
 #[cfg(test)]
 mod images_tests;

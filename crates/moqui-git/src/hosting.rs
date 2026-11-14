@@ -28,7 +28,7 @@ use super::diff::{self, FileChange, FileDiff};
 use super::events::{self, RefUpdate, UpdateOrigin};
 use super::merge::{self, Mergeability, Merged, Method, Overlay};
 use super::ops::{self, Author, CommitDetails};
-use super::revwalk::new_commits;
+use super::revwalk::{self, new_commits};
 use super::rules::{self, RefChangeKind};
 use super::store::{GitStore, RefEdit, RefOutcome};
 use super::{GitProvider, Repo, RepositoryKind};
@@ -100,6 +100,16 @@ pub(crate) enum MergeOutcome {
         reason: String,
         conflicts: Vec<String>,
     },
+}
+
+/// What a merge merges.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MergeSource<'a> {
+    /// A revision as a caller names it: a branch, a tag, a full ref name or a commit id.
+    Revision(&'a str),
+    /// This commit, never a branch or tag whose name is its id: the head a merge request's approvals and checks
+    /// were counted for.
+    Commit(ObjectId),
 }
 
 /// How the branch rules apply to a ref write.
@@ -330,8 +340,9 @@ impl GitProvider {
     }
 
     /// Write refs as one change under the repository's lock: the branch rules as `rules` says, the pre events of
-    /// source `write` (an error refuses the change), the change recorded as a `GitUpdate` with its post events
-    /// scheduled. The objects of `overlay` are written to the store first. Each ref's outcome, in order: refused with
+    /// source `write` (an error refuses the change; `merge` is what they say of a merge), the change recorded as a
+    /// `GitUpdate` with its post events scheduled. The objects of `overlay` are written to the store once the change
+    /// may be made; the rules read them over the store until then. Each ref's outcome, in order: refused with
     /// why. An archived or mirror repository refuses every ref, and a ref made or moved must be a branch or tag with
     /// a name git takes: every ref a service writes comes through here.
     pub(crate) fn write_refs(
@@ -340,6 +351,7 @@ impl GitProvider {
         writes: &[RefWrite],
         rules: RefRules,
         overlay: Option<&Overlay<'_>>,
+        merge: Option<events::MergeOrigin>,
     ) -> Result<Vec<Result<(), String>>, Error> {
         let repo = self.repo(repository_id)?;
         if repo.definition.kind == RepositoryKind::Remote {
@@ -360,9 +372,12 @@ impl GitProvider {
         let _turn = moqui_lib::sync::lock(&lock);
         // the row as it is now: archived or deleted since the repository was opened, no ref is written
         self.still_writable(repository_id)?;
-        if let Some(overlay) = overlay {
-            overlay.flush()?;
-        }
+        // the change's own objects are read over the store until the change may be made, as a push's wait in
+        // quarantine: a refused merge or commit stores nothing
+        let view: &dyn GitStore = match overlay {
+            Some(overlay) => overlay,
+            None => store,
+        };
         let refs_before = store.list_refs("refs/")?;
         let mut results: Vec<Result<(), String>> = Vec::with_capacity(writes.len());
         let mut refs = Vec::with_capacity(writes.len());
@@ -371,7 +386,7 @@ impl GitProvider {
                 .iter()
                 .find(|(name, _)| *name == write.name)
                 .map(|(_, id)| *id);
-            let change_type = events::change_type(store, write.expected, write.new);
+            let change_type = events::change_type(view, write.expected, write.new);
             refs.push(RefUpdate {
                 name: write.name.clone(),
                 old: write.expected,
@@ -409,15 +424,17 @@ impl GitProvider {
                 .ok()
                 .flatten()
                 .filter(|id| !id.is_empty()),
+            merge,
             ..Default::default()
         };
         let candidates: Vec<usize> = (0..results.len()).filter(|index| results[*index].is_ok()).collect();
         if !candidates.is_empty() {
             let decided = events::pre_receive(
-                store,
+                view,
                 repository_id,
                 &repo.definition.branch,
                 &origin,
+                &refs_before,
                 &refs,
                 &candidates,
             );
@@ -458,6 +475,9 @@ impl GitProvider {
             // refused before anything moved: one row for the push log, nothing to run after it
             self.record_refused(repository_id, &origin, &refs_before, &recorded);
             return Ok(results);
+        }
+        if let Some(overlay) = overlay {
+            overlay.flush()?;
         }
         let update_id = self.begin_update(repository_id, &origin, &refs_before, &recorded);
         if results.iter().all(Result::is_ok) {
@@ -568,21 +588,24 @@ impl GitProvider {
         Ok(None)
     }
 
-    /// Merge `source` (a revision) into the branch `target`, by `method`. With `check_only` a trial merge that changes
-    /// nothing. `source_label` is what the source is called in a merge commit's message when the revision is not a
-    /// branch's name (the head ref of a merge request from a fork). The merge's commits are by the current user (a squash's author `squash_author` when given); the target
-    /// moves through [`Self::write_refs`], so the branch rules and gitECA events run as for a push.
+    /// Merge `source` into the branch `target`, by `method`. With `check_only` a trial merge that changes nothing.
+    /// `source_label` is what the source is called in a merge commit's message when it is not a branch's name (a
+    /// commit by its id, the head ref of a merge request from a fork). The merge's commits are by the current user (a
+    /// squash's author `squash_author` when given); the target moves through [`Self::write_refs`], so the branch
+    /// rules run and the gitECA pre events see the commits the merge brings (a squash's or a rebase's as it made
+    /// them), with the merge request `merge_request_id` when it is one's merge, which is checked as one by the
+    /// branch rules.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn merge_refs(
         &self,
         repository_id: &str,
-        source: &str,
+        source: MergeSource<'_>,
         target: &str,
         method: Method,
         message: Option<&str>,
         squash_author: Option<Author>,
         check_only: bool,
-        through_merge_request: bool,
+        merge_request_id: Option<&str>,
         source_label: Option<&str>,
     ) -> Result<MergeOutcome, Error> {
         let repo = self.repo(repository_id)?;
@@ -601,9 +624,14 @@ impl GitProvider {
                 short_name(&target_ref)
             )));
         };
-        let Some(source_id) = self.resolve_commit(repository_id, source)? else {
+        let (source_id, source_text) = match source {
+            MergeSource::Revision(revision) => (self.resolve_commit(repository_id, revision)?, revision.to_string()),
+            // the commit itself, whatever a branch or tag of that name points at
+            MergeSource::Commit(id) => (revwalk::peel_to_commit(store, &id)?, id.to_string()),
+        };
+        let Some(source_id) = source_id else {
             return Err(Error::new(format!(
-                "{source} names no commit in repository {repository_id}"
+                "{source_text} names no commit in repository {repository_id}"
             )));
         };
         if check_only {
@@ -611,7 +639,7 @@ impl GitProvider {
         }
         let committer = self.author();
         let overlay = Overlay::new(store);
-        let source_name = source_label.unwrap_or_else(|| short_name(source)).to_string();
+        let source_name = source_label.unwrap_or_else(|| short_name(&source_text)).to_string();
         let target_name = short_name(&target_ref).to_string();
         let request = merge::MergeRequest {
             method,
@@ -643,12 +671,17 @@ impl GitProvider {
                 expected: Some(target_id),
                 new: Some(merged.head),
             }],
-            if through_merge_request {
+            if merge_request_id.is_some() {
                 RefRules::MergeRequest
             } else {
                 RefRules::Direct
             },
             Some(&overlay),
+            Some(events::MergeOrigin {
+                merge_request_id: merge_request_id.map(str::to_string),
+                method: method.enum_id(),
+                source: source_id,
+            }),
         )?;
         match written.into_iter().next() {
             Some(Ok(())) => Ok(MergeOutcome::Merged(merged)),

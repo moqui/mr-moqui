@@ -250,8 +250,8 @@ A `*.gitecas.xml` file in a component's `service` directory (schema `framework/x
 
 | Event | Runs | An error |
 |---|---|---|
-| `pre-receive` | once per push, before any ref changes, with `newCommits` | refuses the push |
-| `pre-ref-update` | once per ref of a push, before it changes | refuses that ref (every ref of an `atomic` push) |
+| `pre-receive` | once per push, or other change of refs ([every write](#the-pre-events-of-every-write)), before any ref changes, with `newCommits` | refuses the change |
+| `pre-ref-update` | once per ref of the change, before it changes, with that ref's `newCommits` | refuses that ref (every ref of an `atomic` push, and of a write through a service) |
 | `ref-update` | once per ref that changed, with `newCommitIds` (the commits it gained) | is recorded |
 | `commit` | once per commit new to the repository, oldest first, with the ref it came on | is recorded |
 | `tag` | once per tag created | is recorded |
@@ -259,7 +259,7 @@ A `*.gitecas.xml` file in a component's `service` directory (schema `framework/x
 
 | Attribute | |
 |---|---|
-| `source` | `push`, `fetch` (of a `remote` mirror), `import`, `write` (a commit through `git://` or `commit#GitFiles`, such as a wiki save, and a ref written by `create#GitRef`, `delete#GitRef` or a merge); `push,fetch,import` when empty |
+| `source` | `push`, `fetch` (of a `remote` mirror), `import`, `write` (a commit through `git://` or `commit#GitFiles`, such as a wiki save, and a ref written by `create#GitRef`, `delete#GitRef` or a merge); `push,fetch,import` when empty, so a rule that must hold for every way a branch moves says `source="push,fetch,import,write"` |
 | `repository-pattern`, `ref-pattern` | regular expressions the whole repositoryId, or ref name (`refs/heads/main`), must match |
 | `ref-type` | `branch` or `tag` |
 | `default-branch-only` | the repository's default branch only (a commit event: a commit that came on it) |
@@ -272,6 +272,58 @@ a push to `refs/for/<branch>`); a per-ref event those fields of its ref;
 a commit event `commit` (`commitId`, `shortId`, `summary`, `body`, `message`, `trailers` by name, the author and
 committer and their dates, `parentIds`, `moquiUserId`); a tag event `tag` (`tagName`, `targetId`, `commitId`,
 `annotated`, and an annotated tag's `message` and tagger). `org.moqui.GitServices.process#GitEca` is the interface.
+
+### The pre events of every write
+
+`pre-receive` and then `pre-ref-update` run before a ref is written, for every way one is, each with its `source`. A
+rule's error stops the write, and its message is what the caller gets: a `remote:` line and the ref's reason for a
+push, the service's error (`declined: <the message>`) for a service, the error of the resource write, the import or
+the fetch.
+
+| A branch moves by | `source`, `transport` | Refs of the event | A refusal |
+|---|---|---|---|
+| a push (HTTP, SSH), also to `refs/for/<branch>` | `push`; `http` or `ssh` | each ref of the push | that ref, or the push |
+| `commit#GitFiles` to `branch` or `newBranch` (also with `bypassBranchRules`) | `write`; `internal` | the branch | the service's error; nothing is stored |
+| `commit#GitFiles` with `asProposal` | `push`; `internal` | `refs/for/<branch>` (`forReview` true) | the service's error; nothing is stored |
+| `merge#MergeRequest`, `merge#GitRefs` (merge commit, fast-forward, squash, rebase) | `write`; `internal` | the target branch | the service's error; nothing is stored, and the merge request stays open |
+| `create#GitRef`, `delete#GitRef`, the source branch `merge#MergeRequest` deletes | `write`; `internal` | the branch or tag | the service's error (a kept source branch is a message) |
+| a write through a `git://` location or a git drive (a wiki save, a file upload, a restore) | `write`; `internal` | the repository's branch | the write's error |
+| `import#GitRepository` | `import`; `internal` | the repository's branch | the import's error; the branch stays |
+| `fetch#GitRepository` of a `remote` mirror | `fetch`; `internal` | each branch and tag the fetch would create, move or delete | the refused refs stay as they were and the others move; the fetch ends in an error naming them (`lastFetchError`) |
+
+Not events: `fork#GitRepository` (the new repository's refs are its source's, commits that are in the source
+already), the head ref of a merge request (`refs/merge-requests/<n>/head`, moved by the merge request services;
+the commits reach a branch only by a merge, which is one), and the server's own `export#GitRepository` to a
+directory.
+
+What a pre rule sees, beside the fields of every event (no `updateId`: nothing is recorded yet):
+
+- `userId`: the calling user (the pusher; the user of the service call or resource write; empty for a fetch by a job).
+- `refUpdates`, and in `pre-ref-update` its ref's `refName`, `refType`, `shortName`, `oldId`, `newId`, `changeType`,
+  `isDefaultBranch`, `forReview`, `targetBranch`.
+- `newCommitIds` and `newCommits`: the commits the ref would gain, oldest first, those its new id reaches and its old
+  id does not; for a ref that is new, those no branch or tag reached before, so a branch made at a commit the
+  repository has gains none. In `pre-receive` they are those of every ref of the change, each once. Each of
+  `newCommits` is a map as a commit event's `commit` (`commitId`, `authorName`, `authorEmail`, `committerName`,
+  `committerEmail`, `summary`, `message`, `trailers`, `parentIds`, `moquiUserId`, ...). They are read from the
+  change's own objects (a push's quarantine, a merge's or a commit's objects before they are stored).
+- `newCommitsTruncated`: true when there are more than `git-server` `eca-max-commits` (10,000) of them, of which the
+  oldest are listed, or when they could not be read. A rule that must see every commit refuses when it is true.
+- `forReview`, and `packBytes` (0 but for a push and a proposal, whose `packBytes` is the bytes of its files).
+- For a merge by a service: `isMerge` true, `mergeMethodEnumId` (`GmmMerge`, `GmmFastForward`, `GmmSquash`,
+  `GmmRebase`), `mergeSourceCommitId` (the source's head) and, for `merge#MergeRequest`, `mergeRequestId`; false and
+  empty otherwise. The new commits of a merge are what it brings to the target: the source's commits and the merge
+  commit (by the merging user), a fast-forward's source commits, a rebase's copies of them, and for a squash its one commit alone, whose author is the merge request's author (the merging
+  user for `merge#GitRefs`): a rule that asks about the squashed commits' authors reads them from
+  `mergeSourceCommitId`.
+
+So a rule that keeps out commits by authors with no agreement on file:
+
+```xml
+<giteca rule-name="Agreement" event="pre-ref-update" source="push,fetch,import,write" ref-type="branch">
+    <actions><service-call name="my.AgreementServices.check#Commits" in-map="context"/></actions>
+</giteca>
+```
 
 **A quota by pre-receive.** The pre events of a push also have `packBytes`: the bytes of the pack the push sent, as
 it is kept in quarantine (a thin pack completed from the repository), so what the push would add to a `local`
@@ -290,8 +342,8 @@ would pass a limit, and its message is what the client sees:
 A push is bounded before any rule runs by `git-server` `max-push-size`. LFS uploads do not pass pre-receive: see
 [Large files](#large-files-git-lfs).
 
-The pre events run in the push, against its quarantined objects: their messages, and the reasons of a refusal, show
-on the client as `remote:` lines. The post events run after the change, on a job of the git pool, from its
+The pre events of a push run in the push, against its quarantined objects: their messages, and the reasons of a
+refusal, show on the client as `remote:` lines. The post events run after the change, on a job of the git pool, from its
 `moqui.resource.GitUpdate` row (with a `GitUpdateRef` per ref), each rule in a transaction of its own; one that fails
 is logged and recorded on the row (`ecaStatus` failed, `ecaError`), and the others still run. The updates of one
 repository run one at a time, in order. Every push is recorded, accepted or not, so the rows are also its push log
@@ -390,17 +442,26 @@ at it. So that an object is in the store never decides a read.
 | Caller | Reads by id |
 |---|---|
 | anyone who may view | a commit that a branch, a tag, or the head of a merge request that is not hidden (`refs/merge-requests/<n>/head`) reaches |
-| a user with the update right, in a repository that is in no fork network | also any other commit of its store (a deleted or forced branch's, which the commit pages and links of who works in the repository show), but not what the head of a hidden merge request reaches |
-| a user with the update right, in a repository of a fork network | as anyone: the store is other repositories' too |
+| a user with the update right, where every commit of the store was once a reader's to read (below) | also any other commit of its store (a deleted or forced branch's, which the commit pages and links of who works in the repository show) |
+| a user with the update right, anywhere else | as anyone: the store has commits that were never a reader's |
 | a service called with authorization disabled | as a user with the update right; with `includeHidden`, a hidden head's commits too |
 | the git protocol (a fetch by id), a `git://` location's version, a checkout of a network's repository | only what the refs reach, whoever asks |
 
 Any other id is answered as one that names nothing.
 
+**Where the commits the refs have left are still read.** The second row holds only for a repository that is in no
+fork network, none of whose merge requests is hidden or ever was, on a server without `review-start-hidden`. A fork
+network's store is other repositories' too. A store that has held a hidden merge request has commits nobody was to
+read: the heads it had before its current one, and its head once it is closed and its ref released; so from the
+first hidden merge request on (`GitRepository.reviewHiddenDate`, set by `set#MergeRequestHidden` and by a merge
+request that starts hidden, and never cleared by the framework) only the refs decide, for everyone. The row is read
+when the question is asked, not as the node had it when it opened the repository, so the first fork made on another
+node, or the first merge request hidden there, counts at once.
+
 - **Where.** Every revision a service takes (`get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob`, `get#GitTree`,
   `get#GitLog`, `get#GitCompare`, `get#GitBlame`, `get#GitArchive`, `get#GitCommitStatuses`, `get#GitCommitRefs`,
   `get#GitCommitPushers`, `create#GitRef`, `merge#GitRefs`, `create#GitCommitStatus`) that is an object id or the
-  start of one; a name (a branch, a tag, `refs/merge-requests/<n>/head`) is the ref itself. The start of an id is
+  start of one, and each id of `get#GitCommitStatuses`' `commitIdList`; a name (a branch, a tag, `refs/merge-requests/<n>/head`) is the ref itself. The start of an id is
   looked up among the commits the refs reach, so neither its answer nor "names more than one commit" says anything
   of the rest of the store. A version of a `git://` location named by a commit id (read, or restored:
   `restore_version`) and a checkout of a revision are of such commits too. A fetch that wants an object by id
@@ -408,23 +469,40 @@ Any other id is answered as one that names nothing.
 - **What a push names.** A push names objects it does not bring: the new value of a ref, the parents of its
   commits, the targets of its tags, the entries of its trees, and the bases its thin pack's deltas are made from.
   Each must be the pusher's to read, else the push is refused (`missing necessary objects`), so nobody makes a
-  branch of a commit they only know the id of, builds on one, or reads a file back through a tree entry or a delta:
+  branch or a tag of an object they only know the id of, builds on one, or reads a file back through a tree entry
+  or a delta:
   - a commit (a ref's value, a parent, a tag's target, also a parent the client says is where its shallow history
-    is cut): one the readable refs reach;
-  - a tree, a blob or a delta's base: a file or directory of a commit the pusher reads, which for a user with a
-    push right is what any readable ref points to or a commit the push builds on, and for a user who may only push
-    for review is the branch the push is for, the heads of the user's own open pushes for review, or a commit the
-    push builds on. These are the objects a git client leaves out of a push; the files of older commits it sends
-    again. The walk reads the trees of those commits until what was named is found, at most 1,000,000 trees.
+    is cut, which must be there): one the readable refs reach;
+  - a tag object (a ref's value, a tag's target): one a readable tag names, itself or through other tag objects (an
+    annotated tag given a second name);
+  - a tree, a blob or a delta's base (and a ref's value that is one, for a user with a push right): a file or
+    directory of a commit the pusher reads, which for a user with a push right is what any readable ref points to
+    or a commit the push builds on, and for a user who may only push for review is the branch the push is for, the
+    heads of the user's own open pushes for review, or a commit the push builds on; or the object a readable ref
+    names. These are the objects a git client leaves out of a push; the files of older commits it sends again. The
+    walk reads the trees of those commits until what was named is found, at most 1,000,000 trees for a user with a
+    push right and `review-max-trees` (20,000) for one without.
+  - **One answer.** An id the store does not have and an id that is another's are refused in the same words, with
+    the same report and the same row in the push log, whatever the ref's name and the user's rights: as a ref's
+    value, as a parent, as a tree's entry and as the base of a thin pack's delta. A fetch acknowledges a `have` only
+    for a commit the readable refs reach. So neither a push nor a fetch tells which ids a store holds.
 - **The push log.** `find#GitUpdates` gives a user without the update right no `remoteAddress`, no object id that
-  no readable ref reaches now (the old value of a forced or deleted branch, a replaced head), and no row of a push
-  to `refs/for/` whose head is not read (a hidden merge request's).
+  no readable ref reaches now (the old value of a forced or deleted branch, a replaced head), no row of a push
+  to `refs/for/` whose head is not read (a hidden merge request's), no `ecaError`, and of each ref's `result` only
+  `ok`, `pending` or `refused` (the text of a refusal names objects and says what a rule checks). Its
+  `updateListCount` is then the rows given up to this page, one more while rows may follow, not the size of the
+  log.
 - **Hidden.** `GitReviewServices.set#MergeRequestHidden(mergeRequestId, hidden)` (with authorization disabled, else
   the delete right) sets `GitMergeRequest.hiddenDate` while an application holds a merge request's text: its head is
   then fetched by nobody, by name or by id, its commits are not read by id, and `get#MergeRequest`,
   `get#MergeRequestDiff` and `find#MergeRequests` (`includeHidden`) answer for it only with authorization disabled,
-  as the application decides who sees it. It does not merge while hidden. A read service takes `includeHidden`,
-  honoured with authorization disabled only, to read a hidden head's commits for those viewers.
+  as the application decides who sees it. `update#MergeRequest`, `set#MergeRequestReviewers`,
+  `submit#MergeRequestReview`, `close#MergeRequest`, `reopen#MergeRequest` and `get#MergeRequestApprovals` answer
+  for it to its author and with authorization disabled, and to anyone else as for a merge request that is not
+  there. It does not merge while hidden, and the repository's webhooks are sent nothing of it
+  ([Webhooks](#webhooks)). A read service takes `includeHidden`, honoured with authorization disabled only, to read
+  a hidden head's commits for those viewers; `create#GitCommitStatus` and `get#GitCommitStatuses` take it too, so
+  the application writes and reads a check of a hidden head (an agreement check made while it is held).
 - **Cost.** The commits each repository's refs reach are kept in memory on the node that is asked, as a set
   (about 50 bytes a commit), for at most 128 repositories (one more lets go of the set used longest ago). When the
   refs changed, the new values are walked back to the commits already known: a push that moves a branch forward,
@@ -471,8 +549,9 @@ A merge is refused on a conflict, listing the paths (`conflictPaths`); `checkOnl
 nothing. The merged objects are made apart from the repository and written only when the target moves.
 
 Every ref written through Moqui (`create#GitRef`, `delete#GitRef`, `merge#GitRefs`, `merge#MergeRequest`) moves under
-the repository's lock as a push does: the branch rules, the pre events of [gitECA rules](#giteca-rules) of source
-`write` (an error refuses it), a `GitUpdate` in the push log, and the post events after it (so Mantle's link rules and
+the repository's lock as a push does: the branch rules, the pre events of [gitECA rules](#the-pre-events-of-every-write) of source
+`write` (an error refuses it, and is the service's error; a merge's say that it is one, with its method and merge
+request), a `GitUpdate` in the push log, and the post events after it (so Mantle's link rules and
 the framework's own rules follow).
 
 ### Commits through Moqui
@@ -509,6 +588,11 @@ file: no clone, no working tree. Where the commit goes:
 - **A proposal** is a push for review made by a service: the same caps, and the pre events of gitECA rules of
   source `push` (transport `internal`) with the ref `refs/for/<branch>`, `forReview` and `packBytes` (the bytes of
   the files), so a rule that gates pushes for review gates proposals; it is in the push log as that push.
+- **Nothing is stored before it may be.** The blobs, trees and commit of a `commit#GitFiles` call are made in
+  memory over the store, as a push's objects wait in quarantine, and written only once the change may be made: for
+  a proposal after its pre events passed, under the repository's lock and into a repository that is not archived
+  or being deleted then; for a branch as the ref is written. A refused proposal leaves no object, and counts as a
+  refused push for review (`review-max-refused`).
 - **Out**: `commitId` (empty when nothing changed), `refName` (the branch, or the merge request's head ref), and for
   a proposal `mergeRequestId`, `mergeRequestNum` and `mergeRequestCreated`.
 
@@ -526,7 +610,7 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitDefaultBranch` | `delete#GitRef` | the default branch cannot be deleted |
 | `GitArchived` | every write, `create#MergeRequest`, `fork#GitRepository` | the repository is archived (or being deleted) |
 | `GitNoSuchRef` | `delete#GitRef`, `commit#GitFiles`, `create#MergeRequest`, `merge#MergeRequest`, a push to `refs/for/` | no such branch or tag |
-| `GitStaleRef` | the ref writes | the ref moved since it was read |
+| `GitStaleRef` | the ref writes, `merge#MergeRequest` (`expectedHeadCommitId`) | the ref moved since it was read; the merge request's head is not the expected one |
 | `GitFileChanged` | `commit#GitFiles` | `errorCode`, with no error: a path's blob is not the expected one |
 | `GitReservedContext` | `create#GitCommitStatus` | a context the system keeps |
 | `GitHasForks` | `delete#GitRepository` | other repositories were forked from it |
@@ -534,6 +618,9 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitNotInNetwork` | `create#MergeRequest`, `get#GitCompare` | the two repositories are not forks of one |
 | `GitMergeRequestExists`, `GitNumberTaken` | `create#MergeRequest` | one is open for the source and target; the number given is in use |
 | `GitReviewPushTooLarge`, `GitReviewQuota` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | over the caps for a user with no push right |
+| `GitReviewRefusals` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | too many of the account's pushes for review and proposals were refused this hour (`review-max-refused`) |
+| `GitReviewPushTooWide` | a push to `refs/for/` | it builds on more commits of the repository than `review-max-built-on` |
+| `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
 | `KeyInUse` | `UserServices.create#UserSshKey` | the key is an account's already |
 
 Over git the same texts are a ref's reason (`! [remote rejected] main -> main (GitProtectedBranch: protected branch:
@@ -623,6 +710,12 @@ Authorization: Bearer <access token>
 {"state": "success", "target_url": "https://ci.example.com/run/7", "description": "Build", "context": "ci/build"}
 ```
 
+The commit is a branch, a tag, or an id the caller reads ([Reachability](#reachability)): an id no readable ref
+reaches is answered as a commit that is not there, by `create#GitCommitStatus` (which needs a push right) and by
+`get#GitCommitStatuses` (which leaves it out of `commitIdList`'s answer), so a status says nothing of a commit its
+asker may not read and is not attached to a hidden merge request's head by a user. Both take `includeHidden`,
+honoured with authorization disabled only: the application writes and reads the checks of a hidden head.
+
 **Reserved contexts.** A hosting application that writes checks of its own (a contributor agreement check, its CI
 engine) names their prefixes in `git-server` `reserved-status-contexts` (`agreement/,ci/`): such a context is then
 refused from a user, whatever their rights (`GitReservedContext`), and written with authorization disabled only, so
@@ -644,7 +737,18 @@ signature check it unchanged. Each delivery is a SystemMessage of type `GitWebho
 (`SystemMessageError`); `test#GitWebhook` sends a `ping` now. A webhook URL that names, or resolves to, a loopback,
 private or link-local address is refused unless `git-server` `webhook-private-network="true"` (a CI server on the same
 network). Pushes and tags are queued by the framework's post-receive rule (`framework/service/Git.gitecas.xml`), merge
-request events by the review services.
+request events by the review services. An event is signed with the webhook's secret, so who may queue one is who may
+change the repository: `queue#GitWebhookEvent` and `queue#MergeRequestEvent` need the update right on the repository,
+or authorization disabled (as the review services, the framework's rules and an application call them; the review
+services queue their own events for a user who may only view, such as a reviewer's comment).
+
+What a webhook is sent of work offered for review: a push to `refs/for/<branch>` is no `push` event (those are of
+branches and tags), so a webhook hears of it through its merge request's events only, whose `merge_request` has
+`id`, `number`, `title`, `description`, `state`, `draft`, `source_branch`, `target_branch`, `source_repository`,
+`pushed_for_review`, `head_ref`, `head_sha`, `base_sha`, `merge_commit_sha` and `author`. Of a hidden merge request
+([Reachability](#reachability)) nothing is sent, whatever happens to it; when an open one is shown the webhooks get
+`opened` (`queue#MergeRequestEvent` itself still runs for a hidden one, so an application's service ECA rules on it
+do). A body's `<` and `>` are sent as the JSON escapes `\u003c` and `\u003e`.
 
 ### Push mirrors
 
@@ -673,11 +777,11 @@ end, so the mirror's own post-receive hooks finish.
 | Service | |
 |---|---|
 | `create#MergeRequest` | of a branch of the repository by a user who may push; with `sourceRepositoryId`, of a fork's branch by a user who may view the target and has the update right on the fork; one open request per source and target; head, merge base and mergeability read now. With authorization disabled only: `mergeRequestNum`, a free number (an import) |
-| `update#MergeRequest` | title, description, target, draft (marked ready), merge method, delete the source after; by the author or a user with update |
+| `update#MergeRequest` | title, description, target (a branch of the repository, else `GitNoSuchRef`), draft (marked ready), merge method, delete the source after; by the author or a user with update |
 | `set#MergeRequestReviewers` | replace, add or remove reviewers (not the author) |
 | `submit#MergeRequestReview` | approve, request changes or comment, at the current head; only a user who may push (update) approves, a viewer comments or requests changes; the author does not approve their own |
 | `close#`, `reopen#MergeRequest` | |
-| `merge#MergeRequest` | by its method (given, its own, else the repository's default) once the target's branch rules are met: the approvals (of the current head when stale ones are dismissed; only those of users who may push now count, each decided as its reviewer), the required checks successful on the head, a method they allow; update right (an application with roles of its own checks them before it calls). What merges is the head the approvals and checks were counted for, by its id: a source that moves meanwhile is not merged. It writes the target only; the source branch is deleted when asked, in a fork only by a user with the delete right there |
+| `merge#MergeRequest` | by its method (given, its own, else the repository's default) once the target's branch rules are met: the approvals (of the current head when stale ones are dismissed; only those of users who may push now count, each decided as its reviewer), the required checks successful on the head, a method they allow; update right (an application with roles of its own checks them before it calls). What merges is the head the approvals and checks were counted for, by its id: a source that moves meanwhile is not merged, nor is a branch or tag named as that id. With `expectedHeadCommitId` (the head the caller showed) a merge request whose head is another now is refused with `GitStaleRef` before anything is written. The target moves as every ref a service writes does, so a [pre rule](#the-pre-events-of-every-write) sees the merge's commits and its refusal is the error. It writes the target only; the source branch is deleted when asked (`deleteSourceBranch`): one of the same repository when its branch rules allow, one of another repository (a fork) only when the calling user holds the delete right there, with authorization disabled too, unless the call has authorization disabled and `forceDeleteSourceBranch` |
 | `get#MergeRequest` | the request, its reviewers, the head's checks, the target's rules and what keeps it from merging now (`missingList`), and what the user may do |
 | `find#MergeRequests` | of the repositories the user may view: by repository, status, author, reviewer, waiting for a user's review, target, title |
 | `get#MergeRequestApprovals` | the approvals that count toward the branch rules, as `merge#MergeRequest` counts them |
@@ -702,7 +806,8 @@ rule, and `get#GitRefs` does not list it.
   keeps its ref for `git-server` `review-ref-retention-days` (30; 0 for ever): `gc#GitRepositories` then deletes it,
   so what was pushed for review and refused does not stay in the repository, and a later collection lets go of the
   objects. A reopened one of a branch gets its ref back; one pushed for review is pushed again. While it is
-  hidden the ref of a closed one is there and not fetched.
+  hidden the ref of a closed one is there and not fetched, and once it is released its commits are read by nobody
+  ([Reachability](#reachability)). A fork's closed merge requests are released by the fork's own turn of the run.
 - **Merge requests from before these refs.** One that has no ref gets it when it is next read or refreshed
   (`sync#MergeRequestHead`): an open one from its source branch, a merged one (and a closed one within the
   retention time) from its recorded `headCommitId` while that commit is in the store, so `get#MergeRequestDiff`
@@ -792,6 +897,14 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
   no cap. `GitUpdate.packBytes` and `reviewPush` keep what was counted. A pre-receive rule sees `forReview`, the
   ref's `targetBranch`, `userId` and `packBytes`, and refuses by the application's own rules (a confirmed address,
   a limit a day); its message is the client's.
+- **The server's work** for a user with no push right is kept small, as each push costs it the checks of
+  [what a push names](#reachability) whatever becomes of it: the push's commands, shallow lines and push options
+  are at most `review-max-commands` (8) each, in `review-max-request-bytes` (64 KiB) together
+  (`GitPushRequestTooLarge`; `push-max-commands`, 100,000, and `push-max-request-bytes`, 16 MiB, for a user who may
+  push); it builds on at most `review-max-built-on` (8) commits of the repository (`GitReviewPushTooWide`); at most
+  `review-max-trees` (20,000) trees are read to find the files it names and does not bring; and after
+  `review-max-refused` (30; 0 for no cap) of an account's pushes for review and proposals were refused in an hour
+  the next are refused before their pack is read (`GitReviewRefusals`), until the hour is over.
 - **The answer** names the merge request by number and id, and its page when `git-server` `merge-request-url` is set
   (`/{repositoryPath}/-/merge-requests/{mergeRequestNum}`; also `{repositoryId}` and `{mergeRequestId}`; after the
   public URL when it starts with `/`).
@@ -996,12 +1109,17 @@ one commit) can so live in a `db` repository, with their history, in the databas
   `merge#GitRefs`; blame and archive do not.
 - Reachability: what a push may name is the files of the commits it builds on and of the ref values it may read,
   not of their history, as a git client sends; a client that leaves out an object only an older commit has is
-  refused. A fetch negotiation still says whether an object id a client offers as a `have` is in the store. The set
-  of reached commits is per node; after `set#MergeRequestHidden` another node may answer from its set for two
-  seconds. In a repository in no fork network a user with the update right reads the replaced heads of a hidden
-  merge request that its current head does not reach.
+  refused, and so is a push for review that names a file more than `review-max-trees` trees into a very large
+  branch. A tag object is named only when a readable tag names it. The set of reached commits is per node; after
+  `set#MergeRequestHidden` another node may answer from its set for two seconds. A repository that has held a
+  hidden merge request no longer answers a user with the update right for the commits a deleted or forced branch
+  left (`reviewHiddenDate`; an administrator who knows its store holds nothing held may clear the field). A commit
+  pushed for review is in the store for the moment between its push and its merge request's row, so a server
+  that holds such text sets `review-start-hidden`, with which no commit is read by id but through a ref.
 - Push to review: a v0 client does not see `refs/merge-requests/*` by name. The caps count packs as sent, per node's
-  clock, and a push refused after its pack came in still counted nothing. A push recorded and cut short by a
+  clock, and a push refused after its pack came in still counted nothing toward the bytes; it counts as a refusal
+  (`review-max-refused`), which is kept in memory per node and forgotten at a restart. A user who may push is not
+  limited by these, but for `push-max-commands` and `push-max-request-bytes`. A push recorded and cut short by a
   restart is logged as not made, though its merge request may have its head. `review-push` is one switch for the
   server. A proposal of `commit#GitFiles` is always made on the branch's head, replacing the merge request's
   earlier head rather than adding to it.

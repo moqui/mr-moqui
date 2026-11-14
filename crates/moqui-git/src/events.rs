@@ -19,7 +19,9 @@
 //! the rows are what make the events survive a restart. The commits new to the repository are worked out then, from
 //! the refs before the change (`priorTips`): a collection of unreachable objects (`gc#GitRepositories`) keeps the
 //! tips of an update not yet done, so the walk gives the same answer later.
-//! The pre events of a push run in the push itself, against its quarantined objects ([`pre_receive`]).
+//! The pre events of a push run in the push itself, against its quarantined objects ([`pre_receive`]); those of every
+//! other way a branch moves (a merge, `commit#GitFiles`, `create#GitRef`, a write through `git://`, an import, a
+//! mirror's fetch) run before its ref is written, with that change's source, and a refusal stops it.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -96,6 +98,19 @@ pub(crate) struct UpdateOrigin {
     pub pack_bytes: u64,
     /// A push to `refs/for/*` by a user with no push right: its bytes count toward the account's cap.
     pub review_push: bool,
+    /// The change is a merge made through a service: what its pre events say of it.
+    pub merge: Option<MergeOrigin>,
+}
+
+/// A merge made by `merge#MergeRequest` or `merge#GitRefs`, for the pre events of the target's move.
+#[derive(Clone, Debug)]
+pub(crate) struct MergeOrigin {
+    /// The merge request merged; none for `merge#GitRefs`.
+    pub merge_request_id: Option<String>,
+    /// `GmmMerge`, `GmmFastForward`, `GmmSquash` or `GmmRebase`.
+    pub method: &'static str,
+    /// The source's head: what a squash or a rebase made its commits from.
+    pub source: ObjectId,
 }
 
 fn id_text(id: Option<ObjectId>) -> Value {
@@ -109,6 +124,8 @@ fn parse_id(value: Option<&Value>) -> Option<ObjectId> {
 fn now_millis() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
+
+const HOUR_MILLIS: i64 = 60 * 60 * 1000;
 
 impl GitProvider {
     /// Write a `GitUpdate` and its refs, each ref with `result` (`pending` while a push makes it), in the caller's
@@ -243,6 +260,50 @@ impl GitProvider {
             }
         }
         None
+    }
+
+    /// Count a push for review or a proposal of the current user, who has no push right, that was refused: each
+    /// costs the server its checks (the pack read, the walks of what it names), whatever becomes of it.
+    pub(crate) fn note_review_refusal(&self) {
+        let Some(user) = moqui_core::user::current_user_id()
+            .ok()
+            .flatten()
+            .filter(|user| !user.is_empty())
+        else {
+            return;
+        };
+        let hour = now_millis() / HOUR_MILLIS;
+        let mut refusals = moqui_lib::sync::lock(&self.inner.review_refusals);
+        if refusals.len() > 10_000 {
+            refusals.retain(|_, (counted, _)| *counted == hour);
+        }
+        let entry = refusals.entry(user).or_insert((hour, 0));
+        if entry.0 != hour {
+            *entry = (hour, 0);
+        }
+        entry.1 = entry.1.saturating_add(1);
+    }
+
+    /// Why the current user, who has no push right, sends nothing more for review this hour: more than `git-server`
+    /// `review-max-refused` (30; 0 is no cap) of its pushes for review and proposals were refused in it, on this
+    /// node. Asked before a push's pack is read.
+    pub(crate) fn review_refusals_over(&self) -> Option<String> {
+        let most: u32 = super::number_setting("review-max-refused", 30);
+        if most == 0 {
+            return None;
+        }
+        let user = moqui_core::user::current_user_id().ok().flatten()?;
+        let hour = now_millis() / HOUR_MILLIS;
+        let refused = moqui_lib::sync::lock(&self.inner.review_refusals)
+            .get(&user)
+            .filter(|(counted, _)| *counted == hour)
+            .map_or(0, |(_, refused)| *refused);
+        (refused >= most).then(|| {
+            format!(
+                "GitReviewRefusals: {refused} pushes for review of this account were refused in the last hour; \
+                 wait before sending another"
+            )
+        })
     }
 
     /// Keep who brought the commits a change is the first to bring (`GitCommitPush`, for `get#GitCommitPushers`):
@@ -1036,14 +1097,90 @@ pub(crate) struct PreReceive {
     pub messages: Vec<String>,
 }
 
-/// Run the pre events of a push against `view` (the repository with the pushed objects over it): pre-receive once
-/// with every ref, then pre-ref-update for each ref the push may still make (`candidates`, by index). A ref write
-/// through Moqui (`create#GitRef`, `merge#GitRefs`) runs them the same way, with its origin's source (`write`).
+/// Whether any rule runs on a pre event (pre-receive, pre-ref-update) from `source`.
+pub(crate) fn pre_listening(source: &str) -> bool {
+    git_eca::listening(GitEvent::PreReceive, source) || git_eca::listening(GitEvent::PreRefUpdate, source)
+}
+
+/// The commits a ref would gain, oldest first, at most `git-server` `eca-max-commits` of them.
+struct Gained {
+    ids: Vec<ObjectId>,
+    /// There are more than are listed, or they could not be walked: a rule that must see every commit refuses.
+    truncated: bool,
+}
+
+/// The commits `reference` would gain, for a pre event: those its new commit reaches and its old one does not; for a
+/// ref that is new, those no branch or tag reached before (`prior_tips`), so a branch made at a commit the repository
+/// has gains nothing.
+fn gained(view: &dyn GitStore, reference: &RefUpdate, prior_tips: &[ObjectId]) -> Gained {
+    let none = |truncated: bool| Gained {
+        ids: Vec::new(),
+        truncated,
+    };
+    let Some(new) = reference.new else {
+        return none(false);
+    };
+    let new = match peel_to_commit(view, &new) {
+        Ok(Some(new)) => new,
+        // a tag of a tree or a blob brings no commit
+        Ok(None) => return none(false),
+        Err(err) => {
+            tracing::warn!("new commits of {}: {err}", reference.name);
+            return none(true);
+        }
+    };
+    let hidden: Vec<ObjectId> = match reference.old {
+        Some(old) => vec![peel_to_commit(view, &old).ok().flatten().unwrap_or(old)],
+        None => prior_tips.to_vec(),
+    };
+    match revwalk::new_commits(view, &[new], &hidden) {
+        Ok(commits) => {
+            let limit = max_commits();
+            Gained {
+                truncated: commits.len() > limit,
+                ids: commits.into_iter().rev().take(limit).map(|commit| commit.id).collect(),
+            }
+        }
+        Err(err) => {
+            tracing::warn!("new commits of {}: {err}", reference.name);
+            none(true)
+        }
+    }
+}
+
+/// `newCommitIds`, `newCommits` (each as a commit event's `commit`) and `newCommitsTruncated` of a pre event.
+fn insert_new_commits(fields: &mut BTreeMap<String, Value>, view: &dyn GitStore, ids: &[ObjectId], truncated: bool) {
+    let mut truncated = truncated;
+    let mut commits = Vec::with_capacity(ids.len());
+    for id in ids {
+        match ops::commit_details(view, id) {
+            Ok(details) => commits.push(commit_value(&details)),
+            Err(err) => {
+                // not listed, so the list is said to be short: a rule that needs every commit refuses
+                tracing::warn!("new commit {id} not read for a pre event: {err}");
+                truncated = true;
+            }
+        }
+    }
+    fields.insert(
+        "newCommitIds".to_string(),
+        Value::List(ids.iter().map(|id| Value::string(id.to_string())).collect()),
+    );
+    fields.insert("newCommits".to_string(), Value::List(commits));
+    fields.insert("newCommitsTruncated".to_string(), Value::Bool(truncated));
+}
+
+/// Run the pre events of a change against `view` (the repository with the new objects over it): pre-receive once
+/// with every ref, then pre-ref-update for each ref the change may still make (`candidates`, by index), each with the
+/// commits it would bring (`newCommits`, `newCommitIds`, `newCommitsTruncated`). `prior` is the repository's refs
+/// before the change. A push runs them with source `push`; every other way a ref moves with its origin's source
+/// (`write`, `import`, `fetch`).
 pub(crate) fn pre_receive(
     view: &dyn GitStore,
     repository_id: &str,
     branch: &str,
     origin: &UpdateOrigin,
+    prior: &[(String, ObjectId)],
     refs: &[RefUpdate],
     candidates: &[usize],
 ) -> PreReceive {
@@ -1079,6 +1216,23 @@ pub(crate) fn pre_receive(
                 .any(|index| refs[*index].name.starts_with(super::reach::REVIEW_REFS)),
         ),
     );
+    // a merge through a service says so, with what it merges: a squash's commit is not the source's commits
+    let merge = origin.merge.as_ref();
+    base.insert("isMerge".to_string(), Value::Bool(merge.is_some()));
+    base.insert(
+        "mergeRequestId".to_string(),
+        merge
+            .and_then(|merge| merge.merge_request_id.clone())
+            .map_or(Value::Null, Value::string),
+    );
+    base.insert(
+        "mergeMethodEnumId".to_string(),
+        merge.map_or(Value::Null, |merge| Value::string(merge.method)),
+    );
+    base.insert(
+        "mergeSourceCommitId".to_string(),
+        merge.map_or(Value::Null, |merge| Value::string(merge.source.to_string())),
+    );
     base.insert(
         "refUpdates".to_string(),
         Value::List(
@@ -1088,23 +1242,33 @@ pub(crate) fn pre_receive(
                 .collect(),
         ),
     );
+    let prior_tips: Vec<ObjectId> = prior
+        .iter()
+        .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+        .filter_map(|(_, id)| peel_to_commit(view, id).ok().flatten())
+        .collect();
+    let gains: Vec<Gained> = candidates
+        .iter()
+        .map(|index| gained(view, &refs[*index], &prior_tips))
+        .collect();
     if wants_receive {
         let mut fields = base.clone();
-        let tips: Vec<ObjectId> = candidates
-            .iter()
-            .filter_map(|index| refs[*index].new)
-            .filter_map(|id| peel_to_commit(view, &id).ok().flatten())
-            .collect();
-        let hidden: Vec<ObjectId> = candidates.iter().filter_map(|index| refs[*index].old).collect();
-        let new_commits: Vec<Value> = revwalk::new_commits(view, &tips, &hidden)
-            .unwrap_or_default()
-            .into_iter()
-            .rev()
-            .take(max_commits())
-            .filter_map(|commit| ops::commit_details(view, &commit.id).ok())
-            .map(|details| commit_value(&details))
-            .collect();
-        fields.insert("newCommits".to_string(), Value::List(new_commits));
+        // every commit the change brings, each once, within the same bound
+        let limit = max_commits();
+        let mut seen = HashSet::new();
+        let mut ids = Vec::new();
+        let mut truncated = gains.iter().any(|gain| gain.truncated);
+        for id in gains.iter().flat_map(|gain| &gain.ids) {
+            if !seen.insert(*id) {
+                continue;
+            }
+            if ids.len() >= limit {
+                truncated = true;
+                break;
+            }
+            ids.push(*id);
+        }
+        insert_new_commits(&mut fields, view, &ids, truncated);
         let outcome = git_eca::run_git_rules(
             &event_key(GitEvent::PreReceive, source, repository_id, None, &branch_ref),
             &fields,
@@ -1117,13 +1281,13 @@ pub(crate) fn pre_receive(
         }
     }
     if wants_ref {
-        for index in candidates {
+        for (index, gain) in candidates.iter().zip(&gains) {
             let reference = &refs[*index];
             let mut fields = base.clone();
             for (name, value) in ref_fields(reference, &branch_ref) {
                 fields.insert(name.to_string(), value);
             }
-            fields.insert("newCommitIds".to_string(), new_commit_ids(view, reference));
+            insert_new_commits(&mut fields, view, &gain.ids, gain.truncated);
             let outcome = git_eca::run_git_rules(
                 &event_key(
                     GitEvent::PreRefUpdate,
@@ -1142,4 +1306,32 @@ pub(crate) fn pre_receive(
         }
     }
     decided
+}
+
+/// The pre events of a change of one ref made outside [`GitProvider::write_refs`] (a write through `git://`, an
+/// import): the rules' messages go to the message facade, and a refusal is the error, with the rule's message.
+pub(crate) fn pre_check(
+    view: &dyn GitStore,
+    repository_id: &str,
+    branch: &str,
+    origin: &UpdateOrigin,
+    prior: &[(String, ObjectId)],
+    reference: &RefUpdate,
+) -> Result<(), Error> {
+    let decided = pre_receive(
+        view,
+        repository_id,
+        branch,
+        origin,
+        prior,
+        std::slice::from_ref(reference),
+        &[0],
+    );
+    for message in &decided.messages {
+        ExecutionContext::with_current(|ec| ec.message().add_message(message.clone()));
+    }
+    match decided.refused.as_ref().or_else(|| decided.refused_refs.get(&0)) {
+        Some(reason) => Err(Error::new(format!("declined: {reason}"))),
+        None => Ok(()),
+    }
 }

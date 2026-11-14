@@ -31,7 +31,7 @@ const GIT: &str = "org.moqui.git.GitServices";
 const REVIEW: &str = "org.moqui.git.GitReviewServices";
 
 /// A user who may view, create and update in every repository, and not delete.
-const DEVELOPER: &str = "git.developer";
+pub(crate) const DEVELOPER: &str = "git.developer";
 
 fn git(name: &str) -> String {
     format!("{GIT}.{name}")
@@ -109,7 +109,7 @@ fn blob(fixture: &Fixture, revision: &str, path: &str) -> Option<String> {
     out.get("text").map(text_of)
 }
 
-fn developer(fixture: &Fixture) {
+pub(crate) fn developer(fixture: &Fixture) {
     let _entered = fixture.context.enter();
     let _authz = fixture.context.disable_authz();
     user(&fixture.entity, DEVELOPER);
@@ -424,6 +424,14 @@ fn commits_and_what_is_asked_of_them(kind: &str) {
         ],
     );
     assert!(errors.contains("not taken for review"), "{errors}");
+    // and what was refused stored nothing: its file is not an object of the repository
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let provider = crate::provider(fixture.context.factory()).unwrap();
+        let blocked = crate::store::object_id(gix::objs::Kind::Blob, b"blocked\n").unwrap();
+        assert!(provider.repo("site").unwrap().store.find(&blocked).unwrap().is_none());
+    }
 
     // a proposal by a reader: no branch, the commit the head of a merge request; again, the same one
     let proposed = committed(

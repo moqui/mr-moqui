@@ -186,8 +186,14 @@ fn commit_files(
     // a user with no push right stores objects only within what a push for review may bring
     let viewer = proposal && !may_push;
     if viewer {
+        // refused too often this hour: nothing more is built for it
+        if let Some(reason) = provider.review_refusals_over() {
+            add_error(reason);
+            return none();
+        }
         let bytes: u64 = puts.iter().map(|(_, bytes)| bytes.len() as u64).sum();
         if let Some(reason) = provider.review_cap(bytes) {
+            provider.note_review_refusal();
             add_error(reason);
             return none();
         }
@@ -210,10 +216,16 @@ fn commit_files(
     let outcome = match provider.commit_change(&id, &request) {
         Ok(outcome) => outcome,
         Err(err) => {
+            if viewer {
+                provider.note_review_refusal();
+            }
             add_refusal(err.message());
             return none();
         }
     };
+    if viewer && matches!(outcome, FileCommitOutcome::Refused(_)) {
+        provider.note_review_refusal();
+    }
     match outcome {
         FileCommitOutcome::Unchanged => Ok(out([("commitId", Value::Null), ("conflict", Value::Bool(false))])),
         FileCommitOutcome::Committed { commit, ref_name } => Ok(out([

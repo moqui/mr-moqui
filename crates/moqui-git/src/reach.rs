@@ -371,34 +371,70 @@ impl GitProvider {
         Ok(reached.with_prefix(prefix, limit))
     }
 
+    /// Whether the commits the refs of a repository have left (a deleted or forced branch's) are still read by id by
+    /// who works in it: the compatibility rule of [`Self::readable_by_id`]. Only where every commit of the store was
+    /// once a reader's to read: a repository that is in no fork network, none of whose merge requests is or ever was
+    /// hidden (`GitRepository.reviewHiddenDate`, and a merge request hidden now), on a server that does not start
+    /// merge requests hidden (`review-start-hidden`). The row is read now, not as it was when the repository was
+    /// opened: another node may have made the first fork, or hidden the first merge request, since.
+    pub(crate) fn leftovers_readable(&self, repository_id: &str) -> Result<bool, Error> {
+        if super::server::review_starts_hidden() {
+            return Ok(false);
+        }
+        let _rows = rows_guard();
+        let entity = self.entity()?;
+        let Some(row) = entity
+            .find(super::GIT_REPOSITORY)?
+            .eq("repositoryId", Value::string(repository_id))
+            .one()?
+        else {
+            return Ok(false);
+        };
+        if super::text(row.get("forkNetworkId")).is_some() || super::text(row.get("reviewHiddenDate")).is_some() {
+            return Ok(false);
+        }
+        let hidden = entity
+            .find("moqui.resource.GitMergeRequest")?
+            .eq("repositoryId", Value::string(repository_id))
+            .condition(moqui_core::entity::Condition::is_not_null("hiddenDate"))
+            .select_field("mergeRequestId")
+            .limit(1)
+            .list()?;
+        let none = hidden.iter().next().is_none();
+        Ok(none)
+    }
+
+    /// Record that a merge request of the repository was hidden (`GitRepository.reviewHiddenDate`, kept from the
+    /// first one on): its store has held commits its readers were not to read, so from then on only its refs decide
+    /// what is read by id ([`Self::leftovers_readable`]), also after the merge request is shown or its ref released.
+    pub(crate) fn note_review_hidden(&self, repository_id: &str) -> Result<(), Error> {
+        let _rows = rows_guard();
+        self.entity()?
+            .find(super::GIT_REPOSITORY)?
+            .eq("repositoryId", Value::string(repository_id))
+            .condition(moqui_core::entity::Condition::is_null("reviewHiddenDate"))
+            .update_all([("reviewHiddenDate".to_string(), moqui_core::user::now_value())])?;
+        Ok(())
+    }
+
     /// Whether the current user reads the commit `id` of the repository by its id: one its readable refs reach; and,
-    /// in a repository that is in no fork network, any commit of its store for a user with the update right (the
-    /// commits of a deleted or forced branch, which the pages of who works in the repository still show), but for
-    /// what a hidden merge request's head reaches. In a fork network the store is other repositories' too, so only
-    /// the refs decide.
+    /// where the compatibility rule holds ([`Self::leftovers_readable`]), any commit of its store for a user with
+    /// the update right (the commits of a deleted or forced branch, which the pages of who works in the repository
+    /// still show). In a fork network the store is other repositories' too, and a store that has held a hidden merge
+    /// request has commits nobody was to read (its replaced heads, its head once its ref is released), so there
+    /// only the refs decide.
     pub(crate) fn readable_by_id(&self, repo: &Repo, id: &ObjectId) -> Result<bool, Error> {
         if self.reachable(repo, id)? {
             return Ok(true);
         }
-        if repo.definition.network.is_some() || !super::server::permitted(&repo.definition.id, "update") {
+        if !super::server::permitted(&repo.definition.id, "update") || !self.leftovers_readable(&repo.definition.id)? {
             return Ok(false);
         }
-        let store = repo.store.as_ref();
-        if !matches!(store.find(id)?, Some((Kind::Commit, _))) {
-            return Ok(false);
-        }
-        for (_, head) in self.readable_refs(repo)?.hidden {
-            if let Some(head) = super::revwalk::peel_to_commit(store, &head)? {
-                if super::revwalk::is_ancestor(store, id, &head).unwrap_or(false) {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
+        Ok(matches!(repo.store.find(id)?, Some((Kind::Commit, _))))
     }
 }
 
-/// The trees (and tree of each commit) that one walk of [`objects_within`] reads at most.
+/// The trees (and tree of each commit) that one walk of [`objects_within`] reads at most, for a user who may push.
 pub(crate) const WITHIN_MAX_TREES: usize = 1_000_000;
 
 /// Which of `wanted` are the commits `roots`, their trees, or trees and blobs within those trees (the files of

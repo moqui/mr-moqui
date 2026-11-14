@@ -178,8 +178,8 @@ impl GitProvider {
         let found = self.reachable_prefix(&repo, revision, 2)?;
         match found.as_slice() {
             [id] => Ok(Some(*id)),
-            [] if repo.definition.network.is_none() => {
-                // in a repository alone in its store, a commit its refs have left, for who may read those
+            [] if self.leftovers_readable(repository_id)? => {
+                // where the commits the refs have left are still read, by who may read those
                 match ops::resolve_revision(store, &repo.definition.branch, revision) {
                     Ok(Some(id)) => match revwalk::peel_to_commit(store, &id)? {
                         Some(commit) if self.readable_by_id(&repo, &commit)? => Ok(Some(commit)),

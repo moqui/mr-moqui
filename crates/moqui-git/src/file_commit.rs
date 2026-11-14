@@ -15,13 +15,16 @@
 //! A commit of files made through a service, `commit#GitFiles` (docs/interfaces/Git-Hosting.md, Commits through
 //! Moqui; plans/Dogfood.md N-COMMIT): to a branch, to a new branch made from one, or as a proposal with no branch
 //! (the commit a merge request's head, as a push to `refs/for/<branch>` leaves it). A branch moves through
-//! [`GitProvider::write_refs`], so the branch rules and the gitECA events are a push's.
+//! [`GitProvider::write_refs`], so the branch rules and the gitECA events are a push's. The blobs, trees and commit
+//! are made over the store ([`merge::Overlay`]) and written to it only once the change may be made, under the
+//! repository's lock, as a push's objects wait in quarantine: a refused proposal stores nothing.
 
 use gix::objs::tree::EntryKind;
 use gix::ObjectId;
 
 use super::lfs_files::FileContent;
 use super::ops::{self, Author, Edit};
+use super::store::GitStore;
 use super::{events, merge, store, GitProvider, RepositoryKind};
 use moqui_core::context::Error;
 
@@ -123,6 +126,7 @@ impl GitProvider {
             )));
         }
         let store = repo.store.as_ref();
+        let overlay = merge::Overlay::new(store);
         // a new branch's name, before anything is stored or a store is asked for it
         if let Some(new_branch) = request.new_branch {
             let name = ops::branch_ref(new_branch.strip_prefix("refs/heads/").unwrap_or(new_branch));
@@ -218,13 +222,19 @@ impl GitProvider {
                 Some((mode, _)) if mode.is_executable() => EntryKind::BlobExecutable,
                 _ => EntryKind::Blob,
             };
-            let blob = self.store_file(&repo, path, FileContent::Bytes(bytes))?;
+            // a file kept in LFS is a content blob and its pointer, by a user who may push (the viewer was refused
+            // above); any other waits in the overlay
+            let blob = if self.lfs_tracked(&repo, path)? {
+                self.store_file(&repo, path, FileContent::Bytes(bytes))?
+            } else {
+                overlay.write(gix::objs::Kind::Blob, bytes)?
+            };
             edits.push(Edit::Put(path.clone(), kind, blob));
         }
         if edits.is_empty() {
             return Ok(FileCommitOutcome::Unchanged);
         }
-        let tree = ops::apply_edits(store, head_tree.as_ref(), &edits)?;
+        let tree = ops::apply_edits(&overlay, head_tree.as_ref(), &edits)?;
         if head_tree == Some(tree) {
             return Ok(FileCommitOutcome::Unchanged);
         }
@@ -245,7 +255,7 @@ impl GitProvider {
         };
         let parents: Vec<ObjectId> = head.into_iter().collect();
         let commit = merge::write_commit(
-            store,
+            &overlay,
             tree,
             &parents,
             merge::author_signature(&author),
@@ -276,19 +286,23 @@ impl GitProvider {
                 new: Some(commit),
                 change_type: "create".to_string(),
             };
-            let decided = events::pre_receive(
-                store,
+            if let Err(refused) = events::pre_check(
+                &overlay,
                 repository_id,
                 &repo.definition.branch,
                 &origin,
-                std::slice::from_ref(&candidate),
-                &[0],
-            );
-            for message in &decided.messages {
-                moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message(message.clone()));
+                &prior,
+                &candidate,
+            ) {
+                return Ok(FileCommitOutcome::Refused(refused.message().to_string()));
             }
-            if let Some(reason) = decided.refused.as_ref().or_else(|| decided.refused_refs.get(&0)) {
-                return Ok(FileCommitOutcome::Refused(format!("declined: {reason}")));
+            {
+                // the rules passed: the objects go into the store as a push's do, with the repository's writers,
+                // and into one that is not archived or going now (the row read again under the lock)
+                let lock = self.lock_of(repository_id);
+                let _turn = moqui_lib::sync::lock(&lock);
+                self.still_writable(repository_id)?;
+                overlay.flush()?;
             }
             self.record_update(repository_id, &origin, store, &prior, &[change]);
             return Ok(FileCommitOutcome::Proposed {
@@ -318,6 +332,7 @@ impl GitProvider {
             } else {
                 super::hosting::RefRules::Direct
             },
+            Some(&overlay),
             None,
         )?;
         Ok(match written.into_iter().next() {

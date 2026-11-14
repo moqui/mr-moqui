@@ -51,11 +51,17 @@ fn pack_error(what: &str, err: impl std::fmt::Display) -> Error {
     Error::new(format!("{what}: {err}"))
 }
 
+/// How the error of a push that refers to an object it does not bring, and that it may not name, begins: the same
+/// for an object the store does not have and for one that is not the pusher's to read.
+pub(crate) const MISSING_OBJECT: &str = "the push is missing object ";
+
 /// Bases of a thin pack, looked up in the repository. A store error is kept and answered as a missing object, as the
 /// lookup can only say yes or no; the caller reports the kept error.
 struct StoreFind<'a> {
     store: &'a dyn GitStore,
     failed: Mutex<Option<Error>>,
+    /// The first base asked for that the store does not have.
+    missing: Mutex<Option<ObjectId>>,
     /// The objects found: the bases the thin pack was completed with.
     found: Mutex<HashSet<ObjectId>>,
 }
@@ -68,7 +74,10 @@ impl gix::objs::Find for StoreFind<'_> {
                 *buffer = data;
                 Ok(Some(gix::objs::Data::new(buffer, kind, gix::hash::Kind::Sha1)))
             }
-            Ok(None) => Ok(None),
+            Ok(None) => {
+                moqui_lib::sync::lock(&self.missing).get_or_insert(id.to_owned());
+                Ok(None)
+            }
             Err(err) => {
                 *moqui_lib::sync::lock(&self.failed) = Some(err);
                 Ok(None)
@@ -142,6 +151,7 @@ pub(crate) fn receive<'a>(
     let lookup = StoreFind {
         store: base,
         failed: Mutex::new(None),
+        missing: Mutex::new(None),
         found: Mutex::new(HashSet::new()),
     };
     let interrupt = AtomicBool::new(false);
@@ -163,7 +173,17 @@ pub(crate) fn receive<'a>(
     if let Some(err) = moqui_lib::sync::lock(&lookup.failed).take() {
         return Err(err);
     }
-    let written = written.map_err(|err| pack_error("reading the pushed pack", err))?;
+    let written = match (written, *moqui_lib::sync::lock(&lookup.missing)) {
+        (Ok(written), _) => written,
+        // a delta whose base is neither in the pack nor in the repository
+        (Err(err), Some(missing)) => {
+            tracing::debug!("a pushed pack was not read: {err}");
+            return Err(Error::new(format!(
+                "{MISSING_OBJECT}{missing}, which a pushed object refers to"
+            )));
+        }
+        (Err(err), None) => return Err(pack_error("reading the pushed pack", err)),
+    };
     quarantine.bases = std::mem::take(&mut *moqui_lib::sync::lock(&lookup.found));
     if let Some(keep) = &written.keep_path {
         let _ = std::fs::remove_file(keep);
@@ -271,7 +291,7 @@ impl Quarantine<'_> {
             let present = self.base.contains_many(chunk)?;
             if let Some(missing) = chunk.iter().find(|id| !present.contains(*id)) {
                 return Err(Error::new(format!(
-                    "the push is missing object {missing}, which a pushed object refers to"
+                    "{MISSING_OBJECT}{missing}, which a pushed object refers to"
                 )));
             }
         }

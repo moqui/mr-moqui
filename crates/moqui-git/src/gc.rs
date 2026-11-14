@@ -285,6 +285,13 @@ impl GitProvider {
                 "git repository {repository_id} is a mirror, which fetch#GitRepository keeps; it is not collected"
             )));
         }
+        if !options.dry_run {
+            // first the heads of merge requests closed long ago, so what only they reach can go: a fork's too, whose
+            // objects the root's run collects
+            if let Err(err) = self.release_closed_heads(entity, repository_id) {
+                tracing::error!(repository = %repository_id, "merge request heads not released: {}", err.message());
+            }
+        }
         if definition.kind == RepositoryKind::Db && definition.is_fork() {
             // its objects are the network's rows: the root's run collects them, keeping what every fork reaches
             return Ok(GcReport {
@@ -294,12 +301,6 @@ impl GitProvider {
                 )),
                 ..GcReport::default()
             });
-        }
-        if !options.dry_run {
-            // first the heads of merge requests closed long ago, so what only they reach can go
-            if let Err(err) = self.release_closed_heads(entity, repository_id) {
-                tracing::error!(repository = %repository_id, "merge request heads not released: {}", err.message());
-            }
         }
         let run = || match definition.kind {
             RepositoryKind::Local => local::collect(self, entity, &definition, options),
@@ -370,6 +371,17 @@ impl GitProvider {
             // one that is not deleted is logged and the others still go
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
+            // still closed, now that the lock is held: one reopened since keeps its head
+            let still_closed = entity
+                .find("moqui.resource.GitMergeRequest")?
+                .eq("repositoryId", Value::string(repository_id))
+                .eq("mergeRequestNum", Value::I64(num))
+                .eq("statusId", Value::string("GmrClosed"))
+                .count()?
+                > 0;
+            if !still_closed {
+                continue;
+            }
             let edit = super::store::RefEdit {
                 name: name.clone(),
                 expected: Some(*current),
