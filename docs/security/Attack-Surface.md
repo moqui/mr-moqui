@@ -618,6 +618,12 @@ OPTIONS is answered with no login: `DAV: 1, 2, 3, calendar-access, addressbook, 
 
 Every other method is HTTP Basic. No credentials is 401 `WWW-Authenticate: Basic realm="Moqui", charset="UTF-8"`. Plain HTTP while `allow-http` is false is 403 `credentials over plain HTTP are refused; use HTTPS`. A path whose user segment is not the signed-in username (case-insensitive) is 404. Writes go through the file and adapter services as that user. `docs/interfaces/Sync.md` paths: `/dav/`, `/dav/principals/<user>/`, `/dav/files/<user>/<drive>/<path>`, `/dav/calendars/...`, `/dav/addressbooks/...`. The framework keeps no calendar or contact of its own. An application serves them through adapter services, and Mantle sets those adapters.
 
+Projected address books (Mantle's `ContactProjection`, IronStone Sales' My accounts) are read-only collections
+`projected-<id>` computed per request by their owner service as the signed-in user: the collection is listed only when the
+owner admits the user, its cards are the parties the owner answers for that user (Sales: the contacts of the accounts the
+user manages or has deals with, in their Sales scope), and `PUT` and `DELETE` on them answer 403. No `ContactBook` row is
+copied.
+
 `login_user` does not call `finish_login` when a second factor is required. DAV requires that login to succeed and requires a non-empty current user id. The wrapper that maps a second-factor result onto the current user was not read.
 
 ## Non-HTTP listeners
@@ -631,6 +637,14 @@ There is no open SMTP receiver by default. `smtp_listen_port` empty does not sta
 The listener is the last hop behind an operator-run gateway (`docs/interfaces/Mail-Inbound.md`). There is no SMTP `AUTH` and no client certificate. The allow-list is the gateway. A peer outside `smtp_allowed_addresses` gets `554` at connect and the connection closes. An empty allow-list refuses to start the listener. `proxy-protocol`, `starttls`, and `require-tls` default to false. STARTTLS with no certificate does not start the listener. `dsn` defaults to false. The message cap is 25 MiB (`max-message-size` 26214400), 100 recipients, 20 connections. In internet mode no allow-list is needed: STARTTLS is on by default, each address is limited (`max-connections-per-ip` 5, `connections-per-minute` 30; IPv6 by its /64), and SPF, DKIM, DMARC and ARC are checked after the data within 45 seconds, with the listener's own `Authentication-Results` written and any claiming its authserv-id removed; a DMARC reject policy is refused (550). Rspamd's verdict, when `mail_rspamd_url` is set, fails open ([Mail-Inbound](../interfaces/Mail-Inbound.md)).
 
 A permitted gateway can `RCPT TO` a hosted (`EakHosted`) or shared (`EakShared`) address that has no incoming IMAP or POP server. Other recipients are `550`. After `DATA`, the message is stored in that account's Inbox, or Junk when a configured spam header starts with yes or true. That store runs with authorization disabled, including the app `EmailMessage` ECA when Mantle is loaded. There is no relaying. `VRFY` answers `252`. Empty `smtp_authserv_id` keeps every `Authentication-Results` header, including a forged one, and warns at startup. Out of internet mode the listener does not check SPF, DKIM, or DMARC; the gateway does.
+
+An application's mail rule actions run on stored mail with authorization disabled, so mail from anyone reaches them. IronStone
+Sales' lead intake address (`createLead`, Mantle `create#LeadFromEmail`; the request for quote address `createQuoteRequest`
+follows in Sales P8) takes the team from the rule's value or the plus tag of a `To` or `Cc` address (`sales+leads@`), only a team
+of an organization the rule's owner works for; the message makes a `SalesLeadIntake` row and a lead in that team's queue,
+never a party, the sender's name and address held on the intake until the lead is qualified and blanked after the retention
+days if it never is (`purge#LeadIntakes`); its `Message-ID` is the intake's identity, so the same mail again makes no second
+lead. The mail text decides only the lead's name and description.
 
 `poll#EmailServer` (job `poll_EmailServer_frequent`) is paused. If unpaused, the cron is every 15 minutes, `emailServerId=SYSTEM`, `authenticate="anonymous-all"`. It connects out to the configured IMAP or POP server. `sync#DueEmailAccounts` (job `sync_EmailAccounts_frequent`) is running, every minute, `authenticate="anonymous-all"`, `allow-remote="false"`. IMAP IDLE is on by default (`idle-enabled="true"`, `idle-max` 8) and dials the account's server. It does not listen. Both jobs use the scheduler's authorization-off path.
 

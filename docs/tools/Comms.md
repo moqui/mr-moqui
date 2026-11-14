@@ -241,7 +241,7 @@ records drive's folders by their records.
 | `inbox-source` | Every Inbox, Compose, MessageDetail and Home operation (`run#Operation`): its answer is the whole page, so an app's own messages and mailboxes are one list with the mail. Without one, the framework answers over the user's mail. A provider that does not answer `get#MailChanges` makes `mailChanges` answer `unsupported`; `set#ThreadState` and `apply#ViewAction` with a `clientRef` run once whoever answers them |
 | `record-lookup` | A record room's title and link, a message's record cards, the records to file a message on |
 | `record-link` | Filing a chat message on a record |
-| `create-from` | Making a record (a task) from a chat message |
+| `create-from` | Making a record (a task) from a chat message, or from a mail or internal message through Mail's `createRecord` (`kind`, `emailMessageId`, `communicationEventId`) |
 | `invitation` | Answering the calendar invitation a message carries (`emailMessageId`, `response`; answers `workEffortId`, `statusId`, `replySent`, `eventUrl`). The framework reads the card itself (`InboxServices.get#InvitationCard`); without a provider it shows no answers (IronStone: the event on the user's calendar, the organizer told) |
 | `contact-card` | Who a sender or recipient is, for the reading pane's contact card (`address`, `partyId`, `name`; answers `card`); without one the card is the address alone (IronStone: the party with the address and its threads; the example gallery has one for its addresses) |
 | `home-source` | Boxes of its own on Home (answers `cardList`, each with its rows and a link to more), after Home's parts whoever answered them (`CommsHomeServices.get#HomeSources`; IronStone: its mailboxes with unread; the example gallery has two, one failing on purpose) |
@@ -258,7 +258,12 @@ A provider runs with the app's authorization and entity filters; a read that fai
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is
 `{chatRoomId, eventSeq}`; IronStone adds Create a task, request and event there, each with `hook="create-from"` so a
 user without that provider is not offered it. Calls, Voicemail's slot is `voicemail-actions`, whose item is
-`{voicemailId, fromNumber, callSessionId}`, for actions such as Create from and Add to contacts.
+`{voicemailId, fromNumber, callSessionId}`, for actions such as Create from and Add to contacts. Inbox, Mail's slot is
+`message-actions`, in the More menus of a message and of its thread (for the thread's last message), whose item is
+`{store, emailMessageId, communicationEventId}` (`store` `email` with the mail message's id, or `internal` with the internal
+message's communication event); an action there with `hook="create-from"` posts Mail's `createRecord` transition, which
+hands the message's ids and the action's `kind` to the `create-from` providers as Chat's `createFrom` does (IronStone's
+Sales adds Create lead there).
 
 IronStone BOSS is the worked example: `runtime/components/addon/mr-boss/screen/Comms.xml` (the mounts and providers) and
 `screen-extend/basic-comms/`.

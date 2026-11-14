@@ -202,11 +202,19 @@ fn get_transition_method(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn get_disable_link(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let (exists, disabled, path) = read(call, |url| (url.exists, url.disable_link(), url.path()))?;
+    let (exists, disabled, path, given) = read(call, |url| {
+        (url.exists, url.disable_link(), url.path(), url.minimal_names.join("/"))
+    })?;
     let disabled = disabled.map_err(|err| HostError::message(err.message()))?;
     if !exists {
-        // A static template does not write a disabled link, so a report records that the merged page did.
-        crate::screen::statics::record_note("disable-link", "link", &format!("{path} is not a screen or transition"));
+        // A static template does not write a disabled link, so a report records that the merged page did. A path that
+        // did not resolve is `#`, so the note names the path as the link gave it.
+        let shown = if path == "#" && !given.is_empty() { given } else { path };
+        crate::screen::statics::record_note(
+            "disable-link",
+            "link",
+            &format!("{shown} is not a screen or transition"),
+        );
     }
     Ok(disabled.into())
 }

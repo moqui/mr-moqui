@@ -939,6 +939,10 @@ fn end_frame_write(facade: &EntityFacade, token: u64, full_name: &str) {
     }
     // After the evict, so a definition built meanwhile does not keep rows read from the cache before it.
     super::derived::note_write(facade, full_name);
+    // The authorization generation again, from the write's own transaction now that it ended and its rows are evicted: a
+    // session that loaded its groups or rules between the write and here read the rows from before the commit. The
+    // notice at the write moves it too, but can register no commit hook on a thread with no execution context.
+    (crate::hooks::get().note_write)(Some(full_name));
 }
 
 /// One write of a frame, kept to evict again at the frame's end.

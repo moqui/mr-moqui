@@ -480,6 +480,115 @@ Confirmed in `crates/moqui-core/src/user/filter_tests.rs` (`a_profile_frame_give
 - **The round trip is the evaluation.** Transport and block are a few milliseconds; completion can be a call for each keystroke. The browser engine (Phase 5) would not help an edit: the evaluation would cost the same there.
 - **The ESM build is needed for a custom module.** The vendored UMD file exposes `registerModule` and `extendModule` but not the `Module` base class or the module bindings, so a module cannot be written against it. The formatter, the editor and the loader above needed no module; the fill handle and reference picking do.
 
+## Engine speed in the fork
+
+Begun 2026-11-13 in the fork, [moqui/IronCalc](https://github.com/moqui/IronCalc), cloned at `../IronCalc`. The work is commits on the fork's `main`, on top of upstream's main as merged into it, one change for each commit so that each can be offered back on its own; the larger pull requests wait until the work has settled. The workspace builds the fork at a pinned revision (`Cargo.toml`, `deny.toml`).
+
+### The benchmark
+
+`base/examples/data_sheet.rs` in the fork (upstream's `xlsx/examples/deep_chain.rs` and `forward_chain.rs` are the precedent for a timing example):
+
+```
+cargo run --release -p ironcalc_base --example data_sheet -- [rows] [mix] [only] [times]
+```
+
+- A `Data` sheet of 100,000 rows by 20 columns (an id, six texts, thirteen numbers), a `Numbers` sheet with the thirteen number columns alone, and formulas on the first sheet. The sheets are filled one after the other with rows made at their size, as a table read from a database is: rows built while another sheet was filled row by row lay out of order in memory, and reading a column then cost a third more.
+- The memory of the workbook, counted by the allocator and as `Model::memory_usage` gives it; then each of 26 formulas evaluated alone, best of five, with the allocations and the peak memory of one evaluation; then a mix of 300 (thirty each of `SUM`, `AVERAGE`, `MAX`, `COUNT`, `SUMIF`, `SUMIFS`, `COUNTIF`, `COUNTIFS`, `SUMPRODUCT`, `VLOOKUP`).
+- With `only`, one formula is evaluated `times` times, for a profiler. With `RELOAD` set, the workbook goes through `to_bytes` and `from_bytes` first, as a stored workbook is opened.
+
+Profiles are stack samples taken with gdb, since `perf` and samply need `kernel.perf_event_paranoid` at 1 and it is at 4. Timings that decide a change are the best of three runs of each build, alternated. The sampler and the runs are in `../quickjs-oxide-bench/work/ironcalc/`.
+
+### Results
+
+| Over 100,000 rows | Upstream `87b684bb` | The fork now |
+|---|---|---|
+| The workbook in memory | 126.3 MB | **50.1 MB** |
+| `SUM` of a column | 13.3 ms | 0.34 ms |
+| `SUM` of 13 columns (1.3 million cells) | 26.5 ms | 4.0 ms |
+| `SUM` of the 13 columns of the `Numbers` sheet | 25.3 ms | 0.86 ms |
+| `AVERAGE`, `MAX`, `COUNT`, `STDEV` of a column | 12 to 13 ms | 0.35 to 0.39 ms |
+| `SUMIF` on a text column | 35.0 ms | 1.4 ms |
+| `SUMIFS`, two text criteria | 38.5 ms | 2.0 ms |
+| `COUNTIF` on a text column | 38.9 ms | 1.1 ms |
+| `COUNTIFS`, text and number | 39.3 ms | 1.5 ms |
+| `SUMPRODUCT` of two columns | 42.6 ms, 10.7 MB held | 1.4 ms, 1.5 MB held |
+| `VLOOKUP`, exact, last row | 54.1 ms | 1.6 ms |
+| `SUM(Data!J:J)`, a whole column | 16.7 ms | 0.34 ms |
+| **The mix of 300** | **7.52 s**, 67 million allocations | **0.38 s**, 4,928 |
+
+With 0.38 s for 300 aggregates over 100,000 rows, the 250 ms budget for an evaluation (Phase 0 results) holds about 200 such formulas at that size, where before it held ten.
+
+### The commits
+
+Each passes `ironcalc_base`'s tests (2,894 now), the same with `IRONCALC_MAX_DEPTH=1`, the `ironcalc` crate's 246 tests of Excel's workbooks, and upstream's lint. Each new test was also run against the code before its change, to be sure it says what the old code did.
+
+1. **The `data_sheet` example.**
+2. **A cell is looked for where its column should be** before the row is searched: in a row filled from column A on, column `c` is at index `c - 1`. The bisection was 80% of `SUM`, `SUMIF` and `SUMPRODUCT`.
+3. **Numbers far apart are compared without rounding.** `compare_values` rounded both to 15 digits by formatting them as text and parsing them back, 63% of `VLOOKUP`; only numbers within `scale × 1e-14` of each other need it. (With a test of `MATCH` on close and far numbers.)
+4. **A sheet keeps its used area.** `Worksheet::dimension()` walked every cell, on every evaluation, for `COUNTIF` and for any whole column. Now it is found from the ends of each row and kept; a cell put down stretches it, and it is found again only after cells are removed or moved.
+5. **The IFS functions judge each text once**, by shared string index, and read constants from the sheet. They copied the text and then made a lower case copy, three allocations for each row.
+6. **`SUMPRODUCT` reads a range into its numbers**, not into rows of `ArrayNode` and then rows of `f64`.
+7. **Functions over a range of numbers read it a row at a time** (`Model::walk_row`, `for_each_number_in_range`): a row of numbers as a slice, the constants of any other row straight from it with a text lent and not copied, a column of a range as one look. Formulas, spills and errors still go through `evaluate_cell` in the same order, and the walk stops where the function stops, so the same cells are read and put on record. Fourteen functions use it; `COUNT` and the functions on `for_each_value` also stop walking a whole column at the used area, as `SUM` did, where they walked a million rows.
+8. **The example fills one sheet after the other** (above).
+9. **A row of values with no formula is held as 16-byte constants** (`Row::Constants`), where a cell of any kind takes 48 bytes, for the kinds that hold a formula, and 56 with its column. A data row of 20 is 320 bytes instead of 1,120. `set_row` and the reading of a saved workbook choose it; a formula, or a cell changed in place, makes the row a row of cells as before; it is saved as cells, so the stored form does not change. `SheetData::peek` and `constants_in_row_between` read it without making cells.
+10. **`Model::memory_usage`**: the bytes of the cells of each sheet and of the shared strings, from the sizes of the rows (49.8 MB estimated against 50.1 MB counted at 100,000 rows; the parsed formulas, styles and the allocator's overhead are left out). See the touch-points below.
+
+Not run: the bindings' own tests (WASM, Node.js, Python; they build and pass clippy) and `ironcalc_base` on `wasm32-wasip2`, which upstream's CI runs.
+
+### Next: evaluate only what changed
+
+Every edit still evaluates every formula of the workbook. At 0.38 s for the mix, the rows are no longer the limit for a sheet of aggregates; the number of formulas is, and an edit that touches nothing they read costs as much as one that does.
+
+**Upstream, as of 2026-11-13: planned, not started.** [Issue 849](https://github.com/ironcalc/IronCalc/issues/849) (opened April 2026) asks for it. The main author calls it "the biggest problem in IronCalc as of now" (July), said in October that it is "NOT a great issue to pick up" and "definitely not something I want to give to an LLM", needing brainstorming and design first, and on October 29, answering a prototype, that it "might just be the right amount of inspiration I need to finally kick this off". There is no branch for it upstream. In the issue:
+
+- A prototype on [incr](https://github.com/Anyesh/incr), an incremental computation library: one query for each formula, reads recorded in `evaluate_cell`; 0.06 ms against 314 ms for an edit at 1 million rows, about 340 bytes for each formula, and the full pass for spills and cycles. Built with AI agents, as its author says.
+- A sketch of the same idea inside the existing evaluator: reads recorded at run time, a map for single cells and a spatial index (R*-tree) for ranges, a dirty set walked from the edit, volatiles always dirty; then an early cutoff by height in the graph.
+- [Pull request 1435](https://github.com/ironcalc/IronCalc/pull/1435) (September, from outside the project): `Model::evaluate_incremental(edited_cells)` with an index built by `evaluate()` and a fallback to the full pass near spills and cycles, 0.3 s to 50 µs on 100,000 formulas. Not reviewed, and it no longer merges with main.
+
+What follows for us: the design upstream is converging on is the one below, so the two do not pull apart. The main author wants to write it himself and is wary of contributions written by models, so we do not send this one as a pull request; our use (formulas over data sheets of 100,000 rows, rooms on a server that want the changed cells) is worth adding to the issue, by the user. Our speed commits do not conflict with it, and `walk_row` helps it: the reads of a range now pass through one place, where a read can be recorded as one rectangle. If upstream has not begun in a few weeks, we build it in the fork on the same design, and offer it as a reference rather than a pull request.
+
+The design:
+
+- **Record what each formula read in its last run**, where the reads already pass through one place: `evaluate_cell` for single cells, and the range readers (`walk_row`, `read_row`, `clip_to_used_area`) for rectangles, one record for each range and not for each cell. The evaluation already records reads for the dynamic arrays (`record_seen`, `seen_ranges`), for the root of the recursion; this is the same for every formula, kept across evaluations.
+- **An edit marks dirty** the cells it changed, the formulas whose records cover them, and transitively the formulas that read those. An evaluation then runs the dirty formulas only, in the existing pass with the clean ones read as the stored values they are. A formula's references that depend on values (`INDIRECT`, `OFFSET`, `INDEX` returning a reference, a defined name) are covered as they were last resolved: the cell that changes the reference is itself a read, so the formula is dirtied and records its new reads.
+- **Always dirty**: the volatile functions (`NOW`, `TODAY`, `RAND`, `RANDBETWEEN`, `RANDARRAY`, `CELL`, `INFO`), which IronCalc has no list of yet, and everything after a structural change (rows or columns inserted or deleted, sheets renamed, names redefined) until a full evaluation has recorded again. Dynamic arrays whose area changes restart as they do now.
+- **What changed comes out of it**: the formulas whose values changed are a list of changed cells, which upstream does not have and which the rooms want (below).
+- **Its cost**: one record for each formula, mostly one or two ranges for an aggregate; a hundred thousand formulas that each read a few cells is a few MB. An index from a cell to the formulas reading it: single cells in a map, ranges in a list by sheet and column scanned per changed cell, which is cheap for a few hundred ranges.
+- **The test**: the existing order-independence oracle in `base/src/test/dynamic_evaluation` evaluates in different orders and compares; the same idea compares an incremental evaluation after each edit of a random sequence with a full one.
+
+### Touch-points for the integration
+
+What `moqui-calc` works around, with what the engine could offer instead. In order of value to us:
+
+| Now | What it costs | Offer |
+|---|---|---|
+| A refresh builds a new `UserModel` from the overlay and the rows: data can be loaded only on a `Model`, below `UserModel`, which gives only a shared reference to its model | The undo history ends at every refresh, and the whole model is rebuilt from bytes | A bulk load on `UserModel` that replaces the rows of a sheet (`set_row` underneath) and is one step of its history, or a mutable accessor to the model |
+| Every edit sends the visible rows again, because nothing says which cells changed | A viewport of 60 × 30 for each member of a room, for each edit | The changed cells of the last evaluation (falls out of evaluating only what changed) |
+| ~~No measure of memory~~ | | `Model::memory_usage` (commit 10); the room can show it, and the server can count what its rooms hold |
+| Tables cannot be added or resized after load; structured references become fixed ranges. Data sheets keep two stub rows and insert rows between them so that the ranges stretch | `insert_rows` and `delete_rows` over the whole sheet on every open and save | An API to add a table and set its range, moving the formulas that refer to it |
+| The shared strings keep every text of every sheet; the stored form empties the data sheets and rebuilds the list itself | A pass over every cell of every sheet on save | Dropping unused shared strings in the engine (`Workbook::compact_shared_strings`) |
+| Errors are strings | Messages matched by text | Error types |
+
+### Proposed next, in order
+
+1. Offer the commits upstream, one at a time and the example first, once we have used them for a while. Add our use to issue 849 (the user's call).
+2. The bulk load on `UserModel`, so that a refresh is an edit. Small, and in `user_model` only.
+3. Evaluate only what changed, with the list of changed cells: upstream's if it comes soon, else ours in the fork on the same design.
+4. The remaining speed in the profiles: `COUNTA` on text still copies each text (100,000 allocations), `MEDIAN` sorts a copy, `VLOOKUP` and `MATCH` hold 4 to 5 MB while they run (an array of the lookup column).
+
+### Upstream's practices
+
+What a pull request there has to meet, from `CONTRIBUTING.md`, the `Makefile`, the workflows and the history:
+
+- **Talk first.** `CONTRIBUTING.md` asks for an issue or a message before starting, a branch from a clean `main`, and changes that are "properly tested".
+- **Lint** (`make lint`): `cargo fmt -- --check`, and `cargo clippy --all-targets --all-features` with `unwrap_used`, `expect_used` and `panic` as warnings and every warning an error. No `unwrap`, `expect` or `panic` outside tests; a test file opens with `#![allow(clippy::unwrap_used)]`. The tree is rustfmt-clean, so `cargo fmt` is run there.
+- **Tests in CI**: `cargo test` on Ubuntu and macOS, `ironcalc_base` again on `wasm32-wasip2` under Wasmtime, then the WASM, Node.js and Python bindings and the web app, and a check that `language.bin` is current. Coverage goes to Codecov.
+- **Where tests go.** A function or feature has a file in `base/src/test/` (`test_fn_sumifs.rs`), listed in `test/mod.rs`, written with `new_empty_model()`, `model._set("A1", "=...")`, `model.evaluate()` and `model._get_text("A1")`. The storage has its own in `base/src/sheet_data/test.rs`. Results against Excel are workbooks in `xlsx/tests/calc_tests/` (25 folders by function category), one generated test for each file, comparing with the values Excel stored. `IRONCALC_MAX_DEPTH=1 cargo test` runs every test through the evaluation's unwind and replay.
+- **No benchmark harness.** There is no `benches/` and no criterion; timing programs are examples, and measurements are quoted in the comments of the code they justify.
+- **Commits**: a subject that starts `FIX:` or `UPDATE:`, one sentence, the issue number in parentheses when there is one. Pull requests get a Copilot review that the authors answer.
+- **Comments**: doc comments in plain prose that say why, with the measurement where speed is the reason (`sheet_data/mod.rs`, `evaluation.rs`).
+- **Direction.** The evaluation and the cell storage were both rewritten for speed in September and October 2026 by the main author, so speed changes fit what upstream is doing. One change for each pull request, each with its numbers from `data_sheet`, and the example itself offered first.
+
 ## Decisions
 
 Settled 2026-11-13.
@@ -507,11 +616,11 @@ None from the plan; the question of rooms of different scopes was answered by Ph
 
 ## Working with upstream
 
-No fork first. A fork only for what cannot wait, kept small and offered back.
+There is a fork of IronCalc, [moqui/IronCalc](https://github.com/moqui/IronCalc), for the speed and memory work ([Engine speed in the fork](#engine-speed-in-the-fork)) and the expansions we need; the workspace builds it at a pinned revision of its `main`, and each change is offered back. No fork of Tabulator.
 
 - **IronCalc.** Small requests that make our use easier: sheet protection, a list of changed cells after an evaluation (it would let the room send changes in place of whole viewports), selection and undo kept outside the model for several users, a hook for custom functions, error types. Larger: the chart and image model. They plan charts after 1.0, so our work there is either a contribution or a divergence; talk before writing it.
 - **Tabulator.** Extension points only. If merged cells or reference picking need a hook that is missing, propose the hook.
-- **Versions.** Pin IronCalc to a release and move on purpose; the API will change before 1.0.
+- **Versions.** Build the fork at a pinned revision of its `main`, which takes upstream's main by merge, and move on purpose; the API will change before 1.0.
 
 ## Risks
 

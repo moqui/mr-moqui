@@ -85,6 +85,7 @@ fn serve_upstream(listener: TcpListener) {
     }
 }
 
+
 #[test]
 fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
     if !crate::common::own_process() {
@@ -118,7 +119,7 @@ fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
             "the body",
         ),
     );
-    // the body streams back with its length left to the chunks, as every proxied body (the test client joins them)
+    // the body streams back with its length left to the chunks, as every proxied body (the test client decodes them)
     let body = String::from_utf8(body).unwrap();
     assert_eq!(status, 202, "{body}");
     assert_eq!(header(&headers, "x-upstream").as_deref(), Some("yes"));
