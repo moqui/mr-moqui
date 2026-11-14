@@ -140,17 +140,25 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 
 ## Choose a topology
 
-| Topology | Use it for | Package | Database | Section |
-|---|---|---|---|---|
-| One dev instance | Developing on your machine | Maximal with the dev tools (the default) | Embedded Postgres | [Quick start](#develop-on-your-machine) |
-| One production server | One business or one site | Maximal (`--release`) | Embedded Postgres, or an external server | [One production server](#one-production-server) |
-| Cluster | More capacity, or a member that can fail | Enterprise (`--enterprise`) | One external Postgres for all members | [Cluster](#cluster) |
-| PASS servers with a BOSS server or cluster | Public sites (forum, members) with no business data on the public machines | PASS: any server package, Lite is the smallest. BOSS: Maximal or Enterprise | Each PASS server its own; BOSS its own | [PASS](#pass-servers-with-a-boss-server-or-cluster) |
-| Dev instances with a dev group server | A team: shared repositories, tasks and models | Laptops: Dev. Group server: Maximal or Enterprise | Each its own | [Dev group](#dev-instances-with-a-dev-group-server) |
-| Public demo server | The apps for anyone to try with the `john.doe` login | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
-| A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
-| An all-in-one node | A public server, with its own users, apps and data, that is also the edge node of one local node (a desktop or office node), so no second cloud instance is needed | Server: Maximal. Local: Maximal or Enterprise | Each its own; the server also keeps the local node's queue and copies | [An all-in-one node](#an-all-in-one-node) |
-| The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
+| Topology | Use it for | Conf | Package | Database | Section |
+|---|---|---|---|---|---|
+| One dev instance | Developing on your machine | `conf/` (`MoquiDevConf.xml`) | Maximal with the dev tools (the default) | Embedded Postgres | [Quick start](#develop-on-your-machine) |
+| One production server | One business or one site | `conf/` (`MoquiProductionConf.xml`) | Maximal (`--release`) | Embedded Postgres, or an external server | [One production server](#one-production-server) |
+| One server, several sites by host name | Separate sites on sub-domains or related domains, each host with its own root screen | `conf/` (`MoquiSitesConf.xml`) | Maximal (`--release`) | As one production server | [Several sites by host name](#several-sites-by-host-name) |
+| Cluster | More capacity, or a member that can fail | [`conf/local-cluster/`](../runtime/conf/local-cluster/README.md) | Enterprise (`--enterprise`) | One external Postgres for all members | [Cluster](#cluster) |
+| PASS servers with a BOSS server or cluster | Public sites (forum, members) with no business data on the public machines | [`conf/pass/`](../runtime/conf/pass/README.md) | PASS: any server package, Lite is the smallest. BOSS: Maximal or Enterprise | Each PASS server its own; BOSS its own | [PASS](#pass-servers-with-a-boss-server-or-cluster) |
+| Dev instances with a dev group server | A team: shared repositories, tasks and models | [`conf/dev-group/`](../runtime/conf/dev-group/README.md) | Laptops: Dev. Group server: Maximal or Enterprise | Each its own | [Dev group](#dev-instances-with-a-dev-group-server) |
+| Public demo server | The apps for anyone to try with the `john.doe` login | `conf/` (`MoquiDemoConf.xml`) | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
+| A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | [`conf/edge/`](../runtime/conf/edge/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
+| An all-in-one node | A public server, with its own users, apps and data, that is also the edge node of one local node (a desktop or office node), so no second cloud instance is needed | [`conf/all-in-one/`](../runtime/conf/all-in-one/README.md) | Server: Maximal. Local: Maximal or Enterprise | Each its own; the server also keeps the local node's queue and copies | [An all-in-one node](#an-all-in-one-node) |
+| Several local nodes on one edge node | Branch offices, or the separate organizations of one group, each with its own data and domains behind one edge node | [`conf/multi-domain/`](../runtime/conf/multi-domain/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each local node its own; the edge node keeps each one's queue and copies | [Several local nodes on one edge node](#several-local-nodes-on-one-edge-node) |
+| The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | In the app; its edge or all-in-one node as above | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
+
+The conf is the runtime conf each node runs, under `runtime/`. A topology's directory has a conf for each kind of node,
+whose comments say what each setting does, and a README with its diagram, the `.env` names each node needs and the
+commands ([runtime/conf](../runtime/conf/README.md)). The sections below keep what each topology is, its steps and
+what is not built. The topologies still to come (a standby, an edge cluster, a front node, the full stack) get their directories as they are built
+([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 
 ## Production checklist
 
@@ -231,7 +239,9 @@ The runtime conf is the first of these that is found:
 2. `<runtime>/MoquiConf.xml`;
 3. `<runtime>/conf/MoquiDevConf.xml`.
 
-`./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. A running server takes
+`./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. The confs of the other
+topologies are in a directory each under `conf/`, as `-c conf/edge/MoquiEdgeConf.xml`
+([Choose a topology](#choose-a-topology)). A running server takes
 a changed conf file without a restart where what reads the setting allows it (System › Conf, `systemctl reload moqui`
 or SIGHUP, and the file watcher on a dev instance), and lists the rest as waiting for a restart
 ([Component-Deploy](tools/Component-Deploy.md)). Conf merges add components but never remove one. To leave a component out, keep it out of `runtime/components/addon`. The example dev
@@ -319,14 +329,15 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
 | `edge_sip_enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
-| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
-| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_xmpp_node` | empty | On an edge node, the ports whose connections go to a local node's XMPP server, STARTTLS (5222) and direct TLS (5223), the address they listen on (empty for every one) and the node (empty for the only one linked) |
+| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge_ssh_tunnel_host` |
+| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
+| `edge_call_legs_per_pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
 | `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
-| `edge_mail_mta` | `moqui` in MoquiEdgeConf.xml, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
+| `edge_mail_mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
 | `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node with `edge_mail_mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
 | `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
-| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in MoquiEdgeConf.xml), with Rspamd's HTTP API for its spam verdict when the URL is set ([Edge node](#a-local-server-with-an-edge-node), Mail) |
+| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
 | `mail_dkim_key`, `mail_dkim_selector`, `mail_dkim_domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
 | `mail_arc_trusted_sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
 | `mail_delivery_retry_seconds`, `mail_delivery_days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
@@ -618,7 +629,7 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 | Port | Listener | Default | Properties |
 |---|---|---|---|
 | 8080 | HTTP | On, every address | `webapp_http_port`, `webapp_http_bind` |
-| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) | `webapp_https_listen_port` (`off`), `webapp_http2` |
+| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp_https_listen_port` (`off`), `webapp_http2` |
 | 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
 | `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
@@ -676,7 +687,43 @@ After that, `default` serves any other name. A domain with no certificate gets a
 again within seconds of a change, so a renewal needs no restart.
 
 In dev (`instance_purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
-certificate, the HTTPS listener does not start, or the start fails when the port was set explicitly.
+certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
+`runtime/cert` (seen within a minute). A `webapp_https_listen_port` set explicitly with no certificate no longer fails
+the start: the listener waits the same way.
+
+**System › Certificates** lists the names this node answers (its own host, its sites' hosts, the SMTP host, the XMPP
+domain, an edge node's terminate hosts, the files in `runtime/cert`) and the certificate each is served: its issuer,
+its expiry and its file. A name with none gets no HTTPS.
+
+**From ACME.** Set up with ACME, on that screen, gets a name's certificate from an ACME authority: Let's Encrypt
+(`acme_directory_url`), its staging directory for a first try, or any other authority's directory URL. Nothing is ever
+asked for a name nobody set up there.
+
+- **The challenge** is TLS-ALPN-01 on the HTTPS listener: the authority connects to the name on port 443, so 443 must
+  reach the listener (a port forward to 8443, the systemd drop-in below, or an edge node). No port 80 is needed.
+  Set up first checks that the name's DNS has an address and that 443 there reaches this node; a router that cannot
+  connect to its own public address fails the check, and the screen offers to order without it. The check takes up
+  to about 20 seconds, and the screen waits for it.
+- **The first certificate.** A node with no certificate at all starts its HTTPS listener when a name is set up (on any
+  member of its cluster), and for the length of a check. Until a certificate is there it answers only the challenges
+  of names set up and refuses every other handshake. An edge node that started with no certificate takes no links
+  either: restart it once it has one.
+- **Behind an edge node.** For a passthrough host the challenge goes down the tunnel untouched, so the local node sets
+  the name up on its own Certificates screen and gets its own certificate. For a terminate host the edge node sets it
+  up on its own screen.
+- **Files.** The certificate is written as `runtime/cert/<name>/fullchain.pem` and `privkey.pem` (certbot's layout),
+  with a `.moqui-acme` marker; a `<name>/` directory another tool wrote is never written over. Another file pair for
+  the name (`<name>.crt`) is served before it.
+- **Renewal.** The `renew_AcmeCertificates_daily` job, paused until a name is set up, renews each name set up there
+  when a third of its certificate's life is left. A failure shows on the screen and on the System home with the
+  expiry. Stop renewing and Remove are on the screen.
+- **Cluster.** One member orders a name at a time (a lock row whose 15-minute lease is by each member's clock, so the
+  clocks must agree); the challenge and the certificate are rows, the key encrypted, so any member answers the
+  challenge and every member writes its own files within a minute.
+- **Account.** The account key is derived from `acme_account_key`, a secret generated into `runtime/.env`; the members
+  of a cluster share it in their shared `.env`, or each is a separate account. For a company's own authority,
+  `acme_directory_ca` names the root its HTTPS is checked against.
+- **Not built:** HTTP-01 (port 80), DNS-01 and so wildcard names.
 
 ### Listen ports and URL ports
 
@@ -719,7 +766,7 @@ The server terminates HTTPS itself, so a proxy is optional. A proxy or load bala
 with the binary in it.
 
 - **What goes in**: the package's binary; `runtime/conf/MoquiProductionConf.xml` as `MoquiConf.xml` (`--conf FILE` puts
-  in another); `README.txt`; and all of `runtime/` except `log/`, `tmp/`, `save/` and `install/`.
+  in another, such as `conf/edge/MoquiEdgeConf.xml`); `README.txt`; and all of `runtime/` except `log/`, `tmp/`, `save/` and `install/`.
 - **`--no-data`** leaves out the database, the OpenSearch data, `.env` and `cert/`, for a fresh instance or an upgrade.
   Without it the embedded database goes in as files, so stop the server first.
 - **Platform**: the binary runs on the OS and CPU it was built for, so build on the server's platform.
@@ -780,6 +827,51 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
 | SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
 
+## Several sites by host name
+
+One server can answer several host names with a different root screen for each, as Moqui Java does: separate sites
+on sub-domains or related domains, such as a forum and a shop beside the business's own apps. It is not the default:
+every host gets `webroot.xml`, the apps on paths under it, until a `root-screen` names another root for a host.
+`conf/MoquiSitesConf.xml` is a working example (it uses mr-pass for the two public hosts).
+
+```xml
+<webapp name="webroot">
+    <root-screen host="forum\.example\.org" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
+    <root-screen host="(www\.)?example\.com" location="component://example-site/screen/ExampleSite.xml" framework-routes="include"/>
+</webapp>
+```
+
+- **Host.** A regular expression matched against the whole `Host` header, without its port, in lower case. The first
+  that matches wins; `.*` (`webroot.xml`, in MoquiDefaultConf.xml) is the fallback.
+- **The root screen** is a thin wrapper: a home page and the pages of its site, or one app at its root. Files beside it
+  (`ExampleSite/` beside `ExampleSite.xml`) are served as `webroot/` is for `webroot.xml`. The shared `/js`, `/css`,
+  `/libs` and `/images` come from `webroot.xml` when the wrapper's directory has no such file, and so do the error
+  screens.
+- **`framework-routes`** says what else the host gets. A conf whose `root-screen` patterns cannot be read (a pattern
+  that is not a valid regex) refuses the framework's routes on every host until it is fixed:
+
+  | Value | The host serves |
+  |---|---|
+  | not set | The root's own screens and the shared static files. The token routes, the servlets and the sockets answer as on every host (Moqui Java's behaviour) |
+  | `include` | The root's own screens first, then `webroot.xml`'s for a first path name the root does not have: the shell (`/qapps`), sign-in, the apps, `/rest`, the PWA files and Web Push |
+  | `refuse` | The root's own screens and the shared static files only. `/Login`, `/apps`, `/qapps`, `/rest`, the token routes, the servlets, the sockets, `/dav`, `/health`, `/metrics` and the gRPC services of the HTTPS listener are Not Found there, so nobody signs in to the framework on the host. Git at a public site's page URL is the one exception, on a host that is also a `public-site`'s. Use it for a public site |
+
+- **Links.** A link made in a request to such a host keeps that host, with the webapp's scheme and port: only a host a
+  `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
+  `webapp_http_host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
+  apps, which that host does not serve.
+- **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. A
+  deployment's own sites share accounts through SSO; mr-pass's Account does that for PASS sites. A server that is the
+  sign-in provider for its own other hosts is later work.
+- **Per origin.** Each host is its own origin: CORS, the service worker, the PWA manifest and Web Push subscriptions
+  are each host's.
+- **Public sites.** An mr-pass host has its `public-site` (the site id and the app at `/`) and a `root-screen` naming
+  the same `Pass.xml` with `framework-routes="refuse"`. The site id is bound by the conf, never by a request
+  ([mr-pass Deployment](../runtime/components/addon/mr-pass/docs/Deployment.md)).
+- **Each host** needs a DNS record and a certificate for its name ([Certificates](#certificates)). Behind an edge node
+  each is an `EdgeHost` of the pairing, added on the local node's System › Edge Node, passthrough or terminate
+  ([A local server with an edge node](#a-local-server-with-an-edge-node)).
+
 ## Public demo server
 
 A server where anyone can try the apps with the `john.doe` / `moqui` login. It runs on the production purpose with
@@ -801,236 +893,92 @@ the Dev AIDE loads there.
 ## A local server with an edge node
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
-open ([plan](../plans/archive/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
-edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
-beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
-their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
+open ([plan](../plans/archive/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through
+the edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and
+Rspamd beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local
+node as their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
 clients through its tunnel ports, and phone calls (SIP trunks and outside phones), with a voicemail fallback while the
 local node is away.
+
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, edge_ssh_tunnel_port
+ edge node      conf/edge/MoquiEdgeConf.xml    base components and mr-pass; the link's queue and copies
+    ^  the local node dials 443 and keeps one link open
+ local node     conf/edge/MoquiLocalConf.xml   the apps and the data, in the office or at home
+```
+
+The confs, the `.env` names each node needs and the commands are in
+[runtime/conf/edge](../runtime/conf/edge/README.md); each conf's comments say what each setting does. The edge node
+runs the Maximal package, or Enterprise with an external database (both have the link), with the base components and
+mr-pass (`./moq component-get edge`). Its HTTPS listener needs a WebPKI certificate ([Certificates](#certificates)),
+which local nodes check when they pair, and no TLS-terminating proxy in front: the link needs ALPN and client
+certificates end to end. If a proxy is in front of it, name it in `webapp_trusted_proxies`; on an edge node a
+client-IP header with no trusted proxies is ignored.
 
 The browser terminal goes through too, in both web access modes: a client of the edge node is another machine to the
 local node, so a dev local node's command line and shells need `terminal_remote=true` and a recent sign-in there, and a
 dropped link resumes each terminal by the count of what it drew ([Terminal](ui/Terminal.md#the-desktop-and-mobile-apps-and-phones)).
-Each terminal is one of the link's forwarded sockets.
 
 **Attach a local node in one sitting.**
-1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI
-   certificate, and a start with `conf/MoquiEdgeConf.xml`. In its System › Edge Clients, make a pairing code.
-2. On the local node, in System › Edge Node, choose **Pair with an edge node**. The wizard's steps:
+1. Set up the edge node from its README: its `.env`, a certificate, and a start with `conf/edge/MoquiEdgeConf.xml`. In
+   its System › Edge Clients › Clients, make a pairing code. Clients also lists the paired nodes, pings and revokes
+   them, and shows the edge node's link key fingerprint; Domains has their host names and what each claims, and Ports
+   their tunnel ports.
+2. On the local node, in System › Edge Node, choose **Pair with an edge node**. Pairing writes `edge_node_url`,
+   `edge_node_key`, `edge_node_pin` and `edge_node_id` to `runtime/.env` and brings the link up; unpairing removes them.
+   The wizard's steps:
    1. **Edge node.** Its address and the pairing code.
    2. **Connect.** Check its name and link key fingerprint against Edge Clients. Next pairs and waits for the link.
    3. **Discover.** What the edge node offers, as a form with each area on or off and this node's choices filled in:
-      the host names, passthrough or terminate (this node's `webapp_http_host` by default, unless it is `localhost` or
-      has one label, and the names the edge node has for this node now); the mail domains (from the hosted and shared
-      accounts), and whether the system's mail (off by default when `SYSTEM` has a server of its own) and the chosen
-      accounts' mail goes out through the edge node; the chat bridges whose webhooks go to it; the PASS sites it
-      serves, with their SSO callback; XMPP, this node's `xmpp_domain` through the edge node's tunnel ports (on by
-      default when both are there; Next adds the domain to the passthrough names, as uploads and `/xmpp-websocket`
-      ride on web access); calls, new calls' media on the edge node's media node with its TURN (on by default when
-      it runs one, unless `edge_calls_enabled` is false here; office users in a call with each other then send media
-      to the cloud and back, with no cascading to a media node of this node's own, and one local node per edge node
-      takes calls); phones, this node's trunks and phones through the edge node's SIP engine (on by default when it
-      runs one, unless `edge_sip_enabled` is false here), with the trunks and their numbers that go through it (from
-      the replicated set `voiceTrunks`), its registrar for outside phones, which cannot register while this node is
-      away, and how many numbers have a voicemail fallback, which follows no call-handling rules or schedules; a
-      number with none is refused (480) then. A host name must be a public DNS name:
-      not an IP address, `localhost` or a name with one label.
+      host names (public DNS names, passthrough or terminate), mail domains and which mail goes out through the edge
+      node, chat bridges, PASS sites, XMPP, calls and phones.
    4. **Apply.** The whole setup is checked first, and nothing changes when any of it is not right. The edge node's
-      part goes first (host names, mail domains, bridges, sites, the XMPP domain): it takes only this node's names, and refuses a name
-      another node holds and its own names (its public names, its SMTP host, its bounce domain, its sites' hosts, and
-      their subdomains); a name of this node not listed is removed. When the edge node does not take the setup,
-      nothing changes on this node. Then it writes this node's part: an `EmailServer` `EDGE` with `smtpHost` `edge:`,
-      `SYSTEM`'s `smtpHost` set to `edge:` when chosen, and the chosen accounts sending through it;
-      `channels_public_url` (the edge node's address); `pass_edge_client`, `pass_client_edge_sites` and
-      `pass_client_edge_callback`; `edge_calls_enabled`, and the edge node's media row written again with it (draining
-      while off), with a line each for its media address (public), the TURN secret its link handed this node, and the
-      row (live and first for new calls); `edge_sip_enabled`, with a line each for the replication of `voiceTrunks`
-      and `voiceFallbacks` (their cursor and the changes waiting; empty while off), the edge node's `SipNode` row,
-      the realm phones made here get (the edge node's, and a failed line for phones made for another), and the
-      numbers with and without a fallback. The host or server each mail row had is kept (`edgePriorSmtpHost`,
-      `edgePriorServerId`), and **unpairing puts it back**; mail for an `edge:` server while this node is not paired is
-      not queued, but fails as retryable and stays in the Outbox. Every replicated set is sent whole again. An area
-      turned off is left as it is. Then it lists the DNS records to set, each looked up live: MX, SPF, the DKIM key and DMARC for
-      each mail domain, A and AAAA for each host name, and with XMPP `_xmpp-client._tcp` and `_xmpps-client._tcp`
-      for the XMPP domain, naming the edge node and its tunnel ports, and with calls A and AAAA for the host of its TURN
-      URLs when it is a name (`turn_public_host` there), naming its addresses or its media address, and with phones
-      `_sips._tcp`, `_sip._udp` and `_sip._tcp` for the edge node's `sip_domain`, naming the edge node and its SIP
-      ports. Check again looks them up again. `_xmpp-server._tcp` (federation) is listed for later. A line says when this node's `xmpp_port` or
-      `xmpp_tls_port`, which Chat apps shows, differ from the edge node's ports.
-   5. **Test.** The link, mail in (the edge node takes mail for a hosted account's address), mail out (the system's
+      part goes first: it takes only this node's names, and refuses a name another node holds and its own names. Then
+      this node's part, listed in [`MoquiLocalConf.xml`](../runtime/conf/edge/MoquiLocalConf.xml)'s comments; the host
+      or server each mail row had is kept (`edgePriorSmtpHost`, `edgePriorServerId`), and unpairing puts it back.
+      Every replicated set is sent whole again. An area turned off is left as it is. Then the DNS records to set, each
+      looked up live (Check again looks again).
+   5. **Test.** Each area a pass, fail or not-checked line, with round trips on the queue and no outside mail or
+      provider: the link, mail in (the edge node takes mail for a hosted account's address), mail out (the system's
       and the accounts' servers are on `edge:`, and the edge node can send: its DKIM key, or its Postfix relay
-      answering), the webhooks, PASS, and XMPP (a client connection through each tunnel port reaches this node's XMPP
-      server, its TLS this node's own certificate, and the domain is one of its host names there), and calls (the edge
-      node's media row is live and first for new calls, `make#IceServers` signs its TURN URLs with its secret, and that
-      credential allocates on its TURN with a permission for its media address's IP), and phones (the edge node's
-      `SipNode` row is live, its SIP engine loaded every enabled trunk and none failed, and its copy holds every
-      number's fallback), each a pass, fail
-      or not-checked line, with round trips on the queue and no outside mail or provider. It runs once per visit;
-      Test again runs it again. Continue anyway goes on with a failure; Finish shows the status.
+      answering), the webhooks, PASS, XMPP, calls and phones (the last three as their guides say). Test again runs it again; Continue anyway goes on with a failure; Finish shows the status.
 3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.
 
-The status screen shows what is set up (host names, mail, chat, PASS, XMPP, calls, phones), with Set up again, which opens the wizard at
-Discover. Edge Clients shows what each node's setup sent. A page waits at most 3 s for the edge node's offer, and
-says when it is not answering. The offer is read fresh each time; the area names in the edge node's Hello are read at
-its start, so restart it after changing its mail, chat, PASS or XMPP settings. The sections below are what the wizard sets,
-for an operator who sets a part by hand; a name the operator adds on Edge Clients is not checked against the edge
-node's own names.
+The status screen shows what is set up, with Set up again, which opens the wizard at Discover. Edge Clients › Domains
+shows what each node's setup sent. The offer is read fresh each time; a page waits at most 3 s for it, and says when the edge
+node is not answering. The area names in the edge node's Hello are
+read at its start, so restart it after changing its mail, chat, PASS or XMPP settings. A name the operator adds by
+hand on Edge Clients is not checked against the edge node's own names.
 
-- **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
-  mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
-  have the link:
+**Web access.** Point each host name's DNS at the edge node; in the office's DNS the same name can point at the local
+node. A name is **passthrough**, the default (the edge node sends the connection down the link before any TLS, and the
+local node ends the TLS with its own certificate, so the edge node sees no content), or **terminate** (the edge node
+ends the TLS, runs its web protection, and shows an offline page while the link is down). The apps, `/notws` and the
+other sockets, DAV and git over HTTPS work in both, and the local node's logs and web protection see the client's
+address.
 
-  ```sh
-  ./moq run-production --release -c conf/MoquiEdgeConf.xml
-  ./moq archive --release --no-data --conf conf/MoquiEdgeConf.xml    # or package it for the host
-  ```
+**Each area**, with its settings in the confs' comments and its detail in its guide:
 
-  Local nodes dial its HTTPS listener, which tells their connections from browsers' by ALPN, so it needs a WebPKI
-  certificate ([Certificates](#certificates)) and no port of its own.
-  - **Port.** A local node dials port 443 unless the address has a port, and `webapp_https_listen_port` is 8443 by
-    default. Listen on 443, or give the port in the address.
-  - **No TLS-terminating proxy in front.** The link needs ALPN and client certificates end to end.
-  - **Link key.** Pairing checks the web certificate. The link itself uses the edge node's own link key,
-    `edge_link_key`. It is generated into `runtime/.env` on every node at the first start, but only an edge node uses
-    it. A renewed web certificate does not touch the link, but a changed `edge_link_key` means every local node must
-    pair again.
-  - **Edge Clients.** Its operator makes a pairing code in System › Edge Clients, which also lists the paired nodes,
-    pings them and revokes them. It shows the edge node's link key fingerprint, to compare with the one the local node
-    shows when it pairs.
-- **The local node** needs no role and no open port. In System › Edge Node, enter the edge node's address and the code,
-  check its name and link key fingerprint, and pair. Pairing writes `edge_node_url`, `edge_node_key`, `edge_node_pin` and `edge_node_id` (the edge node's instance id) to
-  `runtime/.env` and brings the link up; unpairing removes them.
-- **Web access.** The wizard sets the local node's host names, or add each in System › Edge Clients, such as
-  `erp.example.com`, and point its DNS at the edge node. In the office's DNS the same name can point at the local node. A name has a
-  mode:
-  - **Passthrough**, the default. The edge node reads the name the browser asks for, before any TLS, and sends the
-    connection down the link with a PROXY header that names the client. The local node ends the TLS with its own
-    certificate, so the edge node sees no content. The local node needs its HTTPS listener and a certificate for the
-    name (DNS-01 with an outside tool, or a copied one). While the link is down the connection is refused.
-  - **Terminate.** The edge node ends the TLS with its own certificate and forwards each request down the link, with
-    the client's address. Its web protection runs first. While the link is down it shows an offline page (503), or the
-    page at `edge_offline_page`.
+| Area | Guide |
+|---|---|
+| Mail in and out, the DNS to publish, Postfix and Rspamd beside the edge node | [Mail-Inbound](interfaces/Mail-Inbound.md#the-edge-node-as-the-gateway) |
+| Chat webhooks and MMS | [SMS](interfaces/SMS.md), [Chat-Bridges](interfaces/Chat-Bridges.md) |
+| PASS sites, with the local node as their authority | mr-pass [docs/Deployment.md](../runtime/components/addon/mr-pass/docs/Deployment.md), An edge node as the PASS server |
+| Calls: the media node and TURN; recordings | [WebRTC](interfaces/WebRTC.md#the-edge-node-as-media-node), [TURN](interfaces/TURN.md#on-an-edge-node), [Call-Recording](interfaces/Call-Recording.md) |
+| Phones: trunks, outside phones, the fallback while the local node is away | [SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away) |
+| XMPP clients through the tunnel ports | [XMPP](interfaces/XMPP.md#behind-an-edge-node) |
+| SSH through the tunnel port | [`MoquiEdgeConf.xml`](../runtime/conf/edge/MoquiEdgeConf.xml)'s comments; [Attack-Surface](security/Attack-Surface.md#edge-node), SSH tunnel port |
+| Work over the link: delegated services, the queue, replicated sets | the `<edge>` element in `MoquiEdgeConf.xml` and `MoquiDefaultConf.xml`; [plan](../plans/archive/Edge-Node.md) §5.2 |
 
-  The apps, `/notws` and the other sockets, DAV and git over HTTPS work in both. The local node's logs and web
-  protection see the client's address. If a proxy is in front of the edge node, name it in `webapp_trusted_proxies`;
-  on an edge node a client-IP header with no trusted proxies is ignored.
-- **Calls.** The edge node is the media node of the local node's calls ([WebRTC](interfaces/WebRTC.md#the-edge-node-as-media-node)):
-  `conf/MoquiEdgeConf.xml` turns on its media socket (`rtc_media_port` 10000 on every address) and TURN (`turn_port`
-  3478); set `rtc_public_address` in its `.env` and open UDP 10000, UDP and TCP 3478 and the relay range
-  (`turn_relay_ports`). The local node needs no media port: it keeps the edge node's media row from the link, sends the
-  calls' signaling over it, signs TURN credentials with the edge node's secret (told on the link,
-  [TURN](interfaces/TURN.md#on-an-edge-node)) and stores the recordings the edge node queues
-  ([Call-Recording](interfaces/Call-Recording.md)).
-- **Phones (SIP).** Set `sip_port` (5060) and `sip_tls_port` (5061), `sip_host` 0.0.0.0 and `sip_public_address` in the
-  edge node's `.env` (with `sip_registrar_enabled=true` for desk and soft phones outside the office), and open those
-  ports and `sip_rtp_ports` (UDP 20000-20999). Set up trunks and numbers on the local node as usual (System, Voice):
-  the edge node gets the trunks by replication and registers them, the local node keeps its SIP node's row from the
-  link, routes each call there, and stores its voicemail, which the edge node records and queues. Phones' passwords
-  stay on the local node, which checks each sign-in. While the local node is away a call is answered from its number's
-  fallback: the user's mobile (when they ring it with their calls) or a ring group's outside number, then a message
-  that arrives when the link is back; a number with neither gets 480, so set the trunk provider's failover number too.
-  The fallbacks are written as the numbers, greetings and boxes change, and every minute while the link is up
-  ([SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away)).
-- **SSH.** Set `edge_ssh_tunnel_port` on the edge node (and `edge_ssh_tunnel_host`, empty for every address). The edge
-  node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
-  local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than
-  one linked node, `edge_ssh_tunnel_node` names the one.
-- **XMPP.** Set `edge_xmpp_port` (5222) and `edge_xmpp_tls_port` (5223) on the edge node (and `edge_xmpp_host`), and
-  `xmpp_domain` on the local node, not the edge node, which starts no XMPP server. The edge node's web protection
-  admits each connection, and it goes down the link to the local node's XMPP server, which ends the TLS with its
-  certificates for the domain, so channel binding (SCRAM-SHA-256-PLUS) works. The local node needs no XMPP port of
-  its own for this; give any it has the same numbers, which Chat apps shows. `_xmpp-client._tcp` and
-  `_xmpps-client._tcp` name the edge node in public DNS. Uploads and `/xmpp-websocket` go through web access, so the
-  XMPP domain is one of the node's host names. While the link is down clients cannot connect, and retry
-  ([XMPP](interfaces/XMPP.md#behind-an-edge-node)).
-- **Work over the link** (the `<edge>` conf element, the same on both nodes; [plan](../plans/archive/Edge-Node.md) §5.2). A
-  service listed in `delegate` runs on the local node when called on the edge node, as the user `_EDGE_`, whose grants
-  (the `EDGE_DELEGATE` artifact group) must cover it; it fails at once while the link is down. A `queue-kind` names the
-  service that applies queued items of that kind; what waits for a local node that is away is kept
-  `queue-retention-days` (14, the same on both nodes) up to `queue-max-megabytes`, then the oldest fails, logged; a
-  payload is at most 1 MiB, and a larger body (up to 64 MiB, a mail message) crosses as the item's content. A
-  `replicate` set is copied to the edge node, read-only there, and sent whole again when
-  the edge node lost its copy. On a clustered local node only the member holding the link sends its outbox and
-  replication. System › Edge Node shows the outbox and the sets, with Pause and Resync; Edge Clients shows each node's
-  queue and sets. The edge node's database now holds the queue: unpause its backup job
-  (`backup_EmbeddedDatabase_daily`).
-- **PASS** ([plan](../plans/archive/Edge-Node.md) §5.5). With `pass_backend_url=edge:` (set in MoquiEdgeConf.xml), the edge
-  node's mr-pass calls its local node as the authority over gRPC down the link; the local node needs no public authority
-  and no PASS client secret for it. On the local node, the edge node is the client `pass_edge_client` (default `edge`):
-  set `pass_client_edge_sites` (the sites the edge node serves) and `pass_client_edge_callback` (its SSO callback). Set
-  `pass_backend_web_url` on the edge node to the local node's web address (a host name with web access through the
-  edge node) for the SSO front channel. While the link is down every PASS page fails as unavailable.
-- **Chat and SMS** ([plan](../plans/archive/Edge-Node.md) §5.4, [SMS](interfaces/SMS.md)). MoquiEdgeConf.xml sets
-  `channels_webhooks_enabled=true`: the edge node checks each webhook's signature with the local node's replicated
-  bridge and queues it for the local node. On the local node, `channels_public_url` is the edge node's address, so the
-  files of an MMS are served by the edge node.
-- **Mail** ([plan](../plans/archive/Edge-Node.md) §5.4). The MTA in moqui is the default (`edge_mail_mta=moqui` in
-  MoquiEdgeConf.xml; an empty `edge_mail_mta` keeps E5a's relay to Postfix, so an older edge node is not switched by
-  an upgrade): the edge node takes port 25 itself and delivers to each domain's MX. Postfix and Rspamd beside it are
-  the alternative, below.
-  - **In.** The SMTP listener runs in internet mode (`smtp_internet=true`): set `smtp_listen_port=25`,
-    `smtp_listen_host=0.0.0.0` (or `::`) and `smtp_hostname` (the MX name, also the authserv-id of its
-    `Authentication-Results`) in `.env`. It offers STARTTLS with the web certificate, limits each address
-    (`max-connections-per-ip`, `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any
-    `Authentication-Results` claiming its name, refuses a DMARC failure whose policy is reject (550) and files a
-    quarantine one in Junk. With `mail_rspamd_url` (Rspamd's HTTP API, `http://127.0.0.1:11333`) Rspamd's verdict
-    sets `X-Spam-Flag` and `X-Spam-Status` (any that came are removed); without it there is no spam check. Both fail
-    open: Rspamd not reached, or a check that fails, is logged and the mail taken (as not spam); checks that do not
-    finish in 45 seconds answer 451. DMARC is RFC 9989's (`t=y` lowers the policy; there is no `pct`), and a passing
-    ARC chain sealed by one of `mail_arc_trusted_sealers` (a forwarder or list you trust) overrides a reject or
-    quarantine; with none named there is no ARC exception. `RCPT TO`
-    is answered from the local node's accounts, replicated to the edge node (`mailRecipients`), so an unknown address
-    is refused while the local node is away too, and each message is queued for the local node, which delivers it as
-    its own listener would, trusting the edge node's `Authentication-Results`.
-  - **Out.** On the local node, give `SYSTEM` and the accounts an `EmailServer` with `smtpHost` `edge:`. A send is
-    queued for the edge node, which DKIM-signs it (`mail_dkim_key`, generated into `.env` the first time; selector
-    `mail_dkim_selector`, default `moqui`; for `mail_dkim_domains`, else the hosted accounts' domains) and delivers it
-    to each recipient domain's MX: STARTTLS when offered, MTA-STS honored (with `mode: enforce`, only the policy's MX
-    hosts, with a valid certificate), a 4xx tried again from 5 minutes (`mail_delivery_retry_seconds`) doubling to 4
-    hours, for `mail_delivery_days` (5). Set `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the
-    edge node) and each message goes from `bounce+<item>@` that domain, so a remote server's later bounce names the
-    message. A message no recipient got (refused at the MX, by a later bounce, or after `mail_delivery_days`) goes back
-    to a mail client's Outbox with the replies as its send error, as does one the local node could not hand to the edge
-    node within the queue's retention period; one some recipients got stays Sent, with the refused named in its send
-    error. Mail to the local node's own accounts is queued back to it by the edge node, signed and with an
-    `Authentication-Results`, not sent round through port 25.
-  - **DNS to publish.** For each mail domain: MX at the edge node's name; SPF (`v=spf1 a:edge.example.com -all`, or
-    its addresses); the DKIM key at `moqui._domainkey.<domain>` (the TXT value is
-    `org.moqui.mail.EmailServices.get#DkimRecord`'s `record`, run on the edge node; it is longer than 255 characters,
-    so enter it as several quoted strings of at most 255 each, which DNS joins); DMARC at `_dmarc.<domain>`
-    (`v=DMARC1; p=quarantine; rua=mailto:...` to start); the bounce domain's MX at the edge node too. Reverse DNS: the
-    edge node's address must resolve to its `smtp_hostname`, and that name back to the address (set it at the cloud
-    provider). MTA-STS for the domains themselves (`_mta-sts` and `https://mta-sts.<domain>/.well-known/mta-sts.txt`)
-    is optional. DANE is not checked yet.
-  - **Postfix and Rspamd beside it** (E5a) do the internet side instead ([Mail-Inbound](interfaces/Mail-Inbound.md)
-    has the gateway's rules). In `.env`: `edge_mail_mta=postfix`, `smtp_internet=false`, `smtp_listen_port=10024` and
-    `smtp_allowed_addresses=127.0.0.1,::1`, and `protocol="lmtp"` on the `smtp-server` in the runtime's conf. Postfix
-    hands mail for the local node's domains to that LMTP listener; set `smtp_authserv_id` on the local node to
-    Rspamd's authserv-id, so only its `Authentication-Results` are kept. Mail out is relayed to Postfix on
-    `edge_mail_relay_port` (10025), and Postfix signs it with DKIM through Rspamd and delivers it; while Postfix is not
-    reached the message waits in the queue.
+System › Edge Node shows the outbox and the replicated sets, with Pause and Resync; Edge Clients shows each node's
+queue and sets. The edge node's database holds the queue, and its conf sets the backup job running
+(`embedded_db_backup_scheduled`).
 
-  ```
-  # /etc/postfix/main.cf (the listener answers RCPT TO itself, so no reject_unverified_recipient)
-  mynetworks = 127.0.0.0/8 [::1]/128
-  relay_domains = example.com, bounces.example.com
-  transport_maps = hash:/etc/postfix/transport    # example.com and bounces.example.com  lmtp:inet:127.0.0.1:10024
-  smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
-  smtpd_milters = inet:127.0.0.1:11332            # Rspamd: SPF, DKIM, DMARC and spam in; DKIM signing out
-  non_smtpd_milters = inet:127.0.0.1:11332
-  milter_default_action = accept
-  # /etc/postfix/master.cf: the relay port the edge node sends to, for this host only
-  127.0.0.1:10025 inet n - n - - smtpd
-    -o mynetworks=127.0.0.0/8
-    -o smtpd_client_restrictions=permit_mynetworks,reject
-    -o smtpd_recipient_restrictions=permit_mynetworks,reject
-  # /etc/rspamd/local.d/dkim_signing.conf: sign mail from this host for the domains
-  selector = "moqui";
-  path = "/var/lib/rspamd/dkim/$domain.$selector.key";
-  sign_local = true;
-  # /etc/rspamd/local.d/milter_headers.conf: Authentication-Results with the edge node's authserv-id
-  use = ["authentication-results", "x-spam-status"];
-  ```
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): a
+clustered local node with every member linked (E17; today only the member holding the link sends its outbox and
+replication, and a call's socket on another member is refused), a second edge node (E18), certificates by ACME (E15),
+a PASS read cache on the edge node, and monitoring over the link.
 
 ## An all-in-one node
 
@@ -1038,21 +986,26 @@ A full server, with its own users, apps, data, mail domains, chat bridges, calls
 node of one local node, such as a desktop node ([plan](../plans/archive/Edge-Node.md#10-all-in-one-node-e12) §10). The local
 node pairs and runs the wizard as with a dedicated edge node (above), and sees no difference.
 
-- **Conf.** Run `conf/MoquiAllInOneConf.xml` (`node_role=all-in-one`) with the server's full runtime, on the Maximal
-  package:
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223 (its own XMPP), the local node's XMPP tunnel ports
+ all-in-one node   conf/all-in-one/MoquiAllInOneConf.xml   its own apps and data; the local node's queue and copies
+    ^  the local node dials 443 and keeps one link open
+ local node        conf/edge/MoquiLocalConf.xml            the apps and the data
+```
 
-  ```sh
-  ./moq run-production --release -c conf/MoquiAllInOneConf.xml
-  ```
-
-  It needs what an edge node needs: a WebPKI certificate on the HTTPS listener, `edge_public_addresses`, and the edge
-  node's mail, calls and SIP properties in `.env`. It takes the link and never dials an edge node itself.
+- **Conf.** Run `conf/all-in-one/MoquiAllInOneConf.xml` (`node_role=all-in-one`) with the server's full runtime, on
+  the Maximal package. The `.env` names and the commands are in
+  [runtime/conf/all-in-one](../runtime/conf/all-in-one/README.md). It needs what an edge node needs: a WebPKI
+  certificate on the HTTPS listener, `edge_public_addresses`, and the edge node's mail, calls and SIP properties in
+  `.env`. It takes the link and never dials an edge node itself. Its conf sets the backup job running: the queue is in
+  the server's database.
 - **Each item has one owner.** The server's own host names, mail accounts, chat bridges, numbers, calls and XMPP
   domain are served here as on a normal node; the local node's `EdgeHost` names, recipients, bridges, numbers and calls
   go over the link. A mail domain may be split by address.
 - **Claims both sides make.** The server's own items win. The wizard's Configure refuses the local node's bridges,
   XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `edge_mail_bounce_domain`). A
-  replicated record that claims a server's item is not applied: System › Edge Clients lists it under Replica conflicts,
+  replicated record that claims a server's item is not applied: System › Edge Clients › Domains lists it under Replica conflicts,
   with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
   sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
 - **XMPP.** The server's XMPP server keeps `xmpp_port` and `xmpp_tls_port`. Give the local node's domain tunnel ports
@@ -1062,6 +1015,55 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
   local node are not served here yet.
 - **Limits.** One paired node. Its load shares the server's CPU, bandwidth and media ports. The queue is in the
   server's database, so the server's backups cover it. Unpairing leaves the server's own services as they were.
+
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): several paired nodes and PASS sites for them (E16),
+and a clustered all-in-one server, where every member takes links (E18).
+
+## Several local nodes on one edge node
+
+One edge node can serve several local nodes, each on its own database with its own domains: branch offices, or the
+separate organizations of one group ([plan](../plans/Edge-Node2.md#41-domains-on-one-edge-node) §4.1). Each local node
+pairs and runs the wizard as it would alone; each is a pairing on the edge node, and the edge node routes each name,
+address, number, bridge, domain and site to the pairing that owns it.
+
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, a tunnel port per local node for SSH
+ edge node      conf/multi-domain/MoquiEdgeConf.xml    the links' queues and copies, one pairing per local node
+    ^  each local node dials 443 and keeps its own link open
+ local node A   conf/multi-domain/MoquiLocalConf.xml   its apps and data, with its own domains
+ local node B   conf/multi-domain/MoquiLocalConf.xml   its apps and data, with its own domains
+```
+
+The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](../runtime/conf/multi-domain/README.md).
+
+1. Set up the edge node as for one local node, from `conf/multi-domain/MoquiEdgeConf.xml`.
+2. For each local node: make a pairing code on the edge node (System › Edge Clients › Clients), and pair and run the
+   wizard on the local node. Give each local node its own `xmpp_domain` and `sip_domain` first.
+3. Check Edge Clients › Domains: each local node's host names, mail domains, XMPP domain, SIP realm and numbers, chat
+   bridges and PASS sites, and any record refused because another node claimed its item.
+4. For SSH, give each local node a tunnel port of its own on Edge Clients › Ports.
+
+- **The first claim holds.** A host name, XMPP domain, SIP realm or PASS site another local node named first is refused
+  in the wizard's Apply ("another node has this name"), and on Edge Clients › Domains for a host name added by hand.
+  A replicated mail address or number another local node holds is kept as a replica conflict, shown on Domains with
+  Check again; an address two nodes both have gets 451 at `RCPT TO` until one lets it go. Chat bridge ids may be the
+  same on two nodes: a webhook goes by the request's host name first.
+- **Each area by its owner.** Web access by host name; mail in by the recipient's address, the most specific match
+  first; chat webhooks by the bridge within the host name; PASS by the site a local node's setup names; XMPP by the
+  domain a client names, on one pair of ports; SIP by the number dialled and the phone's realm; calls by the room's
+  node, with a TURN secret per pairing; delegated calls and the queue by the owner of the item. A call with no owner is
+  refused while more than one local node is paired.
+- **Limits per local node.** The queue's size cap holds for each local node alone, and a local node's own cap is set
+  on Edge Clients › Clients (Queue cap). Mail delivery gives each local node with mail due an even share of its
+  sessions. Call legs have a cap per local node (`edge_call_legs_per_pairing`).
+- **Isolation.** Reasonable, not multi-tenant: one operator runs the edge node, and the local nodes belong to one
+  organization or to related ones. Shared: the edge node's addresses and mail reputation, its DKIM key (published in
+  each domain), its media and TURN ports, web protection's counts, CPU and bandwidth. Revoking a local node ends its
+  link and its TURN access.
+
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): an operator per local node with a view of its own,
+and a cluster of local nodes as one pairing (E17).
 
 ## Cluster
 
@@ -1076,10 +1078,15 @@ Sessions are rows in the shared database, so any member can serve any request.
                       | https
                load balancer             webapp_trusted_proxies on each member
            +----------+----------+
-       member 1   member 2   member 3    8444 between members only (cluster_base_url)
+       member 1   member 2   member 3    conf/local-cluster/MoquiLocalConf.xml; 8444 between members only
            +----------+----------+
               shared Postgres            entity_ds_db_conf=postgres
 ```
+
+Every member runs `conf/local-cluster/MoquiLocalConf.xml`; the `.env` names and the commands are in
+[runtime/conf/local-cluster](../runtime/conf/local-cluster/README.md), and the conf's comments say what each setting
+does. A cluster pooled and balanced by an edge node in place of your own load balancer is not built yet
+([Edge-Node2](../plans/Edge-Node2.md) E17).
 
 ### Requirements
 
@@ -1094,39 +1101,24 @@ Sessions are rows in the shared database, so any member can serve any request.
 
 ### Steps
 
-1. Start the first member once with the shared database settings, so it generates its secrets into `.env`.
+1. Start the first member once with `conf/local-cluster/MoquiLocalConf.xml` and the shared database settings in
+   `.env`, so it generates its secrets into `.env`.
 2. Copy that `.env` to each other member before its first start.
 3. Set `cluster_base_url=https://<this member's private address>:8444` on each member. Empty is
    `https://127.0.0.1:8444`, which logs an error once other members are live.
 4. Open port 8444 between the members only.
-5. If the load balancer does not keep a client on one member, set guaranteed session writes in the runtime conf:
-
-   ```xml
-   <webapp-list><webapp name="webroot"><session-config flush="guarantee"/></webapp></webapp-list>
-   ```
-
+5. The conf writes each session change before the response (`<session-config flush="guarantee"/>`), for a load
+   balancer that does not keep a client on one member. With sticky sessions it can go.
 6. Set `webapp_trusted_proxies` and `webapp_client_ip_header` for the load balancer, then start the other members.
 7. Check the cluster with `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database.
 
 ### Transports
 
-`cluster_transport` sets how peers reach this member:
-
-| Value | How |
-|---|---|
-| empty (default) | Its cluster port at `cluster_base_url` (8444): TLS with the cluster certificate, then gRPC or HTTP/1.1 (below) |
-| `notify` | Postgres `LISTEN`/`NOTIFY` on the shared database, for members that cannot connect to each other; needs Postgres |
-| `ssh` | Through the member's SSH server (`ssh_port`); needs the `ssh` feature |
-
-On the cluster port TLS picks the protocol by ALPN. `cluster_protocol` sets what a member speaks there, as listener and
-as sender:
-
-| Value | How |
-|---|---|
-| empty (default), `grpc` | gRPC on HTTP/2 (`moqui.cluster.v1.Cluster`): each peer gets what was waiting for it as one call. A peer that does not choose HTTP/2 is posted to over HTTP/1.1 |
-| `rest` | HTTP/1.1 only: `POST /cluster/{topic}`, one message each |
-
-Members on different settings, or of different builds, still reach each other: the HTTP/1.1 POST is always there.
+`cluster_transport` sets how peers reach this member: its cluster port at `cluster_base_url` (the default: TLS with the
+cluster certificate), Postgres `LISTEN`/`NOTIFY` (`notify`, for members that cannot connect to each other), or its SSH
+server (`ssh`). On the cluster port `cluster_protocol` picks gRPC on HTTP/2 (the default) or HTTP/1.1 only (`rest`).
+Members on different settings, or of different builds, still reach each other: the HTTP/1.1 POST is always there. The
+values are in the conf's comments.
 
 ### What is shared and what is not
 
@@ -1156,6 +1148,10 @@ business database. The public machines keep only sessions and their own conf.
                                                                one server or a cluster
 ```
 
+A PASS server runs `conf/pass/MoquiPassConf.xml` and the authority `conf/pass/MoquiAuthorityConf.xml`; the `.env` names
+and the commands are in [runtime/conf/pass](../runtime/conf/pass/README.md), and the confs' comments say what each
+setting does. Change their example names (the host, site id, client id and callback) to yours.
+
 In local mode, mr-pass runs in the same runtime as Mantle and makes in-process calls; that is the default when
 `pass_backend_url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
 [docs/Deployment.md](../runtime/components/addon/mr-pass/docs/Deployment.md). This section covers the remote layout.
@@ -1172,30 +1168,14 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    [cluster](#cluster). Use Maximal or Enterprise: forum thumbnails need `image`, and sign-in providers need `sso`.
    The site readiness check reports what is missing. The PASS jobs are in Mantle's data (`ForumSetupData.xml`) and run
    here. Add mr-pass only if this server also serves sites itself.
-2. Register each PASS deployment with these properties, kept with the other secrets in `.env` or the environment:
-
-   | Property | Value |
-   |---|---|
-   | `pass_client_<id>_secret` | The deployment's secret |
-   | `pass_client_<id>_sites` | The site IDs it may serve, comma-separated |
-   | `pass_client_<id>_callback` | The exact SSO callback, such as `https://forum.example.com/account/Sso` |
-
-   For gRPC clients, set `pass_authority_grpc_enabled=true`: the gRPC listener (`pass_authority_grpc_port`, 4317) then
-   takes PASS calls, with the client's ID and secret in metadata and TLS from the HTTPS listener's certificate. With no
-   certificate in `cert/` the listener falls back to plain h2c, and then takes PASS calls only on a loopback address
-   (an error is logged otherwise), unless `pass_authority_grpc_insecure=true` says to send the secrets in clear. The
-   HTTPS listener takes the same calls over [HTTP/2](#http2), so a PASS server's `pass_backend_grpc_url` can name the
-   HTTPS port (`grpcs://boss.example.com:443`) and no other port needs to be open.
+2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass_client_<id>_sites`,
+   `pass_client_<id>_callback`), in `.env` its secret (`pass_client_<id>_secret`). The conf turns on gRPC for PASS
+   clients (`pass_authority_grpc_enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other
+   port needs to be open.
 3. Create the sites and bind their hosts and mounts with `mantle.public.SiteServices.create#Site` and `store#Mounts`
    (Deployment.md, Provisioning).
-4. When web protection is on (`webapp_trusted_proxies` set, or `webapp_web_protection=true`), exempt the PASS servers,
-   or all their visitors count as one client:
-
-   ```xml
-   <webapp-list><webapp name="webroot"><web-protection>
-       <client-rule name="pass-servers" action="exempt" cidr="10.0.2.0/24"/>
-   </web-protection></webapp></webapp-list>
-   ```
+4. Put the PASS servers' addresses in the conf's `client-rule`, which exempts them from web protection, or all their
+   visitors count as one client.
 
 ### A PASS server
 
@@ -1208,29 +1188,9 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    ```
 
 2. Build it with any server package. PASS calls the authority for images and sign-in, so Lite, the smallest, is
-   enough: `./moq archive --lite --no-data`.
-3. Configure it in `.env` and `MoquiConf.xml`. Set `pass_backend_url` to the authority's final https origin, so that
-   no call depends on a redirect.
-
-   ```sh
-   pass_backend_url=https://boss.example.com
-   pass_client_id=forum
-   pass_client_secret=...
-   ```
-
-   ```xml
-   <webapp-list><webapp name="webroot">
-       <public-site host="forum.example.com" site-id="FORUM_SITE" screen-location="component://mr-pass/screen/Pass.xml"
-               resolver-service="pass.RouteServices.resolve#Route">
-           <mount path="/forum" screen="Forum"/>
-           <mount path="/account" screen="Account"/>
-           <mount path="/members" screen="Members"/>
-           <mount path="/sites" screen="Sites"/>
-       </public-site>
-   </webapp></webapp-list>
-   ```
-
-   The hosts and mounts here must match the ones bound at the authority.
+   enough: `./moq archive --lite --no-data --conf conf/pass/MoquiPassConf.xml`.
+3. Set the authority's origin, the client id and the public site's host and mounts in the conf; they must match the
+   ones bound at the authority. Put `pass_client_secret` in `.env`.
 4. Embedded Postgres is enough. The PASS server stores framework tables and sessions, and the sessions hold each
    visitor's delegation from the authority.
 5. Put the certificate for the public host in `cert/`. Behind a proxy, set `webapp_trusted_proxies` and
@@ -1281,25 +1241,29 @@ The group server runs production purpose because it holds the team's real data. 
 gives its users code execution as the server's OS user, and the dev conf turns off the tarpits and allows every
 origin.
 
+The group server runs `conf/dev-group/MoquiGroupConf.xml`; the dev instances and the shared dev-aide server keep the
+dev conf, with a few properties in their `.env`. Those names and the commands are in
+[runtime/conf/dev-group](../runtime/conf/dev-group/README.md), and the conf's comments say what each setting does.
+
 ### The group server
 
 1. Run BOSS: `./moq component-get mr-boss` (which brings mr-mantle), on Maximal, or on Enterprise as a
-   [cluster](#cluster). Set it up as in [One production server](#one-production-server).
+   [cluster](#cluster), with `conf/dev-group/MoquiGroupConf.xml`. Set it up as in
+   [One production server](#one-production-server).
 2. **Git hosting** ([Git-Hosting](interfaces/Git-Hosting.md)):
    - HTTPS clones work as soon as HTTPS does: `https://team.example.com/git/<repositoryId>.git`.
-   - For SSH, set `ssh_port` (such as 2222, since 22 is usually the system's sshd), `ssh_host=0.0.0.0`, and
-     `ssh_public_port` for the clone URLs shown.
+   - The conf runs the SSH server on every address, on 2222 (22 is usually the system's sshd).
    - Grant `SSH_GIT` to the developers' group. Seed data grants it to ADMIN only.
    - Create repositories from a project's Repositories tab, or on the Git Repositories screen (System, Resource
      Finder). On a cluster, make them `db` repositories.
    - Commit trailers such as `Task: PROJ-12` and branch names link commits to Projects work items through Mantle's
      gitECA rules.
-3. **LLM gateway** ([Gateway](ai/Gateway.md)):
-   - set `llm_gateway_enabled=true` and the aliases developers call;
+3. **LLM gateway** ([Gateway](ai/Gateway.md)), which the conf turns on with the alias `default`:
+   - add the aliases developers call (System › LLM › Gateway › Aliases, or the conf);
    - grant `LlmGatewayUse` to the developers' group;
    - for each developer's key, add an `LlmApiClient` row with the `gateway` scope (System › LLM › Gateway). Its
      `allowedAliases`, `dailyTokens` and `dailyCost` limit that key.
-4. Optionally, turn on MCP (`mcp_enabled=true`) for coding agents. `/mcp/setup` gives a client config to paste
+4. Optionally, turn on MCP (`mcp_enabled=true` in the conf) for coding agents. `/mcp/setup` gives a client config to paste
    ([MCP](ai/MCP.md)).
 
 ### Each dev instance
@@ -1422,7 +1386,8 @@ mr-moqui/
       dev/            components that load only on a dev instance: dev-aide, example, demo (off until a conf names
                       it); template for component-create
       test/           test-only add-on components, loaded on a dev or test instance (not in git)
-    conf/             MoquiDevConf.xml, MoquiProductionConf.xml, MoquiDemoConf.xml, MoquiEdgeConf.xml
+    conf/             MoquiDevConf.xml, MoquiProductionConf.xml, MoquiDemoConf.xml, MoquiLoadTestConf.xml; a
+                      directory of confs per topology: edge/, all-in-one/, pass/, dev-group/, local-cluster/
     cert/ db/ log/ .env   per-instance files (not in git)
   podman/             the image, compose stacks and Quadlet units
   systemd/            the unit, sysusers file and drop-ins

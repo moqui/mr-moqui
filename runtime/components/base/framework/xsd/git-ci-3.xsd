@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pipelines: the ci.xml file at the root of a hosted git repository, read at the commit a run is for. No Java
+    counterpart (MR Moqui). Guide: docs/interfaces/Pipelines.md. The reader is strict (crates/moqui-git/src/ci/file.rs):
+    an element or attribute that is not here is an error, and the run is an error status naming the line. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+    <xs:element name="ci">
+        <xs:annotation><xs:documentation>The pipelines of a repository.</xs:documentation></xs:annotation>
+        <xs:complexType><xs:sequence><xs:element maxOccurs="unbounded" ref="pipeline"/></xs:sequence></xs:complexType>
+    </xs:element>
+
+    <xs:element name="pipeline">
+        <xs:annotation><xs:documentation>Jobs that run for a commit on the events named. The jobs run in parallel
+            unless one needs another.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" ref="env"/>
+                <xs:element maxOccurs="unbounded" ref="job"/>
+            </xs:sequence>
+            <xs:attribute name="name" type="xs:string" use="required"><xs:annotation><xs:documentation>Letters, digits,
+                dot, dash and underscore; unique in the file. The status context is ci/pipeline/job.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="on" type="xs:string" use="required"><xs:annotation><xs:documentation>The events, separated
+                by spaces: push (a branch moved), merge-request (one opened, or its head moved), tag (one created),
+                schedule (by cron), manual (asked for by a user with the update right), deploy (a deployment to an
+                environment).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="branches" type="xs:string"><xs:annotation><xs:documentation>Branch name patterns, separated
+                by spaces (* is any run of characters): the branch of a push, the target branch of a merge request, the
+                branch a schedule runs on (the default branch when empty). Every branch when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tags" type="xs:string"><xs:annotation><xs:documentation>Tag name patterns for the tag
+                event; every tag when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="cron" type="xs:string"><xs:annotation><xs:documentation>When a schedule pipeline runs: a
+                cron expression of six fields (seconds first), as a ServiceJob's. Required with the schedule event,
+                read from the default branch.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="job">
+        <xs:annotation><xs:documentation>Steps run in order in one container (or on one registered runner), in a
+            shallow checkout of the commit. A step that fails ends the job.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:choice minOccurs="0" maxOccurs="unbounded">
+                    <xs:element ref="env"/>
+                    <xs:element ref="secret"/>
+                    <xs:element ref="service"/>
+                    <xs:element ref="matrix"/>
+                    <xs:element ref="cache"/>
+                    <xs:element ref="step"/>
+                    <xs:element ref="artifact"/>
+                    <xs:element ref="report"/>
+                </xs:choice>
+            </xs:sequence>
+            <xs:attribute name="name" type="xs:string" use="required"><xs:annotation><xs:documentation>Letters, digits,
+                dot, dash and underscore; unique in the pipeline.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="image" type="xs:string" use="required"><xs:annotation><xs:documentation>The image the job
+                runs in; the pool must allow it. ${matrix.NAME} is expanded.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="pool" type="xs:string"><xs:annotation><xs:documentation>The runner pool's name; the
+                default pool when empty. An untrusted run uses only a pool that takes untrusted runs.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="timeout-minutes" type="xs:positiveInteger"><xs:annotation><xs:documentation>The job is
+                ended as an error after this long; never more than the pool's and the server's limit.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="needs" type="xs:string"><xs:annotation><xs:documentation>Job names of this pipeline,
+                separated by spaces: this job starts once each has succeeded (every matrix job of one), and is skipped
+                when one did not.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="fetch-depth" type="xs:positiveInteger" default="1"><xs:annotation><xs:documentation>The
+                depth of the checkout's history.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="environment" type="xs:string"><xs:annotation><xs:documentation>The environment whose
+                secrets the job may ask for; given only for a trusted run.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="env">
+        <xs:annotation><xs:documentation>An environment variable of the pipeline's jobs, of a job, or of a service
+            container. ${matrix.NAME} is expanded in the value.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="value" type="xs:string" use="required"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="secret">
+        <xs:annotation><xs:documentation>A secret the job asks for, given as an environment variable. It is given only
+            to a job of a trusted run on a protected branch or tag, or in the job's environment; otherwise the
+            variable is not set. Its value is masked in the log.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="name" type="xs:string" use="required"><xs:annotation><xs:documentation>The secret's name.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="env" type="xs:string"><xs:annotation><xs:documentation>The variable's name; the secret's
+                name when empty.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="service">
+        <xs:annotation><xs:documentation>A container beside the job (a database), reached from the job by its name
+            as a host name. Removed with the job.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="env"/></xs:sequence>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="image" type="xs:string" use="required"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="matrix">
+        <xs:annotation><xs:documentation>The job runs once for each combination of the axes' values, each a job of
+            its own with the status context ci/pipeline/job (value, value).</xs:documentation></xs:annotation>
+        <xs:complexType><xs:sequence><xs:element maxOccurs="unbounded" ref="axis"/></xs:sequence></xs:complexType>
+    </xs:element>
+    <xs:element name="axis">
+        <xs:complexType>
+            <xs:attribute name="name" type="xs:string" use="required"><xs:annotation><xs:documentation>${matrix.NAME} in
+                the job's image, env values, step commands, cache keys, artifact names and service images, and the
+                variable MATRIX_NAME (upper case) in the job.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="values" type="xs:string" use="required"><xs:annotation><xs:documentation>Separated by
+                spaces.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="cache">
+        <xs:annotation><xs:documentation>A directory kept between runs, by key, per repository and separately for
+            protected and unprotected refs. Restored before the first step and saved after the last when the job
+            succeeded and nothing is stored under the key yet. An untrusted run reads the target branch's cache and
+            writes none.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="key" type="xs:string" use="required"><xs:annotation><xs:documentation>${hash:FILE} is the
+                SHA-256 of a file of the checkout (empty when it is not there); ${matrix.NAME} is expanded.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="path" type="xs:string" use="required"><xs:annotation><xs:documentation>A path inside the
+                checkout.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="step">
+        <xs:complexType>
+            <xs:attribute name="run" type="xs:string" use="required"><xs:annotation><xs:documentation>A shell command,
+                run with sh -c in the checkout.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="name" type="xs:string"/>
+            <xs:attribute name="timeout-minutes" type="xs:positiveInteger"><xs:annotation><xs:documentation>The step is
+                ended as failed after this long; the job's time limit still applies.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="continue-on-error" type="xs:boolean" default="false"><xs:annotation><xs:documentation>The
+                job goes on when the step fails, and the step's failure does not fail it.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="artifact">
+        <xs:annotation><xs:documentation>Files uploaded when the steps have run (also when one failed), as one
+            tar.gz download of the run.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="path" type="xs:string" use="required"><xs:annotation><xs:documentation>A file, a directory
+                or a pattern (* is any run of characters of one name, in any segment), inside the checkout.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="retention-days" type="xs:positiveInteger"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="report">
+        <xs:annotation><xs:documentation>Test results uploaded when the steps have run: each failed test becomes a
+            row of the run (suite, test, file, line, message).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="junit" type="xs:string" use="required"><xs:annotation><xs:documentation>JUnit XML files: a
+                file, a directory or a pattern (* is any run of characters of one name, in any segment), inside the checkout.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>

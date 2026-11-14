@@ -232,6 +232,10 @@ webpki = { package = "rustls-webpki", version = "0.103", default-features = fals
 # Self-signed cluster certificate. ring and pem stay off. aws-lc-rs is the crypto provider.
 # x509-parser and fips stay off. time is certificate validity only; clocks stay jiff.
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs"] }
+# The ACME client of System › Certificates (moqui-host src/acme, plans/Edge-Node2.md §4.8): aws-lc-rs, and its
+# hyper-rustls client with the OS trust store, as reqwest verifies with; ring stays off. Its rcgen feature stays off: the
+# certificate's key and request are made with the rcgen above.
+instant-acme = { version = "0.8", default-features = false, features = ["aws-lc-rs", "hyper-rustls"] }
 # No std feature on 0.6. Defaults are alloc, getrandom, and password-hash.
 argon2 = { version = "0.6", features = ["password-hash"] }
 csv = "1"

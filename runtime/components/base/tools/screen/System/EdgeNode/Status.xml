@@ -129,7 +129,7 @@ along with this software (see the LICENSE.md file). If not, see
                         // through the edge node: its tunnel ports come here, and the domain is a host name of this node there
                         const hosted = !!xmppDomain && Array.from(offer.nodeHosts || [])
                             .some((host) => String(host.hostName || '').replace(/\.$/, '').toLowerCase() === xmppDomain)
-                        xmppText = !xmppDomain ? L('No XMPP server on this node') : xmpp.needsNode ? L('Refused: set edge_xmpp_node on the edge node')
+                        xmppText = !xmppDomain ? L('No XMPP server on this node') : xmpp.needsNode ? L('Not found there: apply the setup again to name the XMPP domain')
                             : xmpp.available && !xmpp.otherNode && hosted
                             ? ec.resource.expand('${domain} through ports ${ports}', '', {domain: xmppDomain, ports})
                             : L('Not through the edge node')

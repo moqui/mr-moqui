@@ -15,6 +15,19 @@ podman/build.sh --nobuild  # image only, from an existing target/release/moqui
 
 The image copies `runtime/components/base` and whatever is checked out under `runtime/components/addon` (no `.git` and no `target/`). Add components before building the image.
 
+`podman/build.sh` uses `docker` when there is no `podman` on `PATH`.
+
+### The build image
+
+`moqui-build` (`Containerfile.build`) is the image pipeline jobs run in ([Pipelines](../docs/interfaces/Pipelines.md#images)): the same Debian base with the Rust toolchain `rust-toolchain.toml` pins, a C toolchain, git, bash, curl and the libraries embedded Postgres loads; the `moqui` binary, whose `moqui ci-run` is the job's runner; and an MR Moqui tree at `/opt/moqui` (what is tracked, no add-on components) for the built-in pipeline of a component repository.
+
+```sh
+podman/build.sh --build-image            # both images
+podman/build.sh --only-build-image --nobuild --chromium --java
+```
+
+`--chromium` adds Chromium (PDF and the browser tests) and `--java` a Java runtime (for an OpenSearch that `./moq opensearch-download` gets in the job). The image is tagged `localhost/moqui-build:latest` and with the binary's version. A job's container runs as uid 1000 with a read-only root, a volume at `/workspace` and a tmpfs at `/tmp`, so the image sets `HOME` and `CARGO_HOME` under `/workspace`.
+
 The container starts as root so it can chown a new data volume, then drops to uid 1000 before the binary. Embedded Postgres will not run as root. One volume, mounted at `/var/lib/moqui`, holds `db`, `log`, `cert`, `tmp`, `install`, `txlog`, and the generated secrets file. Those paths are symlinks into `/opt/moqui`, which is the runtime directory.
 
 ## Compose

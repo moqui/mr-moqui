@@ -12,16 +12,23 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Who holds a name, address, number or bridge (plans/archive/Edge-Node.md §10, E12). Ownership is exclusive: each item
-//! belongs to the server itself or to one paired node. [`own_claim`] finds the server's own holder of an item and
-//! [`replica_claim`] the paired node whose copies (its replicated sets, its Configure) hold it. Configure and
-//! replication refuse what the server holds, and the server's own setup refuses what a paired node holds, each with
-//! [`claimed_message`] naming the item.
+//! Who holds a name, address, number, bridge or site (plans/archive/Edge-Node.md §10, E12; plans/Edge-Node2.md §4.1,
+//! E16). Ownership is exclusive: each item belongs to the server itself or to one paired node, and on a node with
+//! several pairings to one of them. [`own_claim`] finds the server's own holder of an item and [`replica_claim`] the
+//! paired node whose copies (its replicated sets, its Configure) hold it; [`pairing_claim`] the same among the other
+//! pairings only. Configure and replication refuse what the server or another pairing holds (the first claim holds),
+//! and the server's own setup refuses what a paired node holds, each with [`claimed_message`] naming the item to the
+//! operator; a paired node is told only [`HELD_BY_ANOTHER`].
+//!
+//! A chat bridge id is the one item two pairings may share: ids come from separate databases, so a webhook goes by the
+//! bridge id within the request's host name (`crate::service::chat_bridge_edge`), and only the server's own bridge
+//! (on an all-in-one node) is exclusive. A mail domain is split by address, between the server and a pairing as
+//! between two pairings; each address has one holder.
 //!
 //! The server's host names ([`own_host_names`]) are what a dedicated edge node already reserves (§5.7); an all-in-one
 //! node adds its `xmpp_domain` and `sip_domain`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
@@ -44,6 +51,8 @@ pub enum ClaimKind {
     PhoneNumber,
     /// A SIP device domain (registrar realm): the server's `sip_domain`, a paired node's Configure `sipDomain`.
     SipDomain,
+    /// An mr-pass site whose authority is a paired node: a paired node's Configure `passSites` (E16).
+    PassSite,
 }
 
 impl ClaimKind {
@@ -56,6 +65,7 @@ impl ClaimKind {
             Self::XmppDomain => "XMPP domain",
             Self::PhoneNumber => "phone number",
             Self::SipDomain => "SIP domain",
+            Self::PassSite => "PASS site",
         }
     }
 
@@ -68,6 +78,7 @@ impl ClaimKind {
             Self::XmppDomain => "XmppDomain",
             Self::PhoneNumber => "PhoneNumber",
             Self::SipDomain => "SipDomain",
+            Self::PassSite => "PassSite",
         }
     }
 
@@ -80,6 +91,7 @@ impl ClaimKind {
             Self::XmppDomain,
             Self::PhoneNumber,
             Self::SipDomain,
+            Self::PassSite,
         ]
         .into_iter()
         .find(|kind| kind.id() == id.trim())
@@ -87,8 +99,8 @@ impl ClaimKind {
 }
 
 /// The item a replicated record claims, by its entity: an `EmailAccount`'s or `EmailIdentity`'s address, a
-/// `ChatBridge`'s id, a `PhoneNumberFallback`'s number. `None` for a record that claims nothing (an `EmailServer`, a
-/// trunk, a group), or one with no key.
+/// `ChatBridge`'s id, a `PhoneNumberFallback`'s or a `PhoneNumber`'s number (the latter in `voiceTrunks`, E16). `None`
+/// for a record that claims nothing (an `EmailServer`, a trunk, a group), or one with no key.
 pub fn copy_claim(
     entity_name: &str,
     pk: &serde_json::Value,
@@ -104,20 +116,27 @@ pub fn copy_claim(
     match entity_name {
         ACCOUNT | IDENTITY => of(fields, "emailAddress").map(|key| (ClaimKind::MailAddress, key)),
         BRIDGE => of(pk, "chatBridgeId").map(|key| (ClaimKind::ChatBridge, key)),
-        FALLBACK => of(pk, "phoneNumber").map(|key| (ClaimKind::PhoneNumber, key)),
+        FALLBACK | PHONE_NUMBER => of(pk, "phoneNumber").map(|key| (ClaimKind::PhoneNumber, key)),
         _ => None,
     }
 }
 
-/// An item of a paired node's Configure that the server holds, so it was taken out of the setup kept.
+/// What a paired node is told of an item another pairing holds: never which one (plans/Edge-Node2.md §4.1).
+pub const HELD_BY_ANOTHER: &str = "another node has this name";
+
+/// An item of a paired node's Configure that the server or another pairing holds, so it was taken out of the setup
+/// kept.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refused {
     /// The setup's field it was in (`chatBridgeIds`, `mailDomains`, ..).
     pub field: &'static str,
     pub kind: ClaimKind,
     pub key: String,
-    /// The server's holder, for the log ("the server's ChatBridge B1"); the paired node is told only the item.
+    /// The holder, for the log ("the server's ChatBridge B1", "paired node local-b"); the paired node is told only
+    /// the item, and for another pairing's only [`HELD_BY_ANOTHER`].
     pub holder: String,
+    /// Another pairing holds it, not the server.
+    pub by_pairing: bool,
 }
 
 /// What [`check_setup_claims`] found in a paired node's Configure.
@@ -133,33 +152,60 @@ pub struct SetupClaims {
 /// The fields of a kept setup (`EdgeClient.setupJson`) that name items one side holds, by kind: each a string or a
 /// list of strings. `mailDomains` is checked by [`check_setup_claims`] on its own rule. A Configure names no phone
 /// numbers: a paired node's numbers are its replicated `voiceFallbacks`, checked as replica conflicts.
-const SETUP_ITEMS: [(&str, ClaimKind); 3] = [
+const SETUP_ITEMS: [(&str, ClaimKind); 4] = [
     ("chatBridgeIds", ClaimKind::ChatBridge),
     ("xmppDomain", ClaimKind::XmppDomain),
     ("sipDomain", ClaimKind::SipDomain),
+    ("passSites", ClaimKind::PassSite),
 ];
 
-/// On an all-in-one node, take out of a paired node's setup (the JSON kept on its `EdgeClient`) each item the server
-/// holds ([`own_claim`]): a chat bridge, its XMPP domain, its SIP domain, and a mail domain the server holds whole. A
-/// mail domain is split by address (§10): the server holds one whole only as its own bounce domain
-/// (`edge_mail_bounce_domain`, or a subdomain of it), and one it merely has addresses in is kept and noted in
-/// [`SetupClaims::shared_domains`]. An item whose check fails is refused, logged, as the server cannot tell.
+/// Whether two pairings may both hold an item of `kind`: a chat bridge id, which the request's host name tells apart
+/// (see the module notes).
+fn shared_between_pairings(kind: ClaimKind) -> bool {
+    kind == ClaimKind::ChatBridge
+}
+
+/// On a node that takes links, take out of paired node `node`'s setup (the JSON kept on its `EdgeClient`) each item
+/// another holder has: on an all-in-one node the server ([`own_claim`]: a chat bridge, its XMPP domain, its SIP domain,
+/// and a mail domain the server holds whole), and on any such node another active pairing ([`pairing_claim`]: its XMPP
+/// or SIP domain, its PASS sites; the first claim holds). A mail domain is split by address (§10): the server holds
+/// one whole only as its own bounce domain (`edge_mail_bounce_domain`, or a subdomain of it), and one it merely has
+/// addresses in is kept and noted in [`SetupClaims::shared_domains`]; between pairings a domain is split the same way.
+/// An item whose check fails is refused, logged, as the node cannot tell.
 pub fn check_setup_claims(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
+    node: &str,
     setup: &mut serde_json::Value,
 ) -> SetupClaims {
+    let all_in_one = super::settings(factory).all_in_one();
     let mut found = SetupClaims::default();
     let mut refuse = |field: &'static str, kind: ClaimKind, key: &str| -> bool {
-        let holder = match own_claim(factory, facade, kind, key) {
-            Ok(Some(holder)) => holder,
-            Ok(None) => return false,
+        let own = if all_in_one {
+            own_claim(factory, facade, kind, key)
+        } else {
+            Ok(None)
+        };
+        let (holder, by_pairing) = match own {
+            Ok(Some(holder)) => (holder, false),
+            Ok(None) if shared_between_pairings(kind) => return false,
+            Ok(None) => match pairing_claim(facade, kind, key, Some(node)) {
+                Ok(Some(other)) => (format!("paired node {other}"), true),
+                Ok(None) => return false,
+                Err(error) => {
+                    tracing::error!(
+                        "{} {key}: whether another pairing holds it could not be read, so it is refused: {error}",
+                        kind.label()
+                    );
+                    ("another pairing (the check failed)".to_string(), true)
+                }
+            },
             Err(error) => {
                 tracing::error!(
                     "{} {key}: whether the server holds it could not be read, so it is refused: {error}",
                     kind.label()
                 );
-                "the server (the check failed)".to_string()
+                ("the server (the check failed)".to_string(), false)
             }
         };
         found.refused.push(Refused {
@@ -167,6 +213,7 @@ pub fn check_setup_claims(
             kind,
             key: key.trim().to_string(),
             holder,
+            by_pairing,
         });
         true
     };
@@ -198,8 +245,12 @@ pub fn check_setup_claims(
                     kind: ClaimKind::MailAddress,
                     key: name,
                     holder: format!("the server's bounce domain {bounce}"),
+                    by_pairing: false,
                 });
                 return false;
+            }
+            if !all_in_one {
+                return true;
             }
             match own_domain_addresses(facade, &name) {
                 Ok(0) => {}
@@ -241,6 +292,8 @@ pub const MAIL_SET: &str = "mailRecipients";
 pub const CHAT_SET: &str = "chatBridges";
 /// The replicated set of a paired node's numbers' fallbacks: the numbers the replica knows of.
 pub const FALLBACKS_SET: &str = "voiceFallbacks";
+/// The replicated set of a paired node's trunks, which carries its numbers too (`PhoneNumber`, E16).
+pub const TRUNKS_SET: &str = "voiceTrunks";
 
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
 const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
@@ -420,6 +473,8 @@ pub fn own_claim(
             let name = key.trim_end_matches('.').to_ascii_lowercase();
             Ok((!own.is_empty() && name == own).then(|| format!("the server's SIP domain {own}")))
         }
+        // the server's own mr-pass sites are its own authority's, which no Configure names
+        ClaimKind::PassSite => Ok(None),
     }
 }
 
@@ -472,60 +527,157 @@ fn own_mail_address(facade: &EntityFacade, address: &str) -> Result<Option<Strin
 /// - a host name: its `EdgeHost` rows (exact name), kept by a revoked node too, as the names stay reserved for it;
 /// - a mail address: its replicated `mailRecipients` accounts and identities, in any case;
 /// - a chat bridge: its replicated `chatBridges`;
-/// - a phone number: its replicated `voiceFallbacks` (a number with nothing to fall back to has no copy);
-/// - an XMPP or SIP domain: the `xmppDomain` or `sipDomain` of its last Configure (`EdgeClient.setupJson`).
+/// - a phone number: its replicated `PhoneNumber` (in `voiceTrunks`, E16) or `PhoneNumberFallback` (`voiceFallbacks`);
+/// - an XMPP or SIP domain: the `xmppDomain` or `sipDomain` of its last Configure (`EdgeClient.setupJson`);
+/// - a PASS site: the `passSites` of its last Configure.
 ///
 /// # Errors
 ///
 /// Returns the database's error.
 pub fn replica_claim(facade: &EntityFacade, kind: ClaimKind, key: &str) -> Result<Option<String>, Error> {
+    pairing_claim(facade, kind, key, None)
+}
+
+/// [`replica_claim`] among the active pairings other than `except`: the other pairing that holds `key` of `kind`. What
+/// a Configure or a replicated record of pairing `except` is refused for (the first claim holds).
+///
+/// # Errors
+///
+/// Returns the database's error.
+pub fn pairing_claim(
+    facade: &EntityFacade,
+    kind: ClaimKind,
+    key: &str,
+    except: Option<&str>,
+) -> Result<Option<String>, Error> {
     let key = key.trim();
     if key.is_empty() {
         return Ok(None);
     }
+    if kind == ClaimKind::HostName {
+        let name = key.trim_end_matches('.').to_ascii_lowercase();
+        return Ok(facade
+            .find(EDGE_HOST)?
+            .eq("hostName", Value::string(&name))
+            .select_field("pairedNodeId")
+            .disable_authz()
+            .one()?
+            .map(|row| text(&row, "pairedNodeId"))
+            .filter(|node| Some(node.as_str()) != except));
+    }
+    let mut nodes = active_nodes(facade)?;
+    nodes.retain(|node| Some(node.as_str()) != except);
+    claim_among(facade, kind, key, &nodes)
+}
+
+/// The first of `nodes` (active pairings, in order) whose copies or Configure hold `key` of `kind`; not for a host
+/// name, which [`pairing_claim`] reads from its own row.
+///
+/// # Errors
+///
+/// Returns the database's error.
+pub fn claim_among(
+    facade: &EntityFacade,
+    kind: ClaimKind,
+    key: &str,
+    nodes: &[String],
+) -> Result<Option<String>, Error> {
+    claim_among_with(facade, kind, key, nodes, &MailIndex::default())
+}
+
+/// [`claim_among`] with the mail addresses of the copies read once into `index` and kept there for its holder's life
+/// (a batch of replication, in its transaction, so a batch rolled back leaves nothing kept).
+///
+/// # Errors
+///
+/// Returns the database's error.
+pub fn claim_among_with(
+    facade: &EntityFacade,
+    kind: ClaimKind,
+    key: &str,
+    nodes: &[String],
+    index: &MailIndex,
+) -> Result<Option<String>, Error> {
+    let key = key.trim();
+    if key.is_empty() || nodes.is_empty() {
+        return Ok(None);
+    }
     match kind {
-        ClaimKind::HostName => {
-            let name = key.trim_end_matches('.').to_ascii_lowercase();
-            Ok(facade
-                .find(EDGE_HOST)?
-                .eq("hostName", Value::string(&name))
-                .select_field("pairedNodeId")
-                .disable_authz()
-                .one()?
-                .map(|row| text(&row, "pairedNodeId")))
-        }
+        ClaimKind::HostName => Ok(pairing_claim(facade, kind, key, None)?.filter(|node| nodes.contains(node))),
         ClaimKind::MailAddress => {
-            // the copies' fields are encrypted at rest, so the address cannot be a condition: each node's are read
-            for node in active_nodes(facade)? {
-                for entity in [ACCOUNT, IDENTITY] {
-                    let copies = super::replica::list_values(facade, Some(&node), MAIL_SET, Some(entity), SCAN_LIMIT)?;
-                    if copies.len() >= SCAN_LIMIT {
-                        tracing::error!(
-                            "paired node {node}: more than {SCAN_LIMIT} {entity} copies in {MAIL_SET}; whether one \
-                             past them holds mail address {key} is not checked"
-                        );
-                    }
-                    let held = copies.iter().any(|copy| {
-                        copy.fields["emailAddress"]
-                            .as_str()
-                            .is_some_and(|held| held.trim().eq_ignore_ascii_case(key))
-                    });
-                    if held {
-                        return Ok(Some(node));
-                    }
+            let holders = index.holders(facade)?;
+            Ok(holders
+                .get(&key.to_ascii_lowercase())
+                .and_then(|held| nodes.iter().find(|node| held.contains(node)))
+                .cloned())
+        }
+        ClaimKind::ChatBridge => keyed_copy(facade, nodes, CHAT_SET, BRIDGE, "chatBridgeId", key),
+        ClaimKind::PhoneNumber => {
+            // a number of a pairing's trunks (E16), or one with a fallback; the first pairing in order with either
+            for node in nodes {
+                let one = std::slice::from_ref(node);
+                if keyed_copy(facade, one, TRUNKS_SET, PHONE_NUMBER, "phoneNumber", key)?.is_some()
+                    || keyed_copy(facade, one, FALLBACKS_SET, FALLBACK, "phoneNumber", key)?.is_some()
+                {
+                    return Ok(Some(node.clone()));
                 }
             }
             Ok(None)
         }
-        ClaimKind::ChatBridge => keyed_copy(facade, CHAT_SET, BRIDGE, "chatBridgeId", key),
-        ClaimKind::PhoneNumber => keyed_copy(facade, FALLBACKS_SET, FALLBACK, "phoneNumber", key),
-        ClaimKind::XmppDomain => setup_claim(facade, "xmppDomain", key),
-        ClaimKind::SipDomain => setup_claim(facade, "sipDomain", key),
+        ClaimKind::XmppDomain => setup_claim(facade, nodes, "xmppDomain", key),
+        ClaimKind::SipDomain => setup_claim(facade, nodes, "sipDomain", key),
+        ClaimKind::PassSite => setup_claim(facade, nodes, "passSites", key),
     }
 }
 
+/// The mail addresses (lower case) of every node's replicated `mailRecipients` accounts and identities, each with the
+/// nodes whose copies have it, read at the first need and kept for the index's life: the copies' fields are encrypted
+/// at rest, so the address cannot be a condition, and a batch checks each of its records. A batch keeps its own
+/// index, so nothing read inside a transaction that rolls back outlives it.
+#[derive(Default)]
+pub struct MailIndex(std::cell::OnceCell<Holders>);
+
+/// The nodes whose copies have each mail address, by the address in lower case.
+type Holders = HashMap<String, Vec<String>>;
+
+impl MailIndex {
+    fn holders(&self, facade: &EntityFacade) -> Result<&Holders, Error> {
+        if let Some(map) = self.0.get() {
+            return Ok(map);
+        }
+        let map = read_holders(facade)?;
+        Ok(self.0.get_or_init(|| map))
+    }
+}
+
+fn read_holders(facade: &EntityFacade) -> Result<Holders, Error> {
+    let mut map = Holders::new();
+    for entity in [ACCOUNT, IDENTITY] {
+        let copies = super::replica::list_values(facade, None, MAIL_SET, Some(entity), SCAN_LIMIT)?;
+        if copies.len() >= SCAN_LIMIT {
+            tracing::error!(
+                "more than {SCAN_LIMIT} {entity} copies in {MAIL_SET}; the mail addresses past them are not checked"
+            );
+        }
+        for copy in copies {
+            let Some(address) = copy.fields["emailAddress"]
+                .as_str()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+            else {
+                continue;
+            };
+            let nodes = map.entry(address.to_ascii_lowercase()).or_default();
+            if !nodes.contains(&copy.paired_node_id) {
+                nodes.push(copy.paired_node_id);
+            }
+        }
+    }
+    Ok(map)
+}
+
 /// The paired nodes that are active (`EdgeClientActive`), in id order.
-fn active_nodes(facade: &EntityFacade) -> Result<Vec<String>, Error> {
+pub fn active_nodes(facade: &EntityFacade) -> Result<Vec<String>, Error> {
     Ok(facade
         .find(EDGE_CLIENT)?
         .eq("statusId", Value::string("EdgeClientActive"))
@@ -539,37 +691,70 @@ fn active_nodes(facade: &EntityFacade) -> Result<Vec<String>, Error> {
         .collect())
 }
 
-/// The active node whose copy in `set` of `entity`'s record with the one key field `field` = `key` exists.
-fn keyed_copy(facade: &EntityFacade, set: &str, entity: &str, field: &str, key: &str) -> Result<Option<String>, Error> {
+/// The first of `nodes` whose copy in `set` of `entity`'s record with the one key field `field` = `key` exists.
+fn keyed_copy(
+    facade: &EntityFacade,
+    nodes: &[String],
+    set: &str,
+    entity: &str,
+    field: &str,
+    key: &str,
+) -> Result<Option<String>, Error> {
     let pk = BTreeMap::from([(field.to_string(), key.to_string())]);
-    for node in active_nodes(facade)? {
-        if super::replica::get_value(facade, Some(&node), set, entity, &pk)?.is_some() {
+    for node in nodes {
+        if super::replica::get_value(facade, Some(node), set, entity, &pk)?.is_some() {
+            return Ok(Some(node.clone()));
+        }
+    }
+    Ok(None)
+}
+
+/// A setup field's names, in normal form (trimmed, lower case, no trailing dot): a string or a list of strings.
+fn setup_names(setup: &serde_json::Value, field: &str) -> Vec<String> {
+    let normal = |name: &str| name.trim().trim_end_matches('.').to_ascii_lowercase();
+    match &setup[field] {
+        serde_json::Value::String(name) => vec![normal(name)],
+        serde_json::Value::Array(names) => names.iter().filter_map(|name| name.as_str()).map(normal).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The first of `nodes` whose last Configure set `field` (a domain, or a list of PASS sites) to `key`, in any case.
+fn setup_claim(facade: &EntityFacade, nodes: &[String], field: &str, key: &str) -> Result<Option<String>, Error> {
+    let name = key.trim().trim_end_matches('.').to_ascii_lowercase();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    for (node, setup) in setups(facade)? {
+        if nodes.contains(&node) && setup_names(&setup, field).contains(&name) {
             return Ok(Some(node));
         }
     }
     Ok(None)
 }
 
-/// The active paired node whose last Configure set `field` (a domain) to `key`, in any case.
-fn setup_claim(facade: &EntityFacade, field: &str, key: &str) -> Result<Option<String>, Error> {
-    let name = key.trim_end_matches('.').to_ascii_lowercase();
+/// The kept setup of each active pairing (`EdgeClient.setupJson`, an empty object when it has none), in id order.
+///
+/// # Errors
+///
+/// Returns the database's error.
+pub fn setups(facade: &EntityFacade) -> Result<Vec<(String, serde_json::Value)>, Error> {
     let clients = facade
         .find(EDGE_CLIENT)?
         .eq("statusId", Value::string("EdgeClientActive"))
         .select_field("pairedNodeId")
         .select_field("setupJson")
+        .order_by("pairedNodeId", false)
         .disable_authz()
         .list()?;
-    for client in clients.values() {
-        let setup: serde_json::Value = serde_json::from_str(&text(client, "setupJson")).unwrap_or_default();
-        let held = setup[field]
-            .as_str()
-            .map(|held| held.trim().trim_end_matches('.').to_ascii_lowercase());
-        if held.is_some_and(|held| !held.is_empty() && held == name) {
-            return Ok(Some(text(client, "pairedNodeId")));
-        }
-    }
-    Ok(None)
+    Ok(clients
+        .values()
+        .iter()
+        .map(|client| {
+            let setup = serde_json::from_str(&text(client, "setupJson")).unwrap_or_else(|_| serde_json::json!({}));
+            (text(client, "pairedNodeId"), setup)
+        })
+        .collect())
 }
 
 #[cfg(test)]

@@ -658,8 +658,9 @@ along with this software (see the LICENSE.md file). If not, see
             transaction-timeout="1800">
         <description>Delete a repository and everything the framework keeps of it: its refs and objects (the rows of a
             db kind, the directory of a local or remote kind), its Git LFS objects and locks, its push log
-            (GitUpdate), commit statuses, webhooks, branch rules, merge requests and their reviewers, the redirects of
-            paths it had, and its row. It cannot be undone.
+            (GitUpdate), commit statuses, webhooks, branch rules, merge requests and their reviewers, its pipeline
+            runs with their jobs, logs and uploads, its CI secrets, environments and schedules (jobs still running
+            are stopped: docs/interfaces/Pipelines.md), the redirects of paths it had, and its row. It cannot be undone.
             Needs delete, which is also the right to force a push and to change the repository's settings: an
             application that lets fewer users delete (an Owner, a typed confirmation) checks its own rule first and
             exposes its own service, not this one. Called with authorization off it deletes for any caller.

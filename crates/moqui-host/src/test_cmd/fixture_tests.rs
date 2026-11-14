@@ -96,6 +96,27 @@ fn the_scratch_runtime_links_the_downloaded_chromium() {
     }
 }
 
+/// The scratch runtime copies the conf with its topology directories, so a `MOQUI_CONF` such as
+/// `conf/edge/MoquiEdgeConf.xml` is found there; a symbolic link to a directory (here a loop) is not followed.
+#[test]
+fn the_scratch_runtime_copies_the_conf_directories() {
+    let root = std::env::temp_dir().join(format!("moqui-fixture-conf-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("conf/edge")).unwrap();
+    std::fs::create_dir_all(root.join("components/base")).unwrap();
+    std::fs::write(root.join("conf/MoquiDevConf.xml"), "<moqui-conf/>").unwrap();
+    std::fs::write(root.join("conf/edge/MoquiEdgeConf.xml"), "<moqui-conf/>").unwrap();
+    std::os::unix::fs::symlink(root.join("conf"), root.join("conf/edge/loop")).unwrap();
+    let runtime = std::fs::canonicalize(&root).unwrap();
+    let scratch = scratch_runtime(&runtime).unwrap();
+    assert!(scratch.join("conf/MoquiDevConf.xml").is_file());
+    assert!(scratch.join("conf/edge/MoquiEdgeConf.xml").is_file());
+    assert!(!scratch.join("conf/edge/loop").exists());
+    for dir in [scratch, runtime] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// At a run's end the other snapshots go once no run has used them for an hour: the one the run used stays however old,
 /// one another run restored a minute ago stays, an old one goes, and so does one with no mark whose dump is old; a
 /// directory that is not a snapshot stays.

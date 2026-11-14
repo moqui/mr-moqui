@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{
-    Configured, DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, EdgeOffer, EdgeSetup,
-    LinkStatus, PairResult, PairingCode, NODE_ID, NODE_KEY, NODE_PIN, NODE_URL,
+    Configured, DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeInfo, EdgeLink, EdgeOffer, EdgeSetup, LinkStatus,
+    PairResult, PairingCode, NODE_ID, NODE_KEY, NODE_PIN, NODE_URL,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -184,24 +184,30 @@ pub(crate) fn start(
                 listener(factory, super::TUNNEL_LISTENER, State::Skipped(busy.clone()));
             }
             for port in ports.into_iter().filter(|_| busy.is_none()) {
-                // an all-in-one node's own XMPP server keeps its ports; the paired node's domain has its own (§10)
+                // an all-in-one node's own XMPP ports take its pairings' domains too (E16, tunnel::xmpp_to_pairing)
                 if let Some(own) = role
                     .all_in_one()
                     .then(|| super::tunnel::own_xmpp_clash(port.bind))
                     .flatten()
                 {
-                    tracing::error!(
-                        "The edge {} tunnel port {} is the server's own XMPP port ({own}); that tunnel is off: give \
-                         it a port of its own",
+                    tracing::info!(
+                        "The edge {} tunnel port {} is the server's own XMPP port ({own}), which takes the paired \
+                         nodes' XMPP domains too",
                         port.kind,
                         port.bind
                     );
                     continue;
                 }
                 let kind = port.kind;
-                if let Some(address) = super::tunnel::listen(&server, port, Arc::clone(&guard)) {
-                    opened.push(format!("{kind} tcp {address}"));
+                match super::tunnel::listen(&server, port, Arc::clone(&guard), Arc::downgrade(factory), None) {
+                    Ok(address) => opened.push(format!("{kind} tcp {address}")),
+                    Err(err) => tracing::error!("{err}"),
                 }
+            }
+            // the ports of one pairing each, as the System app sets them (E16); not while another process holds the
+            // tunnel listeners (the port check skipped them), whose rows it serves
+            if busy.is_none() {
+                super::tunnel::watch_rows(&server, Arc::clone(&guard), Arc::downgrade(factory));
             }
             if busy.is_none() && !opened.is_empty() {
                 listener(factory, super::TUNNEL_LISTENER, State::On(opened.join(", ")));
@@ -504,34 +510,18 @@ impl EdgeLink for Hook {
         self.server()?.revoke(paired_node_id)
     }
 
-    fn hosts(&self, paired_node_id: Option<&str>) -> Result<Vec<EdgeHostInfo>, Error> {
-        self.server()?;
-        super::hosts::list(&*self.factory()?, paired_node_id)
-    }
-
-    fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error> {
-        let server = self.server()?;
-        let factory = self.factory()?;
-        let saved = super::hosts::add(&factory, host)?;
-        server.hosts.load(&factory)?;
-        tracing::info!(
-            "Edge node: host {} goes to local node {} ({})",
-            saved.host_name,
-            saved.paired_node_id,
-            saved.mode_enum_id
-        );
-        Ok(saved)
-    }
-
-    fn remove_host(&self, host_name: &str) -> Result<bool, Error> {
-        let server = self.server()?;
-        let factory = self.factory()?;
-        let removed = super::hosts::remove(&factory, host_name)?;
-        server.hosts.load(&factory)?;
-        if removed {
-            tracing::info!("Edge node: host {} removed", host_name.trim());
+    fn hosts_changed(&self) {
+        let Ok(server) = self.server() else {
+            return;
+        };
+        match self.factory() {
+            Ok(factory) => {
+                if let Err(err) = server.hosts.load(&factory) {
+                    tracing::error!("Edge node: the host table was not loaded again after a change: {err}");
+                }
+            }
+            Err(err) => tracing::error!("Edge node: the host table was not loaded again after a change: {err}"),
         }
-        Ok(removed)
     }
 
     fn delegate(&self, call: &DelegateCall) -> Result<DelegateAnswer, Error> {

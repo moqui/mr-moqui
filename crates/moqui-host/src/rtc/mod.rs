@@ -216,6 +216,8 @@ pub(crate) struct RtcNode {
     stop: Arc<AtomicBool>,
     driver: Option<JoinHandle<()>>,
     register: Option<JoinHandle<()>>,
+    /// On a node that takes links, what hands the TURN server the active pairings (E16).
+    pairings: Option<JoinHandle<()>>,
     tcp: Option<JoinHandle<()>>,
     turn: Option<Arc<turn::TurnNode>>,
     /// On an edge node, the factory whose link Hello advertises this media node, until it stops.
@@ -230,6 +232,9 @@ impl Drop for RtcNode {
         self.stop.store(true, Ordering::Release);
         let _ = command(Command::Stop);
         if let Some(t) = self.register.take() {
+            let _ = t.join();
+        }
+        if let Some(t) = self.pairings.take() {
             let _ = t.join();
         }
         if let Some(t) = self.driver.take() {
@@ -521,6 +526,17 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             .spawn(move || register_loop(&factory, &own, public, &turn_urls, &stop))
             .ok()
     };
+    // a local node's legs are signed with its pairing's secret: the TURN server takes the active pairings only (E16)
+    let pairings = match (&turn_arc, settings.takes_links()) {
+        (Some(turn), true) => {
+            let (factory, stop, turn) = (Arc::clone(factory), Arc::clone(&stop), Arc::clone(turn));
+            std::thread::Builder::new()
+                .name("moqui-turn-pairings".to_string())
+                .spawn(move || pairings_loop(&factory, &turn, &stop))
+                .ok()
+        }
+        _ => None,
+    };
     *lock(&factory.extension(|_| RtcAddress::default()).0) = Some(bound);
     listener(
         factory,
@@ -536,6 +552,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         stop,
         driver: Some(driver),
         register,
+        pairings,
         tcp: tcp_thread,
         turn: turn_arc,
         advertised: advertised.then(|| Arc::downgrade(factory)),
@@ -563,6 +580,50 @@ fn start_turn(
             listener(factory, TURN_LISTENER, State::failed(err));
             None
         }
+    }
+}
+
+/// How often the TURN server's pairings are read again: a new pairing's TURN credentials are taken, and a revoked
+/// one's refused, within this.
+const PAIRINGS_EVERY: Duration = Duration::from_secs(1);
+
+/// On a node that takes links: the active pairings to the TURN server now and whenever they change, until `stop`. A
+/// read that fails keeps the ones before (logged once until one works).
+fn pairings_loop(factory: &Arc<ExecutionContextFactory>, turn: &turn::TurnNode, stop: &AtomicBool) {
+    let mut held: Option<std::collections::HashMap<String, String>> = None;
+    let mut failing = false;
+    let mut next = std::time::Instant::now();
+    while !stop.load(Ordering::Acquire) {
+        if std::time::Instant::now() >= next {
+            next = std::time::Instant::now() + PAIRINGS_EVERY;
+            let read = factory.entity().map_or_else(
+                || Err(moqui_core::context::Error::new("no entity facade")),
+                |facade| {
+                    factory
+                        .service_pools()
+                        .call(move || Ok(moqui_core::edge::media::active_pairings(&facade)?))
+                },
+            );
+            match read {
+                Ok(now) => {
+                    failing = false;
+                    let now: std::collections::HashMap<String, String> = now.into_iter().collect();
+                    if held.as_ref() != Some(&now) {
+                        turn.set_pairings(now.clone());
+                        held = Some(now);
+                    }
+                }
+                Err(err) if !failing => {
+                    failing = true;
+                    tracing::error!(
+                        "TURN: the active pairings were not read, the last ones hold: {}",
+                        err.message()
+                    );
+                }
+                Err(_) => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
 }
 

@@ -131,7 +131,9 @@ feature("a resource at warning is listed with its number, resources first, then 
                     {name: "example.com", daysLeft: 200, level: "ok", notAfter: Date.now() + 200 * 86400000}]
             }
         }
-        const rows = {}
+        // a name set up with ACME whose renewal failed, ten days before its certificate runs out (System › Certificates)
+        const acmeExpiry = new Date(Date.now() + 10.5 * 86400000)
+        const rows = {"moqui.server.AcmeName": [{hostName: "www.example.com", statusId: "AcmeFailed", notAfter: acmeExpiry}]}
         // what the readiness service answers: one check of each state, two with a System place and one an app's
         const readiness = {checks: [
             {checkKey: "spec.ready", state: "ready", message: "Fine"},
@@ -171,11 +173,12 @@ feature("a resource at warning is listed with its number, resources first, then 
         }
         runInContext(script, state)
         const items = Array.from(state.items || [])
-        return {items, keys: items.map((item) => item.key).join(","), logged: logged.join(" | "), checkedDate: state.checkedDate}
+        return {items, keys: items.map((item) => item.key).join(","), logged: logged.join(" | "), checkedDate: state.checkedDate,
+            acmeUntil: ec.l10n.format(acmeExpiry, "yyyy-MM-dd")}
     },
-    then({items, keys, logged, checkedDate}) {
+    then({items, keys, logged, checkedDate, acmeUntil}) {
         // the resources first, the critical one before the warning; then the others, the critical one first
-        keys == "disk,memory,certificates,startup,spec.failed,spec.owner,spec.warning"
+        keys == "disk,memory,certificates,acmeRenewal,startup,spec.failed,spec.owner,spec.warning"
         items[0].severity == "critical"
         items[0].text == "Disk /var is 91 % full, 4.0 GiB free (runtime, database)"
         items[0].value == 91.2
@@ -189,20 +192,25 @@ feature("a resource at warning is listed with its number, resources first, then 
         items[2].text == "The certificate of shop.example.com expires in 12 days"
         items[2].value == 12
         items[2].parameters.metricName == "moqui.tls.certificate.days_left"
-        items[3].severity == "critical"
-        items[3].text == "Listener SSH failed to start: the port is in use"
+        // a failed ACME renewal, with the day its certificate expires, linked to Certificates
+        items[3].severity == "warning"
+        items[3].value == 10
+        items[3].text == "Renewing the certificate of www.example.com by ACME failed; it expires " + acmeUntil
+        items[3].link == "/apps/system/Certificates"
+        items[4].severity == "critical"
+        items[4].text == "Listener SSH failed to start: the port is in use"
         // the checks that are not ready: the failed one critical, the others warnings, the unavailable before the
         // warning; a fix place that is a System screen is linked, an app's own place is not
-        items[4].severity == "critical"
-        items[4].text == "3 job runs failed in the last day: Spec"
-        items[4].link == "/apps/system/Operations/JobRuns"
-        items[4].parameters.state == "failed"
-        items[5].severity == "warning"
-        items[5].text == "Accounting setup could not be checked (Spec organization)"
-        items[5].link == null
-        items[6].text == "Backups are not mirrored off the server"
-        items[6].link == "/apps/system/Integrations/ConnectionDetail"
-        items[6].parameters.adapterKey == "remote"
+        items[5].severity == "critical"
+        items[5].text == "3 job runs failed in the last day: Spec"
+        items[5].link == "/apps/system/Operations/JobRuns"
+        items[5].parameters.state == "failed"
+        items[6].severity == "warning"
+        items[6].text == "Accounting setup could not be checked (Spec organization)"
+        items[6].link == null
+        items[7].text == "Backups are not mirrored off the server"
+        items[7].link == "/apps/system/Integrations/ConnectionDetail"
+        items[7].parameters.adapterKey == "remote"
         // the item that failed is named in the log and the rest came back
         logged == "System attention item systemMessages failed: Error: the spec's failure"
         checkedDate != null

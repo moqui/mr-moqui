@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A local node behind an edge node or an all-in-one node (conf/edge/README.md): a production server in the office or at
+    home that holds the data and dials its edge node. It needs no role, no open port, port forward or fixed address,
+    and no setting here for the link: pairing (System › Edge Node) writes edge_node_url, edge_node_key, edge_node_pin
+    and edge_node_id to runtime/.env and brings the link up, and unpairing removes them. The wizard then writes the
+    rest of this node's part, listed below, so an operator sets these by hand only for a part the wizard does not run.
+    It is the production conf with the backup job running; any production conf works. Per-host settings go in .env. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+
+    <!-- Web access (.env): webapp_http_host, this node's public name, which the wizard offers as its first host name
+        (unless it is localhost or has one label). A passthrough name ends its TLS here, so this node needs its HTTPS
+        listener and a certificate for each such name in runtime/cert (DNS-01 with an outside tool, or a copied one);
+        a terminate name needs none here. In the office's DNS the same names can point at this node. -->
+
+    <!-- What the wizard's Apply writes on this node, each an area of the edge node's offer:
+        mail: an EmailServer EDGE with smtpHost edge:, SYSTEM's smtpHost set to edge: when chosen, and the chosen
+            accounts sending through it (their host or server before is kept, and unpairing puts it back);
+        chat and SMS: channels_public_url, the edge node's address, so MMS files are served there;
+        PASS: pass_edge_client (edge), pass_client_edge_sites and pass_client_edge_callback, the edge node as a PASS
+            client with no secret;
+        calls: edge_calls_enabled (false keeps new calls on this node's own media nodes);
+        phones: edge_sip_enabled (false sends the replicated trunks and fallbacks empty).
+        XMPP: set xmpp_domain here, not on the edge node; give any XMPP ports of this node's own the edge node's numbers,
+        which Chat apps shows. SSH: ssh_port here, for the edge node's SSH tunnel. A dev local node's command line and
+        shells through the edge node need terminal_remote=true. -->
+
+    <!-- Backups: this node holds the business data. The nightly backup_EmbeddedDatabase_daily job is paused in the seed
+        data; this sets it running at each boot (docs/Run-Deploy.md, Backups: its mirror, keeping a copy off this host).
+        It backs up the embedded database only: back an external one up with its own tools. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+</moqui-conf>

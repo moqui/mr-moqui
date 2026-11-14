@@ -5,7 +5,8 @@ git command line and any git client: clone, fetch and push over HTTPS (smart HTT
 shallow clones for CI, branches and tags, and Git LFS. A push or a mirror fetch runs **gitECA rules**, the git
 counterpart of email ECA rules, and Mantle uses them to tie commits, branches and tags to projects and tasks. gitoxide
 has no server side; the protocol is ours (`crates/moqui-git/src/server/`) over gitoxide's objects and
-packs.
+packs. The CI engine that runs a repository's pipelines for its pushes and merge requests is in
+[Pipelines](Pipelines.md).
 
 ## Clone URLs
 
@@ -354,7 +355,9 @@ component's own code.
 
 The framework has rules of its own (`framework/service/Git.gitecas.xml`, ids `FrameworkRefreshMergeRequests` and
 `FrameworkWebhookPush`, on every source, run even after another rule failed): merge requests follow their branches, and
-webhooks get pushes and tags ([Hosting through Moqui](#hosting-through-moqui)).
+webhooks get pushes and tags ([Hosting through Moqui](#hosting-through-moqui)). `FrameworkQueuePipelineRuns`
+(post-receive, the sources `push` and `write`) queues the pipelines of the branches and tags that moved
+([Pipelines](Pipelines.md#events)).
 
 ## Hosting through Moqui
 
@@ -446,6 +449,7 @@ at it. So that an object is in the store never decides a read.
 | a user with the update right, anywhere else | as anyone: the store has commits that were never a reader's |
 | a service called with authorization disabled | as a user with the update right; with `includeHidden`, a hidden head's commits too |
 | the git protocol (a fetch by id), a `git://` location's version, a checkout of a network's repository | only what the refs reach, whoever asks |
+| a CI job's token ([Pipelines](Pipelines.md#job-tokens)) | its job's commit and nothing else: one the head of its run's merge request reaches (a hidden one's too), or for another run what anyone who may view reads; a commit its ref has left only where the second row holds |
 
 Any other id is answered as one that names nothing.
 
@@ -669,8 +673,10 @@ one a walk of its directory.
 
 `delete#GitRepository(repositoryId)` (delete right) removes a repository and everything the framework keeps of it:
 its refs and objects (the rows of a `db` kind, the directory of a `local` or `remote` kind), its LFS objects and
-locks, its push log, commit statuses, webhooks, branch rules, merge requests and their reviewers, the redirects of
-paths it had, and its row. It cannot be undone.
+locks, its push log, commit statuses, webhooks, branch rules, merge requests and their reviewers, its pipeline runs
+with their jobs, logs and uploads, its CI secrets, environments and schedules ([Pipelines](Pipelines.md#records); a
+job still running is stopped: its container removed, its token dead), the redirects of paths it had, and its row. It
+cannot be undone.
 
 - **Who.** The delete right is also what forces a push and changes a repository's settings, so an application
   that lets fewer users delete (an Owner, a typed path to confirm) checks its own rule and offers its own service,
@@ -716,11 +722,15 @@ reaches is answered as a commit that is not there, by `create#GitCommitStatus` (
 asker may not read and is not attached to a hidden merge request's head by a user. Both take `includeHidden`,
 honoured with authorization disabled only: the application writes and reads the checks of a hidden head.
 
-**Reserved contexts.** A hosting application that writes checks of its own (a contributor agreement check, its CI
-engine) names their prefixes in `git-server` `reserved-status-contexts` (`agreement/,ci/`): such a context is then
-refused from a user, whatever their rights (`GitReservedContext`), and written with authorization disabled only, so
-a branch rule that requires it cannot be met by someone who may push posting it themselves. None is reserved by
-default: an outside CI posts `ci/...` with a user's token, as above.
+**Reserved contexts.** A hosting application that writes checks of its own (a contributor agreement check) or runs
+the framework's [pipelines](Pipelines.md#statuses) names their prefixes in `git-server` `reserved-status-contexts`
+(`agreement/,ci/`): such a context is then refused from a user, whatever their rights (`GitReservedContext`), and
+written with authorization disabled only, so a branch rule that requires it cannot be met by someone who may push
+posting it themselves. None is reserved by default: an outside CI posts `ci/...` with a user's token, as above.
+
+**The engine's statuses.** The CI engine writes each job's status (`ci/<pipeline>/<job>`) through this service, with
+authorization disabled and `includeHidden`, so a service ECA rule on `create#GitCommitStatus` sees the engine's
+checks as it sees an outside CI's, a hidden head's among them.
 
 ### Webhooks
 
@@ -748,7 +758,8 @@ branches and tags), so a webhook hears of it through its merge request's events 
 `pushed_for_review`, `head_ref`, `head_sha`, `base_sha`, `merge_commit_sha` and `author`. Of a hidden merge request
 ([Reachability](#reachability)) nothing is sent, whatever happens to it; when an open one is shown the webhooks get
 `opened` (`queue#MergeRequestEvent` itself still runs for a hidden one, so an application's service ECA rules on it
-do). A body's `<` and `>` are sent as the JSON escapes `\u003c` and `\u003e`.
+do, and the framework's own, which queues its [pipeline runs](Pipelines.md#events), hidden with it). A body's `<` and
+`>` are sent as the JSON escapes `\u003c` and `\u003e`.
 
 ### Push mirrors
 
@@ -808,6 +819,8 @@ rule, and `get#GitRefs` does not list it.
   objects. A reopened one of a branch gets its ref back; one pushed for review is pushed again. While it is
   hidden the ref of a closed one is there and not fetched, and once it is released its commits are read by nobody
   ([Reachability](#reachability)). A fork's closed merge requests are released by the fork's own turn of the run.
+- **Pipelines** of a merge request run at this ref's commit, in its repository: a job's token fetches the head from
+  here, a fork's and a pushed one's too ([Pipelines](Pipelines.md#events)).
 - **Merge requests from before these refs.** One that has no ref gets it when it is next read or refreshed
   (`sync#MergeRequestHead`): an open one from its source branch, a merged one (and a closed one within the
   retention time) from its recorded `headCommitId` while that commit is in the store, so `get#MergeRequestDiff`
@@ -860,7 +873,8 @@ has and who sees the fork are the application's, checked before the call and set
   forks themselves. A `local` parent's run walks each fork's refs through the fork's own store, so what a fork's
   own commits reach in the parent's directory stays (a branch the parent deleted and a fork built on); a fork's run
   packs only what its own directory holds. A network one of whose repositories cannot be opened is not collected.
-- **Delete.** A fork is deleted alone: its refs and rows go; a `db` fork's object rows stay in the network as
+- **Delete.** A fork is deleted alone: its refs and rows go (its own pipeline runs with them; the runs of its merge
+  requests into other repositories are theirs, and stay); a `db` fork's object rows stay in the network as
   nobody's (they count in no repository's usage) until a collection lets go of those no ref reaches, and a `local`
   fork's directory goes with it (what a merge request brought to another repository was copied there). A repository
   others were forked from is not deleted (`GitHasForks`): delete its forks first, or archive it. The objects are not

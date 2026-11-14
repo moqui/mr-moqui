@@ -198,6 +198,16 @@ fn transaction<T>(
         .run(attribute, Some(Duration::from_secs(30)), body)
 }
 
+/// The paired node an item that names none is for, on a node that takes links (plans/Edge-Node2.md §4.1): the node of
+/// the [`super::owner::with`] scope this thread runs in, else the only active paired node. With several paired and no
+/// scope it cannot be told, and is refused.
+pub(crate) fn owner_node(facade: &EntityFacade) -> Result<String, Error> {
+    match super::owner::scoped() {
+        Some(super::owner::Owner::Paired(node)) => Ok(node.to_string()),
+        _ => only_paired_node(facade),
+    }
+}
+
 /// The only active paired node of an edge node, for an item that names none.
 pub(crate) fn only_paired_node(facade: &EntityFacade) -> Result<String, Error> {
     let rows = facade
@@ -210,7 +220,9 @@ pub(crate) fn only_paired_node(facade: &EntityFacade) -> Result<String, Error> {
     match rows.values() {
         [only] => Ok(text(only, "pairedNodeId")),
         [] => Err(Error::new("no local node is paired with this edge node")),
-        _ => Err(Error::new("several local nodes are paired: name the pairedNodeId")),
+        _ => Err(Error::new(
+            "several local nodes are paired: name the pairedNodeId, or run the call as the item's owner",
+        )),
     }
 }
 
@@ -229,8 +241,9 @@ pub struct Enqueued {
     pub created: bool,
 }
 
-/// Queue `item` for the other end of the link: on an edge node for `paired_node_id` (the only paired node when
-/// `None`), on a local node for its edge node. The kind must be one this node's conf lists (`queue-kind`), the payload
+/// Queue `item` for the other end of the link: on an edge node for `paired_node_id` (when `None`, the node of the
+/// owner scope the call runs in, else the only paired node; refused with several paired and no scope), on a local node
+/// for its edge node. The kind must be one this node's conf lists (`queue-kind`), the payload
 /// at most [`MAX_PAYLOAD_BYTES`] and the content at most [`MAX_CONTENT_BYTES`]; the content is kept under
 /// [`CONTENT_OUT`] in the transaction of the row. An idempotency key already queued returns that item.
 pub fn enqueue(
@@ -262,7 +275,9 @@ pub fn enqueue(
         paired_node_id.map(str::trim).filter(|id| !id.is_empty()),
     ) {
         (true, Some(node)) => node.to_string(),
-        (true, None) => only_paired_node(facade)?,
+        (true, None) => owner_node(facade).inspect_err(|err| {
+            tracing::error!("Edge queue: a {kind} item names no paired node, and none can be told: {err}");
+        })?,
         (false, _) => local_node_id(factory),
     };
     let key = item.idempotency_key.trim();
@@ -1079,6 +1094,67 @@ pub fn stats(facade: &EntityFacade, paired_node_id: Option<&str>) -> Result<Vec<
     Ok(by_kind.into_values().collect())
 }
 
+/// The size cap of `node`'s waiting items: its `EdgeClient.queueMaxMegabytes` when set above 0 (on a node that takes
+/// links), else the conf's `queue-max-megabytes`. A row that cannot be read is logged and the conf's cap holds.
+fn node_cap(facade: &EntityFacade, settings: &EdgeSettings, node: &str) -> u64 {
+    if !settings.takes_links() || node.is_empty() {
+        return settings.max_bytes;
+    }
+    let row = transaction(facade, TransactionAttribute::UseOrBegin, || {
+        facade
+            .find("moqui.edge.EdgeClient")?
+            .eq("pairedNodeId", Value::string(node))
+            .select_field("queueMaxMegabytes")
+            .disable_authz()
+            .one()
+    });
+    match row {
+        Ok(Some(row)) if number(&row, "queueMaxMegabytes") > 0 => u64::try_from(number(&row, "queueMaxMegabytes"))
+            .unwrap_or(0)
+            .saturating_mul(1024 * 1024),
+        Ok(_) => settings.max_bytes,
+        Err(err) => {
+            tracing::error!("Edge queue retention: the size cap of {node} was not read, the conf's is used: {err}");
+            settings.max_bytes
+        }
+    }
+}
+
+/// Fail `node`'s oldest pending items while its waiting bytes (`total`) pass `cap`, each logged; how many failed.
+fn fail_over_cap(
+    facade: &EntityFacade,
+    settings: &EdgeSettings,
+    node: &str,
+    mut total: u64,
+    cap: u64,
+    now: i64,
+) -> Result<i64, Error> {
+    let reason = format!("the waiting items of {node} passed its size cap of {cap} bytes");
+    let mut expired = 0;
+    let mut after = i64::MIN;
+    loop {
+        let page = pending_page(
+            facade,
+            after,
+            Some(Condition::equals("pairedNodeId", Value::string(node))),
+        )?;
+        for row in &page {
+            if total <= cap {
+                return Ok(expired);
+            }
+            after = after.max(number(row, "sequenceNum"));
+            if expire(facade, row, &reason, now) {
+                expired += 1;
+                notify_failed(facade, settings, &text(row, "queueItemId"), &reason);
+                total = total.saturating_sub(u64::try_from(number(row, "payloadSize")).unwrap_or(0));
+            }
+        }
+        if page.len() < usize::try_from(CLEAN_PAGE).unwrap_or(500) {
+            return Ok(expired);
+        }
+    }
+}
+
 /// What a [`clean`] pass did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Cleaned {
@@ -1319,34 +1395,27 @@ pub fn clean(
             break;
         }
     }
-    // the size cap, from one grouped sum
-    let total = transaction(facade, TransactionAttribute::UseOrBegin, || {
-        facade
+    // the size cap, per pairing (plans/Edge-Node2.md §4.1): one grouped sum by node, so one pairing's backlog fails
+    // only its own oldest items
+    let totals = transaction(facade, TransactionAttribute::UseOrBegin, || {
+        Ok(facade
             .find(COUNT)?
             .eq("statusEnumId", Value::string(PENDING))
+            .select_field("pairedNodeId")
             .select_field("payloadBytes")
             .disable_authz()
-            .one()
+            .list()?
+            .values()
+            .to_vec())
     })?;
-    let mut total = total.map_or(0, |row| u64::try_from(number(&row, "payloadBytes")).unwrap_or(0));
-    if total > settings.max_bytes {
-        let reason = format!("the waiting items passed the size cap of {} bytes", settings.max_bytes);
-        let mut after = i64::MIN;
-        'cap: loop {
-            let page = pending_page(facade, after, None)?;
-            for row in &page {
-                if total <= settings.max_bytes {
-                    break 'cap;
-                }
-                after = after.max(number(row, "sequenceNum"));
-                if expire(facade, row, &reason, now) {
-                    expired += 1;
-                    notify_failed(facade, settings, &text(row, "queueItemId"), &reason);
-                    total = total.saturating_sub(u64::try_from(number(row, "payloadSize")).unwrap_or(0));
-                }
-            }
-            if page.len() < usize::try_from(CLEAN_PAGE).unwrap_or(500) {
-                break;
+    for row in &totals {
+        let node = text(row, "pairedNodeId");
+        let cap = node_cap(facade, settings, &node);
+        let total = u64::try_from(number(row, "payloadBytes")).unwrap_or(0);
+        if total > cap {
+            match fail_over_cap(facade, settings, &node, total, cap, now) {
+                Ok(count) => expired += count,
+                Err(err) => tracing::error!("Edge queue retention: the size cap of {node} was not applied: {err}"),
             }
         }
     }

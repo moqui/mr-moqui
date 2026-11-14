@@ -46,9 +46,14 @@ use moqui_calc as _;
 #[cfg(feature = "channels")]
 use moqui_channels as _;
 
+// Certificates by ACME from System › Certificates (plans/Edge-Node2.md §4.8), with the HTTPS listener.
+#[cfg(feature = "axum")]
+mod acme;
 pub mod chromium;
 // The database drivers (crates/moqui-drivers), at their old path.
 pub use moqui_drivers as db;
+#[cfg(feature = "git")]
+mod ci_run;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -783,6 +788,23 @@ where
         [command, rest @ ..] if command == "test" => {
             test_cmd::dispatch_test(rest)?;
             Ok(None)
+        }
+        [command, rest @ ..] if command == "ci-run" => {
+            #[cfg(feature = "git")]
+            {
+                // the job's result is the exit code: 0 success, 1 failure, 2 error, 3 the job is gone
+                match ci_run::dispatch(rest)? {
+                    0 => Ok(None),
+                    code => std::process::exit(code),
+                }
+            }
+            #[cfg(not(feature = "git"))]
+            {
+                let _ = rest;
+                Err(moqui_lib::error::Error::new(
+                    "moqui ci-run is not built into this host (the git feature)",
+                ))
+            }
         }
         [command, rest @ ..] if command == "test-client" => {
             #[cfg(feature = "test-client")]

@@ -88,6 +88,19 @@ along with this software (see the LICENSE.md file). If not, see
         <parameters parameterName="systemMessageRemoteId" parameterValue="EmbeddedDbBackup"/>
     </moqui.service.job.ServiceJob>
 
+    <!-- Certificates by ACME (plans/Edge-Node2.md §4.8): the statuses of a name set up on System › Certificates, and the
+         job that renews those names before they run out. Paused until a name is set up there, which unpauses it; it
+         is paused again when the last such name is removed. It renews only names set up there (moqui.server.AcmeName)
+         and never asks for a certificate for any other. -->
+    <moqui.basic.StatusType statusTypeId="AcmeName" description="ACME certificate"/>
+    <moqui.basic.StatusItem statusId="AcmeOrdering" statusTypeId="AcmeName" sequenceNum="1" description="Ordering" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="AcmeIssued" statusTypeId="AcmeName" sequenceNum="2" description="Issued" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AcmeFailed" statusTypeId="AcmeName" sequenceNum="3" description="Failed" statusColor="negative"/>
+    <moqui.service.job.ServiceJob jobName="renew_AcmeCertificates_daily"
+            description="Renew the certificates set up with ACME on System, Certificates before they run out"
+            serviceName="org.moqui.admin.CertificateServices.renew#AcmeCertificates" cronExpression="0 17 3 * * ?" paused="Y"
+            transactionTimeout="1800"/>
+
     <!-- Change paused to 'N' to run the EntitySync job -->
     <moqui.service.job.ServiceJob jobName="run_EntitySyncAll_frequent" description="Run All EntitySync"
             serviceName="org.moqui.impl.EntitySyncServices.run#EntitySyncAll" cronExpression="0 0/15 * * * ?" paused="Y"/>
@@ -123,6 +136,20 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The drive zips, exports and previews under runtime/tmp older than a day (FileServices.clean#DriveTempFiles) -->
     <moqui.service.job.ServiceJob jobName="clean_DriveTempFiles_hourly" description="Remove drive temporary files older than a day"
             serviceName="org.moqui.resource.FileServices.clean#DriveTempFiles" cronExpression="0 17 * * * ?" paused="N"/>
+    <!-- Pipelines (docs/interfaces/Pipelines.md): each finds nothing on a server with no runner pool. Queued job runs are
+        started soon after they are queued as a rule; the start job takes what that left -->
+    <moqui.service.job.ServiceJob jobName="start_QueuedJobRuns_frequent" description="Start queued pipeline job runs"
+            serviceName="org.moqui.git.GitCiServices.start#QueuedJobRuns" cronExpression="20 * * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="end_OverdueJobRuns_frequent" description="End pipeline job runs past their time and remove what they left"
+            serviceName="org.moqui.git.GitCiServices.end#OverdueJobRuns" cronExpression="40 * * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="queue_ScheduledPipelineRuns_frequent" description="Queue the pipelines that run on schedule"
+            serviceName="org.moqui.git.GitCiServices.queue#ScheduledRuns" cronExpression="5 * * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+    <!-- Before gc_ContentBlobs_daily, which deletes the blobs of what this removes -->
+    <moqui.service.job.ServiceJob jobName="expire_PipelineRunData_daily" description="Remove expired pipeline artifacts, caches and logs"
+            serviceName="org.moqui.git.GitCiServices.expire#RunData" cronExpression="0 10 4 * * ?" paused="N"/>
 
     <!-- Change paused to 'N' to run the poll EmailServer job; NOTE emailServerId=SYSTEM, change if needed along with run frequency.
          A success is not kept: the messages are the record. -->

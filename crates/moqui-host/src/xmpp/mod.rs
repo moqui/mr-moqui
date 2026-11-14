@@ -32,6 +32,10 @@
 //!   ports (`edge_xmpp_port`, `edge_xmpp_tls_port`) pipe each client down the link, and [`serve_tunneled`] serves the
 //!   stream here as a connection from the client the edge node names, with this node's certificates and TLS, so
 //!   channel binding keeps its exporter. This node needs no listener of its own for that.
+//! - **On an all-in-one node** (plans/Edge-Node2.md §4.1, E16) its own client ports serve its pairings' domains too:
+//!   a connection that names a paired node's XMPP domain (the TLS server name, the stream header's `to`) goes down
+//!   that node's link (`edge_link::tunnel::xmpp_to_pairing`), and the rest are served here, so one pair of ports
+//!   takes every domain.
 
 pub(crate) mod upload;
 pub(crate) mod ws;
@@ -388,8 +392,12 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
             listener,
             Arc::clone(&server),
             acceptor,
-            direct,
-            sources.clone(),
+            Listening {
+                direct,
+                sources: sources.clone(),
+                factory: Arc::downgrade(factory),
+                routes: moqui_core::edge::settings(factory).all_in_one(),
+            },
         ));
     }
     *lock(&slot.addresses) = addresses;
@@ -426,13 +434,69 @@ fn tls_acceptor(runtime_dir: &std::path::Path, direct: bool) -> Result<TlsAccept
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-async fn accept_loop(
-    listener: TcpListener,
-    server: Arc<Server>,
-    acceptor: TlsAcceptor,
+/// What a client port's accept loop serves with.
+struct Listening {
+    /// Direct TLS, else STARTTLS.
     direct: bool,
     sources: Sources,
+    #[cfg_attr(not(feature = "edge"), allow(dead_code))]
+    factory: Weak<ExecutionContextFactory>,
+    /// An all-in-one node's port: a paired node's XMPP domain goes down its link (E16).
+    #[cfg_attr(not(feature = "edge"), allow(dead_code))]
+    routes: bool,
+}
+
+/// The client ports this node's own XMPP server listens on now: STARTTLS and direct TLS, each `None` while off.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn client_ports(factory: &ExecutionContextFactory) -> (Option<u16>, Option<u16>) {
+    let (starttls, direct) = *lock(&factory.extension(|_| XmppSlot::default()).addresses);
+    (starttls.map(|a| a.port()), direct.map(|a| a.port()))
+}
+
+/// How long a client on an all-in-one node's port has to name its XMPP domain.
+#[cfg(feature = "edge")]
+const DOMAIN_WAIT: Duration = Duration::from_secs(10);
+
+/// One client connection of an all-in-one node's port (E16): down a paired node's link when it names that node's
+/// XMPP domain, else served here with what was read for the domain first.
+#[cfg(feature = "edge")]
+async fn serve_routed(
+    server: Arc<Server>,
+    stream: tokio::net::TcpStream,
+    peer: SocketAddr,
+    acceptor: TlsAcceptor,
+    listening: &Listening,
 ) {
+    let direct = listening.direct;
+    let mut stream = stream;
+    let (domain, seen) =
+        match tokio::time::timeout(DOMAIN_WAIT, crate::edge_link::xmpp_domain::sniff(&mut stream, direct)).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(err)) => {
+                tracing::debug!("XMPP connection from {peer}: its start did not read: {err}");
+                return;
+            }
+            Err(_) => {
+                tracing::debug!("XMPP connection from {peer} named no domain in time");
+                return;
+            }
+        };
+    let mut held = Some(stream);
+    if crate::edge_link::tunnel::xmpp_to_pairing(&listening.factory, &mut held, peer, domain.as_deref(), &seen, direct)
+        .await
+    {
+        return;
+    }
+    if let Some(stream) = held {
+        let _ = stream.set_nodelay(true);
+        let stream = crate::edge_link::xmpp_domain::Prefixed::new(seen, stream);
+        moqui_xmpp::conn::serve_stream(server, stream, peer, acceptor, direct).await;
+    }
+}
+
+async fn accept_loop(listener: TcpListener, server: Arc<Server>, acceptor: TlsAcceptor, listening: Listening) {
+    let listening = Arc::new(listening);
+    let (direct, sources) = (listening.direct, listening.sources.clone());
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -450,7 +514,15 @@ async fn accept_loop(
             continue;
         };
         let (server, acceptor) = (Arc::clone(&server), acceptor.clone());
+        let listening = Arc::clone(&listening);
         tokio::spawn(async move {
+            #[cfg(feature = "edge")]
+            if listening.routes {
+                serve_routed(server, stream, peer, acceptor, &listening).await;
+                drop(admitted);
+                return;
+            }
+            let _ = &listening;
             moqui_xmpp::conn::serve_tcp(server, stream, peer, acceptor, direct).await;
             drop(admitted);
         });

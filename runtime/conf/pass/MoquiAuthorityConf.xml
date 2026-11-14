@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- The PASS authority (conf/pass/README.md): a BOSS server, or a cluster of them (conf/local-cluster/), that holds Mantle
+    and the business database and answers the PASS servers' calls for every read and write. The runtime has mr-boss,
+    which brings mr-mantle (./moq component-get mr-boss); add mr-pass only when this server also serves sites itself.
+    Use Maximal or Enterprise: forum thumbnails need image, and sign-in providers need sso; the site readiness check
+    reports what is missing. The PASS jobs are in Mantle's data and run here.
+    Each PASS deployment is a client: an id, its secret, the sites it may serve and its exact SSO callback. A client id
+    has one SSO callback, so give each host name that offers SSO its own. Change the example names (forum,
+    FORUM_SITE, forum.example.com) to yours, and add a set of three lines for each further client. Then create the
+    sites and bind their hosts and mounts with mantle.public.SiteServices.create#Site and store#Mounts (mr-pass's
+    docs/Deployment.md, Provisioning). -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+
+    <!-- The client forum: its secret goes in .env, never here, as
+            pass_client_forum_secret=...
+        and the same value is the PASS server's pass_client_secret. -->
+    <default-property name="pass_client_forum_sites" value="FORUM_SITE"/>
+    <default-property name="pass_client_forum_callback" value="https://forum.example.com/account/Sso"/>
+
+    <!-- gRPC for PASS servers on Maximal or Enterprise (REST is always there): the gRPC listener, pass_authority_grpc_port
+        (4317) on pass_authority_grpc_host, takes PASS calls with the client's id and secret in metadata and TLS from
+        the HTTPS listener's certificate. The HTTPS listener takes the same calls over HTTP/2, so a PASS server's
+        pass_backend_grpc_url can name the HTTPS port and no other port needs to be open. With no certificate in cert/
+        the listener is plain h2c and takes PASS calls only on a loopback address, unless
+        pass_authority_grpc_insecure=true says to send the secrets in clear. -->
+    <default-property name="pass_authority_grpc_enabled" value="true"/>
+
+    <!-- Web protection on: the PASS servers are exempt, or all their visitors would count as one client. Put the PASS
+        servers' addresses in the cidr. Behind a proxy set webapp_trusted_proxies and webapp_client_ip_header (.env). -->
+    <default-property name="webapp_web_protection" value="true"/>
+    <webapp-list>
+        <webapp name="webroot">
+            <web-protection>
+                <client-rule name="pass-servers" action="exempt" cidr="10.0.2.0/24"/>
+            </web-protection>
+        </webapp>
+    </webapp-list>
+
+    <!-- Backups: the nightly backup_EmbeddedDatabase_daily job, paused in the seed data, runs from each boot (false pauses
+        it; docs/Run-Deploy.md, Backups). It backs up the embedded database only: back an external one up with its own
+        tools. On a cluster, pass_media_root and pass_import_dir must name storage every member reads. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+</moqui-conf>

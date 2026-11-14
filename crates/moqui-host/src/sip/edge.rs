@@ -29,6 +29,10 @@
 //! On an all-in-one node (plans/archive/Edge-Node.md §10, E12) all of this is for the paired node's items only (`owners.rs`),
 //! and what it keeps of the paired node's audio is under a location of that node's
 //! (`moqui_core::edge::media::kept_audio_location`), apart from the server's own greetings at the same paths.
+//!
+//! With several pairings (plans/Edge-Node2.md §4.1, E16) each of these is by pairing: the trunks of every pairing's
+//! copy, a number's fallback from its owner's copy, and a message queued (and requeued after a restart) to the
+//! pairing whose call it was.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -66,21 +70,6 @@ pub(crate) fn is_fallback(id: &str) -> bool {
     super::owners::bare(id).starts_with(FALLBACK_PREFIX)
 }
 
-/// The only active paired local node, whose copies this node answers from; none while none is paired.
-fn paired_node(facade: &moqui_core::entity::EntityFacade) -> Result<Option<String>, moqui_core::context::Error> {
-    let rows = facade
-        .find("moqui.edge.EdgeClient")?
-        .eq("statusId", Value::string("EdgeClientActive"))
-        .select_field("pairedNodeId")
-        .disable_authz()
-        .limit(2)
-        .list()?;
-    Ok(match rows.values() {
-        [only] => only.get("pairedNodeId").map(to_plain_string),
-        _ => None,
-    })
-}
-
 /// Runs `job` on a request worker with authorization off, as the engine's own work.
 async fn on_pool<T: Send + 'static>(
     factory: &Arc<ExecutionContextFactory>,
@@ -94,18 +83,21 @@ async fn on_pool<T: Send + 'static>(
     .map_err(|err| err.message().to_string())
 }
 
-/// `get#EngineConfig`'s answer for the paired node, from its copy of `voiceTrunks`, with the node: none while no node
-/// is paired.
-pub(crate) async fn engine_config(factory: &Arc<ExecutionContextFactory>) -> Result<Option<(String, Json)>, String> {
+/// `get#EngineConfig`'s answer for each active pairing, from its copy of `voiceTrunks`, with the pairing, in id order
+/// (E16): none while none is paired. A pairing whose copy does not read is logged and left out, and the others load.
+pub(crate) async fn engine_config(factory: &Arc<ExecutionContextFactory>) -> Result<Vec<(String, Json)>, String> {
     on_pool(factory, |factory| {
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
-        let Some(node) = paired_node(&facade)? else {
-            return Ok(None);
-        };
-        let values = replica::list_values(&facade, Some(&node), TRUNKS_SET, None, MAX_TRUNKS)?;
-        Ok(Some((node, config_of(&values))))
+        let mut configs = Vec::new();
+        for (node, _) in moqui_core::edge::sip::pairing_domains(&facade)? {
+            match replica::list_values(&facade, Some(&node), TRUNKS_SET, None, MAX_TRUNKS) {
+                Ok(values) => configs.push((node, config_of(&values))),
+                Err(err) => tracing::error!("SIP: local node {node}'s trunks did not load, its calls wait: {err}"),
+            }
+        }
+        Ok(configs)
     })
     .await
 }
@@ -282,17 +274,15 @@ pub(crate) fn fallback_from(fields: &Json) -> Option<Fallback> {
     (fallback.voicemail || fallback.forward.is_some()).then_some(fallback)
 }
 
-/// The fallback of the number `to` (E.164), from the copy of `voiceFallbacks`; none for a number with none, or when it
-/// cannot be read (logged).
-pub(crate) async fn fallback_of(factory: &Arc<ExecutionContextFactory>, to: &str) -> Option<Fallback> {
+/// The fallback of the number `to` (E.164), from the copy of `voiceFallbacks` of its owner, the pairing `node`; none
+/// for a number with none, or when it cannot be read (logged).
+pub(crate) async fn fallback_of(factory: &Arc<ExecutionContextFactory>, node: &str, to: &str) -> Option<Fallback> {
     let number = to.to_string();
+    let node = node.to_string();
     let read = on_pool(factory, move |factory| {
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
-        let Some(node) = paired_node(&facade)? else {
-            return Ok(None);
-        };
         let pk = BTreeMap::from([("phoneNumber".to_string(), number)]);
         Ok(replica::get_value(&facade, Some(&node), FALLBACKS_SET, FALLBACK_ENTITY, &pk)?.map(|value| value.fields))
     })
@@ -317,15 +307,28 @@ fn sidecar(path: &Path) -> std::path::PathBuf {
 const QUEUE_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(2);
 const QUEUE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// Queues a message the engine recorded (`path`, its spool file) to the local node, with `payload` (the number called,
-/// the caller, its length, when, and the call when the local node routed it), keyed by its spool file's name so a retry
-/// is the same item. What it is queued with is kept beside it first (`<file>.json`), so a message that does not queue
-/// now, or whose process stops before, is not lost: it is tried again with a backoff from 2 s to 5 minutes while the
-/// engine runs, and [`requeue_spool`] queues it at the next start. The spool file and its sidecar go once it is queued.
-pub(crate) async fn queue_voicemail(factory: &Arc<ExecutionContextFactory>, path: &Path, mut payload: Json) {
+/// The field of a sidecar that names the pairing its message goes to (E16); never queued.
+const SIDECAR_NODE: &str = "edgeNode";
+
+/// Queues a message the engine recorded (`path`, its spool file) to the local node `node` whose call it was, with
+/// `payload` (the number called, the caller, its length, when, and the call when the local node routed it), keyed by
+/// its spool file's name so a retry is the same item. What it is queued with, and to which pairing, is kept beside it
+/// first (`<file>.json`), so a message that does not queue now, or whose process stops before, is not lost: it is
+/// tried again with a backoff from 2 s to 5 minutes while the engine runs, and [`requeue_spool`] queues it to the same
+/// pairing at the next start. The spool file and its sidecar go once it is queued.
+pub(crate) async fn queue_voicemail(
+    factory: &Arc<ExecutionContextFactory>,
+    node: &str,
+    path: &Path,
+    mut payload: Json,
+) {
     // the local node's own ids (E12: the engine keys them by node)
     super::owners::bare_ids(&mut payload);
-    if let Err(err) = std::fs::write(sidecar(path), payload.to_string()) {
+    let mut side = payload.clone();
+    if let Json::Object(map) = &mut side {
+        map.insert(SIDECAR_NODE.to_string(), Json::String(node.to_string()));
+    }
+    if let Err(err) = std::fs::write(sidecar(path), side.to_string()) {
         tracing::error!(
             "SIP voicemail: {}'s details were not kept beside it: {err}",
             path.display()
@@ -335,7 +338,7 @@ pub(crate) async fn queue_voicemail(factory: &Arc<ExecutionContextFactory>, path
     let mut wait = QUEUE_RETRY_FIRST;
     loop {
         let Some(factory) = weak.upgrade() else { return };
-        match queue_once(&factory, path, &payload).await {
+        match queue_once(&factory, node, path, &payload).await {
             Ok(()) => return,
             Err(err) => tracing::error!(
                 "SIP voicemail: the message {} was not queued for the local node, tried again in {wait:?}: {err}",
@@ -362,11 +365,17 @@ pub(crate) fn requeue_spool(factory: &Arc<ExecutionContextFactory>) {
         let payload: Option<Json> = std::fs::read_to_string(&side)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
-        match payload {
-            Some(payload) if file.is_file() => {
-                tracing::info!("SIP voicemail: {} was left in the spool, queued now", file.display());
+        match payload.map(sidecar_parts) {
+            Some((Some(node), payload)) if file.is_file() => {
+                tracing::info!(
+                    "SIP voicemail: {} was left in the spool, queued now for local node {node}",
+                    file.display()
+                );
                 let factory = Arc::clone(factory);
-                tokio::spawn(async move { queue_voicemail(&factory, &file, payload).await });
+                tokio::spawn(async move { queue_voicemail(&factory, &node, &file, payload).await });
+            }
+            Some((None, _)) => {
+                tracing::error!("SIP voicemail: {} names no local node it goes to, left", side.display())
             }
             _ => tracing::error!(
                 "SIP voicemail: {} has no message or its details do not read, left",
@@ -376,9 +385,27 @@ pub(crate) fn requeue_spool(factory: &Arc<ExecutionContextFactory>) {
     }
 }
 
-/// One try of [`queue_voicemail`]: queued, and the spool file and its sidecar removed.
-async fn queue_once(factory: &Arc<ExecutionContextFactory>, path: &Path, payload: &Json) -> Result<(), String> {
+/// A sidecar's pairing ([`SIDECAR_NODE`]) and the payload queued without it.
+pub(crate) fn sidecar_parts(mut side: Json) -> (Option<String>, Json) {
+    let node = match &mut side {
+        Json::Object(map) => map
+            .remove(SIDECAR_NODE)
+            .and_then(|node| node.as_str().map(str::to_string))
+            .filter(|node| !node.is_empty()),
+        _ => None,
+    };
+    (node, side)
+}
+
+/// One try of [`queue_voicemail`]: queued to `node`, and the spool file and its sidecar removed.
+async fn queue_once(
+    factory: &Arc<ExecutionContextFactory>,
+    node: &str,
+    path: &Path,
+    payload: &Json,
+) -> Result<(), String> {
     let payload = payload.clone();
+    let node = node.to_string();
     let file = path.to_path_buf();
     let shown = path.display().to_string();
     let queued = on_pool(factory, move |factory| {
@@ -400,7 +427,7 @@ async fn queue_once(factory: &Arc<ExecutionContextFactory>, path: &Path, payload
             content: Some(content),
             content_location: None,
         };
-        let queued = moqui_core::edge::queue::enqueue(factory, &facade, None, &item)?;
+        let queued = moqui_core::edge::queue::enqueue(factory, &facade, Some(&node), &item)?;
         Ok(queued.queue_item_id)
     })
     .await;

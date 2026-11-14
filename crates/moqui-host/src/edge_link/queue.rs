@@ -543,9 +543,9 @@ pub(crate) fn maintain(factory: &Arc<ExecutionContextFactory>, mut shutdown: tok
                             tracing::info!("Edge chat files that ran out removed: {removed}");
                         }
                     }
-                    // an all-in-one node's replica copies held back for a claim of the server's own (E12): one whose
-                    // claim is gone is applied now
-                    if settings.all_in_one() {
+                    // replica copies held back for a claim of the server's own (an all-in-one node, E12) or another
+                    // pairing's (E16): one whose claim is gone is applied now
+                    if settings.takes_links() {
                         match moqui_core::edge::replica::conflicts::recheck_conflicts(factory, &facade, None) {
                             Ok(applied) if applied > 0 => {
                                 tracing::info!("Edge replica conflicts rechecked: {applied} applied");

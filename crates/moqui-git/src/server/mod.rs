@@ -26,7 +26,10 @@
 #[cfg(test)]
 mod access_tests;
 #[cfg(test)]
+mod ci_tests;
+#[cfg(test)]
 pub(crate) mod hosting_tests;
+mod job_fetch;
 pub mod lfs;
 pub(crate) mod pack_in;
 pub(crate) mod pack_out;
@@ -764,6 +767,11 @@ pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn H
     } else {
         body
     };
+    // a CI job's token is no user's: it reads its job's repository at its job's commit, and nothing else
+    if let Some(job_token) = job_fetch::token_of(request) {
+        job_fetch::serve(request, &job_token, body, out);
+        return;
+    }
     let started = (|| -> Result<(GitProvider, Arc<Repo>, Option<AnonymousSlot>), Refusal> {
         let provider = provider()?;
         let has_credentials = request.authorization.is_some() || request.api_key.is_some();

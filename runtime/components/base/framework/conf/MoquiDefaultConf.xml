@@ -42,6 +42,19 @@
     <!-- The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, "off" none.
         webapp_https_port above is the port clients see in generated URLs, which differs behind a reverse proxy. -->
     <default-property name="webapp_https_listen_port" value=""/>
+    <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
+        nobody set up there. acme_directory_url fills in the authority's directory on that screen, Let's Encrypt's; the
+        screen offers its staging directory for a first try and takes any other authority's. acme_account_key is the seed
+        of the ACME account's key (P-256), one account per authority; a new one is a new account, and the certificates
+        already issued stay valid. The members of a cluster share it (the shared .env), or each is an account of its own. acme_challenge_port is the port the set-up check connects to on the name, as the
+        authority does: 443, which the HTTPS listener must answer (a port forward to webapp_https_listen_port, or an edge
+        node's passthrough host); another port only for a test authority. acme_directory_ca, when set, is the root (a PEM
+        file, absolute or under the runtime) the authority's HTTPS is checked against in place of the system's, for a
+        company's own ACME authority. -->
+    <default-property name="acme_directory_url" value="https://acme-v02.api.letsencrypt.org/directory"/>
+    <default-property name="acme_directory_ca" value=""/>
+    <default-property name="acme_account_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="acme_challenge_port" value="443"/>
     <!-- HTTP/2 on the HTTPS listener, chosen by ALPN with HTTP/1.1 beside it: true, or false for HTTP/1.1 only. Over
         HTTP/2 WebSockets use extended CONNECT, and the OTLP receiver's and PASS authority's gRPC, when they are on, are
         served on this port too. The plain HTTP listener is HTTP/1.1. -->
@@ -174,7 +187,7 @@
         listener. mail_dkim_selector: its selector (the TXT record to publish at selector._domainkey.domain is
         org.moqui.mail.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
         for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
-        MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
+        conf/edge/MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
         time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
         mail_mx_override (testing and staging only): domain=host:port pairs, * for any, in place of the MX.
         mail_dns_offline (testing only): true makes no DNS query.
@@ -458,7 +471,7 @@
     <default-property name="instance_id" value=""/>
     <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, edge for an edge node,
         which then takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1), or all-in-one for a
-        full server that also takes the link of a paired local node (§10, runtime/conf/MoquiAllInOneConf.xml): its own
+        full server that also takes the link of a paired local node (§10, runtime/conf/all-in-one/MoquiAllInOneConf.xml): its own
         names, mail, webhooks and calls stay its own, and the paired node's go over the link. A local node needs no
         role: it dials its edge node when edge_node_url is set. Pairing (System › Edge Node) writes edge_node_url,
         edge_node_key (this node's private key, base64 PKCS#8; a secret) and edge_node_pin (the SHA-256 of the edge node's
@@ -472,21 +485,22 @@
         runtime/.env; a new one means each local node pairs again. -->
     <default-property name="edge_link_key" value="CHANGEME" is-secret="true"/>
     <!-- An edge node's web access (plans/archive/Edge-Node.md §5.3). The paired nodes' host names and their modes are
-        moqui.edge.EdgeHost rows (System › Edge Clients). edge_offline_page is the location of the page a terminate host
+        moqui.edge.EdgeHost rows (System › Edge Clients › Domains). edge_offline_page is the location of the page a terminate host
         shows while its node's link is down (503 with Retry-After); empty for the built-in one. edge_ssh_tunnel_port, when
         set, is a TCP port on edge_ssh_tunnel_host (empty for every address) whose connections go down the link to the
-        local node's SSH server; edge_ssh_tunnel_node names the paired node, empty for the only one linked. edge_xmpp_port
-        (STARTTLS, 5222) and edge_xmpp_tls_port (direct TLS, 5223), when set, are TCP ports on edge_xmpp_host (empty for
-        every address) whose connections go down the link to the local node's XMPP server, which ends their TLS;
-        edge_xmpp_node names the paired node, empty for the only one linked. -->
+        SSH server of the one active pairing (refused with several, and while it is away). edge_xmpp_port (STARTTLS, 5222) and edge_xmpp_tls_port (direct TLS,
+        5223), when set, are TCP ports on edge_xmpp_host (empty for every address) for every paired node's XMPP domain:
+        each connection goes down the link of the node whose domain it names (the TLS server name, or the stream's to),
+        whose XMPP server ends its TLS. A port of one paired node each, SSH or XMPP, is a moqui.edge.EdgePort row
+        (System › Edge Clients › Ports; plans/Edge-Node2.md §4.1). On a node that takes links, edge_call_legs_per_pairing
+        is the most call legs of one paired node on its media node at once (200; 0 for no cap). -->
     <default-property name="edge_offline_page" value=""/>
     <default-property name="edge_ssh_tunnel_port" value=""/>
     <default-property name="edge_ssh_tunnel_host" value=""/>
-    <default-property name="edge_ssh_tunnel_node" value=""/>
     <default-property name="edge_xmpp_port" value=""/>
     <default-property name="edge_xmpp_tls_port" value=""/>
     <default-property name="edge_xmpp_host" value=""/>
-    <default-property name="edge_xmpp_node" value=""/>
+    <default-property name="edge_call_legs_per_pairing" value=""/>
     <default-property name="entity_add_missing_runtime" value="false"/>
     <default-property name="entity_add_missing_startup" value="true"/>
     <default-property name="entity_lock_track" value="false"/>
@@ -1297,6 +1311,27 @@
             reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
 
     <!--
+        Pipelines: the CI engine over the hosted repositories (docs/interfaces/Pipelines.md). With enabled empty the
+        engine queues runs only while there is an enabled GitRunnerPool, so a server that runs no CI writes no
+        statuses. server-url is the URL runners reach this server by (the git public URL when empty). The
+        run-check-service is asked before a run is queued (org.moqui.git.GitCiServices.check#PipelineRun) and the
+        run-url-service, else the run-url template, gives the target of the commit statuses. A job never runs on
+        this server: the limits here are what a ci.xml may ask for and what a runner may send.
+    -->
+    <git-ci enabled="${git_ci_enabled}" server-url="${git_ci_server_url}" server-id="" run-check-service=""
+            run-url-service="" run-url=""
+            builtin-enabled="true" builtin-image="moqui-build" builtin-pool="" builtin-workers="2"
+            max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
+            max-timeout-minutes="360" default-timeout-minutes="60" max-fetch-depth="50"
+            max-log-bytes="16777216" max-log-batch-bytes="1048576" max-artifact-bytes="1073741824"
+            max-report-bytes="16777216" max-cache-bytes="2147483648" max-artifacts="100"
+            artifact-retention-days="30" max-artifact-retention-days="365" log-retention-days="90"
+            cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
+            runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
+            container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
+            container-tmp-mb="1024"/>
+
+    <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
         inbound-smtp feature; docs/interfaces/Mail-Inbound.md). listen-port, listen-host, allowed-addresses, hostname and
         authserv-id: see the smtp_ properties. proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
@@ -1390,6 +1425,8 @@
         <replicate set="voiceTrunks">
             <entity name="moqui.call.VoiceTrunk" fields="name,host,port,transportEnumId,mediaEncryptionEnumId,providerProfileEnumId,authJson,registerFlag,emergencyCapable,inboundAddresses,fromDomain,disabled"/>
             <entity name="moqui.call.VoicePolicy" fields="internationalEnabled,premiumEnabled,maxConcurrentCalls,authFailureLimit,authFailureWindowSeconds,authBlockSeconds,homeCountryCode,emergencyNumbers,premiumPrefixes"/>
+            <!-- the numbers alone, by which an edge node with several pairings finds the owner of a call (E16) -->
+            <entity name="moqui.call.PhoneNumber" fields="voiceTrunkId"/>
         </replicate>
         <replicate set="voiceFallbacks">
             <entity name="moqui.call.PhoneNumberFallback" fields="voiceTrunkId,voicemailFlag,greetingLocation,forwardNumber,forwardSeconds,forwardMaxConcurrent,forwardMaxPerDay"/>

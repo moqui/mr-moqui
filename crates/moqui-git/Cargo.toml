@@ -44,5 +44,12 @@ moqui-report = { workspace = true }
 image = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 
+# Opt-in: one container on a real Docker or Podman socket (docs/interfaces/Pipelines.md "Tests"). Run by name, with
+# MOQUI_CI_DOCKER_SOCKET set: cargo test -p moqui-git --test ci_docker
+[[test]]
+name = "ci_docker"
+path = "tests/ci_docker.rs"
+test = false
+
 [lints]
 workspace = true

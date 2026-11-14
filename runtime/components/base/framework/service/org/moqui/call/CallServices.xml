@@ -596,8 +596,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: the ICE servers of a leg: the TURN URLs (turnUrls, the media node's, and turn_external_urls)
             with a credential in the TURN REST form coturn's use-auth-secret takes: username &lt;expiry&gt;:&lt;callLegId&gt;,
             password base64 of HMAC-SHA1 of it with turn_auth_secret. Empty without URLs or a secret. The URLs of
-            mediaNodeId when it is this node's edge node get a credential signed with that node's secret, which its link
-            told this node (plans/archive/Edge-Node.md §5.4), and the external ones another.</description>
+            mediaNodeId when it is this node's edge node get a credential signed with this node's pairing's secret there,
+            which its link told this node (plans/archive/Edge-Node.md §5.4), whose username names the pairing
+            (&lt;expiry&gt;:&lt;callLegId&gt;@&lt;pairing&gt;, plans/Edge-Node2.md §4.1), and the external ones
+            another.</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="turnUrls"/>

@@ -20,7 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
             that counts records (at most 100: a count of 100 is "100 or more"), value for a resource reading (its
             percent), link a route under /apps with its parameters. The resource readings whose level is not ok come
             first (the status map's Resources: disk space and inodes of each filesystem, memory, CPU load, open files,
-            the certificates the HTTPS listener serves, swap), the most severe first; then the listeners and integrations that failed or were skipped, a draining
+            the certificates the HTTPS listener serves, a name set up with ACME whose last order failed, swap), the most
+            severe first; then the listeners and integrations that failed or were skipped, a draining
             instance, saturated workers or database pool, the readiness checks that are not ready, system messages
             in error, open incidents, firing alerts, failing checks and scrape targets, new error groups and agent
             approvals waiting. The readiness checks are those of org.moqui.admin.ReadinessServices.get#Readiness, the
@@ -127,6 +128,21 @@ along with this software (see the LICENSE.md file). If not, see
                             : days === 1 ? say('The certificate of ${name} expires in 1 day', {name: certificate.name})
                             : say('The certificate of ${name} expires in ${days} days', {name: certificate.name, days})},
                         metrics('moqui.tls.certificate.days_left')))
+                }
+            })
+            // a name set up with ACME whose last order failed (System › Certificates), with when its certificate expires
+            check('acme', () => {
+                if (!mayView('moqui.server.AcmeName')) return
+                const failed = Array.from(ec.entity.find('moqui.server.AcmeName').condition('statusId', 'AcmeFailed').limit(LIMIT).disableAuthz().list())
+                for (const name of failed) {
+                    const notAfter = name.notAfter ? Number(name.notAfter) : null
+                    const days = notAfter != null && Number.isFinite(notAfter) ? Math.floor((notAfter - now) / DAY) : null
+                    const values = {name: name.hostName, until: notAfter != null ? ec.l10n.format(name.notAfter, 'yyyy-MM-dd') : ''}
+                    item(resources, {key: 'acmeRenewal', severity: days == null || days < 7 ? 'critical' : 'warning', value: days,
+                        text: days == null ? say('The certificate of ${name} could not be ordered by ACME, and it has none', values)
+                            : days < 0 ? say('Renewing the certificate of ${name} by ACME failed, and it expired ${until}', values)
+                            : say('Renewing the certificate of ${name} by ACME failed; it expires ${until}', values),
+                        link: '/apps/system/Certificates'})
                 }
             })
             check('swap', () => {

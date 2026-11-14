@@ -386,9 +386,10 @@ const EXTERNAL_PROPERTY: &str = "turn_external_urls";
 /// `make#IceServers`: the ICE servers of a leg for its RTCPeerConnection: the TURN URLs of its call's media node
 /// (`turnUrls`, which the node registered) and any external ones, with a credential for this leg in the TURN REST form
 /// (`<expiry>:<legId>`, base64 HMAC-SHA1). Nothing when there are no URLs or no secret. A media node that is this local
-/// node's edge node (`mediaNodeId`, plans/archive/Edge-Node.md §5.4, E7) checks its own secret, which its link told this node
-/// ([`crate::edge::media::turn_secret`]): its URLs get a credential signed with that, and the external ones another
-/// signed with this node's.
+/// node's edge node (`mediaNodeId`, plans/archive/Edge-Node.md §5.4, E7) checks a secret of this node's pairing, which its
+/// link told this node ([`crate::edge::media::turn_secret`]): its URLs get a credential signed with that, whose
+/// username names the pairing (`<expiry>:<legId>@<pairing>`, the id this node paired as, plans/Edge-Node2.md §4.1, E16), and the external ones
+/// another signed with this node's.
 fn make_ice_servers(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -412,7 +413,7 @@ fn make_ice_servers(
         .collect();
     let own = moqui_lib::env::get_prop_or_env(SECRET_PROPERTY);
     let edge_secret = crate::context::ExecutionContext::with_current(|ec| {
-        crate::edge::media::turn_secret(ec.factory(), &text("mediaNodeId"))
+        crate::edge::media::turn_peer(ec.factory(), &text("mediaNodeId"))
     })
     .flatten();
     let hours: u64 = moqui_lib::env::get_prop_or_env(HOURS_PROPERTY)
@@ -424,14 +425,22 @@ fn make_ice_servers(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let username = format!("{}:{leg}", now + hours * 3600);
+    let expiry = now + hours * 3600;
+    let username = crate::edge::media::turn_username(expiry, &leg, None);
     let mut servers = Vec::new();
     if !leg.is_empty() {
         let groups = match edge_secret {
-            Some(edge) => vec![(node_urls, edge), (external, own)],
-            None => vec![(node_urls.into_iter().chain(external).collect(), own)],
+            Some((edge, pairing)) => vec![
+                (
+                    node_urls,
+                    crate::edge::media::turn_username(expiry, &leg, Some(&pairing)),
+                    edge,
+                ),
+                (external, username, own),
+            ],
+            None => vec![(node_urls.into_iter().chain(external).collect(), username, own)],
         };
-        for (urls, secret) in groups {
+        for (urls, username, secret) in groups {
             if let Some(server) = ice_server(&urls, &username, &secret)? {
                 servers.push(server);
             }

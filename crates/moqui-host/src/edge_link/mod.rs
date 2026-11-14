@@ -71,6 +71,7 @@ mod signal;
 mod store;
 pub(crate) mod tunnel;
 pub(crate) mod web;
+pub(crate) mod xmpp_domain;
 
 pub(crate) use accept::{Acceptor, Secured};
 pub use dial::{connect_up, Dialer, UpLink};
@@ -310,9 +311,12 @@ impl Backoff {
 /// The longest node id: the `id` type of `moqui.edge.EdgeClient.pairedNodeId`.
 const MAX_NODE_ID: usize = 40;
 
-/// Whether `id` can be a paired node's id: not empty, at most 40 bytes, no whitespace or control characters.
+/// Whether `id` can be a paired node's id: not empty, at most 40 bytes, no whitespace or control characters, and no
+/// `@`, which a TURN username puts between a leg and its pairing (`moqui_rtc::turn::PAIRING_SEPARATOR`, E16).
 pub(crate) fn valid_node_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= MAX_NODE_ID && !id.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+    !id.is_empty()
+        && id.len() <= MAX_NODE_ID
+        && !id.chars().any(|ch| ch.is_whitespace() || ch.is_control() || ch == '@')
 }
 
 impl Backoff {
@@ -387,16 +391,14 @@ pub struct EdgeConfig {
     /// The Pair calls one address may make in `pair_window`.
     pub pair_attempts: u32,
     pub pair_window: Duration,
-    /// The port that pipes SSH down a link (`edge_ssh_tunnel_port` on `edge_ssh_tunnel_host`), none when empty.
+    /// The port that pipes SSH down a link (`edge_ssh_tunnel_port` on `edge_ssh_tunnel_host`), none when empty: to
+    /// the one node linked. A port per pairing is an `EdgePort` row (E16, `tunnel.rs`).
     pub ssh_tunnel: Option<std::net::SocketAddr>,
-    /// The paired node the SSH tunnel goes to (`edge_ssh_tunnel_node`); empty for the only paired node.
-    pub ssh_tunnel_node: String,
     /// The ports that pipe XMPP clients down a link: STARTTLS (`edge_xmpp_port`) and direct TLS
-    /// (`edge_xmpp_tls_port`), both on `edge_xmpp_host`; each none when empty.
+    /// (`edge_xmpp_tls_port`), both on `edge_xmpp_host`; each none when empty. Each connection goes to the pairing
+    /// whose XMPP domain it names (E16, `tunnel.rs`).
     pub xmpp_tunnel: Option<std::net::SocketAddr>,
     pub xmpp_tls_tunnel: Option<std::net::SocketAddr>,
-    /// The paired node the XMPP tunnels go to (`edge_xmpp_node`); empty for the only paired node.
-    pub xmpp_tunnel_node: String,
     /// The page a terminate host answers with while its node's link is down (`edge_offline_page`, else the default).
     pub offline_page: std::sync::Arc<str>,
     /// How long opening a tunnel or forwarding a request head down a link may take.
@@ -422,12 +424,8 @@ impl EdgeConfig {
             pair_attempts: 10,
             pair_window: Duration::from_secs(600),
             ssh_tunnel: tunnel_bind(TUNNEL_PORTS[0].0, TUNNEL_PORTS[0].1, TUNNEL_PORTS[0].2),
-            ssh_tunnel_node: moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_node")
-                .trim()
-                .to_string(),
             xmpp_tunnel: tunnel_bind(TUNNEL_PORTS[1].0, TUNNEL_PORTS[1].1, TUNNEL_PORTS[1].2),
             xmpp_tls_tunnel: tunnel_bind(TUNNEL_PORTS[2].0, TUNNEL_PORTS[2].1, TUNNEL_PORTS[2].2),
-            xmpp_tunnel_node: moqui_lib::env::get_prop_or_env("edge_xmpp_node").trim().to_string(),
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
         }

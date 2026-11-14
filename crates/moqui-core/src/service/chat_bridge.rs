@@ -1529,7 +1529,7 @@ fn push_state(room_id: &str, seq: i64) {
 #[path = "chat_bridge_web.rs"]
 mod web;
 pub use web::{
-    media, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook, FetchedMedia,
+    media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook, FetchedMedia,
     MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
 };
 

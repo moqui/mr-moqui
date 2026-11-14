@@ -25,6 +25,12 @@
 //! out the edge node's link-kept `SipNode` row, which stays: no new call goes to the edge node's engine, and its
 //! registrar signs no phone in, no phone rings through a binding there (`SipDevices.js` `liveSipNodes`), and Apply
 //! removes its bindings ([`remove_edge_bindings`]). Calls already on it go on.
+//!
+//! **Several pairings** (plans/Edge-Node2.md §4.1, E16). The edge node's engine loads every pairing's trunks and reads
+//! each one's copies. A number's owner is the claim of [`super::claims`] (`PhoneNumber` in `voiceTrunks`, so a number
+//! with no fallback row is found too, or `PhoneNumberFallback` in `voiceFallbacks`; a number another owner holds is
+//! held back as a replica conflict); here are each pairing's `sipDomain` ([`pairing_domains`]) and the realm a
+//! pairing's phones register in ([`pairing_realm`]).
 
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
@@ -50,6 +56,7 @@ const NUMBER: &str = "moqui.call.PhoneNumber";
 const FALLBACK: &str = "moqui.call.PhoneNumberFallback";
 const DEVICE: &str = "moqui.call.SipDevice";
 const REGISTRATION: &str = "moqui.call.SipRegistration";
+const EDGE_CLIENT: &str = "moqui.edge.EdgeClient";
 
 /// Whether phones go through the edge node ([`SIP_ENABLED`]).
 pub fn sip_enabled() -> bool {
@@ -244,14 +251,6 @@ pub fn other_realm_devices(facade: &EntityFacade, realm: &str) -> Result<usize, 
 /// The Test step's trunks check: every one of this node's enabled trunks (`local`, as (id, name)) is loaded by the
 /// edge node's engine (the offer's), and none failed. `None` when there is nothing to check.
 pub fn trunk_check(local: &[(String, String)], offer: &SipOffer) -> (Option<bool>, String) {
-    if offer.other_nodes {
-        return (
-            Some(false),
-            "Other local nodes are active on the edge node too, so its SIP engine loads no node's trunks (one local \
-             node per edge node for phones)"
-                .to_string(),
-        );
-    }
     if local.is_empty() {
         return (None, "Not checked: this node has no enabled trunk".to_string());
     }
@@ -328,13 +327,6 @@ pub fn trunk_check(local: &[(String, String)], offer: &SipOffer) -> (Option<bool
 /// The Test step's fallbacks check: the edge node's copy holds as many fallbacks as this node has (`local`), with
 /// nothing of the set waiting to go (`set`, its replication state here).
 pub fn fallback_check(local: usize, offer: &SipOffer, set: Option<&SetStatus>) -> (bool, String) {
-    if offer.other_nodes {
-        return (
-            false,
-            "Other local nodes are active on the edge node too, so its SIP engine reads no node's fallbacks"
-                .to_string(),
-        );
-    }
     let Some(set) = set else {
         return (
             false,
@@ -434,14 +426,6 @@ pub fn apply(
     for name in [TRUNKS_SET, FALLBACKS_SET] {
         lines.push(set_line(status.iter().find(|set| set.name == name), name, on));
     }
-    if offer.other_nodes {
-        lines.push(SetupLine::new(
-            "sip",
-            false,
-            "Other local nodes are active on the edge node too, so its SIP engine reads no node's trunks or fallbacks \
-             (one local node per edge node for phones)",
-        ));
-    }
     let row = sip_row(facade, &edge.instance_id);
     let now = crate::user::now_millis();
     let (ok, text) = match &row {
@@ -539,6 +523,92 @@ pub fn remove_edge_bindings(facade: &EntityFacade, instance_id: &str) -> Result<
         .eq("instanceId", Value::string(instance_id))
         .disable_authz()
         .delete_all()
+}
+
+/// The SIP device domain of a kept Configure (`EdgeClient.setupJson`'s `sipDomain`), lower case with no trailing dot.
+pub fn setup_domain(setup: &str) -> String {
+    let setup: serde_json::Value = serde_json::from_str(setup).unwrap_or_default();
+    setup["sipDomain"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+/// On a node that takes links, each active pairing (`EdgeClientActive`) in id order, with the SIP device domain of
+/// its last Configure ([`setup_domain`]; empty when it named none).
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn pairing_domains(facade: &EntityFacade) -> Result<Vec<(String, String)>, Error> {
+    let rows = facade
+        .find(EDGE_CLIENT)?
+        .eq("statusId", Value::string("EdgeClientActive"))
+        .select_field("pairedNodeId")
+        .select_field("setupJson")
+        .order_by("pairedNodeId", false)
+        .disable_authz()
+        .list()?;
+    Ok(rows
+        .values()
+        .iter()
+        .map(|row| (text(row, "pairedNodeId"), setup_domain(&text(row, "setupJson"))))
+        .filter(|(node, _)| !node.is_empty())
+        .collect())
+}
+
+/// The realm the phones of the pairing `node` register in on this edge node, and whether its registrar takes them,
+/// as its Hello and offer tell that pairing (E16): the `sipDomain` of its last Configure when it named one; else, on
+/// a dedicated edge node, the registrar's own realm (`sip_domain`), and on an all-in-one node none, as the server's
+/// own realm is the server's. The domain is the one the SIP engine's registrar takes now
+/// ([`super::media::applied_sip_domain`]), or with `kept` the one kept from the last Configure, which the engine
+/// takes within seconds. `None` while this node runs no SIP engine. A read that fails is logged and taken as no
+/// domain.
+pub fn pairing_realm(
+    factory: &crate::context::ExecutionContextFactory,
+    node: &str,
+    kept: bool,
+) -> Option<(String, bool)> {
+    let advert = super::media::sip_advert(factory)?;
+    let applied = (!kept)
+        .then(|| super::media::applied_sip_domain(factory, node))
+        .flatten();
+    if let Some(domain) = applied {
+        return Some(realm_of(&domain, super::settings(factory).all_in_one(), &advert));
+    }
+    let domain = match factory.entity() {
+        Some(facade) => facade
+            .find(EDGE_CLIENT)
+            .and_then(|find| {
+                find.eq("pairedNodeId", Value::string(node))
+                    .select_field("setupJson")
+                    .disable_authz()
+                    .one()
+            })
+            .map(|row| {
+                row.map(|row| setup_domain(&text(&row, "setupJson")))
+                    .unwrap_or_default()
+            })
+            .unwrap_or_else(|err| {
+                tracing::error!("SIP: the domain of local node {node}'s phones was not read: {err}");
+                String::new()
+            }),
+        None => String::new(),
+    };
+    Some(realm_of(&domain, super::settings(factory).all_in_one(), &advert))
+}
+
+/// [`pairing_realm`] from the pairing's domain (`domain`), the node's role and its SIP engine's advert.
+pub fn realm_of(domain: &str, all_in_one: bool, advert: &super::media::SipAdvert) -> (String, bool) {
+    if !domain.is_empty() {
+        (domain.to_string(), advert.registrar)
+    } else if all_in_one {
+        (String::new(), false)
+    } else {
+        (advert.domain.clone(), advert.registrar)
+    }
 }
 
 /// The edge node of a link that is up, as its last Hello said, when it runs a SIP engine, or why there is none.

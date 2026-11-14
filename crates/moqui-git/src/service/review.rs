@@ -354,6 +354,8 @@ fn set_merge_request_hidden(parameters: &Parameters, facade: &EntityFacade) -> O
             .eq("mergeRequestId", Value::string(&mr_id))
             .update_all([("hiddenDate".to_string(), date.clone())])?;
     }
+    // its pipeline runs are read as it is: hidden with it, shown with it (docs/interfaces/Pipelines.md)
+    crate::ci::queue::set_merge_request_hidden(facade, &mr_id, hidden)?;
     let was_hidden = field(&row, "hiddenDate").is_some();
     if hidden || was_hidden {
         // from the first one on, only the refs of the repository decide what is read by id

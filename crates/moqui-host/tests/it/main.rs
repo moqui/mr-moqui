@@ -33,6 +33,8 @@ use example as _;
 use ::dev_aide as _;
 
 mod a2a;
+mod acme;
+mod acme_authority;
 mod agent_eval;
 mod agent_members;
 mod agent_remote;
@@ -53,6 +55,8 @@ mod devaide;
 mod edge_allinone;
 mod edge_call;
 mod edge_chat;
+mod edge_domains;
+mod edge_domains_comms;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;
@@ -98,6 +102,7 @@ mod report_documents;
 mod report_monitoring;
 mod report_schedule_lock;
 mod resources;
+mod root_hosts;
 #[cfg(feature = "rtc")]
 mod rtc;
 mod screen_stream;

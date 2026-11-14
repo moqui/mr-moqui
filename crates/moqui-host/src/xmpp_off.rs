@@ -29,6 +29,12 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
     None
 }
 
+/// No XMPP server listens in this build.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn client_ports(_factory: &ExecutionContextFactory) -> (Option<u16>, Option<u16>) {
+    (None, None)
+}
+
 /// No XMPP server runs in this build.
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
 pub(crate) fn running(_factory: &ExecutionContextFactory, _direct: bool) -> bool {

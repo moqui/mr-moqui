@@ -37,6 +37,7 @@ fn live_row(now: i64) -> SipRow {
 
 fn trunk(id: &str, state: &str, error: &str) -> SipTrunkState {
     SipTrunkState {
+        paired_node_id: String::new(),
         voice_trunk_id: id.to_string(),
         name: format!("{id} name"),
         state: state.to_string(),
@@ -125,9 +126,6 @@ fn the_trunk_check_wants_every_enabled_trunk_loaded_and_none_failed() {
         ok == Some(true) && text.contains("T1 name (registered), T2 name (ok)"),
         "{text}"
     );
-    offer.other_nodes = true;
-    let (ok, text) = trunk_check(&local, &offer);
-    assert!(ok == Some(false) && text.contains("Other local nodes"), "{text}");
 }
 
 #[test]
@@ -174,11 +172,6 @@ fn the_fallback_check_wants_the_copy_complete_and_nothing_waiting() {
     };
     let (ok, text) = fallback_check(0, &none, Some(&set));
     assert!(ok && text.contains("refused (480)"), "{text}");
-    let others = SipOffer {
-        other_nodes: true,
-        ..offer
-    };
-    assert!(!fallback_check(2, &others, Some(&set)).0);
 }
 
 #[test]
@@ -190,4 +183,118 @@ fn a_link_that_is_down_or_without_sip_names_no_sip_node() {
     assert!(linked_sip_node(&status).unwrap_err().contains("sip_port"));
     status.peer.sip_tls_address = "203.0.113.5:5061".to_string();
     assert_eq!(linked_sip_node(&status).unwrap().instance_id, "edge-1");
+}
+
+fn open() -> (crate::context::ExecutionContext, EntityFacade) {
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    (ctx, facade)
+}
+
+fn paired(facade: &EntityFacade, node: &str, status: &str, setup: &str) {
+    let mut row = facade.make_value(EDGE_CLIENT).unwrap();
+    for (field, value) in [
+        ("pairedNodeId", node),
+        ("keyFingerprint", "ab"),
+        ("statusId", status),
+        ("setupJson", setup),
+    ] {
+        row.set(field, Value::string(value));
+    }
+    row.create(facade).unwrap();
+}
+
+/// A paired node's full send of `set` with one record of `entity` keyed by `number`.
+fn numbers(facade: &EntityFacade, node: &str, set: &str, entity: &str, numbers: &[&str]) {
+    let batch = crate::edge::replica::Batch {
+        set_name: set.to_string(),
+        epoch: "e1".to_string(),
+        base_seq: 0,
+        seq: 1,
+        snapshot: true,
+        snapshot_end: true,
+        changes: numbers
+            .iter()
+            .map(|number| crate::edge::replica::Change {
+                entity_name: entity.to_string(),
+                pk_json: serde_json::json!({"phoneNumber": number}).to_string(),
+                fields_json: Some(serde_json::json!({"voiceTrunkId": "T1"}).to_string()),
+            })
+            .collect(),
+    };
+    crate::edge::replica::apply_batch(facade, node, &batch).unwrap();
+}
+
+#[test]
+fn a_number_is_found_by_the_pairing_whose_copies_have_it() {
+    use crate::edge::claims::{self, ClaimKind};
+    let (_ctx, facade) = open();
+    paired(
+        &facade,
+        "local-a",
+        "EdgeClientActive",
+        r#"{"sipDomain": "SIP.A.example."}"#,
+    );
+    paired(&facade, "local-b", "EdgeClientActive", "{}");
+    paired(
+        &facade,
+        "local-c",
+        "EdgeClientRevoked",
+        r#"{"sipDomain": "sip.c.example"}"#,
+    );
+    assert_eq!(
+        pairing_domains(&facade).unwrap(),
+        vec![
+            ("local-a".to_string(), "sip.a.example".to_string()),
+            ("local-b".to_string(), String::new())
+        ],
+        "the active pairings with their domains, a revoked one left out"
+    );
+    // local-a's number with no fallback row (only on its trunk) and local-b's with one, apart
+    numbers(&facade, "local-a", TRUNKS_SET, NUMBER, &["+15550001111"]);
+    numbers(&facade, "local-b", FALLBACKS_SET, FALLBACK, &["+15550002222"]);
+    numbers(&facade, "local-c", TRUNKS_SET, NUMBER, &["+15550004444"]);
+    let holder = |number: &str| claims::replica_claim(&facade, ClaimKind::PhoneNumber, number).unwrap();
+    assert_eq!(
+        holder("+15550001111").as_deref(),
+        Some("local-a"),
+        "a number of its trunk only"
+    );
+    assert_eq!(holder("+15550002222").as_deref(), Some("local-b"));
+    assert_eq!(holder("+15550004444"), None, "a revoked pairing's");
+    // a PhoneNumber copy claims its number, so another pairing's copy of it is held back as a conflict
+    assert_eq!(
+        claims::copy_claim(
+            NUMBER,
+            &serde_json::json!({"phoneNumber": "+15550001111"}),
+            &serde_json::json!({})
+        ),
+        Some((ClaimKind::PhoneNumber, "+15550001111".to_string()))
+    );
+}
+
+#[test]
+fn a_pairings_phones_register_in_its_own_domain() {
+    let advert = crate::edge::media::SipAdvert {
+        domain: "sip.edge.example".to_string(),
+        registrar: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        realm_of("sip.a.example", false, &advert),
+        ("sip.a.example".to_string(), true)
+    );
+    assert_eq!(
+        realm_of("", false, &advert),
+        ("sip.edge.example".to_string(), true),
+        "a dedicated edge node's own realm for a pairing that named none"
+    );
+    assert_eq!(
+        realm_of("", true, &advert),
+        (String::new(), false),
+        "never the all-in-one server's own realm"
+    );
+    assert_eq!(setup_domain(r#"{"sipDomain": " Sip.B.example. "}"#), "sip.b.example");
+    assert_eq!(setup_domain("not json"), "");
 }

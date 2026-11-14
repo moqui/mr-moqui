@@ -392,6 +392,7 @@ impl GitProvider {
                 // an id made again already: its rows are the new repository's
                 return Ok(());
             }
+            super::ci::delete_repository_rows(&entity, repository_id)?;
             delete_rows_of(&entity, repository_id)
         });
         if let Err(err) = swept {
@@ -502,6 +503,8 @@ impl GitProvider {
                     .condition(Condition::is_null("sourceDetachedDate"))
                     .update_all([("sourceDetachedDate".to_string(), moqui_core::user::now_value())])?;
             }
+            // the engine's rows of it (docs/interfaces/Pipelines.md, Records): its runs, their jobs still running stopped
+            super::ci::delete_repository_rows(&entity, repository_id)?;
             delete_rows_of(&entity, repository_id)?;
             if entity.table_ready(GIT_PATH_REDIRECT) {
                 entity

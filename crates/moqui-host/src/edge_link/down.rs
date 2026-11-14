@@ -365,7 +365,8 @@ where
     let Some(tls) = web.serve.tls.clone() else {
         return;
     };
-    let handshake = tokio_rustls::TlsAcceptor::from(tls).accept(stream);
+    // an ACME challenge for this node's passthrough name is answered here too (crate::acme)
+    let handshake = crate::acme::accept(stream, tls, &web.factory);
     let limit = web.serve.app.limits.header.unwrap_or(TUNNEL_HANDSHAKE);
     let stream = match tokio::time::timeout(limit, handshake).await {
         Ok(Ok(stream)) => stream,

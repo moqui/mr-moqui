@@ -792,6 +792,8 @@ impl Engine {
         match &recorded.error {
             // E8: an edge node's message goes to the local node on the queue, routed or not, with its audio
             None if recorded.duration_ms >= MIN_MESSAGE_MS && super::owners::owner_of(leg) != Owner::Own => {
+                // E16: to the pairing whose call it was, now and after a restart
+                let node = super::owners::owner_of(leg).node().unwrap_or_default().to_string();
                 let target = &recorded.plan.target;
                 let received_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -801,7 +803,7 @@ impl Engine {
                     "toNumber": target.get("toNumber"), "fromNumber": target.get("fromNumber"),
                     "fromName": target.get("fromName"), "durationMs": recorded.duration_ms, "receivedMs": received_ms});
                 let (factory, path) = (Arc::clone(&self.factory), recorded.plan.path.clone());
-                tokio::spawn(async move { super::edge::queue_voicemail(&factory, &path, payload).await });
+                tokio::spawn(async move { super::edge::queue_voicemail(&factory, &node, &path, payload).await });
             }
             None if recorded.duration_ms >= MIN_MESSAGE_MS => {
                 let mut parameters = recorded.plan.target.clone();

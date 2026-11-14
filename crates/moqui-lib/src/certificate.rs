@@ -12,9 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! When an X.509 certificate expires, read from its DER bytes: the `notAfter` of its validity, for the resource
-//! readings (plans/archive/Tools-Fancy.md §11, certificate expiry). It reads the few fields on the way to the validity
-//! and checks nothing else: a certificate is verified by the TLS stack, not here.
+//! When an X.509 certificate expires and who issued it, read from its DER bytes: the `notAfter` of its validity, for
+//! the resource readings (plans/archive/Tools-Fancy.md §11, certificate expiry), and the issuer's name, for System ›
+//! Certificates (plans/Edge-Node2.md §4.8). It reads the few fields on the way to them and checks nothing else: a
+//! certificate is verified by the TLS stack, not here.
 
 /// One DER element: its tag, its content, and what follows it.
 struct Element<'a> {
@@ -71,6 +72,47 @@ pub fn not_after(der: &[u8]) -> Option<i64> {
     time(not_after.tag, not_after.content)
 }
 
+/// The issuer of the certificate in `der`, as a person reads it: its common name, else its organization; `None` when the
+/// bytes are not a certificate this reads or the issuer has neither.
+#[must_use]
+pub fn issuer(der: &[u8]) -> Option<String> {
+    let certificate = element(der).filter(|found| found.tag == SEQUENCE)?;
+    let tbs = element(certificate.content).filter(|found| found.tag == SEQUENCE)?;
+    // version (optional), serialNumber, signature, then issuer
+    let mut field = element(tbs.content)?;
+    if field.tag == VERSION {
+        field = element(field.rest)?;
+    }
+    for _ in 0..2 {
+        field = element(field.rest)?;
+    }
+    let name = Some(field).filter(|found| found.tag == SEQUENCE)?;
+    let attribute = |wanted: &[u8]| -> Option<String> {
+        let mut sets = name.content;
+        while let Some(set) = element(sets) {
+            sets = set.rest;
+            let mut entries = set.content;
+            while let Some(entry) = element(entries) {
+                entries = entry.rest;
+                let oid = element(entry.content).filter(|found| found.tag == OID)?;
+                let value = element(oid.rest)?;
+                if oid.content == wanted && STRING_TAGS.contains(&value.tag) {
+                    return std::str::from_utf8(value.content).ok().map(str::to_string);
+                }
+            }
+        }
+        None
+    };
+    attribute(COMMON_NAME).or_else(|| attribute(ORGANIZATION))
+}
+
+const OID: u8 = 0x06;
+/// 2.5.4.3 and 2.5.4.10.
+const COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
+const ORGANIZATION: &[u8] = &[0x55, 0x04, 0x0a];
+/// UTF8String, PrintableString, IA5String, T61String: the forms a name's text comes in.
+const STRING_TAGS: [u8; 4] = [0x0c, 0x13, 0x16, 0x14];
+
 /// A `UTCTime` (`YYMMDDHHMMSSZ`, the year 1950 to 2049) or a `GeneralizedTime` (`YYYYMMDDHHMMSSZ`) as seconds since
 /// 1970.
 fn time(tag: u8, content: &[u8]) -> Option<i64> {
@@ -113,7 +155,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{days_from_civil, element, not_after, time, GENERALIZED_TIME, UTC_TIME};
+    use super::{days_from_civil, element, issuer, not_after, time, GENERALIZED_TIME, UTC_TIME};
 
     #[test]
     fn a_time_is_read_in_both_forms_and_refused_when_it_is_not_one() {
@@ -155,5 +197,44 @@ mod tests {
         assert_eq!(not_after(&[0x04, 0x02, 0x30, 0x00]), None, "not a sequence");
         assert_eq!(not_after(&[0x30, 0x02, 0x30, 0x00]), None, "an empty certificate body");
         assert!(element(&[0x30, 0x81, 0x01, 0x05]).is_some_and(|found| found.content == [0x05]));
+        assert_eq!(issuer(&[]), None);
+        assert_eq!(issuer(&[0x30, 0x02, 0x30, 0x00]), None);
+    }
+
+    /// The issuer's common name, else its organization, from a certificate's issuer Name.
+    #[test]
+    fn the_issuer_is_its_common_name_else_its_organization() {
+        // SEQUENCE { SEQUENCE (tbs) { [0] { INTEGER 2 }, INTEGER 1, SEQUENCE {}, issuer } }
+        let certificate = |issuer_name: &[u8]| {
+            let mut tbs = vec![0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01, 0x01, 0x30, 0x00];
+            tbs.extend_from_slice(issuer_name);
+            let mut tbs_element = vec![0x30, u8::try_from(tbs.len()).unwrap()];
+            tbs_element.extend(tbs);
+            let mut der = vec![0x30, u8::try_from(tbs_element.len()).unwrap()];
+            der.extend(tbs_element);
+            der
+        };
+        // C=US, O=Let's Encrypt, CN=R11
+        let mut name = vec![0x30, 0x00];
+        for (oid, text) in [(0x06_u8, &b"US"[..]), (0x0a, b"Let's Encrypt"), (0x03, b"R11")] {
+            let mut entry = vec![0x06, 0x03, 0x55, 0x04, oid, 0x13, u8::try_from(text.len()).unwrap()];
+            entry.extend_from_slice(text);
+            let mut set = vec![
+                0x31,
+                u8::try_from(entry.len() + 2).unwrap(),
+                0x30,
+                u8::try_from(entry.len()).unwrap(),
+            ];
+            set.extend(entry);
+            name.extend(set);
+        }
+        name[1] = u8::try_from(name.len() - 2).unwrap();
+        assert_eq!(issuer(&certificate(&name)).as_deref(), Some("R11"));
+        // O only
+        let only_o = [
+            0x30, 0x0c, 0x31, 0x0a, 0x30, 0x08, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x01, b'X',
+        ];
+        assert_eq!(issuer(&certificate(&only_o)).as_deref(), Some("X"));
+        assert_eq!(issuer(&certificate(&[0x30, 0x00])), None, "an empty issuer");
     }
 }

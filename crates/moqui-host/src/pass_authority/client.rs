@@ -17,8 +17,9 @@
 //! - `grpc://host:port` and `grpcs://host:port`: the authority's gRPC listener, plain HTTP/2 or TLS (WebPKI roots,
 //!   ALPN h2), one connection per endpoint kept and dialed again when it closes; the client is `pass_client_id`, its
 //!   secret `pass_client_secret` in the metadata.
-//! - `edge:`: on an edge node, its local node down the link (`EdgeServer::only_link`); "local node offline" at once
-//!   while the link is down.
+//! - `edge:`: on an edge node, a local node down the link: the pairing whose Configure names the call's site, else the
+//!   only one linked (`EdgeServer::pass_link`, plans/Edge-Node2.md §4.1); "local node offline" at once while that
+//!   link is down.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -138,16 +139,11 @@ impl Sender {
     async fn client(
         direct: Arc<Mutex<HashMap<String, H2Send>>>,
         endpoint: &Endpoint,
+        link: Option<H2Send>,
     ) -> Result<AuthorityClient, Error> {
         let (send, origin) = match endpoint {
             Endpoint::Edge => {
-                let server = crate::edge_link::hook::edge_server().ok_or_else(|| {
-                    Error::new(format!(
-                        "{}: this is not a running edge node, so edge: names no local node",
-                        moqui_core::edge::OFFLINE
-                    ))
-                })?;
-                let (_, send, _) = server.only_link()?;
+                let send = link.ok_or_else(|| Error::new("edge: names no link"))?;
                 (send, crate::edge_link::origin())
             }
             Endpoint::Direct { host, port, tls } => {
@@ -169,6 +165,22 @@ impl Sender {
             .max_decoding_message_size(super::MAX_MESSAGE)
             .max_encoding_message_size(super::MAX_MESSAGE))
     }
+}
+
+/// For `edge:`, the down connection of the local node that is the authority of `site` (`EdgeServer::pass_link`), read
+/// on the caller's thread before the call goes to the runtime; none for a direct endpoint.
+fn edge_link(endpoint: &Endpoint, site: &str) -> Result<Option<H2Send>, Error> {
+    if *endpoint != Endpoint::Edge {
+        return Ok(None);
+    }
+    let server = crate::edge_link::hook::edge_server().ok_or_else(|| {
+        Error::new(format!(
+            "{}: this is not a running edge node, so edge: names no local node",
+            moqui_core::edge::OFFLINE
+        ))
+    })?;
+    let (_, send, _) = server.pass_link(site)?;
+    Ok(Some(send))
 }
 
 /// An HTTP/2 connection to a direct endpoint, its driver on the runtime.
@@ -208,10 +220,11 @@ async fn dial(host: &str, port: u16, tls: bool) -> Result<H2Send, Error> {
 impl PassSender for Sender {
     fn call(&self, endpoint: &str, mut call: Call) -> Result<Reply, Error> {
         let endpoint = parse_endpoint(endpoint)?;
+        let link = edge_link(&endpoint, &call.site_id)?;
         let direct = Arc::clone(&self.direct);
         crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
-            let mut client = Sender::client(direct, &endpoint).await?;
+            let mut client = Sender::client(direct, &endpoint, link).await?;
             let request = request(super::call_message(&call), &endpoint)?;
             let answer = tokio::time::timeout(CALL_TIMEOUT, client.call(request))
                 .await
@@ -223,10 +236,11 @@ impl PassSender for Sender {
 
     fn upload(&self, endpoint: &str, mut call: Call, file: UploadFile) -> Result<Reply, Error> {
         let endpoint = parse_endpoint(endpoint)?;
+        let link = edge_link(&endpoint, &call.site_id)?;
         let direct = Arc::clone(&self.direct);
         crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
-            let mut client = Sender::client(direct, &endpoint).await?;
+            let mut client = Sender::client(direct, &endpoint, link).await?;
             let length = file.bytes.len() as u64;
             let mut parts = vec![
                 UploadPart {
@@ -256,11 +270,12 @@ impl PassSender for Sender {
 
     fn download(&self, endpoint: &str, mut call: Call) -> Result<Result<Download, PassError>, Error> {
         let endpoint = parse_endpoint(endpoint)?;
+        let link = edge_link(&endpoint, &call.site_id)?;
         let direct = Arc::clone(&self.direct);
         let operation = call.operation.clone();
         let opened = crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
-            let mut client = Sender::client(direct, &endpoint).await?;
+            let mut client = Sender::client(direct, &endpoint, link).await?;
             let request = request(super::call_message(&call), &endpoint)?;
             let mut stream = tokio::time::timeout(CALL_TIMEOUT, client.download(request))
                 .await

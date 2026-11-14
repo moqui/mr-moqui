@@ -226,12 +226,16 @@ fn link(from: &Path, to: &Path) -> Result<(), Error> {
     }
 }
 
+/// The runtime's `conf` with its subdirectories: a `MOQUI_CONF` may name a topology's conf, as
+/// `conf/edge/MoquiEdgeConf.xml`. A symbolic link to a directory is not followed, so a loop cannot hold the copy up.
 fn copy_files(from: &Path, to: &Path) -> Result<(), Error> {
     std::fs::create_dir_all(to).map_err(io("could not create the scratch conf"))?;
     let entries = std::fs::read_dir(from).map_err(io("could not read the runtime conf"))?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            copy_files(&path, &to.join(entry.file_name()))?;
+        } else if path.is_file() {
             std::fs::copy(&path, to.join(entry.file_name())).map_err(io("could not copy the runtime conf"))?;
         }
     }
