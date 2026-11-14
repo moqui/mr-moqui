@@ -1947,6 +1947,9 @@ impl Drop for ServeProcess {
         self.facade.take();
         self.sim.take();
         self.db.take();
+        // Change 1: Emit lifecycle completion after telemetry and database resources stop.
+        // stderr remains available after the telemetry exporter has shut down.
+        eprintln!("Moqui server shutdown complete");
     }
 }
 
