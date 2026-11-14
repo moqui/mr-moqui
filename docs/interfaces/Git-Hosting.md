@@ -1148,8 +1148,12 @@ rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:
 its own process (the lease first, so no writer holds the lock while it waits on another member), so two members never
 write the same directory at once: one waits for the other, at most `shared-lock-wait-seconds` (120; then
 `GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed while held (scheduled by one thread of
-the process, each renewal on a thread of its own and waiting at most a sixth of the lease's time for the database, so
-one renewal the database holds does not lose the others; a lease let go within its first renewal interval costs none)
+the process, each renewal on a thread of its own, so one renewal the database holds does not lose the others; on
+Postgres the renewal's clock read and update each wait at most a sixth of the lease's time, while on MySQL, whose
+client cannot change an open connection's read timeout, they wait up to the datasource's `read-timeout` (600 s by
+default) and the renewer marks the lease lost once it goes stale meanwhile; a lease let go within its first renewal
+interval costs none; a lease marked lost is renewed no more and its row is let go at once, on the condition that its
+holder still has it)
 and taken over once it lapses (60 seconds after a member that held it stopped); its times are the database's clock
 (read by the statement its dialect takes, every 30 seconds; a read that fails keeps the offset last read, is warned of
 and is tried again at the next use), so the members' clocks do not matter. Its holder

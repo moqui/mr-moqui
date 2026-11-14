@@ -153,6 +153,34 @@ fn login_user_sets_current_username_and_logout_clears_it() {
     session::reset_session();
 }
 
+/// A job's borrowed sign-in (internal login, then `logout_local`) writes nothing to the account: a person's
+/// `hasLoggedOut` stays as it was, set or not, so a job neither ends nor brings back the person's sessions; a person's
+/// own sign-in clears it, and `logout` sets it.
+#[test]
+fn a_jobs_login_and_logout_local_leave_has_logged_out_alone() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "job.user", "Secret1!", |_| {});
+    let flag = || text(&load_user(&facade, "job.user"), "hasLoggedOut");
+    let before = flag();
+    internal_login_user("job.user").unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("job.user"));
+    logout_local().unwrap();
+    assert!(session::current_username().unwrap().is_none());
+    assert_eq!(flag(), before, "not marked logged out");
+
+    login_user("job.user", "Secret1!").unwrap();
+    logout().unwrap();
+    assert_eq!(flag(), "Y");
+    internal_login_user("job.user").unwrap();
+    logout_local().unwrap();
+    assert_eq!(flag(), "Y", "a job's login does not clear it");
+    login_user("job.user", "Secret1!").unwrap();
+    assert_eq!(flag(), "N", "a person's sign-in clears it");
+    logout_local().unwrap();
+    session::reset_session();
+}
+
 #[test]
 fn a_legacy_hash_verifies_and_the_stored_value_becomes_an_argon2_string() {
     let (ctx, facade) = open_ctx();

@@ -181,6 +181,73 @@ fn of_engines_racing_for_one_queued_job_exactly_one_starts_it() {
     );
 }
 
+/// A claim whose later writes fail gives the job back to the queue, its token never handed out; a give-back is this
+/// claim's only, so an old claim's (a rollback that comes late) does not undo a newer claim of the job.
+#[test]
+fn a_claim_whose_later_writes_fail_is_queued_again_and_an_old_one_undoes_no_new_one() {
+    let fixture = claims_fixture("ci-claim-after");
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let one = |entity: &str, key: &str, id: &str| super::one(&fixture.entity, entity, key, id).unwrap().unwrap();
+    let (run, pool) = (
+        one(PIPELINE_RUN, "pipelineRunId", "R1"),
+        one(RUNNER_POOL, "runnerPoolId", "P1"),
+    );
+    let hash_of = || super::field(&one(JOB_RUN, "jobRunId", "J1"), "tokenHash").unwrap_or_default();
+    let status = || super::field(&one(JOB_RUN, "jobRunId", "J1"), "statusId").unwrap_or_default();
+
+    engine::FAIL_AFTER_CLAIM.with(|fail| fail.set(true));
+    let failed = engine::claim_job(&fixture.entity, &run, &one(JOB_RUN, "jobRunId", "J1"), &pool, None);
+    engine::FAIL_AFTER_CLAIM.with(|fail| fail.set(false));
+    assert!(failed.is_err());
+    assert_eq!(status(), "queued", "given back to the queue");
+    let old = hash_of();
+    assert!(!old.is_empty());
+
+    let token = engine::claim_job(&fixture.entity, &run, &one(JOB_RUN, "jobRunId", "J1"), &pool, None).unwrap();
+    assert!(token.is_some());
+    assert_eq!(status(), "running");
+    let new = hash_of();
+    assert_ne!(old, new);
+    engine::unclaim_for_test(&fixture.entity, "J1", &old);
+    assert_eq!(status(), "running", "the old claim's give-back leaves the new claim");
+    engine::unclaim_for_test(&fixture.entity, "J1", &new);
+    assert_eq!(status(), "queued");
+}
+
+/// Registrations racing for the last places of a pool (two runners, a cap of four) on any member get those places and
+/// no more; a cap of 0 is none.
+#[test]
+fn registrations_at_once_do_not_pass_the_pools_runner_cap() {
+    let fixture = fixture_with(
+        "ci-register-race",
+        moqui_core::context::framework_dir(),
+        r#"<git-ci max-runners-per-pool="4"/>"#,
+    );
+    fill(&fixture);
+    let entity = fixture.entity.clone();
+    let registered = race(&fixture, 6, move |index| {
+        registered::register_in(&entity, "P1", &format!("runner {index}"), None).unwrap()
+    });
+    assert_eq!(registered.iter().flatten().count(), 2, "{registered:?}");
+
+    let unlimited = fixture_with(
+        "ci-register-nocap",
+        moqui_core::context::framework_dir(),
+        r#"<git-ci max-runners-per-pool="0"/>"#,
+    );
+    fill(&unlimited);
+    let _entered = unlimited.context.enter();
+    for index in 0..60 {
+        assert!(
+            registered::register_in(&unlimited.entity, "P1", &format!("runner {index}"), None)
+                .unwrap()
+                .is_some(),
+            "registration {index}"
+        );
+    }
+}
+
 #[test]
 fn two_runners_of_a_pool_with_room_for_one_job_get_one_between_them() {
     let fixture = claims_fixture("ci-claim-pool");

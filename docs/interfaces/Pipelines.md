@@ -532,10 +532,11 @@ the server that took the read: on a cluster a page still polls, less often.
 type and the name it is sent under), read with `get#RunArtifact`'s check: the view right on the repository, a hidden
 run's only with authorization disabled or as the user it was made for; a cache, one that is not there and one the
 caller does not read are not found. So every transport that sends a file sends one, streamed from its content blob:
-`ec.web.sendResourceResponse(location, inline)` in a screen (a user's file, so it is sandboxed when inline and never
-sniffed), and a PASS authority download over gRPC, whose authority service answers the location (`download.location`)
-once it has checked its caller; the gRPC frontend opens that answer with authorization off, as the service's own
-request would send it.
+`ec.web.sendResourceResponse(location, inline)` in a screen (a user's file, so never sniffed, an attachment when its
+type can run script, sandboxed when shown inline), and a PASS authority download over gRPC, whose authority service
+answers the location (`download.location`) once it has checked its caller; the gRPC frontend opens a `ci-artifact://`
+answer with authorization off (the service vouches for it, a hidden run's file too) and any other answer with the
+call's own authorization, and sends it with the same headers (nosniff; an active type an attachment; inline sandboxed).
 
 The engine's own services are the rules' and the jobs': `queue#PushRuns` and `queue#MergeRequestRuns` (with
 authorization disabled only), `queue#ScheduledRuns`, `start#QueuedJobRuns`, `end#OverdueJobRuns`, `expire#RunData`.
@@ -621,7 +622,7 @@ the client's address arrives).
 | `artifact-retention-days`, `max-artifact-retention-days`, `log-retention-days`, `cache-retention-days` | 30, 365, 90, 30 | |
 | `lost-seconds`, `queue-timeout-minutes` | 180, 1440 | |
 | `runner-max-requests-per-minute`, `runner-command`, `start-inline` | 1200, `moqui ci-run`, true | |
-| `runner-max-registrations-per-minute`, `max-runners-per-pool` | 10, 50 | Registrations of one pool in a minute (429 past it); active runners a pool holds (a registration past it is 409 until one is revoked), so a leaked pool token mints only so many runner tokens |
+| `runner-max-registrations-per-minute`, `max-runners-per-pool` | 10, 50 | Registrations of one pool in a minute (429 past it); active runners a pool holds (a registration past it is 409 until one is revoked), so a leaked pool token mints only so many runner tokens. The minute count is each cluster member's own (n members allow n times it); the runner cap is counted under the pool's lease across the cluster, 0 no cap |
 | `container-user`, `container-read-only-root`, `container-workdir`, `container-tmp-mb`, `container-workspace-mb` | 1000:1000, true, `/workspace`, 1024, 4096 | A job's container and its services |
 
 ## Tests

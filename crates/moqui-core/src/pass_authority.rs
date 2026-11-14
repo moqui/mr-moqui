@@ -459,6 +459,9 @@ pub fn serve(call: &Call, client: &Client, file: Option<UploadFile>) -> Result<R
     })
 }
 
+/// The locations a download opens with authorization off: run artifacts, whose provider checks its reader itself.
+const VOUCHED_SCHEME: &str = "ci-artifact://";
+
 /// Run a download's call (`getAttachment`, `getExport`): the file's metadata and content, or the error envelope.
 ///
 /// # Errors
@@ -478,10 +481,15 @@ pub fn serve_download(
     };
     let location = download["location"].as_str().unwrap_or_default();
     // the location is the authority service's answer, never the client's, and that service checked who may have the
-    // file: it is opened with authorization off, so a scheme that checks its reader (`ci-artifact://`, `git://`)
-    // serves it here as `ec.web.sendResourceResponse` serves it in the service's own request
+    // file. A run artifact (`ci-artifact://`, whose own check is get#RunArtifact's and takes a hidden run's file only
+    // with authorization off) is opened with authorization off, as the service vouches for it; any other location (a
+    // `git://` file, a drive's) is opened with this call's own authorization, so an answer naming another file is not
+    // read past its rules
+    let unchecked = location.starts_with(VOUCHED_SCHEME);
     let opened = {
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let _authz = unchecked
+            .then(|| ExecutionContext::with_current(ExecutionContext::disable_authz))
+            .flatten();
         factory.resource().open(location)
     };
     let opened = match opened {

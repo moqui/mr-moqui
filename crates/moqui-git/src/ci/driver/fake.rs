@@ -16,7 +16,8 @@
 //! `hostAddress` says, for the engine's tests and for trying pipelines with no container host
 //! (docs/interfaces/Pipelines.md "The fake host type"). `success` and `hang` start a container that runs until it is
 //! removed (nothing runs in it, so a test plays the runner, or the job runs to its time limit); `fail` refuses to
-//! start; `lost` starts one the host then does not know; `exit` starts one that has exited with code 137.
+//! start; `lost` starts one the host then does not know; `exit` starts one that has exited with code 137; `cancel`
+//! starts one and cancels its job as it starts (a cancel between the engine's check and the container's start).
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -138,13 +139,24 @@ fn start_run_fake(parameters: &Parameters, facade: &EntityFacade) -> Out {
         *next += 1;
         format!("fake-{}", *next)
     };
+    let labels = string_map(parameters.get("labels"));
+    if mode(facade, &host_id) == "cancel" {
+        // the job is cancelled while its container starts: its cancel finds no container to remove
+        if let Some(job) = labels.get(super::LABEL_JOB) {
+            let _rows = crate::rows_guard();
+            facade
+                .find("moqui.resource.GitJobRun")?
+                .eq("jobRunId", Value::string(job))
+                .update_all([("statusId".to_string(), Value::string("cancelled"))])?;
+        }
+    }
     moqui_lib::sync::lock(&hosts.containers).insert(
         id.clone(),
         FakeContainer {
             host_id,
             image: text(parameters, "image"),
             env: string_map(parameters.get("envMap")),
-            labels: string_map(parameters.get("labels")),
+            labels,
         },
     );
     Ok([("instanceRef".to_string(), Value::string(id))].into_iter().collect())

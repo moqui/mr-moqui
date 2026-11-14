@@ -33,6 +33,7 @@ pub(super) static USER: HostClass = HostClass {
             login_user
         ),
         method!("ec.user", "logoutUser", [], None, logout_user),
+        method!("ec.user", "logoutLocal", [], None, logout_local),
         method!("ec.user", "internalLoginUser", [Text], None, internal_login_user),
         method!("ec.user", "loginUserKey", [Text], None, login_user_key),
         method!(
@@ -244,6 +245,17 @@ fn login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn logout_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
     match crate::user::logout() {
+        Ok(()) => Ok(true.into()),
+        Err(err) => {
+            with_ec(|ec| ec.message().add_error(err.message().to_string()))?;
+            Ok(false.into())
+        }
+    }
+}
+
+/// `ec.user.logoutLocal()`: end this context's login only, writing nothing to the account (a job's borrowed sign-in).
+fn logout_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    match crate::user::logout_local() {
         Ok(()) => Ok(true.into()),
         Err(err) => {
             with_ec(|ec| ec.message().add_error(err.message().to_string()))?;

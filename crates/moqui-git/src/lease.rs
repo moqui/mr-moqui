@@ -137,6 +137,12 @@ fn local_millis() -> i64 {
 /// answers with no time it tells (a test's in-memory one). A read that fails keeps the offset last read, is not kept
 /// (the next call reads again) and is warned of, so a failure does not put the member on its own clock.
 pub(crate) fn db_now(entity: &EntityFacade) -> i64 {
+    db_now_within(entity, None)
+}
+
+/// [`db_now`], a read of the database's clock waiting at most `limit` (a renewal's [`renew_limit`], where the
+/// connection's driver can bound a read: `DbConnection::set_read_timeout`).
+fn db_now_within(entity: &EntityFacade, limit: Option<Duration>) -> i64 {
     static OFFSET: Mutex<Option<(Instant, i64)>> = Mutex::new(None);
     static WARNED: Mutex<Option<Instant>> = Mutex::new(None);
     let cached = *moqui_lib::sync::lock(&OFFSET);
@@ -145,7 +151,7 @@ pub(crate) fn db_now(entity: &EntityFacade) -> i64 {
             return local_millis() + offset;
         }
     }
-    let read = read_db_millis(entity).map(|db| db.map(|db| db - local_millis()));
+    let read = read_db_millis(entity, limit).map(|db| db.map(|db| db - local_millis()));
     let (offset, keep) = next_offset(
         read.as_ref().map(|offset| *offset).map_err(Error::message),
         cached.map(|(_, offset)| offset),
@@ -167,13 +173,27 @@ pub(crate) fn db_now(entity: &EntityFacade) -> i64 {
 }
 
 /// The database server's time, by the statement its dialect takes: `None` when it answers with no time this can read.
-fn read_db_millis(entity: &EntityFacade) -> Result<Option<i64>, Error> {
+/// With `limit`, the read waits at most that long where the driver bounds a read (the connection is closed past it).
+fn read_db_millis(entity: &EntityFacade, limit: Option<Duration>) -> Result<Option<i64>, Error> {
     let (sql, tx) = entity
         .with_group(LEASE, |_, dialect, _, tx| {
             Ok((dialect.current_timestamp_sql(), tx.clone()))
         })
         .map_err(Error::from)?;
-    let rows = tx.with_reserve(|conn| conn.query(sql, &[]))?;
+    let rows = tx.with_reserve(|conn| {
+        let Some(limit) = limit else {
+            return conn.query(sql, &[]);
+        };
+        conn.set_read_timeout(Some(limit))?;
+        let rows = conn.query(sql, &[]);
+        // back to the pool with no limit (a connection that timed out is closed and not kept)
+        if !conn.is_closed() {
+            if let Err(err) = conn.set_read_timeout(None) {
+                tracing::debug!("a reserve connection's read timeout was not cleared: {err}");
+            }
+        }
+        rows
+    })?;
     Ok(rows
         .first()
         .and_then(|row| row.columns.first())
@@ -211,17 +231,20 @@ fn update(entity: &EntityFacade, name: &str, fields: Vec<(&str, Value)>, conditi
 }
 
 /// The longest a renewal of a lease of `ttl` waits for the database: a sixth of its time, from 1 to 10 seconds, so a
-/// renewal the database holds fails well before the lease goes stale and the next one is tried.
+/// renewal the database holds fails well before the lease goes stale and the next one is tried. It holds where the
+/// driver bounds a read (`DbConnection::set_read_timeout`: Postgres, the embedded one too); MySQL's client cannot change
+/// a connection's read timeout once open, so there a renewal waits up to the datasource's `read-timeout` (600 s by
+/// default), and the renewer marks the lease lost when it goes stale meanwhile (docs/interfaces/Git-Hosting.md).
 fn renew_limit(ttl: Duration) -> Duration {
     (ttl / 6).clamp(Duration::from_secs(1), Duration::from_secs(10))
 }
 
 /// Renew the lease `name` of `holder` for `ttl` from the database's now, on the condition that it is still this
-/// holder's and has not lapsed, within [`renew_limit`]: whether it was.
+/// holder's and has not lapsed, the clock's read and the update each within [`renew_limit`]: whether it was.
 fn renew(entity: &EntityFacade, name: &str, holder: &str, ttl: Duration) -> Result<bool, Error> {
     #[cfg(test)]
     tests::hold_renewal(name);
-    let now = db_now(entity);
+    let now = db_now_within(entity, Some(renew_limit(ttl)));
     let condition = Condition::and(vec![
         Condition::equals("leaseName", Value::string(name)),
         Condition::equals("holderId", Value::string(holder)),
@@ -495,6 +518,25 @@ impl Renewals {
                         );
                     }
                 }
+                // a lease marked lost (by a check, or above) is not renewed again: its row is let go, so the other
+                // members can take it and a re-entry here takes it anew
+                let lost: Vec<u64> = entries
+                    .iter()
+                    .filter(|(_, entry)| {
+                        !entry.in_flight
+                            && !entry.state.valid.load(Ordering::Acquire)
+                            && !entry.state.released.load(Ordering::Acquire)
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
+                if !lost.is_empty() {
+                    let gone: Vec<Renewal> = lost.iter().filter_map(|id| entries.remove(id)).collect();
+                    drop(entries);
+                    for entry in gone {
+                        release_lost(&entry.entity, &entry.name, &entry.holder);
+                    }
+                    continue;
+                }
                 let next = entries
                     .values()
                     .filter(|entry| !entry.in_flight)
@@ -577,6 +619,13 @@ impl Renewals {
             state.valid.store(false, Ordering::Release);
             tracing::error!(lease = %name, "a git lease went unrenewed for nearly its time: its writes stop");
         }
+        // marked lost while this renewal ran (by the loop, by a check) or just now: a renewal that went through
+        // anyway does not keep the row held for a holder whose writes have stopped
+        let lost = !state.valid.load(Ordering::Acquire) && !state.released.load(Ordering::Acquire);
+        let keep = keep && !lost;
+        if lost {
+            release_lost(entity, name, holder);
+        }
         {
             let mut entries = moqui_lib::sync::lock(&self.entries);
             if keep {
@@ -591,6 +640,20 @@ impl Renewals {
             }
         }
         self.changed.notify_all();
+    }
+}
+
+/// Let go of the row of a lease marked lost, on the condition that this holder still has it (another member may have
+/// taken it over already). A failure is logged: the row lapses at its time.
+fn release_lost(entity: &EntityFacade, name: &str, holder: &str) {
+    let released = update(
+        entity,
+        name,
+        vec![("holderId", Value::Null), ("leaseUntil", Value::Null)],
+        Condition::equals("holderId", Value::string(holder)),
+    );
+    if let Err(err) = released {
+        tracing::warn!(lease = %name, "a lost git lease was not let go (it lapses): {err}");
     }
 }
 
