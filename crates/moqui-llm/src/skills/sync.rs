@@ -103,7 +103,7 @@ pub fn skill_dirs(factory: &ExecutionContextFactory) -> Vec<(String, PathBuf)> {
 pub fn read_dirs(dirs: &[(String, PathBuf)]) -> ReadSkills {
     let mut read = ReadSkills::default();
     for (component, dir) in dirs {
-        if !dir.is_dir() {
+        if !moqui_lib::vfs::is_dir(dir) {
             continue;
         }
         let prefix = format!("component://{component}/skill/");
@@ -123,7 +123,7 @@ pub fn read_dirs(dirs: &[(String, PathBuf)]) -> ReadSkills {
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| file.display().to_string());
             let location = format!("{prefix}{relative}");
-            let parsed = std::fs::read_to_string(&file)
+            let parsed = moqui_lib::vfs::read_to_string(&file)
                 .map_err(|error| error.to_string())
                 .and_then(|text| parse_skill(&text));
             match parsed {
@@ -148,8 +148,8 @@ pub fn read_dirs(dirs: &[(String, PathBuf)]) -> ReadSkills {
             }
         }
         let aliases = dir.join("aliases.json");
-        if aliases.is_file() {
-            match std::fs::read_to_string(&aliases)
+        if moqui_lib::vfs::is_file(&aliases) {
+            match moqui_lib::vfs::read_to_string(&aliases)
                 .map_err(|error| error.to_string())
                 .and_then(|text| {
                     serde_json::from_str::<BTreeMap<String, Vec<String>>>(&text).map_err(|error| error.to_string())
@@ -178,14 +178,15 @@ pub fn read_dirs(dirs: &[(String, PathBuf)]) -> ReadSkills {
 
 /// The Markdown files under `dir`; false when a directory of it could not be read (logged).
 fn markdown_files(dir: &Path, out: &mut Vec<PathBuf>) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    // with the files built into the binary that are not on disk (moqui_lib::vfs)
+    let Ok(entries) = moqui_lib::vfs::read_dir(dir) else {
         tracing::error!("skill directory {} could not be read", dir.display());
         return false;
     };
     let mut whole = true;
-    for entry in entries.flatten() {
+    for entry in entries {
         let path = entry.path();
-        if path.is_dir() {
+        if entry.is_dir() {
             whole &= markdown_files(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "md") {
             out.push(path);

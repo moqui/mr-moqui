@@ -14,7 +14,10 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{compare, entries, first_differing_line, unified_diff, write_skeleton, Difference, Kind, Set};
+use super::{
+    children, compare, entries, file, first_differing_line, is_dir, is_file, unified_diff, write_runtime, Difference,
+    Kind, Set,
+};
 
 /// An empty directory of its own for one test, removed when dropped.
 struct Scratch(PathBuf);
@@ -34,8 +37,17 @@ impl Drop for Scratch {
     }
 }
 
+fn repo_runtime() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime")
+}
+
 fn repo_base() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")
+    repo_runtime().join("components/base")
+}
+
+/// Write every built-in file into the runtime `dir`, with its framework in the base set.
+fn write_all(dir: &Path) -> Vec<PathBuf> {
+    write_runtime(dir, &dir.join("components/base/framework")).unwrap()
 }
 
 /// The component directories under `base`, as [`compare`] takes them.
@@ -71,6 +83,9 @@ fn the_sets_hold_framework_and_tools_without_their_tests_and_the_webroot_stub() 
     ));
     assert!(has(Set::Skeleton, "components/base/webroot/screen/webroot/qapps.xml"));
     assert!(has(Set::Skeleton, "components/components.xml"));
+    assert!(has(Set::Conf, "MoquiDevConf.xml"));
+    assert!(has(Set::Conf, "MoquiProductionConf.xml"));
+    assert!(has(Set::Conf, "edge/MoquiEdgeConf.xml"));
     assert!(!has(Set::Webroot, "screen/webroot/qapps.xml"));
     assert!(!entries.iter().any(|entry| entry.set == Set::Webroot
         && (entry.path.contains("/libs/fontawesome/")
@@ -87,9 +102,32 @@ fn the_repository_runtime_matches_what_was_packed() {
 }
 
 #[test]
+fn one_file_and_a_directory_are_read_without_the_rest() {
+    let packed = file(Set::Conf, "MoquiDevConf.xml").unwrap().unwrap();
+    assert_eq!(
+        packed,
+        std::fs::read(repo_runtime().join("conf/MoquiDevConf.xml")).unwrap()
+    );
+    assert_eq!(file(Set::Conf, "NoSuchConf.xml").unwrap(), None);
+    assert!(is_file(Set::Framework, "conf/MoquiDefaultConf.xml"));
+    assert!(!is_file(Set::Framework, "conf"));
+    assert!(is_dir(Set::Framework, "conf"));
+    assert!(is_dir(Set::Framework, "conf/"));
+    assert!(is_dir(Set::Framework, ""));
+    assert!(!is_dir(Set::Framework, "conf/MoquiDefaultConf.xml"));
+    assert!(!is_dir(Set::Framework, "test"));
+    let top = children(Set::Framework, "");
+    assert!(top.contains(&("component.xml".to_string(), false)), "{top:?}");
+    assert!(top.contains(&("entity".to_string(), true)), "{top:?}");
+    let skeleton = children(Set::Skeleton, "components/base/webroot/screen");
+    assert_eq!(skeleton, vec![("webroot".to_string(), true)]);
+    assert!(children(Set::Conf, "no-such-dir").is_empty());
+}
+
+#[test]
 fn a_skeleton_compares_clean_and_each_kind_of_change_is_reported() {
     let scratch = Scratch::new("kinds");
-    let written = write_skeleton(&scratch.0).unwrap();
+    let written = write_all(&scratch.0);
     let base = scratch.0.join("components/base");
     let framework = base.join("framework");
     let tools = base.join("tools");
@@ -104,6 +142,11 @@ fn a_skeleton_compares_clean_and_each_kind_of_change_is_reported() {
         written.contains(&scratch.0.join("components/components.xml")),
         "the sets' manifest is written"
     );
+    assert!(
+        written.contains(&scratch.0.join("conf/MoquiDevConf.xml")),
+        "the confs are written"
+    );
+    assert!(written.contains(&scratch.0.join("conf/edge/README.md")));
     assert_eq!(compare_all(&base), Vec::<Difference>::new());
 
     let service = framework.join("conf/MoquiDefaultConf.xml");
@@ -168,25 +211,51 @@ fn a_skeleton_compares_clean_and_each_kind_of_change_is_reported() {
 }
 
 #[test]
-fn a_skeleton_keeps_existing_files_and_an_existing_webroot_or_tools() {
+fn writing_the_runtime_keeps_the_files_there_and_fills_in_the_rest() {
     let scratch = Scratch::new("keep");
-    let framework = scratch.0.join("components/base/framework");
+    let base = scratch.0.join("components/base");
+    let framework = base.join("framework");
     std::fs::create_dir_all(framework.join("conf")).unwrap();
     std::fs::write(framework.join("conf/MoquiDefaultConf.xml"), "mine").unwrap();
-    std::fs::create_dir_all(scratch.0.join("components/base/webroot")).unwrap();
-    std::fs::create_dir_all(scratch.0.join("components/base/tools")).unwrap();
-    let written = write_skeleton(&scratch.0).unwrap();
+    std::fs::create_dir_all(base.join("webroot/screen/webroot")).unwrap();
+    std::fs::write(base.join("webroot/screen/webroot/qapps.xml"), "<screen/>").unwrap();
+    std::fs::create_dir_all(base.join("tools")).unwrap();
+    std::fs::create_dir_all(scratch.0.join("conf")).unwrap();
+    std::fs::write(scratch.0.join("conf/MoquiDevConf.xml"), "mine").unwrap();
+    let written = write_all(&scratch.0);
     assert_eq!(
         std::fs::read_to_string(framework.join("conf/MoquiDefaultConf.xml")).unwrap(),
         "mine"
     );
+    assert_eq!(
+        std::fs::read_to_string(base.join("webroot/screen/webroot/qapps.xml")).unwrap(),
+        "<screen/>",
+        "the placeholder does not replace the web client's screen"
+    );
+    assert_eq!(
+        std::fs::read_to_string(scratch.0.join("conf/MoquiDevConf.xml")).unwrap(),
+        "mine"
+    );
     assert!(framework.join("component.xml").is_file());
     assert!(
-        written
-            .iter()
-            .all(|path| path.starts_with(&framework) || path.ends_with("components/components.xml")),
-        "nothing written into a webroot or tools that is there"
+        base.join("tools/component.xml").is_file(),
+        "an empty tools is filled in"
     );
+    assert!(base.join("webroot/screen/webroot/rest.xml").is_file());
+    assert!(scratch.0.join("conf/MoquiProductionConf.xml").is_file());
+    assert!(!written.contains(&framework.join("conf/MoquiDefaultConf.xml")));
+    assert!(write_all(&scratch.0).is_empty(), "a second run writes nothing");
+}
+
+#[test]
+fn a_framework_elsewhere_is_written_where_it_is() {
+    let scratch = Scratch::new("elsewhere");
+    let runtime = scratch.0.join("runtime");
+    let framework = scratch.0.join("framework");
+    write_runtime(&runtime, &framework).unwrap();
+    assert!(framework.join("component.xml").is_file());
+    assert!(!runtime.join("components/base/framework").exists());
+    assert!(runtime.join("components/base/tools/component.xml").is_file());
 }
 
 #[test]

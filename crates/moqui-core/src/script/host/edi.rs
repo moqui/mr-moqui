@@ -104,8 +104,8 @@ fn changed(call: &Call<'_>, change: impl FnOnce(&mut EdiHandler) -> Result<(), H
 /// Run the structure file in this engine. It evaluates to the structure list.
 fn structure_at(call: &mut Call<'_>, location: &str) -> Result<Value, HostError> {
     let path = crate::context::locate(location).map_err(|err| HostError::message(err.message()))?;
-    let text =
-        std::fs::read_to_string(&path).map_err(|_| HostError::message(format!("could not read script {location}")))?;
+    let text = moqui_lib::vfs::read_to_string(&path)
+        .map_err(|_| HostError::message(format!("could not read script {location}")))?;
     let source = crate::script::parse::file_function(&text);
     match call.ops.evaluate(&source, location) {
         Err(HostError::Message(message)) => Err(HostError::message(format!("EDI structure {location}: {message}"))),

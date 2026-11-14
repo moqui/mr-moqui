@@ -12,10 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Packs the files src/lib.rs embeds into `OUT_DIR/embedded.tar.gz`: the framework and tools components less their
-//! top-level `test/` (the regression and acceptance suites), under `framework/` and `tools/`; the webroot files `webroot-files.txt` names,
-//! under `webroot/`; and this crate's `skeleton/` tree, under `skeleton/`. The tar is the same for the same files (sorted,
-//! no times or owners).
+//! Packs the files src/lib.rs embeds into `OUT_DIR`: the framework and tools components less their top-level `test/`
+//! (the regression and acceptance suites), under `framework/` and `tools/`; the webroot files `webroot-files.txt`
+//! names, under `webroot/`; this crate's `skeleton/` tree, under `skeleton/`; and the runtime's `conf/`, under `conf/`.
+//!
+//! Each file is deflated on its own into `embedded.bin`, so one file is read without unpacking the rest, and
+//! `embedded.idx` lists them, one line each: `name<TAB>offset<TAB>packed length<TAB>size`, sorted by name. Both are the
+//! same for the same files.
 //!
 //! Cargo watches each packed top-level entry, not a component directory as a whole, so an edit to a component's tests
 //! does not relink the binary; a new top-level directory in a component is packed once anything else changes.
@@ -31,7 +34,8 @@ const COMPONENT_SKIP: [&str; 1] = ["test"];
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let base = manifest.join("../../runtime/components/base");
+    let runtime = manifest.join("../../runtime");
+    let base = runtime.join("components/base");
     let webroot = base.join("webroot");
     let list = manifest.join("webroot-files.txt");
     let skeleton = manifest.join("skeleton");
@@ -39,24 +43,7 @@ fn main() {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
 
     for component in WHOLE_COMPONENTS {
-        let dir = base.join(component);
-        let mut top: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|err| panic!("could not read {}: {err}", dir.display()))
-            .map(|entry| {
-                entry
-                    .expect("component entry")
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .filter(|name| !name.starts_with('.') && !COMPONENT_SKIP.contains(&name.as_str()))
-            .collect();
-        top.sort();
-        for name in top {
-            let path = dir.join(&name);
-            println!("cargo:rerun-if-changed={}", path.display());
-            collect(&path, &format!("{component}/{name}"), &mut files);
-        }
+        pack_top_entries(&base.join(component), component, &COMPONENT_SKIP, &mut files);
     }
 
     println!("cargo:rerun-if-changed={}", list.display());
@@ -81,32 +68,59 @@ fn main() {
     println!("cargo:rerun-if-changed={}", skeleton.display());
     collect(&skeleton, "skeleton", &mut files);
     // the sets' manifest a skeleton runtime needs, since only the sets it lists load (plans/archive/Components-Dir.md)
-    let sets = manifest.join("../../runtime/components/components.xml");
+    let sets = runtime.join("components/components.xml");
     println!("cargo:rerun-if-changed={}", sets.display());
     files.push(("skeleton/components/components.xml".to_string(), sets));
+
+    // the example and starter confs (runtime/conf/README.md)
+    pack_top_entries(&runtime.join("conf"), "conf", &[], &mut files);
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files.dedup_by(|a, b| a.0 == b.0);
 
-    let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR")).join("embedded.tar.gz");
-    let file = std::fs::File::create(&out).unwrap_or_else(|err| panic!("could not create {}: {err}", out.display()));
-    let gz = flate2::write::GzEncoder::new(std::io::BufWriter::new(file), flate2::Compression::default());
-    let mut tar = tar::Builder::new(gz);
+    let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    let mut blob = Vec::new();
+    let mut index = String::new();
     for (name, path) in &files {
+        assert!(
+            !name.contains(['\t', '\n', '\r']),
+            "{name}: a packed file name has no tab or line break"
+        );
         let bytes = std::fs::read(path).unwrap_or_else(|err| panic!("could not read {}: {err}", path.display()));
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o644);
-        header.set_mtime(0);
-        header.set_uid(0);
-        header.set_gid(0);
-        header.set_entry_type(tar::EntryType::Regular);
-        tar.append_data(&mut header, name, bytes.as_slice())
-            .unwrap_or_else(|err| panic!("could not pack {name}: {err}"));
+        let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(&bytes).expect("deflate");
+        let packed = encoder.finish().expect("deflate finish");
+        index.push_str(&format!("{name}\t{}\t{}\t{}\n", blob.len(), packed.len(), bytes.len()));
+        blob.extend_from_slice(&packed);
     }
-    let gz = tar.into_inner().expect("tar finish");
-    let mut writer = gz.finish().expect("gzip finish");
-    writer.flush().expect("flush embedded.tar.gz");
+    write_out(&out.join("embedded.bin"), &blob);
+    write_out(&out.join("embedded.idx"), index.as_bytes());
+}
+
+/// Pack each top-level entry of `dir` under `prefix`, less dot files and the `skip` names, watching each one.
+fn pack_top_entries(dir: &Path, prefix: &str, skip: &[&str], files: &mut Vec<(String, PathBuf)>) {
+    println!("cargo:rerun-if-changed={}", dir.display());
+    let mut top: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|err| panic!("could not read {}: {err}", dir.display()))
+        .map(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| !name.starts_with('.') && !skip.contains(&name.as_str()))
+        .collect();
+    top.sort();
+    for name in top {
+        let path = dir.join(&name);
+        println!("cargo:rerun-if-changed={}", path.display());
+        collect(&path, &format!("{prefix}/{name}"), files);
+    }
+}
+
+fn write_out(path: &Path, bytes: &[u8]) {
+    std::fs::write(path, bytes).unwrap_or_else(|err| panic!("could not write {}: {err}", path.display()));
 }
 
 /// Every file under `path` (or `path` itself), named `prefix/<relative path>`, with `/` separators; dot files left out.

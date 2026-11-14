@@ -88,10 +88,11 @@ fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<J
     let mut ids = BTreeSet::new();
     for component in factory.components().iter() {
         let directory = component.location.join("report");
-        if !directory.is_dir() {
+        // with the files built into the binary that are not on disk (moqui_lib::vfs)
+        if !moqui_lib::vfs::is_dir(&directory) {
             continue;
         }
-        let entries = match std::fs::read_dir(&directory) {
+        let entries = match moqui_lib::vfs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) => {
                 tracing::error!(path=%directory.display(),%error,"could not read report definitions");
@@ -100,13 +101,7 @@ fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<J
         };
         let mut paths = Vec::new();
         for entry in entries {
-            let path = match entry {
-                Ok(entry) => entry.path(),
-                Err(error) => {
-                    tracing::error!(path=%directory.display(),%error,"could not read report definition entry");
-                    continue;
-                }
-            };
+            let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
@@ -115,7 +110,7 @@ fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<J
         paths.sort();
         for path in paths {
             let result = (|| -> Result<Json, Error> {
-                let bytes = std::fs::read(&path).map_err(fail)?;
+                let bytes = moqui_lib::vfs::read(&path).map_err(fail)?;
                 if bytes.len() > 2_000_000 {
                     return Err(fail("shipped definition exceeds two megabytes"));
                 }

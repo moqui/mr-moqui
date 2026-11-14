@@ -13,7 +13,7 @@ instances). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/`
 | `components/addon/` | no | Add-on components, normally checked out by `./moq component-get` or deployed from System > Components ([components/addon/README.md](components/addon/README.md)) |
 | `components/dev/` | partly | Components that load only when `instance_purpose` is `dev`: the framework's (`dev-aide`, `example`), the demo lock-down (off by default, loaded on a demo server by `conf/MoquiDemoConf.xml`) and the component template in git, a developer's own beside them ([components/dev/README.md](components/dev/README.md)) |
 | `components/test/` | no | Test-only add-on components, loaded on a dev or test instance, never on production ([components/test/README.md](components/test/README.md)) |
-| `conf/` | yes | Runtime conf files (`MoquiDevConf.xml`, `MoquiProductionConf.xml`, ...) merged over `MoquiDefaultConf.xml`, and a directory of confs for each topology ([conf/README.md](conf/README.md)) |
+| `conf/` | yes | Runtime conf files (`MoquiDevConf.xml`, `MoquiProductionConf.xml`, ...) merged over `MoquiDefaultConf.xml`, and a directory of confs for each topology ([conf/README.md](conf/README.md)); built into the binary too |
 | `cert/` | no | HTTPS certificates by domain (nginx-proxy, certbot or mkcert layouts; `docs/Run-Deploy.md`). Never commit keys. |
 | `db/` | no | Embedded database cluster and related files |
 | `log/` | no | Log files |
@@ -27,7 +27,9 @@ instances). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/`
 
 Directories marked "no" are listed in `.gitignore` and are created when first needed.
 
-The binary carries a copy of `components/base/framework`, `components/base/tools` and a webroot stub
-(`crates/moqui-embedded`). At startup it logs each file of those here that differs from that copy, and uses the files
-here. With no runtime it writes the copy as a skeleton runtime, which boots, answers `/rest`, `/Login`, `/status` and
-the html `/apps`, and runs `moqui tui` ([Run-Deploy](../docs/Run-Deploy.md#built-in-framework-files)).
+The binary carries a copy of `components/base/framework`, `components/base/tools`, a webroot stub and `conf/`
+(`crates/moqui-embedded`). It reads each of those files that is not here from the copy, and uses the file here when
+there is one; at startup it logs how many it reads from the copy and each file here that differs from it. With no
+runtime it makes only the directories, and the runtime boots, answers `/rest`, `/Login`, `/status` and the html
+`/apps`, and runs `moqui tui`; `moqui embedded extract` writes the copy out
+([Run-Deploy](../docs/Run-Deploy.md#built-in-framework-files)).

@@ -30,5 +30,9 @@ names and the commands ([Run-Deploy, Choose a topology](../../docs/Run-Deploy.md
 | [`front/`](front/README.md) | A front node before a local cluster: load balancing and web protection, none of the edge node's comms |
 | [`full-stack/`](full-stack/README.md) | The full stack: a front node, an edge cluster with mr-pass's sites, a local cluster as their authority |
 
+Every file here is built into the binary (`crates/moqui-embedded`), so a runtime without this directory, or without one
+of its files, reads the built-in copy: `--conf conf/MoquiProductionConf.xml` works with the binary alone, and `moqui
+embedded extract` writes them out. A file added here is built in by the next build too, so keep secrets in `.env`.
+
 `crates/moqui-devkit/src/runtime_conf_tests.rs` checks that every conf here, in the directories too, parses, merges
 over the default conf and passes the schema.

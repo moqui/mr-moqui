@@ -12,42 +12,76 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework, tools and webroot stub files built into the binary (`crates/moqui-embedded`): the skeleton runtime
-//! written where there is none, the startup comparison of the files on disk with the built-in ones, and
-//! `moqui embedded`.
+//! The framework, tools, webroot stub and conf files built into the binary (`crates/moqui-embedded`): mounted on the
+//! runtime so each one that is not on disk is read from the binary (`moqui_lib::vfs`), the basic structure of a new
+//! runtime, the startup comparison of the files on disk with the built-in ones, and `moqui embedded`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use moqui_embedded::{Kind, Set};
 use moqui_lib::error::Error;
 
-/// Write a skeleton runtime from the built-in files when `framework_dir` is this runtime's own framework directory (no
-/// `MOQUI_FRAMEWORK` elsewhere) and has no `component.xml`: the framework, and tools and the webroot stub when they
-/// are not there.
+/// One built-in set, mounted on its directory of a runtime ([`Set::dir_in`]).
+struct Builtin(Set);
+
+impl moqui_lib::vfs::Overlay for Builtin {
+    fn read(&self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+        moqui_embedded::file(self.0, path)
+    }
+
+    fn is_file(&self, path: &str) -> bool {
+        moqui_embedded::is_file(self.0, path)
+    }
+
+    fn is_dir(&self, path: &str) -> bool {
+        moqui_embedded::is_dir(self.0, path)
+    }
+
+    fn children(&self, dir: &str) -> Vec<(String, bool)> {
+        moqui_embedded::children(self.0, dir)
+    }
+}
+
+/// Mount the built-in files on the runtime `runtime_dir` whose framework component is `framework_dir`, so a file of
+/// theirs that is not on disk is read from the binary: the framework, tools and the webroot stub, the sets' manifest,
+/// the placeholder page at `/` and the confs. Mounting again replaces the mounts.
+pub(crate) fn mount(runtime_dir: &Path, framework_dir: &Path) {
+    for set in Set::ALL {
+        moqui_lib::vfs::mount(&set.dir_in(runtime_dir, framework_dir), Arc::new(Builtin(set)));
+    }
+}
+
+/// Make the basic structure of the runtime `runtime_dir` (its base set's directory, with the framework, tools and
+/// webroot component directories), which the boot and the runtime lookup need on disk, and mount the built-in files on
+/// it ([`mount`]). Nothing else is written: each file not on disk is read from the binary, until `moqui embedded
+/// extract` writes them out.
 ///
 /// # Errors
 ///
-/// Returns an error naming the path when a file cannot be written.
+/// Returns an error naming the directory when one cannot be made.
 pub(crate) fn ensure_runtime(runtime_dir: &Path, framework_dir: &Path) -> Result<(), Error> {
-    if framework_dir != moqui_core::context::default_framework_dir(runtime_dir)
-        || framework_dir.join("component.xml").is_file()
-    {
-        return Ok(());
+    let mut dirs = vec![
+        Set::Tools.dir_in(runtime_dir, framework_dir),
+        Set::Webroot.dir_in(runtime_dir, framework_dir),
+    ];
+    // a framework MOQUI_FRAMEWORK names elsewhere is not made
+    if framework_dir == moqui_core::context::default_framework_dir(runtime_dir) {
+        dirs.push(framework_dir.to_path_buf());
     }
-    let written = moqui_embedded::write_skeleton(runtime_dir).map_err(|err| {
-        Error::new(format!(
-            "could not write a skeleton runtime in {}",
+    for dir in &dirs {
+        std::fs::create_dir_all(dir)
+            .map_err(|err| Error::new(format!("could not create {}", dir.display())).with_source(err))?;
+    }
+    mount(runtime_dir, framework_dir);
+    if !framework_dir.join("component.xml").is_file() {
+        tracing::info!(
+            "The runtime {} has no framework files on disk; it reads the framework, tools, webroot and conf files \
+             built into this binary. `moqui embedded extract` writes them out. The web client (/qapps) and the \
+             application components are not built in.",
             runtime_dir.display()
-        ))
-        .with_source(err)
-    })?;
-    tracing::warn!(
-        "No runtime with a framework component was found; wrote a skeleton runtime of {} files in {} from the \
-         framework, tools and webroot built into this binary. It has the framework, the REST interface, the html \
-         apps and the terminal client; the web client (/qapps) and the application components are not installed.",
-        written.len(),
-        runtime_dir.display()
-    );
+        );
+    }
     Ok(())
 }
 
@@ -108,8 +142,18 @@ fn log_differences(dirs: &[(Set, PathBuf)]) {
         }
     };
     let compared = names(dirs);
+    let (built_in, differences): (Vec<_>, Vec<_>) = differences
+        .into_iter()
+        .partition(|difference| difference.kind == Kind::Missing);
+    if !built_in.is_empty() {
+        tracing::info!(
+            "{} {compared} files are not on disk and are read from this binary (`moqui embedded extract` writes them \
+             out)",
+            built_in.len()
+        );
+    }
     if differences.is_empty() {
-        tracing::info!("The {compared} files match the ones built into this binary");
+        tracing::info!("The {compared} files on disk match the ones built into this binary");
         return;
     }
     tracing::warn!(
@@ -122,7 +166,7 @@ fn log_differences(dirs: &[(Set, PathBuf)]) {
     }
 }
 
-/// `moqui embedded list | diff [path] | extract <dir>`.
+/// `moqui embedded list | diff [path] | extract [dir]`.
 ///
 /// # Errors
 ///
@@ -132,9 +176,17 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         [command] if command == "list" => list(),
         [command] if command == "diff" => diff_all(),
         [command, path] if command == "diff" => diff_one(path),
-        [command, dir] if command == "extract" => extract(Path::new(dir)),
+        [command] if command == "extract" => {
+            let (runtime, framework) = super::runtime_framework_dirs();
+            extract(&runtime, &framework)
+        }
+        [command, dir] if command == "extract" => {
+            let runtime = PathBuf::from(dir);
+            let framework = moqui_core::context::default_framework_dir(&runtime);
+            extract(&runtime, &framework)
+        }
         _ => Err(Error::new(
-            "usage: moqui embedded list | diff [<component>/<path>] | extract <runtime dir>",
+            "usage: moqui embedded list | diff [<set>/<path>] | extract [<runtime dir>]",
         )),
     }
 }
@@ -150,34 +202,40 @@ fn list() -> Result<(), Error> {
     Ok(())
 }
 
-/// The component directories `moqui` would boot with, without booting: the framework, and tools and webroot beside it
-/// when they are there.
+/// The component directories `moqui` would boot with, without booting: the framework, tools and webroot of the runtime.
 fn runtime_dirs() -> Vec<(Set, PathBuf)> {
-    let (_, framework) = super::runtime_framework_dirs();
-    let base = framework.parent().map(Path::to_path_buf).unwrap_or_default();
+    let (runtime, framework) = super::runtime_framework_dirs();
     Set::COMPONENTS
         .into_iter()
-        .filter_map(|set| match set {
-            Set::Framework => Some((set, framework.clone())),
-            _ => Some((set, base.join(set.name()))).filter(|(_, dir)| dir.is_dir()),
-        })
+        .map(|set| (set, set.dir_in(&runtime, &framework)))
         .collect()
 }
 
 fn diff_all() -> Result<(), Error> {
     let dirs = runtime_dirs();
     let differences = moqui_embedded::compare(&borrowed(&dirs)).map_err(io_error)?;
+    let (built_in, differences): (Vec<_>, Vec<_>) = differences
+        .into_iter()
+        .partition(|difference| difference.kind == Kind::Missing);
+    if !built_in.is_empty() {
+        println!(
+            "{} {} files are not on disk and are read from this binary (moqui embedded extract writes them out)",
+            built_in.len(),
+            names(&dirs)
+        );
+    }
     if differences.is_empty() {
-        println!("The {} files match the ones built into this binary", names(&dirs));
+        println!(
+            "The {} files on disk match the ones built into this binary",
+            names(&dirs)
+        );
     }
     for difference in differences {
         let name = difference.set.name();
         let path = &difference.path;
         match &difference.kind {
             Kind::Added => println!("Only on disk: {name}/{path}"),
-            Kind::Missing => {
-                println!("Only in the binary: {name}/{path} (moqui embedded diff {name}/{path} prints it)")
-            }
+            Kind::Missing => {}
             Kind::Unreadable(error) => println!("Could not read {name}/{path}: {error}"),
             Kind::Changed { .. } => {
                 if let Some((_, dir)) = dirs.iter().find(|(set, _)| *set == difference.set) {
@@ -192,19 +250,22 @@ fn diff_all() -> Result<(), Error> {
 fn diff_one(path: &str) -> Result<(), Error> {
     let dirs = runtime_dirs();
     let named = path.split_once('/').and_then(|(name, relative)| {
-        let set = Set::named(name).filter(|set| Set::COMPONENTS.contains(set))?;
+        let set = Set::named(name).filter(|set| *set != Set::Skeleton)?;
         Some((set, relative))
     });
     let Some((set, relative)) = named else {
         return Err(Error::new(format!(
-            "{path}: name a built-in file as framework/<path>, tools/<path> or webroot/<path> (moqui embedded list \
-             shows them)"
+            "{path}: name a built-in file as framework/<path>, tools/<path>, webroot/<path> or conf/<path> (moqui \
+             embedded list shows them)"
         )));
     };
-    let dir = dirs
-        .iter()
-        .find(|(known, _)| *known == set)
-        .map_or_else(|| PathBuf::from(set.name()), |(_, dir)| dir.clone());
+    let dir = match dirs.iter().find(|(known, _)| *known == set) {
+        Some((_, dir)) => dir.clone(),
+        None => {
+            let (runtime, framework) = super::runtime_framework_dirs();
+            set.dir_in(&runtime, &framework)
+        }
+    };
     if !print_diff(set, relative, &dir)? {
         println!("{path} matches the one built into this binary");
     }
@@ -222,9 +283,14 @@ fn print_diff(set: Set, path: &str, dir: &Path) -> Result<bool, Error> {
     }
 }
 
-fn extract(runtime_dir: &Path) -> Result<(), Error> {
-    let written = moqui_embedded::write_skeleton(runtime_dir).map_err(io_error)?;
-    println!("Wrote {} files into {}", written.len(), runtime_dir.display());
+/// Write each built-in file that is not on disk into the runtime, so it reads none from the binary.
+fn extract(runtime_dir: &Path, framework_dir: &Path) -> Result<(), Error> {
+    let written = moqui_embedded::write_runtime(runtime_dir, framework_dir).map_err(io_error)?;
+    if written.is_empty() {
+        println!("{} has every built-in file already", runtime_dir.display());
+    } else {
+        println!("Wrote {} built-in files into {}", written.len(), runtime_dir.display());
+    }
     Ok(())
 }
 

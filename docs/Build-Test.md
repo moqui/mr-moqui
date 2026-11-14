@@ -247,9 +247,10 @@ mr-moqui-20261019/
 The binary takes `runtime` in the working directory when it has `components/base/`, else the working directory itself
 when it has one, so the unpacked directory runs as `cd <dir> && ./moqui`; it never looks beside the binary, so one
 binary runs several instances ([Runtime directory](Run-Deploy.md#runtime-directory-and-conf)). The binary also
-carries the framework and tools components and a webroot stub (`crates/moqui-embedded`, about 2.2 MB compressed): it
-compares the runtime's copies with them at startup and logs each difference, and writes them as a skeleton runtime
-when it finds none ([Built-in framework files](Run-Deploy.md#built-in-framework-files)). With no
+carries the framework and tools components, a webroot stub and the runtime confs (`crates/moqui-embedded`): it reads
+each of those files the runtime does not have from the binary, compares the runtime's copies with them at startup and
+logs each difference, and `moqui embedded extract` writes them out
+([Built-in framework files](Run-Deploy.md#built-in-framework-files)). With no
 `MOQUI_CONF`, it merges `<runtime>/MoquiConf.xml`, else `<runtime>/conf/MoquiDevConf.xml`. `--tgz` needs GNU or BSD tar.
 The embedded database, OpenSearch and Chromium go in when they are in `runtime/`, so the embedded Postgres must be
 stopped; `--no-data` leaves out the database, OpenSearch data, `.env` and `cert/` for a fresh instance. A binary runs

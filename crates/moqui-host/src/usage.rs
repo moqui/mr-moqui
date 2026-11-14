@@ -620,22 +620,27 @@ moqui help <command> and moqui <command> --help (or -h) print that command.
 ";
 
 const EMBEDDED: &str = "\
-moqui embedded list | diff [<component>/<path>] | extract <runtime dir>
-    The framework and tools components and the webroot stub built into this binary.
+moqui embedded list | diff [<set>/<path>] | extract [<runtime dir>]
+    The framework and tools components, the webroot stub and the runtime confs built into this binary.
 
-At startup moqui compares the framework, tools and webroot components with these files and logs each
-file that differs (changed, missing, or added on disk); the files on disk are used. With no runtime, or a
-runtime with no framework component, it writes these files there as a skeleton runtime that boots, loads
-the seed data, answers /rest, /Login, /status and the html /apps (System, Tools, Dashboards), and runs
-moqui tui. Fonts, icons, /qapps and the web client's libraries are not in it. See runtime/README.md.
+A runtime reads each of these files that is not on disk from the binary; a file on disk is used in its
+place. With no runtime moqui makes only its directories, and the runtime boots, loads the seed data,
+answers /rest, /Login, /status and the html /apps (System, Tools, Dashboards), and runs moqui tui. Fonts,
+icons, /qapps and the web client's libraries are not built in. At startup moqui logs how many files it
+reads from the binary, and each file on disk that differs from the built-in one (changed, or added on
+disk). See runtime/README.md.
 
-  list      Every built-in file, as framework/<path>, tools/<path> or webroot/<path>, with its size.
-  diff      A unified diff of each changed file (built in as the old side; a missing or added file is one
-            line), or of the one file named.
-  extract   Write a skeleton runtime into the directory; files already there are kept.
+  list      Every built-in file, as framework/<path>, tools/<path>, webroot/<path>, skeleton/<path> or
+            conf/<path>, with its size.
+  diff      A unified diff of each changed file (built in as the old side; an added file is one line,
+            files not on disk one count), or of the one file named.
+  extract   Write each built-in file that is not on disk into the runtime (the one moqui uses, or the
+            directory named); files already there are kept.
 
   moqui embedded diff
   moqui embedded diff framework/conf/MoquiDefaultConf.xml
+  moqui embedded diff conf/MoquiProductionConf.xml
+  moqui embedded extract
   moqui embedded extract /tmp/runtime
 ";
 

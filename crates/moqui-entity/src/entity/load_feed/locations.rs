@@ -17,6 +17,8 @@
 
 use std::path::Path;
 
+use moqui_lib::vfs;
+
 /// The data files of the component `name` at `location`, in load order: with `seed`, `component://name/entity/file`
 /// for each entity definition file (their `seed-data` blocks; not `*.eecas.xml`), then the files of its `data`
 /// directory ([`data_directory_locations`]).
@@ -24,10 +26,10 @@ use std::path::Path;
 pub fn component_data_locations(name: &str, location: &Path, seed: bool) -> Vec<String> {
     let mut locations = Vec::new();
     if seed {
-        if let Ok(read) = std::fs::read_dir(location.join("entity")) {
+        if let Ok(read) = vfs::read_dir(location.join("entity")) {
             let mut names: Vec<String> = read
-                .filter_map(Result::ok)
-                .filter(|entry| entry.path().is_file())
+                .into_iter()
+                .filter(vfs::DirEntry::is_file)
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|file| file.ends_with(".xml") && !file.ends_with(".eecas.xml"))
                 .collect();
@@ -47,18 +49,19 @@ pub fn component_data_locations(name: &str, location: &Path, seed: bool) -> Vec<
 /// within each directory. A file in `data/es/` is `component://name/data/es/file`. Deeper directories are not walked.
 #[must_use]
 pub fn data_directory_locations(component_name: &str, data_dir: &Path) -> Vec<String> {
-    let Ok(read) = std::fs::read_dir(data_dir) else {
+    // with the files built into the binary that are not on disk (moqui_lib::vfs)
+    let Ok(read) = vfs::read_dir(data_dir) else {
         return Vec::new();
     };
     let mut files = Vec::new();
     let mut directories = Vec::new();
-    for entry in read.filter_map(Result::ok) {
+    for entry in read {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if entry.path().is_file() && is_data_file(&name) {
+        if entry.is_file() && is_data_file(&name) {
             files.push(name);
-        } else if entry.path().is_dir() {
+        } else if entry.is_dir() {
             directories.push(name);
         }
     }
@@ -69,12 +72,12 @@ pub fn data_directory_locations(component_name: &str, data_dir: &Path) -> Vec<St
         .map(|name| format!("component://{component_name}/data/{name}"))
         .collect();
     for directory in directories {
-        let Ok(read) = std::fs::read_dir(data_dir.join(&directory)) else {
+        let Ok(read) = vfs::read_dir(data_dir.join(&directory)) else {
             continue;
         };
         let mut nested: Vec<String> = read
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_file())
+            .into_iter()
+            .filter(vfs::DirEntry::is_file)
             .filter_map(|entry| entry.file_name().into_string().ok())
             .filter(|name| is_data_file(name))
             .collect();
@@ -94,7 +97,7 @@ pub fn data_directory_locations(component_name: &str, data_dir: &Path) -> Vec<St
 /// parse declares none here and fails when it loads.
 #[must_use]
 pub fn data_types_of(path: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = vfs::read_to_string(path) else {
         return Vec::new();
     };
     let name = path.to_string_lossy();

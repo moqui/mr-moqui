@@ -4850,7 +4850,6 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "similar",
- "tar",
 ]
 
 [[package]]

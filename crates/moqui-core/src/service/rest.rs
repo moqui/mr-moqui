@@ -234,12 +234,12 @@ fn load(factory: &ExecutionContextFactory) -> Roots {
 }
 
 fn load_dir(resources: &mut BTreeMap<String, Node>, dir: &Path) {
-    let Ok(read) = std::fs::read_dir(dir) else {
+    let Ok(read) = moqui_lib::vfs::read_dir(dir) else {
         return;
     };
     let mut paths: Vec<PathBuf> = read
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
+        .iter()
+        .map(moqui_lib::vfs::DirEntry::path)
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())

@@ -201,31 +201,37 @@ and secrets ([runtime/README.md](../runtime/README.md)). The binary takes the fi
 
 The runtime is never found from where the binary is, so one binary runs several instances, each started in its own
 directory. Run a command such as `moqui load` from the instance's directory, or with `MOQUI_RUNTIME`; from anywhere
-else it finds no runtime and makes a new one there. The server and `moqui load` fill a runtime that has no framework
-component with a skeleton runtime written from the files built into the binary (below), so a lone binary starts.
+else it finds no runtime and makes a new one there. A runtime reads the framework, tools, webroot and conf files it
+does not have from the binary (below), so a lone binary starts in an empty directory.
 
 ### Built-in framework files
 
-The binary carries a copy of the framework and tools components (less their `test/`, which holds both suites) and of a
-webroot stub, listed in `crates/moqui-embedded/webroot-files.txt`: the REST, login, error and html `/apps` screens, and
-the html render mode's style sheet and scripts with the two libraries it loads (Tom Select, SortableJS). Fonts, icons,
-`/qapps` and the web client's JavaScript libraries are not in it. It uses the copy two ways:
+The binary carries a copy of the framework and tools components (less their `test/`, which holds both suites), of a
+webroot stub, listed in `crates/moqui-embedded/webroot-files.txt` (the REST, login, error and html `/apps` screens, and
+the html render mode's style sheet and scripts with the two libraries it loads, Tom Select and SortableJS), and of the
+runtime's `conf/` directory with every example and starter conf. Fonts, icons, `/qapps` and the web client's
+JavaScript libraries are not in it. It uses the copy three ways:
 
+- **Files read in place.** Each built-in file that is not on disk is read from the binary, in any runtime; a file on
+  disk is used in its place. The framework component is the one `MOQUI_FRAMEWORK` names, tools and webroot are in
+  `components/base`, and the confs in `conf/`, so `--conf conf/MoquiProductionConf.xml` and the topology confs work
+  with the binary alone. Without a runtime the server and `moqui load` make only its directories
+  (`components/base/framework`, `tools`, `webroot`, and the database and log directories when they are used); with a
+  placeholder page at `/` in place of the web client and the built-in sets' manifest `components/components.xml`, it
+  boots, loads the seed data, answers `/rest` (with the tools `moqui` API), `/Login`, `/status` and the html `/apps`
+  (System, Tools, Dashboards), and runs `moqui tui`. Links to fonts, icons and the web client are broken until the full
+  webroot is installed, and the application components are not there. A file written to a built-in location (an
+  edit in System, a component put in `components/addon`) lands on disk and is used from then on.
 - **Startup comparison.** After the factory boots, the server and `moqui load` compare the framework, tools and
-  webroot components on disk with the copies and log `N framework, tools and webroot files differ from the ones built
-  into this binary`, then one line per file: changed (with the first line that differs), missing on disk, or added on
-  disk (framework and tools; the webroot copy is a subset). The files on disk are used; the lines say why a changed
-  file may no longer fit the binary. A file the binary has compiled in (`template/XmlActions.js` and three others) is
-  marked as ignored, since its disk copy is never read. `moqui embedded diff [<component>/<path>]` prints the diffs
-  and `moqui embedded list` the built-in files.
-- **Skeleton runtime.** A runtime with no `components/base/framework/component.xml`, and no `MOQUI_FRAMEWORK`, gets
-  the framework, and tools and the webroot stub when `components/base/tools` and `components/base/webroot` are not
-  there, with a placeholder page at `/` in place of the web client, and the sets' manifest `components/components.xml`
-  when it has none (only the sets it lists load). It boots, loads the seed data, answers `/rest`
-  (with the tools `moqui` API), `/Login`, `/status` and the html `/apps` (System, Tools, Dashboards), and runs
-  `moqui tui`; links to fonts, icons and the web client are broken until the full webroot is installed, and the
-  application components are not there. `moqui embedded extract <dir>` writes the same files into a directory. Files
-  already there are never replaced.
+  webroot components on disk with the copies and log `N framework, tools and webroot files are not on disk and are read
+  from this binary` when there are some, and `N … files differ from the ones built into this binary`, then one line per
+  file: changed (with the first line that differs) or added on disk (framework and tools; the webroot copy is a
+  subset). The lines say why a changed file may no longer fit the binary. A file the binary has compiled in
+  (`template/XmlActions.js` and three others) is marked as ignored, since its disk copy is never read. `moqui embedded
+  diff [<set>/<path>]` prints the diffs (`conf/<path>` too) and `moqui embedded list` the built-in files.
+- **Extract.** `moqui embedded extract` writes each built-in file that is not on disk into the runtime `moqui` uses,
+  and `moqui embedded extract <dir>` into another; files already there are never replaced. Then the runtime reads
+  none from the binary, and its files can be edited or put in git.
 
 Keep the runtime path short. The embedded Postgres socket, `<runtime>/db/embedded/.s.PGSQL.5432`, must be under 108
 bytes, or the start fails with "postgres socket path is N bytes".
