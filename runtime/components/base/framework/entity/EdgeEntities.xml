@@ -355,13 +355,28 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgeSenderLock" package="moqui.edge" use="transactional" cache="never">
         <description>On a local node whose cluster members each link to the edge node (plans/Edge-Node2.md §4.4, "Work
             from the pool to the edge node"), the member that sends replication and keeps the link's own rows
-            (CallMediaNode, SipNode) and the phone numbers' fallbacks: one row, lockName replicate. A member claims it
-            while its link is up and renews the lease (the database's time) while it holds it; a lease that lapsed is
-            taken over by another linked member, which then sends each replicated set whole. A member that stops lets
-            it go. No Java counterpart.</description>
+            (CallMediaNode, SipNode) and the phone numbers' fallbacks: lockName replicate. On a node that takes links
+            (plans/Edge-Node2.md §4.6), the member of an edge cluster whose SIP engine registers the trunks: lockName
+            sipTrunks. A member claims it and renews the lease (the database's time) while it holds it; a lease that
+            lapsed is taken over by another member, which then sends each replicated set whole, or registers the trunks.
+            A member that stops lets it go. No Java counterpart.</description>
         <field name="lockName" type="id" is-pk="true"/>
         <field name="instanceId" type="text-short"/>
         <field name="leaseExpireDate" type="date-time"/>
         <field name="claimedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="EdgeMemberLinks" package="moqui.edge" use="transactional" cache="never">
+        <description>On a node that takes links, in an edge cluster (plans/Edge-Node2.md §4.6): the local members each
+            edge member holds links of, by pairing (linksJson, an object of pairing to member ids), one row per edge
+            member. It is written as a link is admitted (in the transaction that locks the pairing's row), and every
+            few seconds while another member of the edge cluster is live (heartbeatDate, the database's time); removed
+            when the member stops, and pruned after a day. Admission on any edge member counts a local member linked on
+            another one, whose row is fresh, as linked (plans/Edge-Node2.md §4.11), so a node that holds only the
+            pairing's key is refused while a real member is linked anywhere, and a member's link to a second edge
+            member is not a takeover. No Java counterpart.</description>
+        <field name="edgeInstanceId" type="id-long" is-pk="true"/>
+        <field name="linksJson" type="text-very-long"/>
+        <field name="heartbeatDate" type="date-time"/>
     </entity>
 </entities>

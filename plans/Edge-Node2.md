@@ -1,6 +1,6 @@
 # Edge Node 2: domains, pools, edge clusters and the front
 
-Status 2026-11-13: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), and E16's routing by owner for web, mail, chat, PASS, delegate and the queue, with claims and limits between pairings, its comms (TURN, SIP, XMPP and ports per pairing) ([§4.1](#41-domains-on-one-edge-node), As built), and its System screens and `conf/multi-domain` ([§4.10](#410-the-system-app), As built), so E16 is built; E17 part A: the roles, every member of a local cluster linking, the member list, admission, member state and drain, and failover to a standby with its notice and Deliver again since ([§4.3](#43-the-front-option-set) to [§4.5](#45-failover-to-a-standby), As built); E17 part B: balancing by protocol with sticky sessions, health and retry, and call signaling per member ([§4.4](#44-pools-load-balancing), As built); E17 part C: work from a pool (the outbox, replication by a lock row) and web protection's rules per host, shared bans and view ([§4.3](#43-the-front-option-set), [§4.4](#44-pools-load-balancing), As built); E17 part D: the Clients screen's members, takeovers, hold and Deliver again, the Balancing tab and the sticky cookie on Domains, a local node's own cluster and drain on Edge Node, and the `local-cluster` (with an edge node) and `local-failover` confs ([§4.10](#410-the-system-app), As built); the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
+Status 2026-11-13: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), and E16's routing by owner for web, mail, chat, PASS, delegate and the queue, with claims and limits between pairings, its comms (TURN, SIP, XMPP and ports per pairing) ([§4.1](#41-domains-on-one-edge-node), As built), and its System screens and `conf/multi-domain` ([§4.10](#410-the-system-app), As built), so E16 is built; E17 part A: the roles, every member of a local cluster linking, the member list, admission, member state and drain, and failover to a standby with its notice and Deliver again since ([§4.3](#43-the-front-option-set) to [§4.5](#45-failover-to-a-standby), As built); E17 part B: balancing by protocol with sticky sessions, health and retry, and call signaling per member ([§4.4](#44-pools-load-balancing), As built); E17 part C: work from a pool (the outbox, replication by a lock row) and web protection's rules per host, shared bans and view ([§4.3](#43-the-front-option-set), [§4.4](#44-pools-load-balancing), As built); E17 part D: the Clients screen's members, takeovers, hold and Deliver again, the Balancing tab and the sticky cookie on Domains, a local node's own cluster and drain on Edge Node, and the `local-cluster` (with an edge node) and `local-failover` confs ([§4.10](#410-the-system-app), As built); E18 part A: a local node's link to every member of an edge cluster ([§4.6](#46-a-cluster-of-edge-nodes), As built); E18 part B: the edge members' in-memory state made right by a cluster notice, admission and revocation across the edge cluster, SIP trunks registered from one member and calls on every member ([§4.6](#46-a-cluster-of-edge-nodes), As built); E18 part C: the Edge cluster tab, System › Edge Node's links to each edge member and `conf/edge-cluster` ([§4.10](#410-the-system-app), As built); the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
 with E0–E10 and E12 built: the link, web access, delegate, queue and replicate, mr-pass on gRPC, mail, chat webhooks,
 calls, SIP, the XMPP tunnel, the attach wizard and the all-in-one node. This plan carries what that one left open
 ([§2](#2-open-from-edge-node)) and adds what larger deployments need, from the user's notes and answers of Nov 12,
@@ -77,8 +77,8 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 |---|---|---|
 | Several local nodes on one edge node (decision 1) | Built (E16): every area by its owner, claims and limits per pairing ([§4.1](#41-domains-on-one-edge-node)), the Clients, Domains and Ports screens ([§4.10](#410-the-system-app)) and `conf/multi-domain` | E16, built |
 | A clustered local node | One member was to hold the link through a lock row; the lock row is not built. The link is matched by key, so members that share a `.env` would replace each other's link (to verify). A call's socket on a member without the link is refused | E17: every member links. Built in part A ([§4.4](#44-pools-load-balancing), As built): each member's link apart, admission by the member list; in part B balancing by protocol, health and call signaling per member; in part C the outbox from any member and replication from the holder of a lock row |
-| A second edge node | A secondary MX, a second webhook URL | E18 |
-| A clustered all-in-one server | Which member holds the edge role | E18: every member takes links |
+| A second edge node | A secondary MX, a second webhook URL | E18, built. Part A: a local node links to every edge member ([§4.6](#46-a-cluster-of-edge-nodes), As built); part B: the in-memory state, admission and revocation across members, SIP and calls on every member; part C: the screens and `conf/edge-cluster` ([§4.10](#410-the-system-app), As built) |
+| A clustered all-in-one server | Which member holds the edge role | E18: every member takes links. Part A: verified, and its acceptance test; [Mobile-Desktop](Mobile-Desktop.md)'s open question answered (part C) |
 | PASS sites for a paired node on an all-in-one node | `pass_backend_url=edge:` means one authority for the whole node | E16: the authority by site, built: `edge:` goes to the pairing whose Configure names the call's site. Left: the server's own sites on the same node, which `edge:` sends to the one linked node when no pairing names them |
 | XMPP for two domains on one port | Built (E16 part B): SNI on direct TLS, the stream's `to` on STARTTLS, on the edge node's tunnel ports and an all-in-one node's own ports; a pair of ports per node is `EdgePort` rows | E16, built |
 | All-in-one gaps | Built (E16 part B): a voicemail sidecar names its pairing, so a requeue after a restart goes to it; a paired number with no fallback row is found by its `PhoneNumber` copy (`voiceTrunks`) | E16, built |
@@ -124,7 +124,7 @@ sets it apart ([§4.9](#49-example-confs-for-each-topology)).
 | Several local nodes on one edge node | Branch offices, or separate organizations of one group, each with its own domains | `conf/multi-domain/` | Built (E16), with its confs |
 | A local cluster | More capacity, or a member that can fail: pooled and balanced by an edge node, or behind a load balancer of your own | `conf/local-cluster/` | Built behind your own balancer, with its conf (E13); with an edge node, `MoquiPooledConf.xml` (E17) |
 | A local node with a standby | A second machine started when the first one dies | `conf/local-failover/` | Built, with its conf (E17) |
-| An edge cluster | An edge node that can fail, or more capacity at the edge | `conf/edge-cluster/` | E18 |
+| An edge cluster | An edge node that can fail, or more capacity at the edge | `conf/edge-cluster/` | Built (E18 parts A to C), with its conf; cascading call media between members is Later, so a phone rings only for calls whose media is on its member |
 | A front node before a local cluster | Load balancing and web protection, with none of the edge node's comms | `conf/front/` | E19 |
 | Full stack | A higher-volume shop or other public site on mr-pass: a local cluster, an edge cluster, a front node, the desktop and mobile apps | `conf/full-stack/` | E19 |
 
@@ -717,8 +717,8 @@ cursors, MMS files, MX delivery rows (leased), PASS visitor sessions.
 **In memory today**, and to make right in a cluster:
 - the host table and the recipient maps, built again on a member when another member applies a change: a cluster
   notice in place of the poll;
-- the SIP registrar's nonce counts and the voicemail fallback's forward counts, per member (the nonce's MAC key is
-  shared, so any member checks a nonce);
+- the SIP registrar's nonce counts and the voicemail fallback's forward counts, per member (as built the nonce's MAC
+  key is per member too, see As built (E18 part B));
 - the webhook replay cache: the queue's idempotency key already makes a repeat one item;
 - pairing tries and web protection's counts, per member, as in any cluster; a ban is shared since E17 (§4.3, As built).
 
@@ -736,6 +736,125 @@ cursors, MMS files, MX delivery rows (leased), PASS visitor sessions.
 one: [§4.7](#47-a-front-node).
 
 **A clustered all-in-one server** is the same: each member takes links.
+
+**As built (E18 part A, a local node's link to each member, 2026-11-14).**
+- **The list.** `edge_link_url` (a default property, per member as `cluster_base_url` is) is written by each member's
+  heartbeat into its `ClusterMember` row (`edgeLinkUrl`, new). Every edge member's `HelloReply` and `PingReply` list the
+  cluster's live members with it (`edge_members`, new `EdgeMember` message), in instance id order (`members::of_cluster`),
+  the answering member only while its own row is live, so every member answers the same list; read at most every 2 s; empty when the rows cannot be read, which a local node takes as not told. The plan said Hello
+  only; the Ping answer carries it too, so a member that joins or leaves is seen within a Ping on links that never
+  drop. An address that is not `https` with a host goes as none.
+- **The local node** (`dial.rs`). A `Dialer` is now a set of links, one per edge member, each with its own generation,
+  status and down connection, and each taking the edge member's calls. `members::plan` decides them: a member with an
+  address gets a link there; the URL the node paired with is dialed while no link is up and every link failed twice
+  in a row, or when there is no list yet, and that link becomes its member's once its Hello names one (dialed at the
+  member's own address from then); a member gone from the list is not dialed again (a link still up goes on until it
+  ends). A member with no address is reached only at the paired URL, so a single edge node needs no `edge_link_url`
+  and an edge cluster sets it on every member.
+- **The list is kept** in `runtime/db/edge_members` (JSON: the paired URL and pin, the members, the ids learned), not in
+  `runtime/.env`: each member of a local cluster learns it from its own links, the `.env` is what people copy between
+  members, and a per-machine file is how `instance_id` and `edge_member_key` are kept. A file for another pairing is
+  not used; pairing and unpairing remove it. A restart dials the kept members, so it links when the member it paired
+  with is gone.
+- **Identity.** All edge members present the one pinned link key (`edge_link_key` in the cluster's `.env`; the pin is
+  the key's SHA-256 and the handshake's signature proves it). A link dialed for a listed member must reach that member,
+  else the attempt fails ("its edge_link_url reaches another member") and the next list corrects the address, which
+  wakes the link with its backoff reset; on the paired URL any id is taken that the local node has no use for: never its
+  own, a member of its cluster (any `ClusterMember` row, live or not) or a media node of its own (a `CallMediaNode` row
+  not `edgeLinked`), since signaling for an id with a link route goes over that link. `edge_node_id` becomes the set of ids learned on pinned links: `LocalConfig::on_pin` is told each
+  new one, and the hook keeps the property the comma-separated set (the `.env` keeps the one pairing wrote), which
+  `guard_share` already reads. The old "the edge node's instance id changed, so pair again" refusal is gone
+  (`check_edge_member` replaces `check_edge_id`): every member is another id with the same key.
+- **Work up once.** One link carries the node's work at a time (`Cluster::elect`, one step under the links' lock: the
+  one that does while it is linked, else the first linked by member id): its outbox, its replicated sets and the sender lock, the edge node's
+  `CallMediaNode` and `SipNode` rows and the TURN peer; it moves when that link ends. Call signaling has a route per
+  link (per edge member). A web protection ban goes to every edge member (the ids `edge_node_id` names), as each edge
+  member keeps its own bans in memory and does not tell a ban from a link on. Work down (requests, delegate, queue
+  delivery, PASS) comes from each member, claimed by lease in the edge cluster's database, so each item once.
+- **On the edge side nothing else changed.** Linked members are per edge member (`Pool`), admission finds the local
+  member's key pinned in the shared `EdgeClient.memberKeys` (so a member linking to a second edge member is
+  "returning", no false takeover), and the generation counter is one row `FOR UPDATE`. A clustered all-in-one server
+  takes links on every member the same way; nothing in the hook or the acceptor assumes one member.
+- **For 18C.** `get#LinkStatus` has `edgeMemberList` on a local node (each link: instanceId, url, state, generation,
+  rttMs, lastConnectDate, lastError, reconnects, carriesWork, retired; `LinkStatus.members`, `EdgeMemberLink`), and
+  `get#EdgeCluster` on a node that takes links lists its cluster's members (instanceId, linkUrl, live, heartbeatAgeMs,
+  version, thisMember; `EdgeLink::edge_cluster`).
+- **Left to 18B.** The edge members' in-memory state (the host table and recipient maps on a change, SIP trunk
+  registration, phone bindings, the webhook replay cache), and a `CallMediaNode` per edge member: the local node keeps
+  the work link's edge member as its one media node and TURN peer for now (`set_peer_turn`, `allow_row` are one slot).
+  Built in part B, below.
+- **Tests.** Host unit tests: `members` (the list's checks, the plan for a first link, adoption, a member gone, a
+  member with no address, the paired URL only when every link fails, the file per pairing; the edge side's list),
+  `check_edge_member`. `it edge_cluster` (regression, about 4 s each): two edge members on one database and a local
+  node; the edge cluster's report, a misdirected address refused and corrected, a link to each member with both ids
+  learned and the list kept, one link carrying the work, a request through either member, items down and up and the
+  replicated set each once, a dialer with another pin linking to none; a restart with the paired member stopped links
+  to the other from the kept list and stops dialing the one gone. Acceptance (run once each):
+  `edge_cluster::acceptance_one_edge_member_stopped_leaves_web_and_the_queue_to_the_other` and
+  `acceptance_a_clustered_all_in_one_server_takes_links_on_every_member` (the same with `node_role=all-in-one`). Mail
+  in through the other member needs 18B's recipient maps and is not written yet (written in 18B, below).
+
+**As built (E18 part B, the in-memory state and calls and SIP on several edge members, 2026-11-14).**
+- **A cluster notice** (`moqui_core::edge::cluster_state`, the new topic `edge-state`, `{"from", "hosts", "sets",
+  "links"}`). There was no poll to replace: each member loaded its host table only after its own changes, and built
+  its recipients and trunks when its own process applied a batch, so another member's change waited for a restart.
+  Now the member that changes the host names or pairings (`Hosts::changed`: add and remove of a host, pairing,
+  Configure, revoke, unpair) or applies a batch (`replica::apply_batch`, the conflicts' recheck) tells the others after
+  the commit. One that hears it from another member loads its host table (on a thread of its own; a burst loads at
+  most twice) and counts each set as applied (`replica::note_applied`), so its mail recipients (`smtp_queue.rs`) and
+  SIP trunks (`sip::watch_trunks`) are built again at their next use. A member whose cluster transport may have missed
+  messages (`cluster::recover_missed`) does both for everything (`note_all_applied` moves every set's count).
+- **Revocation and the links' state** (from the 18A review). A revoke, an Unpair, a pairing made again and a member's
+  forgotten key go on the same notice (`LinkOp`), so every member closes and refuses the links it holds, as the one
+  that took the change did.
+- **Admission across the edge cluster** (from the 18A review). "Linked" meant linked to the edge member being dialed,
+  so a node holding only the key, dialing an edge member with no link of the pairing (one just restarted), took the
+  pairing over while a real member was linked to another edge member. Each edge member now keeps one row
+  (`moqui.edge.EdgeMemberLinks`: the local members it holds or is admitting links of, by pairing), written inside
+  `claim_key`'s transaction that locks the pairing's row and then by one serial writer every 5 s while another member of
+  its cluster is live (by the heartbeat, else by the member rows), removed at stop, pruned after a day. Admission reads
+  the rows each time and counts a member linked when another edge member's row naming it is under 20 s old
+  (`linked_elsewhere`): one linked elsewhere is admitted as another of its links only with its pinned key (another key
+  or a forgotten pin is refused while it is linked), and a new node needs a linked member's list as before. While a
+  live edge member has no fresh row, no takeover is decided (retryable); two edge members admitting at once are ordered
+  by the pairing's row lock, the second re-reading the first's row, so a node dialing both is one takeover. Rows over
+  asking the other edge members: the cluster topics carry no answers, and one row per edge member is one write per
+  beat. A row read that fails refuses the link (it dials again).
+- **Missed notices.** The same beat reads the held pairings' rows and closes the links of a pairing no longer active
+  and of a member whose pin is forgotten or another, and a member whose cluster transport reconnected runs it at once,
+  so a revoke or forgotten key whose notice a member missed still closes its links within seconds.
+- **SIP.** Every member runs an engine and loads every trunk; only the holder of `EdgeSenderLock` `sipTrunks`
+  (`moqui_core::edge::sip::claim_trunk_lock`, the sender lock's claim and timing) registers them (`sip/trunk_lock.rs`,
+  on any node that takes links), the others ping them; a change reloads the trunks, a holder whose claims fail stops
+  after two thirds of its lease, and a stopping engine lets it go. A phone's binding already named the engine's own
+  instance id (`SipRegistration.instanceId`), so with a `SipNode` row per member a call to the phone goes through the
+  member it registered with. **Not as the plan said:** the registrar's nonce MAC key is random per process, not
+  shared. Kept so: sharing it would let an answer captured at one member be replayed at another, whose nonce counts
+  never saw it (digest does not cover the Contact); a phone that reaches another member is challenged again. A phone
+  rings only for a call whose media is on its member, until cascading between edge members (Later), so SIP.md tells
+  operators to point phones at one edge member for now.
+- **Calls.** Each link now keeps its own edge member's `CallMediaNode` and `SipNode` rows and TURN secret
+  (`dial.rs` `MediaRows`, beside its signal route), still written only by the local cluster's replication sender, so
+  each edge member has one row; `calls::allow_row` and `media::set_peer_turn` keep a set (at most 64) cleared at
+  unpairing, and a member gone from the edge cluster's list is pruned from both. The phone numbers' fallbacks stay on
+  the work link (`keep_fallbacks`). Every member's TURN derives the same pairing secret (shared `turn_auth_secret` and
+  pairing row).
+- **Webhooks.** The replay cache stays per member; a repeat to another member is one queue item by the event's
+  idempotency key (`queue::keyed_id`, an insert-if-missing), checked. Pairing tries and web protection's counts stay
+  per member.
+- **Tests.** Unit: `moqui-core` `edge::cluster_state` (another member's notice, recovery, a burst, link operations),
+  `edge::sip` (one member holds the trunk lock, another takes over once it lapses), `edge::media` (a TURN secret per
+  member, forgotten when the member leaves the list), `edge::calls` (the row gate per member), `cluster_state` (only
+  another member's fresh row counts, stop and prune); `moqui-host` `sip::trunk_lock` (a trunk registers only on the
+  holder; the two-thirds fence). `it edge_cluster_state` (regression): a host removed on one member is not answered by
+  the other and one added there is, at once, and a repeated item is one; a key holder, and one naming a linked member's
+  id with another key, refused on one edge member while that member is linked on another, a takeover once none is; a
+  member linked to both edge members with no takeover, a batch counted on both, a revoke on one closing both links; a
+  revoke with no notice closing the links at the next beat; a new mail recipient taken by both members' LMTP
+  listeners. Acceptance (run once):
+  `edge_cluster_state::mail::acceptance_mail_in_goes_on_through_the_other_edge_member`. The per-member call rows have
+  no served test: the media driver and the SIP engine are process globals, so two edge members with media cannot run
+  in one test process; the engine's lock and flag are unit tested and `edge_sip` and `edge_call` run the single case.
 
 ### 4.7 A front node
 
@@ -991,6 +1110,39 @@ queue and sets per node, and the replica conflicts. On a node with the front set
   tui); Edge Node's own cluster rendered draining (qvt and tui) with Drain and Resume. `edge_pool`'s members test
   pings a member by id.
 
+**As built (E18 part C, the screens and conf, Nov 14, 2026).**
+- **Edge cluster** (`System/EdgeClients/EdgeCluster.xml`, a fifth tab): this node's own cluster from `get#EdgeCluster`:
+  each member live or stopped as a chip, its link address (`edge_link_url`; one that is not an `https` URL with a host
+  is shown as not used, as the Hello answer sends none), its heartbeat's age and version, this node marked, and the
+  member that registers the SIP trunks (`get#EdgeCluster`'s `registersTrunks`: the holder of 18B's lock row
+  `sipTrunks` while its lease lasts by the database's clock, by the member id the SIP engine claims it with). A
+  warning names each live member with no usable address while more than one is live; with one, a line says it needs
+  none. Read only: an address is each member's own property. The front nodes it is paired with are E19's and not on
+  the tab yet.
+- **`get#EdgeCluster`** answers from the `ClusterMember` rows and this node's `edge_link_url` as it is now where no link
+  serves (the HTTPS listener off, as under `moqui test`), as 17D made the members and balancing answer, and refuses on a
+  node that takes no links; a member with no heartbeat written has an empty `heartbeatAgeMs` (it was `i64::MAX`), and
+  `linkUrlUsable` says whether its address is one the Hello answer sends. The list and that check are one place,
+  `moqui_core::edge::cluster_list` (`members`, `usable_link_url`), which the link's `edge_cluster` and the Hello
+  answer's `members::of_cluster` call too.
+- **On a local node** System › Edge Node › Status has **Edge cluster** when its edge node is a cluster of more than one
+  (`get#LinkStatus` `edgeMemberList`): each edge member's id (Not known yet before its first Hello), the link's state,
+  address, round trip, last connect, links lost and a note (which link carries this node's work up, a member gone from
+  the list, the last error while not linked); the Link box says it is of the link that carries the work.
+- **Conf** ([§4.9](#49-example-confs-for-each-topology)): `conf/edge-cluster/MoquiEdgeConf.xml`, every edge member
+  (`front_edge` on one external database, no backup job, which covers an embedded database only): the shared `.env`
+  with `edge_link_key`, each member's own `cluster_base_url`, `edge_link_url`, `smtp_hostname`, `rtc_public_address`,
+  `turn_public_host` and `sip_public_address`, and what each area does in a cluster. A local node runs
+  `conf/edge/MoquiLocalConf.xml` unchanged (or `conf/local-cluster/MoquiPooledConf.xml` per member), so the directory
+  has no local conf. Its README has the diagram, the `.env` names, the DNS (an A, MX and SRV record per member) and the
+  commands; Run-Deploy has a section and a topology row.
+- **Tests.** `EdgeScreens.spec.js` (regression, its new feature about 0.03 s): the cluster from the rows with a stopped
+  member's address, this node's address that is not https, the trunk lock's holder and a lapsed lease, the note for one member, Edge
+  cluster rendered once in qvt and in tui, and the refusal on a node that takes no links. `moqui-core`
+  `edge::cluster_list` (the address check) and `service::edge` (`edgeMemberList`'s shape: one link carrying the work, a
+  retired one); `it edge_cluster`'s first test checks `get#EdgeCluster`'s `linkUrlUsable` with the link running. The
+  Edge Node box is not rendered with a running link: its rows are the `edgeMemberList` the unit test shapes.
+
 ### 4.11 Security
 
 - **Admission** is the new trust decision. A pool member holds the pairing's key and is on the member list a linked
@@ -1015,7 +1167,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 | **E15** | Built Nov 13, 2026. Certificates: the screen and the ACME client ([§4.8](#48-certificates-and-acme)); acceptance test `acme::acceptance_certificates_for_an_edge_node_and_its_local_node` | A node with no certificate for a name serves no HTTPS for it and asks nobody. From the screen an edge node gets a certificate for a terminate host, and a local node one for a passthrough name through the tunnel. Both renew by the job. A file put in `runtime/cert` shows beside them |
 | **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens. **Built 2026-11-13**, the screens and `conf/multi-domain` last ([§4.10](#410-the-system-app), As built). Routing part: web, mail, chat webhooks, PASS by site, delegate and the queue by owner, claims and conflicts between pairings, the queue cap and MX share per pairing ([§4.1](#41-domains-on-one-edge-node), As built); the acceptance test is `edge_domains::one_node_away_or_overloaded_leaves_the_other_working` (web, mail, chat, PASS, delegate; SIP and XMPP to add) | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |
 | **E17** | **Part D built 2026-11-14** ([§4.10](#410-the-system-app), As built): Clients' members, takeovers, hold and Deliver again, the Balancing tab and the sticky cookie on Domains, a local node's own cluster and drain, the `local-cluster` with an edge node and `local-failover` confs. **Part A built 2026-11-13** ([§4.4](#44-pools-load-balancing), [§4.5](#45-failover-to-a-standby), As built): the roles, every member linking, the member list and its report, admission, member state and drain, failover with its notice, the hold and Deliver again since; tests `edge_pool` (regression) and its three acceptance tests. **Part B built 2026-11-13** ([§4.4](#44-pools-load-balancing), As built): balancing by protocol, sticky by the session cookie (a host's own name on `EdgeHost`) or the client's address, health with set-aside, a GET or HEAD sent once more, call signaling per member, `get#EdgeBalancing`; tests `edge_balance` (regression) and its two acceptance tests. The front option set and the `node_role` values (`front`, `front_edge`, `edge`); pools: the member list in memory and its report, admission, balancing by protocol with sticky sessions, health and drain, the outbox and replication from a pool; failover to a standby with its notice and Deliver again since; web protection's rules per domain, shared bans and view; the Balancing screen. **Part C built 2026-11-13**: the outbox and replication from a pool, the link's own rows from the sender, web protection's rules per host, shared bans and System › Security › Web Protection ([§4.3](#43-the-front-option-set), [§4.4](#44-pools-load-balancing), As built); tests `edge_pool_work` | Two members of a cluster link and share a host name's requests evenly; a browser session stays on one member, and moves when it stops, still signed in. Clients shows a cluster member that is live but not linked. A node on another database with the same key is refused while a member is linked. With the local node stopped, a standby started by hand takes over its names and gets the queued items once; the first machine, started again, is refused. A drained member finishes its requests and gets no new ones |
-| **E18** | The edge cluster: the list of edge members in Hello, a local node's link to each, the in-memory state made right, calls and SIP on several edge members; the Edge cluster screen | A local node links to both members of an edge cluster. A request to either reaches it. With one edge member stopped, web, mail in and the queue go on through the other, and nothing is delivered twice. A clustered all-in-one server takes links on every member |
+| **E18** | The edge cluster: the list of edge members in Hello, a local node's link to each, the in-memory state made right, calls and SIP on several edge members; the Edge cluster screen. **Part A built 2026-11-14** ([§4.6](#46-a-cluster-of-edge-nodes), As built): `edge_link_url`, the list in Hello and Ping answers, a link to each member kept in `runtime/db/edge_members`, the work up one link, `get#EdgeCluster` and `edgeMemberList`; tests `edge_cluster` (regression) and its two acceptance tests. **Part B built 2026-11-14** ([§4.6](#46-a-cluster-of-edge-nodes), As built): the `edge-state` cluster notice (host table, replicated copies, revocation), admission by `EdgeMemberLinks` rows (and the missed-notice beat), the `sipTrunks` lock, a `CallMediaNode`, `SipNode` and TURN secret per edge member; tests `edge_cluster_state` (regression) and its mail acceptance test **Part C built 2026-11-14** ([§4.10](#410-the-system-app), As built): the Edge cluster tab, System › Edge Node's links to each edge member, `conf/edge-cluster`, Run-Deploy's section; Mobile-Desktop's question answered | A local node links to both members of an edge cluster. A request to either reaches it. With one edge member stopped, web, mail in and the queue go on through the other, and nothing is delivered twice. A clustered all-in-one server takes links on every member |
 | **E19** | The front node: `node_role=front`, an edge node that dials (`front_edge` behind the front first, then `edge` with a local node's second pairing), TCP ports on the front, the local nodes' links through it; the `front` and `full-stack` confs | A front node balances a local cluster with web protection and no edge node. Visitors reach an mr-pass site through a front node, balanced over two edge cluster members, sticky by session, with a local cluster as their authority. Stopping any one node below the front leaves the site up |
 | **E11** | Filtering in moqui, as in the archived plan; after the first release | To be set when it is designed |
 | **Later** | A PASS read cache on the edge node; monitoring over the link, with the link-down alert a standby's automation would watch; sealing queued items; a local media node cascading to the edge node, and regional media nodes; cascading between edge cluster members; the voicemail fallback following rules and schedules; the wizard's undo; QUIC; DANE; typed gRPC messages and mutual TLS for direct PASS | |

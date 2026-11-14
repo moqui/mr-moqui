@@ -199,6 +199,11 @@ claiming its name, refuses a DMARC failure whose policy is reject (550) and file
 - **Recipients.** `RCPT TO` is answered from the local node's accounts, replicated to the edge node
   (`mailRecipients`), and each message is queued for the local node, which delivers it as its own listener would,
   trusting the edge node's `Authentication-Results`.
+- **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18). Every member listens, with an MX record each
+  (or one name with an address per member). The copies of the accounts are shared rows; each member builds its
+  recipients from them, again when a batch is applied on any member (the one that applied it tells the others on the
+  cluster topic `edge-state`). A message taken by any member is one queue item, delivered once to the local node; with
+  one member stopped, the others take the mail, and mail out goes on, as any member claims a delivery row.
 
 ### Mail out
 

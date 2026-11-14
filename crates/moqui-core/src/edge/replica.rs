@@ -670,16 +670,35 @@ fn number(row: &EntityValue, field: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// The batches each set had applied on this edge node, counted from its start.
+/// The batches each set had applied on this edge node, counted from its start, and how many times every set was
+/// counted as changed at once ([`note_all_applied`]).
 #[derive(Default)]
-struct AppliedCounts(Mutex<BTreeMap<String, u64>>);
+struct AppliedCounts(Mutex<(BTreeMap<String, u64>, u64)>);
 
-/// How many batches of set `set_name` this edge node has applied since it started (of any node): a reader that keeps
-/// something built from the set's copies (the mail listener's recipients) builds it again when the count moves.
+/// How many batches of set `set_name` this edge node has applied since it started (of any node), here or on another
+/// member of its edge cluster ([`note_applied`], plans/Edge-Node2.md §4.6): a reader that keeps something built from
+/// the set's copies (the mail listener's recipients, the SIP engine's trunks) builds it again when the count moves.
 pub fn applied_count(facade: &EntityFacade, set_name: &str) -> u64 {
     facade.with_slot_read(AppliedCounts::default, |counts| {
-        lock(&counts.0).get(set_name).copied().unwrap_or(0)
+        let counts = lock(&counts.0);
+        counts.0.get(set_name).copied().unwrap_or(0).wrapping_add(counts.1)
     })
+}
+
+/// Count a batch of `set_name` as applied here: one this member applied, or one another member of its edge cluster
+/// applied to the shared copies (`edge::cluster_state`), so what is built from the set here is built again.
+pub fn note_applied(facade: &EntityFacade, set_name: &str) {
+    facade.with_slot(AppliedCounts::default, |counts| {
+        *lock(&counts.0).0.entry(set_name.to_string()).or_insert(0) += 1;
+    });
+}
+
+/// Count every set as changed: this member may have missed another member's notices (`edge::cluster_state`).
+pub fn note_all_applied(facade: &EntityFacade) {
+    facade.with_slot(AppliedCounts::default, |counts| {
+        let mut counts = lock(&counts.0);
+        counts.1 = counts.1.wrapping_add(1);
+    });
 }
 
 /// Apply a batch from local node `node` on the edge node, with its cursor, in one transaction; once it commits, the
@@ -687,9 +706,9 @@ pub fn applied_count(facade: &EntityFacade, set_name: &str) -> u64 {
 pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
     let answer = apply_batch_rows(facade, node, batch)?;
     if answer == BatchAnswer::Applied {
-        facade.with_slot(AppliedCounts::default, |counts| {
-            *lock(&counts.0).entry(batch.set_name.clone()).or_insert(0) += 1;
-        });
+        note_applied(facade, &batch.set_name);
+        // the other members of an edge cluster build what they keep from this set again (plans/Edge-Node2.md §4.6)
+        super::cluster_state::tell(facade, false, &[batch.set_name.as_str()]);
     }
     Ok(answer)
 }

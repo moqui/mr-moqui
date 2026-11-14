@@ -251,7 +251,7 @@ impl Lmtp {
 }
 
 /// Postfix's side of LMTP: one message to `recipients`, each RCPT's reply and then the replies after the data.
-fn lmtp(address: SocketAddr, recipients: &[&str], message: &str) -> (Vec<String>, Vec<String>) {
+pub(crate) fn lmtp(address: SocketAddr, recipients: &[&str], message: &str) -> (Vec<String>, Vec<String>) {
     let stream = TcpStream::connect(address).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
     let mut client = Lmtp {
@@ -332,7 +332,7 @@ fn down(edge: &Gate) -> bool {
     })
 }
 
-fn message(message_id: &str, body: &str) -> String {
+pub(crate) fn message(message_id: &str, body: &str) -> String {
     format!(
         "Message-ID: {message_id}\r\nFrom: Dan <dan@example.org>\r\nTo: sales@example.com\r\nSubject: Through the \
          edge\r\nDate: Mon, 19 Oct 2026 12:00:00 +0000\r\n\r\n{body}\r\n"

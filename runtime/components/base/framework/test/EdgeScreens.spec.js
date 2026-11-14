@@ -8,9 +8,12 @@
 // not one and on a node that takes no links, and the takeover cleared through Clients by an administrator but not by a
 // user without System. On a local node, System › Edge Node shows its own cluster and drains and resumes itself. Each
 // tab is rendered once in qvt and once in tui (their state chips are render-mode sections), with all of its checks on
-// that render; Domains shows each host's sticky cookie, and Balancing the conf's defaults. No link runs under moqui
-// test: node_role is set to front_edge around each step, the pairings are rows,
-// and no member is linked.
+// that render; Domains shows each host's sticky cookie, and Balancing the conf's defaults. Edge cluster (plans/Edge-Node2.md
+// §4.6) lists this node's own cluster from its rows with each member's link address, one that is not https marked as
+// not used, the member holding the SIP trunk lock (none once its lease lapsed), and get#EdgeCluster refuses on a node
+// that takes no links. No link runs under moqui test: node_role is set to front_edge around each step, the pairings
+// are rows, and no member is linked. A local node's links to each edge member (System › Edge Node, Edge cluster) need
+// a running link: their rows are get#LinkStatus's edgeMemberList, shaped in moqui-core's service::edge tests.
 // Run: ./moq test framework --spec EdgeScreens
 const S = "org.moqui.edge.EdgeServices."
 const WEBROOT = "component://webroot/screen/webroot.xml"
@@ -27,6 +30,11 @@ const NODES = [A, B, R]
 const NONE = "EDGE_SCREENS_SPEC_NONE"
 const ERP = "erp.edge-screens-spec.example.test"
 const SHOP = "shop.edge-screens-spec.example.test"
+const MEMBER = "moqui.server.ClusterMember"
+const LOCK = "moqui.edge.EdgeSenderLock"
+// a member of this node's cluster that stopped a day ago, with its link address
+const EDGE2 = "edge-screens-spec-edge2"
+const EDGE2_URL = "https://edge2.edge-screens-spec.example.test"
 const STANDBY = "edge-screens-spec-standby"
 const FIRST = "edge-screens-spec-first"
 const SETUP_A = {
@@ -116,6 +124,8 @@ spec({
             ec.entity.find(HOST).condition("pairedNodeId", "in", NODES).deleteAll()
             ec.entity.find(PORT).condition("pairedNodeId", "in", NODES).deleteAll()
             ec.entity.find(CLIENT).condition("pairedNodeId", "in", NODES).deleteAll()
+            ec.entity.find(MEMBER).condition("instanceId", EDGE2).deleteAll()
+            ec.entity.find(LOCK).condition("lockName", "sipTrunks").deleteAll()
             ec.entity.find("moqui.security.UserAccount").condition("userId", NONE).deleteAll()
         })
     }
@@ -518,5 +528,64 @@ feature("Balancing shows the conf's defaults and, with no link, no member sent w
         !tui.broken
         tui.text.includes("This node takes no links now")
         tui.text.includes("moqui.session")
+    }
+})
+
+feature("Edge cluster lists this node's cluster with each member's link address, with no link running", {
+    when() {
+        sys(() => ec.entity.makeValue(MEMBER).setAll({instanceId: EDGE2, heartbeat: new Date(Date.now() - 86400000),
+            binaryVersion: "0.1.0-spec", edgeLinkUrl: EDGE2_URL}).create())
+        // this node registers the trunks: it holds the lock row its SIP engine would renew (no engine runs here)
+        const own = String(edge(() => invoke("get#EdgeCluster")).memberList.find((member) => member.thisMember).instanceId)
+        sys(() => ec.entity.makeValue(LOCK).setAll({lockName: "sipTrunks", instanceId: own,
+            leaseExpireDate: new Date(Date.now() + 600000), claimedDate: new Date()}).createOrUpdate())
+        // this node's own address is not https, so its Hello answer would send none
+        context.out = edge(() => withProperty("edge_link_url", "http://edge1.edge-screens-spec.example.test", () => ({
+            cluster: invoke("get#EdgeCluster"),
+            qvt: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "qvt"),
+            tui: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "tui")
+        })))
+        // a lapsed lease registers nothing
+        sys(() => ec.entity.makeValue(LOCK).setAll({lockName: "sipTrunks", leaseExpireDate: new Date(Date.now() - 60000)}).update())
+        context.lapsed = edge(() => invoke("get#EdgeCluster"))
+        context.plain = invoke("get#EdgeCluster")
+    },
+    then() {
+        const out = context.out
+        out.cluster.error === ""
+        const own = out.cluster.memberList.find((member) => member.thisMember)
+        own.live === true
+        own.linkUrl === "http://edge1.edge-screens-spec.example.test"
+        own.linkUrlUsable === false
+        const other = out.cluster.memberList.find((member) => member.instanceId === EDGE2)
+        other.live === false
+        other.thisMember === false
+        other.linkUrl === EDGE2_URL
+        other.linkUrlUsable === true
+        own.registersTrunks === true
+        other.registersTrunks === false
+        context.lapsed.memberList.every((member) => member.registersTrunks === false)
+        other.heartbeatAgeMs > 3600000
+        const {qvt, tui} = out
+        qvt.status === 200
+        qvt.errors === ""
+        !qvt.broken
+        qvt.text.includes(own.instanceId + " (this node)")
+        qvt.text.includes("(not used: not an https address)")
+        qvt.text.includes(EDGE2_URL)
+        qvt.text.includes("Stopped")
+        qvt.text.includes("Registers them")
+        // one live member needs no address; the warning is for a live member with none beside another
+        qvt.text.includes("so it needs no link address")
+        !qvt.text.includes("Members with no link address")
+        !qvt.text.includes("could not be read")
+        // the tui template of the live chip
+        tui.status === 200
+        tui.errors === ""
+        !tui.broken
+        tui.text.includes("(this node)")
+        tui.text.includes("Stopped")
+        tui.text.includes(EDGE2_URL)
+        context.plain.error.includes("only a node that takes links")
     }
 })

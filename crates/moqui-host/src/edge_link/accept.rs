@@ -44,6 +44,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
+use moqui_core::edge::cluster_state::{Elsewhere, HeldLinks, LinkOp};
 use moqui_core::edge::pool::{self, Admission, LinkedMember, RefusedMember};
 use moqui_core::edge::{
     ClusterMemberInfo, DelegateAnswer, DelegateCall, EdgeClientInfo, MemberState, PairingCode, PoolMemberInfo,
@@ -287,6 +288,9 @@ struct Linked {
     down_token: [u8; super::DOWN_TOKEN],
     /// When it was registered.
     linked_at: Instant,
+    /// The fingerprint of the member's own key, as admitted: a link whose pin was forgotten or changed since, on any
+    /// edge member, is closed by the periodic check (plans/Edge-Node2.md §4.6).
+    member_key: String,
 }
 
 struct Down {
@@ -387,6 +391,8 @@ struct Registration {
     state: MemberState,
     /// The pairing's members linked when the admission was decided.
     linked: Vec<String>,
+    /// The fingerprint of the member's own key.
+    member_key: String,
 }
 
 /// Why [`EdgeServer::register`] refused.
@@ -432,7 +438,21 @@ pub(crate) struct EdgeServer {
     notices: Mutex<HashMap<String, Vec<Instant>>>,
     /// Balancing's settings, from the `<edge>` conf (plans/Edge-Node2.md §4.4).
     balance: Rules,
+    /// The edge cluster's live members as Hello and Ping answers list them, and when they were read
+    /// (plans/Edge-Node2.md §4.6).
+    edge_members: Mutex<Option<(Instant, Vec<super::members::EdgeMember>)>>,
+    /// Wakes the writer of this edge member's `EdgeMemberLinks` row when a link comes or goes
+    /// ([`EdgeServer::keep_member_links`]).
+    member_links: tokio::sync::Notify,
+    /// The links being admitted now, by pairing and member: in this edge member's row from the admission's own write
+    /// until they register or are refused.
+    admitting: Mutex<HashSet<(String, String)>>,
+    /// Held while this edge member's row is made and written, so a write never takes an older view than one before it.
+    links_write: Mutex<()>,
 }
+
+/// How long the edge cluster's list is answered before its member rows are read again: every link's Ping asks it.
+const EDGE_MEMBERS_FOR: Duration = Duration::from_secs(2);
 
 /// The sources whose Pair calls are counted at once; a new source past it is refused until a sweep frees room.
 const MAX_PAIR_SOURCES: usize = 10_000;
@@ -515,6 +535,10 @@ impl EdgeServer {
             tunnel_slots: Mutex::new(HashMap::new()),
             notices: Mutex::new(HashMap::new()),
             balance: Rules::of(&moqui_core::edge::settings(factory)),
+            edge_members: Mutex::new(None),
+            member_links: tokio::sync::Notify::new(),
+            admitting: Mutex::new(HashSet::new()),
+            links_write: Mutex::new(()),
         });
         telemetry.observe_gauge("moqui.edgelink.tunnels.active", move || {
             Some(active.load(Ordering::Acquire) as f64)
@@ -793,6 +817,52 @@ impl EdgeServer {
         hello
     }
 
+    /// The live members of this node's cluster with their link addresses, itself first (plans/Edge-Node2.md §4.6): what
+    /// its Hello and Ping answers list, read again at most every [`EDGE_MEMBERS_FOR`]. Empty when the member rows
+    /// cannot be read (logged), which a local node takes as not told: it keeps the list it has.
+    async fn edge_members(&self) -> Vec<super::proto::EdgeMember> {
+        if let Some((read, list)) = lock(&self.edge_members).as_ref() {
+            if read.elapsed() < EDGE_MEMBERS_FOR {
+                return super::members::to_proto(list);
+            }
+        }
+        let read = self
+            .on_pool(|factory| {
+                let facade = factory
+                    .entity()
+                    .ok_or_else(|| Error::new("the entity facade is not installed"))?;
+                moqui_core::cluster::member_report(factory, &facade)
+                    .map_err(|err| Error::new(err.message().to_string()))
+            })
+            .await;
+        match read {
+            Ok(rows) => {
+                let list = super::members::of_cluster(&self.config.instance_id, &self.config.link_url, &rows);
+                let answer = super::members::to_proto(&list);
+                *lock(&self.edge_members) = Some((Instant::now(), list));
+                answer
+            }
+            Err(err) => {
+                tracing::warn!("Edge link: this edge cluster's members were not read for a local node: {err}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// The members of this node's cluster with their link addresses, live or not (plans/Edge-Node2.md §4.6), for
+    /// `get#EdgeCluster`. In the current context.
+    pub(crate) fn edge_cluster(&self) -> Result<Vec<moqui_core::edge::EdgeClusterMember>, Error> {
+        let factory = self
+            .factory
+            .upgrade()
+            .ok_or_else(|| Error::new("the server is stopping"))?;
+        let facade = factory
+            .entity()
+            .ok_or_else(|| Error::new("the entity facade is not installed"))?;
+        moqui_core::edge::cluster_list::members(&factory, &facade, &self.config.instance_id, &self.config.link_url)
+            .map_err(|err| Error::new(err.message().to_string()))
+    }
+
     /// What this node's media node advertises, while its media socket is up.
     fn media(&self) -> Option<moqui_core::edge::media::MediaAdvert> {
         let factory = self.factory.upgrade()?;
@@ -856,6 +926,7 @@ impl EdgeServer {
             hello,
             state,
             linked,
+            member_key,
         } = registration;
         let mut registry = lock(&self.registry);
         if registry.revoked.contains(node) {
@@ -888,6 +959,7 @@ impl EdgeServer {
                 seen: moqui_core::user::now_millis(),
                 down_token: token,
                 linked_at: Instant::now(),
+                member_key,
             },
         );
         drop(registry);
@@ -919,13 +991,41 @@ impl EdgeServer {
                 None
             }
         };
+        if removed.is_some() {
+            self.member_links.notify_one();
+        }
         drop(removed);
     }
 
     /// Close every member's link of pairing `node`, whatever its generation, and forget what was kept of it.
     pub(crate) fn close(&self, node: &str) -> bool {
         let removed = lock(&self.registry).pools.remove(node);
+        self.member_links.notify_one();
         removed.is_some_and(|pool| !pool.members.is_empty())
+    }
+
+    /// Do to the links held here what another member of an edge cluster did to its own (plans/Edge-Node2.md §4.6,
+    /// `moqui_core::edge::cluster_state`): a pairing revoked or unpaired, paired again, or a member's key forgotten.
+    pub(crate) fn apply_link_op(&self, op: &LinkOp) {
+        match op {
+            LinkOp::Revoked { node } => {
+                self.revoked(node);
+                tracing::info!("Edge node: pairing {node} revoked on another member; its links here are closed");
+            }
+            LinkOp::Paired { node, key_changed } => {
+                lock(&self.registry).revoked.remove(node);
+                if *key_changed && self.close(node) {
+                    tracing::info!("Edge node: {node} paired again on another member; its old key's links here closed");
+                }
+            }
+            LinkOp::MemberForgotten { node, member } => {
+                if self.close_member(node, member) {
+                    tracing::warn!(
+                        "Edge node: the link of member {member} of {node} is closed, its key forgotten on another member"
+                    );
+                }
+            }
+        }
     }
 
     /// Mark `node` revoked and close its members' links, in one step under the registry's lock.
@@ -935,7 +1035,169 @@ impl EdgeServer {
             registry.revoked.insert(node.to_string());
             registry.pools.remove(node)
         };
+        self.member_links.notify_one();
         drop(removed);
+    }
+
+    /// The links this edge member holds and is admitting now, for its `EdgeMemberLinks` row.
+    fn held_links(&self) -> HeldLinks {
+        let mut held = HeldLinks::new();
+        {
+            let registry = lock(&self.registry);
+            for (node, pool) in &registry.pools {
+                held.entry(node.clone())
+                    .or_default()
+                    .extend(pool.members.keys().cloned());
+            }
+        }
+        for (node, member) in lock(&self.admitting).iter() {
+            held.entry(node.clone()).or_default().insert(member.clone());
+        }
+        held.retain(|_, members| !members.is_empty());
+        held
+    }
+
+    /// What the other edge members' rows say of pairing `node` ([`moqui_core::edge::cluster_state::linked_elsewhere`]).
+    fn read_elsewhere(&self, factory: &ExecutionContextFactory, node: &str) -> Result<Elsewhere, Error> {
+        let facade = store::facade(factory)?;
+        moqui_core::edge::cluster_state::linked_elsewhere(factory, &facade, &Self::edge_member_id(factory), node)
+            .map_err(|err| Error::new(err.message().to_string()))
+    }
+
+    /// [`EdgeServer::read_elsewhere`] on a request worker.
+    async fn linked_elsewhere(self: &Arc<Self>, node: &str) -> Result<Elsewhere, Error> {
+        let (server, key) = (Arc::clone(self), node.to_string());
+        self.on_pool(move |factory| server.read_elsewhere(factory, &key)).await
+    }
+
+    /// This edge member's id in its cluster, as its `EdgeMemberLinks` row names it.
+    fn edge_member_id(factory: &ExecutionContextFactory) -> String {
+        moqui_core::cluster::instance_id(factory).unwrap_or_default()
+    }
+
+    /// Write this edge member's row from what it holds and admits now, under [`EdgeServer::links_write`], in the
+    /// caller's transaction when there is one.
+    fn write_links(&self, factory: &ExecutionContextFactory) -> Result<(), Error> {
+        let facade = store::facade(factory)?;
+        let _writing = lock(&self.links_write);
+        let held = self.held_links();
+        moqui_core::edge::cluster_state::write_member_links(&facade, &Self::edge_member_id(factory), &held)
+            .map_err(|err| Error::new(err.message().to_string()))
+    }
+
+    /// The links this edge member holds whose pairing is no longer active, or whose member's pinned key is forgotten
+    /// or another (plans/Edge-Node2.md §4.6): what another member did and this one may not have heard.
+    fn stale_links(&self, factory: &ExecutionContextFactory) -> Result<(Vec<String>, Vec<(String, String)>), Error> {
+        let held: Vec<(String, Vec<(String, String)>)> = {
+            let registry = lock(&self.registry);
+            registry
+                .pools
+                .iter()
+                .map(|(node, pool)| {
+                    let members = pool
+                        .members
+                        .iter()
+                        .map(|(member, link)| (member.clone(), link.member_key.clone()))
+                        .collect();
+                    (node.clone(), members)
+                })
+                .collect()
+        };
+        let mut revoked = Vec::new();
+        let mut forgotten = Vec::new();
+        for (node, members) in held {
+            let Some((active, pins)) = store::pairing_state(factory, &node)? else {
+                revoked.push(node);
+                continue;
+            };
+            if !active {
+                revoked.push(node);
+                continue;
+            }
+            for (member, key) in members {
+                if pool::key_matches(&pins, &member, &key) != Some(true) {
+                    forgotten.push((node.clone(), member));
+                }
+            }
+        }
+        Ok((revoked, forgotten))
+    }
+
+    /// Keep this edge member's `EdgeMemberLinks` row (plans/Edge-Node2.md §4.6, §4.11) and check its links against the
+    /// shared rows, while another member of its cluster is live (a node alone writes and checks nothing; it reads its
+    /// cluster's member rows each time unless the heartbeat already knows a peer): every
+    /// [`moqui_core::edge::cluster_state::MEMBER_LINK_BEAT`] and at once when a link comes or goes, until the
+    /// listeners stop, when its row is removed. A pairing revoked, or a member's key forgotten or pinned again, on a
+    /// member whose notice this one missed has its links closed here too. A write or check that fails is logged, and
+    /// the next one goes on.
+    pub(crate) async fn keep_member_links(self: &Arc<Self>) {
+        let mut shutdown = self.shutdown.clone();
+        let mut beats: u64 = 0;
+        loop {
+            let server = Arc::clone(self);
+            let prune = beats.is_multiple_of(60);
+            beats = beats.wrapping_add(1);
+            let done = self
+                .on_pool(move |factory| {
+                    // only while another member of the cluster is live: as the heartbeat read them, else by its rows
+                    // (the heartbeat may not have run since one came up)
+                    let peers = moqui_core::cluster::has_live_peers(factory) || {
+                        let facade = store::facade(factory)?;
+                        moqui_core::cluster::live_member_count(factory, &facade)
+                            .map_err(|err| Error::new(err.message().to_string()))?
+                            > 1
+                    };
+                    if !peers {
+                        return Ok(None);
+                    }
+                    server.write_links(factory)?;
+                    if prune {
+                        let facade = store::facade(factory)?;
+                        if let Err(err) = moqui_core::edge::cluster_state::remove_member_links(&facade, None) {
+                            tracing::warn!("Edge node: the rows of edge members gone were not pruned: {err}");
+                        }
+                    }
+                    server.stale_links(factory).map(Some)
+                })
+                .await;
+            match done {
+                Ok(Some((revoked, forgotten))) => {
+                    for node in revoked {
+                        // closed, not marked revoked: its key is checked as each new link opens, and a pairing made
+                        // again is let in whether or not this member heard of it
+                        if self.close(&node) {
+                            tracing::warn!("Edge node: pairing {node} is not active; its links here are closed");
+                        }
+                    }
+                    for (node, member) in forgotten {
+                        if self.close_member(&node, &member) {
+                            tracing::warn!(
+                                "Edge node: member {member} of {node} has another or a forgotten key now; its link here \
+                                 is closed"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => tracing::warn!("Edge node: the links this member holds were not written or checked: {err}"),
+            }
+            tokio::select! {
+                () = tokio::time::sleep(moqui_core::edge::cluster_state::MEMBER_LINK_BEAT) => {}
+                () = self.member_links.notified() => {}
+                _ = shutdown.wait_for(|stopped| *stopped) => break,
+            }
+        }
+        // stopping: the others no longer count this member's links
+        let removed = self
+            .on_pool(|factory| {
+                let facade = store::facade(factory)?;
+                moqui_core::edge::cluster_state::remove_member_links(&facade, Some(&Self::edge_member_id(factory)))
+                    .map_err(|err| Error::new(err.message().to_string()))
+            })
+            .await;
+        if let Err(err) = removed {
+            tracing::warn!("Edge node: this member's row of links was not removed as it stops: {err}");
+        }
     }
 
     /// Take what a member's Hello or Ping said of its state and its cluster (plans/Edge-Node2.md §4.4): the state on
@@ -1066,6 +1328,7 @@ impl EdgeServer {
             .pools
             .get_mut(node)
             .and_then(|pool| pool.members.remove(member));
+        self.member_links.notify_one();
         removed.is_some()
     }
 
@@ -1787,8 +2050,10 @@ impl EdgeServer {
         let factory = self.factory()?;
         let revoked = store::revoke_client(&factory, node)?;
         self.revoked(node);
+        // the other members of an edge cluster close the links they hold too (plans/Edge-Node2.md §4.6)
+        tell_links(&factory, LinkOp::Revoked { node: node.to_string() });
         // its setup no longer names sites or bridges, and the only-pairing rule counts it out
-        if let Err(err) = self.hosts.load(&factory) {
+        if let Err(err) = self.hosts.changed(&factory) {
             tracing::error!("Edge node: the host table was not loaded again after revoking {node}: {err}");
         }
         Ok(revoked)
@@ -1987,6 +2252,22 @@ impl LinkService {
             (linked, known)
         };
         let reconnect = linked.iter().any(|linked| linked == member);
+        // in an edge cluster a member linked on another edge member is linked too (plans/Edge-Node2.md §4.6, §4.11):
+        // its link here is another of its links, not a takeover, and a node with only the key is refused while one is.
+        // Read at each admission, also on a member that does not know its peers yet (just started)
+        let elsewhere = self.server.linked_elsewhere(node).await.map_err(|err| {
+            tracing::error!("Edge link of {node}: the links on the other edge members were not read: {err}");
+            Status::internal("the edge node could not take the link")
+        })?;
+        // an id linked only elsewhere is that member's only with the key pinned for it: one with another key, or one
+        // whose pin was forgotten, is refused while that member is linked (forgetting its key closes its links)
+        let impostor = !reconnect && elsewhere.members.iter().any(|other| other == member) && pinned != Some(true);
+        let mut linked_any = linked.clone();
+        for other in &elsewhere.members {
+            if !linked_any.contains(other) {
+                linked_any.push(other.clone());
+            }
+        }
         // a linked id with no key pinned yet is a first link racing another of the same id: the older one is given
         // [`YOUNG_LINK`] to pin its key before a link of that id can replace it (plans/Edge-Node2.md §4.11)
         if reconnect && pinned.is_none() && self.server.link_age(node, member).is_some_and(|age| age < YOUNG_LINK) {
@@ -1999,7 +2280,7 @@ impl LinkService {
                 "this member's link is up and answers: a second link of the same member is not taken",
             ));
         }
-        let listed = if !reconnect && !linked.is_empty() {
+        let listed = if !linked_any.iter().any(|linked| linked == member) && !linked_any.is_empty() {
             // asked now, else the latest list a linked member sent with its Ping, while it is fresh
             match self.server.ask_members(node, member).await {
                 Some(list) => Some(list),
@@ -2008,18 +2289,33 @@ impl LinkService {
         } else {
             None
         };
-        let decided = pool::admission(&pool::AdmissionFacts {
-            member,
-            linked: &linked,
-            listed: listed.as_deref(),
-            known: &known,
-            last_member: &row.last_member,
-            hold: row.hold,
-            approved: &row.approved,
-            pinned,
-            displaced: &row.displaced,
-            forgotten: pool::forgotten(&row.pins, member),
-        });
+        let decided = if impostor {
+            Admission::Refuse(pool::JOIN_FIRST.to_string())
+        } else {
+            pool::admission(&pool::AdmissionFacts {
+                member,
+                linked: &linked_any,
+                listed: listed.as_deref(),
+                known: &known,
+                last_member: &row.last_member,
+                hold: row.hold,
+                approved: &row.approved,
+                pinned,
+                displaced: &row.displaced,
+                forgotten: pool::forgotten(&row.pins, member),
+            })
+        };
+        // a live member of the edge cluster whose links are not known yet (it has written no row since another member
+        // came up): no node takes the pairing over until they are, so it cannot displace a member linked there
+        if elsewhere.unknown && matches!(decided, Admission::TakeOver { .. } | Admission::Hold { .. }) {
+            tracing::info!(
+                "Edge link of {node}: member {member} would take the pairing over, but another edge member's links are \
+                 not known yet; it dials again"
+            );
+            return Err(Status::unavailable(
+                "the links on the other edge members are not known yet; dial again",
+            ));
+        }
         let remote = self.remote.to_string();
         let refuse = |message: String, held: bool| {
             let mut registry = lock(&self.server.registry);
@@ -2062,27 +2358,61 @@ impl LinkService {
         // the member's key, claimed for its id in one transaction before its link is registered: pinned when none is,
         // kept when it matches, pinned again on a decided takeover; else refused. The ids linked, the last and the kept
         // list's are never evicted past the cap
-        let mut keep: Vec<String> = linked.clone();
+        let mut keep: Vec<String> = linked_any.clone();
         keep.push(row.last_member.clone());
         keep.extend(known.iter().map(|row| row.instance_id.clone()));
+        // in this edge member's row from the claim's own write until it registers or is refused (the guard)
+        let _admitting = Admitting::start(&self.server, node, member);
         let claim = {
             let (key, id, fingerprint, keep) = (node.to_string(), member.to_string(), member_key.to_string(), keep);
-            let takeover = takeover.is_some();
+            let wanted_takeover = takeover.is_some();
+            let seen = elsewhere.members.clone();
+            let server = Arc::clone(&self.server);
             self.server
-                .on_pool(move |factory| store::claim_key(factory, &key, &id, &fingerprint, takeover, &keep))
+                .on_pool(move |factory| {
+                    let recheck = || -> Result<Option<bool>, Error> {
+                        if !wanted_takeover {
+                            return Ok(Some(false));
+                        }
+                        // with the pairing's row locked: another edge member that admitted a link of this pairing
+                        // since has written its row in the same lock
+                        let now = server.read_elsewhere(factory, &key)?;
+                        if now.members.iter().any(|other| *other == id) {
+                            return Ok(Some(true));
+                        }
+                        Ok((!now.members.iter().any(|other| !seen.contains(other))).then_some(false))
+                    };
+                    let write_own = || server.write_links(factory);
+                    store::claim_key(
+                        factory,
+                        &key,
+                        &id,
+                        &fingerprint,
+                        wanted_takeover,
+                        &keep,
+                        recheck,
+                        write_own,
+                    )
+                })
                 .await
         };
-        match claim {
-            Ok(true) => {}
-            Ok(false) => {
+        let takeover = match claim {
+            Ok(store::Claimed::Pinned { takeover: true }) => takeover,
+            Ok(store::Claimed::Pinned { takeover: false }) => None,
+            Ok(store::Claimed::Refused) => {
                 tracing::warn!("Edge link of {node}: member {member} from {remote} refused: another key is pinned");
                 return Err(refuse(pool::JOIN_FIRST.to_string(), false));
+            }
+            Ok(store::Claimed::Changed) => {
+                return Err(Status::unavailable(
+                    "another member of this pairing linked to another edge member meanwhile; dial again",
+                ));
             }
             Err(err) => {
                 tracing::error!("Edge link of {node}: member {member}'s key was not pinned: {err}");
                 return Err(Status::internal("the edge node could not take the link"));
             }
-        }
+        };
         let Some(close) = lock(close).take() else {
             return Err(Status::failed_precondition("Hello was said already on this connection"));
         };
@@ -2094,6 +2424,7 @@ impl LinkService {
             hello: local.clone(),
             state,
             linked,
+            member_key: member_key.to_string(),
         };
         let token = match self.server.register(node, member, registration) {
             Ok(token) => token,
@@ -2115,6 +2446,8 @@ impl LinkService {
         };
         // named now, before anything else is awaited: a call dropped from here on still leaves no link behind
         let _ = named.set(member.to_string());
+        // the serial writer keeps this edge member's row from now on (plans/Edge-Node2.md §4.6)
+        self.server.member_links.notify_one();
         if let Some(from) = takeover {
             tracing::warn!("Edge link of {node}: new node {member} from {remote} takes the pairing over from {from}");
             let server = Arc::clone(&self.server);
@@ -2186,7 +2519,7 @@ impl Link for LinkService {
                 move |factory| {
                     let paired = store::pair_client(factory, &code, &pairing_node, &key, &local)?;
                     // a new pairing counts for the only-pairing rule at once
-                    if let Err(err) = server.hosts.load(factory) {
+                    if let Err(err) = server.hosts.changed(factory) {
                         tracing::error!("Edge node: the host table was not loaded again after a pairing: {err}");
                     }
                     Ok(paired)
@@ -2203,6 +2536,15 @@ impl Link for LinkService {
                 if key_changed {
                     // the links of the old key end now that its row has the new one
                     self.server.close(&node);
+                }
+                if let Ok(factory) = self.server.factory() {
+                    tell_links(
+                        &factory,
+                        LinkOp::Paired {
+                            node: node.clone(),
+                            key_changed,
+                        },
+                    );
                 }
                 tracing::info!("Edge node: paired local node {node} (key {fingerprint}) from {remote}");
                 Ok(Response::new(PairReply {
@@ -2304,6 +2646,8 @@ impl Link for LinkService {
                 .unwrap_or_default(),
             pairing_id: node.to_string(),
             down_token: down_token.to_vec(),
+            // the edge cluster's live members, each of which the local node dials (plans/Edge-Node2.md §4.6)
+            edge_members: self.server.edge_members().await,
         }))
     }
 
@@ -2315,7 +2659,11 @@ impl Link for LinkService {
         // the member's state and its cluster's members, every Ping (plans/Edge-Node2.md §4.4)
         self.server
             .note_status(node, member, generation, request.into_inner().status.as_ref());
-        Ok(Response::new(PingReply { generation }))
+        Ok(Response::new(PingReply {
+            generation,
+            // so a member that joins or leaves the edge cluster is seen within a Ping (plans/Edge-Node2.md §4.6)
+            edge_members: self.server.edge_members().await,
+        }))
     }
 
     async fn deliver(&self, request: Request<DeliverRequest>) -> Result<Response<DeliverReply>, Status> {
@@ -2410,7 +2758,7 @@ impl Link for LinkService {
             .on_pool(move |factory| {
                 let linked = server.linked_nodes();
                 let reply = super::offer::configure(factory, &server.config, &key, request, &linked)?;
-                server.hosts.load(factory)?;
+                server.hosts.changed(factory)?;
                 Ok(reply)
             })
             .await
@@ -2428,7 +2776,7 @@ impl Link for LinkService {
         self.server
             .on_pool(move |factory| {
                 let revoked = store::revoke_client(factory, &key)?;
-                if let Err(err) = server.hosts.load(factory) {
+                if let Err(err) = server.hosts.changed(factory) {
                     tracing::error!("Edge node: the host table was not loaded again after {key} unpaired: {err}");
                 }
                 Ok(revoked)
@@ -2440,6 +2788,9 @@ impl Link for LinkService {
             })?;
         tracing::info!("Edge node: local node {node} unpaired itself");
         lock(&self.server.registry).revoked.insert(node.to_string());
+        if let Ok(factory) = self.server.factory() {
+            tell_links(&factory, LinkOp::Revoked { node: node.to_string() });
+        }
         // the answer goes out first; then the link closes
         let server = Arc::clone(&self.server);
         let key = node.to_string();
@@ -2448,6 +2799,38 @@ impl Link for LinkService {
             server.close(&key);
         });
         Ok(Response::new(UnpairReply {}))
+    }
+}
+
+/// A link being admitted, in [`EdgeServer::admitting`] while it lives: dropped once the link registered or was refused,
+/// when the serial writer is woken to write the edge member's row without it if it did not register.
+struct Admitting {
+    server: Arc<EdgeServer>,
+    key: (String, String),
+}
+
+impl Admitting {
+    fn start(server: &Arc<EdgeServer>, node: &str, member: &str) -> Self {
+        let key = (node.to_string(), member.to_string());
+        lock(&server.admitting).insert(key.clone());
+        Self {
+            server: Arc::clone(server),
+            key,
+        }
+    }
+}
+
+impl Drop for Admitting {
+    fn drop(&mut self) {
+        lock(&self.server.admitting).remove(&self.key);
+        self.server.member_links.notify_one();
+    }
+}
+
+/// Tell the other members of an edge cluster what was done here to a pairing's links (plans/Edge-Node2.md §4.6).
+pub(crate) fn tell_links(factory: &ExecutionContextFactory, op: LinkOp) {
+    if let Ok(facade) = store::facade(factory) {
+        moqui_core::edge::cluster_state::tell_links(&facade, &[op]);
     }
 }
 

@@ -93,6 +93,11 @@ permission for the IP of its media address (a permission is for an IP alone; the
 is not the one it handed over (restart it after changing `turn_auth_secret`). With `turn_public_host` a name, Apply's
 DNS list checks its A and AAAA records against the edge node's addresses or its media address.
 
+**An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18). Each member runs its own TURN, with the same
+`turn_auth_secret` in the cluster's `.env`, so a pairing's secret is the same on every member. The local node keeps it
+for each member its links reach and signs each member's TURN URLs for the calls whose media is there; every member
+reads the active pairings from the shared rows, so a revoke ends a pairing's TURN access on all of them.
+
 **Revoking a local node ends its TURN access.** Within a second or two of the revoke the edge node's TURN refuses every
 username of that pairing and closes its relays, with no new `turn_auth_secret`; the other pairings go on. A pairing's
 secret makes credentials for its own pairing only: one signed for another pairing's name fails. A call's legs on an

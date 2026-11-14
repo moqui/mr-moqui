@@ -27,7 +27,9 @@
 //! The clear of every entity cache is the recovery of a gap in any topic, so a peer is marked for it whatever it missed:
 //! a failed or skipped batch of any topic, and every peer when a message of another topic is dropped from a full queue.
 //! A member that receives it ([`recover_missed`]) clears its entity caches and retires the live sessions whose rows are
-//! gone, which covers a lost `session-end`. The other topics need no more: a co-edited document's open rooms read the
+//! gone, which covers a lost `session-end`, and an edge cluster member loads its host table again and counts every
+//! replicated set as changed, which covers a lost `edge-state` (`crate::edge::cluster_state`). The other topics need no
+//! more: a co-edited document's open rooms read the
 //! state other servers stored at their next tick (moqui-collab `tick`), so a lost `collab-update` is merged and sent to
 //! the room's clients within seconds; a notification whose topic persists it is stored before it is pushed, and a client
 //! reads its list on load, while one not persisted is a live hint that a closed socket misses on one server too; an RTC
@@ -82,6 +84,7 @@ const MEMBER_COLUMNS: &[&str] = &[
     "certFingerprint",
     "sshHostKeyFingerprint",
     "binaryVersion",
+    "edgeLinkUrl",
 ];
 const DEFAULT_PORT: u16 = 8444;
 const RETRIES: u32 = 3;
@@ -438,6 +441,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         cert_fp: fingerprints.cert,
         ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        edge_link_url: env::get_prop_or_env(EDGE_LINK_URL_PROPERTY).trim().to_string(),
     };
     write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
@@ -536,7 +540,8 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
 /// What a member does when it may have missed cluster messages: a peer's clear of every entity cache (a gap in its
 /// sends) or a transport that lost its connection. Every entity list cache is cleared, and the live sessions whose rows
 /// are gone are retired, so a `session-end` lost in the gap does not leave an ended session served here
-/// (plans/archive/High-Level-Review.md HL-018). The other topics need nothing: see the module documentation. The session step
+/// (plans/archive/High-Level-Review.md HL-018), and an edge cluster member's host table and what it built from the
+/// replicated copies are made again (`crate::edge::cluster_state::recovered`). The other topics need nothing: see the module documentation. The session step
 /// runs only with `factory`, and its failure is logged.
 ///
 /// # Errors
@@ -545,6 +550,8 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
 pub fn recover_missed(factory: Option<&ExecutionContextFactory>, facade: &EntityFacade) -> Result<(), Error> {
     let cleared = crate::entity::cache::clear_all_list_caches(facade).map_err(Error::from);
     if let Some(factory) = factory {
+        // an edge cluster member's host table and what it built from the replicated copies (plans/Edge-Node2.md §4.6)
+        crate::edge::cluster_state::recovered(factory, facade);
         match crate::user::session::retire_gone(factory) {
             Ok(0) => {}
             Ok(retired) => tracing::info!("cluster recovery: {retired} sessions ended on another server were retired"),
@@ -624,6 +631,8 @@ pub struct MemberReport {
     pub heartbeat_age_ms: u64,
     pub live: bool,
     pub version: String,
+    /// Where a local node dials it, on a member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6).
+    pub edge_link_url: String,
 }
 
 /// The members of this factory's cluster from their rows, live or not, in id order.
@@ -643,6 +652,7 @@ pub fn member_report(factory: &ExecutionContextFactory, facade: &EntityFacade) -
             live: is_live(member.heartbeat, now, window),
             instance_id: member.instance_id,
             version: member.version,
+            edge_link_url: member.edge_link_url,
         })
         .collect();
     members.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
@@ -819,7 +829,13 @@ struct Member {
     ssh_fp: String,
     /// The moqui binary's version, which an edge node reports its pool's members with (plans/Edge-Node2.md §4.4).
     version: String,
+    /// Where a local node dials this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6), read at
+    /// start as `cluster_base_url` is. Empty on any other node.
+    edge_link_url: String,
 }
+
+/// The property that names where a local node dials this member of an edge cluster (plans/Edge-Node2.md §4.6).
+pub const EDGE_LINK_URL_PROPERTY: &str = "edge_link_url";
 
 /// `instance_id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
 /// written to `runtime/.env`, which `plans/archive/Cluster.md` says to copy between members: two members with one id would
@@ -1389,6 +1405,7 @@ struct LoadedMember {
     cert_fp: String,
     ssh_fp: String,
     version: String,
+    edge_link_url: String,
 }
 
 fn load_members(facade: &EntityFacade) -> Result<Vec<LoadedMember>, Error> {
@@ -1412,6 +1429,7 @@ fn member_from_row(row: &DbRow) -> LoadedMember {
         cert_fp: row_text(row, "certFingerprint"),
         ssh_fp: row_text(row, "sshHostKeyFingerprint"),
         version: row_text(row, "binaryVersion"),
+        edge_link_url: row_text(row, "edgeLinkUrl"),
     }
 }
 
@@ -1455,6 +1473,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
                     "certFingerprint",
                     "sshHostKeyFingerprint",
                     "binaryVersion",
+                    "edgeLinkUrl",
                 ],
                 Some(&by_id),
             )?
@@ -1471,6 +1490,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
         Value::string(&member.cert_fp),
         Value::string(&member.ssh_fp),
         Value::string(&member.version),
+        Value::string(&member.edge_link_url),
     ];
     let update_params = vec![
         Value::string(&member.base_url),
@@ -1479,6 +1499,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
         Value::string(&member.cert_fp),
         Value::string(&member.ssh_fp),
         Value::string(&member.version),
+        Value::string(&member.edge_link_url),
         instance.clone(),
     ];
     let tx = facade.transactions_for(MEMBER).map_err(Error::from)?;

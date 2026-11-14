@@ -56,6 +56,8 @@ mod edge_allinone;
 mod edge_balance;
 mod edge_call;
 mod edge_chat;
+mod edge_cluster;
+mod edge_cluster_state;
 mod edge_domains;
 mod edge_domains_comms;
 mod edge_link;

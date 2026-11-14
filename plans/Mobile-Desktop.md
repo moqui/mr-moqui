@@ -469,8 +469,9 @@ Before mobile distribution, check the actual remote-application and local-code m
 
 - The descriptors a program hosting the node opens without close-on-exec (CEF's, a development run's DevTools listening socket among them) are marked close-on-exec before the embedded Postgres and the sidecar start (`close_fds`), so a postmaster left by an app that was killed holds none of them.
 
+- A clustered all-in-one server, the all-in-one node's one open question ([Edge-Node §10](archive/Edge-Node.md#10-all-in-one-node-e12)), is answered by [Edge-Node2](Edge-Node2.md#46-a-cluster-of-edge-nodes)'s E18: every member takes links (`node_role=all-in-one` on each, one external database, one `.env` with the one link key, each member's own `edge_link_url`). The desktop node pairs with any member and then links to every live one, takes work from each, sends its own up one link, and keeps the list in `runtime/db/edge_members`, so a restart finds a member when the one it paired with is gone. Nothing in the app changes; its System › Edge Node lists the link to each member ([Run-Deploy](../docs/Run-Deploy.md#an-edge-cluster)). The acceptance test is `edge_cluster::acceptance_a_clustered_all_in_one_server_takes_links_on_every_member`.
+
 **Local node, open:**
-- The all-in-one node's one open question ([Edge-Node §10](archive/Edge-Node.md#10-all-in-one-node-e12)): a clustered server, which is [Edge-Node2](Edge-Node2.md#46-a-cluster-of-edge-nodes)'s E18. Its role is decided (`node_role=all-in-one`).
 - Windows: the `moqui` binary and its process handling there. A restart the sidecar node asks for replaces the process in place only on Unix; elsewhere `moqui` starts a new process and the old one ends, so the host sees its child end while the new node is not its child (`run_again` in `moqui-host`).
 - The upgrade path for a new Postgres major version in the app data directory.
 - The backup and restore dialogs (`rfd`) need the desktop portal on Linux, or zenity or kdialog.

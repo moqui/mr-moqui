@@ -154,12 +154,13 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Several local nodes on one edge node | Branch offices, or the separate organizations of one group, each with its own data and domains behind one edge node | [`conf/multi-domain/`](../runtime/conf/multi-domain/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each local node its own; the edge node keeps each one's queue and copies | [Several local nodes on one edge node](#several-local-nodes-on-one-edge-node) |
 | A local cluster with an edge node | More capacity, or a member that can fail, with a public presence and no load balancer of your own: the edge node pools and balances the members | [`conf/local-cluster/`](../runtime/conf/local-cluster/README.md) (`MoquiPooledConf.xml`) | Members: Enterprise (`--enterprise`). Edge node: Maximal | One external Postgres for all members; the edge node keeps the pairing's queue and copies | [A local cluster with an edge node](#a-local-cluster-with-an-edge-node) |
 | A local node with a standby | A second machine, started by hand or by your own automation when the first one dies, that takes over at the edge node | [`conf/local-failover/`](../runtime/conf/local-failover/README.md) | Both: Maximal or Enterprise. Edge node: Maximal | The same external database, a promoted replica, or the last backup restored | [A local node with a standby](#a-local-node-with-a-standby) |
+| An edge cluster | An edge node that can fail, or more capacity at the edge: several edge nodes on one database, each local node linked to every one | [`conf/edge-cluster/`](../runtime/conf/edge-cluster/README.md) | Edge members: Maximal with an external database, or Enterprise. Local: Maximal or Enterprise | One external Postgres for the edge members; each local node its own | [An edge cluster](#an-edge-cluster) |
 | The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | In the app; its edge or all-in-one node as above | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
 
 The conf is the runtime conf each node runs, under `runtime/`. A topology's directory has a conf for each kind of node,
 whose comments say what each setting does, and a README with its diagram, the `.env` names each node needs and the
 commands ([runtime/conf](../runtime/conf/README.md)). The sections below keep what each topology is, its steps and
-what is not built. The topologies still to come (an edge cluster, a front node, the full stack) get their directories as they are built
+what is not built. The topologies still to come (a front node, the full stack) get their directories as they are built
 ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 
 ## Production checklist
@@ -987,8 +988,11 @@ queue and sets. The edge node's database holds the queue, and its conf sets the 
 balances them ([A local cluster with an edge node](#a-local-cluster-with-an-edge-node)). A second machine started
 when the first one dies takes over the pairing ([A local node with a standby](#a-local-node-with-a-standby)).
 
-**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): a second edge node (E18), a PASS read cache on the
-edge node, and monitoring over the link.
+**Several edge nodes.** The edge node can be a cluster, each local node linked to every member ([An edge
+cluster](#an-edge-cluster)).
+
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): a PASS read cache on the edge node, and monitoring
+over the link.
 
 ## An all-in-one node
 
@@ -1026,8 +1030,8 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
 - **Limits.** One paired node. Its load shares the server's CPU, bandwidth and media ports. The queue is in the
   server's database, so the server's backups cover it. Unpairing leaves the server's own services as they were.
 
-**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): several paired nodes and PASS sites for them (E16),
-and a clustered all-in-one server, where every member takes links (E18).
+A clustered all-in-one server takes links on every member, as an edge cluster does ([An edge
+cluster](#an-edge-cluster)). Several paired nodes: [Several local nodes on one edge node](#several-local-nodes-on-one-edge-node).
 
 ## Several local nodes on one edge node
 
@@ -1171,6 +1175,56 @@ The conf, the `.env` names and the commands are in
   new standby, or a member of the standby's cluster on the same database.
 - **While no machine is linked** the edge node holds what it holds for any local node that is away: the queue for its
   retention period, mail for the replicated recipients, the voicemail fallback and the offline page.
+
+## An edge cluster
+
+Several edge nodes can share one external database and take links, for an edge node that can fail or more capacity at
+the edge ([plan](../plans/Edge-Node2.md#46-a-cluster-of-edge-nodes) §4.6). Each local node pairs once, with any member;
+every member's answer lists the cluster's live members with their link addresses, and the local node links to each,
+takes requests and items from each, and keeps the list in `runtime/db/edge_members`, so a restart finds a member when
+the one it paired with is gone.
+
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, ...                                      an A, MX and SRV record for each member
+ edge 1     edge 2     conf/edge-cluster/MoquiEdgeConf.xml; 8444 between members only
+    +----------+       shared Postgres: the queue, pairings, host names, copies
+    ^  each local node dials every member
+ local node    conf/edge/MoquiLocalConf.xml (or each member of a local cluster, conf/local-cluster/MoquiPooledConf.xml)
+```
+
+The conf, the `.env` names, the DNS records and the commands are in
+[runtime/conf/edge-cluster](../runtime/conf/edge-cluster/README.md). The members are a cluster as in
+[Cluster](#cluster): one external database, the same `.env` and secrets, a distinct instance id each.
+
+1. Start the first member once, so it generates its secrets into `.env`, among them `edge_link_key`, the one link key
+   every member presents and every local node pins.
+2. Copy that `.env` to each other member before its first start, and give each member its own `cluster_base_url` and
+   `edge_link_url` (its own public `https` address, where local nodes dial it), and its own mail, media and SIP
+   addresses.
+3. Check System › Edge Clients › Edge cluster on any member: each member live, with its link address. It warns of a
+   live member with no usable address while there is more than one.
+4. Pair each local node as with one edge node. Its System › Edge Node lists a link to each edge member, its state and
+   round trip, and which one carries its work up.
+
+- **Work down** (requests, delegated calls, queue delivery, PASS) comes from each member, each item claimed by lease in
+  the shared database, so it is applied once. **Work up** (the local node's outbox, replication, its call and SIP
+  rows) goes over one link at a time and moves when that link ends.
+- **By area.** Web, webhooks, PASS pages and tunnels: any member. Mail in: any member, each building its recipients
+  from the shared copies and again when any member applies a change; mail out: any member claims a delivery row
+  ([Mail-Inbound](interfaces/Mail-Inbound.md)). Calls: each member is a media node with its own public address and
+  TURN, and the local node keeps a media node row, a SIP node row and a TURN secret for each member it links to; a
+  call's legs are all on one member ([WebRTC](interfaces/WebRTC.md), [TURN](interfaces/TURN.md)). SIP: every member
+  loads every trunk and one registers them at a time, by a lock row (Edge cluster shows which); a phone's binding names
+  the member it registered with, and it rings only for calls whose media is on that member; the registrar's nonces are
+  per member, so a phone that reaches another member is challenged again ([SIP](interfaces/SIP.md)).
+- **Stopping a member** leaves the others serving its names: DNS sends visitors to each member's address, so a client
+  of the stopped one retries another record, and each local node's other links carry its work.
+- **A clustered all-in-one server** takes links on every member the same way: `node_role=all-in-one` on each, on one
+  external database.
+
+**Not built**: a front node before the cluster and the full stack (E19), cascading call media between edge members
+(so a phone on one member rings for a call whose media is on another).
 
 ## Cluster
 

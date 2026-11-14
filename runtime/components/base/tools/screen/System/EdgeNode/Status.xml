@@ -29,7 +29,10 @@ along with this software (see the LICENSE.md file). If not, see
     id and state on its links, the pairing it is known by, and its cluster's members as its links tell the edge node;
     Drain and Resume (drain#EdgeMember with no pairing) drain this member, so the edge node sends it no new work and
     /health answers 503, for a rolling upgrade or before stopping it. It shows while paired, and while edge_node_url is
-    set with the link not running in this process. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
+    set with the link not running in this process. Edge cluster (plans/Edge-Node2.md §4.6; get#LinkStatus
+    edgeMemberList), when the edge node is a cluster of more than one: this node's link to each member, with its state,
+    address, round trip, last connect, links lost, and which one carries this node's work up; the Link box above is of
+    that one. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
@@ -93,6 +96,21 @@ along with this software (see the LICENSE.md file). If not, see
             versionText: link.binaryVersion ? link.binaryVersion + (link.linkVersion ? ' · ' + L('link') + ' ' + link.linkVersion : '') : '',
             publicNamesText: list(link.publicNames),
             featuresText: list(link.features)}
+        // its link to each member of an edge cluster (plans/Edge-Node2.md §4.6), listed when there is more than one; the
+        // fields above are of the link that carries this node's work up
+        const rtt = (ms) => ms != null ? ec.l10n.format(ms, '#,##0.0') + ' ms' : ''
+        edgeMemberList = !paired ? [] : Array.from(link.edgeMemberList || []).map((member) => {
+            const [memberStateLabel, memberStateColor] = states[member.state] || [member.state || '', 'grey']
+            const notes = []
+            if (member.carriesWork) notes.push(L("Carries this node's work up"))
+            if (member.retired) notes.push(L('Gone from the edge cluster: not dialed again once this link ends'))
+            if (member.lastError && member.state !== 'linked') notes.push(member.lastError)
+            return {instanceId: member.instanceId || L('Not known yet'), url: member.url || '',
+                stateLabel: memberStateLabel, stateColor: memberStateColor, rttText: rtt(member.rttMs),
+                lastConnectText: member.lastConnectDate ? ec.l10n.format(member.lastConnectDate, '') : L('Not yet'),
+                reconnectsText: String(member.reconnects ?? 0), noteText: notes.join('; ')}
+        })
+        edgeCluster = edgeMemberList.length > 1
         // the queue and replication (plans/archive/Edge-Node.md §5.2): this node's own rows and state, with or without the
         // link; a probe (Practices-App-Dev §4), so a failure shows on the page instead of failing it
         let work = {}
@@ -280,6 +298,9 @@ along with this software (see the LICENSE.md file). If not, see
                 </box-body></container-box>
             </widgets></section>
             <container-box><box-header title="Link"/><box-body>
+                <section name="WorkLink" condition="edgeCluster"><widgets>
+                    <label type="p" style="m-muted" text="Of the link that carries this node's work up. Edge cluster below lists the link to each member."/>
+                </widgets></section>
                 <form-single name="LinkStatus" map="edge">
                     <field name="rttText"><default-field title="Round trip"><display/></default-field></field>
                     <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
@@ -298,6 +319,26 @@ along with this software (see the LICENSE.md file). If not, see
                     </field-layout>
                 </form-single>
             </box-body></container-box>
+            <section name="EdgeCluster" condition="edgeCluster"><widgets>
+                <container-box><box-header title="Edge cluster"/><box-body-nopad>
+                    <label type="p" style="m-muted q-pa-sm q-mb-none" text="The edge node is a cluster: this node links to each of its members at the address the members list, takes requests and items from each, and sends its own work up one link at a time. The list is kept in runtime/db/edge_members, so a restart finds a member when the one it paired with is gone."/>
+                    <form-list name="EdgeMemberList" list="edgeMemberList" skip-form="true" paginate="false">
+                        <field name="instanceId"><default-field title="Edge member"><display style="text-weight-medium"/></default-field></field>
+                        <field name="state"><default-field title="State">
+                            <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
+                        </default-field></field>
+                        <field name="url"><default-field title="Address" tooltip="The member's edge_link_url, else the address this node paired with"><display/></default-field></field>
+                        <field name="rttText" align="right"><default-field title="Round trip"><display/></default-field></field>
+                        <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
+                        <field name="reconnectsText" align="right"><default-field title="Links lost" tooltip="Since this server started"><display/></default-field></field>
+                        <field name="noteText"><default-field title="Note"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="instanceId"/><field-ref name="url"/></column>
+                            <column><field-ref name="state"/><field-ref name="noteText"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad></container-box>
+            </widgets></section>
             <container-box><box-header title="Setup"/><box-toolbar>
                 <link url="../Pair/Discover" text="Set up again" icon="sym_o_tune"/>
             </box-toolbar><box-body>

@@ -15,6 +15,10 @@
 //! The public host names an edge node answers for its paired local nodes (plans/archive/Edge-Node.md §5.3):
 //! `moqui.edge.EdgeHost` rows, and the table in memory the listener reads for each connection and request. Only a
 //! name in the table goes down a link, and only to its own node, so the edge node is no open proxy.
+//!
+//! Each member of an edge cluster keeps its own table (plans/Edge-Node2.md §4.6). A member that changes the rows loads
+//! its table and tells the others ([`Hosts::changed`]), which load theirs on the notice
+//! (`moqui_core::edge::cluster_state`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -178,6 +182,15 @@ impl Hosts {
             .chat
             .get(node)
             .is_some_and(|bridges| bridges.iter().any(|id| id == bridge))
+    }
+
+    /// After a change of the rows or the pairings made here: load the table, and tell the other members of an edge
+    /// cluster to load theirs (after the change commits), whether or not this load worked.
+    pub(crate) fn changed(&self, factory: &ExecutionContextFactory) -> Result<usize, Error> {
+        if let Ok(facade) = store::facade(factory) {
+            moqui_core::edge::cluster_state::tell(&facade, true, &[]);
+        }
+        self.load(factory)
     }
 
     /// Replace the table with the rows, unless a load that began later has written it already.

@@ -62,3 +62,32 @@ fn a_link_that_is_down_or_without_media_names_no_media_node() {
     status.peer.media_address = "203.0.113.5:10000".to_string();
     assert_eq!(linked_media_node(&status).unwrap().instance_id, "edge-1");
 }
+
+/// Each edge cluster member's rows may be kept once its own link came up (plans/Edge-Node2.md §4.6): a member whose
+/// link never did is refused, and unpairing refuses them all.
+#[test]
+fn each_edge_members_rows_may_be_kept_once_its_link_came_up() {
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let factory = ctx.factory();
+    let _entered = ctx.enter();
+    let edge = |id: &str| EdgeInfo {
+        instance_id: id.to_string(),
+        media_address: "203.0.113.5:40000".to_string(),
+        ..EdgeInfo::default()
+    };
+    let refused = |id: &str| {
+        register_row(&edge(id), false).is_err_and(|err| err.contains("is not up or this node unpaired"))
+            && register_sip_row(&edge(id), false).is_err_and(|err| err.contains("is not up or this node unpaired"))
+    };
+    allow_row(factory, "edge-1");
+    allow_row(factory, "edge-2");
+    allow_row(factory, "");
+    assert!(!refused("edge-1"), "the first member's");
+    assert!(!refused("edge-2"), "and the second's, beside it");
+    assert!(refused("edge-3"), "a member whose link never came up");
+    retain_rows(factory, &["edge-2".to_string()]);
+    assert!(refused("edge-1"), "a member gone from the list");
+    assert!(!refused("edge-2"), "one still on it");
+    forget_rows(factory, || ());
+    assert!(refused("edge-1") && refused("edge-2"), "none after unpairing");
+}

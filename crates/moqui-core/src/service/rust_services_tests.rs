@@ -67,6 +67,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::edge::forget_edge_member",
         "moqui_core::service::edge::get_edge_balancing",
         "moqui_core::service::edge::get_edge_clients",
+        "moqui_core::service::edge::get_edge_cluster",
         "moqui_core::service::edge::get_edge_domains",
         "moqui_core::service::edge::get_edge_hosts",
         "moqui_core::service::edge::get_edge_members",

@@ -44,6 +44,9 @@
 //!   signaling) goes over `Link.Signal` and `LocalLink.Signal` ([`signal`], `moqui_core::edge::signal`).
 //! - **Liveness.** HTTP/2 PINGs every 15 s keep NAT mappings open; a lost link is dialed again with a backoff from 1 s to
 //!   30 s ([`dial`]); a refused node waits up to 10 minutes.
+//! - **Edge clusters** (plans/Edge-Node2.md §4.6). Every edge member's Hello answer and Ping answer list its cluster's
+//!   live members with their own link addresses (`edge_link_url`); a local node links to each, keeps the list
+//!   ([`members`]) and sends its own work up one of those links.
 //!
 //! The parts take explicit configuration ([`LocalConfig`], [`PairConfig`], [`EdgeConfig`]) read from properties once,
 //! so a test runs an edge end and a local end in one process. [`hook`] is what `org.moqui.edge.EdgeServices` calls
@@ -63,6 +66,7 @@ pub(crate) mod down;
 pub(crate) mod hook;
 pub(crate) mod hosts;
 pub mod member_key;
+mod members;
 mod offer;
 pub mod pair;
 mod probe;
@@ -78,8 +82,8 @@ pub(crate) mod xmpp_domain;
 pub(crate) use accept::{Acceptor, Secured};
 pub use dial::{connect_up, Dialer, FixedMember, PoolMember, UpLink};
 pub use down::{local_web, LocalWeb};
-pub use member_key::MemberKey;
 pub(crate) use hook::{start, stopped};
+pub use member_key::MemberKey;
 pub use pair::{check, new_key, pair, PairConfig, Paired};
 pub use probe::{turn_probe, xmpp_probe};
 pub(crate) use web::{Target, WebFront};
@@ -187,24 +191,38 @@ pub(crate) async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> std::io
     Ok((Answer::from_code(head[0]), String::from_utf8_lossy(&text).into_owned()))
 }
 
-/// Ok when the edge node's Hello names the id this node pinned for it (`pinned`; any when none is pinned yet), and that
-/// id is not this node's own (`own`), else what to tell the operator. Whether it is a live member of this node's
-/// cluster is checked apart, with the database. An edge node that took another media node's id would get that node's
-/// call signaling and media row (plans/archive/Edge-Node.md §5.4).
-pub(crate) fn check_edge_id(pinned: &str, seen: &str, own: &str) -> Result<(), String> {
+/// Ok when the edge member's Hello names an id this node can take: a node id, not this node's own (`own`), and, on a
+/// link dialed for a member of its edge cluster's list (`expected`), that member's (plans/Edge-Node2.md §4.6), else
+/// what to tell the operator. Any member of the edge cluster may be named on a link to the URL this node paired with:
+/// every member presents the link key this node pinned (`edge_link_key` is in the cluster's shared `.env`), and the
+/// id is learned then (`edge_node_id` becomes the set of them). Whether it is a live member of this node's own cluster
+/// is checked apart, with the database: an edge node that took another media node's id would get that node's call
+/// signaling and media row (plans/archive/Edge-Node.md §5.4).
+pub(crate) fn check_edge_member(expected: Option<&str>, seen: &str, own: &str) -> Result<(), String> {
     if seen.is_empty() {
         return Err("the edge node's Hello names no instance id".to_string());
     }
-    if !pinned.is_empty() && pinned != seen {
-        return Err(format!(
-            "the edge node's instance id changed from {pinned} to {}, so pair again",
-            seen.chars().take(40).collect::<String>()
-        ));
+    if !valid_node_id(seen) {
+        return Err(
+            "the edge node's Hello names an instance id that is too long or has spaces, control characters or @"
+                .to_string(),
+        );
+    }
+    if let Some(misdirected) = misdirected(expected, seen) {
+        return Err(misdirected);
     }
     if seen == own {
         return Err("the edge node names this node's own instance id".to_string());
     }
     Ok(())
+}
+
+/// Why a link dialed for edge member `expected` reached member `seen`, another one: its listed address is stale or
+/// wrong (plans/Edge-Node2.md §4.6). `None` when it reached that member, or was dialed for none.
+pub(crate) fn misdirected(expected: Option<&str>, seen: &str) -> Option<String> {
+    expected.filter(|expected| *expected != seen).map(|expected| {
+        format!("the edge member dialed as {expected} names itself {seen}: its edge_link_url reaches another member")
+    })
 }
 
 /// Ok when `theirs` is at most one link protocol version from `ours`, else what to tell the operator.
@@ -443,6 +461,9 @@ pub struct EdgeConfig {
     /// This node has the front set (plans/Edge-Node2.md §4.3): it passes passthrough hosts' connections down links. An
     /// edge node behind a front node (`node_role=edge`) does not.
     pub front: bool,
+    /// Where local nodes dial this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6); empty when
+    /// they dial only the URL they paired with.
+    pub link_url: String,
 }
 
 impl EdgeConfig {
@@ -469,6 +490,9 @@ impl EdgeConfig {
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
             front: moqui_core::edge::node_role_kind().has_front(),
+            link_url: moqui_lib::env::get_prop_or_env(moqui_core::cluster::EDGE_LINK_URL_PROPERTY)
+                .trim()
+                .to_string(),
         }
     }
 }
@@ -549,16 +573,19 @@ pub struct LocalConfig {
     pub key: String,
     /// SHA-256 of the edge node's link key, hex.
     pub pin: String,
-    /// The edge node's instance id, pinned at pairing (`edge_node_id`): a link whose Hello names another is refused.
-    /// Empty for a node paired before E7: the first id a link names is pinned then ([`LocalConfig::on_pin`]).
+    /// The edge node's instance ids (`edge_node_id`, comma separated): the one pairing pinned, and the members of its
+    /// cluster learned since (plans/Edge-Node2.md §4.6). Empty for a node paired before E7.
     pub edge_id: String,
-    /// Keeps the id pinned on a first link when [`LocalConfig::edge_id`] was empty (the hook writes it to
-    /// `runtime/.env`); none keeps it only for the dialer's life.
+    /// Told each edge member id a link learns (the hook keeps `edge_node_id` the set of them, and writes the first to
+    /// `runtime/.env` when pairing wrote none); none keeps them only for the dialer's life.
     pub on_pin: Option<OnPin>,
     /// This node's instance id: the member its links name (plans/Edge-Node2.md §4.4). The edge node keys its rows by
     /// the pairing its key is for, which every member of a cluster shares.
     pub instance_id: String,
     pub node_name: String,
+    /// Where the edge cluster's list is kept (plans/Edge-Node2.md §4.6): a server's `runtime/db/edge_members`; none
+    /// keeps it only for the dialer's life.
+    pub members_file: Option<std::path::PathBuf>,
     /// This member's own key (plans/Edge-Node2.md §4.11): a server's from `runtime/db/edge_member_key`
     /// ([`MemberKey::load_or_create`]), else one made for this config. Clones of a config share it.
     pub member_key: Option<std::sync::Arc<MemberKey>>,
@@ -592,6 +619,7 @@ impl LocalConfig {
             instance_id: instance_id.to_string(),
             node_name: instance_id.to_string(),
             member: None,
+            members_file: None,
             member_key: MemberKey::generate().ok().map(std::sync::Arc::new),
             backoff: Backoff::default(),
             refused_backoff: Backoff::refused(),
@@ -634,6 +662,7 @@ impl std::fmt::Debug for LocalConfig {
             .field("instance_id", &self.instance_id)
             .field("node_name", &self.node_name)
             .field("member", &self.member.is_some())
+            .field("members_file", &self.members_file)
             .field("backoff", &self.backoff)
             .field("refused_backoff", &self.refused_backoff)
             .field("keepalive", &self.keepalive)

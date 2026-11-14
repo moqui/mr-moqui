@@ -33,6 +33,26 @@ impl EdgeLink for Fake {
             generation: 7,
             rtt_ms: Some(1.5),
             link_fingerprint: "cd".repeat(32),
+            // a link to each member of an edge cluster, the second carrying the work up
+            members: vec![
+                crate::edge::EdgeMemberLink {
+                    instance_id: "edge-a".to_string(),
+                    url: "https://edge-a.test".to_string(),
+                    state: LinkState::Retrying,
+                    last_error: "refused".to_string(),
+                    retired: true,
+                    ..crate::edge::EdgeMemberLink::default()
+                },
+                crate::edge::EdgeMemberLink {
+                    instance_id: "edge-b".to_string(),
+                    url: "https://edge-b.test".to_string(),
+                    state: LinkState::Linked,
+                    generation: 3,
+                    rtt_ms: Some(2.5),
+                    carries_work: true,
+                    ..crate::edge::EdgeMemberLink::default()
+                },
+            ],
             ..LinkStatus::default()
         }
     }
@@ -116,6 +136,22 @@ fn the_services_pass_their_parameters_through_and_shape_the_answers() {
     assert_eq!(to_plain_string(&status["state"]), "linked");
     assert_eq!(status["generation"], Value::I64(7));
     assert_eq!(to_plain_string(&status["linkFingerprint"]), "cd".repeat(32));
+    let Value::List(links) = &status["edgeMemberList"] else {
+        panic!("{status:?}")
+    };
+    let field = |at: usize, name: &str| match &links[at] {
+        Value::Map(row) => row[name].clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(links.len(), 2);
+    assert_eq!(to_plain_string(&field(0, "url")), "https://edge-a.test");
+    assert_eq!(to_plain_string(&field(0, "state")), "retrying");
+    assert_eq!(field(0, "retired"), Value::Bool(true));
+    assert_eq!(field(0, "carriesWork"), Value::Bool(false));
+    assert_eq!(to_plain_string(&field(1, "instanceId")), "edge-b");
+    assert_eq!(field(1, "carriesWork"), Value::Bool(true));
+    assert_eq!(field(1, "generation"), Value::I64(3));
+    assert_eq!(field(1, "rttMs"), Value::F64(2.5));
     let paired = pair_edge_node(
         &params(&[
             ("url", "https://edge.test"),

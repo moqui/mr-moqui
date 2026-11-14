@@ -31,6 +31,8 @@ use moqui_lib::sync::InstallSlot;
 
 pub mod calls;
 pub mod claims;
+pub mod cluster_list;
+pub mod cluster_state;
 pub mod conf;
 pub mod delegate;
 pub mod hosts;
@@ -262,6 +264,46 @@ pub struct LinkStatus {
     /// On an edge node, the fingerprint of its own link key (SHA-256 of the public key, hex), for the operator to
     /// compare with what a local node's check shows; empty on any other node.
     pub link_fingerprint: String,
+    /// On a local node, its link to each member of its edge cluster (plans/Edge-Node2.md §4.6), in instance id order:
+    /// one link for a single edge node. The fields above are of the link that carries this node's work up, else of the
+    /// first.
+    pub members: Vec<EdgeMemberLink>,
+}
+
+/// A local node's link to one member of its edge cluster (plans/Edge-Node2.md §4.6), for System › Edge Node.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EdgeMemberLink {
+    /// The edge member's instance id, as its Hello named it; empty until a link to the URL it was paired with came up.
+    pub instance_id: String,
+    /// Where it is dialed: its `edge_link_url`, else the URL this node paired with.
+    pub url: String,
+    pub state: LinkState,
+    pub generation: u64,
+    pub rtt_ms: Option<f64>,
+    pub last_connect: Option<i64>,
+    pub last_error: String,
+    pub reconnects: u64,
+    /// This link carries the node's work up: its outbox, its replicated sets and the edge node's call rows (one link at
+    /// a time).
+    pub carries_work: bool,
+    /// Gone from the edge cluster's list: not dialed again once this link ends.
+    pub retired: bool,
+}
+
+/// A member of this edge node's cluster as its Hello answer lists it (plans/Edge-Node2.md §4.6), for System › Edge
+/// Clients.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EdgeClusterMember {
+    pub instance_id: String,
+    /// Its `edge_link_url`: where local nodes dial it; empty when it has none.
+    pub link_url: String,
+    /// Its heartbeat is within the cluster's liveness window: only live members are listed to local nodes.
+    pub live: bool,
+    /// How long ago its heartbeat was written, in milliseconds, by the database's clock.
+    pub heartbeat_age_ms: u64,
+    pub version: String,
+    /// It is the member answering.
+    pub this_member: bool,
 }
 
 /// What pairing pinned, for the operator to confirm.
@@ -403,6 +445,11 @@ pub trait EdgeLink: Send + Sync {
     /// milliseconds (Clients' Ping on a member row, plans/Edge-Node2.md §4.10).
     fn ping_member(&self, paired_node_id: &str, instance_id: &str) -> Result<f64, Error> {
         let _ = (paired_node_id, instance_id);
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On a node that takes links: the members of its cluster with their link addresses, live or not, as its Hello
+    /// answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
+    fn edge_cluster(&self) -> Result<Vec<EdgeClusterMember>, Error> {
         Err(Error::new(NOT_BUILT))
     }
     /// On a local node: its state changed (drained or resumed here), so its links tell the edge node now rather than

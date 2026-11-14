@@ -17,7 +17,7 @@ use std::time::Duration;
 use super::pair::{parse_url, EdgeUrl, Identity};
 use super::store::normalize_code;
 use super::{
-    check_edge_id, check_versions, edge_info, hello, read_answer, write_answer, Answer, Backoff, LINK_VERSION,
+    check_edge_member, check_versions, edge_info, hello, read_answer, write_answer, Answer, Backoff, LINK_VERSION,
 };
 
 #[test]
@@ -239,12 +239,16 @@ fn the_sip_offer_reads_back_and_one_with_no_address_is_not_available() {
 }
 
 #[test]
-fn the_edge_node_s_instance_id_is_the_pinned_one_and_never_this_node_s() {
-    assert!(check_edge_id("", "edge-1", "local-1").is_ok(), "pinned on a first link");
-    assert!(check_edge_id("edge-1", "edge-1", "local-1").is_ok());
-    assert!(check_edge_id("edge-1", "member-2", "local-1").is_err_and(|err| err.contains("changed from edge-1")));
-    assert!(check_edge_id("", "local-1", "local-1").is_err_and(|err| err.contains("own instance id")));
-    assert!(check_edge_id("", "", "local-1").is_err());
+fn an_edge_member_is_the_one_dialed_and_never_this_node() {
+    // on a link to the URL this node paired with, any member of the edge cluster: they share the pinned link key
+    assert!(check_edge_member(None, "edge-1", "local-1").is_ok());
+    assert!(check_edge_member(None, "edge-2", "local-1").is_ok());
+    // on a link dialed for a member of the list, that member alone (plans/Edge-Node2.md §4.6)
+    assert!(check_edge_member(Some("edge-1"), "edge-1", "local-1").is_ok());
+    assert!(check_edge_member(Some("edge-1"), "edge-2", "local-1").is_err_and(|err| err.contains("dialed as edge-1")));
+    assert!(check_edge_member(None, "local-1", "local-1").is_err_and(|err| err.contains("own instance id")));
+    assert!(check_edge_member(None, "", "local-1").is_err());
+    assert!(check_edge_member(None, "edge 1", "local-1").is_err());
 }
 
 #[test]

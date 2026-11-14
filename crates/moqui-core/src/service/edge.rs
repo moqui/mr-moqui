@@ -47,6 +47,7 @@ pub(in crate::service) fn register(
     rust_service!(map, drain_edge_member)?;
     rust_service!(map, get_local_cluster)?;
     rust_service!(map, get_edge_balancing)?;
+    rust_service!(map, get_edge_cluster)?;
     rust_service!(map, hold_new_members)?;
     rust_service!(map, approve_edge_member)?;
     rust_service!(map, clear_edge_takeover)?;
@@ -135,7 +136,88 @@ fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
     out.insert("reconnects".to_string(), generation(status.reconnects));
     out.insert("linkFingerprint".to_string(), Value::string(&status.link_fingerprint));
     put_edge(&mut out, &status.peer);
+    // its link to each member of its edge cluster (plans/Edge-Node2.md §4.6)
+    let members = status
+        .members
+        .iter()
+        .map(|member| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+            row.insert("url".to_string(), Value::string(&member.url));
+            row.insert("state".to_string(), Value::string(member.state.as_str()));
+            row.insert("generation".to_string(), generation(member.generation));
+            row.insert("rttMs".to_string(), member.rtt_ms.map_or(Value::Null, Value::F64));
+            row.insert("lastConnectDate".to_string(), millis(member.last_connect));
+            row.insert("lastError".to_string(), Value::string(&member.last_error));
+            row.insert("reconnects".to_string(), generation(member.reconnects));
+            row.insert("carriesWork".to_string(), Value::Bool(member.carries_work));
+            row.insert("retired".to_string(), Value::Bool(member.retired));
+            Value::Map(row)
+        })
+        .collect();
+    out.insert("edgeMemberList".to_string(), Value::List(members));
     Ok(out)
+}
+
+/// `get#EdgeCluster`: on a node that takes links, the members of its cluster with their link addresses
+/// (`edge_link_url`), live or not; its Hello answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
+///
+/// Where no link serves (none installed, or its HTTPS listener off) the same list from the rows and this node's own
+/// properties, so System › Edge Clients › Edge cluster shows it; on a node that takes no links, refused.
+fn get_edge_cluster(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("an edge cluster")?;
+    let members = match crate::edge::serving_link() {
+        Some(link) => link.edge_cluster()?,
+        None => cluster_rows()?,
+    };
+    // which member registers the SIP trunks (plans/Edge-Node2.md §4.6, SIP)
+    let registrar = {
+        let factory = current_factory()?;
+        let own = members
+            .iter()
+            .find(|member| member.this_member)
+            .map(|member| member.instance_id.clone())
+            .unwrap_or_default();
+        crate::edge::cluster_list::trunk_registrar(&factory, facade, &own)
+    };
+    let members = members
+        .iter()
+        .map(|member| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+            row.insert("linkUrl".to_string(), Value::string(&member.link_url));
+            // what the Hello answer sends: an address that is not usable goes as none
+            row.insert(
+                "linkUrlUsable".to_string(),
+                Value::Bool(crate::edge::cluster_list::usable_link_url(&member.link_url).is_some()),
+            );
+            row.insert("live".to_string(), Value::Bool(member.live));
+            // u64::MAX is a member with no heartbeat written
+            row.insert(
+                "heartbeatAgeMs".to_string(),
+                i64::try_from(member.heartbeat_age_ms).map_or(Value::Null, Value::I64),
+            );
+            row.insert("version".to_string(), Value::string(&member.version));
+            row.insert("thisMember".to_string(), Value::Bool(member.this_member));
+            row.insert(
+                "registersTrunks".to_string(),
+                Value::Bool(registrar.as_deref() == Some(member.instance_id.as_str())),
+            );
+            Value::Map(row)
+        })
+        .collect();
+    Ok(BTreeMap::from([("memberList".to_string(), Value::List(members))]))
+}
+
+/// This node's cluster as `get#EdgeCluster` lists it with no link serving: this member's address is its
+/// `edge_link_url` as it is now.
+fn cluster_rows() -> Result<Vec<crate::edge::EdgeClusterMember>, LibError> {
+    let factory = current_factory()?;
+    let facade = factory
+        .entity()
+        .ok_or_else(|| LibError::new("the entity facade is not installed"))?;
+    let own_url = moqui_lib::env::get_prop_or_env(crate::cluster::EDGE_LINK_URL_PROPERTY);
+    crate::edge::cluster_list::members(&factory, &facade, &crate::edge::pool::own_id(&factory), own_url.trim())
 }
 
 /// The state and error of `get#LinkStatus` with no link installed: `notBuilt` when this build has no edge link,

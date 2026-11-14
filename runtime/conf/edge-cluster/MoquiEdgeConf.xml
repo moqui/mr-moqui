@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A member of an edge cluster (conf/edge-cluster/README.md; plans/Edge-Node2.md §4.6): every member runs this conf, on
+    one external database, as an edge node that can fail or that needs more capacity. It is conf/edge/MoquiEdgeConf.xml
+    with the members of a cluster in place of one node: that conf's comments say what each area needs, and this one what
+    differs. Each local node pairs once, with any member, and then links to every live member at its own address
+    (edge_link_url), taking requests and items from each; the members share the pairings, host names, the queue (each
+    item claimed by lease, so delivered once), receipts, replicated copies, mail delivery rows, MMS files and PASS
+    visitor sessions as rows. Use the Maximal package with an external database, or Enterprise; the runtime has the base
+    components and mr-pass (./moq component-get edge), the same on each member. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <!-- takes links from paired local nodes on the HTTPS listener: the front and edge sets, as an edge node as built.
+        System › Edge Clients › Edge cluster lists the members with their link addresses; Clients shows the links to the
+        member it is open on. With a front node before the cluster (E19), edge -->
+    <default-property name="node_role" value="front_edge"/>
+    <!-- rate limits, connection limits and bans by client address, counted on each member; a ban one member starts is
+        shared with the others on the cluster topic web-ban (System › Security › Web Protection) -->
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- The shared database: Postgres (or MySQL with the default cluster transport), its settings in .env, the same on
+        every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user, entity_ds_password, and
+        entity_ds_sslmode and entity_ds_sslrootcert for its TLS. It holds the queue of every pairing, the only data here
+        that matters: back it up with its own tools (the backup job covers an embedded database only, so it is not set
+        running here). -->
+    <default-property name="entity_ds_db_conf" value="postgres"/>
+
+    <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
+        first start: session_cookie_key, cluster_tls_cert, cluster_tls_key, entity_ds_crypt_pass and the link key,
+        edge_link_key, so every member presents the one key a local node pinned at pairing (a member that generated a
+        key of its own is refused by every local node); also turn_auth_secret, mail_dkim_key and acme_account_key, and
+        the public settings below that name the cluster as a whole.
+        Each member's own in .env: cluster_base_url, https://(this member's private address):8444, which the other
+        members reach (open 8444 between the members only); and edge_link_url, https://(this member's own public
+        name), with its port when it is not 443, where local nodes dial it. A member with no edge_link_url is reached only at the address a local node
+        paired with, so set it on every member before the second one starts. Each keeps its own instance id in
+        runtime/db/instance_id: never copy runtime/db between members. -->
+    <default-property name="cluster_transport" value=""/>
+    <default-property name="cluster_protocol" value=""/>
+
+    <!-- The link and web access (.env), as on one edge node, with names for the cluster: webapp_http_host, the cluster's
+        public name, with an address record for each member (or a front node's, E19); edge_public_addresses, every
+        member's public IPv4 and IPv6 addresses, comma-separated, which the wizard checks a local node's host names
+        against. Each member needs a WebPKI certificate in runtime/cert for that name, which local nodes check when they
+        pair there (the same files on each, or System › Certificates with ACME, whose challenge any member answers).
+        The links themselves present the link key, which the local nodes pinned, not the web certificate, so a member's
+        own edge_link_url name needs a certificate only if a node pairs at that name. No TLS-terminating proxy in
+        front: the links need ALPN end to end. A terminate name's requests from any member reach the pairing's members, sticky
+        by the session cookie, the same member whichever edge member a browser reaches. -->
+
+    <!-- SSH and XMPP (.env, the same on each member): every member listens on the tunnel ports and sends each
+        connection down a link of the pairing that owns it, as on one edge node (conf/edge/MoquiEdgeConf.xml):
+                                     <default-property name="edge_xmpp_port" value="5222"/>
+                                     <default-property name="edge_xmpp_tls_port" value="5223"/>
+                                     <default-property name="edge_xmpp_host" value=""/>
+                                     <default-property name="edge_ssh_tunnel_port" value="(a port)"/>
+        (and edge_ssh_tunnel_host). With several pairings each gets SSH and XMPP ports of its own as moqui.edge.EdgePort
+        rows (System › Edge Clients › Ports), which every member reads. _xmpp-client._tcp and _xmpps-client._tcp name
+        every member. -->
+
+    <!-- PASS: mr-pass on every member calls the pairing's local node as its authority down the link. pass_backend_web_url
+        in .env, as on one edge node. -->
+    <default-property name="pass_backend_url" value="edge:"/>
+
+    <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway): each member takes port 25, answering RCPT
+        TO from the recipients it builds from the shared copies (again when any member applies a change, told on the
+        cluster topic edge-state), and claims delivery rows for mail out. Per member in .env: smtp_hostname, its own MX name (an MX record for each member,
+        with the same preference, and reverse DNS for each address naming it); the same on each: smtp_listen_port=25,
+        smtp_listen_host, edge_mail_bounce_domain and mail_dkim_key. -->
+    <default-property name="edge_mail_mta" value="moqui"/>
+    <default-property name="smtp_internet" value="true"/>
+    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
+    <default-property name="edge_mail_relay_port" value="10025"/>
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+
+    <!-- Chat bridges and SMS: a network's webhook URL is the cluster's name, /channels/{chatBridgeId}/webhook; any member
+        takes it and queues it once by its idempotency key. MMS files are rows, served by any member. -->
+    <default-property name="channels_webhooks_enabled" value="true"/>
+
+    <!-- Calls (docs/interfaces/WebRTC.md, TURN.md, An edge cluster): each member is a media node with its own public
+        address and TURN; a local node keeps a CallMediaNode row for each member it links to, and a call's legs are all
+        on one member (no cascading between members). Per member in .env: rtc_public_address and turn_public_host, its
+        own; open UDP 10000, UDP and TCP 3478 and the relay range on each. turn_auth_secret the same on each, so a
+        pairing's TURN secret is the same on every member, and a revoke ends it on all of them. -->
+    <default-property name="rtc_media_port" value="10000"/>
+    <default-property name="rtc_media_host" value="0.0.0.0"/>
+    <default-property name="turn_port" value="3478"/>
+    <default-property name="call_recording_segment_mb" value="16"/>
+
+    <!-- SIP (docs/interfaces/SIP.md, An edge cluster): every member runs an engine and loads every pairing's trunks;
+        one member registers them at a time (the holder of the lock row sipTrunks, shown on Edge Clients › Edge cluster,
+        taken over within seconds when it stops), and each places and takes calls. A phone's binding names the member it
+        registered with, and the phone rings only for calls whose media is on that member. The registrar's nonces are
+        per member: a phone that reaches another member is challenged again. Per member in .env:
+        sip_public_address, its own; the same on each: sip_port, sip_tls_port, sip_host and sip_registrar_enabled. SRV
+        records for the SIP domain name every member, and the trunk provider's failover number is still worth setting. -->
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- How work crosses the links, as on one edge node (conf/edge/MoquiEdgeConf.xml): the queue is one for the cluster,
+        claimed by lease, so each item goes once whichever member's link delivers it; the cap holds for each pairing in
+        all. Balancing a pairing's pool of local members is the same on every member, as its hash is over the same
+        list. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
+            sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"/>
+</moqui-conf>

@@ -28,10 +28,9 @@ use std::sync::Arc;
 use moqui_lib::error::Error;
 use moqui_lib::json::canonical;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
 
 use super::super::claims::{self, ClaimKind};
-use super::{text, transaction, AppliedCounts, Batch, Change, VALUE};
+use super::{text, transaction, Batch, Change, VALUE};
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::{Condition, EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
@@ -397,14 +396,14 @@ pub fn recheck_conflicts(
     let applied = transaction(facade, CONFLICT, TransactionAttribute::ForceNew, || {
         Ok(recheck_in(factory, &owners, facade, paired_node_id, None))
     })?;
-    // a reader that keeps something built from a set's copies builds it again
+    // a reader that keeps something built from a set's copies builds it again, here and on the other members of an
+    // edge cluster (plans/Edge-Node2.md §4.6)
     let sets: BTreeSet<&String> = applied.iter().collect();
-    facade.with_slot(AppliedCounts::default, |counts| {
-        let mut counts = lock(&counts.0);
-        for set in sets {
-            *counts.entry(set.clone()).or_insert(0) += 1;
-        }
-    });
+    for set in &sets {
+        super::note_applied(facade, set);
+    }
+    let names: Vec<&str> = sets.iter().map(|set| set.as_str()).collect();
+    super::super::cluster_state::tell(facade, false, &names);
     Ok(applied.len())
 }
 

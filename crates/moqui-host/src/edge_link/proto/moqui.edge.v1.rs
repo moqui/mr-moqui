@@ -123,7 +123,7 @@ pub struct MemberStatus {
     #[prost(message, repeated, tag = "2")]
     pub members: ::prost::alloc::vec::Vec<ClusterMember>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HelloReply {
     #[prost(message, optional, tag = "1")]
     pub hello: ::core::option::Option<Hello>,
@@ -143,6 +143,21 @@ pub struct HelloReply {
     /// bytes (plans/Edge-Node2.md §4.11): a generation alone is guessable.
     #[prost(bytes = "vec", tag = "5")]
     pub down_token: ::prost::alloc::vec::Vec<u8>,
+    /// The live members of the edge node's cluster, itself among them, each with its own link address (plans/Edge-Node2.md
+    /// §4.6): the local node dials every one. Empty from an edge node before E18, or when its member rows could not be
+    /// read: the local node keeps the list it has.
+    #[prost(message, repeated, tag = "6")]
+    pub edge_members: ::prost::alloc::vec::Vec<EdgeMember>,
+}
+/// One member of an edge cluster (plans/Edge-Node2.md §4.6), from its moqui.server.ClusterMember row.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EdgeMember {
+    #[prost(string, tag = "1")]
+    pub instance_id: ::prost::alloc::string::String,
+    /// Where a local node dials it: its edge_link_url (<https://host:port>). Empty when it has none: it is reached only at
+    /// the URL the local node paired with.
+    #[prost(string, tag = "2")]
+    pub link_url: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PingRequest {
@@ -168,10 +183,14 @@ pub struct DrainRequest {
     #[prost(bool, tag = "2")]
     pub drain: bool,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PingReply {
     #[prost(uint64, tag = "1")]
     pub generation: u64,
+    /// On an up connection, the edge cluster's live members, as in HelloReply (plans/Edge-Node2.md §4.6), so a member that
+    /// joins or leaves is seen within a Ping; empty when not told.
+    #[prost(message, repeated, tag = "2")]
+    pub edge_members: ::prost::alloc::vec::Vec<EdgeMember>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UnpairRequest {}
