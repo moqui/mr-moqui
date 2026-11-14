@@ -407,13 +407,10 @@ sframe = { version = "2.1.0", default-features = false, features = ["rust-crypto
 # libopus 1.6 with no dependencies, chosen over rusty-opus and opus-pure, and over libopus through `opus` and cmake.
 opus-rs = "0.1.40"
 # SIP for phone calls (moqui-sip, plans/archive/Comms-Framework.md §5.2, "The V1 gate"): transactions, dialogs and the UDP, TCP
-# and TLS transports, on Tokio. default-features off leaves out WebSocket (tokio-tungstenite) and SRV lookup
-# (hickory-resolver). Its TLS builds its configs from rustls's process default. moqui's fork (docs/Build-Test.md,
-# Forks): its rustls feature has no crypto provider of its own, where upstream's turns on ring beside aws-lc-rs.
-rsipstack = { git = "https://github.com/moqui/rsipstack", rev = "a64b33d561b6427a14bf2c937edd146a4f21a7b9", default-features = false, features = [
-    "platform-tokio",
-    "rustls",
-] }
+# and TLS transports, on Tokio. default-features off leaves out WebSocket (tokio-tungstenite), SRV lookup
+# (hickory-resolver) and rustls-ring. Its rustls feature has no crypto provider of its own (since 0.8.5); its TLS builds
+# its configs from rustls's process default, aws-lc.
+rsipstack = { version = "0.8.5", default-features = false, features = ["platform-tokio", "rustls"] }
 tokio-util = { version = "0.7", default-features = false }
 # XMPP for local users (moqui-xmpp, plans/archive/Comms-Framework.md §4.3 "XMPP server (C3)", D-C3): rxml parses the client's
 # stream (MIT; no DTDs, entities or processing instructions), minidom holds each stanza as an element tree and jid parses

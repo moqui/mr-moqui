@@ -81,13 +81,13 @@ for PDF, and the system `ssh` for git remotes.
 
 #### Forks
 
-Two dependencies are pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because neither keeps ring out
-through a feature. Each branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
-own branch, for a pull request. Go back to the crates.io release once upstream publishes the change.
+One dependency is pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because it does not keep ring out
+through a feature. The branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
+own branch, for a pull request. Go back to the crates.io release once upstream publishes the change, as rsipstack did
+with 0.8.5.
 
 | Crate | Fork and branch (`pr/` branch) | Change |
 |---|---|---|
-| rsipstack 0.7.12 | [moqui/rsipstack](https://github.com/moqui/rsipstack) `moqui/0.7.12-crypto-features` (`pr/rustls-provider-features`) | `rustls` has no crypto provider of its own; `rustls-ring` (the default) and `rustls-aws-lc-rs` choose one. Its TLS configs come from rustls's process default, here the aws-lc-rs provider |
 | mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
 
 Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
