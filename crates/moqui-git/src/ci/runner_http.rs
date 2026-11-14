@@ -111,13 +111,23 @@ impl Window {
 /// Whether the job or runner `key`, whose token was found good, is over `runner-max-requests-per-minute`. Only a key
 /// of a good token is counted, so made-up tokens add no entries (they are the web protection's, by address).
 fn over_rate(key: &str) -> bool {
+    over_limit(
+        key,
+        super::number_setting("runner-max-requests-per-minute", DEFAULT_MAX_REQUESTS),
+    )
+}
+
+/// Whether `key`, whose token was found good, has passed `max` requests this minute.
+fn over_limit(key: &str, max: u64) -> bool {
     let Some(rates) = ExecutionContext::with_current(|ec| ec.factory().extension(|_| Rates::default())) else {
         return false;
     };
-    let max = super::number_setting("runner-max-requests-per-minute", DEFAULT_MAX_REQUESTS);
     let over = moqui_lib::sync::lock(&rates.0).count(key, now_millis() / 60_000, max);
     over
 }
+
+/// Registrations of one pool in a minute (`git-ci` `runner-max-registrations-per-minute`).
+const DEFAULT_MAX_REGISTRATIONS: u64 = 10;
 
 fn respond(out: &mut dyn HttpResponder, status: u16, body: &serde_json::Value) {
     let text = body.to_string();
@@ -474,17 +484,27 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
         }
         match (request.method.as_str(), path) {
             ("POST", "register") => {
+                // the token first, so only a good one is counted; registrations are counted per pool, and a pool
+                // holds at most max-runners-per-pool, so a pool token mints only so many runner tokens
+                let Some(pool_id) = token::pool_of(&entity, &bearer)? else {
+                    moqui_core::web::note_auth_failure();
+                    return Err(Refused::new(401, "the pool token is not valid"));
+                };
+                moqui_core::web::note_token_verified();
+                let max = super::number_setting("runner-max-registrations-per-minute", DEFAULT_MAX_REGISTRATIONS);
+                if over_limit(&format!("register:{pool_id}"), max) {
+                    return Err(Refused::new(429, "too many registrations of this pool in a minute"));
+                }
                 let body = read_json(request, body)?;
                 let name = body["name"].as_str().unwrap_or("runner");
-                match super::registered::register(&entity, &bearer, name, body["platform"].as_str())? {
+                match super::registered::register_in(&entity, &pool_id, name, body["platform"].as_str())? {
                     Some((runner_id, runner_token)) => {
-                        moqui_core::web::note_token_verified();
                         Ok(Some(json!({ "runnerId": runner_id, "token": runner_token })))
                     }
-                    None => {
-                        moqui_core::web::note_auth_failure();
-                        Err(Refused::new(401, "the pool token is not valid"))
-                    }
+                    None => Err(Refused::new(
+                        409,
+                        "the pool has its most runners (git-ci max-runners-per-pool): revoke one to register another",
+                    )),
                 }
             }
             ("POST", "claim") => {

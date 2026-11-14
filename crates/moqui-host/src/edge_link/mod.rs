@@ -462,7 +462,8 @@ pub struct EdgeConfig {
     /// head once its body is all sent (`<edge forward-idle-seconds forward-head-seconds>`, [`web::Waits`]).
     pub forward_idle: Duration,
     pub forward_head: Duration,
-    /// The longest wait for the answer's head of a forwarded request with no body (`<edge forward-first-byte-seconds>`).
+    /// The longest wait for the answer's head of a forwarded GET or HEAD with no body
+    /// (`<edge forward-first-byte-seconds>`).
     pub forward_first_byte: Duration,
     /// SSH connections piped at once by the conf's SSH tunnel port, and by each SSH port of a pairing
     /// (`<edge ssh-tunnels>`).

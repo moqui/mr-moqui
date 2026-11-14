@@ -30,9 +30,12 @@
 //! **Waits** ([`Waits`]). A request's answer may come only once its whole body is stored (an LFS object, a CI artifact
 //! or result, a large upload), so the edge node bounds the member's connection taking the request and each gap in the
 //! request's body as it goes down, and then the wait for the answer's head from when the body is all sent, which is
-//! long by default; never the whole of it by one short timeout. A request with no body waits only a short time for its
-//! answer's head (`forward-first-byte-seconds`), so a GET or HEAD a hung member holds goes once more to another member
-//! and the hung one is set aside, well within the client's patience.
+//! long by default; never the whole of it by one short timeout. A GET or HEAD with no body, which may go once more,
+//! waits only a short time for its answer's head (`forward-first-byte-seconds`), so one a hung member holds goes to
+//! another member and the hung one is set aside, well within the client's patience. Any other request with no body (a
+//! POST, a DELETE) waits the head wait, since it is never sent again; and a first-byte wait that runs out on a request
+//! that is not sent again (no other member, or the second try) is not counted against its member, since it says only
+//! that the answer is slow.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -328,14 +331,17 @@ pub(crate) enum Failed {
     /// The connection failed it; whether the connection is closed now.
     Error(String, bool),
     TimedOut,
+    /// A GET or HEAD with no body had no answer's head within the first-byte wait.
+    FirstByteTimedOut,
 }
 
 /// The bounds of a forwarded request's wait for its answer's head. A request whose answer comes only after its whole
 /// body is stored (an LFS or CI upload, a slow multipart post) may take as long as its body takes to send, so only
 /// the parts that say nothing is happening are short: `open` for the member's connection to take the request, `idle`
 /// for a gap in the request's body as it goes down, and `head`, from when the body is all sent, for the answer's
-/// head (the `<edge>` conf's `forward-idle-seconds` and `forward-head-seconds`). A request with no body waits
-/// `first_byte` for its head instead (`forward-first-byte-seconds`, at most `head`).
+/// head (the `<edge>` conf's `forward-idle-seconds` and `forward-head-seconds`). A GET or HEAD with no body, which may
+/// be sent again, waits `first_byte` for its head instead (`forward-first-byte-seconds`, at most `head`); any other
+/// request with no body waits `head` from when it is sent.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Waits {
     pub(crate) open: Duration,
@@ -348,8 +354,10 @@ pub(crate) struct Waits {
 /// when it ended, in nanoseconds after `start`. A request that carries none in its extensions has no body.
 pub(crate) struct Progress {
     start: tokio::time::Instant,
-    /// The request has no body: its head is waited for `first_byte` from when it is sent.
+    /// The request has no body: its head is waited for from when it is sent.
     bodyless: bool,
+    /// A GET or HEAD with no body, which may be sent again: its head is waited for `first_byte`, not `head`.
+    first_byte: bool,
     last: AtomicU64,
     /// [`NOT_ENDED`] while the body is still going.
     ended: AtomicU64,
@@ -358,10 +366,12 @@ pub(crate) struct Progress {
 const NOT_ENDED: u64 = u64::MAX;
 
 impl Progress {
-    fn new(ended: bool) -> Self {
+    /// `retriable`: a GET or HEAD, not a WebSocket ([`may_send_again`]).
+    fn new(ended: bool, retriable: bool) -> Self {
         Self {
             start: tokio::time::Instant::now(),
             bodyless: ended,
+            first_byte: ended && retriable,
             last: AtomicU64::new(0),
             ended: AtomicU64::new(if ended { 0 } else { NOT_ENDED }),
         }
@@ -391,15 +401,16 @@ impl Progress {
             .compare_exchange(NOT_ENDED, now, Ordering::AcqRel, Ordering::Acquire);
     }
 
-    /// When the wait for the answer's head runs out as things stand: for a request with no body, `first_byte` after it
-    /// was sent; else `idle` after the body last moved while it goes, and after it ended the later of that and `head`
-    /// after the end, so the end of the body never shortens the wait.
+    /// When the wait for the answer's head runs out as things stand: for a GET or HEAD with no body, `first_byte` after
+    /// it was sent, and for any other request with no body `head`; else `idle` after the body last moved while it goes,
+    /// and after it ended the later of that and `head` after the end, so the end of the body never shortens the wait.
     fn deadline(&self, waits: &Waits) -> tokio::time::Instant {
         let at = |nanos: u64, wait: Duration| self.start + Duration::from_nanos(nanos) + wait;
         let idle = at(self.last.load(Ordering::Acquire), waits.idle);
         match self.ended.load(Ordering::Acquire) {
             // `sending` set both clocks to when it was sent
-            ended if self.bodyless => at(ended, waits.first_byte.min(waits.head)),
+            ended if self.first_byte => at(ended, waits.first_byte.min(waits.head)),
+            ended if self.bodyless => at(ended, waits.head),
             NOT_ENDED => idle,
             ended => idle.max(at(ended, waits.head)),
         }
@@ -448,10 +459,11 @@ impl hyper::body::Body for Watched {
     }
 }
 
-/// `body` as a forwarded request's, with the [`Progress`] to put in the request's extensions.
-pub(crate) fn watched(body: tonic::body::Body) -> (tonic::body::Body, Arc<Progress>) {
+/// `body` as a forwarded request's, with the [`Progress`] to put in the request's extensions; `retriable` for a GET or
+/// HEAD that is not a WebSocket.
+pub(crate) fn watched(body: tonic::body::Body, retriable: bool) -> (tonic::body::Body, Arc<Progress>) {
     use hyper::body::Body as _;
-    let progress = Arc::new(Progress::new(body.is_end_stream()));
+    let progress = Arc::new(Progress::new(body.is_end_stream(), retriable));
     let body = tonic::body::Body::new(Watched {
         body,
         progress: Arc::clone(&progress),
@@ -476,11 +488,12 @@ async fn try_send(
         }
         Err(_) => return Err((Failed::TimedOut, Some(Box::new(request)))),
     }
+    let retriable = may_send_again(request.method(), true, false);
     let progress = request
         .extensions()
         .get::<Arc<Progress>>()
         .cloned()
-        .unwrap_or_else(|| Arc::new(Progress::new(true)));
+        .unwrap_or_else(|| Arc::new(Progress::new(true, retriable)));
     progress.sending();
     let answer = send.try_send_request(request);
     tokio::pin!(answer);
@@ -498,7 +511,8 @@ async fn try_send(
             // the deadline moves while the body goes, so it is read again when it comes
             () = tokio::time::sleep_until(progress.deadline(&waits)) => {
                 if progress.deadline(&waits) <= tokio::time::Instant::now() {
-                    return Err((Failed::TimedOut, None));
+                    let failed = if progress.first_byte { Failed::FirstByteTimedOut } else { Failed::TimedOut };
+                    return Err((failed, None));
                 }
             }
         }
@@ -508,7 +522,9 @@ async fn try_send(
 /// Send `request` down the link of `first`, and when it fails before any byte of an answer, once more down the link of
 /// the member `other` gives in place of the failed one (plans/Edge-Node2.md §4.4): a request not sent at all, whatever
 /// it is, or one `again` makes anew (a GET or HEAD with no body). Each try's outcome goes to `outcome`, true when it
-/// was answered. The answer, or the last failure, with the member it came from.
+/// was answered, except a first-byte wait that ran out on a try not followed by another: that says only that the
+/// answer is slow, and is not counted toward setting the member aside. The answer, or the last failure, with the member
+/// it came from.
 pub(crate) async fn send_once_more(
     first: Picked,
     request: http::Request<tonic::body::Body>,
@@ -524,13 +540,20 @@ pub(crate) async fn send_once_more(
         }
         Err(failed) => failed,
     };
-    outcome(&first, false);
+    let first_byte = matches!(failed, Failed::FirstByteTimedOut);
     let Some(request) = unsent.map(|request| *request).or_else(|| again.map(|again| again())) else {
+        if !first_byte {
+            outcome(&first, false);
+        }
         return (Err(failed), first);
     };
     let Some(second) = other(&first.member) else {
+        if !first_byte {
+            outcome(&first, false);
+        }
         return (Err(failed), first);
     };
+    outcome(&first, false);
     drop(first);
     match try_send(second.send.clone(), request, waits).await {
         Ok(response) => {
@@ -538,7 +561,9 @@ pub(crate) async fn send_once_more(
             (Ok(response), second)
         }
         Err((failed, _)) => {
-            outcome(&second, false);
+            if !matches!(failed, Failed::FirstByteTimedOut) {
+                outcome(&second, false);
+            }
             (Err(failed), second)
         }
     }
@@ -565,6 +590,7 @@ where
     }
     let websocket = h2_websocket || is_websocket(&request);
     let again = may_send_again(request.method(), request.body().is_end_stream(), websocket);
+    let retriable = may_send_again(request.method(), true, websocket);
     let (mut parts, body) = request.into_parts();
     let Some(host) = parts
         .headers
@@ -594,7 +620,7 @@ where
         .flatten();
     let method = if websocket { http::Method::CONNECT } else { parts.method };
     let make = move |body: tonic::body::Body, method: http::Method, uri: http::Uri, headers: HeaderMap| {
-        let (body, progress) = watched(body);
+        let (body, progress) = watched(body, retriable);
         let mut down = http::Request::new(body);
         down.extensions_mut().insert(progress);
         *down.uri_mut() = uri;
@@ -657,11 +683,8 @@ where
             } else {
                 server.config().forward_head
             },
-            first_byte: if websocket {
-                server.config().open_timeout
-            } else {
-                server.config().forward_first_byte
-            },
+            // only a GET or HEAD with no body waits by this
+            first_byte: server.config().forward_first_byte,
         },
         |picked, ok| {
             if ok {
@@ -682,7 +705,9 @@ where
                 plain(502, "the site's server did not answer")
             };
         }
-        Err(Failed::TimedOut) => return plain(504, "the site's server did not answer in time"),
+        Err(Failed::TimedOut | Failed::FirstByteTimedOut) => {
+            return plain(504, "the site's server did not answer in time")
+        }
     };
     if !websocket {
         server.count("moqui.edgelink.forwards", "terminate");

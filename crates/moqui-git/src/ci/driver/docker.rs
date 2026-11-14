@@ -236,8 +236,10 @@ impl DockerHost {
             .ok_or_else(|| Error::new(format!("creating container {name}: the answer has no Id")))
     }
 
-    /// With `container-user="image"`, a container made from an image that runs as root (its `Config.User` empty, uid 0
-    /// or `root`) is refused before it starts: a job never runs as root, in any form.
+    /// With `container-user="image"`, a container made from an image whose user is not a numeric uid other than 0 (its
+    /// `Config.User` empty, root, or a name) is refused before it starts: a job never runs as root, in any form, and a
+    /// name is whatever the image's own `/etc/passwd` says, which may be uid 0 under another name
+    /// ([`is_numeric_user`]).
     fn refuse_root(&self, id: &str, name: &str) -> Result<(), Error> {
         let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
         if response.status() >= 300 {
@@ -247,10 +249,11 @@ impl DockerHost {
             .ok()
             .and_then(|body| body["Config"]["User"].as_str().map(str::to_string))
             .unwrap_or_default();
-        if user.trim().is_empty() || is_root_user(&user) {
+        if !is_numeric_user(&user) {
             return Err(Error::new(format!(
-                "the image of container {name} runs as root (its user is {}), and git-ci container-user=\"image\" \
-                 takes only an image whose user is not root: set its USER, or set container-user to a uid",
+                "the image of container {name} may run as root (its user is {}), and git-ci container-user=\"image\" \
+                 takes only an image whose USER is a numeric uid other than 0 (a name may be uid 0 in the image): set \
+                 its USER to a uid, or set container-user to a uid",
                 if user.trim().is_empty() { "unset" } else { user.trim() }
             )));
         }
@@ -432,6 +435,14 @@ impl Default for Hardening {
 pub fn is_root_user(user: &str) -> bool {
     let name = user.split(':').next().unwrap_or_default().trim();
     name.eq_ignore_ascii_case("root") || (!name.is_empty() && name.bytes().all(|byte| byte == b'0'))
+}
+
+/// Whether an image's user is a numeric uid other than 0, with or without a group (`1000`, `1000:1000`): the only user
+/// `container-user="image"` takes, since a name is resolved by the image's own `/etc/passwd`, which an image may make
+/// uid 0 under any name.
+pub fn is_numeric_user(user: &str) -> bool {
+    let uid = user.split(':').next().unwrap_or_default().trim();
+    !uid.is_empty() && uid.bytes().all(|byte| byte.is_ascii_digit()) && !is_root_user(uid)
 }
 
 impl Hardening {

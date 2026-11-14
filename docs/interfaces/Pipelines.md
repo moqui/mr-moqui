@@ -204,8 +204,11 @@ A run refused by the check (`approvalState` `refused`) or never approved is not 
 it, and for any other ended run asks the check again (with the run's event, ref, commit and the caller), so a run
 the check would now refuse, hold or trust less is not run again either. Two retries of one job at once make one
 attempt (the old one is marked superseded first, by one conditional update). A cancel ends a job whatever a claim
-moved it to meanwhile, and a start pass or a runner's claim skips the jobs of a run that ended. A start pass runs
-outside its caller's transaction, so a rollback never queues again a job whose container runs. The new attempt keeps the pool the old one
+moved it to meanwhile, and a start pass or a runner's claim skips the jobs of a run that ended; a job cancelled
+between its claim and its container's start gets no container (the start reads the job again, and a container started
+as it was cancelled is removed). A start pass runs outside its caller's transaction, so a rollback never queues again
+a job whose container runs; a claim whose later writes fail gives its job back to the queue, its token never handed
+out. The new attempt keeps the pool the old one
 ran in (`runnerPoolId`).
 
 Before any run is queued the engine asks the service `git-ci` `run-check-service` names, with authorization
@@ -286,7 +289,8 @@ reaches it.
 A job's container is created with: no privilege, every capability dropped, `no-new-privileges`, no host path or
 socket mounted, no port published, an init as process 1 that reaps what a step leaves (so orphans do not use up
 `pidsLimit`), the user `git-ci` `container-user` (1000:1000; root in no form, `0`, `0:x` or `root:x`; `image` runs the
-image's own user, and a container whose image has none, or root, is refused before it starts), a read-only
+image's own user, and a container whose image's user is not a numeric uid other than 0 (none, root, or a name, which
+the image's own `/etc/passwd` may make uid 0) is refused before it starts), a read-only
 root with a sized tmpfs at `/tmp` (`container-tmp-mb`) and the working directory (`container-workdir`, `/workspace`)
 on a tmpfs of `container-workspace-mb` (4096; it counts toward `memoryMb`), or, when the pool sets `diskMb`, on the
 root filesystem `diskMb` sizes, which is then writable: the working directory is never unbounded. Then the pool's
@@ -337,7 +341,9 @@ is left alone: run the runner as a user of its own.
 A pool token registers runners for `git-ci` `pool-token-days` (7), or the `validDays` of `create#RunnerPoolToken`;
 one with no expiry (made before tokens expired) registers nothing: make a new one. A new token replaces it, and with
 `revokeRunners` the pool's runners are revoked too (a token that leaked). A runner is reserved for its job by one
-conditional update (`GitRunner.currentJobRunId` empty), so it never gets two jobs at once; a pool with no `ownerId` on
+conditional update (`GitRunner.currentJobRunId` empty), so it never gets two jobs at once; a claim that fails after
+the reservation gives the runner back, and under the pool's lease a runner reserved for a job it is not running (a
+claim that stopped between the two) is freed at its next claim; a pool with no `ownerId` on
 a server with `run-check-service` gives its runners no job (as `store#RunnerPool` refuses it), and a runner's claim
 takes the pool's lease only when a job is queued.
 `revoke#Runner` revokes one runner (`GitRunner.statusId` `revoked`): its token is refused from then on, and the job it
@@ -364,7 +370,8 @@ good while that job run is `running` and until its time limit. It authorizes two
 - **Reading the job's repository at the job's commit over git HTTP**: an upload-pack of that repository, in which one
   ref is advertised (`refs/heads/ci`, at the commit), every `want` must be that commit, and the fetch must be shallow
   with a depth of at most `git-ci` `max-fetch-depth`. A push, another repository, another commit, a deep fetch and
-  plain HTTP are refused. No user is logged in. The repository is the run's: for a merge request from a fork, the
+  plain HTTP are refused; the token of a job that ended is 410 Gone, which is no failed sign-in (a runner fetching
+  after a cancel), as on the runner REST. No user is logged in. The repository is the run's: for a merge request from a fork, the
   target, never the fork. The commit must still be the repository's to give
   ([Reachability](Git-Hosting.md#reachability)): for a merge request's run, one the head ref of that merge request
   reaches (`refs/merge-requests/<n>/head`, a hidden one's too, which this token alone fetches); for any other run,
@@ -496,8 +503,9 @@ run's do once approved, and their token is the only thing that fetches the hidde
 | `get#PipelineRun` | view | By `pipelineRunId`, or `repositoryId` and `runNum`. `run`, `jobList` in the order `needs` gives, `canUpdate` |
 | `get#JobRun` | view | `job`, `stepList`, `failedTestList`, `artifactList` (artifacts and reports) |
 | `get#JobLog` | view | See below |
-| `get#RunArtifact` | view | An artifact or report and a piece of its content (`offset`, `maxBytes`; `bytes`, `nextOffset`, `done`). A cache is not found. |
-| `send#RunArtifact` | view | Send an artifact or report as the request's response, streamed from its content blob with `Range`, `ETag` and `If-Range` (`inline` to show a report's HTML): call it from a screen's download transition, and nothing is copied to a file. A cache is not found. |
+| `get#RunArtifact` | view | An artifact or report and a piece of its content (`offset`, `maxBytes`; `bytes`, `nextOffset`, `done`). A cache is not found. Each artifact map carries its `location`, below. |
+| `send#RunArtifact` | view | Send an artifact or report as the request's response, streamed from its content blob with `Range`, `ETag` and `If-Range` (`inline` shows a passive file: an image, a PDF, plain text, JSON): call it from a screen's download transition, and nothing is copied to a file. A job's HTML, SVG, XML or JavaScript is still an attachment unless `inlineActive` is set too; set that only for a run whose commits the application trusts, since the file is shown on the application's host. Shown inline, a file is sandboxed (`Content-Security-Policy: sandbox`, no script, an origin of its own) and never sniffed (`nosniff`). A cache is not found. |
+| `set#RunArtifactKeep` | update, or authorization disabled | Keep an artifact or report past its expiry (`keep`: a release's, which the daily retention then leaves), or let it expire again; it still counts toward the storage caps. A cache is not found. |
 | `get#PipelineDefinitions` | view | The pipelines a commit (`revision`: branch, tag, ref or commit; the default branch when empty) defines, as the engine reads them: `source` (`file`, `builtin`, `none`, `invalid` with `errorMessage`) and `pipelineList` (`pipelineName`, `events`, `manual`, `branches`, `tags`, `cron`, `jobNames`), so an application need not parse `ci.xml`. |
 | `run#Pipeline` | update | A pipeline with the manual event, for a branch or tag |
 | `rerun#PipelineRun` | update | A new run for the same commit and event; one that was untrusted for where its commits came from stays so |
@@ -518,6 +526,16 @@ between two reads. With `watch` the caller is sent a notification on the topic `
 run's id; `{jobRunId, nextChunkSeq, finished}`) when the log grows, at most once a second, for three minutes after
 each read, so a page reads when it is told and need not poll every second. The watchers are kept in the memory of
 the server that took the read: on a cluster a page still polls, less often.
+
+**An artifact's location.** Each artifact and report is also the read-only resource location
+`ci-artifact://<artifactId>/<fileName>` (the `location` of an artifact map; the id alone finds it, the name gives the
+type and the name it is sent under), read with `get#RunArtifact`'s check: the view right on the repository, a hidden
+run's only with authorization disabled or as the user it was made for; a cache, one that is not there and one the
+caller does not read are not found. So every transport that sends a file sends one, streamed from its content blob:
+`ec.web.sendResourceResponse(location, inline)` in a screen (a user's file, so it is sandboxed when inline and never
+sniffed), and a PASS authority download over gRPC, whose authority service answers the location (`download.location`)
+once it has checked its caller; the gRPC frontend opens that answer with authorization off, as the service's own
+request would send it.
 
 The engine's own services are the rules' and the jobs': `queue#PushRuns` and `queue#MergeRequestRuns` (with
 authorization disabled only), `queue#ScheduledRuns`, `start#QueuedJobRuns`, `end#OverdueJobRuns`, `expire#RunData`.
@@ -603,6 +621,7 @@ the client's address arrives).
 | `artifact-retention-days`, `max-artifact-retention-days`, `log-retention-days`, `cache-retention-days` | 30, 365, 90, 30 | |
 | `lost-seconds`, `queue-timeout-minutes` | 180, 1440 | |
 | `runner-max-requests-per-minute`, `runner-command`, `start-inline` | 1200, `moqui ci-run`, true | |
+| `runner-max-registrations-per-minute`, `max-runners-per-pool` | 10, 50 | Registrations of one pool in a minute (429 past it); active runners a pool holds (a registration past it is 409 until one is revoked), so a leaked pool token mints only so many runner tokens |
 | `container-user`, `container-read-only-root`, `container-workdir`, `container-tmp-mb`, `container-workspace-mb` | 1000:1000, true, `/workspace`, 1024, 4096 | A job's container and its services |
 
 ## Tests

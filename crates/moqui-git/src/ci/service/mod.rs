@@ -60,6 +60,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, get_job_log)?;
     rust_service!(map, get_run_artifact)?;
     rust_service!(map, send_run_artifact)?;
+    rust_service!(map, set_run_artifact_keep)?;
     rust_service!(map, get_pipeline_definitions)?;
     rust_service!(map, run_pipeline)?;
     rust_service!(map, rerun_pipeline_run)?;
@@ -143,6 +144,11 @@ fn refuse(repository_id: &str, what: &str) {
 /// Whether the caller reads `run`: it may view the repository, and a hidden run only with authorization disabled and
 /// `includeHidden`, or as the user it was made for.
 fn readable(run: &EntityValue, parameters: &Parameters) -> bool {
+    readable_with(run, flag(parameters, "includeHidden"))
+}
+
+/// [`readable`], with `include_hidden` for the parameter.
+fn readable_with(run: &EntityValue, include_hidden: bool) -> bool {
     let repository = field(run, "repositoryId").unwrap_or_default();
     if !may(&repository, "view") {
         return false;
@@ -150,7 +156,7 @@ fn readable(run: &EntityValue, parameters: &Parameters) -> bool {
     if !is_yes(run, "hidden") {
         return true;
     }
-    (authz_disabled() && flag(parameters, "includeHidden"))
+    (authz_disabled() && include_hidden)
         || (current_user().is_some() && current_user() == field(run, "triggeredByUserId"))
 }
 
@@ -626,14 +632,23 @@ fn artifact_value(artifact: &EntityValue) -> Value {
         ("keep", Value::Bool(is_yes(artifact, "keep"))),
         copy("expireDate"),
         copy("createdDate"),
+        ("fileName", Value::string(file_name(artifact))),
         (
-            "fileName",
-            Value::string(match field(artifact, "artifactKind").as_deref() {
-                Some("artifact") => format!("{}.tar.gz", field(artifact, "name").unwrap_or_default()),
-                _ => field(artifact, "name").unwrap_or_default(),
-            }),
+            "location",
+            Value::string(super::location::location_of(
+                &field(artifact, "artifactId").unwrap_or_default(),
+                &file_name(artifact),
+            )),
         ),
     ])
+}
+
+/// The name an artifact or report downloads as: an artifact's `.tar.gz`, a report's own name.
+pub(crate) fn file_name(artifact: &EntityValue) -> String {
+    match field(artifact, "artifactKind").as_deref() {
+        Some("artifact") => format!("{}.tar.gz", field(artifact, "name").unwrap_or_default()),
+        _ => field(artifact, "name").unwrap_or_default(),
+    }
 }
 
 /// `get#JobLog`: a piece of a job's log. While the job runs: the chunks after `afterChunkSeq`, at most `limit`
@@ -709,17 +724,17 @@ fn get_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `send#RunArtifact`: send an artifact or a report of a run as this request's response, streamed from its content
 /// blob a window at a time (with `Range`, `ETag` and `If-Range`), as `ec.web.sendResourceResponse` sends a file; for a
 /// screen's download transition, so the application copies nothing to a file. Read as `get#RunArtifact` is (the
-/// view right on the repository). Out: `artifact`.
+/// view right on the repository). `inline` shows a passive file (an image, a PDF, plain text); a job's HTML, SVG, XML
+/// or JavaScript is still an attachment unless `inlineActive` is also set, since a job's output is not the
+/// application's own (shown inline it is sandboxed either way, `moqui_core::web::FileDisposition`). Out: `artifact`.
 fn send_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some((artifact, blobs, info)) = readable_artifact(parameters, facade)? else {
         return none();
     };
     let value = artifact_value(&artifact);
-    let file_name = match &value {
-        Value::Map(entries) => entries.get("fileName").map(moqui_lib::object::to_plain_string),
-        _ => None,
-    }
-    .unwrap_or_else(|| "artifact".to_string());
+    let file_name = Some(file_name(&artifact))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "artifact".to_string());
     let opened = moqui_core::context::Opened {
         stat: moqui_core::context::ResourceStat {
             is_file: true,
@@ -728,7 +743,12 @@ fn send_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
         },
         source: blobs.source(&info),
     };
-    if let Err(err) = moqui_core::web::send_file_response(&opened, &file_name, flag(parameters, "inline")) {
+    let disposition = match (flag(parameters, "inline"), flag(parameters, "inlineActive")) {
+        (false, _) => moqui_core::web::FileDisposition::Attachment,
+        (true, false) => moqui_core::web::FileDisposition::Inline,
+        (true, true) => moqui_core::web::FileDisposition::InlineActive,
+    };
+    if let Err(err) = moqui_core::web::send_file_response(&opened, &file_name, disposition) {
         add_error(format!("the artifact's content cannot be read: {}", err.message()));
         return none();
     }
@@ -752,28 +772,102 @@ fn readable_artifact(
         add_error("artifactId is required");
         return Ok(None);
     };
-    let found = {
-        let _rows = crate::rows_guard();
-        let artifact = super::one(facade, RUN_ARTIFACT, "artifactId", &id)?
-            .filter(|artifact| field(artifact, "artifactKind").as_deref() != Some("cache"));
-        match artifact {
-            Some(artifact) => field(&artifact, "pipelineRunId")
-                .map(|run| super::one(facade, PIPELINE_RUN, "pipelineRunId", &run))
-                .transpose()?
-                .flatten()
-                .map(|run| (artifact, run)),
-            None => None,
+    match read_artifact(facade, &id, flag(parameters, "includeHidden"))? {
+        ArtifactRead::Found(artifact, blobs, info) => Ok(Some((artifact, blobs, info))),
+        ArtifactRead::NotFound => {
+            add_error("no such artifact");
+            Ok(None)
         }
+        ArtifactRead::ContentGone => {
+            add_error("the artifact's content is gone");
+            Ok(None)
+        }
+    }
+}
+
+/// What a reader of an artifact or report finds ([`read_artifact`]).
+pub(crate) enum ArtifactRead {
+    Found(
+        EntityValue,
+        moqui_core::resource::blob::BlobStore,
+        moqui_core::resource::blob::BlobInfo,
+    ),
+    /// Not there, a cache, or of a run the caller does not read: one answer for all.
+    NotFound,
+    ContentGone,
+}
+
+/// The artifact or report `id` with its content, when the caller reads its run (the view right on the repository; a
+/// hidden run's with authorization disabled and `include_hidden`, or as the user it was made for): the one check of
+/// `get#`, `send#RunArtifact` and the `ci-artifact://` locations (`super::location`).
+pub(crate) fn read_artifact(
+    facade: &EntityFacade,
+    id: &str,
+    include_hidden: bool,
+) -> Result<ArtifactRead, moqui_core::context::Error> {
+    let found = artifact_and_run(facade, id)?;
+    let Some((artifact, _run)) = found.filter(|(_, run)| readable_with(run, include_hidden)) else {
+        return Ok(ArtifactRead::NotFound);
     };
-    let Some((artifact, _run)) = found.filter(|(_, run)| readable(run, parameters)) else {
+    Ok(match super::artifact::content(facade, &artifact)? {
+        Some((blobs, info)) => ArtifactRead::Found(artifact, blobs, info),
+        None => ArtifactRead::ContentGone,
+    })
+}
+
+/// The artifact or report `id` (never a cache) and its run, read with authorization off.
+fn artifact_and_run(
+    facade: &EntityFacade,
+    id: &str,
+) -> Result<Option<(EntityValue, EntityValue)>, moqui_core::context::Error> {
+    let _rows = crate::rows_guard();
+    let artifact = super::one(facade, RUN_ARTIFACT, "artifactId", id)?
+        .filter(|artifact| field(artifact, "artifactKind").as_deref() != Some("cache"));
+    Ok(match artifact {
+        Some(artifact) => field(&artifact, "pipelineRunId")
+            .map(|run| super::one(facade, PIPELINE_RUN, "pipelineRunId", &run))
+            .transpose()?
+            .flatten()
+            .map(|run| (artifact, run)),
+        None => None,
+    })
+}
+
+/// `set#RunArtifactKeep`: keep an artifact or a report of a run past its expiry (`keep`: a release's, which the daily
+/// retention then leaves), or let it expire again. Needs the update right on the repository, or authorization
+/// disabled; a hidden run's is found as `get#RunArtifact` finds it. A cache is not found. Out: `artifact`.
+fn set_run_artifact_keep(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    let Some(id) = text(parameters, "artifactId") else {
+        add_error("artifactId is required");
+        return none();
+    };
+    let found = artifact_and_run(facade, &id)?.filter(|(_, run)| readable(run, parameters));
+    let Some((_, run)) = found else {
         add_error("no such artifact");
-        return Ok(None);
+        return none();
     };
-    let Some((blobs, info)) = super::artifact::content(facade, &artifact)? else {
-        add_error("the artifact's content is gone");
-        return Ok(None);
+    let repository = field(&run, "repositoryId").unwrap_or_default();
+    if !may(&repository, "update") {
+        refuse(&repository, "keeping an artifact of its runs");
+        return none();
+    }
+    let keep = flag(parameters, "keep");
+    let artifact = {
+        let _rows = crate::rows_guard();
+        super::set_fields(
+            facade,
+            RUN_ARTIFACT,
+            "artifactId",
+            &id,
+            None,
+            vec![("keep", Value::string(if keep { "Y" } else { "N" }))],
+        )?;
+        super::one(facade, RUN_ARTIFACT, "artifactId", &id)?
     };
-    Ok(Some((artifact, blobs, info)))
+    Ok(out([(
+        "artifact",
+        artifact.as_ref().map_or(Value::Null, artifact_value),
+    )]))
 }
 
 /// `get#PipelineDefinitions`: the pipelines a commit defines, as the engine reads them (its `ci.xml`, else the built-in

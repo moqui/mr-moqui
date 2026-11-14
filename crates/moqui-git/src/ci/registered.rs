@@ -109,7 +109,7 @@ pub fn revoke(entity: &EntityFacade, runner_id: &str) -> Result<bool, Error> {
 }
 
 /// Register a runner in the pool of `pool_token`. Its id and its runner token, shown once; `None` for a token that is
-/// no enabled pool's.
+/// no enabled pool's, or a pool that has its most runners ([`register_in`]).
 pub fn register(
     entity: &EntityFacade,
     pool_token: &str,
@@ -119,7 +119,36 @@ pub fn register(
     let Some(pool_id) = token::pool_of(entity, pool_token)? else {
         return Ok(None);
     };
+    register_in(entity, &pool_id, name, platform)
+}
+
+/// The most active runners a pool of registered runners has (`git-ci` `max-runners-per-pool`).
+pub const DEFAULT_MAX_RUNNERS: u64 = 50;
+
+/// Register a runner in the pool `pool_id`, its pool token already found good: its id and its runner token, shown once;
+/// `None` when the pool has `max-runners-per-pool` (50) active runners already. A pool token that leaked can then mint
+/// only so many runner tokens, each a credential the web protection exempts once found good; revoke a runner, or make
+/// a new pool token that revokes them, to register more.
+pub fn register_in(
+    entity: &EntityFacade,
+    pool_id: &str,
+    name: &str,
+    platform: Option<&str>,
+) -> Result<Option<(String, String)>, Error> {
     let _rows = crate::rows_guard();
+    let active = entity
+        .find(RUNNER)?
+        .eq("runnerPoolId", Value::string(pool_id))
+        .eq("statusId", Value::string("active"))
+        .count()?;
+    let max = i64::try_from(super::number_setting("max-runners-per-pool", DEFAULT_MAX_RUNNERS)).unwrap_or(i64::MAX);
+    if active >= max {
+        tracing::warn!(
+            pool = pool_id,
+            "a runner was not registered: the pool has max-runners-per-pool runners"
+        );
+        return Ok(None);
+    }
     let (plain, hashed) = token::new_token(token::RUNNER_PREFIX)?;
     let mut row = EntityValue::make(entity, RUNNER)?;
     row.set_sequenced_id_primary(entity)?;
@@ -191,7 +220,6 @@ pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Resul
     if busy > 0 {
         return Ok(None);
     }
-    free_stale_job(entity, &runner_id)?;
     let trusted = super::is_yes(&pool, "trusted");
     let pool_name = field(&pool, "poolName").unwrap_or_else(|| "default".to_string());
     let queued = entity
@@ -209,6 +237,8 @@ pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Resul
     let Some(_turn) = super::engine::pool_turn(entity, &pool_id)? else {
         return Ok(None);
     };
+    // under the pool's lease, so no claim of this runner is between its reservation and its job's claim
+    free_stale_job(entity, &runner_id)?;
     if super::engine::running_in(entity, &pool_id)? >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
         return Ok(None);
     }
@@ -254,9 +284,19 @@ pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Resul
         if !reserve_runner(entity, &runner_id, &job_run_id)? {
             return Ok(None);
         }
-        let Some(job_token) = super::engine::claim_job(entity, &run, job, &pool, Some(&runner_id))? else {
-            release_runner(entity, &runner_id, &job_run_id);
-            continue;
+        // from here every way out but the job's claim gives the runner back, or it would stay reserved for a job it
+        // never runs and ask in vain from then on
+        let job_token = match super::engine::claim_job(entity, &run, job, &pool, Some(&runner_id)) {
+            Ok(Some(job_token)) => job_token,
+            Ok(None) => {
+                release_runner(entity, &runner_id, &job_run_id);
+                continue;
+            }
+            Err(err) => {
+                // a claim that failed after the job was claimed gave the job back itself (claim_job)
+                release_runner(entity, &runner_id, &job_run_id);
+                return Err(err);
+            }
         };
         return Ok(Some(Claimed { job_run_id, job_token }));
     }
@@ -295,13 +335,15 @@ fn release_runner(entity: &EntityFacade, runner_id: &str, job_run_id: &str) {
     if let Err(err) = released {
         tracing::error!(
             runner = runner_id,
-            "a runner reserved for a job another claim took was not freed: {err}"
+            "a runner reserved for a job it is not running was not freed: {err}"
         );
     }
 }
 
-/// Free a runner whose `currentJobRunId` names a job that has ended or is gone (a member that stopped before it freed
-/// it): it is free, as its running jobs were just counted.
+/// Free a runner whose `currentJobRunId` names a job it is not running: one that has ended or is gone (a member that
+/// stopped before it freed it), or one that is not running with this runner (a claim that failed or stopped between
+/// the reservation and the job's claim, or a job another claim took). Called under the pool's lease, where no claim of
+/// this runner is between the two, after its running jobs were counted.
 fn free_stale_job(entity: &EntityFacade, runner_id: &str) -> Result<(), Error> {
     let Some(runner) = super::one(entity, RUNNER, "runnerId", runner_id)? else {
         return Ok(());
@@ -309,9 +351,10 @@ fn free_stale_job(entity: &EntityFacade, runner_id: &str) -> Result<(), Error> {
     let Some(current) = field(&runner, "currentJobRunId") else {
         return Ok(());
     };
-    let ended = super::one(entity, JOB_RUN, "jobRunId", &current)?
-        .is_none_or(|job| field(&job, "statusId").is_some_and(|status| super::ENDED.contains(&status.as_str())));
-    if ended {
+    let running_here = super::one(entity, JOB_RUN, "jobRunId", &current)?.is_some_and(|job| {
+        field(&job, "statusId").as_deref() == Some("running") && field(&job, "runnerId").as_deref() == Some(runner_id)
+    });
+    if !running_here {
         release_runner(entity, runner_id, &current);
     }
     Ok(())

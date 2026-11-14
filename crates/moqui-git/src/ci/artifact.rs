@@ -290,7 +290,8 @@ pub fn store(
     }
     row.create(entity)?;
     // two uploads at once may each have fit what was left: counted again with this one stored, the one that went past
-    // a cap is taken back
+    // a cap is taken back. Its content blob is left to gc#ContentBlobs, which deletes a blob no row references: blobs
+    // are kept by their content, so the same bytes may be another upload's
     for (setting, key, id, what) in &caps {
         let cap = super::number_setting(setting, 0);
         let Some(id) = id.as_ref().filter(|_| cap > 0) else {

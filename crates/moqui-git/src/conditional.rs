@@ -28,6 +28,10 @@ pub(crate) enum Commit {
     /// A statement of its own on a reserve connection, committed at once: a claim other members see before the
     /// caller's transaction ends.
     Own,
+    /// [`Commit::Own`] with no more than this long waited for the database's answer (the connection's read timeout:
+    /// a server that does not answer, or a row lock held that long, fails the statement and the connection is
+    /// closed), so a lease's renewal is never held past its time.
+    OwnWithin(std::time::Duration),
 }
 
 /// `UPDATE entity_name SET fields, lastUpdatedStamp WHERE condition`, committed as `commit` says: how many rows
@@ -57,7 +61,7 @@ pub(crate) fn update_where(
         let now = || jiff::Timestamp::now().as_millisecond();
         let millis = match commit {
             Commit::Caller => tx.start_time_millis().unwrap_or_else(now),
-            Commit::Own => now(),
+            Commit::Own | Commit::OwnWithin(_) => now(),
         };
         params.push(moqui_core::user::stamp_value(millis));
     }
@@ -65,5 +69,16 @@ pub(crate) fn update_where(
     Ok(match commit {
         Commit::Caller => moqui_core::entity::exec::execute_tx(&tx, &statement.sql, &params)?,
         Commit::Own => tx.with_reserve(|conn| conn.execute(&statement.sql, &params))?,
+        Commit::OwnWithin(limit) => tx.with_reserve(|conn| {
+            conn.set_read_timeout(Some(limit))?;
+            let changed = conn.execute(&statement.sql, &params);
+            // back to the pool with no limit (a connection that timed out is closed and not kept)
+            if !conn.is_closed() {
+                if let Err(err) = conn.set_read_timeout(None) {
+                    tracing::debug!("a reserve connection's read timeout was not cleared: {err}");
+                }
+            }
+            changed
+        })?,
     })
 }

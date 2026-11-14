@@ -631,6 +631,33 @@ fn a_push_runs_a_pipeline_on_the_fake_host_to_its_statuses() {
             "{headers:?}"
         );
     }
+    // a job's XML asked inline is still an attachment (it could run script on the application's origin); with
+    // inlineActive it is shown, sandboxed and never sniffed
+    for (inline_active, shown) in [(false, false), (true, true)] {
+        let _entered = fixture.context.enter();
+        moqui_core::user::internal_login_user(READER).unwrap();
+        let _web = moqui_core::web::install(BTreeMap::new());
+        let parameters: BTreeMap<String, Value> = [
+            ("artifactId".to_string(), s(&report_id)),
+            ("inline".to_string(), Value::Bool(true)),
+            ("inlineActive".to_string(), Value::Bool(inline_active)),
+        ]
+        .into_iter()
+        .collect();
+        moqui_core::service::sync(&format!("{SERVICES}.send#RunArtifact"), &parameters).unwrap();
+        let (status, headers, _, _) = moqui_core::web::take_output();
+        assert_eq!(status, 200);
+        let header = |wanted: &str| {
+            headers
+                .iter()
+                .find(|(name, _)| name == wanted)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(header("Content-Disposition") == "inline", shown, "{headers:?}");
+        assert_eq!(header("X-Content-Type-Options"), "nosniff", "{headers:?}");
+        assert_eq!(header("Content-Security-Policy") == "sandbox", shown, "{headers:?}");
+    }
     // the commit's pipelines, as the engine reads them, for the application
     let definitions = ok(
         &fixture,
@@ -692,6 +719,15 @@ fn a_push_runs_a_pipeline_on_the_fake_host_to_its_statuses() {
     let late = fixture.dir.join("late");
     std::fs::create_dir_all(&late).unwrap();
     assert!(runner::http::checkout(&format!("{base}/git/app.git"), &commit, 1, &job_token, &late).is_err());
+    // as the runner REST answers it: gone (410), no failed sign-in
+    assert_eq!(
+        git_status(
+            &fixture,
+            &git_request("app", GitService::UploadPack, true, &format!("Bearer {job_token}"))
+        )
+        .0,
+        410
+    );
 
     // the job that needed it is queued now, runs, and the run ends
     assert_eq!(text(&job_named(&fixture, &run_id, "after"), "statusId"), "queued");
@@ -1233,6 +1269,24 @@ const CHECK_SERVICE: &str = r#"<services>
     </service>
 </services>"#;
 
+/// Write the application's run check ([`CHECK_SERVICE`]) where a fixture with
+/// `run-check-service="test.CiCheck.check#Run"` finds it.
+fn install_check(fixture: &Fixture) {
+    let _entered = fixture.context.enter();
+    std::fs::create_dir_all(fixture.dir.join("service/test")).unwrap();
+    let stub = fixture.dir.join("service/test/CiCheck.xml");
+    std::fs::write(&stub, CHECK_SERVICE).unwrap();
+    let framework = moqui_core::context::framework_dir();
+    let failures = moqui_core::service::lint(&[
+        framework.join("service/org/moqui/git/GitServices.xml"),
+        framework.join("service/org/moqui/git/GitCiServices.xml"),
+        framework.join("service/org/moqui/dev/InstanceServices.xml"),
+        stub,
+    ])
+    .unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
 #[test]
 fn the_applications_check_refuses_holds_allows_and_lowers_a_run() {
     if !git_available() {
@@ -1240,21 +1294,7 @@ fn the_applications_check_refuses_holds_allows_and_lowers_a_run() {
     }
     let fixture = ci_fixture("ci-check", "success", r#"run-check-service="test.CiCheck.check#Run""#);
     let base = http_server(fixture.context.factory());
-    {
-        let _entered = fixture.context.enter();
-        std::fs::create_dir_all(fixture.dir.join("service/test")).unwrap();
-        let stub = fixture.dir.join("service/test/CiCheck.xml");
-        std::fs::write(&stub, CHECK_SERVICE).unwrap();
-        let framework = moqui_core::context::framework_dir();
-        let failures = moqui_core::service::lint(&[
-            framework.join("service/org/moqui/git/GitServices.xml"),
-            framework.join("service/org/moqui/git/GitCiServices.xml"),
-            framework.join("service/org/moqui/dev/InstanceServices.xml"),
-            stub,
-        ])
-        .unwrap();
-        assert!(failures.is_empty(), "{failures:?}");
-    }
+    install_check(&fixture);
     let (_work, commit) = pushed(&fixture, &base, "app", &[]);
     // the push: no decision, so the engine's own (trusted: queued), under the owner the check named
     let run = only_run(&fixture, "app", &commit);
@@ -2753,8 +2793,13 @@ fn a_job_in_an_environment_that_requires_approval_holds_its_run_for_another_main
         eprintln!("skipped: git is not on the PATH");
         return;
     }
-    let fixture = ci_fixture("ci-env-approval", "success", "");
+    let fixture = ci_fixture(
+        "ci-env-approval",
+        "success",
+        r#"run-check-service="test.CiCheck.check#Run""#,
+    );
     let base = http_server(fixture.context.factory());
+    install_check(&fixture);
     define(&fixture, "deployed", "db");
     {
         let _entered = fixture.context.enter();
@@ -2781,7 +2826,7 @@ fn a_job_in_an_environment_that_requires_approval_holds_its_run_for_another_main
         member.create(&fixture.entity).unwrap();
     }
     let file = r#"<ci>
-    <pipeline name="ship" on="push">
+    <pipeline name="ship" on="push merge-request">
         <job name="deploy" image="moqui-build:1" pool="linux" environment="prod"><step run="echo deploy"/></job>
     </pipeline>
 </ci>"#;
@@ -2808,6 +2853,23 @@ fn a_job_in_an_environment_that_requires_approval_holds_its_run_for_another_main
     assert_eq!(
         (text(&run, "approvalState"), text(&run, "approvedByUserId")),
         ("approved".into(), "git.second".into())
+    );
+    // an untrusted run (a fork's merge request) the application's check allows still waits for the environment
+    let mut request = outside_request("deployed", &commit);
+    request.merge_request_id = Some("MR-ALLOWED".into());
+    let held = queue_request(&fixture, &request).remove(0);
+    assert_eq!(held.status, "waiting");
+    let run = rows(
+        &fixture,
+        "moqui.resource.GitPipelineRun",
+        &[("pipelineRunId", &held.pipeline_run_id)],
+    )
+    .remove(0);
+    assert_eq!(text(&run, "trusted"), "N");
+    assert!(
+        text(&run, "statusMessage").contains("environment prod requires it"),
+        "{}",
+        text(&run, "statusMessage")
     );
 }
 
@@ -2868,5 +2930,209 @@ fn a_start_pass_is_outside_its_callers_transaction_and_a_rolled_back_claim_keeps
             crate::ci::token::JobToken::Ended,
             "a late call with the old token is told the job is gone"
         );
+    }
+}
+
+/// A pool token mints only so many runner tokens: registrations are counted per pool
+/// (`runner-max-registrations-per-minute`), and a pool holds at most `max-runners-per-pool` active runners (409 past
+/// it), so a leaked pool token cannot fill the web protection's list of good CI tokens.
+#[test]
+fn registrations_are_rate_counted_per_pool_and_a_pool_holds_so_many_runners() {
+    let fixture = ci_fixture(
+        "ci-register-cap",
+        "success",
+        r#"max-runners-per-pool="2" runner-max-registrations-per-minute="3""#,
+    );
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{SERVICES}.store#RunnerPool"),
+        &[
+            ("runnerPoolId", s("P_CAP")),
+            ("poolName", s("cap")),
+            ("poolKind", s("registered")),
+            ("allowedImages", s("*")),
+        ],
+    );
+    let pool_token = to_plain_string(
+        &ok(
+            &fixture,
+            WRITER,
+            &format!("{SERVICES}.create#RunnerPoolToken"),
+            &[("runnerPoolId", s("P_CAP"))],
+        )["token"],
+    );
+    let register = || -> u16 {
+        let body = r#"{"name":"mini"}"#;
+        let request = RunnerHttpRequest {
+            method: "POST".into(),
+            path: "register".into(),
+            query: String::new(),
+            authorization: Some(format!("Bearer {pool_token}")),
+            content_length: Some(body.len() as u64),
+            secure: true,
+            client_ip: "127.0.0.1".into(),
+        };
+        let _entered = fixture.context.enter();
+        let mut response = MemoryResponse::default();
+        runner_http::serve(&request, &mut body.as_bytes(), &mut response);
+        response.status
+    };
+    let minute = || jiff::Timestamp::now().as_millisecond() / 60_000;
+    let started = minute();
+    assert_eq!([register(), register()], [200, 200]);
+    assert_eq!(register(), 409, "the pool has its most runners");
+    let fourth = register();
+    // the counts start again each minute
+    if minute() == started {
+        assert_eq!(fourth, 429, "the fourth registration of the pool in a minute");
+    }
+}
+
+/// A job cancelled between its claim and its container's start gets no container: the start re-reads the job.
+#[test]
+fn a_job_cancelled_between_its_claim_and_its_start_gets_no_container() {
+    let fixture = ci_fixture("ci-cancel-before-start", "success", "");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        create(
+            &fixture.entity,
+            "moqui.resource.GitPipelineRun",
+            &[
+                ("pipelineRunId", "R-C"),
+                ("repositoryId", "app"),
+                ("pipelineName", "check"),
+                ("statusId", "queued"),
+                ("trusted", "Y"),
+                ("commitId", "0123456789012345678901234567890123456789"),
+            ],
+        );
+        create(
+            &fixture.entity,
+            "moqui.resource.GitJobRun",
+            &[
+                ("jobRunId", "J-C"),
+                ("pipelineRunId", "R-C"),
+                ("jobName", "build"),
+                ("statusId", "queued"),
+                ("image", "moqui-build:1"),
+                ("poolName", "linux"),
+            ],
+        );
+    }
+    let _entered = fixture.context.enter();
+    let (_, claimed) = engine::claim_queued(&fixture.entity).unwrap();
+    assert_eq!(claimed.len(), 1, "claimed");
+    let cancelled = engine::Outcome {
+        status: "cancelled",
+        exit_code: None,
+        message: Some("Cancelled".to_string()),
+    };
+    assert!(engine::finish_job(&fixture.entity, "J-C", &cancelled).unwrap());
+    let done = engine::start_claimed(&fixture.entity, claimed, engine::Started::default());
+    assert_eq!(done, engine::Started::default());
+    assert!(
+        FakeHosts::of(fixture.context.factory()).containers().is_empty(),
+        "no container was started"
+    );
+    assert!(
+        !FakeHosts::of(fixture.context.factory())
+            .calls()
+            .iter()
+            .any(|call| call.action == "start"),
+        "the host was not asked"
+    );
+}
+
+/// An application keeps a release's artifacts with set#RunArtifactKeep (the update right), and every transport reads a
+/// run artifact at its `ci-artifact://` location, with get#RunArtifact's check: a reader of the repository reads it,
+/// no one else finds it.
+#[test]
+fn a_run_artifact_is_kept_by_its_service_and_read_at_its_location() {
+    let fixture = ci_fixture("ci-artifact-location", "success", "");
+    define(&fixture, "app", "db");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let blobs = moqui_core::resource::blob::BlobStore::new(fixture.entity.clone());
+        let info = blobs
+            .put(
+                &mut &b"hello\n"[..],
+                &moqui_core::resource::blob::Expected::default(),
+                1024,
+            )
+            .unwrap();
+        create(
+            &fixture.entity,
+            "moqui.resource.GitPipelineRun",
+            &[
+                ("pipelineRunId", "R-A"),
+                ("repositoryId", "app"),
+                ("pipelineName", "release"),
+                ("statusId", "success"),
+                ("trusted", "Y"),
+            ],
+        );
+        create(
+            &fixture.entity,
+            "moqui.resource.GitRunArtifact",
+            &[
+                ("artifactId", "A-1"),
+                ("jobRunId", "J-A"),
+                ("pipelineRunId", "R-A"),
+                ("repositoryId", "app"),
+                ("artifactKind", "report"),
+                ("name", "out.txt"),
+                ("blobId", &info.id),
+                ("keep", "N"),
+            ],
+        );
+    }
+    let keep = format!("{SERVICES}.set#RunArtifactKeep");
+    let (_, errors) = call(
+        &fixture,
+        READER,
+        &keep,
+        &[("artifactId", s("A-1")), ("keep", Value::Bool(true))],
+    );
+    assert!(errors.contains("needs the update right"), "{errors}");
+    let kept = ok(
+        &fixture,
+        WRITER,
+        &keep,
+        &[("artifactId", s("A-1")), ("keep", Value::Bool(true))],
+    );
+    match &kept["artifact"] {
+        Value::Map(artifact) => {
+            assert_eq!(artifact["keep"], Value::Bool(true));
+            assert_eq!(to_plain_string(&artifact["location"]), "ci-artifact://A-1/out.txt");
+        }
+        other => panic!("{other:?}"),
+    }
+    let stored = rows(&fixture, "moqui.resource.GitRunArtifact", &[("artifactId", "A-1")]);
+    assert_eq!(text(&stored[0], "keep"), "Y");
+
+    let resources = fixture.context.factory().resource();
+    {
+        let _entered = fixture.context.enter();
+        moqui_core::user::internal_login_user(READER).unwrap();
+        let read = resources.get("ci-artifact://A-1/out.txt").unwrap().read_text().unwrap();
+        assert_eq!(read, "hello\n");
+        let opened = resources
+            .open("ci-artifact://A-1")
+            .unwrap()
+            .expect("found by its id alone");
+        assert_eq!(opened.stat.size, 6);
+    }
+    {
+        // a user who may not view the repository does not find it
+        let _entered = fixture.context.enter();
+        {
+            let _authz = fixture.context.disable_authz();
+            crate::server::tests::user(&fixture.entity, "git.outsider");
+        }
+        moqui_core::user::internal_login_user("git.outsider").unwrap();
+        assert!(resources.open("ci-artifact://A-1/out.txt").unwrap().is_none());
     }
 }

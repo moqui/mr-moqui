@@ -131,12 +131,29 @@ fn down_request(method: http::Method) -> http::Request<tonic::body::Body> {
     request
 }
 
+const WAITS: Waits = Waits {
+    open: Duration::from_secs(5),
+    idle: Duration::from_secs(5),
+    head: Duration::from_secs(5),
+    first_byte: Duration::from_millis(300),
+};
+
 /// One try and its outcomes: the answer's body or the failure, each member's outcome in order, and whether another
 /// member was asked for.
 async fn tried(
     first: &SendRequest<tonic::body::Body>,
     second: &SendRequest<tonic::body::Body>,
     method: http::Method,
+) -> (Result<String, String>, Vec<(String, bool)>, bool) {
+    tried_within(first, Some(second), method, WAITS).await
+}
+
+/// [`tried`] within `waits`, with no other member when `second` is none.
+async fn tried_within(
+    first: &SendRequest<tonic::body::Body>,
+    second: Option<&SendRequest<tonic::body::Body>>,
+    method: http::Method,
+    waits: Waits,
 ) -> (Result<String, String>, Vec<(String, bool)>, bool) {
     let outcomes = std::sync::Mutex::new(Vec::new());
     let asked = std::sync::atomic::AtomicBool::new(false);
@@ -151,14 +168,9 @@ async fn tried(
         |failed| {
             assert_eq!(failed, "member-a");
             asked.store(true, std::sync::atomic::Ordering::SeqCst);
-            Some(picked("member-b", second))
+            second.map(|second| picked("member-b", second))
         },
-        Waits {
-            open: Duration::from_secs(5),
-            idle: Duration::from_secs(5),
-            head: Duration::from_secs(5),
-            first_byte: Duration::from_millis(300),
-        },
+        waits,
         |picked, ok| outcomes.lock().unwrap().push((picked.member.clone(), ok)),
     )
     .await;
@@ -269,7 +281,7 @@ async fn hung_member() -> (
 /// A GET to a member that never answers waits only the first-byte wait (not the long head wait meant for an answer
 /// after a stored body), then goes once more to another member, and the hung one's outcome is a failure, which sets
 /// it aside once it has failed `set-aside-failures` times in a row (plans/Edge-Node2.md §4.4). A POST with no body
-/// to it times out as soon, and goes to no other member.
+/// to it is never sent again, so it waits the head wait, not the first-byte wait, and goes to no other member.
 #[tokio::test]
 async fn a_get_held_by_a_hung_member_goes_to_another_and_the_hung_one_fails() {
     let (hung, hung_seen, _a) = hung_member().await;
@@ -290,11 +302,42 @@ async fn a_get_held_by_a_hung_member_goes_to_another_and_the_hung_one_fails() {
     assert_eq!(hung_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(answering_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
 
-    let (answered, outcomes, asked) = tried(&hung, &answering, http::Method::POST).await;
+    let waits = Waits {
+        head: Duration::from_millis(900),
+        ..WAITS
+    };
+    let started = std::time::Instant::now();
+    let (answered, outcomes, asked) = tried_within(&hung, Some(&answering), http::Method::POST, waits).await;
     assert_eq!(answered.unwrap_err(), "TimedOut");
+    assert!(
+        started.elapsed() >= Duration::from_millis(850),
+        "a POST waits the head wait: {:?}",
+        started.elapsed()
+    );
     assert!(!asked);
     assert_eq!(outcomes, [("member-a".to_string(), false)]);
     assert_eq!(answering_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// A first-byte wait that runs out on a GET that is not sent again says only that the answer is slow: with no other
+/// member, or on the second try, it is not counted against the member (no outcome), so slow pages do not set aside a
+/// whole pool. The first try's, followed by a second, is counted.
+#[tokio::test]
+async fn a_first_byte_timeout_not_followed_by_another_try_is_not_counted() {
+    let (hung, _, _a) = hung_member().await;
+    let (answered, outcomes, asked) = tried_within(&hung, None, http::Method::GET, WAITS).await;
+    assert_eq!(answered.unwrap_err(), "FirstByteTimedOut");
+    assert!(asked, "another member was asked for, and there was none");
+    assert!(outcomes.is_empty(), "{outcomes:?}");
+
+    let (other_hung, _, _b) = hung_member().await;
+    let (answered, outcomes, _) = tried(&hung, &other_hung, http::Method::HEAD).await;
+    assert_eq!(answered.unwrap_err(), "FirstByteTimedOut");
+    assert_eq!(
+        outcomes,
+        [("member-a".to_string(), false)],
+        "only the try that was followed by another"
+    );
 }
 
 #[test]
@@ -389,7 +432,7 @@ async fn upload(
             }
         }
     });
-    let (body, progress) = watched(tonic::body::Body::new(Fed(fed)));
+    let (body, progress) = watched(tonic::body::Body::new(Fed(fed)), false);
     let mut request = down_request(http::Method::PUT);
     *request.body_mut() = body;
     request.extensions_mut().insert(progress);

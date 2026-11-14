@@ -487,8 +487,9 @@ fn queue_pipeline(
     }
     let protected =
         decided.trusted && trust::is_protected(entity, &request.repository_id, request.event, &request.ref_name)?;
-    // a job in an environment that requires approval holds the whole run for a maintainer's (§8.6)
-    let approval_needed = if decided.decision == "allow" && decided.trusted {
+    // a job in an environment that requires approval holds the whole run for a maintainer's (§8.6), trusted or not:
+    // an untrusted run gets no secrets, but its job still deploys to the environment
+    let approval_needed = if decided.decision == "allow" {
         trust::approval_environments(
             entity,
             &request.repository_id,

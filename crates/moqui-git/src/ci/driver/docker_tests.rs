@@ -101,7 +101,11 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
                 .nth(index)
                 .map(|(_, _, body)| body["Image"].as_str().unwrap_or_default().to_string())
                 .unwrap_or_default();
-            let user = if image == "runs-as-root:1" { "" } else { "app" };
+            let user = match image.as_str() {
+                "runs-as-root:1" => "",
+                "named-user:1" => "app",
+                _ => "1000:1000",
+            };
             (200, json!({"Config": {"User": user}}).to_string())
         }
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
@@ -331,6 +335,13 @@ fn a_jobs_container_has_limits_and_no_way_out() {
     }
     for user in ["1000:1000", "nobody", "10"] {
         assert!(!super::is_root_user(user), "{user}");
+    }
+    // container-user="image" takes only a numeric uid other than 0: a name may be uid 0 in the image's passwd
+    for user in ["1000", "1000:1000", " 10 ", "65534:0"] {
+        assert!(super::is_numeric_user(user), "{user}");
+    }
+    for user in ["", "0", "0:1000", "00", "root", "app", "nobody", "1000x", ":1000"] {
+        assert!(!super::is_numeric_user(user), "{user}");
     }
     // with service containers the job is on its own network; with no limits none are sent; the image's user by conf
     let bare: BTreeMap<String, Value> = [("image".to_string(), Value::string("i"))].into_iter().collect();
@@ -607,13 +618,14 @@ fn a_host_row_that_cannot_be_reached_says_why() {
 }
 
 /// With `container-user="image"` the container runs as its image's user, which is inspected before it starts: an
-/// image with no user, or root, is refused and what was made is removed; one with its own user starts.
+/// image with no user, root or a user name (which may be uid 0 in the image) is refused and what was made is removed;
+/// one with a numeric uid of its own starts.
 #[test]
 fn an_image_user_that_is_root_is_refused_before_it_starts() {
     let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
     let (out, errors) = api.call(start_run_docker, &start_parameters("runs-as-root:1"));
     assert!(!out.contains_key("instanceRef"), "{out:?}");
-    assert!(errors.contains("runs as root"), "{errors}");
+    assert!(errors.contains("may run as root"), "{errors}");
     let seen = api.seen();
     assert!(
         !seen.iter().any(|(_, target, _)| target.ends_with("/start")),
@@ -623,6 +635,11 @@ fn an_image_user_that_is_root_is_refused_before_it_starts() {
         .iter()
         .any(|(method, target, _)| method == "DELETE" && target.contains("/containers/c0")));
     assert!(seen[0].2.get("User").is_none(), "no user set: the image's");
+
+    let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("named-user:1"));
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("numeric uid"), "{errors}");
 
     let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));

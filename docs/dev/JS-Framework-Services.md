@@ -540,7 +540,9 @@ Repositories kept by the server (in the database, on disk, or a mirror of a remo
 | `GitCiServices.find#PipelineRuns` | `repositoryId*`, `refName`, `event`, `statusId`, `mergeRequestId`, `commitId`, `pipelineName`, `pageIndex`, `pageSize`, `includeHidden` → `runList`, `runCount`: pipeline runs ([Pipelines](../interfaces/Pipelines.md#services)) |
 | `GitCiServices.get#PipelineRun`, `get#JobRun` | `pipelineRunId` (or `repositoryId`, `runNum`); `jobRunId*` → `run`, `jobList`, `canUpdate`; `job`, `stepList`, `failedTestList`, `artifactList` |
 | `GitCiServices.get#JobLog` | `jobRunId*`, `afterChunkSeq`, `limit`, `offset`, `maxBytes`, `watch` → `chunkList`, `nextChunkSeq`, `text`, `nextOffset`, `logBytes`, `finished`, `statusId`; with `watch`, the topic `GitCiJobLog` |
-| `GitCiServices.get#RunArtifact` | `artifactId*`, `offset`, `maxBytes` → `artifact`, `bytes`, `nextOffset`, `done` |
+| `GitCiServices.get#RunArtifact` | `artifactId*`, `offset`, `maxBytes` → `artifact` (with its `ci-artifact://` `location`), `bytes`, `nextOffset`, `done` |
+| `GitCiServices.send#RunArtifact` | `artifactId*`, `inline`, `inlineActive` → `artifact`: sends it as the response (an HTML, SVG, XML or JavaScript file inline only with `inlineActive`, sandboxed) |
+| `GitCiServices.set#RunArtifactKeep` | `artifactId*`, `keep*` → `artifact`. Needs update, or authorization disabled |
 | `GitCiServices.run#Pipeline`, `rerun#PipelineRun` | `repositoryId*`, `pipelineName*`, `refName`; `pipelineRunId*` → `pipelineRunId`, `runNum`, `statusId`. Need update |
 | `GitCiServices.cancel#PipelineRun`, `approve#PipelineRun`, `retry#JobRun` | `pipelineRunId*`; `jobRunId*` → `statusId`, `approvalState`, `jobRunId`. Need update (approve: or authorization disabled) |
 | `GitCiServices.find#CiSecrets`, `store#CiSecret`, `delete#CiSecret` | `repositoryId` or `ownerId`; `secretId`, `name`, `value`, `scope` (`protected`, `tags`, `environment`), `environmentId` → `secretList` (no values), `secretId`, `deleted` |

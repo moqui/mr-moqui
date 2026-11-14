@@ -332,6 +332,17 @@ fn a_remote_repository_is_a_read_only_mirror_kept_by_fetch() {
     assert!(err.to_string().contains("read-only mirror"), "{err}");
 
     resources.write_bytes("git://source/doc.md", b"v2\n").unwrap();
+    // a fence that fails right before the refs move (a lease lost during the network read) moves none
+    let fenced = fs::fetch(&mirror, &url, "main", &fs::Credentials::default(), true, None, &|| {
+        Err(moqui_core::context::Error::new("GitLeaseLost: fenced"))
+    })
+    .unwrap_err();
+    assert!(fenced.message().starts_with("GitLeaseLost"), "{fenced}");
+    assert_eq!(
+        fs::FsStore::open(&mirror).unwrap().read_ref("refs/heads/main").unwrap(),
+        Some(gix::ObjectId::from_hex(head.as_bytes()).unwrap()),
+        "the mirror's branch did not move"
+    );
     let newer = provider.fetch("mirror").unwrap().expect("a head");
     assert_ne!(newer, head);
     assert_eq!(

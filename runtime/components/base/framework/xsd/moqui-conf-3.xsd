@@ -1852,9 +1852,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="lost-seconds" type="non-neg-int-expandable" default="180"><xs:annotation><xs:documentation>A running job whose runner has not called for this long is checked on its host, and ended when its container is gone or has exited.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="queue-timeout-minutes" type="non-neg-int-expandable" default="1440"><xs:annotation><xs:documentation>A queued job no runner took in this long is an error.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="runner-max-requests-per-minute" type="non-neg-int-expandable" default="1200"><xs:annotation><xs:documentation>Runner REST requests of one job, or one registered runner, in a minute.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="runner-max-registrations-per-minute" type="non-neg-int-expandable" default="10"><xs:annotation><xs:documentation>Runner registrations of one pool (its pool token found good) in a minute; past it 429.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-runners-per-pool" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>The most active runners a pool of registered runners holds; a registration past it is refused (409) until one is revoked, so a pool token that leaked mints only so many runner tokens.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="runner-command" type="xs:string" default="moqui ci-run"><xs:annotation><xs:documentation>The command of a job's container, split at spaces.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="start-inline" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>Start a run's jobs soon after it is queued; false leaves them to the start job.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="container-user" type="xs:string" default="1000:1000"><xs:annotation><xs:documentation>The user of a job's container and its services; image for the image's own, which is then inspected before the container starts and refused when it is root (no USER, uid 0 or root). Never root.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="container-user" type="xs:string" default="1000:1000"><xs:annotation><xs:documentation>The user of a job's container and its services; image for the image's own, which is then inspected before the container starts and refused unless its USER is a numeric uid other than 0 (no USER, uid 0, root, or a name, which the image may map to uid 0). Never root.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="container-read-only-root" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>A job's container, and its service containers, have a read-only root with a sized tmpfs at /tmp and the working directory on a sized tmpfs; with the pool's diskMb the working directory is on the root filesystem diskMb sizes, which is then writable.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="container-workdir" type="xs:string" default="/workspace"><xs:annotation><xs:documentation>The working directory of a job's container.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="container-tmp-mb" type="non-neg-int-expandable" default="1024"><xs:annotation><xs:documentation>The size of the tmpfs at /tmp of a job's container and of its service containers.</xs:documentation></xs:annotation></xs:attribute>
@@ -2030,11 +2032,13 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="forward-first-byte-seconds" type="non-neg-int-expandable" default="30">
-                <xs:annotation><xs:documentation>The longest wait for the answer head of a forwarded request with no
-                    body (a GET, a HEAD), at most forward-head-seconds. Past it the member counts a failure toward
-                    set-aside-failures and a GET or HEAD goes once more to another member, so a hung member is set
-                    aside; a request whose answer takes longer to start (a slow report) is answered 504, so raise it
-                    for one. At least 1.
+                <xs:annotation><xs:documentation>The longest wait for the answer head of a forwarded GET or HEAD with
+                    no body, at most forward-head-seconds; any other request with no body (a POST, a DELETE) is never
+                    sent again and waits forward-head-seconds. Past it the GET or HEAD goes once more to another member
+                    and the first member counts a failure toward set-aside-failures, so a hung member is set aside;
+                    when it goes to no other member (none, or the second try) the timeout is not counted, since it says
+                    only that the answer is slow. A GET whose answer takes longer to start (a slow report) is answered
+                    504, so raise it for one. At least 1.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="ssh-tunnels" type="non-neg-int-expandable" default="256">
