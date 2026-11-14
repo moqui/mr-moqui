@@ -359,7 +359,7 @@ capture.last().toList            // ["customer@example.com"]
 
 | Method | |
 |---|---|
-| `getMessages()` | The captured messages, oldest first, each `{subject, fromAddress, fromName, toList, ccList, bccList, replyToList, body, bodyText, messageId, inReplyTo, references, attachmentNames, headers, capturedDate}` (the 500 most recent; `headers` the added header fields, such as a list email's List-Unsubscribe, name to value) |
+| `getMessages()` | The captured messages, oldest first, each `{subject, fromAddress, fromName, toList, ccList, bccList, replyToList, bounceAddress, body, bodyText, messageId, inReplyTo, references, attachmentNames, headers, capturedDate}` (the 500 most recent; `headers` the added header fields, such as a list email's List-Unsubscribe, name to value; `bounceAddress` the envelope sender bounces go to, empty for the From address) |
 | `last()`, `count()`, `clear()` | The newest one (or null), how many, and forget them |
 | `enable()`, `disable()`, `reset()` | Capture on or off for this server whatever the property says, and back to the property; reset it when the spec ends, as the switch outlives the spec |
 | `isEnabled()` | Whether a send now is captured |

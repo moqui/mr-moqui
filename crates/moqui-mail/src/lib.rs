@@ -62,6 +62,7 @@ pub mod mx;
 mod oauth;
 #[cfg(feature = "imap")]
 mod remote;
+pub mod report;
 #[cfg(feature = "imap")]
 mod store;
 #[cfg(feature = "imap")]
@@ -109,6 +110,7 @@ fn client_setting(name: &str) -> String {
 fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, send_template)?;
     rust_service!(map, send_message)?;
+    rust_service!(map, read_delivery_report)?;
     rust_service!(map, test_server)?;
     rust_service!(map, push_remote_changes)?;
     rust_service!(map, deliver_edge_outbound_mail)?;
@@ -166,6 +168,7 @@ macro_rules! mail_service {
 
 mail_service!(send_template, implementation::send_template);
 mail_service!(send_message, implementation::send_message);
+mail_service!(read_delivery_report, report::read_delivery_report);
 mail_service!(test_server, implementation::test_server);
 mail_service!(deliver_edge_outbound_mail, edge_mail::deliver_edge_outbound_mail);
 mail_service!(note_edge_mail_status, edge_mail::note_edge_mail_status);

@@ -16,6 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- send#Email and send#EmailTemplate are moqui_mail::send_template.
          send#EmailMessage is moqui_mail::send_message.
+         read#DeliveryReport is moqui_mail::read_delivery_report.
          poll#EmailServer is moqui_mail::poll_server.
          test#EmailServer is moqui_mail::test_server.
          deliver#EdgeMail, deliver#EdgeOutboundMail, note#EdgeMailStatus and fail#EdgeOutboundMail are
@@ -60,6 +61,32 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="deliveryOutcome"><description>On an SMTP failure, as send#EmailTemplate's: retryable for an
                 explicit temporary rejection or a server that was not reached, permanent for an explicit permanent
                 rejection, uncertain when acceptance is unknown.</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="read" noun="DeliveryReport" type="rust" location="moqui_mail::read_delivery_report" allow-remote="false">
+        <description>What a stored message says as a delivery report (mr-boss impl-marketing P6, F18): a delivery status
+            notification (RFC 3464, reportType dsn: each recipient's address, action, status and diagnostic) or an abuse
+            feedback report (ARF, RFC 5965, reportType arf: the feedback type, the original envelope sender and recipients),
+            from its report part and returned message as stored (EmailMessageAttachment files), never its body text; with the
+            returned message's Message-ID and the addresses the report came to (its Delivered-To trace fields, else its To:
+            a bounce address such as bounces+(key)@(domain)). A message that is no report answers an empty reportType.
+            Nothing is changed: what a report means for a delivery is the caller's. The edge node reads a DSN of a raw
+            message itself (deliver#EdgeOutboundMail's bounce).</description>
+        <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="reportType"><description>dsn, arf, or empty for a message that is no report</description></parameter>
+            <parameter name="recipientList" type="List"><description>A DSN's recipients, each {finalRecipient, originalRecipient,
+                action (failed, delayed, delivered, relayed, expanded), status (as 5.1.1: 5 permanent, 4 transient),
+                diagnosticCode}</description></parameter>
+            <parameter name="originalEnvelopeId"/>
+            <parameter name="feedbackType"><description>An ARF's Feedback-Type in lower case (abuse, fraud, virus, other,
+                not-spam, auth-failure)</description></parameter>
+            <parameter name="originalMailFrom"><description>An ARF's Original-Mail-From: the original envelope sender</description></parameter>
+            <parameter name="originalRcptToList" type="List"><description>An ARF's Original-Rcpt-To addresses</description></parameter>
+            <parameter name="arrivalDate"/>
+            <parameter name="reportedDomain"/>
+            <parameter name="originalMessageId"><description>The returned message's Message-ID, with its angle brackets</description></parameter>
+            <parameter name="deliveredToList" type="List"><description>The addresses the report came to</description></parameter>
         </out-parameters>
     </service>
     <service verb="test" noun="EmailServer" type="rust" location="moqui_mail::test_server"

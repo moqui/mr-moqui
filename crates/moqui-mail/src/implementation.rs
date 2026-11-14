@@ -24,6 +24,11 @@
 //! attachments render the same way. A screen attachment in `xsl-fo` renders `html-print` and attaches its PDF;
 //! when PDF is not available it is skipped with a logged warning, as Java does when the PDF transform fails. A render
 //! that fails stops the send with the message `Error sending email: ...`, as the Groovy outer catch did.
+//!
+//! One call may give its own `subject`, `fromAddress`, `fromName`, `bounceAddress` and `emailServerId` over the
+//! template's ([`CallHeaders`]; mr-boss impl-marketing P6, F17): a delivery of a business sending profile goes out from
+//! the profile's relay and sender with a bounce address of its own (VERP), with no template per profile. A call's
+//! subject is used as it is, never expanded, so text a person wrote cannot run as an expression.
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -81,14 +86,19 @@ pub(super) fn send_template(
     let mut bcc = param_text(parameters, "bccAddresses");
     cc = merge_lists(&cc, &field_text(&template, "ccAddresses"));
     bcc = merge_lists(&bcc, &field_text(&template, "bccAddresses"));
-    let headers = expand_headers(&template, body_parameters(parameters))?;
+    let call = CallHeaders::of(parameters);
+    let headers = call.over(expand_headers(&template, body_parameters(parameters))?);
+    let server_id = call
+        .email_server_id
+        .clone()
+        .unwrap_or_else(|| field_text(&template, "emailServerId"));
     let supplied_body = param_text(parameters, "body");
     let supplied_text = param_text(parameters, "bodyText");
     let screen = field_text(&template, "bodyScreenLocation");
     if screen.is_empty() && supplied_body.is_empty() && supplied_text.is_empty() {
         return fail("email has no body");
     }
-    let server_web_base_url = find_one(facade, SERVER, "emailServerId", &field_text(&template, "emailServerId"))?
+    let server_web_base_url = find_one(facade, SERVER, "emailServerId", &server_id)?
         .map(|server| field_text(&server, "webBaseUrl"))
         .unwrap_or_default();
     let env = RenderEnv::new(&template, &server_web_base_url, parameters);
@@ -110,7 +120,7 @@ pub(super) fn send_template(
     put_context("webHostName", Value::string(&env.web_host_name))?;
     let mut email_message_id = String::new();
     if create_message(parameters) {
-        email_message_id = insert_draft(facade, parameters, &template, &headers, &cc, &bcc)?;
+        email_message_id = insert_draft(facade, parameters, &template, &server_id, &headers, &cc, &bcc)?;
         put_context("emailMessageId", Value::string(&email_message_id))?;
     }
     let (body, body_text) = match render_bodies(&env, &screen, supplied_body, supplied_text) {
@@ -120,7 +130,6 @@ pub(super) fn send_template(
     if !email_message_id.is_empty() {
         update_ready(facade, &email_message_id, &body, &body_text)?;
     }
-    let server_id = field_text(&template, "emailServerId");
     let Some(server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
         return fail_with(
             format!("No EmailServer record found for EmailTemplate {template_id}"),
@@ -162,7 +171,10 @@ pub(super) fn send_template(
             .reply_to
             .clone()
             .unwrap_or_else(|| split_addresses(&field_text(&template, "replyToAddresses"))),
-        bounce: field_text(&template, "bounceAddress"),
+        bounce: call
+            .bounce_address
+            .clone()
+            .unwrap_or_else(|| field_text(&template, "bounceAddress")),
         body,
         body_text,
         attachments: Vec::new(),
@@ -469,6 +481,64 @@ struct Expanded {
     subject: String,
 }
 
+/// What one `send#EmailTemplate` call gives over its template (F17): each none when the call leaves it out. A subject's
+/// line breaks become spaces; an address or server id with a line break is left out with a warning, as
+/// `replyToAddresses` is.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct CallHeaders {
+    pub(super) subject: Option<String>,
+    pub(super) from_address: Option<String>,
+    pub(super) from_name: Option<String>,
+    pub(super) bounce_address: Option<String>,
+    pub(super) email_server_id: Option<String>,
+}
+
+impl CallHeaders {
+    pub(super) fn of(parameters: &BTreeMap<String, Value>) -> Self {
+        let given = |name: &str| {
+            let value = param_text(parameters, name).trim().to_string();
+            (!value.is_empty()).then_some(value)
+        };
+        let one_line = |name: &str| {
+            let value = given(name)?;
+            if value.contains(['\r', '\n']) {
+                tracing::warn!("{name} has a line break, left out");
+                return None;
+            }
+            Some(value)
+        };
+        let address = |name: &str| {
+            let value = one_line(name)?;
+            if !value.contains('@') {
+                tracing::warn!("{name} is not an address, left out");
+                return None;
+            }
+            Some(value)
+        };
+        Self {
+            subject: given("subject").map(|text| {
+                text.split(['\r', '\n'])
+                    .filter(|line| !line.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
+            from_address: address("fromAddress"),
+            from_name: one_line("fromName"),
+            bounce_address: address("bounceAddress"),
+            email_server_id: one_line("emailServerId"),
+        }
+    }
+
+    /// The template's expanded headers with this call's in their place.
+    fn over(&self, expanded: Expanded) -> Expanded {
+        Expanded {
+            from_address: self.from_address.clone().unwrap_or(expanded.from_address),
+            from_name: self.from_name.clone().unwrap_or(expanded.from_name),
+            subject: self.subject.clone().unwrap_or(expanded.subject),
+        }
+    }
+}
+
 fn expand_headers(
     template: &EntityValue,
     parameters: Option<&moqui_lib::object::ValueMap>,
@@ -647,6 +717,7 @@ fn insert_draft(
     facade: &EntityFacade,
     parameters: &BTreeMap<String, Value>,
     template: &EntityValue,
+    server_id: &str,
     headers: &Expanded,
     cc: &str,
     bcc: &str,
@@ -666,7 +737,6 @@ fn insert_draft(
     let to_user = param_text(parameters, "toUserId");
     let to = param_text(parameters, "toAddresses");
     let template_id = field_text(template, "emailTemplateId");
-    let server_id = field_text(template, "emailServerId");
     force_new(facade, || {
         let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
         let mut row = facade.make_value(MESSAGE)?;
@@ -682,7 +752,7 @@ fn insert_draft(
         set_text(&mut row, "contentType", "text/html");
         set_text(&mut row, "emailTypeEnumId", &email_type);
         set_text(&mut row, "emailTemplateId", &template_id);
-        set_text(&mut row, "emailServerId", &server_id);
+        set_text(&mut row, "emailServerId", server_id);
         set_text(&mut row, "fromUserId", &from_user);
         set_text(&mut row, "toUserId", &to_user);
         let extra = template_extra_headers(parameters);
@@ -1517,6 +1587,7 @@ fn captured(letter: &Letter) -> bool {
             cc: letter.cc.clone(),
             bcc: letter.bcc.clone(),
             reply_to: letter.reply_to.clone(),
+            bounce_address: letter.bounce.clone(),
             body: letter.body.clone(),
             body_text: letter.body_text.clone(),
             message_id: letter.message_id.clone(),

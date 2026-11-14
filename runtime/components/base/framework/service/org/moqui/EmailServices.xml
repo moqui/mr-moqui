@@ -32,6 +32,17 @@ along with this software (see the LICENSE.md file). If not, see
                 oldest are dropped to keep the header to one line.</description></parameter>
             <parameter name="replyToAddresses" allow-html="any"><description>Comma separated Reply-To addresses that replace the template's,
                 such as a scoped reply address. A value with a line break or without addresses is left out.</description></parameter>
+            <parameter name="subject" allow-html="any"><description>The subject of this message over the template's (one line; used as
+                it is, never expanded with bodyParameters as the template's is). Empty: the template's.</description></parameter>
+            <parameter name="fromAddress" allow-html="any"><description>The From address of this message over the template's, such as a
+                business sending profile's sender. A value with a line break or without an @ is left out.</description></parameter>
+            <parameter name="fromName"><description>The From name over the template's</description></parameter>
+            <parameter name="bounceAddress" allow-html="any"><description>The envelope sender (Return-Path) of this message over the
+                template's: a bounce address of its own, such as a VERP address bounces+(key)@(bounce domain) that finds the delivery
+                its bounce is for. A value with a line break or without an @ is left out. An edge relay with edge_mail_bounce_domain
+                set replaces it with its own, as it does the template's.</description></parameter>
+            <parameter name="emailServerId"><description>The EmailServer this message goes out through over the template's, such as
+                a business sending profile's relay; the caller checks it may use it (this service is internal).</description></parameter>
             <parameter name="createEmailMessage" type="Boolean" default="true"/>
             <parameter name="emailTypeEnumId"/>
             <parameter name="fromUserId"/><parameter name="toUserId"/>
