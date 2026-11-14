@@ -229,6 +229,10 @@ libc = "0.2"
 # size, and the session leader of `moqui term-exec`. A workspace dependency already; these features add no crate.
 rustix = { workspace = true, features = ["pty", "process", "termios", "fs"] }
 
+[target.'cfg(windows)'.dependencies]
+# Directory junctions for a test scratch runtime (src/test_cmd/fixture.rs). A symlink needs Developer Mode or an
+# extra privilege; a junction does not. MIT OR Apache-2.0. 1.4.1 strips the `\\?\` prefix canonicalize adds.
+junction = "1.4.1"
 
 [lints]
 workspace = true

@@ -72,9 +72,7 @@ impl Drop for TestFixture {
         drop(self.db.take());
         if let Some(scratch) = self.scratch.take() {
             super::interrupt::untrack(&scratch);
-            if let Err(err) = std::fs::remove_dir_all(&scratch) {
-                tracing::warn!("could not remove the scratch runtime {}: {err}", scratch.display());
-            }
+            super::interrupt::remove_scratch(&scratch);
         }
         // the snapshots this run did not use, at its end: a later run today restores this one
         if let Some(snapshot) = self.snapshot.take() {
@@ -120,7 +118,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
                 Err(err) => {
                     if !keep {
                         super::interrupt::untrack(&scratch);
-                        let _ = std::fs::remove_dir_all(&scratch);
+                        super::interrupt::remove_scratch(&scratch);
                     }
                     return Err(err);
                 }
@@ -151,7 +149,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
         Err(err) => {
             if let Some(scratch) = scratch {
                 super::interrupt::untrack(&scratch);
-                let _ = std::fs::remove_dir_all(scratch);
+                super::interrupt::remove_scratch(&scratch);
             }
             Err(err)
         }
@@ -167,9 +165,11 @@ fn io(context: &str) -> impl Fn(std::io::Error) -> Error + '_ {
     move |err| Error::new(context.to_string()).with_source(err)
 }
 
-/// A scratch runtime under `/tmp` (the Postgres socket path must stay under 108 bytes): `conf` copied, and the component
-/// sets (`context::layout`; the add-on set component by component) with their `components.xml`, the instance
-/// `MoquiConf.xml`, the shared Postgres install and the downloaded Chromium linked.
+/// A scratch runtime under `/tmp` (the Postgres socket path must stay under 108 bytes; on Windows the same short path
+/// stays under `MAX_PATH`, which theseus can start): `conf` copied, and the component sets (`context::layout`; the
+/// add-on set component by component) with their `components.xml`, the instance `MoquiConf.xml`, the shared Postgres
+/// install and the downloaded Chromium linked. On Windows a directory is a junction and a file on the same volume is a
+/// hard link. A failure removes what was already linked.
 fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
     use moqui_core::context::layout::{self, Set};
     let nanos = SystemTime::now()
@@ -177,38 +177,46 @@ fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
         .unwrap_or_default()
         .subsec_nanos();
     let scratch = PathBuf::from("/tmp").join(format!("mt-{}-{nanos:x}", std::process::id()));
-    std::fs::create_dir_all(layout::set_dir(&scratch, Set::Addon))
-        .map_err(io("could not create the scratch runtime"))?;
-    std::fs::create_dir_all(scratch.join("db")).map_err(io("could not create the scratch db directory"))?;
-    copy_files(&runtime.join("conf"), &scratch.join("conf"))?;
-    for set in Set::ALL {
-        let dir = layout::set_dir(runtime, set);
-        if set == Set::Addon {
-            for (_, component) in layout::component_dirs(runtime, &[set]) {
-                if let Some(name) = component.file_name() {
-                    link(&component, &layout::set_dir(&scratch, set).join(name))?;
+    let built = (|| -> Result<(), Error> {
+        std::fs::create_dir_all(layout::set_dir(&scratch, Set::Addon))
+            .map_err(io("could not create the scratch runtime"))?;
+        std::fs::create_dir_all(scratch.join("db")).map_err(io("could not create the scratch db directory"))?;
+        copy_files(&runtime.join("conf"), &scratch.join("conf"))?;
+        for set in Set::ALL {
+            let dir = layout::set_dir(runtime, set);
+            if set == Set::Addon {
+                for (_, component) in layout::component_dirs(runtime, &[set]) {
+                    if let Some(name) = component.file_name() {
+                        link(&component, &layout::set_dir(&scratch, set).join(name))?;
+                    }
                 }
+            } else if dir.is_dir() {
+                link(&dir, &layout::set_dir(&scratch, set))?;
             }
-        } else if dir.is_dir() {
-            link(&dir, &layout::set_dir(&scratch, set))?;
         }
-    }
-    if layout::manifest(runtime).is_file() {
-        link(&layout::manifest(runtime), &layout::manifest(&scratch))?;
-    }
-    // The real runtime's install, after any move from where an earlier build put it.
-    let install = crate::db::embedded::shared_install_dir(runtime, &runtime.join("db/embedded"));
-    if let Some(root) = install.parent() {
-        std::fs::create_dir_all(root).map_err(io("could not create the install directory"))?;
-        link(root, &scratch.join("install"))?;
-    }
-    let instance_conf = runtime.join("MoquiConf.xml");
-    if instance_conf.is_file() {
-        link(&instance_conf, &scratch.join("MoquiConf.xml"))?;
-    }
-    // the Chromium of ./moq chromium-download, which PDF finds in the runtime it boots on (chromium::downloaded_chromium)
-    if runtime.join("chromium").is_dir() {
-        link(&runtime.join("chromium"), &scratch.join("chromium"))?;
+        if layout::manifest(runtime).is_file() {
+            link(&layout::manifest(runtime), &layout::manifest(&scratch))?;
+        }
+        // The real runtime's install, after any move from where an earlier build put it.
+        let install = crate::db::embedded::shared_install_dir(runtime, &runtime.join("db/embedded"));
+        if let Some(root) = install.parent() {
+            std::fs::create_dir_all(root).map_err(io("could not create the install directory"))?;
+            link(root, &scratch.join("install"))?;
+        }
+        let instance_conf = runtime.join("MoquiConf.xml");
+        if instance_conf.is_file() {
+            link(&instance_conf, &scratch.join("MoquiConf.xml"))?;
+        }
+        // the Chromium of ./moq chromium-download, which PDF finds in the runtime it boots on
+        // (chromium::downloaded_chromium)
+        if runtime.join("chromium").is_dir() {
+            link(&runtime.join("chromium"), &scratch.join("chromium"))?;
+        }
+        Ok(())
+    })();
+    if let Err(err) = built {
+        super::interrupt::remove_scratch(&scratch);
+        return Err(err);
     }
     Ok(scratch)
 }
@@ -219,10 +227,52 @@ fn link(from: &Path, to: &Path) -> Result<(), Error> {
         std::os::unix::fs::symlink(from, to)
             .map_err(|err| Error::new(format!("could not link {}", to.display())).with_source(err))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        link_windows(from, to)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (from, to);
         Err(Error::new("moqui test needs symbolic links"))
+    }
+}
+
+/// A directory becomes a junction, which needs no extra privilege. A file becomes a hard link on the same volume, so a
+/// later write of `MoquiConf.xml` is the file the scratch reads; a different volume cannot hold a hard link, and the
+/// file is copied. A junction cannot name a file. The files a scratch runtime links are `MoquiConf.xml` and
+/// `components/components.xml`.
+#[cfg(windows)]
+fn link_windows(from: &Path, to: &Path) -> Result<(), Error> {
+    let from = link_path(from);
+    let to = link_path(to);
+    let meta = std::fs::metadata(&from).map_err(|err| link_error(&to, err))?;
+    if meta.is_dir() {
+        junction::create(&from, &to).map_err(|err| link_error(&to, err))
+    } else if std::fs::hard_link(&from, &to).is_ok() {
+        Ok(())
+    } else {
+        std::fs::copy(&from, &to)
+            .map(|_| ())
+            .map_err(|err| link_error(&to, err))
+    }
+}
+
+#[cfg(windows)]
+fn link_error(to: &Path, err: std::io::Error) -> Error {
+    Error::new(format!("could not link {}", to.display())).with_source(err)
+}
+
+/// `canonicalize` prefixes `\\?\`. A junction stores an NT path, and a second prefix is a link that does not open.
+#[cfg(windows)]
+fn link_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest.to_string())
+    } else {
+        path.to_path_buf()
     }
 }
 

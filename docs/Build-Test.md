@@ -41,6 +41,8 @@ Tasks that run moqui build a missing binary themselves. `./moq build` also links
   "Desktop development with C++" workload; aws-lc and QuickJS compile C, and the embedded Postgres binaries load that
   workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. From PowerShell or cmd, `moq.cmd` runs `moq`; the
   binary is `target\release\moqui.exe`.
+- **`moq test`.** The scratch runtime links its component directories with directory junctions, so the run does not
+  need Developer Mode.
 - **NASM.** The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with
   it). Set `MOQUI_NASM` to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A
   `cargo build` that does not go through `moq` still needs NASM on `PATH`.
