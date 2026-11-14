@@ -753,12 +753,14 @@ along with this software (see the LICENSE.md file). If not, see
             application that keeps a repository (its own roles, gate and conversation, as Smithy does) answers allowed
             false for the writes it does not take this way, with a message and restUrl, the base of its own REST for
             the repository, which the refusal names; application names it in either case. A service that fails refuses
-            the write. The repository's own rights are checked by the services, as without it.</description>
+            the write, and so does an answer that leaves allowed empty: only allowed true lets a write through. The
+            repository's own rights are checked by the services, as without it, and a caller who may not view the
+            repository is told it is not there before this service is asked.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="operation" required="true"><description>read, ref.create, ref.delete, commitStatus.create,
                 mergeRequest.create, mergeRequest.update, mergeRequest.close, mergeRequest.reopen, mergeRequest.reviewers,
-                mergeRequest.review, mergeRequest.merge, pipeline.run, pipeline.rerun, pipeline.cancel, pipeline.approve,
+                mergeRequest.review, mergeRequest.comment, mergeRequest.resolveThread, mergeRequest.merge, pipeline.run, pipeline.rerun, pipeline.cancel, pipeline.approve,
                 job.retry</description></parameter>
             <parameter name="userId"/>
             <parameter name="mergeRequestId"/>
@@ -798,6 +800,36 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="signed" type="Boolean"/>
             <parameter name="message"/>
             <parameter name="signUrl"><description>Where the author signs</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="handle" noun="GitReviewThread" type="interface">
+        <description>The service git-server review-thread-service names: the review threads (line comments) of a merge
+            request, which are an application's (Mantle's get#ReviewThreads, create#ReviewComment and
+            resolve#ReviewThread), for the framework's REST (/rest/s1/moqui/git/[repositoryId]/mergeRequests/[n]/threads).
+            Called as the caller, with authorization as it is, once the REST checked that the caller may view the
+            repository and the merge request (a hidden one is its author's) and, for a write, that the application that
+            keeps the repository allows it (mergeRequest.comment, mergeRequest.resolveThread). operation find: threadList
+            (each threadId, path, oldLine, newLine, commitId, lineText, outdated, resolved, and its commentList of
+            commentId, authorName, entryDate, body, bodyFormat), of path when given; comment: a new thread on a line (path
+            and oldLine or newLine) or on the merge request, or a reply to threadId: threadId and held (it waits for a
+            moderator); resolve: threadId resolved, or reopened with resolved false.</description>
+        <in-parameters>
+            <parameter name="operation" required="true"><description>find, comment or resolve</description></parameter>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="path"/>
+            <parameter name="threadId"/>
+            <parameter name="body" allow-html="safe"/>
+            <parameter name="commitId"/>
+            <parameter name="oldLine" type="Integer"/>
+            <parameter name="newLine" type="Integer"/>
+            <parameter name="lineText"/>
+            <parameter name="resolved" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadList" type="List"/>
+            <parameter name="threadId"/>
+            <parameter name="held" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="set" noun="GitRepositoryPath" type="rust" location="moqui_git::service::hosting::set_repository_path">

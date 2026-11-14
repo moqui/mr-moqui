@@ -1,8 +1,10 @@
 // Group servers in Dev AIDE Settings (plans/design-dev-aide.md 21.2, P11): a connection's state, what the server offers
 // and what Connect would set, never its token; Settings shows them and the plan of one server; a server's address is
 // https (http only for this machine). Connect against a server (the app sign-in, merge requests, push to review, check
-// out) is the host's integration test (crates/moqui-host/tests/it/devaide_group.rs), with the instance as its own group
-// server; the pure parts (myaddons.xml, the REST contracts of a plain and a Smithy server) are the crate's tests.
+// out; P12's threads in the diff and the gutter, a reply and resolve, statuses, the agreement and Sign) is the host's
+// integration test (crates/moqui-host/tests/it/devaide_group.rs), with the instance as its own group server; the pure
+// parts (myaddons.xml, the REST contracts of a plain and a Smithy server, threads of both shapes, failed tests as links,
+// a signature under both lists) are the crate's tests.
 // Run: ./moq test dev-aide --spec GroupServers
 const hosting = (verb, params) => ec.service.sync().name("org.moqui.devaide.HostingServices." + verb).parameters(params || {}).call()
 const dev = () => ec.screen.makeTest().rootScreen("component://dev-aide/screen/DevAide.xml")
@@ -74,5 +76,29 @@ feature("a server's address is https, or http only for this machine", {
     },
     then() {
         refused.includes("is not an https address")
+    }
+})
+
+feature("a server is this machine by its IP literal, never localhost", {
+    when() {
+        ec.message.pushErrors()
+        ec.service.sync().name("org.moqui.devaide.HostingServices.start#Connect").parameters({baseUrl: "http://localhost:8080"})
+            .requireNewTransaction(true).call()
+        refused = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    },
+    then() {
+        refused.includes("is not an https address")
+    }
+})
+
+feature("the gateway's lines take a key for the gateway alone, never the connection's token", {
+    when() {
+        server = hosting("get#Servers").servers.find(item => item.serverId == "SPEC_SERVER")
+    },
+    then() {
+        server.plan.gateway.lines[1].includes("a key for the gateway alone")
+        !JSON.stringify(server.plan).includes("spec-s3cret-key")
     }
 })

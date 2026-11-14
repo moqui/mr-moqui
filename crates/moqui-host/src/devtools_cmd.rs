@@ -77,6 +77,7 @@ struct CheckArgs {
     paths: Vec<PathBuf>,
     json: bool,
     extensions: bool,
+    agreement: bool,
     server: Option<String>,
     project: Option<ProjectArg>,
 }
@@ -86,6 +87,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
         paths: Vec::new(),
         json: false,
         extensions: false,
+        agreement: false,
         server: None,
         project: None,
     };
@@ -94,6 +96,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
         match arg.as_str() {
             "--json" => parsed.json = true,
             "--extensions" => parsed.extensions = true,
+            "--agreement" => parsed.agreement = true,
             "--server" => {
                 parsed.server = Some(
                     rest.next()
@@ -118,6 +121,9 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
 pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
     let args = parse_check(args)?;
     crate::logging::install_with_console(Some(tracing::Level::ERROR));
+    if args.agreement {
+        return check_agreement();
+    }
     let paths = if args.paths.is_empty() && !args.extensions {
         changed_files()?
     } else {
@@ -201,6 +207,111 @@ pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
         )));
     }
     Ok(())
+}
+
+/// `moqui check --agreement` (F19, plans/design-dev-aide.md 21.7): whether the next commit's author (git's
+/// `user.email`) has signed the contributor agreement of the repository at `origin`, as its group server says
+/// (`hosting/repository` for the remote, then `hosting/agreement`). The server is `MOQUI_GROUP_SERVER`, else the
+/// origin of an https remote; the key is `MOQUI_GROUP_TOKEN` (a login key or access token of that server), else none
+/// (a public repository). An unsigned author fails the hook (exit 1) unless the commit stages only `AUTHORS.md`, the
+/// signature itself; a server that cannot be asked, or that does not decide the agreement, is a warning.
+fn check_agreement() -> Result<(), Error> {
+    use moqui_devkit::check::AgreementVerdict;
+    let remote = git(&["remote", "get-url", "origin"]).map(|out| out.trim().to_string())?;
+    let email = git(&["config", "--get", "user.email"])
+        .map(|out| out.trim().to_string())
+        .unwrap_or_default();
+    let staged: Vec<String> = git(&["diff", "--cached", "--name-only"])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let warn = |text: &str| {
+        eprintln!("moqui check --agreement: warning: {text}");
+        Ok(())
+    };
+    let parsed = reqwest::Url::parse(&remote).ok();
+    // the remote's user part (a token in a URL) is never sent
+    let asked = match parsed.clone() {
+        Some(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.to_string()
+        }
+        None => remote.clone(),
+    };
+    let server = std::env::var("MOQUI_GROUP_SERVER")
+        .ok()
+        .filter(|base| !base.trim().is_empty())
+        .or_else(|| {
+            parsed
+                .filter(|url| url.scheme() == "https")
+                .map(|url| url.origin().ascii_serialization())
+        });
+    let Some(server) = server else {
+        return warn(
+            "no group server: set MOQUI_GROUP_SERVER to the server's address (the origin remote is not https)",
+        );
+    };
+    let server = server.trim_end_matches('/').to_string();
+    if !server.starts_with("https://") && !server.starts_with("http://127.0.0.1") && !server.starts_with("http://[::1]")
+    {
+        return warn(&format!(
+            "{server} is not an https address: the key is not sent over plain http"
+        ));
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .user_agent(concat!("moqui-check/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|err| Error::new(format!("HTTP client: {err}")))?;
+    let token = std::env::var("MOQUI_GROUP_TOKEN").unwrap_or_default();
+    let get = |path: &str, query: &[(&str, &str)]| -> Result<serde_json::Value, String> {
+        let mut url = reqwest::Url::parse(&format!("{server}{path}")).map_err(|err| err.to_string())?;
+        url.query_pairs_mut().extend_pairs(query);
+        let mut request = client.get(url).header("accept", "application/json");
+        if !token.is_empty() {
+            request = request.header("api_key", token.as_str());
+        }
+        let response = request.send().map_err(|err| err.to_string())?;
+        let status = response.status();
+        let body = response.text().map_err(|err| err.to_string())?;
+        if !status.is_success() {
+            return Err(format!("{server} answered {status}"));
+        }
+        serde_json::from_str(&body).map_err(|err| format!("{server} answered no JSON: {err}"))
+    };
+    let repository = match get("/rest/s1/moqui/hosting/repository", &[("url", asked.as_str())]) {
+        Ok(answer) if answer["found"].as_bool() == Some(true) => answer["repository"]["repositoryId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        Ok(_) => return warn(&format!("{server} has no repository at {asked} you may see")),
+        Err(err) => return warn(&err),
+    };
+    let answer = match get(
+        "/rest/s1/moqui/hosting/agreement",
+        &[("repositoryId", repository.as_str()), ("authorEmail", email.as_str())],
+    ) {
+        Ok(answer) => answer,
+        Err(err) => return warn(&err),
+    };
+    match moqui_devkit::check::agreement_verdict(&answer, &email, &staged) {
+        AgreementVerdict::Fine => {
+            eprintln!("moqui check --agreement: {repository}: signed");
+            Ok(())
+        }
+        AgreementVerdict::Signing => {
+            eprintln!("moqui check --agreement: {repository}: a commit of the signature");
+            Ok(())
+        }
+        AgreementVerdict::Unknown(text) => warn(&text),
+        AgreementVerdict::Unsigned(text) => {
+            eprintln!("moqui check --agreement: {repository}: {text}");
+            Err(Error::new("moqui check --agreement: the author has not signed"))
+        }
+    }
 }
 
 fn line_of(problem: &Problem, cwd: &Path) -> String {

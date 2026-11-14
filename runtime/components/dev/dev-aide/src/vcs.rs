@@ -253,23 +253,54 @@ fn credential_args(context: &Context, root: &Root) -> (Vec<String>, Vec<(&'stati
     (argv, env)
 }
 
-/// The scheme, host and port of an HTTPS remote URL (`https://user@git.example.com:8443/a/b.git` is
-/// `https://git.example.com:8443`): what a stored token is for. `http` only for this machine.
-pub(crate) fn url_prefix(url: &str) -> Option<String> {
-    let (scheme, rest) = url.trim().split_once("://")?;
-    let scheme = scheme.to_ascii_lowercase();
-    let authority = rest.split(['/', '?', '#']).next()?;
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
-    if host_port.is_empty() || host_port.contains(char::is_whitespace) {
+/// A web URL a token may go to, parsed by the `url` crate: `https`, or `http` only to a loopback IP literal
+/// (`127.0.0.1`, `[::1]`; not a name such as `localhost`, which a hosts file or a resolver may send elsewhere), and no
+/// `\` anywhere (which a browser and git read as `/` and a hand-written split may not). A user part is left for the
+/// caller to refuse or strip.
+pub(crate) fn web_url(text: &str) -> Option<url::Url> {
+    let text = text.trim();
+    if text.contains('\\') || text.chars().any(char::is_control) {
         return None;
     }
-    let host = host_port
-        .strip_prefix('[')
-        .and_then(|rest| rest.split_once(']').map(|(host, _)| host))
-        .unwrap_or_else(|| host_port.split(':').next().unwrap_or(host_port));
-    let loopback = host == "localhost" || host == "::1" || host.starts_with("127.");
-    (scheme == "https" || (scheme == "http" && loopback))
-        .then(|| format!("{scheme}://{}", host_port.to_ascii_lowercase()))
+    let parsed = url::Url::parse(text).ok()?;
+    let loopback = match parsed.host()? {
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+        url::Host::Domain(_) => false,
+    };
+    (parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback)).then_some(parsed)
+}
+
+/// [`web_url`] with no user part: what a server hands back to be stored, shown or given to git.
+pub(crate) fn checked_url(text: &str) -> Result<url::Url, LibError> {
+    let parsed = web_url(text)
+        .ok_or_else(|| LibError::new(format!("{text} is not an https address (http only for 127.0.0.1)")))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(LibError::new(format!("{text} carries a user part")));
+    }
+    Ok(parsed)
+}
+
+/// A remote URL without its user part (`https://ann:secret@h/a.git` is `https://h/a.git`), to send to a server.
+pub(crate) fn without_userinfo(text: &str) -> String {
+    match url::Url::parse(text.trim()) {
+        Ok(mut parsed) if parsed.has_host() => {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.to_string()
+        }
+        // an scp-like SSH remote (`ann@host:a.git`): the account is the SSH user, not a secret
+        _ => text.trim().to_string(),
+    }
+}
+
+/// The scheme, host and port of an HTTPS remote URL (`https://user@git.example.com:8443/a/b.git` is
+/// `https://git.example.com:8443`): what a stored token is for. `http` only for a loopback IP literal ([`web_url`]).
+pub(crate) fn url_prefix(url: &str) -> Option<String> {
+    let parsed = web_url(url)?;
+    let host = parsed.host_str()?;
+    let port = parsed.port().map(|port| format!(":{port}")).unwrap_or_default();
+    Some(format!("{}://{host}{port}", parsed.scheme()))
 }
 
 /// The arguments and environment that answer git's credential request with `username` and `token`, for the remotes at
@@ -940,8 +971,22 @@ fn push_remote(
             },
             ..opening
         };
-        let made = crate::hosting::review::open(&context, root, &opening)?;
-        out.insert("mergeRequest".into(), json_value(&made));
+        // the push stands: a merge request that is not opened is said, not the push's failure (21.4)
+        match crate::hosting::review::open(&context, root, &opening) {
+            Ok(made) => {
+                out.insert("mergeRequest".into(), json_value(&made));
+            }
+            Err(err) => {
+                out.insert("mergeRequestError".into(), Value::string(err.to_string()));
+                out.insert(
+                    "message".into(),
+                    Value::string(format!(
+                        "Pushed {}; the merge request was not opened: {err}",
+                        opening.source
+                    )),
+                );
+            }
+        }
     }
     Ok(out)
 }
@@ -1281,6 +1326,21 @@ mod tests {
         assert_eq!(url_prefix("http://git.example.com/x.git"), None);
         assert_eq!(url_prefix("git@github.com:a/b.git"), None);
         assert_eq!(url_prefix("ssh://git@host/a.git"), None);
+        // the IP literal, never a name; no backslash; IPv6 bracketed
+        assert_eq!(url_prefix("http://localhost:8080/x.git"), None);
+        assert_eq!(url_prefix("https://evil.example.com\\@team.example.com/x"), None);
+        assert_eq!(url_prefix("http://[::1]:8080/x").as_deref(), Some("http://[::1]:8080"));
+        assert_eq!(
+            url_prefix("https://h.example.com:443/x").as_deref(),
+            Some("https://h.example.com")
+        );
+        assert!(checked_url("https://ann:pw@h.example.com/x").is_err());
+        assert!(checked_url("https://h.example.com/git/fork.git").is_ok());
+        assert_eq!(
+            without_userinfo("https://ann:secret@h.example.com/git/a.git"),
+            "https://h.example.com/git/a.git"
+        );
+        assert_eq!(without_userinfo("ann@h.example.com:a.git"), "ann@h.example.com:a.git");
     }
 
     #[test]

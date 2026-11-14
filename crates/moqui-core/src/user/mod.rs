@@ -56,6 +56,7 @@ pub use login::{
     login_user_key, logout, logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login,
     now_value, renew_device_key, revoke_login_key, with_client_ip,
 };
+pub use login::{get_scoped_key, login_user_key_for, KEY_SCOPES};
 pub use login::{last_auth_millis, recent_auth};
 pub use login::{user_account_closed, username_account_closed};
 pub use login::{now_effective_millis, value_millis};

@@ -33,30 +33,32 @@ pub(crate) fn field(row: &EntityValue, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A server's base URL as kept: `https://host[:port][/path]` with no `/` at its end, or `http` for this machine only,
-/// so a token never crosses a network in the clear.
+/// A server's base URL as kept: `https://host[:port][/path]` with no `/` at its end, or `http` for a loopback IP
+/// literal only (`crate::vcs::web_url`), so a token never crosses a network in the clear.
 pub(crate) fn normalize_base(url: &str) -> Result<String, LibError> {
     let url = url.trim().trim_end_matches('/');
-    let prefix = crate::vcs::url_prefix(url)
-        .ok_or_else(|| LibError::new(format!("{url} is not an https address (http only for this machine)")))?;
-    let rest = url
-        .split_once("://")
-        .and_then(|(_, rest)| rest.split_once('/'))
-        .map(|(_, path)| path)
-        .unwrap_or("");
-    let authority = url
-        .split_once("://")
-        .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
-    if rest.contains(['?', '#']) || authority.contains('@') {
+    let parsed = crate::vcs::checked_url(url)?;
+    if parsed.query().is_some() || parsed.fragment().is_some() || url.contains(['?', '#']) {
         return Err(LibError::new(format!(
             "{url} is not a server's address (no user, query or page part)"
         )));
     }
-    Ok(if rest.is_empty() {
+    let prefix = crate::vcs::url_prefix(url)
+        .ok_or_else(|| LibError::new(format!("{url} is not an https address (http only for 127.0.0.1)")))?;
+    let path = parsed.path().trim_matches('/');
+    Ok(if path.is_empty() {
         prefix
     } else {
-        format!("{prefix}/{rest}")
+        format!("{prefix}/{path}")
     })
+}
+
+/// A URL the server handed back (a fork's remote, its addons template, its gateway) checked to be on the server's own
+/// origin, https (or a loopback IP literal), with no user part and no `\`.
+pub(crate) fn on_server(server: &Server, url: &str) -> Result<String, LibError> {
+    let parsed = crate::vcs::checked_url(url)?;
+    server.url(parsed.as_str())?;
+    Ok(url.trim().to_string())
 }
 
 /// `value` encoded for a URL's query.
@@ -256,6 +258,10 @@ impl Server {
 
     pub(crate) fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Json, LibError> {
         self.request(moqui_core::outbound::Method::Get, path, query, None)
+    }
+
+    pub(crate) fn post(&self, path: &str, body: &Json) -> Result<Json, LibError> {
+        self.request(moqui_core::outbound::Method::Post, path, &[], Some(body))
     }
 }
 

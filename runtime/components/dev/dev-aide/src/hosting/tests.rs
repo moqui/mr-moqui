@@ -20,9 +20,12 @@
 
 use serde_json::json;
 
-use super::client::{first_list, normalize_base, ssh_host_port, Application, Server};
-use super::connect::{repository_name, with_repository, without_repository};
-use super::review::{create_call, fork_call, list_call, merge_request_item, propose_args, via, Opening, Via};
+use super::client::{first_list, normalize_base, on_server, ssh_host_port, Application, Server};
+use super::connect::{
+    default_repository, env_restore, redirect_origin, repository_name, repository_url, with_repository,
+    without_repository,
+};
+use super::review::{create_call, fork_call, list_call, merge_request_item, page_url, propose_args, via, Opening, Via};
 
 fn server(offer: serde_json::Value) -> Server {
     Server {
@@ -47,14 +50,17 @@ fn a_servers_address_is_https_or_this_machine() {
         "https://h.example.com:8443/moqui"
     );
     assert_eq!(
-        normalize_base("http://localhost:8080").unwrap(),
-        "http://localhost:8080"
+        normalize_base("http://127.0.0.1:8080").unwrap(),
+        "http://127.0.0.1:8080"
     );
     for bad in [
         "http://team.example.com",
         "team.example.com",
         "https://u@h.example.com",
         "https://h.example.com/?x=1",
+        // RFC 8252 §8.3: this machine by its IP literal; and no backslash a browser reads as a slash
+        "http://localhost:8080",
+        "https://evil.example.com\\@team.example.com",
     ] {
         assert!(normalize_base(bad).is_err(), "{bad}");
     }
@@ -115,9 +121,17 @@ fn connect_writes_one_repository_into_myaddons() {
         again.contains("other.example.com") && again.contains("default-repository=\"team\""),
         "{again}"
     );
-    let (removed, had) = without_repository(&again, "team");
+    let (removed, had) = without_repository(&again, "team", true);
     assert!(had);
     assert_eq!(removed, existing);
+    // the default-repository stays unless Connect set it
+    let (kept_default, _) = without_repository(&again, "team", false);
+    assert_eq!(default_repository(&kept_default).as_deref(), Some("team"));
+    assert_eq!(
+        repository_url(&again, "team").as_deref(),
+        Some("https://other.example.com/git/${name}.git")
+    );
+    assert_eq!(repository_url(&again, "nope"), None);
     assert!(with_repository(Some("<oops/>"), "team", url, false).is_err());
     assert_eq!(repository_name("Team Server", ""), "team-server");
     assert_eq!(repository_name("", "https://moqui.org"), "moqui-org");
@@ -133,13 +147,14 @@ fn push_to_review_names_the_target_and_its_options() {
             "topic=due-date",
             "-o",
             "title=Add a due date",
+            "--",
             "origin",
             "HEAD:refs/for/main"
         ]
     );
     assert_eq!(
         propose_args("origin", "main", "", ""),
-        ["push", "origin", "HEAD:refs/for/main"]
+        ["push", "--", "origin", "HEAD:refs/for/main"]
     );
 }
 
@@ -207,10 +222,195 @@ fn each_server_kind_has_its_rest_contract() {
     let framework = json!({ "mergeRequestList": [{ "mergeRequestNum": 3, "title": "T", "statusId": "GmrOpen", "authorName": "Ann" }] });
     let application =
         json!({ "result": { "items": [{ "number": 3, "title": "T", "state": "open", "authorHandle": "ann" }] } });
-    let one = merge_request_item(&first_list(&framework)[0]);
-    let two = merge_request_item(&first_list(&application)[0]);
+    let one = merge_request_item(&first_list(&framework)[0], &plain);
+    let two = merge_request_item(&first_list(&application)[0], &plain);
     assert_eq!(one["mergeRequestNum"], 3);
     assert_eq!(two["mergeRequestNum"], 3);
     assert_eq!(one["author"], "Ann");
     assert_eq!(two["state"], "open");
+}
+
+/// Remove puts back the developer's own `.env` lines where they are still Connect's, takes out those it added, and
+/// leaves a line changed since (item 3 of the P11 review).
+#[test]
+fn remove_restores_the_env_lines_it_wrote() {
+    let current = vec![
+        ("llm_openai_url".to_string(), "https://team.example.com/llm".to_string()),
+        ("llm_openai_api_key".to_string(), "gw-key".to_string()),
+        ("llm_openai_model".to_string(), "mine-now".to_string()),
+    ];
+    let wrote = [
+        ("llm_openai_url", "https://team.example.com/llm".to_string()),
+        ("llm_openai_api_key", "gw-key".to_string()),
+        ("llm_openai_model", "default".to_string()),
+    ];
+    let prior = json!({ "llm_openai_api_key": "sk-own" });
+    let (set, remove) = env_restore(&current, &wrote, &prior);
+    assert_eq!(set, [("llm_openai_api_key".to_string(), "sk-own".to_string())]);
+    assert_eq!(remove, ["llm_openai_url"]);
+}
+
+/// What a server hands back is checked before it is stored or given to git: its own origin, https, no user part, no
+/// backslash (item 10); this instance's redirect is its IP literal.
+#[test]
+fn a_servers_urls_are_its_own() {
+    let server = server(json!({}));
+    assert!(on_server(&server, "https://team.example.com/git/fork.git").is_ok());
+    for bad in [
+        "https://evil.example.com/git/fork.git",
+        "https://ann:pw@team.example.com/git/fork.git",
+        "https://team.example.com\\@evil.example.com/x",
+        "http://team.example.com/git/fork.git",
+        "ext::sh -c touch% /tmp/pwned",
+        "-uhelp",
+    ] {
+        assert!(on_server(&server, bad).is_err(), "{bad}");
+    }
+    assert_eq!(redirect_origin("http://localhost:8080"), "http://127.0.0.1:8080");
+    assert_eq!(redirect_origin("http://127.0.0.1:8080"), "http://127.0.0.1:8080");
+    assert_eq!(redirect_origin("https://dev.example.com"), "https://dev.example.com");
+}
+
+/// A merge request's link is a page of the server or nothing (item 9).
+#[test]
+fn a_link_from_the_server_is_a_page_of_its_own() {
+    let server = server(json!({}));
+    assert_eq!(
+        page_url(&server, &json!("/acme/-/merge_requests/3")),
+        json!("https://team.example.com/acme/-/merge_requests/3")
+    );
+    assert_eq!(
+        page_url(&server, &json!("https://team.example.com/x")),
+        json!("https://team.example.com/x")
+    );
+    for bad in [
+        "javascript:alert(1)",
+        "https://evil.example.com/x",
+        "//evil.example.com/x",
+        "data:text/html,hi",
+        "https://u:p@team.example.com/x",
+    ] {
+        assert_eq!(page_url(&server, &json!(bad)), json!(null), "{bad}");
+    }
+    let item = merge_request_item(&json!({ "number": 1, "url": "javascript:alert(1)" }), &server);
+    assert_eq!(item["url"], json!(null));
+}
+
+/// Threads, comments, resolve and reviews of each kind of server, by its REST contract: the framework's
+/// (`mergeRequests/{n}/threads`) and Smithy's operations (`changes`' `threadList`, `comments`, `threads/{id}/resolve`,
+/// `reviews`: mr-mantle SmithySchema.js, PassRoutes.js). Both thread shapes read the same.
+#[test]
+fn review_threads_have_each_servers_contract() {
+    use super::threads::{comment_call, resolve_call, review_call, thread_item, threads_call, Comment};
+    let smithy = Via::Application(Application {
+        name: "smithy".into(),
+        rest_base: "/rest/s1/pass/v1/sites/S/smithy".into(),
+    });
+    let list = threads_call(&Via::Framework, "/rest/s1/moqui/git", "acme", "3", "a.xml");
+    assert_eq!(list.path, "/rest/s1/moqui/git/acme/mergeRequests/3/threads");
+    assert_eq!(list.query, [("path", "a.xml".to_string())]);
+    let list = threads_call(&smithy, "/rest/s1/moqui/git", "R1", "3", "");
+    assert_eq!(
+        list.path,
+        "/rest/s1/pass/v1/sites/S/smithy/repositories/R1/merge-requests/3/changes"
+    );
+    assert_eq!(list.query, [("withDiffs", "false".to_string())]);
+    let comment = Comment {
+        body: "Why?".into(),
+        path: "a.xml".into(),
+        new_line: Some(12),
+        ..Comment::default()
+    };
+    let made = comment_call(&Via::Framework, "/rest/s1/moqui/git", "acme", "3", &comment);
+    assert!(made.post);
+    assert_eq!(
+        made.body,
+        Some(json!({ "body": "Why?", "path": "a.xml", "newLine": 12 }))
+    );
+    let made = comment_call(&smithy, "/rest/s1/moqui/git", "R1", "3", &comment);
+    assert_eq!(
+        made.path,
+        "/rest/s1/pass/v1/sites/S/smithy/repositories/R1/merge-requests/3/comments"
+    );
+    let body = made.body.unwrap();
+    assert_eq!(
+        (body["sourceFormat"].as_str(), body["newLine"].as_i64()),
+        (Some("markdown"), Some(12))
+    );
+    assert!(body["operationId"].as_str().is_some_and(|id| !id.is_empty()));
+    let resolved = resolve_call(&smithy, "/rest/s1/moqui/git", "R1", "3", "CE 1", true);
+    assert_eq!(
+        resolved.path,
+        "/rest/s1/pass/v1/sites/S/smithy/repositories/R1/merge-requests/3/threads/CE%201/resolve"
+    );
+    assert_eq!(resolved.body, Some(json!({ "resolved": true })));
+    let review = review_call(&Via::Framework, "/rest/s1/moqui/git", "acme", "3", "approve", "Good");
+    assert_eq!(review.path, "/rest/s1/moqui/git/acme/mergeRequests/3/reviews");
+    assert_eq!(review.body, Some(json!({ "decision": "approve", "note": "Good" })));
+
+    // Mantle's shape through the framework, and Smithy's
+    let mantle = thread_item(
+        &json!({ "communicationEventId": "CE1", "path": "a.xml", "newLine": 12, "resolved": false,
+        "commentList": [{ "communicationEventId": "CE1", "authorName": "Ann", "body": "Why?", "bodyFormat": "markdown" }] }),
+    );
+    let smithy_thread = thread_item(
+        &json!({ "threadId": "P1", "path": "a.xml", "newLine": 12, "resolved": true,
+        "postList": [{ "postId": "P1", "author": { "name": "Bob", "handle": "bob" }, "body": "<p>Why?</p>" }] }),
+    );
+    assert_eq!(
+        (mantle["threadId"].as_str(), smithy_thread["threadId"].as_str()),
+        (Some("CE1"), Some("P1"))
+    );
+    assert_eq!(mantle["comments"][0]["author"], "Ann");
+    assert_eq!(smithy_thread["comments"][0]["author"], "Bob");
+    assert_eq!(smithy_thread["comments"][0]["bodyFormat"], "html");
+    assert_eq!(mantle["newLine"], 12);
+}
+
+/// A check's state as a chip, and a failed test's file as a link into the working tree (or none).
+#[test]
+fn checks_show_chips_and_link_failed_tests_to_the_tree() {
+    use super::checks::{chip_state, test_link};
+    assert_eq!(chip_state("GcsFailure"), "failure");
+    assert_eq!(chip_state("error"), "failure");
+    assert_eq!(chip_state("pending"), "pending");
+    assert_eq!(chip_state("success"), "success");
+    assert_eq!(chip_state("whatever"), "");
+    let tree = std::env::temp_dir().join(format!("dev-aide-test-link-{}", std::process::id()));
+    std::fs::create_dir_all(tree.join("test")).unwrap();
+    std::fs::write(tree.join("test/Things.spec.js"), "x").unwrap();
+    assert_eq!(
+        test_link(&tree, "test/Things.spec.js", Some(7)),
+        Some(json!({ "path": "test/Things.spec.js", "line": 7 }))
+    );
+    // a runner's absolute path: the tail that is a file here
+    assert_eq!(
+        test_link(&tree, "/builds/job-1/work/test/Things.spec.js", Some(0)),
+        Some(json!({ "path": "test/Things.spec.js", "line": null }))
+    );
+    assert_eq!(test_link(&tree, "test/Missing.spec.js", Some(1)), None);
+    assert_eq!(test_link(&tree, "../../etc/passwd", Some(1)), None);
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// Sign adds one line under both lists of AUTHORS.md, and refuses a file without them or a signature already there.
+#[test]
+fn a_signature_goes_under_both_lists() {
+    use super::agreement::{signature_line, with_signature};
+    let text = "# Authors\n\n## Copyright Waiver\n\nText.\n\n- Written in 2026 by Ann A - ann\n\n## Grant of Patent License\n\nText.\n\n- Written in 2026 by Ann A - ann\n";
+    let line = signature_line("2026", "Bob B", "bob");
+    assert_eq!(line, "- Written in 2026 by Bob B - bob");
+    let signed = with_signature(text, &line).unwrap();
+    assert_eq!(signed.matches(&line).count(), 2, "{signed}");
+    assert!(
+        signed.contains("- Written in 2026 by Ann A - ann\n- Written in 2026 by Bob B - bob\n\n## Grant"),
+        "{signed}"
+    );
+    assert!(signed.ends_with("- Written in 2026 by Bob B - bob\n"), "{signed}");
+    assert!(with_signature(&signed, &line).is_err());
+    assert!(with_signature("# Authors\n", &line).is_err());
+    // a list with no signature yet takes it at its end
+    let empty = "## Copyright Waiver\n\nText.\n\n## Grant of Patent License\n\nText.\n";
+    let first = with_signature(empty, &line).unwrap();
+    assert_eq!(first.matches(&line).count(), 2, "{first}");
 }

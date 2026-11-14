@@ -500,7 +500,17 @@ pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Res
 ///
 /// Returns [`INVALID_LOGIN`](Error) when the key is empty, unknown, or expired, or the account cannot log in.
 pub fn login_user_key(key: &str) -> Result<(), Error> {
-    noting_invalid(check_login_key(key, None))
+    noting_invalid(check_login_key(key, None, None))
+}
+
+/// [`login_user_key`] for the one service `scope` names (`gateway`, the LLM gateway): an account's key, or a key made
+/// for that scope alone ([`get_scoped_key`]), which every other login refuses.
+///
+/// # Errors
+///
+/// Returns [`INVALID_LOGIN`](Error) as [`login_user_key`] does, and for a key of another scope.
+pub fn login_user_key_for(key: &str, scope: &str) -> Result<(), Error> {
+    noting_invalid(check_login_key(key, None, Some(scope)))
 }
 
 /// Recheck a socket's hashed login key without logging in, writing history, or changing its session.
@@ -519,7 +529,7 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
         return Ok(None);
     };
     let now = now_millis();
-    if field_millis(&row, "thruDate").is_some_and(|thru| now > thru) {
+    if field_millis(&row, "thruDate").is_some_and(|thru| now > thru) || !text_field(&row, "scope").is_empty() {
         return Ok(None);
     }
     let user_id = text_field(&row, "userId");
@@ -530,8 +540,9 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
 }
 
 /// `session_user`, when the session is already signed in, is the only user the key may log in: a key for another
-/// user is refused before the login, so it never takes over that session or its attributes.
-fn check_login_key(key: &str, session_user: Option<&str>) -> Result<(), Error> {
+/// user is refused before the login, so it never takes over that session or its attributes. A key made for one scope
+/// (`UserLoginKey.scope`) logs in only where `scope` names it.
+fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -> Result<(), Error> {
     if key.is_empty() {
         return Err(Error::new(INVALID_LOGIN));
     }
@@ -547,6 +558,10 @@ fn check_login_key(key: &str, session_user: Option<&str>) -> Result<(), Error> {
     };
     let user_id = text_field(&row, "userId");
     if session_user.is_some_and(|signed_in| signed_in != user_id) {
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    let key_scope = text_field(&row, "scope");
+    if !key_scope.is_empty() && Some(key_scope.as_str()) != scope {
         return Err(Error::new(INVALID_LOGIN));
     }
     if let Some(thru) = field_millis(&row, "thruDate") {
@@ -728,6 +743,36 @@ pub fn get_device_key(device: &str) -> Result<String, Error> {
     )
 }
 
+/// The scopes a key may be made for alone ([`get_scoped_key`]): `gateway`, the LLM gateway's `/llm/v1`.
+pub const KEY_SCOPES: [&str; 1] = ["gateway"];
+
+/// A new key of the logged-in user that opens only `scope` (one of [`KEY_SCOPES`]), named `device` in the user's
+/// device list and good for the conf's `login-key/@device-expire-hours`: a dev instance keeps one for a group server's
+/// LLM gateway (plans/design-dev-aide.md 21.2), where the account's own key would open everything.
+///
+/// # Errors
+///
+/// Returns an error for a scope not in [`KEY_SCOPES`], when nobody is logged in, or when a write fails.
+pub fn get_scoped_key(scope: &str, device: &str) -> Result<String, Error> {
+    if !KEY_SCOPES.contains(&scope) {
+        return Err(Error::new(format!("{scope} is not a scope a key is made for")));
+    }
+    let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
+        return Err(Error::of_kind(
+            crate::context::ErrorKind::AuthenticationRequired,
+            "No active user, cannot get login key",
+        ));
+    };
+    let device: String = device.trim().chars().take(255).collect();
+    let device = if device.is_empty() { scope.to_string() } else { device };
+    make_key(
+        &user_id,
+        policy::login_key_device_expire_hours(),
+        Some(device.as_str()),
+        Some(scope),
+    )
+}
+
 /// End the logged-in user's login key `key` (as the client holds it), as a device signing out does. Answers whether
 /// there was such a key of the user's.
 ///
@@ -841,6 +886,10 @@ fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
 }
 
 fn make_login_key_for(user_id: &str, hours: f64, device: Option<&str>) -> Result<String, Error> {
+    make_key(user_id, hours, device, None)
+}
+
+fn make_key(user_id: &str, hours: f64, device: Option<&str>, scope: Option<&str>) -> Result<String, Error> {
     let login_key = super::factor::random_string(40)?;
     let hashed = password::hash_login_key(&login_key)?;
     let from = now_millis();
@@ -855,6 +904,9 @@ fn make_login_key_for(user_id: &str, hours: f64, device: Option<&str>) -> Result
     row.set("thruDate", stamp_value(thru));
     if let Some(device) = device {
         row.set("deviceName", Value::string(device));
+    }
+    if let Some(scope) = scope {
+        row.set("scope", Value::string(scope));
     }
     // Java creates the key with requireNewTransaction, so a caller's rollback does not lose it.
     let tx = facade.transactions_for(USER_LOGIN_KEY)?;
@@ -885,7 +937,7 @@ pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>) -> Resu
         return Ok(false);
     };
     let signed_in = session::current_user_id()?.filter(|id| !id.is_empty());
-    noting_invalid(check_login_key(key, signed_in.as_deref()))?;
+    noting_invalid(check_login_key(key, signed_in.as_deref(), None))?;
     Ok(true)
 }
 

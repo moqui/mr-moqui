@@ -305,6 +305,8 @@
                 // git depth (P8): Branches, Tags and Stashes under Advanced; a running network command's last line; the
                 // diff's hunks; the conflicted file open in the conflict view; the Commits tab's paging and path
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
+                // the checks of the commits shown (21.5), the commit whose checks are open, and the agreement (21.7)
+                logStates: {}, checksCommit: null, agreement: null,
                 logPage: 0, logMore: false, logPath: "", tree: null
             };
         },
@@ -471,6 +473,8 @@
                 return this.get("status", { rootId: this.rootId }).then((status) => {
                     this.status = status;
                     if (!this.commitForm.task && status.currentTask) this.commitForm.task = status.currentTask;
+                    // the agreement of a hosted repository, asked of the server once per root (21.7)
+                    if (this.hosted && (!this.agreement || this.agreement.rootId !== this.rootId)) this.loadAgreement();
                 }, this.fail);
             },
             loadDir(path) {
@@ -503,6 +507,7 @@
                     });
                     this.offerDraft(tab, this.rootId);
                     this.loadSchema(tab);
+                    this.loadThreads(tab);
                     this.takeDraft(tab, this.rootId);
                     if (how.view && how.view !== "text") this.setView(tab, how.view);
                 }, (error) => { tab.reading = false; this.tabs = pure.closeTab(this.tabs, path, this.active).tabs; this.fail(error); });
@@ -1204,9 +1209,51 @@
                     const commits = answer.commits || [];
                     this.log = more ? this.log.concat(commits) : commits;
                     this.logPage = page; this.logMore = commits.length === 100;
+                    this.commitStates(commits.slice(0, 50).map((commit) => commit.id)).then((states) => { this.logStates = Object.assign({}, more ? this.logStates : {}, states); });
                 }, this.fail);
             },
             history(path) { this.logPath = path || ""; this.commitDetail = null; this.diff = null; this.tab = "commits"; this.loadLog(); },
+            // ---- a group server's review, checks and agreement (21.4, 21.5, 21.7) ----
+            // the combined check state of each commit, on a hosted repository: { id: failure | pending | success }
+            commitStates(ids) {
+                const wanted = (ids || []).filter((id) => id);
+                if (!this.hosted || !wanted.length) return Promise.resolve({});
+                return this.get("commitStates", { rootId: this.rootId, commitIds: wanted.join(",") }).then((answer) => answer.states || {}, () => ({}));
+            },
+            stateColor(state) { return state === "failure" ? "negative" : state === "pending" ? "warning" : state === "success" ? "positive" : "grey"; },
+            openChecks(commitId) { if (commitId) this.loadGit().then(() => { this.checksCommit = commitId; }); },
+            // the open threads of the merge request whose branch is checked out, on this file: marks in the gutter
+            loadThreads(tab) {
+                if (!this.hosted || !tab || tab.binary) return;
+                this.get("fileThreads", { rootId: this.rootId, path: tab.path }).then((answer) => { tab.threads = answer.threads || []; }, () => { tab.threads = []; });
+            },
+            threadMarks(tab) {
+                const threads = (tab && tab.threads) || [];
+                if (!threads.length) return null;
+                return threads.map((thread) => {
+                    const first = (thread.comments || [])[0] || {};
+                    return { from: thread.newLine, to: thread.newLine, commit: "thread", author: first.author || "", time: 0,
+                        summary: (thread.comments || []).map((comment) => (comment.author || "") + ": " + (comment.body || "")).join("\n") };
+                });
+            },
+            // whether the next commit's author has signed the hosted repository's agreement, as the server reports it
+            loadAgreement() {
+                if (!this.hosted) { this.agreement = null; return; }
+                const rootId = this.rootId;
+                this.get("agreement", { rootId }).then((answer) => { if (this.rootId === rootId) this.agreement = Object.assign({ rootId }, answer); }, () => {});
+            },
+            // Sign: your line under both lists of AUTHORS.md, committed alone, by you (an agent has no tool for it)
+            signAgreement() {
+                const agreement = this.agreement || {};
+                this.$q.dialog({ title: "Sign the contributor agreement", message: "Your line goes under both lists of AUTHORS.md, as \"" + (agreement.line || "- Written in <year> by <legal name> - <account>") +
+                    "\", and is committed alone. Your legal name:", prompt: { model: "", type: "text" }, cancel: true }).onOk((legalName) => {
+                    if (!legalName) return;
+                    this.post("signAgreement", { rootId: this.rootId, legalName }).then((answer) => {
+                        this.note("Signed: " + answer.line + ". Push it to the server."); this.agreement = Object.assign({}, this.agreement, { signedHere: true });
+                        this.refreshStatus(); this.loadLog();
+                    }, this.fail);
+                });
+            },
             replay(kind) {
                 const commit = this.commitDetail;
                 if (!commit) return;
@@ -1478,7 +1525,7 @@
             <div v-if="current.outlineError" class="text-caption text-negative q-px-sm" id="DevOutlineError">The text does not parse, so the view shows it as it last parsed: {{current.outlineError}}</div>
           </div>
           <m-code-editor v-show="!currentSpec" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
-              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || null" :schema="current.schema" :lint="lintOf(current)" height="100%"
+              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || threadMarks(current)" :schema="current.schema" :lint="lintOf(current)" height="100%"
               :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
               :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
         </template>
@@ -1548,6 +1595,9 @@
         </div>
       </template>
       <q-separator class="q-my-sm"></q-separator>
+      <div v-if="agreement && agreement.required && !agreement.signed && !agreement.signedHere" class="row items-center no-wrap text-caption text-warning q-mb-xs" id="DevAgreementWarning">
+        <span class="col">{{agreement.authorEmail || "The commit's author"}} has not signed {{hosted && hosted.repositoryPath}}'s contributor agreement: the server may not take these commits.</span>
+        <q-btn v-if="agreement.hasAuthorsFile" dense flat no-caps size="sm" label="Sign" :disable="!canWrite" @click="signAgreement" id="DevSignAgreement"></q-btn></div>
       <q-input dense outlined v-model="commitForm.summary" label="Summary" id="DevCommitSummary"></q-input>
       <q-input dense outlined type="textarea" autogrow v-model="commitForm.body" label="Body" class="q-mt-xs"></q-input>
       <div class="row items-center no-wrap q-mt-xs">
@@ -1586,6 +1636,8 @@
       <q-item v-for="commit in log" :key="commit.id" clickable @click="openCommit(commit)" :active="commitDetail && commitDetail.id === commit.id">
         <q-item-section><q-item-label class="ellipsis">{{commit.subject}}</q-item-label>
           <q-item-label caption>{{commit.shortId}} · {{commit.authorName}} · {{commit.date.slice(0, 10)}}</q-item-label></q-item-section>
+        <q-item-section side v-if="logStates[commit.id]"><q-badge :color="stateColor(logStates[commit.id])" :label="logStates[commit.id]"
+            class="cursor-pointer" @click.stop="openChecks(commit.id)" :data-state="logStates[commit.id]"></q-badge></q-item-section>
       </q-item>
       <q-item v-if="logMore" clickable @click="loadLog(true)" id="DevLogMore"><q-item-section class="text-caption">More commits…</q-item-section></q-item>
     </q-list>
@@ -1616,6 +1668,9 @@
       <m-diff-view v-if="diff && !tree" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
+  <q-dialog :model-value="!!checksCommit" @update:model-value="(open) => { if (!open) checksCommit = null; }">
+    <q-card style="width: 52rem; max-width: 95vw"><m-dev-git-checks v-if="checksCommit && gitLoaded" :ws="this" :commit-id="checksCommit" @close="checksCommit = null"></m-dev-git-checks></q-card>
+  </q-dialog>
   <q-dialog v-model="artifactGoto.open" aria-labelledby="DevGotoArtifactTitle">
     <q-card style="width: 44rem; max-width: 95vw">
       <q-card-section class="q-pb-none"><h2 class="text-h6 q-my-none" id="DevGotoArtifactTitle">Go to artifact</h2></q-card-section>

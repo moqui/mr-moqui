@@ -688,8 +688,9 @@ fn login_app_password(facade: &EntityFacade, username: Option<&str>, password: &
     }
 }
 
+/// An account's login key, or one made for the gateway alone (`UserLoginKey.scope` `gateway`).
 fn login_key(key: &str) -> Option<Credential> {
-    moqui_core::user::login_user_key(key).ok()?;
+    moqui_core::user::login_user_key_for(key, "gateway").ok()?;
     moqui_core::user::hash_login_key(key).ok().map(Credential::LoginKey)
 }
 

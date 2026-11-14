@@ -28,13 +28,19 @@
 //!
 //! The redirect URIs an app may give are the property `webapp_app_redirect_uris` (spaces or commas between them),
 //! by default the desktop app's `org.moqui.desktop:/sso` and the mobile app's `org.moqui.mobile:/sso`, and any
-//! loopback one (RFC 8252 §7.3: `http://127.0.0.1:<port>/...`, `http://[::1]:<port>/...` or `http://localhost:<port>/...`,
-//! any port), unless `webapp_app_loopback_redirect` is false: a dev instance signs in to its group server so, with its
-//! own address as the redirect (plans/design-dev-aide.md 21.2, F17).
+//! loopback one (RFC 8252 §7.3 and §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
+//! `localhost`, which a hosts file or a resolver may send elsewhere), unless `webapp_app_loopback_redirect` is false (on
+//! by default: a dev instance signs in to its group server so, with its own address as the redirect,
+//! plans/design-dev-aide.md 21.2, F17). Any program on the user's computer can listen on a loopback port, so the
+//! confirmation names the port the code goes to and says the app's name is the app's own word.
 //!
 //! With no `authFlowId` the browser signs in at this server's own login instead of an identity provider (a server
-//! with none): a session signed in already is signed out first, and the confirmation needs a sign-in after the start
-//! (the session's last proven sign-in, `last_auth_millis`), as the provider round trip is needed otherwise.
+//! with none). A session signed in already stays signed in: the confirmation then asks for the account's password (and
+//! its second factor) again (`reauthenticate`), as it needs a sign-in after the start (the session's last proven
+//! sign-in, `last_auth_millis`) as the provider round trip is needed otherwise.
+//!
+//! The pages of the browser's side are never shown in a frame (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), so
+//! no other site can put the confirmation under a click of its own.
 
 use std::collections::BTreeMap;
 
@@ -121,15 +127,17 @@ fn start_app_login(
     let device: String = param_text(parameters, "deviceName").chars().take(255).collect();
     let flow = param_text(parameters, "authFlowId");
     let local = flow.is_empty();
-    if local && crate::user::current_user_id()?.is_some() {
-        // the server's own login, done after this start: a browser signed in already signs in again
-        crate::user::logout()?;
-    }
     let pending = serde_json::json!({ "challenge": challenge, "state": state, "redirectUri": redirect, "device": device,
         "startedAt": crate::user::now_millis(), "local": local });
     set_session_attribute(PENDING_APP, Some(&pending.to_string()));
     if local {
-        crate::web::send_redirect(&format!("/Login?returnTo={}", percent(APP_CODE_PATH)));
+        // the server's own login, after this start; a browser signed in already stays so, and confirms who it is on the
+        // confirmation instead (a sign-out here would end what the user has open in other tabs)
+        if crate::user::current_user_id()?.is_some_and(|id| !id.is_empty()) {
+            crate::web::send_redirect(APP_CODE_PATH);
+        } else {
+            crate::web::send_redirect(&format!("/Login?returnTo={}", percent(APP_CODE_PATH)));
+        }
         return Ok(BTreeMap::new());
     }
     let mut login = BTreeMap::new();
@@ -174,17 +182,27 @@ fn pending() -> Option<serde_json::Value> {
     Some(pending)
 }
 
-/// The app sign-in the current user did in this browser, ready for the confirmation: its callback done by the user
-/// signed in now (or, at this server's own login, a sign-in of the user after the start), its redirect still one an
-/// app may give.
-fn completed_pending() -> Option<serde_json::Value> {
+/// Where an app sign-in in this browser stands for the confirmation.
+enum Ready {
+    /// Its callback was done by the user signed in now (or, at this server's own login, the user signed in after the
+    /// start): the user may let the app in.
+    Confirm(serde_json::Value),
+    /// At this server's own login, a browser signed in before the start: the user confirms who they are first.
+    Reauthenticate(serde_json::Value),
+}
+
+/// The app sign-in the current user did in this browser, with its redirect still one an app may give.
+fn ready_pending() -> Option<Ready> {
     let mut pending = pending()?;
     let user_id = crate::user::current_user_id()
         .ok()
         .flatten()
         .filter(|id| !id.is_empty())?;
-    let redirect_allowed = Redirects::configured().allows(pending["redirectUri"].as_str().unwrap_or(""));
-    let signed_in_since = pending["local"].as_bool() == Some(true)
+    if !Redirects::configured().allows(pending["redirectUri"].as_str().unwrap_or("")) {
+        return None;
+    }
+    let local = pending["local"].as_bool() == Some(true);
+    let signed_in_since = local
         && pending["startedAt"]
             .as_i64()
             .zip(crate::user::last_auth_millis())
@@ -192,8 +210,74 @@ fn completed_pending() -> Option<serde_json::Value> {
     if signed_in_since {
         pending["completedBy"] = serde_json::Value::String(user_id.clone());
     }
-    let done_by_this_user = pending["completedBy"].as_str() == Some(user_id.as_str());
-    (done_by_this_user && redirect_allowed).then_some(pending)
+    if pending["completedBy"].as_str() == Some(user_id.as_str()) {
+        Some(Ready::Confirm(pending))
+    } else if local {
+        Some(Ready::Reauthenticate(pending))
+    } else {
+        None
+    }
+}
+
+/// The port of a loopback redirect, what the confirmation names: the app on this computer that gets the code.
+fn redirect_port(redirect: &str) -> Option<String> {
+    let rest = redirect
+        .strip_prefix("http://")
+        .or_else(|| redirect.strip_prefix("https://"))?;
+    let authority = rest.split(['/', '?']).next()?;
+    let (_, port) = authority
+        .rsplit_once(':')
+        .filter(|(host, _)| host.ends_with(']') || !host.contains(':'))?;
+    Some(port.to_string())
+}
+
+/// What the confirmation says of the app: its name as the app gave it, and where the code goes.
+fn app_text(pending: &serde_json::Value) -> String {
+    let device = pending["device"].as_str().filter(|name| !name.is_empty());
+    let redirect = pending["redirectUri"].as_str().unwrap_or("");
+    let named = device.map_or_else(
+        || "an app".to_string(),
+        |name| format!("an app that calls itself \u{201c}{}\u{201d}", escape(name)),
+    );
+    if is_loopback_redirect(redirect) {
+        let port =
+            redirect_port(redirect).unwrap_or_else(|| if redirect.starts_with("https") { "443" } else { "80" }.into());
+        format!("{named}, on this computer at port {}", escape(&port))
+    } else {
+        format!("{named} ({})", escape(redirect))
+    }
+}
+
+/// The form that confirms the signed-in user again, with the session's token: the password, and the code when the
+/// account has a second factor (`code_wanted`).
+fn reauth_form(token: &str, code_wanted: bool) -> String {
+    let code = if code_wanted {
+        "<p><label>Code <input name=\"code\" autocomplete=\"one-time-code\" inputmode=\"numeric\"></label></p>"
+    } else {
+        ""
+    };
+    format!(
+        "<form method=\"post\" action=\"/sso/appCodeConfirm\"><input type=\"hidden\" name=\"moquiSessionToken\" value=\"{}\">\
+         <p><label>Password <input type=\"password\" name=\"password\" autocomplete=\"current-password\"></label></p>{code}\
+         <button type=\"submit\" name=\"allow\" value=\"true\">Confirm and sign in</button> \
+         <button type=\"submit\" name=\"allow\" value=\"false\">Cancel</button></form>",
+        escape(token)
+    )
+}
+
+/// The page that asks the signed-in user to confirm who they are before an app is let in.
+fn send_reauth_page(pending: &serde_json::Value, note: Option<&str>, code_wanted: bool) -> Result<(), LibError> {
+    let username = crate::user::current_username()?.unwrap_or_default();
+    let token = crate::user::csrf_token()?;
+    let text = format!(
+        "{}Sign in to {} as {}? You are signed in already: enter your password to confirm it is you. The app gets its own \
+         key, which you can revoke from your account.",
+        note.map(|note| format!("{} ", escape(note))).unwrap_or_default(),
+        app_text(pending),
+        escape(&username)
+    );
+    send_page(200, "Confirm it is you", &text, Some(&reauth_form(&token, code_wanted)));
+    Ok(())
 }
 
 /// `confirm#AppLogin`: after the provider signed the browser in for an app, a page that asks the user to let that app
@@ -203,24 +287,27 @@ fn confirm_app_login(
     _parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let Some(pending) = completed_pending() else {
-        send_page(
-            400,
-            "Nothing to sign in",
-            "No app sign-in is waiting in this browser. Start it again from the app.",
-            None,
-        );
-        return Ok(BTreeMap::new());
+    let pending = match ready_pending() {
+        Some(Ready::Confirm(pending)) => pending,
+        Some(Ready::Reauthenticate(pending)) => {
+            send_reauth_page(&pending, None, false)?;
+            return Ok(BTreeMap::new());
+        }
+        None => {
+            send_page(
+                400,
+                "Nothing to sign in",
+                "No app sign-in is waiting in this browser. Start it again from the app.",
+                None,
+            );
+            return Ok(BTreeMap::new());
+        }
     };
     let username = crate::user::current_username()?.unwrap_or_default();
-    let device = pending["device"]
-        .as_str()
-        .filter(|name| !name.is_empty())
-        .unwrap_or("an app");
     let token = crate::user::csrf_token()?;
     let text = format!(
         "Sign in to {} as {}? The app gets its own key, which you can revoke from your account.",
-        escape(device),
+        app_text(&pending),
         escape(&username)
     );
     let form = format!(
@@ -239,24 +326,54 @@ fn issue_app_code(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let Some(pending) = completed_pending() else {
-        send_page(
-            400,
-            "Nothing to sign in",
-            "No app sign-in is waiting in this browser. Start it again from the app.",
-            None,
-        );
-        return Ok(BTreeMap::new());
+    let allow = param_text(parameters, "allow") == "true";
+    let pending = match ready_pending() {
+        Some(Ready::Confirm(pending)) => pending,
+        Some(Ready::Reauthenticate(pending)) if allow => {
+            // the signed-in user confirms who they are: the password, then the code of a second factor
+            match crate::user::reauthenticate(
+                &param_text(parameters, "password"),
+                param_text(parameters, "code").trim(),
+            ) {
+                Ok(crate::user::CodeLogin::LoggedIn) => {
+                    let mut pending = pending;
+                    pending["completedBy"] =
+                        serde_json::Value::String(crate::user::current_user_id()?.unwrap_or_default());
+                    pending
+                }
+                Ok(crate::user::CodeLogin::CodeNeeded { text, .. }) => {
+                    send_reauth_page(&pending, Some(&text), true)?;
+                    return Ok(BTreeMap::new());
+                }
+                Err(err) => {
+                    send_reauth_page(&pending, Some(err.message()), false)?;
+                    return Ok(BTreeMap::new());
+                }
+            }
+        }
+        Some(Ready::Reauthenticate(pending)) => pending,
+        None => {
+            send_page(
+                400,
+                "Nothing to sign in",
+                "No app sign-in is waiting in this browser. Start it again from the app.",
+                None,
+            );
+            return Ok(BTreeMap::new());
+        }
     };
     // one code per sign-in
     set_session_attribute(PENDING_APP, None);
     let text = |name: &str| pending[name].as_str().unwrap_or("").to_string();
     let (challenge, state, redirect) = (text("challenge"), text("state"), text("redirectUri"));
-    if param_text(parameters, "allow") != "true" {
+    if !allow {
         send_app_redirect(&redirect, &[("error", "access_denied"), ("state", &state)]);
         return Ok(BTreeMap::new());
     }
     let user_id = text("completedBy");
+    if user_id.is_empty() {
+        return Err(LibError::new("the app sign-in has no user"));
+    }
     let code = crate::user::random_string(43)?;
     let now = crate::user::now_millis();
     let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
@@ -379,8 +496,9 @@ impl Redirects {
     }
 }
 
-/// Whether `redirect` is a loopback redirect URI (RFC 8252 §7.3): http or https to `127.0.0.1`, `[::1]` or `localhost`,
-/// on any port, with no user part and no fragment. The code it carries is good only with the app's PKCE verifier.
+/// Whether `redirect` is a loopback redirect URI (RFC 8252 §7.3): http or https to the IP literal `127.0.0.1` or
+/// `[::1]` (§8.3: not `localhost`, which a hosts file or resolver may send elsewhere), on any port, with no user part and
+/// no fragment. The code it carries is good only with the app's PKCE verifier.
 pub(crate) fn is_loopback_redirect(redirect: &str) -> bool {
     let Some(rest) = redirect
         .strip_prefix("http://")
@@ -398,7 +516,7 @@ pub(crate) fn is_loopback_redirect(redirect: &str) -> bool {
     };
     let port_ok =
         port.is_none_or(|port| !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()));
-    port_ok && matches!(host, "127.0.0.1" | "[::1]" | "localhost")
+    port_ok && matches!(host, "127.0.0.1" | "[::1]")
 }
 
 /// Why a start is refused, if it is: an S256 challenge (43 base64url characters), a state of plain characters, and a
@@ -458,11 +576,20 @@ fn send_page(status: u16, title: &str, text: &str, form: Option<&str>) {
          <h1 style=\"font-size:1.4em\">{title}</h1><p>{text}</p>{}</body></html>",
         form.unwrap_or("")
     );
-    crate::web::send_bytes_with_headers(
-        status,
-        vec![("Content-Type".to_string(), "text/html; charset=utf-8".to_string())],
-        html.into_bytes(),
-    );
+    crate::web::send_bytes_with_headers(status, page_headers(), html.into_bytes());
+}
+
+/// The headers of the browser's pages of an app sign-in: HTML, never in a frame, never cached.
+fn page_headers() -> Vec<(String, String)> {
+    [
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Content-Security-Policy", "frame-ancestors 'none'"),
+        ("X-Frame-Options", "DENY"),
+        ("Cache-Control", "no-store"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.to_string()))
+    .collect()
 }
 
 /// `text` for HTML.

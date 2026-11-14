@@ -76,7 +76,7 @@ pub(crate) struct Call {
 }
 
 impl Call {
-    fn send(&self, server: &Server) -> Result<Json, LibError> {
+    pub(crate) fn send(&self, server: &Server) -> Result<Json, LibError> {
         let query: Vec<(&str, &str)> = self.query.iter().map(|(key, value)| (*key, value.as_str())).collect();
         let method = if self.post {
             moqui_core::outbound::Method::Post
@@ -177,8 +177,23 @@ pub(crate) fn fork_call(via: &Via, repository_id: &str) -> Option<Call> {
     }
 }
 
-/// A merge request as the list shows it, from the framework's shape or an application's.
-pub(crate) fn merge_request_item(item: &Json) -> Json {
+/// A page of the server the answer named, as a link the page may show: a path on the server, or an http(s) URL of its
+/// own origin; anything else (another site, `javascript:`, a user part) is no link.
+pub(crate) fn page_url(server: &Server, value: &Json) -> Json {
+    let Some(url) = value.as_str().map(str::trim).filter(|url| !url.is_empty()) else {
+        return Json::Null;
+    };
+    let checked = if url.starts_with('/') && !url.starts_with("//") && !url.contains('\\') {
+        server.url(url).ok()
+    } else {
+        client::on_server(server, url).ok()
+    };
+    checked.map_or(Json::Null, Json::String)
+}
+
+/// A merge request as the list shows it, from the framework's shape or an application's; its link only when it is a
+/// page of `server` ([`page_url`]).
+pub(crate) fn merge_request_item(item: &Json, server: &Server) -> Json {
     let text = |keys: &[&str]| -> Json {
         keys.iter()
             .map(|key| &item[*key])
@@ -196,7 +211,7 @@ pub(crate) fn merge_request_item(item: &Json) -> Json {
         "checkState": text(&["checkState", "checks"]),
         "pushedForReview": text(&["pushedForReview"]),
         "updated": text(&["lastUpdatedDate", "updatedAt", "lastUpdated"]),
-        "url": text(&["url", "pageUrl", "webUrl"]),
+        "url": page_url(server, &text(&["url", "pageUrl", "webUrl"])),
     })
 }
 
@@ -214,14 +229,18 @@ impl Hosted {
         self.repository["repositoryId"].as_str().unwrap_or("").to_string()
     }
 
-    fn via(&self) -> Via {
+    pub(crate) fn via(&self) -> Via {
         via(&self.server, &self.repository)
     }
 }
 
-/// The user preference of a root's hosted repository as this user may use it (`<prefix>.<rootId>`): the server's base
-/// and the user's rights there. The repository is the root's, the rights and the connection each user's own.
+/// The user preference of a root's hosted repository as this user may use it (`<prefix>.<rootId>`): the server's base,
+/// the user's rights there and the agreement as it stands for the user. The repository is the root's; the rights, the
+/// agreement and the connection are each user's own.
 pub const HOSTED_ACCESS: &str = "DEV_AIDE_HOSTED_ACCESS";
+
+/// What of a resolved repository is the user's alone, kept in their preference and never on the shared root.
+const PER_USER: [&str; 2] = ["access", "agreement"];
 
 /// The root's hosted repository, as last resolved, through the current user's connection to its server, with the
 /// user's own rights when they resolved it.
@@ -240,11 +259,13 @@ pub(crate) fn hosted(context: &Context, root: &Root) -> Option<Hosted> {
         .flatten()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or(Json::Null);
-    repository["access"] = if own["base"] == base {
-        own["access"].clone()
-    } else {
-        Json::Null
-    };
+    for name in PER_USER {
+        repository[name] = if own["base"] == base {
+            own[name].clone()
+        } else {
+            Json::Null
+        };
+    }
     Some(Hosted {
         server,
         remote: field(&row, "hostedRemote"),
@@ -265,10 +286,12 @@ pub(crate) fn resolve(context: &Context, root: &Root) -> Result<Option<Json>, Li
     let servers = Server::all(&context.facade, &current_user());
     let mut tried = Vec::new();
     for (remote, url) in remotes(context, root) {
+        // the remote's user part (a token pasted into a URL) is never sent to the server
+        let asked = crate::vcs::without_userinfo(&url);
         for server in servers.iter().filter(|server| server.matches_remote(&url)) {
             let answer = server.get(
                 &format!("{}/repository", server.rest_path("hosting")),
-                &[("url", url.as_str())],
+                &[("url", asked.as_str())],
             );
             match answer {
                 Ok(answer) if answer["found"].as_bool() == Some(true) => {
@@ -278,9 +301,10 @@ pub(crate) fn resolve(context: &Context, root: &Root) -> Result<Option<Json>, Li
                     moqui_core::user::set_preference(
                         &format!("{HOSTED_ACCESS}.{}", root.id),
                         Some(
-                            json!({ "base": server.base, "access": repository["access"] })
-                                .to_string()
-                                .as_str(),
+                            json!({ "base": server.base, "access": repository["access"],
+                                "agreement": repository["agreement"] })
+                            .to_string()
+                            .as_str(),
                         ),
                     )?;
                     return Ok(Some(
@@ -300,8 +324,30 @@ pub(crate) fn resolve(context: &Context, root: &Root) -> Result<Option<Json>, Li
             tried.join("; ")
         );
     }
-    store(context, root, None)?;
+    moqui_core::user::set_preference(&format!("{HOSTED_ACCESS}.{}", root.id), None)?;
+    // on a shared root another user's resolution stays: this user's connections, or rights, are not theirs
+    if resolved_by_current_user(context, root) {
+        store(context, root, None)?;
+    }
     Ok(None)
+}
+
+/// Whether the root's hosted repository was resolved through one of the current user's own connections.
+fn resolved_by_current_user(context: &Context, root: &Root) -> bool {
+    let Some(row) = crate::roots::root_row(&context.facade, &root.path) else {
+        return false;
+    };
+    let server_id = field(&row, "hostedServerId");
+    if server_id.is_empty() {
+        return false;
+    }
+    context
+        .facade
+        .find(client::SERVER)
+        .and_then(|find| find.eq("serverId", Value::string(&server_id)).one())
+        .ok()
+        .flatten()
+        .is_none_or(|server| field(&server, "userId") == current_user())
 }
 
 /// Keep (or clear) a root's hosted repository on its `DevAideRoot` row.
@@ -327,7 +373,13 @@ fn store(context: &Context, root: &Root, hosted: Option<(&str, &str, &Json)>) ->
                 "hostedRepositoryId",
                 Value::string(repository["repositoryId"].as_str().unwrap_or("")),
             );
-            row.set("hostedJson", Value::string(repository.to_string()));
+            let mut shared = repository.clone();
+            if let Json::Object(map) = &mut shared {
+                for name in PER_USER {
+                    map.remove(name);
+                }
+            }
+            row.set("hostedJson", Value::string(shared.to_string()));
             row.set("hostedDate", moqui_core::user::now_value());
         }
         None => {
@@ -375,7 +427,7 @@ fn resolve_root_hosting(
     Ok(out)
 }
 
-fn need_hosted(context: &Context, root: &Root) -> Result<Hosted, LibError> {
+pub(crate) fn need_hosted(context: &Context, root: &Root) -> Result<Hosted, LibError> {
     // known, with this user's rights: else asked again, as this user
     if let Some(hosted) = hosted(context, root).filter(|hosted| !hosted.repository["access"].is_null()) {
         return Ok(hosted);
@@ -410,7 +462,10 @@ fn get_merge_requests(
         &hosted.server.username,
     );
     let answer = call.send(&hosted.server)?;
-    let items: Vec<Json> = client::first_list(&answer).iter().map(merge_request_item).collect();
+    let items: Vec<Json> = client::first_list(&answer)
+        .iter()
+        .map(|item| merge_request_item(item, &hosted.server))
+        .collect();
     let mut out = Parameters::new();
     out.insert("mergeRequests".into(), json_value(&items));
     out.insert("repository".into(), json_value(&hosted.repository));
@@ -449,7 +504,7 @@ pub(crate) fn open(context: &Context, root: &Root, opening: &Opening) -> Result<
     );
     Ok(json!({
         "mergeRequestNum": made["mergeRequestNum"], "repositoryId": hosted.id(), "target": opening.target,
-        "url": made["url"],
+        "url": page_url(&hosted.server, &made["url"]),
     }))
 }
 
@@ -507,6 +562,7 @@ pub fn propose_args(remote: &str, target: &str, topic: &str, title: &str) -> Vec
         args.push("-o".into());
         args.push(format!("title={}", title.trim().replace('\n', " ")));
     }
+    args.push("--".into());
     args.push(remote.to_string());
     args.push(format!("HEAD:refs/for/{target}"));
     args
@@ -572,8 +628,14 @@ fn checkout_branch(parameters: &Parameters, number: &str) -> String {
         .unwrap_or_else(|| format!("mr/{number}"))
 }
 
+/// What checking out a merge request means here: its code runs in this instance.
+pub const CHECKOUT_WARNING: &str = "This is someone else's code: the file watcher reloads it into this instance as it \
+    is checked out, so its services, screens and scripts run here with your rights. Read the changes first.";
+
 /// `checkout#MergeRequest`: `refs/merge-requests/<n>/head` of the hosted remote fetched into a local branch (`mr/<n>`
-/// by default) and switched to; the branch already current takes the new head by a fast-forward.
+/// by default) and switched to. A branch is never overwritten by force: a new branch is made from the head; the
+/// merge request's own `mr/<n>` takes a new head only when it has no commits of its own that the head lacks; any other
+/// branch that exists is refused. The answer warns that the code now runs here (hot reload).
 fn checkout_merge_request(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -590,27 +652,63 @@ fn checkout_merge_request(
     }
     let branch = checkout_branch(parameters, &number);
     crate::vcs::valid_branch(&branch)?;
+    let own = format!("mr/{number}");
     let source = format!("refs/merge-requests/{number}/head");
+    let local = format!("refs/heads/{branch}");
+    let exists = context
+        .git()
+        .read(&root.path, &["rev-parse", "-q", "--verify", &local])
+        .is_ok_and(|out| !out.trim().is_empty());
+    if exists && branch != own {
+        return Err(LibError::new(format!(
+            "{branch} is a branch already: check the merge request out as {own}, or name a new branch"
+        )));
+    }
     let current = crate::vcs::current_branch(&context, root).unwrap_or_default();
     let mut shown = String::new();
-    if current == branch {
-        let fetched = run_network_with(&context, root, &["fetch", &hosted.remote, &source], None)?.checked("fetch")?;
-        shown.push_str(&fetched.stderr);
-        let merged = context
+    let fetched =
+        run_network_with(&context, root, &["fetch", "--", &hosted.remote, &source], None)?.checked("fetch")?;
+    shown.push_str(&fetched.stderr);
+    if exists {
+        let ahead = context
             .git()
-            .run(
-                &root.path,
-                Mode::Write,
-                &["merge", "--ff-only", "FETCH_HEAD"],
-                &[],
-                None,
-            )?
-            .checked("merge --ff-only")?;
-        shown.push_str(&merged.stdout);
+            .read(&root.path, &["rev-list", "--count", &format!("FETCH_HEAD..{local}")])
+            .map(|out| out.trim().to_string())
+            .unwrap_or_default();
+        if ahead != "0" {
+            return Err(LibError::new(format!(
+                "{branch} has {} commit(s) of your own that merge request !{number} does not: push or move them, then \
+                 check out again",
+                if ahead.is_empty() { "unknown".to_string() } else { ahead }
+            )));
+        }
+        let moved = if current == branch {
+            // the working tree's own changes are kept; a change that the new head touches stops it
+            context
+                .git()
+                .run(&root.path, Mode::Write, &["reset", "--keep", "FETCH_HEAD"], &[], None)?
+                .checked("reset --keep")?
+        } else {
+            context
+                .git()
+                .run(
+                    &root.path,
+                    Mode::Write,
+                    &["update-ref", &local, "FETCH_HEAD"],
+                    &[],
+                    None,
+                )?
+                .checked("update-ref")?
+        };
+        shown.push_str(&moved.stdout);
     } else {
-        let refspec = format!("+{source}:refs/heads/{branch}");
-        let fetched = run_network_with(&context, root, &["fetch", &hosted.remote, &refspec], None)?.checked("fetch")?;
-        shown.push_str(&fetched.stderr);
+        let made = context
+            .git()
+            .run(&root.path, Mode::Write, &["branch", &branch, "FETCH_HEAD"], &[], None)?
+            .checked("branch")?;
+        shown.push_str(&made.stderr);
+    }
+    if current != branch {
         let switched = context
             .git()
             .run(&root.path, Mode::Write, &["switch", &branch], &[], None)?
@@ -626,6 +724,7 @@ fn checkout_merge_request(
     let mut out = Parameters::new();
     out.insert("branch".into(), Value::string(branch));
     out.insert("output".into(), Value::string(shown));
+    out.insert("warning".into(), Value::string(CHECKOUT_WARNING));
     // the file watcher reloads what changed; a changed entity or conf file still takes a restart
     out.insert("restart".into(), Value::Bool(true));
     Ok(out)
@@ -668,11 +767,13 @@ fn fork_repository(
             hosted.server.base
         )));
     }
+    // the fork's URL is the server's own, https, with no user part: git is given nothing else
+    let url = client::on_server(&hosted.server, &url)?;
     let has_fork = remotes(&context, root).iter().any(|(name, _)| name == "fork");
     let args = if has_fork {
-        vec!["remote", "set-url", "fork", url.as_str()]
+        vec!["remote", "set-url", "--", "fork", url.as_str()]
     } else {
-        vec!["remote", "add", "fork", url.as_str()]
+        vec!["remote", "add", "--", "fork", url.as_str()]
     };
     context
         .git()

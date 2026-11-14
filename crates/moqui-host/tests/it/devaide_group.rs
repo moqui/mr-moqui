@@ -46,6 +46,65 @@ use crate::common::{exchange, http_request, merge_cookies, start_with_files_and_
 const SITE_COMPONENT: &str = r#"<component name="my-site"/>"#;
 const SITE_SERVICES: &str = "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n</services>\n";
 const HS: &str = "org.moqui.devaide.HostingServices.";
+/// The group server's application, as Mantle would be for threads and Smithy for the agreement: a review-thread service
+/// over a table of its own, and an agreement check that knows one signed address (plans/design-dev-aide.md 21.10).
+const STUB_COMPONENT: &str = r#"<component name="review-stub"/>"#;
+const STUB_CONF: &str = r#"<moqui-conf><git-server review-thread-service="reviewstub.Stub.handle#Thread"
+    agreement-check-service="reviewstub.Stub.check#Signed"/></moqui-conf>"#;
+const STUB_ENTITIES: &str = r#"<entities>
+    <entity entity-name="ReviewNote" package="reviewstub">
+        <field name="noteId" type="id" is-pk="true"/>
+        <field name="threadId" type="id"/>
+        <field name="mergeRequestId" type="id"/>
+        <field name="path" type="text-medium"/>
+        <field name="newLine" type="number-integer"/>
+        <field name="oldLine" type="number-integer"/>
+        <field name="authorName" type="text-medium"/>
+        <field name="body" type="text-long"/>
+        <field name="resolved" type="text-indicator"/>
+    </entity>
+</entities>"#;
+const STUB_SERVICES: &str = r#"<services>
+    <service verb="handle" noun="Thread">
+        <implements service="org.moqui.git.GitServices.handle#GitReviewThread"/>
+        <actions><script><![CDATA[
+            const E = 'reviewstub.ReviewNote'
+            if (operation === 'find') {
+                let find = ec.entity.find(E).condition('mergeRequestId', mergeRequestId).disableAuthz()
+                if (path) find = find.condition('path', path)
+                const byThread = {}
+                threadList = []
+                for (const note of Array.from(find.orderBy('noteId').list())) {
+                    let thread = byThread[note.threadId]
+                    if (!thread) {
+                        thread = byThread[note.threadId] = {threadId: note.threadId, path: note.path, newLine: note.newLine,
+                            oldLine: note.oldLine, resolved: false, commentList: []}
+                        threadList.push(thread)
+                    }
+                    if (note.resolved === 'Y') thread.resolved = true
+                    thread.commentList.push({commentId: note.noteId, authorName: note.authorName, body: note.body, bodyFormat: 'markdown'})
+                }
+            } else if (operation === 'comment') {
+                const note = ec.entity.makeValue(E).setAll({mergeRequestId, path, newLine, oldLine, body,
+                    authorName: ec.user.username}).setSequencedIdPrimary()
+                note.threadId = threadId || note.noteId
+                note.create()
+                threadId = note.threadId
+            } else if (operation === 'resolve') {
+                ec.entity.find(E).condition('threadId', threadId).disableAuthz().updateAll({resolved: resolved ? 'Y' : 'N'})
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="check" noun="Signed">
+        <implements service="org.moqui.git.GitServices.check#GitAuthorSigned"/>
+        <actions><script><![CDATA[
+            known = true
+            required = true
+            signed = authorEmail === 'signed@example.com'
+        ]]></script></actions>
+    </service>
+</services>"#;
+const AUTHORS: &str = "# Authors\n\n## Copyright Waiver\n\nText.\n\n- Written in 2026 by Ann A - ann\n\n## Grant of Patent License\n\nText.\n\n- Written in 2026 by Ann A - ann\n";
 const VCS: &str = "org.moqui.devaide.VcsServices.";
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -127,8 +186,8 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
 }
 
 /// The browser's side of an installed app's sign-in at this server's own login (F17), as john.doe: the code the
-/// confirmation hands to `redirect`.
-fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> String {
+/// confirmation hands to `redirect`, and the browser's cookie, signed in.
+fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> (String, String) {
     let query = format!(
         "codeChallenge={challenge}&codeChallengeMethod=S256&state=st-1&redirectUri={}&deviceName=Dev%20AIDE",
         redirect.replace(':', "%3A").replace('/', "%2F")
@@ -159,7 +218,10 @@ fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> Stri
         &http_request("GET", "/sso/appCode", &[("Cookie", &cookie)], ""),
     );
     assert_eq!(status, 200, "{page}");
-    assert!(page.contains("Sign in to Dev AIDE as john.doe"), "{page}");
+    assert!(
+        page.contains("calls itself \u{201c}Dev AIDE\u{201d}") && page.contains("as john.doe?"),
+        "{page}"
+    );
     let cookie = merge_cookies(&cookie, &headers);
     let marker = "name=\"moquiSessionToken\" value=\"";
     let start = page.find(marker).expect("the confirmation has the session token") + marker.len();
@@ -183,7 +245,74 @@ fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> Stri
         "{location}"
     );
     let code = location.split("code=").nth(1).unwrap().split('&').next().unwrap();
-    code.to_string()
+    (code.to_string(), merge_cookies(&cookie, &headers))
+}
+
+/// The session token of a page's form.
+fn form_token(page: &str) -> String {
+    let marker = "name=\"moquiSessionToken\" value=\"";
+    let start = page.find(marker).expect("the page has the session token") + marker.len();
+    page[start..start + page[start..].find('"').unwrap()].to_string()
+}
+
+/// A browser signed in already starts another app sign-in at this server's own login (F17, item 7 of the P11 review):
+/// it stays signed in, the confirmation names the port the code goes to, is never framed, and asks for the password;
+/// a `localhost` redirect is refused.
+fn signed_in_browser_confirms_who_it_is(address: SocketAddr, cookie: &str, challenge: &str, redirect: &str) {
+    let start = |redirect: &str| {
+        let query = format!(
+            "codeChallenge={challenge}&codeChallengeMethod=S256&state=st-2&redirectUri={}&deviceName=Other%20app",
+            redirect.replace(':', "%3A").replace('/', "%2F")
+        );
+        exchange(
+            address,
+            &http_request("GET", &format!("/sso/appLogin?{query}"), &[("Cookie", cookie)], ""),
+        )
+    };
+    let (status, _, body) = start(&redirect.replace("127.0.0.1", "localhost"));
+    assert_eq!(status, 400, "a localhost redirect: {body}");
+    let (status, headers, body) = start(redirect);
+    assert_eq!(status, 302, "{body}");
+    assert_eq!(
+        header(&headers, "location"),
+        "/sso/appCode",
+        "not signed out: {headers:?}"
+    );
+    let cookie = merge_cookies(cookie, &headers);
+    let (status, headers, page) = exchange(
+        address,
+        &http_request("GET", "/sso/appCode", &[("Cookie", &cookie)], ""),
+    );
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(header(&headers, "x-frame-options"), "DENY");
+    assert!(header(&headers, "content-security-policy").contains("frame-ancestors 'none'"));
+    let port = redirect.split(':').nth(2).unwrap().split('/').next().unwrap();
+    assert!(
+        page.contains(&format!("port {port}")) && page.contains("calls itself"),
+        "{page}"
+    );
+    assert!(page.contains("type=\"password\""), "{page}");
+    let cookie = merge_cookies(&cookie, &headers);
+    let token = form_token(&page);
+    let confirm = |password: &str| {
+        exchange(
+            address,
+            &http_request(
+                "POST",
+                "/sso/appCodeConfirm",
+                &[
+                    ("Cookie", &cookie),
+                    ("Content-Type", "application/x-www-form-urlencoded"),
+                ],
+                &format!("allow=true&password={password}&moquiSessionToken={token}"),
+            ),
+        )
+    };
+    let (status, _, page) = confirm("not-it");
+    assert_eq!(status, 200, "a wrong password asks again: {page}");
+    let (status, headers, body) = confirm("moqui");
+    assert_eq!(status, 302, "{body}");
+    assert!(header(&headers, "location").contains("code="), "{headers:?}");
 }
 
 #[test]
@@ -217,6 +346,14 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     let files = [
         ("components/addon/my-site/component.xml", SITE_COMPONENT),
         ("components/addon/my-site/service/mysite/Things.xml", SITE_SERVICES),
+        ("components/addon/my-site/AUTHORS.md", AUTHORS),
+        ("components/addon/review-stub/component.xml", STUB_COMPONENT),
+        ("components/addon/review-stub/MoquiConf.xml", STUB_CONF),
+        ("components/addon/review-stub/entity/ReviewStub.xml", STUB_ENTITIES),
+        (
+            "components/addon/review-stub/service/reviewstub/Stub.xml",
+            STUB_SERVICES,
+        ),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-group",
@@ -225,6 +362,7 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             ("instance_purpose", "dev"),
             ("dev_aide_site_component", "my-site"),
             ("dev_aide_shared", "false"),
+            ("llm_gateway_enabled", "true"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -253,7 +391,8 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     let verifier = "dev-aide-verifier-0123456789-0123456789-0123456789".to_string();
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier.as_bytes()));
     let redirect = format!("{base}/qapps/dev/Settings/serverSignedIn");
-    let code = browser_sign_in(address, &challenge, &redirect);
+    let (code, browser) = browser_sign_in(address, &challenge, &redirect);
+    signed_in_browser_confirms_who_it_is(address, &browser, &challenge, &redirect);
     {
         // what start#Connect keeps, which needs the page's request for this instance's own address
         let context = factory.new_context();
@@ -283,6 +422,25 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     let server = json(&servers, "servers")[0].clone();
     assert_eq!(server["username"], "john.doe", "{server}");
     assert_eq!(server["hasToken"], true);
+    // git's credential is the server's account (item 6)
+    let (credential_name, app_key) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let row = facade
+            .find("moqui.dev.DevAideCredential")
+            .unwrap()
+            .eq("serverId", Value::string("GROUP"))
+            .one()
+            .unwrap()
+            .unwrap();
+        (
+            row.get("username").map(to_plain_string).unwrap_or_default(),
+            row.get("token").map(to_plain_string).unwrap_or_default(),
+        )
+    };
+    assert_eq!(credential_name, "john.doe");
     assert!(
         server["offer"]["git"]["httpsUrlTemplate"]
             .as_str()
@@ -291,7 +449,15 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         "{server}"
     );
 
-    // what Connect sets, as confirmed: the addons repository, the task source, git's credential
+    // what Connect sets, as confirmed: the addons repository, the task source, the gateway's lines with a key for the
+    // gateway alone (the developer's own lines kept), git's credential
+    let env_file = gate.runtime.join(".env");
+    let env_before = std::fs::read_to_string(&env_file).unwrap_or_default();
+    std::fs::write(
+        &env_file,
+        format!("{env_before}\nllm_openai_api_key=sk-own\nllm_openai_model=mine\n"),
+    )
+    .unwrap();
     let applied = call(
         &factory,
         "john.doe",
@@ -301,11 +467,37 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             ("addons", "true"),
             ("defaultRepository", "true"),
             ("taskSource", "true"),
+            ("gateway", "true"),
             ("gitCredential", "stored"),
         ],
     )
     .unwrap();
-    assert_eq!(json(&applied, "done").as_array().unwrap().len(), 3, "{applied:?}");
+    assert_eq!(json(&applied, "done").as_array().unwrap().len(), 4, "{applied:?}");
+    let env_lines = moqui_lib::env::parse_dotenv(&std::fs::read_to_string(&env_file).unwrap());
+    let env = |name: &str| {
+        env_lines
+            .iter()
+            .rev()
+            .find(|(have, _)| have == name)
+            .map(|(_, value)| value.clone())
+            .unwrap_or_default()
+    };
+    let gateway_key = env("llm_openai_api_key");
+    assert!(
+        gateway_key.len() == 40 && gateway_key != app_key,
+        "item 4: {gateway_key}"
+    );
+    assert_eq!(env("llm_openai_url"), format!("{base}/llm"));
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        assert!(
+            moqui_core::user::login_user_key(&gateway_key).is_err(),
+            "the gateway's key opens nothing else"
+        );
+        moqui_core::user::login_user_key_for(&gateway_key, "gateway").unwrap();
+        moqui_core::user::logout().unwrap();
+    }
     let myaddons = std::fs::read_to_string(gate.runtime.join("myaddons.xml")).unwrap();
     assert!(myaddons.contains("<addons default-repository=\"team\">"), "{myaddons}");
     assert!(
@@ -340,6 +532,65 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     assert_eq!(repository["repositoryId"], "my-site", "{hosted:?}");
     assert_eq!(repository["access"]["canUpdate"], true);
     assert_eq!(repository["defaultBranch"], "main");
+    // the shared root keeps no one's rights or agreement (item 12)
+    let hosted_json = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let row = facade
+            .find("moqui.dev.DevAideRoot")
+            .unwrap()
+            .eq("hostedServerId", Value::string("GROUP"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.get("hostedJson").map(to_plain_string).unwrap_or_default()
+    };
+    assert!(
+        !hosted_json.contains("\"access\"") && !hosted_json.contains("\"agreement\""),
+        "{hosted_json}"
+    );
+    // a user with no connection finds nothing, and leaves john.doe's resolution as it was
+    let unseen = call(
+        &factory,
+        "dev.viewer",
+        &format!("{HS}resolve#RootHosting"),
+        &[("rootId", "my-site")],
+    )
+    .unwrap();
+    assert!(json(&unseen, "hosted").is_null(), "{unseen:?}");
+    let still = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#MergeRequests"),
+        &[("rootId", "my-site")],
+    );
+    assert!(still.is_ok(), "{still:?}");
+
+    // a Connect-made task source moved to another address takes a token of its own, not the server's (item 5)
+    let source_id = json(&sources, "sources")
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["label"] == "Team")
+        .and_then(|source| source["taskSourceId"].as_str().map(str::to_string))
+        .unwrap();
+    let moved = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.TaskServices.store#TaskSource",
+        &[
+            ("taskSourceId", &source_id),
+            ("label", "Team"),
+            ("username", "john.doe"),
+            ("baseUrl", "https://elsewhere.example.com"),
+        ],
+    );
+    assert!(
+        matches!(&moved, Err(err) if err.contains("token of its own")),
+        "{moved:?}"
+    );
 
     // Push with a merge request, through git's stored credential and the framework's REST
     git(&site, &["switch", "-q", "-c", "due-date"]);
@@ -445,6 +696,182 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     let branch = text(&checked, "branch");
     assert_eq!(branch, format!("mr/{number}"));
     assert_eq!(git(&site, &["rev-parse", &branch]), proposed_head);
+    assert!(text(&checked, "warning").contains("someone else's code"), "{checked:?}");
+    // never by force: a branch of the developer's is refused, and mr/<n> with a commit of its own stays (item 8)
+    let onto_main = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}checkout#MergeRequest"),
+        &[("rootId", "my-site"), ("mergeRequestNum", &number), ("branch", "main")],
+    );
+    assert!(
+        matches!(&onto_main, Err(err) if err.contains("is a branch already")),
+        "{onto_main:?}"
+    );
+    std::fs::write(site.join("LOCAL.md"), "mine\n").unwrap();
+    git(&site, &["add", "LOCAL.md"]);
+    git(&site, &["commit", "-q", "-m", "A local commit"]);
+    let local_head = git(&site, &["rev-parse", "HEAD"]);
+    let again = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}checkout#MergeRequest"),
+        &[("rootId", "my-site"), ("mergeRequestNum", &number)],
+    );
+    assert!(matches!(&again, Err(err) if err.contains("of your own")), "{again:?}");
+    assert_eq!(git(&site, &["rev-parse", &branch]), local_head);
+
+    // P12 review: a thread made on the server shows on its line, in the gutter of the checked-out branch; a reply and
+    // a resolve reach the server; a review is submitted
+    // on the server, through its REST, as dev.viewer
+    let threads_path = format!("/rest/s1/moqui/git/my-site/mergeRequests/{number}/threads");
+    let (status, _, body) = exchange(
+        address,
+        &http_request(
+            "POST",
+            &threads_path,
+            &[("api_key", &viewer_key), ("Content-Type", "application/json")],
+            r#"{"body": "Is this the right file?", "path": "README.md", "newLine": 1}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{body}");
+    let read = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#ReviewThreads"),
+        &[("rootId", "my-site"), ("mergeRequestNum", &number)],
+    )
+    .unwrap();
+    let thread = json(&read, "threads")[0].clone();
+    assert_eq!(
+        (thread["path"].as_str(), thread["newLine"].as_i64()),
+        (Some("README.md"), Some(1)),
+        "{read:?}"
+    );
+    assert_eq!(thread["comments"][0]["author"], "dev.viewer");
+    let thread_id = thread["threadId"].as_str().unwrap().to_string();
+    let gutter = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#FileThreads"),
+        &[("rootId", "my-site"), ("path", "README.md")],
+    )
+    .unwrap();
+    assert_eq!(json(&gutter, "threads").as_array().unwrap().len(), 1, "{gutter:?}");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{HS}create#ReviewComment"),
+        &[
+            ("rootId", "my-site"),
+            ("mergeRequestNum", &number),
+            ("threadId", &thread_id),
+            ("body", "Yes: it is the readme"),
+        ],
+    )
+    .unwrap();
+    call(
+        &factory,
+        "john.doe",
+        &format!("{HS}resolve#ReviewThread"),
+        &[
+            ("rootId", "my-site"),
+            ("mergeRequestNum", &number),
+            ("threadId", &thread_id),
+        ],
+    )
+    .unwrap();
+    let (status, _, body) = exchange(
+        address,
+        &http_request("GET", &threads_path, &[("api_key", &viewer_key)], ""),
+    );
+    assert_eq!(status, 200, "{body}");
+    let on_server: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let server_thread = on_server["threadList"][0].clone();
+    assert_eq!(
+        server_thread["commentList"].as_array().unwrap().len(),
+        2,
+        "{on_server:?}"
+    );
+    assert_eq!(server_thread["resolved"], true);
+    let gutter = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#FileThreads"),
+        &[("rootId", "my-site"), ("path", "README.md")],
+    )
+    .unwrap();
+    assert!(json(&gutter, "threads").as_array().unwrap().is_empty(), "{gutter:?}");
+    let changes = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#MergeRequestChanges"),
+        &[("rootId", "my-site"), ("mergeRequestNum", &number)],
+    )
+    .unwrap();
+    assert!(
+        json(&changes, "files")
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "README.md"),
+        "{changes:?}"
+    );
+    let file = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#MergeRequestFile"),
+        &[
+            ("rootId", "my-site"),
+            ("mergeRequestNum", &number),
+            ("path", "README.md"),
+            ("baseCommitId", &text(&changes, "baseCommitId")),
+            ("headCommitId", &text(&changes, "headCommitId")),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&file, "modified"), "A fix\n", "{file:?}");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{HS}submit#Review"),
+        &[
+            ("rootId", "my-site"),
+            ("mergeRequestNum", &number),
+            ("decision", "comment"),
+            ("body", "Read"),
+        ],
+    )
+    .unwrap();
+
+    // P12 checks: a failed status shows on its commit
+    let (status, _, body) = exchange(
+        address,
+        &http_request(
+            "POST",
+            &format!("/rest/s1/moqui/git/my-site/commits/{proposed_head}/statuses"),
+            &[("api_key", &john_key), ("Content-Type", "application/json")],
+            // no context: the REST takes no parameter named `context` (the default context, `default`)
+            r#"{"state": "failure", "description": "ci/test failed"}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{body}");
+    let states = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#CommitStates"),
+        &[("rootId", "my-site"), ("commitIds", &proposed_head)],
+    )
+    .unwrap();
+    assert_eq!(json(&states, "states")[&proposed_head], "failure", "{states:?}");
+    let checks = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#Checks"),
+        &[("rootId", "my-site"), ("commitId", &proposed_head)],
+    )
+    .unwrap();
+    assert_eq!(json(&checks, "statuses")[0]["state"], "failure", "{checks:?}");
 
     // Publish to a publish branch opens the merge request into the current branch
     git(&site, &["switch", "-q", "main"]);
@@ -476,6 +903,50 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     );
     assert_eq!(json(&published, "mergeRequest")["target"], "main");
 
+    // a push whose merge request cannot be opened (the branch is the target) still pushes, and says why (item 11)
+    let pushed_main = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}push#Remote"),
+        &[("rootId", "my-site"), ("openMergeRequest", "true")],
+    )
+    .unwrap();
+    assert!(
+        text(&pushed_main, "mergeRequestError").contains("is the target"),
+        "{pushed_main:?}"
+    );
+
+    // P12 agreement: an author who has not signed is warned; Sign commits AUTHORS.md alone
+    git(&site, &["config", "user.email", "unsigned@example.com"]);
+    git(&site, &["config", "user.name", "John Doe"]);
+    let agreement = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}get#Agreement"),
+        &[("rootId", "my-site")],
+    )
+    .unwrap();
+    assert_eq!(
+        (text(&agreement, "required"), text(&agreement, "signed")),
+        ("true".to_string(), "false".to_string()),
+        "{agreement:?}"
+    );
+    std::fs::write(site.join("STAGED.md"), "staged\n").unwrap();
+    git(&site, &["add", "STAGED.md"]);
+    let signed = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}sign#Agreement"),
+        &[("rootId", "my-site"), ("legalName", "John Doe"), ("years", "2026")],
+    )
+    .unwrap();
+    assert_eq!(text(&signed, "line"), "- Written in 2026 by John Doe - john.doe");
+    assert_eq!(git(&site, &["show", "--name-only", "--format=", "HEAD"]), "AUTHORS.md");
+    assert!(git(&site, &["diff", "--cached", "--name-only"]).contains("STAGED.md"));
+    let authors = std::fs::read_to_string(site.join("AUTHORS.md")).unwrap();
+    assert_eq!(authors.matches("John Doe - john.doe").count(), 2, "{authors}");
+    git(&site, &["reset", "-q", "STAGED.md"]);
+
     // Remove takes back what Connect set
     let removed = call(
         &factory,
@@ -491,4 +962,23 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     );
     let myaddons = std::fs::read_to_string(gate.runtime.join("myaddons.xml")).unwrap();
     assert!(!myaddons.contains("repository name=\"team\""), "{myaddons}");
+    // the developer's own .env lines are back, the gateway's URL is gone, and both keys are ended (items 3, 4)
+    let env_lines = moqui_lib::env::parse_dotenv(&std::fs::read_to_string(&env_file).unwrap());
+    let env = |name: &str| {
+        env_lines
+            .iter()
+            .rev()
+            .find(|(have, _)| have == name)
+            .map(|(_, value)| value.clone())
+    };
+    assert_eq!(env("llm_openai_api_key").as_deref(), Some("sk-own"));
+    assert_eq!(env("llm_openai_model").as_deref(), Some("mine"));
+    assert_eq!(env("llm_openai_url"), None);
+    let context = factory.new_context();
+    let _entered = context.enter();
+    assert!(moqui_core::user::login_user_key_for(&gateway_key, "gateway").is_err());
+    assert!(
+        moqui_core::user::login_user_key(&app_key).is_err(),
+        "the sign-in's key is ended"
+    );
 }

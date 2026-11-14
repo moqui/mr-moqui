@@ -121,11 +121,20 @@ first branch pushed) its default branch.
 - **An installed app** (a dev instance's Dev AIDE connecting to its group server, plans/design-dev-aide.md 21.2; the
   desktop and mobile apps) gets a login key without a pasted token: it opens `/sso/appLogin` in the browser with a PKCE
   challenge, a state and its redirect URI; the browser signs in (at an identity provider, or with no `authFlowId` at
-  this server's own login, signed out first when it was signed in); the user confirms; the code goes to the redirect
-  URI and the app takes it at `/sso/appToken` with its verifier for the key (`service/sso_app.rs`). A redirect URI is
-  one of `webapp_app_redirect_uris` exactly, or any loopback one (RFC 8252: `http://127.0.0.1:<port>/...`, `[::1]` or
-  `localhost`, any port) unless `webapp_app_loopback_redirect` is false; a shared dev server that is not on loopback
-  is listed in `webapp_app_redirect_uris`, or its users paste a token.
+  this server's own login; a browser signed in already stays signed in and enters the account's password, and its
+  second factor, again on the confirmation); the user confirms, on a page that names the port the code goes to and
+  says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
+  with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
+  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp_app_redirect_uris` exactly, or any loopback one
+  by its IP literal (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
+  `localhost`) unless `webapp_app_loopback_redirect` is false. It is on by default: any program on the user's computer
+  may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
+  app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
+  is not on loopback is listed in `webapp_app_redirect_uris`, or its users paste a token.
+- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
+  (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
+  user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's
+  own only). The REST has both as `hosting/gatewayKey` and `hosting/keyRevoke` (POST).
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
@@ -992,17 +1001,30 @@ call `GitServices`, `GitReviewServices` and `GitCiServices`.
 | `hosting/repository` | GET `url` | `resolve#RepositoryUrl`: the repository a clone, SSH or page URL names, as `get#Repository` |
 | `hosting/mergeRequests` | GET | `find#MergeRequests` across the repositories the caller may view |
 | `hosting/agreement` | GET | `get#AuthorSigned` |
+| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway alone), `revoke#UserHeldKey` |
+| `.../mergeRequests/{n}/threads` | GET, POST | `find#ReviewThreads` (`path`), `create#ReviewComment` (a new thread on a line, or a reply: `threadId`) |
+| `.../mergeRequests/{n}/threads/{threadId}/resolve` | POST | `resolve#ReviewThread` (`resolved`, true by default) |
 
 **Threads.** Line comments and review threads are an application's (Mantle's `get#ReviewThreads`,
 `create#ReviewComment`, `resolve#ReviewThread`, and Smithy's posts with anchors): the framework keeps the merge request,
-its reviewers, their reviews and its merge, and its REST has those. A client reads threads through the application's
-REST, which the offer names.
+its reviewers, their reviews and its merge. Its REST reaches the threads through `git-server` `review-thread-service`
+(interface `handle#GitReviewThread`: operation `find`, `comment` or `resolve`), called as the caller once the merge
+request's gates passed, a write once the keeper allows `mergeRequest.comment` or `mergeRequest.resolveThread`; with no
+service there are none (`threadsAvailable` false) and a comment is refused. The offer's `rest.reviewThreads` says
+which. A repository an application keeps is commented through the application's REST (Smithy's `comments`).
+
+**The gates of the REST.** A caller who may not view a repository is told it is not there before the keeping
+application is asked, so no keeper of a private repository is named. A merge request the application holds hidden
+(`hiddenDate`) is not there for anyone but its author, in the same words as a number that is not there, and a
+framework service's `No merge request <id>` is said as `No merge request !<n> in <repository>`. The keeper's check
+allows only an explicit `allowed` true. One page of `find#MergeRequests` is at most 200.
 
 **What the server offers** (`get#HostingOffer`), to a caller with or without credentials: `baseUrl`; `user` (`signedIn`,
 `username`: whether the caller's credentials were good); `git` (`httpsBase`, `httpsUrlTemplate` and `sshUrlTemplate`
 with `${name}`, as a `myaddons.xml` location takes them, `sshHost`, `sshPort`, `pushToReview`, `mergeRequestRefs`);
 `rest` (the paths above and the OpenAPI document); `signIn` (an installed app's sign-in: `appLogin`, `appToken`,
-`appProviders`, `loopbackRedirect`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM gateway,
+`appProviders`, `loopbackRedirect`, `keyRevoke`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM
+gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether the key needs an `LlmApiClient`,
 docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`. `git-server` `offer-service` (interface
 `add#GitHostingOffer`, with the offer and the user, authorization off) returns the offer as the application has it:
 its REST (`application`: `name`, `restBase`), its task source (`tasks`: `kind`, `path`, and a task app's paths),

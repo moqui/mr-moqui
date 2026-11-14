@@ -66,6 +66,9 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, get_merge_request_diff)?;
     rust_service!(map, get_merge_request_approvals)?;
     rust_service!(map, merge_merge_request)?;
+    rust_service!(map, find_review_threads)?;
+    rust_service!(map, create_review_comment)?;
+    rust_service!(map, resolve_review_thread)?;
     rust_service!(map, run_pipeline)?;
     rust_service!(map, rerun_pipeline_run)?;
     rust_service!(map, cancel_pipeline_run)?;
@@ -108,7 +111,8 @@ pub(crate) struct Keeper {
 }
 
 /// Ask `git-server rest-write-check-service` about `operation` on `repository_id`, with authorization off. With no
-/// service, allowed; a service that fails refuses, with its errors as the message.
+/// service, allowed; with one, only an explicit `allowed` true (or `Y`) allows: an answer that leaves it empty refuses,
+/// as a service that fails does, with its errors as the message.
 pub(crate) fn keeper(repository_id: &str, operation: &str, merge_request_id: Option<&str>) -> Keeper {
     let user = moqui_core::user::current_user_id().ok().flatten();
     let parameters = crate::ci::parameters([
@@ -131,7 +135,7 @@ pub(crate) fn keeper(repository_id: &str, operation: &str, merge_request_id: Opt
                     .unwrap_or_default()
             };
             Keeper {
-                allowed: !matches!(get("allowed").as_str(), "false" | "N"),
+                allowed: matches!(get("allowed").as_str(), "true" | "Y"),
                 message: get("message"),
                 application: get("application"),
                 rest_url: get("restUrl"),
@@ -227,6 +231,8 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
         }
     });
     let gateway = conf("llm-facade", "enabled") != "false" && conf("llm-facade/gateway", "enabled") == "true";
+    // a login key needs an LlmApiClient naming it unless require-client is off (docs/ai/Gateway.md)
+    let require_client = conf("llm-facade/gateway", "require-client") != "false";
     let loopback = property("webapp_app_loopback_redirect") != "false";
     let agreement_service = !crate::setting("agreement-check-service").is_empty();
     let offer = map([
@@ -266,6 +272,11 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
                 ("repositories", Value::string(format!("{REST_BASE}/git"))),
                 ("hosting", Value::string(format!("{REST_BASE}/hosting"))),
                 ("openapi", Value::string("/rest/service.swagger/moqui.json")),
+                // the merge requests' review threads, where an application keeps them (review-thread-service)
+                (
+                    "reviewThreads",
+                    Value::Bool(!crate::setting("review-thread-service").is_empty()),
+                ),
             ]),
         ),
         (
@@ -275,6 +286,7 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
                 ("appToken", Value::string("/sso/appToken")),
                 ("appProviders", Value::string("/sso/appProviders")),
                 ("loopbackRedirect", Value::Bool(loopback)),
+                ("keyRevoke", Value::string(format!("{REST_BASE}/hosting/keyRevoke"))),
             ]),
         ),
         (
@@ -289,6 +301,9 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
                         Value::Null
                     },
                 ),
+                // a key for the gateway alone, so a client never writes its account's key where a model client reads it
+                ("keyPath", Value::string(format!("{REST_BASE}/hosting/gatewayKey"))),
+                ("requireClient", Value::Bool(require_client)),
             ]),
         ),
         (
@@ -581,12 +596,18 @@ fn get_run_artifact(parameters: &Parameters, _facade: &EntityFacade) -> Out {
 
 // ---- writes on a repository ----
 
-/// Call `name` with `parameters` once the keeper allowed `operation` on the repository they name.
+/// Call `name` with `parameters` once the keeper allowed `operation` on the repository they name. A caller who may not
+/// view the repository hears that it is not there before the keeper is asked, so the answer names no keeper of a
+/// repository the caller may not see.
 fn forward_write(name: &str, operation: &str, parameters: &Parameters) -> Out {
     let Some(id) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
         return none();
     };
+    if !may(&id, "view") {
+        add_error(format!("Repository {id} not found"));
+        return none();
+    }
     if !may_write(&id, operation, None) {
         return none();
     }
@@ -653,9 +674,10 @@ fn retry_job_run(parameters: &Parameters, facade: &EntityFacade) -> Out {
 
 // ---- merge requests by their numbers ----
 
-/// The id of merge request `mergeRequestNum` of `repositoryId`, for a caller who may view the repository; else the
-/// error recorded, which says the same whether it is not there or not to be seen.
-fn merge_request_id(parameters: &Parameters) -> Option<(String, String)> {
+/// The id of merge request `mergeRequestNum` of `repositoryId`, for a caller who may view the repository, and, while
+/// the application holds it hidden (`hiddenDate`), only for its author; else the error recorded, which says the same
+/// whether it is not there or not to be seen. With the number as the path has it: what an error names.
+fn merge_request_id(parameters: &Parameters) -> Option<MergeRequestRef> {
     let Some(id) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
         return None;
@@ -680,9 +702,14 @@ fn merge_request_id(parameters: &Parameters) -> Option<(String, String)> {
                 .one()
         })
     };
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     match found {
-        Ok(Some(row)) => Some((id, row.get("mergeRequestId").map(to_plain_string).unwrap_or_default())),
-        Ok(None) => not_found(),
+        Ok(Some(row)) if visible(&row, &user) => Some(MergeRequestRef {
+            repository_id: id,
+            merge_request_id: row.get("mergeRequestId").map(to_plain_string).unwrap_or_default(),
+            num,
+        }),
+        Ok(_) => not_found(),
         Err(err) => {
             add_error(format!("merge request !{num} of {id} not read: {err}"));
             None
@@ -690,27 +717,75 @@ fn merge_request_id(parameters: &Parameters) -> Option<(String, String)> {
     }
 }
 
+/// A merge request the path names: its repository, its id and its number as given.
+pub(crate) struct MergeRequestRef {
+    pub repository_id: String,
+    pub merge_request_id: String,
+    pub num: String,
+}
+
+/// Whether a merge request row may be seen by `user`: not hidden, or hidden and the user's own.
+pub(crate) fn visible(row: &moqui_core::entity::EntityValue, user: &str) -> bool {
+    let hidden = row.get("hiddenDate").is_some_and(|value| !is_empty(value));
+    !hidden || (!user.is_empty() && row.get("authorUserId").map(to_plain_string).as_deref() == Some(user))
+}
+
+/// An error of a framework service about the merge request, in the words of the path: `No merge request <id>` (which
+/// names the internal id, and says what a hidden one says) becomes the answer of a number that is not there.
+pub(crate) fn path_error(error: &str, merge_request: &MergeRequestRef) -> String {
+    let internal = format!("No merge request {}", merge_request.merge_request_id);
+    if error.trim() == internal || error.contains(&format!("{internal} ")) || error.ends_with(&internal) {
+        format!(
+            "No merge request !{} in {}",
+            merge_request.num, merge_request.repository_id
+        )
+    } else {
+        error.to_string()
+    }
+}
+
 /// Call `name` for the merge request the path names, with its id in place of its number; a write (`operation`)
-/// once the keeper allowed it.
+/// once the keeper allowed it. The service's errors are said in the path's words ([`path_error`]).
 fn forward_merge_request(name: &str, operation: Option<&str>, parameters: &Parameters) -> Out {
-    let Some((id, merge_request)) = merge_request_id(parameters) else {
+    let Some(merge_request) = merge_request_id(parameters) else {
         return none();
     };
     if let Some(operation) = operation {
-        if !may_write(&id, operation, Some(&merge_request)) {
+        if !may_write(
+            &merge_request.repository_id,
+            operation,
+            Some(&merge_request.merge_request_id),
+        ) {
             return none();
         }
     }
     let mut parameters = parameters.clone();
-    parameters.insert("mergeRequestId".into(), Value::string(merge_request));
-    Ok(moqui_core::service::sync(name, &parameters)?)
+    parameters.insert("mergeRequestId".into(), Value::string(&merge_request.merge_request_id));
+    match crate::ci::with_errors_taken(|| moqui_core::service::sync(name, &parameters)) {
+        Ok(answer) => Ok(answer),
+        Err(err) => {
+            for line in err.message().lines().filter(|line| !line.trim().is_empty()) {
+                add_error(path_error(line, &merge_request));
+            }
+            none()
+        }
+    }
 }
+
+/// The most merge requests one page of `find#MergeRequests` gives through REST.
+pub(crate) const MAX_PAGE_SIZE: i64 = 200;
 
 /// `find#MergeRequests`: those of a repository, or of every repository the caller may view, by `filter`: `mine` (the
 /// caller's), `review` (waiting for the caller's review), `open` (open and draft; the default) or `all`, with the
-/// framework service's other filters.
+/// framework service's other filters, at most [`MAX_PAGE_SIZE`] a page.
 fn find_merge_requests(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     let mut parameters = parameters.clone();
+    // the hidden ones are the application's to show, never a REST caller's to ask for
+    parameters.remove("includeHidden");
+    let size = text(&parameters, "pageSize")
+        .and_then(|size| size.trim().parse::<i64>().ok())
+        .unwrap_or(20);
+    parameters.insert("pageSize".into(), Value::I64(size.clamp(1, MAX_PAGE_SIZE)));
     let user = moqui_core::user::current_user_id().ok().flatten();
     let filter = text(&parameters, "filter").unwrap_or_else(|| "open".into());
     let open = || Value::List(vec![Value::string("GmrDraft"), Value::string("GmrOpen")]);
@@ -803,6 +878,128 @@ fn merge_merge_request(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         Some("mergeRequest.merge"),
         parameters,
     )
+}
+
+// ---- review threads: an application's, through `git-server review-thread-service` ----
+
+/// What a call of the review-thread service came to.
+enum Thread {
+    /// Its answer.
+    Answer(BTreeMap<String, Value>),
+    /// The server names no service.
+    NoService,
+    /// Refused or failed, with the errors recorded.
+    Refused,
+}
+
+/// Call `git-server review-thread-service` (`handle#GitReviewThread`) for the merge request the path names, as the
+/// caller: `operation` with the `keys` of `parameters`. A write is asked of the keeper first (`keeper_operation`). The
+/// service's errors are said in the path's words.
+fn thread_call(operation: &str, keeper_operation: Option<&str>, parameters: &Parameters, keys: &[&str]) -> Thread {
+    let Some(merge_request) = merge_request_id(parameters) else {
+        return Thread::Refused;
+    };
+    let name = crate::setting("review-thread-service");
+    if name.is_empty() {
+        return Thread::NoService;
+    }
+    if let Some(keeper_operation) = keeper_operation {
+        if !may_write(
+            &merge_request.repository_id,
+            keeper_operation,
+            Some(&merge_request.merge_request_id),
+        ) {
+            return Thread::Refused;
+        }
+    }
+    let mut call = crate::ci::parameters([
+        ("operation", Value::string(operation)),
+        ("repositoryId", Value::string(&merge_request.repository_id)),
+        ("mergeRequestId", Value::string(&merge_request.merge_request_id)),
+    ]);
+    for key in keys {
+        if let Some(value) = parameters.get(*key).filter(|value| !is_empty(value)) {
+            call.insert((*key).to_string(), value.clone());
+        }
+    }
+    match crate::ci::with_errors_taken(|| moqui_core::service::sync(&name, &call)) {
+        Ok(answer) => Thread::Answer(answer),
+        Err(err) => {
+            for line in err.message().lines().filter(|line| !line.trim().is_empty()) {
+                add_error(path_error(line, &merge_request));
+            }
+            Thread::Refused
+        }
+    }
+}
+
+/// The refusal of a thread write on a server that keeps no threads.
+const NO_THREADS: &str = "this server keeps no review threads (git-server review-thread-service names none)";
+
+/// `find#ReviewThreads`: the merge request's threads (of `path`), from the application that keeps them; with none,
+/// no threads and `threadsAvailable` false. Out: `threadList`, `threadsAvailable`.
+fn find_review_threads(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    match thread_call("find", None, parameters, &["path"]) {
+        Thread::Answer(answer) => Ok(out([
+            (
+                "threadList",
+                answer.get("threadList").cloned().unwrap_or(Value::List(Vec::new())),
+            ),
+            ("threadsAvailable", Value::Bool(true)),
+        ])),
+        Thread::NoService => Ok(out([
+            ("threadList", Value::List(Vec::new())),
+            ("threadsAvailable", Value::Bool(false)),
+        ])),
+        Thread::Refused => none(),
+    }
+}
+
+/// `create#ReviewComment`: a comment as the caller, a new thread or a reply. Out: `threadId`, `held`.
+fn create_review_comment(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    if text(parameters, "body").is_none() {
+        add_error("body is required");
+        return none();
+    }
+    let keys = ["body", "threadId", "path", "commitId", "oldLine", "newLine", "lineText"];
+    match thread_call("comment", Some("mergeRequest.comment"), parameters, &keys) {
+        Thread::Answer(answer) => Ok(out([
+            ("threadId", answer.get("threadId").cloned().unwrap_or(Value::Null)),
+            ("held", answer.get("held").cloned().unwrap_or(Value::Bool(false))),
+        ])),
+        Thread::NoService => {
+            add_error(NO_THREADS);
+            none()
+        }
+        Thread::Refused => none(),
+    }
+}
+
+/// `resolve#ReviewThread`: a thread resolved, or reopened with `resolved` false. Out: `threadId`.
+fn resolve_review_thread(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let mut parameters = parameters.clone();
+    parameters.entry("resolved".into()).or_insert(Value::Bool(true));
+    match thread_call(
+        "resolve",
+        Some("mergeRequest.resolveThread"),
+        &parameters,
+        &["threadId", "resolved"],
+    ) {
+        Thread::Answer(answer) => Ok(out([(
+            "threadId",
+            answer
+                .get("threadId")
+                .filter(|value| !is_empty(value))
+                .or_else(|| parameters.get("threadId"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        )])),
+        Thread::NoService => {
+            add_error(NO_THREADS);
+            none()
+        }
+        Thread::Refused => none(),
+    }
 }
 
 #[cfg(test)]

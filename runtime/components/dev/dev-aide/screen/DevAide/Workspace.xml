@@ -87,6 +87,33 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="fork"><service-call name="org.moqui.devaide.HostingServices.fork#Repository" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- review, checks and the agreement (21.4, 21.5, 21.7) -->
+    <transition name="mergeRequestChanges" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#MergeRequestChanges" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="mergeRequestFile" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#MergeRequestFile" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="reviewThreads" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#ReviewThreads" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="fileThreads" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#FileThreads" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="reviewComment"><service-call name="org.moqui.devaide.HostingServices.create#ReviewComment" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="resolveThread"><service-call name="org.moqui.devaide.HostingServices.resolve#ReviewThread" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="submitReview"><service-call name="org.moqui.devaide.HostingServices.submit#Review" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="commitStates" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#CommitStates" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="checks" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#Checks" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="job" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#Job" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="rerunCheck"><service-call name="org.moqui.devaide.HostingServices.rerun#Check" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="agreement" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#Agreement" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="signAgreement"><service-call name="org.moqui.devaide.HostingServices.sign#Agreement" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- the task panel (14) -->
     <transition name="tasks" read-only="true"><service-call name="org.moqui.devaide.TaskServices.get#Tasks" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

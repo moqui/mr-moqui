@@ -67,9 +67,10 @@ along with this software (see the LICENSE.md file). If not, see
         at /sso/appLogin; after the provider signs the browser in, /sso/appCode asks the user to let the app in, and on
         that a single-use code goes to the app by its redirect URI, which it takes to /sso/appToken for a device key.
         The redirect URIs an app may give are the property webapp_app_redirect_uris (default org.moqui.desktop:/sso and org.moqui.mobile:/sso),
-        and any loopback one (http://127.0.0.1:[port]/..., [::1] or localhost, RFC 8252) unless webapp_app_loopback_redirect
-        is false: a dev instance signs in to its group server so (plans/design-dev-aide.md 21.2). With no authFlowId the
-        browser signs in at this server's own login. -->
+        and any loopback one (http://127.0.0.1:[port]/... or [::1], RFC 8252; not localhost) unless
+        webapp_app_loopback_redirect is false (on by default): a dev instance signs in to its group server so
+        (plans/design-dev-aide.md 21.2). With no authFlowId the browser signs in at this server's own login, or, signed in
+        already, confirms the account's password again. The pages are never shown in a frame. -->
     <service verb="get" noun="AppProviders" type="rust" location="moqui_core::service::sso_app::get_app_providers"
             authenticate="anonymous-all">
         <description>The identity providers an app can offer: the AuthFlows the login page shows.</description>
@@ -80,8 +81,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Checks the app's S256 code challenge, its state and its redirect URI (one of
             webapp_app_redirect_uris, or a loopback one), keeps them and the app's name in the session for 15 minutes,
             and starts the provider's login as login#User does, coming back to /sso/appCode. With no authFlowId the
-            browser goes to this server's own /Login instead, signed out first when it was signed in, and the
-            confirmation needs that sign-in. A refusal answers 400; a failure later goes back to the app with
+            browser goes to this server's own /Login instead; a browser signed in already stays signed in and confirms
+            the account's password (and second factor) on the confirmation, which needs a sign-in after the start. A refusal answers 400; a failure later goes back to the app with
             error=server_error.</description>
         <in-parameters>
             <parameter name="authFlowId"><description>The identity provider; this server's own login when empty</description></parameter>
@@ -102,7 +103,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>On the user's confirmation (allow=true): a single-use code (a minute) for the app, bound to the
             user, its challenge and its redirect URI, and the browser sent to that URI with the code and the app's state;
             on Cancel, error=access_denied.</description>
-        <in-parameters><parameter name="allow"/></in-parameters>
+        <in-parameters>
+            <parameter name="allow"/>
+            <parameter name="password"><description>A browser signed in before the start confirms who it is (reauthenticate)</description></parameter>
+            <parameter name="code"><description>The code of the account's second factor, with the password</description></parameter>
+        </in-parameters>
     </service>
     <service verb="exchange" noun="AppCode" type="rust" location="moqui_core::service::sso_app::exchange_app_code"
             authenticate="anonymous-all">

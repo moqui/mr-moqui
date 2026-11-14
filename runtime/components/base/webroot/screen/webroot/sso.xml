@@ -67,7 +67,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <transition name="appCodeConfirm" method="post">
-        <parameter name="allow"/>
+        <parameter name="allow"/><parameter name="password"/><parameter name="code"/>
         <actions>
             <service-call name="org.moqui.sso.AuthServices.issue#AppCode" in-map="context"/>
         </actions>

@@ -4075,9 +4075,10 @@ download_component() {
     if [ "$type" = git ]; then
         need_tool git
         if [ -n "$branch" ]; then
-            run_cmd git clone -b "$branch" "$url" "$target" || die "git clone of $name failed"
+            # `--` before the URL: a myaddons.xml URL that starts with `-` is not an option of git's
+            run_cmd git clone -b "$branch" -- "$url" "$target" || die "git clone of $name failed"
         else
-            run_cmd git clone "$url" "$target" || die "git clone of $name failed"
+            run_cmd git clone -- "$url" "$target" || die "git clone of $name failed"
         fi
         return 0
     fi

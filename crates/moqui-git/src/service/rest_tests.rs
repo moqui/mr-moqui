@@ -21,9 +21,12 @@ use std::collections::BTreeMap;
 
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::{kept_message, url_paths, Keeper};
+use super::{kept_message, path_error, url_paths, Keeper, MergeRequestRef, MAX_PAGE_SIZE};
 use crate::server::hosting_tests::{entry, grant_entities, ok, s, text_of};
-use crate::server::tests::{create, define, fixture_in, fixture_with, Fixture, READER, WRITER};
+use crate::server::tests::{create, define, fixture_in, fixture_with, user, Fixture, READER, WRITER};
+
+/// A user with no right on any repository.
+const OUTSIDER: &str = "git.outsider";
 use moqui_core::context::ExecutionContext;
 
 /// The two REST paths' grants, as ToolsSecurityData.xml has them, and the REST file.
@@ -261,8 +264,9 @@ const APPLICATION: &str = r#"<services>
             const kept = repositoryId === 'kept'
             application = kept ? 'smithy' : null
             restUrl = kept ? '/rest/s1/pass/v1/sites/S/smithy/repositories/kept' : null
-            allowed = !kept || operation === 'read'
-            if (!allowed) message = 'kept by Smithy: ' + operation
+            // a repository whose check answers nothing: refused, as only an explicit true allows
+            if (repositoryId !== 'silent') allowed = !kept || operation === 'read'
+            if (allowed === false) message = 'kept by Smithy: ' + operation
         ]]></script></actions>
     </service>
     <service verb="check" noun="Signed">
@@ -272,6 +276,16 @@ const APPLICATION: &str = r#"<services>
             required = known
             signed = false
             signUrl = known ? '/kept/-/blob/main/AUTHORS.md' : null
+        ]]></script></actions>
+    </service>
+    <service verb="handle" noun="Thread">
+        <implements service="org.moqui.git.GitServices.handle#GitReviewThread"/>
+        <actions><script><![CDATA[
+            if (operation === 'find') threadList = [{threadId: 'T1', path: path || 'a.txt', newLine: 1, resolved: false,
+                commentList: [{commentId: 'C1', authorName: ec.user.username, body: 'On ' + mergeRequestId}]}]
+            if (operation === 'comment') { if (body === 'fail') { ec.message.addError('No merge request ' + mergeRequestId); return }
+                threadId = threadId || ('T-' + (path || 'mr') + '-' + (newLine || 0)) }
+            if (operation === 'resolve') threadId = threadId + (resolved ? '-resolved' : '-open')
         ]]></script></actions>
     </service>
     <service verb="add" noun="Offer">
@@ -444,4 +458,280 @@ fn a_refusal_names_the_applications_rest() {
         "GitKeptByApplication: repository r1 is kept by smithy, which takes this change through its own REST \
          (use /rest/s1/pass/x)"
     );
+}
+
+/// A private repository and its keeper are not revealed to a caller who may not view it; a hidden merge request is not
+/// there for anyone but its author, in the same words as a number that is not there; a keeper that leaves `allowed`
+/// empty refuses; one page of merge requests is capped.
+#[test]
+fn what_a_caller_may_not_see_answers_as_missing() {
+    let fixture = fixture_with(
+        "rest-unseen",
+        moqui_core::context::framework_dir(),
+        r#"<git-server rest-write-check-service="test.GitRestApp.check#Write"/>"#,
+    );
+    grant_entities(&fixture);
+    rest_paths(&fixture);
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        user(&fixture.entity, OUTSIDER);
+        std::fs::create_dir_all(fixture.dir.join("service/test")).unwrap();
+        let stub = fixture.dir.join("service/test/GitRestApp.xml");
+        std::fs::write(&stub, APPLICATION).unwrap();
+        let git = moqui_core::context::framework_dir().join("service/org/moqui/git");
+        let failures = moqui_core::service::lint(&[
+            git.join("GitServices.xml"),
+            git.join("GitReviewServices.xml"),
+            git.join("GitCiServices.xml"),
+            git.join("GitRestServices.xml"),
+            stub,
+        ])
+        .unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+    for id in ["kept", "silent", "web"] {
+        define(&fixture, id, "db");
+        branches(&fixture, id);
+    }
+
+    // 1: an outsider's write on a kept repository: not found, with no keeper named
+    let (_, errors) = rest(
+        &fixture,
+        Some(OUTSIDER),
+        "post",
+        "moqui/git/kept/refs",
+        &[("refName", s("other")), ("revision", s("main"))],
+    );
+    assert!(errors.contains("Repository kept not found"), "{errors}");
+    assert!(
+        !errors.contains("GitKeptByApplication") && !errors.contains("Smithy"),
+        "{errors}"
+    );
+
+    // 13: a check that leaves allowed empty refuses
+    let (_, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/silent/refs",
+        &[("refName", s("other")), ("revision", s("main"))],
+    );
+    assert!(errors.contains("GitKeptByApplication"), "{errors}");
+
+    // 2: a hidden merge request is its author's alone; to anyone else it is a number that is not there
+    let (opened, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/web/mergeRequests",
+        &[("sourceRef", s("topic")), ("title", s("Held"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let id = to_plain_string(&field(&opened, "mergeRequestId"));
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let parameters: BTreeMap<String, Value> = [
+            ("mergeRequestId".to_string(), s(&id)),
+            ("hidden".to_string(), Value::Bool(true)),
+        ]
+        .into();
+        moqui_core::service::sync("org.moqui.git.GitReviewServices.set#MergeRequestHidden", &parameters).unwrap();
+    }
+    let (_, hidden) = rest(&fixture, Some(READER), "get", "moqui/git/web/mergeRequests/1", &[]);
+    let (_, missing) = rest(&fixture, Some(READER), "get", "moqui/git/web/mergeRequests/7", &[]);
+    assert_eq!(hidden.replace("!1", "!N"), missing.replace("!7", "!N"));
+    let (_, diff) = rest(&fixture, Some(READER), "get", "moqui/git/web/mergeRequests/1/diff", &[]);
+    assert!(
+        diff.contains("No merge request !1 in web") && !diff.contains(&id),
+        "{diff}"
+    );
+    // its author passes the path's gate, and the framework's services decide: a change of its title is taken, and its
+    // read (the application's to show) answers in the same words as a number that is not there
+    let (_, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "patch",
+        "moqui/git/web/mergeRequests/1",
+        &[("title", s("Held, renamed"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let (_, own) = rest(&fixture, Some(WRITER), "get", "moqui/git/web/mergeRequests/1", &[]);
+    assert_eq!(own.trim(), "No merge request !1 in web", "{own}");
+
+    // 13: a page of merge requests is capped
+    let (_, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "get",
+        "moqui/hosting/mergeRequests",
+        &[("pageSize", s("100000")), ("filter", s("all"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+}
+
+#[test]
+fn a_services_error_names_the_number_not_the_id() {
+    let merge_request = MergeRequestRef {
+        repository_id: "web".into(),
+        merge_request_id: "100042".into(),
+        num: "3".into(),
+    };
+    assert_eq!(
+        path_error("No merge request 100042", &merge_request),
+        "No merge request !3 in web"
+    );
+    assert_eq!(path_error("may not push", &merge_request), "may not push");
+    assert_eq!(MAX_PAGE_SIZE, 200);
+}
+
+/// The review threads go to the application's service, as the caller, behind the same gates as the merge request:
+/// viewers read, a kept repository's writes are the application's, a hidden merge request is not there, and a server
+/// with no service has none.
+#[test]
+fn review_threads_are_the_applications_behind_the_merge_requests_gates() {
+    let fixture = fixture_with(
+        "rest-threads",
+        moqui_core::context::framework_dir(),
+        r#"<git-server rest-write-check-service="test.GitRestApp.check#Write"
+            review-thread-service="test.GitRestApp.handle#Thread"/>"#,
+    );
+    grant_entities(&fixture);
+    rest_paths(&fixture);
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        user(&fixture.entity, OUTSIDER);
+        std::fs::create_dir_all(fixture.dir.join("service/test")).unwrap();
+        let stub = fixture.dir.join("service/test/GitRestApp.xml");
+        std::fs::write(&stub, APPLICATION).unwrap();
+        let git = moqui_core::context::framework_dir().join("service/org/moqui/git");
+        let failures = moqui_core::service::lint(&[
+            git.join("GitServices.xml"),
+            git.join("GitReviewServices.xml"),
+            git.join("GitCiServices.xml"),
+            git.join("GitRestServices.xml"),
+            stub,
+        ])
+        .unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+    for id in ["web", "kept"] {
+        define(&fixture, id, "db");
+        branches(&fixture, id);
+    }
+    let (_, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/web/mergeRequests",
+        &[("sourceRef", s("topic")), ("title", s("Topic"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let (read, errors) = rest(
+        &fixture,
+        Some(READER),
+        "get",
+        "moqui/git/web/mergeRequests/1/threads",
+        &[("path", s("t.txt"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&field(&read, "threadsAvailable")), "true");
+    let thread = match field(&read, "threadList") {
+        Value::List(items) => items[0].clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(text_of(entry(&thread, "path")), "t.txt");
+    let (made, errors) = rest(
+        &fixture,
+        Some(READER),
+        "post",
+        "moqui/git/web/mergeRequests/1/threads",
+        &[("body", s("Why?")), ("path", s("t.txt")), ("newLine", Value::I64(1))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&field(&made, "threadId")), "T-t.txt-1");
+    let (resolved, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/web/mergeRequests/1/threads/T-t.txt-1/resolve",
+        &[],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&field(&resolved, "threadId")), "T-t.txt-1-resolved");
+    // the service's own words about the merge request are the path's
+    let (_, errors) = rest(
+        &fixture,
+        Some(READER),
+        "post",
+        "moqui/git/web/mergeRequests/1/threads",
+        &[("body", s("fail"))],
+    );
+    assert_eq!(errors.trim(), "No merge request !1 in web", "{errors}");
+    // an outsider: not there; a kept repository's comment is the application's
+    let (_, errors) = rest(
+        &fixture,
+        Some(OUTSIDER),
+        "get",
+        "moqui/git/web/mergeRequests/1/threads",
+        &[],
+    );
+    assert!(errors.contains("No merge request !1 in web"), "{errors}");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let parameters: BTreeMap<String, Value> = [
+            ("repositoryId".to_string(), s("kept")),
+            ("sourceRef".to_string(), s("topic")),
+            ("title".to_string(), s("Kept")),
+        ]
+        .into();
+        moqui_core::user::internal_login_user(WRITER).unwrap();
+        moqui_core::service::sync("org.moqui.git.GitReviewServices.create#MergeRequest", &parameters).unwrap();
+        let _ = moqui_core::user::logout();
+    }
+    let (_, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/kept/mergeRequests/1/threads",
+        &[("body", s("Hello"))],
+    );
+    assert!(errors.contains("GitKeptByApplication"), "{errors}");
+}
+
+#[test]
+fn a_server_with_no_thread_service_has_no_threads() {
+    let fixture = fixture_in("rest-no-threads", moqui_core::context::framework_dir());
+    grant_entities(&fixture);
+    rest_paths(&fixture);
+    define(&fixture, "web", "db");
+    branches(&fixture, "web");
+    let (_, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/web/mergeRequests",
+        &[("sourceRef", s("topic")), ("title", s("Topic"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let (read, errors) = rest(
+        &fixture,
+        Some(READER),
+        "get",
+        "moqui/git/web/mergeRequests/1/threads",
+        &[],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&field(&read, "threadsAvailable")), "false");
+    let (_, errors) = rest(
+        &fixture,
+        Some(READER),
+        "post",
+        "moqui/git/web/mergeRequests/1/threads",
+        &[("body", s("Hi"))],
+    );
+    assert!(errors.contains("keeps no review threads"), "{errors}");
 }

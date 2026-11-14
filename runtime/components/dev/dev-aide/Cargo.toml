@@ -24,6 +24,8 @@ sha2 = { workspace = true }
 # The PKCE challenge of a group server sign-in (src/hosting).
 base64 = { workspace = true }
 regex = { workspace = true }
+# The URLs a group server hands back (a fork's remote, the addons template, the gateway): parsed, not split by hand.
+url = { workspace = true }
 
 [lints]
 workspace = true

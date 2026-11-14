@@ -74,8 +74,14 @@ along with this software (see the LICENSE.md file). If not, see
             signed-out (the token is not)</description></field>
         <field name="lastError" type="text-long"/>
         <field name="connectedDate" type="date-time"/>
-        <field name="setupJson" type="text-very-long"><description>What Connect set: the myaddons.xml repository, the task
-            source and app, the .env lines, the git credential</description></field>
+        <field name="setupJson" type="text-very-long"><description>What Connect set: the myaddons.xml repository (and
+            whether it set the default one), the task source and app, the .env lines, the git credential, and how the token
+            came (an app sign-in, whose key Remove ends on the server, or a pasted one)</description></field>
+        <field name="envPriorJson" type="text-long" encrypt="true"><description>The .env lines of the model endpoint as
+            the file had them before Connect wrote the gateway's: Remove puts them back where the lines are still
+            Connect's</description></field>
+        <field name="gatewayKey" type="text-medium" encrypt="true"><description>The key for the server's LLM gateway
+            alone (create#UserScopedKey) that Connect wrote into .env; Remove ends it on the server</description></field>
         <field name="pendingState" type="text-medium"><description>An installed-app sign-in under way (F17): its state,
             PKCE verifier and redirect URI, good for 15 minutes</description></field>
         <field name="pendingVerifier" type="text-medium" encrypt="true"/>

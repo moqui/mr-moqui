@@ -1314,7 +1314,9 @@
         rest-write-check-service (org.moqui.git.GitServices.check#GitRestWrite) before each write on a repository, so an
         application that keeps a repository (its own rules, pages and REST) refuses and names its own REST; offer-service
         (add#GitHostingOffer) adds what the application offers to /rest/s1/moqui/hosting/offer; agreement-check-service
-        (check#GitAuthorSigned) answers whether an author signed a repository's contributor agreement. None when empty.
+        (check#GitAuthorSigned) answers whether an author signed a repository's contributor agreement; review-thread-service
+        (handle#GitReviewThread) keeps merge requests' review threads (an application's, such as Mantle's) for the REST.
+        None when empty.
         In a cluster (docs/interfaces/Git-Hosting.md, Shared storage in a cluster) a local or remote repository needs
         runtime/git on storage every member mounts, said by shared-storage (git_shared_storage); without it a cluster
         member refuses a new one and warns of the ones it has. With it a push or write waits at most
@@ -1334,7 +1336,7 @@
             review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
             review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
             review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
-            merge-request-url="" rest-write-check-service="" offer-service="" agreement-check-service=""
+            merge-request-url="" rest-write-check-service="" offer-service="" agreement-check-service="" review-thread-service=""
             reach-max-commits="1000000" contains-max-commits="200000"
             reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""
             shared-storage="${git_shared_storage}" shared-lock-wait-seconds="120"/>

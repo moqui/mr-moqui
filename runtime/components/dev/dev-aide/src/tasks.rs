@@ -174,25 +174,26 @@ fn source_row(context: &Context, id: &str, user: &str) -> Result<moqui_core::ent
         .ok_or_else(|| LibError::new(format!("no task source {id} of yours")))
 }
 
-/// A GET of another instance's REST API with the source's token, its JSON answer.
+/// A GET of another instance's REST API with the source's token, its JSON answer. A source Connect made
+/// (`serverId`) reads with the group server's token, sent only to the server's own origin, whatever its `baseUrl` says
+/// (plans/design-dev-aide.md 21.6).
 fn rest_get(row: &moqui_core::entity::EntityValue, path: &str) -> Result<Json, LibError> {
+    let server_id = field(row, "serverId");
+    if !server_id.is_empty() {
+        let server = crate::hosting::client::Server::load(
+            &row_facade()?,
+            &server_id,
+            &moqui_core::user::current_user_id().ok().flatten().unwrap_or_default(),
+        )?;
+        return server.get(path, &[]);
+    }
     let base = field(row, "baseUrl").trim_end_matches('/').to_string();
     if !(base.starts_with("https://") || base.starts_with("http://")) {
         return Err(LibError::new(
             "a task source's base URL starts with https:// or http://",
         ));
     }
-    // a source Connect made reads with the group server's token (plans/design-dev-aide.md 21.6), sent to its address
-    let token = match field(row, "serverId") {
-        server if server.is_empty() => field(row, "token"),
-        server => crate::hosting::client::Server::load(
-            &row_facade()?,
-            &server,
-            &moqui_core::user::current_user_id().ok().flatten().unwrap_or_default(),
-        )?
-        .token
-        .unwrap_or_default(),
-    };
+    let token = field(row, "token");
     let request = moqui_core::outbound::Request {
         method: moqui_core::outbound::Method::Get,
         url: format!("{base}{path}"),
@@ -462,6 +463,18 @@ fn store_task_source(
     } else {
         source_row(&context, &id, &user)?
     };
+    // a source Connect made reads with the group server's token; at another address it is a source of its own, which
+    // needs its own token
+    if !field(&row, "serverId").is_empty() && field(&row, "baseUrl").trim_end_matches('/') != base.trim_end_matches('/')
+    {
+        row.set("serverId", Value::Null);
+        row.set("token", Value::Null);
+        if text(parameters, "token").trim().is_empty() {
+            return Err(LibError::new(
+                "this source read with the group server's token; at another address it needs a token of its own",
+            ));
+        }
+    }
     row.set("label", Value::string(text(parameters, "label").trim()));
     row.set("baseUrl", Value::string(&base));
     row.set("username", Value::string(text(parameters, "username").trim()));

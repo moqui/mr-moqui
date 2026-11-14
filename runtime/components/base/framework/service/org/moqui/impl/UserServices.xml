@@ -1110,6 +1110,25 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="loginKey"/>
         </in-parameters>
     </service>
+    <service verb="create" noun="UserScopedKey" type="rust" location="moqui_core::service::user_keys::create_scoped_key">
+        <description>A new key of the current user that opens one service alone (UserLoginKey.scope): gateway, the LLM
+            gateway's /llm/v1, which the web, REST, git and every other login refuse. It is in the user's device list
+            under deviceName (revoke#UserDeviceKey ends it) and good for login-key/@device-expire-hours. Shown only in the
+            out parameters. A dev instance keeps one for its group server's gateway (plans/design-dev-aide.md 21.2), in
+            place of the account's key.</description>
+        <in-parameters>
+            <parameter name="scope" default-value="gateway"><description>gateway</description></parameter>
+            <parameter name="deviceName"><description>Who keeps it, as the device list shows it</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="loginKey"/><parameter name="scope"/></out-parameters>
+    </service>
+    <service verb="revoke" noun="UserHeldKey" type="rust" location="moqui_core::service::user_keys::revoke_held_key">
+        <description>End a key of the current user by the key itself, as its holder keeps it: a client let go ends the
+            keys it held (a scoped key, and the key it signs in with). A key that is not the user's is not ended
+            (revoked false).</description>
+        <in-parameters><parameter name="loginKey" required="true"/></in-parameters>
+        <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
+    </service>
     <service verb="create" noun="UserAppPassword" type="rust" location="moqui_core::service::user_keys::create_app_password">
         <description>A new app password for the current user, for one device or app: the CalDAV, CardDAV and WebDAV
             servers and SFTP to drives take it with the username; the web login does not. It is shown only in the out

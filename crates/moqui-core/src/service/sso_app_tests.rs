@@ -67,9 +67,8 @@ fn a_loopback_redirect_on_any_port_starts() {
     };
     for redirect in [
         "http://127.0.0.1:8080/qapps/dev/Settings/serverSignedIn",
-        "http://localhost:51234/cb",
         "http://[::1]:9000/",
-        "http://localhost/x?y=1",
+        "http://127.0.0.1/x?y=1",
         "https://127.0.0.1:8443/cb",
     ] {
         assert!(
@@ -80,6 +79,9 @@ fn a_loopback_redirect_on_any_port_starts() {
     for redirect in [
         "http://127.0.0.1.evil.example.com/cb",
         "http://localhost.evil.example.com:80/cb",
+        // RFC 8252 §8.3: the IP literal, not a name a hosts file may send elsewhere
+        "http://localhost:51234/cb",
+        "http://localhost/x?y=1",
         "http://evil@127.0.0.1:8080/cb",
         "http://127.0.0.1:8080/cb#frag",
         "http://127.0.0.1:80a/cb",
@@ -111,4 +113,27 @@ fn the_confirmation_page_escapes_what_it_shows() {
 fn a_redirect_carries_its_values_encoded() {
     assert_eq!(percent("a b&c=d"), "a%20b%26c%3Dd");
     assert_eq!(percent("Az09-._~"), "Az09-._~");
+}
+
+/// The confirmation names the port the code goes to, and the app's name as the app's own word.
+#[test]
+fn the_confirmation_names_the_port_and_marks_the_name_as_the_apps() {
+    let pending = serde_json::json!({ "device": "Dev <AIDE>", "redirectUri": "http://127.0.0.1:8123/cb" });
+    let text = app_text(&pending);
+    assert!(text.contains("port 8123"), "{text}");
+    assert!(
+        text.contains("calls itself") && text.contains("Dev &lt;AIDE&gt;"),
+        "{text}"
+    );
+    assert_eq!(redirect_port("http://[::1]:9000/"), Some("9000".into()));
+    assert_eq!(redirect_port("http://127.0.0.1/x"), None);
+    let desktop = app_text(&serde_json::json!({ "redirectUri": "org.moqui.desktop:/sso" }));
+    assert!(desktop.starts_with("an app (org.moqui.desktop:/sso)"), "{desktop}");
+    let headers = page_headers();
+    assert!(headers
+        .iter()
+        .any(|(name, value)| name == "X-Frame-Options" && value == "DENY"));
+    assert!(headers
+        .iter()
+        .any(|(name, value)| name == "Content-Security-Policy" && value.contains("frame-ancestors 'none'")));
 }

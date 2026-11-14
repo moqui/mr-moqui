@@ -16,8 +16,10 @@
 //! it offers, then signs in there as an installed app does (F17: the server's `/sso/appLogin` in the browser with a PKCE
 //! challenge and this instance's own address as the loopback redirect, the code taken at `/sso/appToken` for a login
 //! key), or takes a token pasted from the server's Git access page. What it then sets, each shown and confirmed: the
-//! `myaddons.xml` repository of the server's git URL, a `moqui-rest` task source, the `.env` lines of the LLM gateway,
-//! and git's credential for the server's host. Remove takes back what it set.
+//! `myaddons.xml` repository of the server's git URL, a `moqui-rest` task source, the `.env` lines of the LLM gateway
+//! (with a key for the gateway alone, never the account's), and git's credential for the server's host. Remove takes
+//! back what it set and nothing else: the `.env` lines go back to what they were where they are still Connect's, a
+//! `myaddons.xml` repository it did not write stays, and the keys it was given are ended on the server.
 
 use std::path::{Path, PathBuf};
 
@@ -29,7 +31,7 @@ use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
 
-use super::client::{self, field, normalize_base, query_text, Server, CREDENTIAL, OFFER_PATH, SERVER};
+use super::client::{self, field, normalize_base, on_server, query_text, Server, CREDENTIAL, OFFER_PATH, SERVER};
 use crate::tier::Tier;
 use crate::workspace::{flag, json_value, text, Context};
 
@@ -99,12 +101,32 @@ fn challenge_of(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
-/// This instance's own origin (`http://localhost:8080`), from the request.
+/// This instance's own origin (`http://127.0.0.1:8080`), from the request; `localhost` as the IP literal, the loopback
+/// redirect a server takes (RFC 8252 §8.3).
 fn own_origin() -> Option<String> {
     let url = moqui_core::web::request_url()?;
     let (scheme, rest) = url.split_once("://")?;
     let authority = rest.split('/').next()?;
-    (!authority.is_empty()).then(|| format!("{scheme}://{authority}"))
+    (!authority.is_empty()).then(|| redirect_origin(&format!("{scheme}://{authority}")))
+}
+
+/// `origin` with a `localhost` host as `127.0.0.1`.
+#[must_use]
+pub fn redirect_origin(origin: &str) -> String {
+    match url::Url::parse(origin) {
+        Ok(mut parsed)
+            if parsed
+                .host_str()
+                .is_some_and(|host| host.eq_ignore_ascii_case("localhost")) =>
+        {
+            if parsed.set_host(Some("127.0.0.1")).is_ok() {
+                parsed.as_str().trim_end_matches('/').to_string()
+            } else {
+                origin.to_string()
+            }
+        }
+        _ => origin.to_string(),
+    }
 }
 
 /// The user's row of a server by its base URL, made when there is none.
@@ -313,10 +335,51 @@ fn start_connect(
     Ok(out)
 }
 
-/// Whether an origin is this machine's: the redirect a server takes from any installed app.
+/// Whether an origin is this machine's by its IP literal: the redirect a server takes from any installed app.
 fn loopback(origin: &str) -> bool {
-    let host = origin.split_once("://").map_or(origin, |(_, rest)| rest);
-    host.starts_with("localhost") || host.starts_with("127.0.0.1") || host.starts_with("[::1]")
+    match url::Url::parse(origin)
+        .ok()
+        .and_then(|parsed| parsed.host().map(|host| host.to_owned()))
+    {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    }
+}
+
+/// The username of the user's token for a server, as the server answered it, where the token was kept without one
+/// (an app sign-in): git's credential is the server's account, not this instance's.
+fn name_token(context: &Context, server_id: &str, username: &str) -> Result<(), LibError> {
+    if username.is_empty() {
+        return Ok(());
+    }
+    for mut credential in context
+        .facade
+        .find(CREDENTIAL)?
+        .eq("serverId", Value::string(server_id))
+        .eq("userId", Value::string(current_user()))
+        .list()?
+        .into_values()
+    {
+        if field(&credential, "username").is_empty() {
+            credential.set("username", Value::string(username));
+            credential.update(&context.facade)?;
+        }
+    }
+    Ok(())
+}
+
+/// Note on the connection how its token came: `app` (an app sign-in, whose key Remove ends on the server) or `pasted`.
+fn note_token_source(
+    context: &Context,
+    row: &mut moqui_core::entity::EntityValue,
+    source: &str,
+) -> Result<(), LibError> {
+    let mut setup: Json = serde_json::from_str(&field(row, "setupJson")).unwrap_or_else(|_| json!({}));
+    setup["token"] = json!(source);
+    row.set("setupJson", Value::string(setup.to_string()));
+    row.update(&context.facade)?;
+    Ok(())
 }
 
 /// `finish#Connect`: the server's sign-in came back with `code` and `state` (or `error`): the code is taken for a login
@@ -391,6 +454,8 @@ fn finish_connect(
     }
     store_token(&context, &server.id, &server.base, &key, "")?;
     let server = refresh(&context, &mut row)?;
+    name_token(&context, &server.id, &server.username)?;
+    note_token_source(&context, &mut row, "app")?;
     tracing::info!("Dev AIDE: {} connected to {}", current_user(), server.base);
     let mut out = Parameters::new();
     out.insert("serverId".into(), Value::string(&server.id));
@@ -432,7 +497,9 @@ fn store_server_token(
         &token,
         &text(parameters, "username"),
     )?;
-    refresh(&context, &mut row)?;
+    let server = refresh(&context, &mut row)?;
+    name_token(&context, &id, &server.username)?;
+    note_token_source(&context, &mut row, "pasted")?;
     let mut out = Parameters::new();
     out.insert("serverId".into(), Value::string(id));
     out.insert("statusText".into(), Value::string(field(&row, "statusText")));
@@ -488,7 +555,7 @@ pub fn with_repository(text: Option<&str>, name: &str, url: &str, default: bool)
         };
         return Ok(format!("{root}\n{block}</addons>\n"));
     };
-    let mut text = without_repository(text, name).0;
+    let mut text = without_repository(text, name, false).0;
     let Some(close) = text.rfind("</addons>") else {
         return Err("myaddons.xml has no </addons> to add the repository before".into());
     };
@@ -513,9 +580,32 @@ pub fn with_repository(text: Option<&str>, name: &str, url: &str, default: bool)
     Ok(text)
 }
 
-/// `text` without the repository `name`, and whether it had it; a `default-repository` naming it goes too.
+/// The `url` of the git location of repository `name` in a `myaddons.xml`, as the file has it (attribute text).
 #[must_use]
-pub fn without_repository(text: &str, name: &str) -> (String, bool) {
+pub fn repository_url(text: &str, name: &str) -> Option<String> {
+    let open = format!("<repository name=\"{}\"", crate::workspace::xml_attr(name));
+    let start = text.find(&open)?;
+    let end = text[start..]
+        .find("</repository>")
+        .map_or(text.len(), |end| start + end);
+    let block = &text[start..end];
+    let at = block.find(" url=\"")? + " url=\"".len();
+    block[at..].split_once('"').map(|(url, _)| url.to_string())
+}
+
+/// The `default-repository` a `myaddons.xml` names, if any.
+#[must_use]
+pub fn default_repository(text: &str) -> Option<String> {
+    let open = text.find("<addons")?;
+    let tag = &text[open..open + text[open..].find('>')?];
+    let at = tag.find("default-repository=\"")? + "default-repository=\"".len();
+    tag[at..].split_once('"').map(|(name, _)| name.to_string())
+}
+
+/// `text` without the repository `name`, and whether it had it; with `drop_default`, a `default-repository` naming it
+/// goes too.
+#[must_use]
+pub fn without_repository(text: &str, name: &str, drop_default: bool) -> (String, bool) {
     let attr = crate::workspace::xml_attr(name);
     let mut text = text.to_string();
     let mut had = false;
@@ -537,8 +627,10 @@ pub fn without_repository(text: &str, name: &str) -> (String, bool) {
         }
     }
     let default = format!(" default-repository=\"{attr}\"");
-    if let Some(at) = text.find(&default) {
-        text.replace_range(at..at + default.len(), "");
+    if drop_default {
+        if let Some(at) = text.find(&default) {
+            text.replace_range(at..at + default.len(), "");
+        }
     }
     (text, had)
 }
@@ -589,8 +681,10 @@ fn plan(context: &Context, server: &Server) -> Json {
         "taskSource": { "available": server.token.is_some(), "path": tasks_path(server), "present": task_source },
         "gateway": {
             "available": gateway, "url": server.offered("gateway.url"), "alias": "default", "writable": instance_files,
-            "lines": [format!("{ENV_URL}={}", server.offered("gateway.url")), format!("{ENV_KEY}=(your token)"),
-                format!("{ENV_MODEL}=default")],
+            "lines": [format!("{ENV_URL}={}", server.offered("gateway.url")),
+                format!("{ENV_KEY}=(a key for the gateway alone, made by the server)"), format!("{ENV_MODEL}=default")],
+            // with require-client on, the server's admin names the key's client (an LlmApiClient) before it opens
+            "requireClient": server.offer["gateway"]["requireClient"].as_bool().unwrap_or(false),
         },
         "gitCredential": {
             "prefix": crate::vcs::url_prefix(&server.base).unwrap_or_default(),
@@ -629,6 +723,8 @@ fn apply_server_setup(
         if template.is_empty() {
             return Err(LibError::new(format!("{} offers no git URL", server.base)));
         }
+        // the server's own git, https, with no user part: what moq clones from
+        on_server(&server, &template.replace("${name}", "x"))?;
         let name = Some(text(parameters, "repositoryName"))
             .filter(|name| !name.trim().is_empty())
             .map_or_else(
@@ -637,6 +733,17 @@ fn apply_server_setup(
             );
         let file = myaddons_path(context.factory.runtime_dir());
         let before = std::fs::read_to_string(&file).ok();
+        let ours = setup["addons"]["repositoryName"].as_str() == Some(name.as_str());
+        let existing = before.as_deref().and_then(|text| repository_url(text, &name));
+        let template_attr = crate::workspace::xml_attr(&template);
+        // a repository of that name the developer wrote is theirs: not replaced, and not Connect's to remove
+        if existing.as_ref().is_some_and(|url| *url != template_attr) && !ours {
+            return Err(LibError::new(format!(
+                "{} already has a repository {name} of its own: give the server's another name",
+                file.display()
+            )));
+        }
+        let default_before = before.as_deref().and_then(default_repository);
         let after = with_repository(
             before.as_deref(),
             &name,
@@ -645,7 +752,13 @@ fn apply_server_setup(
         )
         .map_err(LibError::new)?;
         crate::workspace::write_atomic(&file, after.as_bytes())?;
-        setup["addons"] = json!({ "file": file.display().to_string(), "repositoryName": name });
+        let set_default = default_before.is_none() && default_repository(&after).as_deref() == Some(name.as_str());
+        // what was there before Connect stays the developer's (an entry of the same URL Connect only kept)
+        let written = existing.is_none() || ours;
+        setup["addons"] = json!({
+            "file": file.display().to_string(), "repositoryName": name, "url": template, "written": written,
+            "setDefault": set_default || (ours && setup["addons"]["setDefault"].as_bool() == Some(true)),
+        });
         done.push(format!("the {name} repository in {}", file.display()));
     }
     if flag(parameters, "taskSource") {
@@ -685,24 +798,55 @@ fn apply_server_setup(
     if flag(parameters, "gateway") {
         instance_files()?;
         let url = server.offered("gateway.url");
-        let token = server
-            .token
-            .clone()
-            .ok_or_else(|| LibError::new("connect first: the gateway takes your token"))?;
+        if server.token.is_none() {
+            return Err(LibError::new(
+                "connect first: the gateway takes a key the server gives you",
+            ));
+        }
         if url.is_empty() {
             return Err(LibError::new(format!("{} offers no LLM gateway", server.base)));
         }
+        // the gateway is the server's own, https (or this machine by its IP literal)
+        let url = on_server(&server, &url)?;
         let alias = Some(text(parameters, "gatewayAlias"))
             .filter(|alias| !alias.trim().is_empty())
             .unwrap_or_else(|| "default".into());
+        // a key for the gateway alone: the account's key never goes where a model client reads it
+        let key_path = Some(server.offered("gateway.keyPath"))
+            .filter(|path| !path.is_empty())
+            .unwrap_or_else(|| "/rest/s1/moqui/hosting/gatewayKey".into());
+        let device = format!("Dev AIDE gateway ({})", own_origin().unwrap_or_default());
+        let answer = server.post(&key_path, &json!({ "scope": "gateway", "deviceName": device }))?;
+        let key = answer["loginKey"].as_str().unwrap_or("").to_string();
+        if key.is_empty() {
+            return Err(LibError::new(format!("{} gave no key for its gateway", server.base)));
+        }
+        let env_file = context.factory.runtime_dir().join(".env");
+        let names = [ENV_URL, ENV_KEY, ENV_MODEL];
+        // the developer's own lines, from the file itself, kept to put back at Remove; a connection that wrote them
+        // before keeps what was there before it
+        if field(&row, "envPriorJson").is_empty() || setup["gateway"].is_null() {
+            let lines = moqui_lib::env::parse_dotenv(&std::fs::read_to_string(&env_file).unwrap_or_default());
+            let prior: serde_json::Map<String, Json> = lines
+                .into_iter()
+                .filter(|(name, _)| names.contains(&name.as_str()))
+                .map(|(name, value)| (name, Json::String(value)))
+                .collect();
+            row.set("envPriorJson", Value::string(Json::Object(prior).to_string()));
+        }
+        let previous_key = field(&row, "gatewayKey");
         let set = vec![
             (ENV_URL.to_string(), url.clone()),
-            (ENV_KEY.to_string(), token),
+            (ENV_KEY.to_string(), key.clone()),
             (ENV_MODEL.to_string(), alias.trim().to_string()),
         ];
-        moqui_lib::env::update_dotenv_file(&context.factory.runtime_dir().join(".env"), &set, &[])?;
-        setup["gateway"] = json!({ "url": url, "alias": alias.trim(), "names": [ENV_URL, ENV_KEY, ENV_MODEL] });
-        done.push("the gateway's .env lines (a restart applies them)".into());
+        moqui_lib::env::update_dotenv_file(&env_file, &set, &[])?;
+        row.set("gatewayKey", Value::string(&key));
+        if !previous_key.is_empty() && previous_key != key {
+            revoke_on_server(&server, &previous_key, "the gateway's earlier key");
+        }
+        setup["gateway"] = json!({ "url": url, "alias": alias.trim(), "names": names });
+        done.push("the gateway's .env lines, with a key for the gateway alone (a restart applies them)".into());
     }
     let git = text(parameters, "gitCredential");
     if git == "stored" || git == "helper" {
@@ -745,8 +889,55 @@ fn apply_server_setup(
     Ok(out)
 }
 
-/// `remove#Server`: the connection, its token and what Connect set (the task source, the `myaddons.xml` repository,
-/// the `.env` lines still as it wrote them, the roots' hosted repositories it resolved).
+/// End `key` on the server (`hosting/keyRevoke`, as the user): whether it ended. A failure is logged; Remove goes on.
+fn revoke_on_server(server: &Server, key: &str, what: &str) -> bool {
+    let path = Some(server.offered("signIn.keyRevoke"))
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| "/rest/s1/moqui/hosting/keyRevoke".into());
+    match server.post(&path, &json!({ "loginKey": key })) {
+        Ok(answer) => answer["revoked"].as_bool() == Some(true),
+        Err(err) => {
+            tracing::warn!("Dev AIDE: {what} was not ended on {}: {err}", server.base);
+            false
+        }
+    }
+}
+
+/// What Remove does to the `.env` lines: each still as Connect wrote it (`wrote`) goes back to the value the file had
+/// before (`prior`), or goes when it had none; a line the developer changed since stays.
+#[must_use]
+pub fn env_restore(
+    current: &[(String, String)],
+    wrote: &[(&str, String)],
+    prior: &Json,
+) -> (Vec<(String, String)>, Vec<&'static str>) {
+    let mut set = Vec::new();
+    let mut remove = Vec::new();
+    for (name, value) in wrote {
+        let now = current
+            .iter()
+            .rev()
+            .find(|(have, _)| have == name)
+            .map(|(_, value)| value);
+        if value.is_empty() || now != Some(value) {
+            continue;
+        }
+        let name = match *name {
+            ENV_URL => ENV_URL,
+            ENV_KEY => ENV_KEY,
+            _ => ENV_MODEL,
+        };
+        match prior[name].as_str() {
+            Some(before) => set.push((name.to_string(), before.to_string())),
+            None => remove.push(name),
+        }
+    }
+    (set, remove)
+}
+
+/// `remove#Server`: the connection, its token and what Connect set (the task source, the `myaddons.xml` repository it
+/// wrote, the `.env` lines still as it wrote them, put back as they were, the roots' hosted repositories it resolved),
+/// and the keys it was given ended on the server: the gateway's, and an app sign-in's.
 fn remove_server(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -757,6 +948,7 @@ fn remove_server(
     let _authz = ec.disable_authz();
     let row = own_row(&context, &text(parameters, "serverId"))?;
     let id = field(&row, "serverId");
+    let server = Server::from_row(&context.facade, &row);
     let setup: Json = serde_json::from_str(&field(&row, "setupJson")).unwrap_or(Json::Null);
     let mut removed: Vec<String> = Vec::new();
     // each part goes on its own: one that fails is logged, and the rest still go
@@ -800,13 +992,19 @@ fn remove_server(
             ) else {
                 return Ok(false);
             };
-            if context.tier != Tier::Full {
+            // only an entry Connect wrote, still with the URL it wrote: one the developer had or changed stays
+            if context.tier != Tier::Full || setup["addons"]["written"].as_bool() == Some(false) {
                 return Ok(false);
             }
             let Ok(before) = std::fs::read_to_string(file) else {
                 return Ok(false);
             };
-            let (after, had) = without_repository(&before, name);
+            let wrote = setup["addons"]["url"].as_str().map(crate::workspace::xml_attr);
+            if wrote.is_some() && repository_url(&before, name) != wrote {
+                return Ok(false);
+            }
+            let set_default = setup["addons"]["setDefault"].as_bool() != Some(false);
+            let (after, had) = without_repository(&before, name, set_default);
             if had {
                 crate::workspace::write_atomic(Path::new(file), after.as_bytes())?;
             }
@@ -819,25 +1017,36 @@ fn remove_server(
             if setup["gateway"].is_null() || context.tier != Tier::Full {
                 return Ok(false);
             }
-            // only lines still as Connect wrote them
-            let token = Server::from_row(&context.facade, &row).token.unwrap_or_default();
-            let expected = [
+            let env_file = context.factory.runtime_dir().join(".env");
+            let current = moqui_lib::env::parse_dotenv(&std::fs::read_to_string(&env_file).unwrap_or_default());
+            // the key Connect wrote: the gateway's own, or (a connection made before it had one) the account's token
+            let key = Some(field(&row, "gatewayKey"))
+                .filter(|key| !key.is_empty())
+                .or_else(|| server.token.clone())
+                .unwrap_or_default();
+            let wrote = [
                 (ENV_URL, setup["gateway"]["url"].as_str().unwrap_or("").to_string()),
-                (ENV_KEY, token),
+                (ENV_KEY, key),
                 (ENV_MODEL, setup["gateway"]["alias"].as_str().unwrap_or("").to_string()),
             ];
-            let names: Vec<&str> = expected
-                .iter()
-                .filter(|(name, value)| moqui_lib::env::get_prop_or_env(name) == *value)
-                .map(|(name, _)| *name)
-                .collect();
-            if names.is_empty() {
+            let prior: Json = serde_json::from_str(&field(&row, "envPriorJson")).unwrap_or(Json::Null);
+            let (set, remove) = env_restore(&current, &wrote, &prior);
+            if set.is_empty() && remove.is_empty() {
                 return Ok(false);
             }
-            moqui_lib::env::update_dotenv_file(&context.factory.runtime_dir().join(".env"), &[], &names)?;
+            moqui_lib::env::update_dotenv_file(&env_file, &set, &remove)?;
             Ok(true)
         })(),
     );
+    part("the gateway's key on the server", {
+        let key = field(&row, "gatewayKey");
+        Ok(!key.is_empty() && revoke_on_server(&server, &key, "the gateway's key"))
+    });
+    part("the sign-in's key on the server", {
+        // a key the app sign-in made is this connection's alone; a token the user pasted may serve elsewhere
+        let token = server.token.clone().unwrap_or_default();
+        Ok(setup["token"] == "app" && !token.is_empty() && revoke_on_server(&server, &token, "the sign-in's key"))
+    });
     part(
         "the roots' hosted repositories",
         (|| {

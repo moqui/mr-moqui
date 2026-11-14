@@ -308,6 +308,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <resource name="approvals"><method type="get"><service name="org.moqui.git.GitRestServices.get#MergeRequestApprovals"/></method></resource>
                     <resource name="diff"><method type="get"><service name="org.moqui.git.GitRestServices.get#MergeRequestDiff"/></method></resource>
                     <resource name="merge"><method type="post"><service name="org.moqui.git.GitRestServices.merge#MergeRequest"/></method></resource>
+                    <resource name="threads">
+                        <method type="get"><service name="org.moqui.git.GitRestServices.find#ReviewThreads"/></method>
+                        <method type="post"><service name="org.moqui.git.GitRestServices.create#ReviewComment"/></method>
+                        <id name="threadId">
+                            <resource name="resolve"><method type="post"><service name="org.moqui.git.GitRestServices.resolve#ReviewThread"/></method></resource>
+                        </id>
+                    </resource>
                 </id>
             </resource>
             <resource name="pipelines">
@@ -343,6 +350,10 @@ along with this software (see the LICENSE.md file). If not, see
         <resource name="repository"><method type="get"><service name="org.moqui.git.GitRestServices.resolve#RepositoryUrl"/></method></resource>
         <resource name="mergeRequests"><method type="get"><service name="org.moqui.git.GitRestServices.find#MergeRequests"/></method></resource>
         <resource name="agreement"><method type="get"><service name="org.moqui.git.GitRestServices.get#AuthorSigned"/></method></resource>
+        <!-- a client's own keys (plans/design-dev-aide.md 21.2): a key for the LLM gateway alone, and the end of a key it
+            holds, when it is let go -->
+        <resource name="gatewayKey"><method type="post"><service name="org.moqui.impl.UserServices.create#UserScopedKey"/></method></resource>
+        <resource name="keyRevoke"><method type="post"><service name="org.moqui.impl.UserServices.revoke#UserHeldKey"/></method></resource>
     </resource>
 
     <!-- The artifact index of a project an admin allowed (DevArtifactProject), read only, on any instance

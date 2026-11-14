@@ -220,3 +220,55 @@ fn a_key_line_gives_the_fingerprint_ssh_keygen_prints() {
     assert!(line.starts_with(&bare) && !bare.contains("test@example"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A key made for the gateway alone logs in nowhere else, opens the gateway's scope, and its holder ends it by the
+/// key itself; another user's key is not ended so.
+#[test]
+fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    crate::service::load_definitions().unwrap();
+    {
+        let _authz = context.disable_authz();
+        for name in ["keys.ann", "keys.bob"] {
+            let mut row = facade.make_value("moqui.security.UserAccount").unwrap();
+            row.set("userId", Value::string(name));
+            row.set("username", Value::string(name));
+            row.create(&facade).unwrap();
+        }
+    }
+    let (made, errors) = call_as(
+        "keys.ann",
+        "create#UserScopedKey",
+        &[("deviceName", Value::string("Dev AIDE gateway"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let key = to_plain_string(&made["loginKey"]);
+    assert_eq!(key.len(), 40);
+    assert!(
+        crate::user::login_user_key(&key).is_err(),
+        "an account login refuses it"
+    );
+    assert!(
+        crate::user::apply_header_keys(Some(&key), None).is_err(),
+        "a REST header login refuses it"
+    );
+    crate::user::login_user_key_for(&key, "gateway").unwrap();
+    assert_eq!(crate::user::current_username().unwrap().as_deref(), Some("keys.ann"));
+    crate::user::logout().unwrap();
+    assert!(crate::user::login_user_key_for(&key, "mcp").is_err());
+    let (_, errors) = call_as(
+        "keys.ann",
+        "create#UserScopedKey",
+        &[("scope", Value::string("everything"))],
+    );
+    assert!(errors.contains("not a scope"), "{errors}");
+
+    // bob cannot end ann's key; ann ends it by the key she holds
+    let (theirs, _) = call_as("keys.bob", "revoke#UserHeldKey", &[("loginKey", Value::string(&key))]);
+    assert_eq!(theirs["revoked"], Value::Bool(false));
+    let (own, errors) = call_as("keys.ann", "revoke#UserHeldKey", &[("loginKey", Value::string(&key))]);
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(own["revoked"], Value::Bool(true));
+    assert!(crate::user::login_user_key_for(&key, "gateway").is_err());
+}

@@ -30,10 +30,13 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   publish branches, more directories, network git on a shared dev server, and the **group servers**
   ([plans/design-dev-aide.md](../../../../plans/design-dev-aide.md) §21): Connect signs in at a team's server (or
   moqui.org) as an installed app does, with this instance's own address as the redirect, or takes a pasted token, and
-  then sets what you confirm: the `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines and git's
-  credential. The Workspace then knows each working tree's hosted repository: a Merge requests tab (Check out, New),
-  Propose (push to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish
-  that opens a merge request. The server's REST decides, as you there: the framework's
+  then sets what you confirm: the `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with a
+  key for the gateway alone) and git's credential; Remove takes back only what it set. The Workspace then knows each
+  working tree's hosted repository: a Merge requests tab (Check out, New, Review with the server's threads: reply,
+  resolve, a comment on a line, a review), open threads in the editor's gutter, check chips on Commits and Branches
+  (the runs, a job's log, failed tests as links, Re-run), the contributor agreement's warning and Sign, Propose (push
+  to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish that opens a
+  merge request. The server's REST decides, as you there: the framework's
   ([Git-Hosting](../../../../docs/interfaces/Git-Hosting.md#rest)), or the REST of the application that keeps the
   repository (Smithy). Steps: [Run-Deploy](../../../../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server).
 
@@ -56,7 +59,8 @@ and the services say they are not built in.
   dev-aide` (the screens, the docs), `cargo test -p dev-aide` (confinement, the git parsers),
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
-  through the app sign-in, merge requests, push to review, check out). The Chromium smokes are acceptance tests, run by
+  through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and
+  Sign). The Chromium smokes are acceptance tests, run by
   `./moq accept-all`: `cargo test -p moqui-host --test gate3_browser the_workspace` and
   `the_entity_modeler`, `the_screen_builder` and `the_service_writer`. `test/vectors/` are the visual views' operations, which the page tests make and the
   crate's tests apply (`MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide` writes their outlines and texts again).

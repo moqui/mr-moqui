@@ -220,6 +220,51 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="mergeRequestId" required="false"/>
         </in-parameters>
     </service>
+    <service verb="find" noun="ReviewThreads" type="rust" location="moqui_git::service::rest::find_review_threads" read-only="true">
+        <description>The review threads of a merge request, of path when given, from the application that keeps them
+            (git-server review-thread-service, handle#GitReviewThread operation find). threadsAvailable false, and no
+            threads, on a server with none.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadList" type="List"/>
+            <parameter name="threadsAvailable" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="ReviewComment" type="rust" location="moqui_git::service::rest::create_review_comment">
+        <description>A comment on a merge request, as the caller: a new thread on a line of a file (path, and oldLine or
+            newLine of the side it is on, with lineText and commitId), on the merge request, or a reply (threadId); once
+            the application that keeps the repository allows it (mergeRequest.comment).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="body" required="true" allow-html="safe"/>
+            <parameter name="threadId"/>
+            <parameter name="path"/>
+            <parameter name="commitId"/>
+            <parameter name="oldLine" type="Integer"/>
+            <parameter name="newLine" type="Integer"/>
+            <parameter name="lineText"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadId"/>
+            <parameter name="held" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="resolve" noun="ReviewThread" type="rust" location="moqui_git::service::rest::resolve_review_thread">
+        <description>Resolve a review thread, or reopen it (resolved false), once the application that keeps the
+            repository allows it (mergeRequest.resolveThread).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="threadId" required="true"/>
+            <parameter name="resolved" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="threadId"/></out-parameters>
+    </service>
     <service verb="merge" noun="MergeRequest" type="rust" location="moqui_git::service::rest::merge_merge_request">
         <description>merge#MergeRequest, once the application that keeps the repository allows it
             (mergeRequest.merge).</description>

@@ -15,7 +15,8 @@
 /*
  * Git depth in the Workspace (plans/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
  * Advanced toggle, the Merge requests tab of a root a group server hosts (21.4: mine, waiting for my review, open; Check
- * out, New), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
+ * out, New; Review with the server's threads), a commit's checks (21.5: statuses, runs, a job's log and its failed tests
+ * as links, Re-run), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
  * its publish branch, Open on the hosting site), a
  * compare of two refs, and the conflict view: ours, the result and theirs side by side, Accept ours, theirs or both on
  * each conflict, Mark resolved and Abort. Each component takes the Workspace (ws) for its transitions, its notes and its
@@ -74,17 +75,22 @@
     // ---- components ----
 
     const date = (text) => String(text || "").slice(0, 10);
+    // the color of a check's state chip (21.5)
+    pure.stateColor = (state) => (state === "failure" ? "negative" : state === "pending" ? "warning" : state === "success" ? "positive" : "grey");
 
     const branches = {
         name: "mDevGitBranches",
         props: { ws: { type: Object, required: true } },
-        data() { return { local: [], remote: [], compare: null, loading: false }; },
+        computed: { pure: () => pure },
+        data() { return { local: [], remote: [], compare: null, loading: false, states: {} }; },
         mounted() { this.load(); },
         methods: {
             load() {
                 this.loading = true;
                 return this.ws.get("branches", { rootId: this.ws.rootId }).then((answer) => {
                     this.local = answer.local || []; this.remote = answer.remote || []; this.loading = false;
+                    // the checks of each branch's head on a hosted repository (21.5)
+                    this.ws.commitStates(this.local.concat(this.remote).map((branch) => branch.commit)).then((states) => { this.states = states; });
                 }, (error) => { this.loading = false; this.ws.fail(error); });
             },
             done(message) { this.ws.note(message); this.load(); this.ws.refreshStatus(); },
@@ -133,7 +139,9 @@
       <q-btn dense flat no-caps size="sm" icon="add" label="New" @click="ws.newBranch().then(load)"></q-btn></div>
     <div v-for="branch in local" :key="branch.name" class="m-dev-change q-py-xs" :data-branch="branch.name">
       <div class="row items-center no-wrap"><q-icon v-if="branch.current" name="sym_o_check" size="xs" class="q-mr-xs"></q-icon>
-        <span class="ellipsis text-weight-medium">{{branch.name}}</span><q-space></q-space>
+        <span class="ellipsis text-weight-medium">{{branch.name}}</span>
+        <q-badge v-if="states[branch.commit]" :color="pure.stateColor(states[branch.commit])" class="q-ml-xs cursor-pointer" :label="states[branch.commit]"
+            @click="ws.openChecks(branch.commit)" :data-state="states[branch.commit]"></q-badge><q-space></q-space>
         <q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + branch.name"><q-menu><q-list dense style="min-width: 12rem">
           <q-item v-if="!branch.current" clickable v-close-popup @click="ws.switchBranch(branch.name)"><q-item-section>Switch</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="merge(branch)"><q-item-section>Merge into {{ws.status && ws.status.branch}}</q-item-section></q-item>
@@ -394,20 +402,79 @@
     const mergeRequests = {
         name: "mDevGitMergeRequests",
         props: { ws: { type: Object, required: true } },
-        data() { return { filter: "open", items: [], loading: false, error: "" }; },
+        data() { return { filter: "open", items: [], loading: false, error: "", review: null }; },
         mounted() { this.load(); },
         watch: { filter() { this.load(); } },
         methods: {
             date,
+            // Review (21.4): the changes in the merge view with the server's threads on their lines; reply, resolve, a new
+            // comment on a line and a review. Each write is made on the server as you.
+            openReview(item) {
+                this.review = { item, files: [], threads: [], file: null, loading: true, error: "", available: true, reply: {}, line: "", text: "",
+                    decision: "comment", body: "", base: "", head: "" };
+                this.ws.get("mergeRequestChanges", { rootId: this.ws.rootId, mergeRequestNum: item.mergeRequestNum }).then((answer) => {
+                    Object.assign(this.review, { files: answer.files || [], threads: answer.threads || [], loading: false, available: answer.threadsAvailable !== false,
+                        base: answer.baseCommitId || "", head: answer.headCommitId || "",
+                        error: answer.diffRefused ? "The server shows no changes of this merge request" + (answer.reason ? " (" + answer.reason + ")" : "") : "" });
+                }, (error) => { this.review.loading = false; this.review.error = pure.errorText ? pure.errorText(error) : String(error); });
+            },
+            openReviewFile(file) {
+                const review = this.review;
+                this.ws.get("mergeRequestFile", { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum, path: file.path,
+                    baseCommitId: review.base, headCommitId: review.head }).then((answer) => {
+                    review.file = { path: file.path, original: answer.original || "", modified: answer.modified || "" };
+                }, this.ws.fail);
+            },
+            // a server's HTML is shown as its text: nothing a server sends runs on this instance's page
+            plain(html) {
+                try { return new DOMParser().parseFromString(String(html || ""), "text/html").body.textContent || ""; } catch (error) { return String(html || ""); }
+            },
+            fileThreads(path) { return ((this.review && this.review.threads) || []).filter((thread) => !path || thread.path === path); },
+            reloadThreads() {
+                const review = this.review;
+                return this.ws.get("reviewThreads", { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum }).then((answer) => {
+                    review.threads = answer.threads || [];
+                }, this.ws.fail);
+            },
+            reply(thread) {
+                const review = this.review, body = review.reply[thread.threadId];
+                if (!body) return;
+                this.ws.post("reviewComment", { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum, threadId: thread.threadId, body }).then((answer) => {
+                    review.reply[thread.threadId] = ""; this.ws.note(answer.held ? "Sent: it waits for a moderator" : "Replied on the server"); this.reloadThreads();
+                }, this.ws.fail);
+            },
+            comment() {
+                const review = this.review;
+                if (!review.text) return;
+                const params = { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum, body: review.text, commitId: review.head };
+                if (review.file) { params.path = review.file.path; if (Number(review.line) > 0) params.newLine = Number(review.line); }
+                this.ws.post("reviewComment", params).then((answer) => {
+                    review.text = ""; review.line = ""; this.ws.note(answer.held ? "Sent: it waits for a moderator" : "Commented on the server"); this.reloadThreads();
+                }, this.ws.fail);
+            },
+            resolve(thread, resolved) {
+                this.ws.post("resolveThread", { rootId: this.ws.rootId, mergeRequestNum: this.review.item.mergeRequestNum, threadId: thread.threadId, resolved })
+                    .then(() => this.reloadThreads(), this.ws.fail);
+            },
+            submitReview() {
+                const review = this.review;
+                this.ws.post("submitReview", { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum, decision: review.decision, body: review.body }).then(() => {
+                    review.body = ""; this.ws.note("Review sent: " + review.decision.replace("_", " ")); this.load();
+                }, this.ws.fail);
+            },
             load() {
                 this.loading = true; this.error = "";
                 return this.ws.get("mergeRequests", { rootId: this.ws.rootId, filter: this.filter }).then((answer) => {
                     this.loading = false; this.items = answer.mergeRequests || [];
                 }, (error) => { this.loading = false; this.items = []; this.error = pure.errorText ? pure.errorText(error) : String(error); });
             },
+            // a link from the server only when it is http(s); the server's answer is filtered too (review.rs page_url)
+            pageUrl: (url) => (typeof url === "string" && /^https?:\/\//i.test(url) ? url : null),
             checkout(item) {
+                // its code runs here once checked out (hot reload): said before, and again after
+                if (!window.confirm("Check out !" + item.mergeRequestNum + "? This is someone else's code: the file watcher reloads it into this instance, where it runs with your rights. Read the changes first.")) return;
                 this.ws.post("checkoutMergeRequest", { rootId: this.ws.rootId, mergeRequestNum: item.mergeRequestNum }).then((answer) => {
-                    this.ws.note("On " + answer.branch); this.ws.refreshStatus(); this.ws.reloadTabs();
+                    this.ws.note("On " + answer.branch + (answer.warning ? ": " + answer.warning : ""), "warning"); this.ws.refreshStatus(); this.ws.reloadTabs();
                 }, this.ws.fail);
             },
             create() {
@@ -429,16 +496,123 @@
     <q-item-section><q-item-label>!{{item.mergeRequestNum}} {{item.title}}</q-item-label>
       <q-item-label caption>{{item.sourceRef}} → {{item.targetRef}} · {{item.author}} · {{item.state}}{{item.checkState ? ' · checks ' + item.checkState : ''}}</q-item-label></q-item-section>
     <q-item-section side><div class="row no-wrap">
-      <q-btn v-if="item.url" dense flat no-caps size="sm" label="Open on server" :href="item.url" target="_blank" type="a"></q-btn>
+      <q-btn v-if="pageUrl(item.url)" dense flat no-caps size="sm" label="Open on server" :href="pageUrl(item.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
+      <q-btn dense flat no-caps size="sm" label="Review" @click="openReview(item)" :data-review="item.mergeRequestNum"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Check out" :disable="!ws.canWrite" @click="checkout(item)"></q-btn></div></q-item-section>
   </q-item></q-list>
   <div v-if="!items.length && !loading && !error" class="m-muted q-pa-md">No merge requests here.</div>
+  <div v-if="review" class="column no-wrap q-mt-md" id="DevReview">
+    <div class="row items-center"><span class="text-subtitle2">Review !{{review.item.mergeRequestNum}} {{review.item.title}}</span><q-space></q-space>
+      <q-btn dense flat no-caps size="sm" label="Close" @click="review = null"></q-btn></div>
+    <div v-if="review.error" class="text-negative">{{review.error}}</div>
+    <div v-if="!review.available" class="text-caption m-muted">This server keeps no review threads.</div>
+    <div class="row no-wrap">
+      <q-list dense class="m-dev-side" style="width: 260px"><q-item v-for="file in review.files" :key="file.path" clickable @click="openReviewFile(file)"
+          :active="review.file && review.file.path === file.path">
+        <q-item-section>{{file.path}}</q-item-section>
+        <q-item-section side v-if="fileThreads(file.path).length"><q-badge :label="fileThreads(file.path).length"></q-badge></q-item-section></q-item></q-list>
+      <m-diff-view v-if="review.file" class="col" :original="review.file.original" :modified="review.file.modified" :file-name="review.file.path"></m-diff-view>
+    </div>
+    <div v-for="thread in fileThreads(review.file && review.file.path)" :key="thread.threadId" class="q-pa-xs m-dev-change" :data-thread="thread.threadId">
+      <div class="text-caption text-weight-medium">{{thread.path || 'The merge request'}}{{thread.newLine ? ':' + thread.newLine : thread.oldLine ? ' (old) :' + thread.oldLine : ''}}
+        {{thread.resolved ? '· resolved' : ''}}{{thread.outdated ? '· outdated' : ''}}</div>
+      <div v-for="comment in thread.comments" :key="comment.commentId" class="text-caption"><b>{{comment.author}}</b>:
+        <span style="white-space: pre-wrap">{{comment.bodyFormat === 'html' ? plain(comment.body) : comment.body}}</span></div>
+      <div class="row items-center no-wrap q-gutter-x-xs">
+        <q-input dense outlined class="col" v-model="review.reply[thread.threadId]" placeholder="Reply"></q-input>
+        <q-btn dense flat no-caps size="sm" label="Reply" @click="reply(thread)"></q-btn>
+        <q-btn dense flat no-caps size="sm" :label="thread.resolved ? 'Reopen' : 'Resolve'" @click="resolve(thread, !thread.resolved)"></q-btn></div>
+    </div>
+    <div class="row items-center no-wrap q-gutter-x-xs q-mt-xs">
+      <q-input v-if="review.file" dense outlined style="width: 6rem" v-model="review.line" label="Line"></q-input>
+      <q-input dense outlined class="col" v-model="review.text" :label="review.file ? 'A comment on ' + review.file.path : 'A comment on the merge request'"></q-input>
+      <q-btn dense flat no-caps size="sm" label="Comment" :disable="!review.text" @click="comment" id="DevReviewComment"></q-btn></div>
+    <div class="row items-center no-wrap q-gutter-x-xs q-mt-xs">
+      <q-select dense outlined emit-value map-options style="width: 12rem" v-model="review.decision"
+          :options="[{ label: 'Comment', value: 'comment' }, { label: 'Approve', value: 'approve' }, { label: 'Request changes', value: 'request_changes' }]"></q-select>
+      <q-input dense outlined class="col" v-model="review.body" label="Review"></q-input>
+      <q-btn dense unelevated no-caps color="primary" label="Send review" @click="submitReview" id="DevSubmitReview"></q-btn></div>
+    <div class="text-caption m-muted">Merging is on the server's page.</div>
+  </div>
+</div>`
+    };
+
+    // A commit's checks (21.5): its statuses, its pipeline runs and jobs; a job's log, followed while it runs, and its
+    // failed tests as links to the file and line; Re-run for a user who may.
+    const checks = {
+        name: "mDevGitChecks",
+        props: { ws: { type: Object, required: true }, commitId: { type: String, required: true } },
+        data() { return { loading: true, state: "", statuses: [], runs: [], job: null, error: "" }; },
+        computed: { pure: () => pure },
+        mounted() { this.load(); },
+        beforeUnmount() { this.stopFollow(); },
+        methods: {
+            load() {
+                this.loading = true;
+                return this.ws.get("checks", { rootId: this.ws.rootId, commitId: this.commitId }).then((answer) => {
+                    Object.assign(this, { loading: false, state: answer.state || "", statuses: answer.statuses || [], runs: answer.runs || [] });
+                }, (error) => { this.loading = false; this.error = pure.errorText ? pure.errorText(error) : String(error); });
+            },
+            pageUrl: (url) => (typeof url === "string" && /^https?:\/\//i.test(url) ? url : null),
+            openJob(job) {
+                this.stopFollow();
+                this.job = { jobRunId: job.jobRunId, name: job.jobName, text: "", offset: 0, tests: [], finished: false };
+                this.more();
+            },
+            more() {
+                const job = this.job;
+                if (!job) return;
+                this.ws.get("job", { rootId: this.ws.rootId, jobRunId: job.jobRunId, offset: job.offset }).then((answer) => {
+                    if (this.job !== job) return;
+                    job.text += answer.text || ""; job.offset = answer.nextOffset || job.offset; job.tests = answer.failedTests || []; job.finished = answer.finished !== false;
+                    // a running job is followed
+                    if (!job.finished) this.timer = setTimeout(() => this.more(), 2000);
+                }, this.ws.fail);
+            },
+            stopFollow() { if (this.timer) clearTimeout(this.timer); this.timer = null; },
+            openTest(test) { if (test.link) { this.ws.openFile(test.link.path, test.link.line || 0); this.$emit("close"); } },
+            rerun(run, job) {
+                const params = { rootId: this.ws.rootId };
+                if (job) params.jobRunId = job.jobRunId; else params.runNum = run.runNum;
+                this.ws.post("rerunCheck", params).then(() => { this.ws.note(job ? "Job re-run" : "Run re-run"); this.load(); }, this.ws.fail);
+            }
+        },
+        emits: ["close"],
+        template: `
+<div class="column no-wrap q-pa-sm" id="DevChecks">
+  <div class="row items-center"><span class="text-subtitle2">Checks of {{commitId.slice(0, 9)}}</span>
+    <q-badge v-if="state" :color="pure.stateColor(state)" :label="state" class="q-ml-sm"></q-badge><q-space></q-space>
+    <q-btn dense flat no-caps size="sm" label="Refresh" :loading="loading" @click="load"></q-btn></div>
+  <div v-if="error" class="text-negative">{{error}}</div>
+  <div v-for="status in statuses" :key="status.context" class="row items-center no-wrap text-caption">
+    <q-badge :color="pure.stateColor(status.state)" :label="status.state" class="q-mr-xs"></q-badge>{{status.context}}
+    <span class="m-muted q-ml-xs ellipsis">{{status.description}}</span>
+    <q-btn v-if="pageUrl(status.url)" dense flat no-caps size="sm" label="Open" :href="pageUrl(status.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn></div>
+  <div v-for="run in runs" :key="run.runNum" class="q-mt-sm">
+    <div class="row items-center no-wrap text-caption text-weight-medium">#{{run.runNum}} {{run.pipelineName}}
+      <q-badge :color="pure.stateColor(run.state)" :label="run.statusId" class="q-ml-xs"></q-badge><q-space></q-space>
+      <q-btn v-if="run.canUpdate" dense flat no-caps size="sm" label="Re-run" @click="rerun(run)"></q-btn></div>
+    <div v-for="job in run.jobs" :key="job.jobRunId" class="row items-center no-wrap text-caption q-pl-md">
+      <q-badge :color="pure.stateColor(job.state)" :label="job.statusId" class="q-mr-xs"></q-badge>
+      <a href="#" @click.prevent="openJob(job)">{{job.jobName}}{{job.matrixKey ? ' (' + job.matrixKey + ')' : ''}}</a>
+      <span v-if="job.testFailedCount" class="text-negative q-ml-xs">{{job.testFailedCount}} failed</span><q-space></q-space>
+      <q-btn v-if="run.canUpdate" dense flat no-caps size="sm" label="Retry" @click="rerun(run, job)"></q-btn></div>
+  </div>
+  <div v-if="job" class="q-mt-sm" id="DevJobLog">
+    <div class="text-caption text-weight-medium">{{job.name}}{{job.finished ? '' : ' · running'}}</div>
+    <div v-for="test in job.tests" :key="test.suiteName + test.testName" class="text-caption">
+      <a v-if="test.link" href="#" @click.prevent="openTest(test)" :data-test-link="test.link.path + ':' + (test.link.line || '')">{{test.link.path}}{{test.link.line ? ':' + test.link.line : ''}}</a>
+      <span v-else class="m-muted">{{test.filePath}}</span> {{test.testName}}: {{test.message}}</div>
+    <pre class="m-dev-mono q-ma-none scroll" style="max-height: 40vh; white-space: pre-wrap">{{job.text}}</pre>
+  </div>
+  <div v-if="!loading && !statuses.length && !runs.length && !error" class="m-muted">No checks of this commit.</div>
 </div>`
     };
 
     devAide.gitComponents = {
         "m-dev-git-branches": branches, "m-dev-git-tags": tags, "m-dev-git-stashes": stashes,
-        "m-dev-git-settings": settings, "m-dev-git-conflict": conflict, "m-dev-git-merge-requests": mergeRequests
+        "m-dev-git-settings": settings, "m-dev-git-conflict": conflict, "m-dev-git-merge-requests": mergeRequests,
+        "m-dev-git-checks": checks
     };
     const qvt = moqui.qvt;
     if (qvt && qvt.registerLate) Object.keys(devAide.gitComponents).forEach((name) => qvt.registerLate(name, devAide.gitComponents[name]));

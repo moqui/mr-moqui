@@ -164,6 +164,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="output"/>
             <parameter name="mergeRequest" type="Map"/>
+            <parameter name="mergeRequestError"><description>Why the merge request was not opened; the push stands</description></parameter>
+            <parameter name="message"/>
         </out-parameters>
     </service>
     <service verb="switch" noun="Branch" type="rust" location="dev_aide::vcs::switch_branch" allow-remote="false">

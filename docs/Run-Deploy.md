@@ -1460,25 +1460,38 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    (`https://team.example.com`) and Connect. The browser opens the group server's sign-in, as the desktop app's does:
    sign in there (with its identity provider, or its own login) and confirm. The dev instance gets a login key of
    your account, kept encrypted and sent only to that server ([Logging in](interfaces/Git-Hosting.md#logging-in); the
-   redirect is the dev instance's own loopback address). A server without the sign-in takes an access token pasted
-   from its Git access page (Projects › Code › Git access, or Commons › Settings › Account) instead.
+   redirect is the dev instance's own loopback address by its IP literal, `http://127.0.0.1:8080/...` even when the
+   page is at `localhost`, so you may be asked to sign in to the dev instance at `127.0.0.1` once). A browser signed
+   in to the group server already stays signed in there and enters its password again on the confirmation. A server
+   without the sign-in takes an access token pasted from its Git access page (Projects › Code › Git access, or Commons
+   › Settings › Account) instead.
 2. **Confirm what Connect sets**, each a checkbox, from what the server offers
    (`/rest/s1/moqui/hosting/offer`):
    - the repository entry in `myaddons.xml` (not in git) for the server's git URL, and optionally as the
-     `default-repository`; then `./moq component-get acme-site`. The repository ids (or paths) on the group server are
-     the component names;
+     `default-repository` when the file names none; then `./moq component-get acme-site`. The repository ids (or
+     paths) on the group server are the component names. A repository of the same name that you wrote is not replaced:
+     give the server's another name;
    - the task source (`moqui-rest`) with your token: Tasks lists your work items, and commits carry the current
      task's trailer;
-   - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the token as `llm_openai_api_key`, the alias as
-     `llm_openai_model`), applied at the next start. The gateway needs `LlmGatewayUse` and an `LlmApiClient` row for
-     your key on the group server;
+   - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the alias as `llm_openai_model`, and as
+     `llm_openai_api_key` a key the server makes for its gateway alone, never your account's key), applied at the next
+     start. The lines you had before are kept and put back by Remove. The gateway needs `LlmGatewayUse`, and, while its
+     `require-client` is on, an `LlmApiClient` row naming the key on the group server (or `require-client` off);
    - git's credential for the server's host: git's own helper (the default), or the token of the connection.
 
    For git over SSH, add your public key on the server's Git access screen instead. Settings › Group servers shows each
-   connection's state, Check, Sign in again and Remove, which takes back what Connect set.
+   connection's state, Check, Sign in again and Remove, which takes back what Connect set and nothing else: a
+   `myaddons.xml` repository only as Connect wrote it, the `.env` lines only while they are as it wrote them (yours put
+   back), and the keys it was given ended on the server (the gateway's, and the sign-in's; a pasted token stays, as it
+   may serve elsewhere).
 3. **The Workspace** then knows the hosted repository of each working tree whose remote is the server's (a Merge
-   requests tab, Propose in place of Push for a repository you may only view, Fork where the server makes forks,
-   Publish to a publish branch opening a merge request). Merging stays on the server's page.
+   requests tab with Review: the changes in the merge view with the server's threads, a reply, resolve, a comment on a
+   line and a review; open threads in the editor's gutter on a checked-out merge request; Propose in place of Push for
+   a repository you may only view, Fork where the server makes forks, Publish to a publish branch opening a merge
+   request; check chips on Commits and Branches with the runs, a job's log, its failed tests as links and Re-run; the
+   contributor agreement's warning and Sign). Checking out a merge request runs its code here (the file watcher
+   reloads it): read it first. Merging stays on the server's page. For a pre-commit hook or a coding agent in a
+   terminal, `moqui check --agreement` asks the server the same (`MOQUI_GROUP_SERVER`, `MOQUI_GROUP_TOKEN`).
 4. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
    not be reachable from the network.
 

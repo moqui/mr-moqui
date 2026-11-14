@@ -244,7 +244,8 @@ set the directory. The default is types/ inside the runtime directory. This does
 
 const CHECK: &str = "\
 moqui check [paths] [--extensions] [--json] [--server URL] [--project DIR | --java DIR]
-    Check Moqui XML files: schema, references, expressions.
+moqui check --agreement
+    Check Moqui XML files: schema, references, expressions; or the contributor agreement.
 
 Checks each file (a directory: the XML files in it) against the framework's XSDs, the names it uses
 (entities, fields, services, service parameters, locations) against the loaded definitions, and its
@@ -264,11 +265,19 @@ runtime/, read with MR Moqui's framework conf (beside this executable, or MOQUI_
 reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java checkout is found when
 MOQUI_RUNTIME is its runtime or the working directory is in it. With --server, the project is a
 directory on the server's machine, read there into memory on first use and kept fresh with its files
-(no restart). A definition that does not resolve is logged and left out.
+(no restart). A definition that does not resolve is logged and left out. A repository's ci.xml is checked
+against git-ci-3.xsd as any other.
+
+--agreement asks the repository's group server whether the next commit's author (git's user.email) has
+signed its contributor agreement (AUTHORS.md; /rest/s1/moqui/hosting/agreement): the server is
+MOQUI_GROUP_SERVER, else the origin of an https origin remote, with the key MOQUI_GROUP_TOKEN when set.
+An author who has not signed fails it (exit 1), for a pre-commit hook, unless the commit stages only
+AUTHORS.md (the signature itself); a server that cannot be asked or does not decide it is a warning.
 
   moqui check
   moqui check runtime/components/addon/my-site/service/my/MyServices.xml
   moqui check --extensions --json
+  moqui check --agreement
 ";
 
 const REFS: &str = "\
