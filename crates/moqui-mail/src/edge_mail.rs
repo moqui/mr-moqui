@@ -129,21 +129,7 @@ pub fn parse_dsn(raw: &[u8]) -> Option<DsnReport> {
     let body = body.split("\n--").next().unwrap_or(body);
     let mut report = DsnReport::default();
     let mut details = Vec::new();
-    for group in body.split("\n\n") {
-        let mut fields: Vec<(String, String)> = Vec::new();
-        for line in group.lines() {
-            match (line.starts_with([' ', '\t']), fields.last_mut()) {
-                (true, Some((_, value))) => {
-                    value.push(' ');
-                    value.push_str(line.trim());
-                }
-                _ => {
-                    if let Some((name, value)) = line.split_once(':') {
-                        fields.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
-                    }
-                }
-            }
-        }
+    for fields in super::report::field_groups(body) {
         let field = |name: &str| {
             fields
                 .iter()

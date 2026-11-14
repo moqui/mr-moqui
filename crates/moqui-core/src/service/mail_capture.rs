@@ -20,7 +20,8 @@
 //!
 //! The tool: `isEnabled()`, `enable()`, `disable()` (this factory, until `reset()`, which goes back to the conf
 //! property), `getMessages()` (oldest first, each `{subject, fromAddress, fromName, toList, ccList, bccList,
-//! replyToList, body, bodyText, messageId, inReplyTo, references, attachmentNames, headers, capturedDate}`), `count()`,
+//! replyToList, bounceAddress, body, bodyText, messageId, inReplyTo, references, attachmentNames, headers,
+//! capturedDate}`), `count()`,
 //! `last()` and `clear()`.
 
 use std::sync::{Arc, Mutex};
@@ -49,6 +50,8 @@ pub struct CapturedMail {
     pub cc: Vec<String>,
     pub bcc: Vec<String>,
     pub reply_to: Vec<String>,
+    /// The envelope sender bounces go to (a template's or a call's `bounceAddress`), empty for the From address.
+    pub bounce_address: String,
     pub body: String,
     pub body_text: String,
     pub message_id: String,
@@ -141,6 +144,7 @@ fn mail_value(at: i64, mail: &CapturedMail) -> Value {
         ("ccList", list(&mail.cc)),
         ("bccList", list(&mail.bcc)),
         ("replyToList", list(&mail.reply_to)),
+        ("bounceAddress", Value::string(&mail.bounce_address)),
         ("body", Value::string(&mail.body)),
         ("bodyText", Value::string(&mail.body_text)),
         ("messageId", Value::string(&mail.message_id)),
@@ -184,8 +188,9 @@ impl ToolFactory for MailCaptureToolFactory {
         Some(
             "{ isEnabled(): boolean; enable(): void; disable(): void; reset(): void; \
              getMessages(): { subject: string; fromAddress: string; fromName: string; toList: string[]; ccList: string[]; \
-             bccList: string[]; replyToList: string[]; body: string; bodyText: string; messageId: string; inReplyTo: string; \
-             references: string; attachmentNames: string[]; headers: Record<string, string>; capturedDate: number }[]; \
+             bccList: string[]; replyToList: string[]; bounceAddress: string; body: string; bodyText: string; \
+             messageId: string; inReplyTo: string; references: string; attachmentNames: string[]; \
+             headers: Record<string, string>; capturedDate: number }[]; \
              count(): number; \
              last(): Record<string, unknown> | null; clear(): void }",
         )
