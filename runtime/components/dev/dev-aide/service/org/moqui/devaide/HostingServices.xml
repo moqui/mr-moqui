@@ -334,8 +334,9 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="rerun" noun="Check" type="rust" location="dev_aide::hosting::checks::rerun_check" allow-remote="false">
-        <description>A pipeline run again (runNum), or one of its jobs (jobRunId), on the server as the user, who may.
-            From a session only.</description>
+        <description>A pipeline run again (runNum), or one of its jobs (jobRunId, with its runNum), on the server as the
+            user, who may: through the framework's REST, or for a repository an application keeps through its
+            operations (Smithy's rerunPipelineRun and retryJobRun). From a session only.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="runNum"/>

@@ -661,6 +661,7 @@ fn discard_files(
     });
     for path in &untracked {
         let resolved = context.resolve(root, path)?;
+        crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, path)?;
         std::fs::remove_file(&resolved.path).map_err(|err| LibError::new(format!("{path}: {err}")))?;
     }
     let mut out = if tracked.is_empty() {

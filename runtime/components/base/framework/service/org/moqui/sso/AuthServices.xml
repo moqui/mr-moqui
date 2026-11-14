@@ -107,6 +107,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="allow"/>
             <parameter name="password"><description>A browser signed in before the start confirms who it is (reauthenticate)</description></parameter>
             <parameter name="code"><description>The code of the account's second factor, with the password</description></parameter>
+            <parameter name="pendingId"><description>The sign-in the page was shown for; another started since is refused</description></parameter>
+            <parameter name="signOut"><description>true: an account with no password here signs out and in again, the app sign-in kept</description></parameter>
         </in-parameters>
     </service>
     <service verb="exchange" noun="AppCode" type="rust" location="moqui_core::service::sso_app::exchange_app_code"

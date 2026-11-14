@@ -122,7 +122,8 @@ first branch pushed) its default branch.
   desktop and mobile apps) gets a login key without a pasted token: it opens `/sso/appLogin` in the browser with a PKCE
   challenge, a state and its redirect URI; the browser signs in (at an identity provider, or with no `authFlowId` at
   this server's own login; a browser signed in already stays signed in and enters the account's password, and its
-  second factor, again on the confirmation); the user confirms, on a page that names the port the code goes to and
+  second factor, again on the confirmation, or, with no password here, signs out and in again from it); the user
+  confirms (the form answers only the sign-in it was shown for, not one another start put in its place), on a page that names the port the code goes to and
   says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
   with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
   'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp_app_redirect_uris` exactly, or any loopback one
@@ -1077,7 +1078,8 @@ call `GitServices`, `GitReviewServices` and `GitCiServices`.
 its reviewers, their reviews and its merge. Its REST reaches the threads through `git-server` `review-thread-service`
 (interface `handle#GitReviewThread`: operation `find`, `comment` or `resolve`), called as the caller once the merge
 request's gates passed, a write once the keeper allows `mergeRequest.comment` or `mergeRequest.resolveThread`; with no
-service there are none (`threadsAvailable` false) and a comment is refused. The offer's `rest.reviewThreads` says
+service there are none (`threadsAvailable` false) and a comment is refused. The REST passes the path's merge request
+and the caller's `threadId`; the service refuses a thread of another merge request as one that is not there. The offer's `rest.reviewThreads` says
 which. A repository an application keeps is commented through the application's REST (Smithy's `comments`).
 
 **The gates of the REST.** A caller who may not view a repository is told it is not there before the keeping

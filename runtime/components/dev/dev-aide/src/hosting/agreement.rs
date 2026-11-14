@@ -40,6 +40,13 @@ pub const AUTHORS_FILE: &str = "AUTHORS.md";
 /// The headings of the two lists a signature goes under.
 const LISTS: [&str; 2] = ["## Copyright Waiver", "## Grant of Patent License"];
 
+/// Whether a legal name may go into a line of `AUTHORS.md`: two characters at least, no control character (a newline,
+/// a tab, an escape, a carriage return) and no markup.
+#[must_use]
+pub fn legal_name_ok(name: &str) -> bool {
+    name.trim().chars().count() >= 2 && !name.chars().any(|ch| ch.is_control() || matches!(ch, '<' | '>'))
+}
+
 /// The line of a signature, as `AUTHORS.md` asks for it.
 #[must_use]
 pub fn signature_line(years: &str, legal_name: &str, username: &str) -> String {
@@ -186,6 +193,8 @@ fn sign_agreement(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
+    // a person signs: never under an agent's fence or in a sim (try_service), where it would still be real
+    crate::workspace::unfenced(moqui_core::entity::fence::Effect::Process, "sign#Agreement")?;
     if moqui_core::screen::gate::header_authenticated_request() {
         return Err(LibError::new(
             "A person signs, from a session: not a request logged in by a header",
@@ -195,7 +204,7 @@ fn sign_agreement(
     let root = git_write_root(&context, parameters, "signs the agreement")?;
     let hosted = need_hosted(&context, root)?;
     let legal_name = text(parameters, "legalName");
-    if legal_name.trim().len() < 2 || legal_name.contains(['\n', '<', '>']) {
+    if !legal_name_ok(&legal_name) {
         return Err(LibError::new("your legal name is required"));
     }
     let username = Some(text(parameters, "username"))

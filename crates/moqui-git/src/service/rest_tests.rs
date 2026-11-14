@@ -283,9 +283,13 @@ const APPLICATION: &str = r#"<services>
         <actions><script><![CDATA[
             if (operation === 'find') threadList = [{threadId: 'T1', path: path || 'a.txt', newLine: 1, resolved: false,
                 commentList: [{commentId: 'C1', authorName: ec.user.username, body: 'On ' + mergeRequestId}]}]
+            // a thread is of one merge request: its id carries it, and another's is not there (the interface's rule)
+            const ofThis = (id) => String(id).startsWith('T-' + mergeRequestId + '-')
             if (operation === 'comment') { if (body === 'fail') { ec.message.addError('No merge request ' + mergeRequestId); return }
-                threadId = threadId || ('T-' + (path || 'mr') + '-' + (newLine || 0)) }
-            if (operation === 'resolve') threadId = threadId + (resolved ? '-resolved' : '-open')
+                if (threadId && !ofThis(threadId)) { ec.message.addError('No thread ' + threadId); return }
+                threadId = threadId || ('T-' + mergeRequestId + '-' + (path || 'mr') + '-' + (newLine || 0)) }
+            if (operation === 'resolve') { if (!ofThis(threadId)) { ec.message.addError('No thread ' + threadId); return }
+                threadId = threadId + (resolved ? '-resolved' : '-open') }
         ]]></script></actions>
     </service>
     <service verb="add" noun="Offer">
@@ -651,16 +655,66 @@ fn review_threads_are_the_applications_behind_the_merge_requests_gates() {
         &[("body", s("Why?")), ("path", s("t.txt")), ("newLine", Value::I64(1))],
     );
     assert!(errors.is_empty(), "{errors}");
-    assert_eq!(to_plain_string(&field(&made, "threadId")), "T-t.txt-1");
+    let thread_id = to_plain_string(&field(&made, "threadId"));
+    assert!(
+        thread_id.starts_with("T-") && thread_id.ends_with("-t.txt-1"),
+        "{thread_id}"
+    );
     let (resolved, errors) = rest(
         &fixture,
         Some(WRITER),
         "post",
-        "moqui/git/web/mergeRequests/1/threads/T-t.txt-1/resolve",
+        &format!("moqui/git/web/mergeRequests/1/threads/{thread_id}/resolve"),
         &[],
     );
     assert!(errors.is_empty(), "{errors}");
-    assert_eq!(to_plain_string(&field(&resolved, "threadId")), "T-t.txt-1-resolved");
+    assert_eq!(
+        to_plain_string(&field(&resolved, "threadId")),
+        format!("{thread_id}-resolved")
+    );
+    // a thread of merge request 1 is not reached through merge request 2's path, to resolve or to reply
+    ok(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.commit#GitFiles",
+        &[
+            ("repositoryId", s("web")),
+            ("message", s("Other work")),
+            ("branch", s("main")),
+            ("newBranch", s("other")),
+            (
+                "fileMap",
+                Value::Map([("o.txt".to_string(), s("other\n"))].into_iter().collect()),
+            ),
+        ],
+    );
+    let (second, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/web/mergeRequests",
+        &[("sourceRef", s("other")), ("title", s("Second"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&field(&second, "mergeRequestNum")), "2");
+    {
+        let (_, errors) = rest(
+            &fixture,
+            Some(WRITER),
+            "post",
+            &format!("moqui/git/web/mergeRequests/2/threads/{thread_id}/resolve"),
+            &[],
+        );
+        assert!(errors.contains("No thread"), "{errors}");
+        let (_, errors) = rest(
+            &fixture,
+            Some(READER),
+            "post",
+            "moqui/git/web/mergeRequests/2/threads",
+            &[("body", s("Sneaky")), ("threadId", s(&thread_id))],
+        );
+        assert!(errors.contains("No thread"), "{errors}");
+    }
     // the service's own words about the merge request are the path's
     let (_, errors) = rest(
         &fixture,
@@ -734,4 +788,41 @@ fn a_server_with_no_thread_service_has_no_threads() {
         &[("body", s("Hi"))],
     );
     assert!(errors.contains("keeps no review threads"), "{errors}");
+}
+
+/// A commit status posted as GitHub's CI posts it, with `context`: the name the context stack keeps for itself is taken
+/// as the status's context.
+#[test]
+fn a_status_takes_githubs_context_parameter() {
+    let fixture = fixture_in("rest-context", moqui_core::context::framework_dir());
+    grant_entities(&fixture);
+    rest_paths(&fixture);
+    define(&fixture, "web", "db");
+    branches(&fixture, "web");
+    let (posted, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "post",
+        "moqui/git/web/commits/main/statuses",
+        &[
+            ("state", s("failure")),
+            ("context", s("ci/test")),
+            ("description", s("1 failed")),
+        ],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert!(posted.is_some());
+    let (read, errors) = rest(
+        &fixture,
+        Some(READER),
+        "get",
+        "moqui/git/web/commits/main/statuses",
+        &[],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let contexts: Vec<String> = match field(&read, "statusList") {
+        Value::List(items) => items.iter().map(|item| text_of(entry(item, "context"))).collect(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(contexts, ["ci/test"]);
 }

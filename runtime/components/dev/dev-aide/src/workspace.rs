@@ -458,7 +458,19 @@ fn get_file(
 }
 
 /// Write `bytes` over `path` through a temporary file beside it, keeping its permissions.
+/// Refuse one of the Dev AIDE's own writes (a file, a git command that changes a repository or reaches a remote, a
+/// program, a call of a group server) while a fence or a sim is in force: an agent's read tool or a preview may run
+/// services, and none of these writes goes into a sim's overlay or is undone with it.
+///
+/// # Errors
+///
+/// The fence's refusal, also kept on the fence.
+pub(crate) fn unfenced(effect: moqui_core::entity::fence::Effect, target: &str) -> Result<(), LibError> {
+    moqui_core::entity::fence::check_effect(effect, target).map_err(|err| LibError::new(err.to_string()))
+}
+
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), LibError> {
+    unfenced(moqui_core::entity::fence::Effect::Resource, &path.display().to_string())?;
     let dir = path.parent().ok_or_else(|| LibError::new("a path with no directory"))?;
     std::fs::create_dir_all(dir).map_err(|err| LibError::new(format!("{}: {err}", dir.display())))?;
     let name = path
@@ -590,6 +602,7 @@ pub(crate) fn save_text(
         bytes.extend_from_slice(BOM);
     }
     bytes.extend_from_slice(body.as_bytes());
+    unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
     if let Some(parent) = resolved.path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
     }
@@ -694,6 +707,7 @@ fn create_directory(
     let root = context.root(&text(parameters, "rootId"))?;
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
+    unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
     std::fs::create_dir_all(&resolved.path).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
     audit::record(
         &context.facade,
@@ -729,6 +743,7 @@ fn rename_path(
     if to.path.exists() {
         return Err(LibError::new(format!("{} is there already", to.relative)));
     }
+    unfenced(moqui_core::entity::fence::Effect::Resource, &to.relative)?;
     if let Some(parent) = to.path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| LibError::new(err.to_string()))?;
     }
@@ -788,6 +803,7 @@ fn delete_path(
         return Err(LibError::new("a root is not deleted from here"));
     }
     context.may_write(root, &resolved.relative)?;
+    unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
     let before = std::fs::read(&resolved.path).ok().map(|bytes| sha256(&bytes));
     if resolved.path.is_dir() {
         std::fs::remove_dir_all(&resolved.path)

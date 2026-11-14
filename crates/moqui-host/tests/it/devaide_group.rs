@@ -85,13 +85,18 @@ const STUB_SERVICES: &str = r#"<services>
                     thread.commentList.push({commentId: note.noteId, authorName: note.authorName, body: note.body, bodyFormat: 'markdown'})
                 }
             } else if (operation === 'comment') {
+                // a reply only to a thread of this merge request (handle#GitReviewThread's rule)
+                if (threadId && ec.entity.find(E).condition('threadId', threadId).condition('mergeRequestId', mergeRequestId)
+                        .disableAuthz().count() == 0) { ec.message.addError('No thread ' + threadId); return }
                 const note = ec.entity.makeValue(E).setAll({mergeRequestId, path, newLine, oldLine, body,
                     authorName: ec.user.username}).setSequencedIdPrimary()
                 note.threadId = threadId || note.noteId
                 note.create()
                 threadId = note.threadId
             } else if (operation === 'resolve') {
-                ec.entity.find(E).condition('threadId', threadId).disableAuthz().updateAll({resolved: resolved ? 'Y' : 'N'})
+                const notes = () => ec.entity.find(E).condition('threadId', threadId).condition('mergeRequestId', mergeRequestId).disableAuthz()
+                if (notes().count() == 0) { ec.message.addError('No thread ' + threadId); return }
+                notes().updateAll({resolved: resolved ? 'Y' : 'N'})
             }
         ]]></script></actions>
     </service>
@@ -223,9 +228,8 @@ fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> (Str
         "{page}"
     );
     let cookie = merge_cookies(&cookie, &headers);
-    let marker = "name=\"moquiSessionToken\" value=\"";
-    let start = page.find(marker).expect("the confirmation has the session token") + marker.len();
-    let token = &page[start..start + page[start..].find('"').unwrap()];
+    let token = form_field(&page, "moquiSessionToken");
+    let pending = form_field(&page, "pendingId");
     let (status, headers, body) = exchange(
         address,
         &http_request(
@@ -235,7 +239,7 @@ fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> (Str
                 ("Cookie", &cookie),
                 ("Content-Type", "application/x-www-form-urlencoded"),
             ],
-            &format!("allow=true&moquiSessionToken={token}"),
+            &format!("allow=true&moquiSessionToken={token}&pendingId={pending}"),
         ),
     );
     assert_eq!(status, 302, "{body}");
@@ -248,16 +252,20 @@ fn browser_sign_in(address: SocketAddr, challenge: &str, redirect: &str) -> (Str
     (code.to_string(), merge_cookies(&cookie, &headers))
 }
 
-/// The session token of a page's form.
-fn form_token(page: &str) -> String {
-    let marker = "name=\"moquiSessionToken\" value=\"";
-    let start = page.find(marker).expect("the page has the session token") + marker.len();
+/// A hidden field of a page's form: the session token, the pending sign-in it was shown for.
+fn form_field(page: &str, name: &str) -> String {
+    let marker = format!("name=\"{name}\" value=\"");
+    let start = page
+        .find(&marker)
+        .unwrap_or_else(|| panic!("the page has {name}: {page}"))
+        + marker.len();
     page[start..start + page[start..].find('"').unwrap()].to_string()
 }
 
 /// A browser signed in already starts another app sign-in at this server's own login (F17, item 7 of the P11 review):
 /// it stays signed in, the confirmation names the port the code goes to, is never framed, and asks for the password;
-/// a `localhost` redirect is refused.
+/// a `localhost` redirect is refused. Its confirmation answers only the sign-in it was shown for, and an account with no
+/// password here signs out and in again from it, the app sign-in kept.
 fn signed_in_browser_confirms_who_it_is(address: SocketAddr, cookie: &str, challenge: &str, redirect: &str) {
     let start = |redirect: &str| {
         let query = format!(
@@ -279,10 +287,8 @@ fn signed_in_browser_confirms_who_it_is(address: SocketAddr, cookie: &str, chall
         "not signed out: {headers:?}"
     );
     let cookie = merge_cookies(cookie, &headers);
-    let (status, headers, page) = exchange(
-        address,
-        &http_request("GET", "/sso/appCode", &[("Cookie", &cookie)], ""),
-    );
+    let code_page = |cookie: &str| exchange(address, &http_request("GET", "/sso/appCode", &[("Cookie", cookie)], ""));
+    let (status, headers, page) = code_page(&cookie);
     assert_eq!(status, 200, "{page}");
     assert_eq!(header(&headers, "x-frame-options"), "DENY");
     assert!(header(&headers, "content-security-policy").contains("frame-ancestors 'none'"));
@@ -293,19 +299,43 @@ fn signed_in_browser_confirms_who_it_is(address: SocketAddr, cookie: &str, chall
     );
     assert!(page.contains("type=\"password\""), "{page}");
     let cookie = merge_cookies(&cookie, &headers);
-    let token = form_token(&page);
-    let confirm = |password: &str| {
+    let token = form_field(&page, "moquiSessionToken");
+    let first = form_field(&page, "pendingId");
+    let post = |cookie: &str, body: &str| {
         exchange(
             address,
             &http_request(
                 "POST",
                 "/sso/appCodeConfirm",
                 &[
-                    ("Cookie", &cookie),
+                    ("Cookie", cookie),
                     ("Content-Type", "application/x-www-form-urlencoded"),
                 ],
-                &format!("allow=true&password={password}&moquiSessionToken={token}"),
+                body,
             ),
+        )
+    };
+    // another start in its place: the page shown first confirms nothing
+    let (status, _, _) = start(redirect);
+    assert_eq!(status, 302);
+    let (_, _, page) = code_page(&cookie);
+    let second = form_field(&page, "pendingId");
+    assert_ne!(first, second);
+    let (status, _, page) = post(
+        &cookie,
+        &format!("allow=true&password=moqui&moquiSessionToken={token}&pendingId={first}"),
+    );
+    assert_eq!(status, 400, "a replaced sign-in: {page}");
+    assert!(page.contains("The sign-in changed"), "{page}");
+    // the one shown now: a wrong password asks again, the right one gives the code
+    let (status, _, _) = start(redirect);
+    assert_eq!(status, 302);
+    let (_, _, page) = code_page(&cookie);
+    let pending = form_field(&page, "pendingId");
+    let confirm = |password: &str| {
+        post(
+            &cookie,
+            &format!("allow=true&password={password}&moquiSessionToken={token}&pendingId={pending}"),
         )
     };
     let (status, _, page) = confirm("not-it");
@@ -313,6 +343,42 @@ fn signed_in_browser_confirms_who_it_is(address: SocketAddr, cookie: &str, chall
     let (status, headers, body) = confirm("moqui");
     assert_eq!(status, 302, "{body}");
     assert!(header(&headers, "location").contains("code="), "{headers:?}");
+    // no password here: sign out and in again from the page, the sign-in kept
+    let (status, _, _) = start(redirect);
+    assert_eq!(status, 302);
+    let (_, _, page) = code_page(&cookie);
+    let pending = form_field(&page, "pendingId");
+    let token = form_field(&page, "moquiSessionToken");
+    let (status, headers, body) = post(
+        &cookie,
+        &format!("signOut=true&moquiSessionToken={token}&pendingId={pending}"),
+    );
+    assert_eq!(status, 302, "{body}");
+    assert!(
+        header(&headers, "location").starts_with("/Login?returnTo="),
+        "{headers:?}"
+    );
+    let cookie = merge_cookies(&cookie, &headers);
+    let (status, headers, body) = exchange(
+        address,
+        &http_request(
+            "POST",
+            "/Login/login",
+            &[
+                ("Cookie", &cookie),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            "username=john.doe&password=moqui",
+        ),
+    );
+    assert_eq!(status, 302, "{body}");
+    let cookie = merge_cookies(&cookie, &headers);
+    let (status, _, page) = code_page(&cookie);
+    assert_eq!(status, 200, "{page}");
+    assert!(
+        page.contains("Sign in to the app") && !page.contains("type=\"password\""),
+        "{page}"
+    );
 }
 
 #[test]
@@ -851,8 +917,8 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             "POST",
             &format!("/rest/s1/moqui/git/my-site/commits/{proposed_head}/statuses"),
             &[("api_key", &john_key), ("Content-Type", "application/json")],
-            // no context: the REST takes no parameter named `context` (the default context, `default`)
-            r#"{"state": "failure", "description": "ci/test failed"}"#,
+            // GitHub's names, as an outside CI posts them: `context` among them
+            r#"{"state": "failure", "context": "ci/test", "description": "1 failed"}"#,
         ),
     );
     assert_eq!(status, 200, "{body}");
@@ -872,6 +938,7 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     )
     .unwrap();
     assert_eq!(json(&checks, "statuses")[0]["state"], "failure", "{checks:?}");
+    assert_eq!(json(&checks, "statuses")[0]["context"], "ci/test", "{checks:?}");
 
     // Publish to a publish branch opens the merge request into the current branch
     git(&site, &["switch", "-q", "main"]);
@@ -931,6 +998,48 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         ("true".to_string(), "false".to_string()),
         "{agreement:?}"
     );
+    // an agent's try_service in the sim: Dev AIDE's own write services are refused before they run, and the fence
+    // refuses what they would do (a commit, a file), which nothing would undo
+    let head_before = git(&site, &["rev-parse", "HEAD"]);
+    let authors_before = std::fs::read_to_string(site.join("AUTHORS.md")).unwrap();
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        assert!(dev_aide::agent::try_service::sim_refusal(&format!("{HS}sign#Agreement")).is_some());
+        assert!(dev_aide::agent::try_service::sim_refusal(&format!("{HS}get#Agreement")).is_none());
+        let _sim = moqui_core::entity::fence::enter_sim("try_service of a test");
+        let params = |pairs: &[(&str, &str)]| -> BTreeMap<String, Value> {
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+                .collect()
+        };
+        let signed = moqui_core::service::sync(
+            &format!("{HS}sign#Agreement"),
+            &params(&[("rootId", "my-site"), ("legalName", "Mallory"), ("years", "2026")]),
+        );
+        let saved = moqui_core::service::sync(
+            "org.moqui.devaide.WorkspaceServices.save#File",
+            &params(&[("rootId", "my-site"), ("path", "SIM.md"), ("text", "from the sim\n")]),
+        );
+        let errors = context.message().errors().join("; ");
+        assert!(
+            signed.is_err() || saved.is_err() || !errors.is_empty(),
+            "the sim refused nothing"
+        );
+    }
+    assert_eq!(
+        git(&site, &["rev-parse", "HEAD"]),
+        head_before,
+        "no commit from the sim"
+    );
+    assert_eq!(
+        std::fs::read_to_string(site.join("AUTHORS.md")).unwrap(),
+        authors_before
+    );
+    assert!(!site.join("SIM.md").exists(), "no file from the sim");
+
     std::fs::write(site.join("STAGED.md"), "staged\n").unwrap();
     git(&site, &["add", "STAGED.md"]);
     let signed = call(

@@ -28,7 +28,7 @@ use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
 
 use super::client::query_text;
-use super::review::{need_hosted, Hosted};
+use super::review::{need_hosted, Call, Hosted, Via};
 use crate::tier::Tier;
 use crate::vcs::{audit_git, git_root};
 use crate::workspace::{json_value, text, Context};
@@ -66,9 +66,16 @@ pub fn test_link(root: &Path, file_path: &str, line: Option<i64>) -> Option<Json
     let relative = file_path.trim_start_matches("./").trim_start_matches('/');
     let segments: Vec<&str> = relative.split('/').filter(|part| !part.is_empty()).collect();
     // the server's path, else the shortest tail of a runner's absolute path that is a file here
+    // a candidate is a plain relative path: no drive (`C:`), root or `..` that would make root.join leave the tree
+    let plain = |candidate: &str| {
+        !candidate.contains(':')
+            && Path::new(candidate)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+    };
     let found = (0..segments.len()).find_map(|start| {
         let candidate = segments[start..].join("/");
-        root.join(&candidate).is_file().then_some(candidate)
+        (plain(&candidate) && root.join(&candidate).is_file()).then_some(candidate)
     })?;
     Some(json!({ "path": found, "line": line.filter(|line| *line > 0) }))
 }
@@ -242,6 +249,45 @@ fn get_job(ec: &ExecutionContext, _service: &ServiceInfo<'_>, parameters: &Param
     Ok(out)
 }
 
+/// A re-run of a run (`run`, its number), or a retry of one of its jobs (`job`): through the framework's REST
+/// (`pipelines/{n}/rerun`, `jobs/{id}/retry`), or for a repository an application keeps through its operations
+/// (Smithy's `rerunPipelineRun`, `retryJobRun`), which the framework's REST refuses for it. `None` without a run's
+/// number that is a whole number.
+#[must_use]
+pub(crate) fn rerun_call(via: &Via, repository_path: &str, repository_id: &str, run: &str, job: &str) -> Option<Call> {
+    let run_ok = !run.is_empty() && run.bytes().all(|byte| byte.is_ascii_digit());
+    let path = match via {
+        Via::Framework if !job.is_empty() => format!("{repository_path}/jobs/{}/retry", query_text(job)),
+        Via::Framework if run_ok => format!("{repository_path}/pipelines/{run}/rerun"),
+        Via::Framework => return None,
+        Via::Application(application) => {
+            if !run_ok {
+                return None;
+            }
+            let base = format!(
+                "{}/repositories/{}/pipelines/{run}",
+                application.rest_base,
+                query_text(repository_id)
+            );
+            if job.is_empty() {
+                format!("{base}/rerun")
+            } else {
+                format!("{base}/jobs/{}/retry", query_text(job))
+            }
+        }
+    };
+    let body = match via {
+        Via::Framework => json!({}),
+        Via::Application(_) => json!({ "operationId": super::client::operation_id() }),
+    };
+    Some(Call {
+        post: true,
+        path,
+        query: Vec::new(),
+        body: Some(body),
+    })
+}
+
 /// `rerun#Check`: a run again (`runNum`), or one job of it (`jobRunId`), on the server as the user, who may.
 fn rerun_check(
     ec: &ExecutionContext,
@@ -257,16 +303,10 @@ fn rerun_check(
     let _authz = ec.disable_authz();
     let root = git_root(&context, parameters)?;
     let hosted = need_hosted(&context, root)?;
-    let base = repository_path(&hosted);
     let (job, run) = (text(parameters, "jobRunId"), text(parameters, "runNum"));
-    let path = if !job.is_empty() {
-        format!("{base}/jobs/{}/retry", query_text(&job))
-    } else if !run.is_empty() && run.bytes().all(|byte| byte.is_ascii_digit()) {
-        format!("{base}/pipelines/{run}/rerun")
-    } else {
-        return Err(LibError::new("a run's number or a job is required"));
-    };
-    let answer = hosted.server.post(&path, &json!({}))?;
+    let call = rerun_call(&hosted.via(), &repository_path(&hosted), &hosted.id(), &run, &job)
+        .ok_or_else(|| LibError::new("a run's number is required, with its job for a retry"))?;
+    let answer = super::client::result_of(&call.send(&hosted.server)?).clone();
     audit_git(&context, root, "rerun", json!({ "run": run, "job": job }));
     let mut out = Parameters::new();
     out.insert("runNum".into(), json_value(&answer["runNum"]));

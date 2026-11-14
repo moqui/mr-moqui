@@ -250,19 +250,45 @@ fn app_text(pending: &serde_json::Value) -> String {
 
 /// The form that confirms the signed-in user again, with the session's token: the password, and the code when the
 /// account has a second factor (`code_wanted`).
-fn reauth_form(token: &str, code_wanted: bool) -> String {
+fn reauth_form(token: &str, pending_id: &str, code_wanted: bool) -> String {
     let code = if code_wanted {
         "<p><label>Code <input name=\"code\" autocomplete=\"one-time-code\" inputmode=\"numeric\"></label></p>"
     } else {
         ""
     };
+    // an account with no password here (it signs in through an identity provider) finishes by signing in again
     format!(
-        "<form method=\"post\" action=\"/sso/appCodeConfirm\"><input type=\"hidden\" name=\"moquiSessionToken\" value=\"{}\">\
+        "<form method=\"post\" action=\"/sso/appCodeConfirm\">{}\
          <p><label>Password <input type=\"password\" name=\"password\" autocomplete=\"current-password\"></label></p>{code}\
          <button type=\"submit\" name=\"allow\" value=\"true\">Confirm and sign in</button> \
-         <button type=\"submit\" name=\"allow\" value=\"false\">Cancel</button></form>",
-        escape(token)
+         <button type=\"submit\" name=\"allow\" value=\"false\">Cancel</button></form>\
+         <form method=\"post\" action=\"/sso/appCodeConfirm\">{}<p>No password here (you sign in with another \
+         provider)? <button type=\"submit\" name=\"signOut\" value=\"true\">Sign out and sign in again</button></p></form>",
+        hidden_fields(token, pending_id),
+        hidden_fields(token, pending_id)
     )
+}
+
+/// The session token and the pending sign-in a form was shown for.
+fn hidden_fields(token: &str, pending_id: &str) -> String {
+    format!(
+        "<input type=\"hidden\" name=\"moquiSessionToken\" value=\"{}\"><input type=\"hidden\" name=\"pendingId\" value=\"{}\">",
+        escape(token),
+        escape(pending_id)
+    )
+}
+
+/// The id of a pending sign-in that its page's form carries back: a confirmation answers the sign-in it showed, not
+/// one another start put in its place since.
+fn pending_id(pending: &serde_json::Value) -> String {
+    let text = format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        pending["challenge"].as_str().unwrap_or(""),
+        pending["state"].as_str().unwrap_or(""),
+        pending["redirectUri"].as_str().unwrap_or(""),
+        pending["startedAt"].as_i64().unwrap_or(0)
+    );
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(text.as_bytes()))
 }
 
 /// The page that asks the signed-in user to confirm who they are before an app is let in.
@@ -276,7 +302,12 @@ fn send_reauth_page(pending: &serde_json::Value, note: Option<&str>, code_wanted
         app_text(pending),
         escape(&username)
     );
-    send_page(200, "Confirm it is you", &text, Some(&reauth_form(&token, code_wanted)));
+    send_page(
+        200,
+        "Confirm it is you",
+        &text,
+        Some(&reauth_form(&token, &pending_id(pending), code_wanted)),
+    );
     Ok(())
 }
 
@@ -311,10 +342,10 @@ fn confirm_app_login(
         escape(&username)
     );
     let form = format!(
-        "<form method=\"post\" action=\"/sso/appCodeConfirm\"><input type=\"hidden\" name=\"moquiSessionToken\" value=\"{}\">\
+        "<form method=\"post\" action=\"/sso/appCodeConfirm\">{}\
          <button type=\"submit\" name=\"allow\" value=\"true\">Sign in</button> \
          <button type=\"submit\" name=\"allow\" value=\"false\">Cancel</button></form>",
-        escape(&token)
+        hidden_fields(&token, &pending_id(&pending))
     );
     send_page(200, "Sign in to the app", &text, Some(&form));
     Ok(BTreeMap::new())
@@ -327,7 +358,33 @@ fn issue_app_code(
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let allow = param_text(parameters, "allow") == "true";
-    let pending = match ready_pending() {
+    let ready = ready_pending();
+    // the form answers the sign-in it was shown for: another start since (another app, another tab) is not confirmed
+    // by it
+    let shown = param_text(parameters, "pendingId");
+    let current = match &ready {
+        Some(Ready::Confirm(pending) | Ready::Reauthenticate(pending)) => pending_id(pending),
+        None => String::new(),
+    };
+    if ready.is_some() && shown != current {
+        send_page(
+            400,
+            "The sign-in changed",
+            "Another app sign-in was started in this browser since this page was shown. Start it again from the app.",
+            None,
+        );
+        return Ok(BTreeMap::new());
+    }
+    // signed in already with no password here: signed out, the sign-in kept, and back through this server's login
+    if param_text(parameters, "signOut") == "true" {
+        if let Some(Ready::Reauthenticate(pending)) = ready {
+            crate::user::logout()?;
+            set_session_attribute(PENDING_APP, Some(&pending.to_string()));
+            crate::web::send_redirect(&format!("/Login?returnTo={}", percent(APP_CODE_PATH)));
+            return Ok(BTreeMap::new());
+        }
+    }
+    let pending = match ready {
         Some(Ready::Confirm(pending)) => pending,
         Some(Ready::Reauthenticate(pending)) if allow => {
             // the signed-in user confirms who they are: the password, then the code of a second factor

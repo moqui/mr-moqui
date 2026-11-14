@@ -36,7 +36,9 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   resolve, a comment on a line, a review), open threads in the editor's gutter, check chips on Commits and Branches
   (the runs, a job's log, failed tests as links, Re-run), the contributor agreement's warning and Sign, Propose (push
   to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish that opens a
-  merge request. The server's REST decides, as you there: the framework's
+  merge request. None of Dev AIDE's own writes (a file, a git command that changes a repository, a call of a group
+  server) runs under an agent's fence or in a sim: `try_service` refuses its write services, and the writes refuse
+  themselves. The server's REST decides, as you there: the framework's
   ([Git-Hosting](../../../../docs/interfaces/Git-Hosting.md#rest)), or the REST of the application that keeps the
   repository (Smithy). Steps: [Run-Deploy](../../../../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server).
 

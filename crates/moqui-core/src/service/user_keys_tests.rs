@@ -257,6 +257,9 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
     assert_eq!(crate::user::current_username().unwrap().as_deref(), Some("keys.ann"));
     crate::user::logout().unwrap();
     assert!(crate::user::login_user_key_for(&key, "mcp").is_err());
+    // a socket's recheck by the key's hash has no user for it either
+    let hashed = crate::user::hash_login_key(&key).unwrap();
+    assert_eq!(crate::user::login_key_user_by_hash(&hashed).unwrap(), None);
     let (_, errors) = call_as(
         "keys.ann",
         "create#UserScopedKey",

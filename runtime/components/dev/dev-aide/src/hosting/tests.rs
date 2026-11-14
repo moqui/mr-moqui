@@ -390,13 +390,33 @@ fn checks_show_chips_and_link_failed_tests_to_the_tree() {
     );
     assert_eq!(test_link(&tree, "test/Missing.spec.js", Some(1)), None);
     assert_eq!(test_link(&tree, "../../etc/passwd", Some(1)), None);
+    // nothing that would make the join leave the tree: a drive, a root, a backslash path
+    assert_eq!(test_link(&tree, "C:/test/Missing.spec.js", Some(1)), None);
+    assert_eq!(test_link(&tree, "C:", Some(1)), None);
+    assert_eq!(
+        test_link(&tree, "C:\\builds\\test\\Things.spec.js", Some(2)),
+        Some(json!({ "path": "test/Things.spec.js", "line": 2 }))
+    );
+    assert_eq!(test_link(&tree, "\\\\server\\share\\x", Some(1)), None);
     let _ = std::fs::remove_dir_all(&tree);
 }
 
 /// Sign adds one line under both lists of AUTHORS.md, and refuses a file without them or a signature already there.
 #[test]
 fn a_signature_goes_under_both_lists() {
-    use super::agreement::{signature_line, with_signature};
+    use super::agreement::{legal_name_ok, signature_line, with_signature};
+    assert!(legal_name_ok("Bob B"));
+    for bad in [
+        "B",
+        "Bob\nB",
+        "Bob\rB",
+        "Bob\tB",
+        "Bob\u{1b}[31mB",
+        "Bob\u{7f}",
+        "<b>Bob</b>",
+    ] {
+        assert!(!legal_name_ok(bad), "{bad:?}");
+    }
     let text = "# Authors\n\n## Copyright Waiver\n\nText.\n\n- Written in 2026 by Ann A - ann\n\n## Grant of Patent License\n\nText.\n\n- Written in 2026 by Ann A - ann\n";
     let line = signature_line("2026", "Bob B", "bob");
     assert_eq!(line, "- Written in 2026 by Bob B - bob");
@@ -413,4 +433,37 @@ fn a_signature_goes_under_both_lists() {
     let empty = "## Copyright Waiver\n\nText.\n\n## Grant of Patent License\n\nText.\n";
     let first = with_signature(empty, &line).unwrap();
     assert_eq!(first.matches(&line).count(), 2, "{first}");
+}
+
+/// Re-run and Retry go through the framework's REST, or Smithy's operations for a repository it keeps.
+#[test]
+fn a_rerun_has_each_servers_contract() {
+    use super::checks::rerun_call;
+    let smithy = Via::Application(Application {
+        name: "smithy".into(),
+        rest_base: "/rest/s1/pass/v1/sites/S/smithy".into(),
+    });
+    let base = "/rest/s1/moqui/git/acme";
+    assert_eq!(
+        rerun_call(&Via::Framework, base, "acme", "4", "").unwrap().path,
+        "/rest/s1/moqui/git/acme/pipelines/4/rerun"
+    );
+    assert_eq!(
+        rerun_call(&Via::Framework, base, "acme", "4", "J9").unwrap().path,
+        "/rest/s1/moqui/git/acme/jobs/J9/retry"
+    );
+    assert!(rerun_call(&Via::Framework, base, "acme", "x", "").is_none());
+    let rerun = rerun_call(&smithy, base, "R1", "4", "").unwrap();
+    assert_eq!(
+        rerun.path,
+        "/rest/s1/pass/v1/sites/S/smithy/repositories/R1/pipelines/4/rerun"
+    );
+    assert!(rerun.body.unwrap()["operationId"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert_eq!(
+        rerun_call(&smithy, base, "R1", "4", "J9").unwrap().path,
+        "/rest/s1/pass/v1/sites/S/smithy/repositories/R1/pipelines/4/jobs/J9/retry"
+    );
+    assert!(rerun_call(&smithy, base, "R1", "", "J9").is_none());
 }

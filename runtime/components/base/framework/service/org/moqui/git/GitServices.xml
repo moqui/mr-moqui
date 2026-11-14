@@ -902,7 +902,10 @@ along with this software (see the LICENSE.md file). If not, see
             (each threadId, path, oldLine, newLine, commitId, lineText, outdated, resolved, and its commentList of
             commentId, authorName, entryDate, body, bodyFormat), of path when given; comment: a new thread on a line (path
             and oldLine or newLine) or on the merge request, or a reply to threadId: threadId and held (it waits for a
-            moderator); resolve: threadId resolved, or reopened with resolved false.</description>
+            moderator); resolve: threadId resolved, or reopened with resolved false. The REST binds the call to the
+            merge request of its path (mergeRequestId) and passes threadId as the caller gave it: the service must
+            refuse a threadId (for a reply or a resolve) that is not a thread of that mergeRequestId, in the same words
+            as one that is not there, so a viewer of one merge request cannot reach another's threads.</description>
         <in-parameters>
             <parameter name="operation" required="true"><description>find, comment or resolve</description></parameter>
             <parameter name="repositoryId" required="true"/>

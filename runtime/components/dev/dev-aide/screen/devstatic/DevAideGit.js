@@ -572,8 +572,9 @@
             stopFollow() { if (this.timer) clearTimeout(this.timer); this.timer = null; },
             openTest(test) { if (test.link) { this.ws.openFile(test.link.path, test.link.line || 0); this.$emit("close"); } },
             rerun(run, job) {
-                const params = { rootId: this.ws.rootId };
-                if (job) params.jobRunId = job.jobRunId; else params.runNum = run.runNum;
+                // the run's number with a job too: a repository an application keeps retries a job of a run
+                const params = { rootId: this.ws.rootId, runNum: run.runNum };
+                if (job) params.jobRunId = job.jobRunId;
                 this.ws.post("rerunCheck", params).then(() => { this.ws.note(job ? "Job re-run" : "Run re-run"); this.load(); }, this.ws.fail);
             }
         },

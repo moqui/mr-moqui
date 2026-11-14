@@ -273,6 +273,10 @@ pub(crate) fn send(
     body: Option<String>,
     base: &str,
 ) -> Result<Json, LibError> {
+    // a call of a group server is the user's act there (a comment, a key, a re-run): never under a fence or in a sim
+    if method != moqui_core::outbound::Method::Get {
+        crate::workspace::unfenced(moqui_core::entity::fence::Effect::RemoteCall, base)?;
+    }
     let request = moqui_core::outbound::Request {
         method,
         url,

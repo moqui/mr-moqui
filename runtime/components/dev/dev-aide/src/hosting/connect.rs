@@ -840,6 +840,7 @@ fn apply_server_setup(
             (ENV_KEY.to_string(), key.clone()),
             (ENV_MODEL.to_string(), alias.trim().to_string()),
         ];
+        crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, ".env")?;
         moqui_lib::env::update_dotenv_file(&env_file, &set, &[])?;
         row.set("gatewayKey", Value::string(&key));
         if !previous_key.is_empty() && previous_key != key {
@@ -1034,6 +1035,7 @@ fn remove_server(
             if set.is_empty() && remove.is_empty() {
                 return Ok(false);
             }
+            crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, ".env")?;
             moqui_lib::env::update_dotenv_file(&env_file, &set, &remove)?;
             Ok(true)
         })(),

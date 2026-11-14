@@ -270,7 +270,9 @@ against git-ci-3.xsd as any other.
 
 --agreement asks the repository's group server whether the next commit's author (git's user.email) has
 signed its contributor agreement (AUTHORS.md; /rest/s1/moqui/hosting/agreement): the server is
-MOQUI_GROUP_SERVER, else the origin of an https origin remote, with the key MOQUI_GROUP_TOKEN when set.
+MOQUI_GROUP_SERVER, else the origin of an https origin remote. The key MOQUI_GROUP_TOKEN is sent only to
+MOQUI_GROUP_SERVER when the origin remote is on it (the same origin, or for SSH the same host), never to a
+server read from the remote alone, and no redirect is followed; plain http only to a loopback IP literal.
 An author who has not signed fails it (exit 1), for a pre-commit hook, unless the commit stages only
 AUTHORS.md (the signature itself); a server that cannot be asked or does not decide it is a warning.
 

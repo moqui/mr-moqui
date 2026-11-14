@@ -233,7 +233,7 @@ fn check_agreement() -> Result<(), Error> {
     };
     let parsed = reqwest::Url::parse(&remote).ok();
     // the remote's user part (a token in a URL) is never sent
-    let asked = match parsed.clone() {
+    let asked = match parsed {
         Some(mut url) => {
             let _ = url.set_username("");
             let _ = url.set_password(None);
@@ -241,32 +241,24 @@ fn check_agreement() -> Result<(), Error> {
         }
         None => remote.clone(),
     };
-    let server = std::env::var("MOQUI_GROUP_SERVER")
-        .ok()
-        .filter(|base| !base.trim().is_empty())
-        .or_else(|| {
-            parsed
-                .filter(|url| url.scheme() == "https")
-                .map(|url| url.origin().ascii_serialization())
-        });
-    let Some(server) = server else {
-        return warn(
-            "no group server: set MOQUI_GROUP_SERVER to the server's address (the origin remote is not https)",
-        );
+    let configured = std::env::var("MOQUI_GROUP_SERVER").ok();
+    let target = match agreement_server(configured.as_deref(), &remote) {
+        Ok(target) => target,
+        Err(why) => return warn(&why),
     };
-    let server = server.trim_end_matches('/').to_string();
-    if !server.starts_with("https://") && !server.starts_with("http://127.0.0.1") && !server.starts_with("http://[::1]")
-    {
-        return warn(&format!(
-            "{server} is not an https address: the key is not sent over plain http"
-        ));
-    }
+    let server = target.base.clone();
+    // no redirect is followed: the key goes to the server named and nowhere it points
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("moqui-check/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|err| Error::new(format!("HTTP client: {err}")))?;
-    let token = std::env::var("MOQUI_GROUP_TOKEN").unwrap_or_default();
+    let token = if target.send_token {
+        std::env::var("MOQUI_GROUP_TOKEN").unwrap_or_default()
+    } else {
+        String::new()
+    };
     let get = |path: &str, query: &[(&str, &str)]| -> Result<serde_json::Value, String> {
         let mut url = reqwest::Url::parse(&format!("{server}{path}")).map_err(|err| err.to_string())?;
         url.query_pairs_mut().extend_pairs(query);
@@ -312,6 +304,70 @@ fn check_agreement() -> Result<(), Error> {
             Err(Error::new("moqui check --agreement: the author has not signed"))
         }
     }
+}
+
+/// Where `moqui check --agreement` asks, and whether `MOQUI_GROUP_TOKEN` goes with it.
+#[derive(Debug, PartialEq, Eq)]
+struct AgreementServer {
+    base: String,
+    send_token: bool,
+}
+
+/// Whether `url` is https, or http to a loopback IP literal (never a name), with no user part.
+fn safe_server(url: &reqwest::Url) -> bool {
+    // the parser keeps a name a name (`127.0.0.1.evil.example`), so only an IP literal parses as an address
+    let loopback = url
+        .host_str()
+        .and_then(|host| host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().ok())
+        .is_some_and(|ip| ip.is_loopback());
+    url.username().is_empty()
+        && url.password().is_none()
+        && (url.scheme() == "https" || (url.scheme() == "http" && loopback))
+}
+
+/// The server of `moqui check --agreement`: `configured` (`MOQUI_GROUP_SERVER`) when set, else the origin of an https
+/// `remote`. The token is sent only to a configured server that the remote is on (the same origin, or for an SSH remote
+/// the same host): a server read from the remote alone could be anyone's, so it is asked with no token. An address
+/// that is not https, or http to a loopback IP literal, is refused.
+fn agreement_server(configured: Option<&str>, remote: &str) -> Result<AgreementServer, String> {
+    let remote_url = reqwest::Url::parse(remote.trim()).ok();
+    // an scp-like SSH remote (user@host:path) has no scheme the parser takes: its host
+    let remote_host = remote_url
+        .as_ref()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .or_else(|| {
+            let (authority, _) = remote.trim().split_once(':')?;
+            (!authority.contains('/')).then(|| authority.rsplit('@').next().unwrap_or("").to_ascii_lowercase())
+        });
+    let configured = configured.map(str::trim).filter(|base| !base.is_empty());
+    let (base, send_token) = match configured {
+        Some(configured) => {
+            let url =
+                reqwest::Url::parse(configured).map_err(|err| format!("MOQUI_GROUP_SERVER {configured}: {err}"))?;
+            let on_it = match &remote_url {
+                Some(remote) if matches!(remote.scheme(), "https" | "http") => remote.origin() == url.origin(),
+                _ => remote_host.is_some() && remote_host.as_deref() == url.host_str(),
+            };
+            (configured.trim_end_matches('/').to_string(), on_it)
+        }
+        None => {
+            let origin = remote_url
+                .filter(|url| url.scheme() == "https")
+                .map(|url| url.origin().ascii_serialization())
+                .ok_or_else(|| {
+                    "no group server: set MOQUI_GROUP_SERVER to the server's address (the origin remote is not https)"
+                        .to_string()
+                })?;
+            (origin, false)
+        }
+    };
+    let url = reqwest::Url::parse(&base).map_err(|err| format!("{base}: {err}"))?;
+    if !safe_server(&url) {
+        return Err(format!(
+            "{base} is not an https address: nothing is sent over plain http"
+        ));
+    }
+    Ok(AgreementServer { base, send_token })
 }
 
 fn line_of(problem: &Problem, cwd: &Path) -> String {
