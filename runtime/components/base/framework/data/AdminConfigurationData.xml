@@ -365,6 +365,10 @@ along with this software (see the LICENSE.md file). If not, see
         authorized to call those directly here. -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.admin\.OperationServices\.(find#Jobs|get#Job|store#Job|find#JobRuns|get#JobRun|get#JobRunItems|find#Topics|get#Topic|store#TopicDefaults|store#TopicSubscription)"/>
+    <!-- Web protection (plans/Edge-Node2.md §4.3): get#WebProtection checks ADMIN_OPERATION_VIEW, lift#WebBan
+        ADMIN_OPERATION_MANAGE. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(get#WebProtection|lift#WebBan)"/>
 
     <!-- The framework's own registrations (it owns these jobs and this topic; an app's are its own seed rows). The two
         system message jobs: their schedule, pause, priority and wait after an error, and the retry settings of a message

@@ -243,7 +243,18 @@ pub(crate) struct FetchOutcome {
     pub before: Vec<(String, ObjectId)>,
     /// The local branches and tags that were created, moved or deleted.
     pub changes: Vec<RefChange>,
+    /// The branches and tags a [`FetchGate`] refused, each with why: they stay as they were.
+    pub refused: Vec<(String, String)>,
 }
+
+/// Asked by a mirror's fetch once the remote's objects are in the store and before a branch or tag moves, with the
+/// store, the branches and tags before and the changes the fetch would make: why each change it refuses is refused,
+/// by its index (the gitECA pre events of source `fetch`).
+pub(crate) type FetchGate<'a> =
+    &'a mut dyn FnMut(&FsStore, &[(String, ObjectId)], &[RefChange]) -> Vec<(usize, String)>;
+
+/// Where a gated fetch keeps the remote's branches and tags until its gate has passed them: no ref a clone is given.
+const INCOMING: &str = "refs/moqui-incoming/";
 
 /// The refs a mirror keeps: every branch and tag.
 const MIRRORED: [&str; 2] = ["refs/heads/", "refs/tags/"];
@@ -258,18 +269,27 @@ fn mirrored_refs(store: &FsStore) -> Result<Vec<(String, ObjectId)>, Error> {
 
 /// Fetch `url` into the bare repository at `path` (created when it is not there), replacing local refs with the
 /// remote's: a remote repository is a mirror. With `mirror` every branch and tag is fetched and a local one the remote
-/// no longer has is deleted (gix does not prune); without it only `branch`, for an import.
+/// no longer has is deleted (gix does not prune); without it only `branch`, for an import. With a `gate` (a mirror's)
+/// the remote's refs are fetched under [`INCOMING`] first, and a local branch or tag changes only when the gate
+/// passes that change.
 pub(crate) fn fetch(
     path: &Path,
     url: &str,
     branch: &str,
     credentials: &Credentials,
     mirror: bool,
+    gate: Option<FetchGate<'_>>,
 ) -> Result<FetchOutcome, Error> {
     let store = FsStore::init(path, branch)?;
     let before = mirrored_refs(&store)?;
     let repo = store.local();
-    let specs: Vec<String> = if mirror {
+    let gate = gate.filter(|_| mirror);
+    let specs: Vec<String> = if gate.is_some() {
+        MIRRORED
+            .iter()
+            .map(|prefix| format!("+{prefix}*:{INCOMING}{}*", prefix.trim_start_matches("refs/")))
+            .collect()
+    } else if mirror {
         MIRRORED.iter().map(|prefix| format!("+{prefix}*:{prefix}*")).collect()
     } else {
         vec![format!("+refs/heads/{branch}:refs/heads/{branch}")]
@@ -309,7 +329,67 @@ pub(crate) fn fetch(
         .prepare_fetch(gix::progress::Discard, gix::remote::ref_map::Options::default())
         .and_then(|prepare| prepare.receive(gix::progress::Discard, &interrupt))
         .map_err(|err| Error::new(format!("fetching {}: {err}", moqui_core::outbound::redacted(url))))?;
-    if mirror {
+    let mut refused = Vec::new();
+    if let Some(gate) = gate {
+        let remote_names: HashSet<String> = outcome
+            .ref_map
+            .remote_refs
+            .iter()
+            .map(|reference| reference.unpack().0.to_string())
+            .collect();
+        let staged = store.list_refs(INCOMING)?;
+        // what the remote has now (a ref left under INCOMING by a fetch cut short is not one of them)
+        let incoming: Vec<(String, ObjectId)> = staged
+            .iter()
+            .filter_map(|(name, id)| Some((format!("refs/{}", name.strip_prefix(INCOMING)?), *id)))
+            .filter(|(name, _)| remote_names.contains(name))
+            .collect();
+        let mut changes: Vec<RefChange> = before
+            .iter()
+            .filter(|(name, _)| !remote_names.contains(name))
+            .map(|(name, id)| RefChange {
+                name: name.clone(),
+                old: Some(*id),
+                new: None,
+            })
+            .collect();
+        for (name, id) in incoming {
+            let old = before.iter().find(|(known, _)| *known == name).map(|(_, id)| *id);
+            if old != Some(id) {
+                changes.push(RefChange {
+                    name,
+                    old,
+                    new: Some(id),
+                });
+            }
+        }
+        let declined = gate(&store, &before, &changes);
+        let mut edits = Vec::new();
+        for (index, change) in changes.iter().enumerate() {
+            match declined.iter().find(|(refused, _)| *refused == index) {
+                Some((_, reason)) => refused.push((change.name.clone(), reason.clone())),
+                None => edits.push(RefEdit {
+                    name: change.name.clone(),
+                    expected: change.old,
+                    new: change.new,
+                }),
+            }
+        }
+        for (edit, outcome) in edits.iter().zip(store.update_refs(&edits, false)?) {
+            if outcome != RefOutcome::Updated {
+                tracing::warn!("{} of {} was not fetched: it moved", edit.name, path.display());
+            }
+        }
+        let done: Vec<RefEdit> = staged
+            .into_iter()
+            .map(|(name, id)| RefEdit {
+                name,
+                expected: Some(id),
+                new: None,
+            })
+            .collect();
+        store.update_refs(&done, false)?;
+    } else if mirror {
         let remote_names: HashSet<String> = outcome
             .ref_map
             .remote_refs
@@ -336,5 +416,6 @@ pub(crate) fn fetch(
         head: store.read_ref(&super::ops::branch_ref(branch))?,
         changes: ref_changes(&before, &after),
         before,
+        refused,
     })
 }

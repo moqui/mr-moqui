@@ -33,6 +33,26 @@ impl EdgeLink for Fake {
             generation: 7,
             rtt_ms: Some(1.5),
             link_fingerprint: "cd".repeat(32),
+            // a link to each member of an edge cluster, the second carrying the work up
+            members: vec![
+                crate::edge::EdgeMemberLink {
+                    instance_id: "edge-a".to_string(),
+                    url: "https://edge-a.test".to_string(),
+                    state: LinkState::Retrying,
+                    last_error: "refused".to_string(),
+                    retired: true,
+                    ..crate::edge::EdgeMemberLink::default()
+                },
+                crate::edge::EdgeMemberLink {
+                    instance_id: "edge-b".to_string(),
+                    url: "https://edge-b.test".to_string(),
+                    state: LinkState::Linked,
+                    generation: 3,
+                    rtt_ms: Some(2.5),
+                    carries_work: true,
+                    ..crate::edge::EdgeMemberLink::default()
+                },
+            ],
             ..LinkStatus::default()
         }
     }
@@ -116,6 +136,22 @@ fn the_services_pass_their_parameters_through_and_shape_the_answers() {
     assert_eq!(to_plain_string(&status["state"]), "linked");
     assert_eq!(status["generation"], Value::I64(7));
     assert_eq!(to_plain_string(&status["linkFingerprint"]), "cd".repeat(32));
+    let Value::List(links) = &status["edgeMemberList"] else {
+        panic!("{status:?}")
+    };
+    let field = |at: usize, name: &str| match &links[at] {
+        Value::Map(row) => row[name].clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(links.len(), 2);
+    assert_eq!(to_plain_string(&field(0, "url")), "https://edge-a.test");
+    assert_eq!(to_plain_string(&field(0, "state")), "retrying");
+    assert_eq!(field(0, "retired"), Value::Bool(true));
+    assert_eq!(field(0, "carriesWork"), Value::Bool(false));
+    assert_eq!(to_plain_string(&field(1, "instanceId")), "edge-b");
+    assert_eq!(field(1, "carriesWork"), Value::Bool(true));
+    assert_eq!(field(1, "generation"), Value::I64(3));
+    assert_eq!(field(1, "rttMs"), Value::F64(2.5));
     let paired = pair_edge_node(
         &params(&[
             ("url", "https://edge.test"),
@@ -154,4 +190,108 @@ fn the_services_pass_their_parameters_through_and_shape_the_answers() {
         .message()
         .contains("only a node that takes links"));
     crate::edge::clear_edge_link();
+}
+
+/// A link installed with its HTTPS listener off: it serves no links.
+struct Off;
+
+impl EdgeLink for Off {
+    fn serving(&self) -> bool {
+        false
+    }
+    fn status(&self) -> LinkStatus {
+        Fake.status()
+    }
+    fn check(&self, url: &str) -> Result<EdgeInfo, LibError> {
+        Fake.check(url)
+    }
+    fn pair(&self, url: &str, code: &str, expect: Option<&str>) -> Result<PairResult, LibError> {
+        Fake.pair(url, code, expect)
+    }
+    fn unpair(&self) -> Result<(), LibError> {
+        Ok(())
+    }
+    fn create_pairing_code(&self, valid_minutes: u32) -> Result<PairingCode, LibError> {
+        Fake.create_pairing_code(valid_minutes)
+    }
+    fn clients(&self) -> Result<Vec<EdgeClientInfo>, LibError> {
+        Err(LibError::new(
+            "this edge node takes no links: its HTTPS listener is off",
+        ))
+    }
+    fn revoke(&self, _paired_node_id: &str) -> Result<bool, LibError> {
+        Ok(false)
+    }
+    fn ping_client(&self, _paired_node_id: &str) -> Result<f64, LibError> {
+        Err(LibError::new("off"))
+    }
+}
+
+#[test]
+fn a_link_whose_listener_is_off_is_not_started_and_serves_nothing_in_memory() {
+    let _lock = slot_lock();
+    crate::edge::install_edge_link(Arc::new(Off));
+    let facade = crate::testing::open();
+    let status = get_link_status(&BTreeMap::new(), &facade).unwrap();
+    assert_eq!(to_plain_string(&status["state"]), "notStarted");
+    assert!(crate::edge::serving_link().is_none());
+    crate::edge::install_edge_link(Arc::new(Fake));
+    assert!(crate::edge::serving_link().is_some());
+    crate::edge::clear_edge_link();
+}
+
+#[test]
+fn the_front_pairing_is_a_row_per_front_link_or_one_from_what_pairing_wrote() {
+    let field = |rows: &[Value], at: usize, name: &str| match &rows[at] {
+        Value::Map(row) => row[name].clone(),
+        other => panic!("{other:?}"),
+    };
+    // none without a front pairing
+    assert!(front_rows(None, " ", "").is_empty());
+    // a front pairing alone, by the properties pairing wrote
+    assert!(front_only(" ", "https://front.test"));
+    assert!(!front_only("https://edge.test", "https://front.test"));
+    assert!(!front_only("", ""));
+    // the link not running here: what pairing wrote, not started
+    let rows = front_rows(None, " https://front.test ", "front-1");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(to_plain_string(&field(&rows, 0, "url")), "https://front.test");
+    assert_eq!(to_plain_string(&field(&rows, 0, "instanceId")), "front-1");
+    assert_eq!(to_plain_string(&field(&rows, 0, "state")), "notStarted");
+    assert_eq!(field(&rows, 0, "lastConnectDate"), Value::Null);
+    // a link to each member of the front's cluster, each with the front's name and pinned fingerprint
+    let mut front = LinkStatus {
+        state: LinkState::Linked,
+        url: "https://front.test".to_string(),
+        ..LinkStatus::default()
+    };
+    front.peer.name = "front.test".to_string();
+    front.peer.fingerprint = "ef".repeat(32);
+    let one = front_rows(Some(&front), "https://ignored.test", "");
+    assert_eq!(one.len(), 1, "a link with no member list is one row");
+    assert_eq!(to_plain_string(&field(&one, 0, "state")), "linked");
+    assert_eq!(to_plain_string(&field(&one, 0, "frontName")), "front.test");
+    front.members = vec![
+        crate::edge::EdgeMemberLink {
+            instance_id: "front-1".to_string(),
+            url: "https://front.test".to_string(),
+            state: LinkState::Linked,
+            rtt_ms: Some(1.5),
+            ..Default::default()
+        },
+        crate::edge::EdgeMemberLink {
+            instance_id: "front-2".to_string(),
+            url: "https://front2.test".to_string(),
+            state: LinkState::Retrying,
+            last_error: "refused".to_string(),
+            ..Default::default()
+        },
+    ];
+    let rows = front_rows(Some(&front), "", "");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(field(&rows, 0, "rttMs"), Value::F64(1.5));
+    assert_eq!(to_plain_string(&field(&rows, 1, "instanceId")), "front-2");
+    assert_eq!(to_plain_string(&field(&rows, 1, "state")), "retrying");
+    assert_eq!(to_plain_string(&field(&rows, 1, "lastError")), "refused");
+    assert_eq!(to_plain_string(&field(&rows, 1, "fingerprint")), "ef".repeat(32));
 }

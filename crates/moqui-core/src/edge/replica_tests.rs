@@ -245,6 +245,7 @@ fn change(id: &str, description: Option<&str>) -> Change {
 
 fn batch(epoch: &str, base_seq: u64, seq: u64, snapshot: bool, changes: Vec<Change>) -> Batch {
     Batch {
+        sender_token: 0,
         set_name: "groups".to_string(),
         epoch: epoch.to_string(),
         base_seq,
@@ -298,4 +299,34 @@ fn the_edge_node_applies_batches_that_follow_its_cursor_and_asks_for_the_rest_wh
         ("e2", 1, 1)
     );
     assert!(cursors[0].snapshot_date.is_some());
+}
+
+/// A member that lost the sender lock and has not noticed yet cannot cross the new sender's batches (plans/Edge-Node2.md
+/// §4.4): the edge node refuses a batch whose sender took the lock before the one that last wrote the set's cursor.
+#[test]
+fn the_edge_node_refuses_a_batch_from_an_earlier_sender() {
+    let (_ctx, facade) = open();
+    let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+    client.set("pairedNodeId", Value::string("local-f"));
+    client.set("keyFingerprint", Value::string("ab"));
+    client.create(&facade).unwrap();
+    let node = "local-f";
+    let token = |token: u64, batch: Batch| Batch {
+        sender_token: token,
+        ..batch
+    };
+    // the old sender's full send, then the new sender's under a later token
+    let old = token(100, batch("e1", 0, 1, true, vec![change("A", Some("a"))]));
+    assert_eq!(apply_batch(&facade, node, &old).unwrap(), BatchAnswer::Applied);
+    let new = token(200, batch("e2", 0, 1, true, vec![change("A", Some("b"))]));
+    assert_eq!(apply_batch(&facade, node, &new).unwrap(), BatchAnswer::Applied);
+    // the old sender's next batch, or a full send of its own, is refused
+    let late = token(100, batch("e1", 1, 2, false, vec![change("A", Some("stale"))]));
+    let err = apply_batch(&facade, node, &late).unwrap_err();
+    assert!(err.message().contains("newer replication sender"), "{err}");
+    let restart = token(100, batch("e3", 0, 1, true, vec![change("A", Some("stale"))]));
+    assert!(apply_batch(&facade, node, &restart).is_err());
+    // the new sender goes on
+    let next = token(200, batch("e2", 1, 2, false, vec![change("A", Some("c"))]));
+    assert_eq!(apply_batch(&facade, node, &next).unwrap(), BatchAnswer::Applied);
 }

@@ -266,6 +266,7 @@ pub static CATALOG: &[Unit] = &[
     single("ssh-server", LISTENER),
     single("terminal", Class::Live),
     single("git-server", Class::Live).attrs(&[("max-concurrent", LISTENER), ("max-queued", LISTENER)]),
+    single("git-ci", Class::Live),
     single("dav-server", Class::Live).attrs(&[("sftp-drives", LISTENER)]),
     single("smtp-server", LISTENER),
     single(

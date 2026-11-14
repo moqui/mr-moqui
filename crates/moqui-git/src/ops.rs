@@ -255,17 +255,20 @@ pub(crate) fn commit(
     author: &Author,
     edits: impl FnMut(Option<&CommitInfo>) -> Result<Option<(Vec<Edit>, String)>, Error>,
 ) -> Result<Option<ObjectId>, Error> {
-    commit_as(store, branch, author, author, edits)
+    commit_as(store, branch, author, author, edits, |_, _| Ok(()))
 }
 
 /// [`commit`] with a committer apart from the author: a version written by someone else at another time (the author,
-/// whose `user_id` is the `Moqui-User-Id` trailer) committed now by the current user.
+/// whose `user_id` is the `Moqui-User-Id` trailer) committed now by the current user. `before_move` is asked once the
+/// commit is written and before the branch moves to it, with the branch's head (none for its first commit) and the
+/// commit: its error is the outcome, and the branch stays (the gitECA pre events).
 pub(crate) fn commit_as(
     store: &dyn GitStore,
     branch: &str,
     author: &Author,
     committer: &Author,
     mut edits: impl FnMut(Option<&CommitInfo>) -> Result<Option<(Vec<Edit>, String)>, Error>,
+    mut before_move: impl FnMut(Option<ObjectId>, ObjectId) -> Result<(), Error>,
 ) -> Result<Option<ObjectId>, Error> {
     let name = branch_ref(branch);
     for _ in 0..COMMIT_ATTEMPTS {
@@ -302,6 +305,7 @@ pub(crate) fn commit_as(
             .write_to(&mut buf)
             .map_err(|err| Error::new(format!("encoding a git commit: {err}")))?;
         let id = store.write(Kind::Commit, &buf)?;
+        before_move(head.as_ref().map(|head| head.id), id)?;
         if store.compare_and_set_ref(&name, head.as_ref().map(|head| head.id), id)? {
             return Ok(Some(id));
         }

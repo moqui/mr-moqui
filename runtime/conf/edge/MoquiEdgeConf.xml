@@ -14,7 +14,7 @@
     <default-property name="instance_purpose" value="production"/>
     <!-- takes links from paired local nodes on the HTTPS listener, told from browsers by ALPN; System › Edge Clients
         makes pairing codes, lists the paired nodes, pings and revokes them -->
-    <default-property name="node_role" value="edge"/>
+    <default-property name="node_role" value="front_edge"/>
     <!-- rate limits, connection limits and bans by client address, run before anything goes down a link. With a proxy
         in front, name it in webapp_trusted_proxies (.env): a client-ip-header with no trusted proxies is ignored -->
     <default-property name="webapp_web_protection" value="true"/>
@@ -113,6 +113,11 @@
         with grants for _EDGE_ (the EDGE_DELEGATE artifact group); an entry may wait less than the link for its answer,
         as SIP's routing does while the caller's phone rings:
             <delegate service="org.moqui.call.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
-        To check a delegated call end to end, list org.moqui.edge.EdgeServices.echo#Delegate on both nodes. -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
+        To check a delegated call end to end, list org.moqui.edge.EdgeServices.echo#Delegate on both nodes.
+        Balancing a pairing's pool of local nodes (plans/Edge-Node2.md §4.4): a terminate host's requests stay on the
+        member their session cookie hashes to (sticky-cookie, the session cookie; a host's own with add#EdgeHost
+        stickyCookie); a member whose requests fail or time out set-aside-failures times in a row gets no new work for
+        set-aside-seconds. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
+            sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"/>
 </moqui-conf>

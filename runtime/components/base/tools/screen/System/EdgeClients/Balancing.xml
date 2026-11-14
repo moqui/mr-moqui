@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Edge Clients › Balancing (plans/Edge-Node2.md §4.4, §4.10): how this node balances each pairing's pool of members
+    (org.moqui.edge.EdgeServices.get#EdgeBalancing). The defaults are the <edge> conf element's: sticky-cookie (the
+    cookie a terminate host's requests are sticky by, where the host names none on Domains), set-aside-failures and
+    set-aside-seconds (the failures in a row that set a member aside, and for how long). Live, from memory since this
+    node started: each member's requests in flight and in all, its failures in a row, the times it was set aside and
+    until when it is now, and whether it takes new work (linked, live and not set aside). Read only: a host's cookie is
+    set on Domains, and a member is drained on Clients. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Balancing" default-menu-index="4">
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        defaults = {}
+        balanceList = []
+        balancingError = ''
+        if (!isEdge) return
+        let out = {}
+        // a probe (Practices-App-Dev §4): a failure is shown on the page rather than failing it
+        ec.message.pushErrors()
+        try {
+            out = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeBalancing').call() || {}
+            if (ec.message.hasError()) balancingError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (balancingError) return
+        defaults = {stickyCookie: out.stickyCookie || '',
+            setAsideText: ec.resource.expand('After ${failures} failures in a row, for ${seconds} s', '',
+                {failures: out.setAsideFailures ?? '', seconds: out.setAsideSeconds ?? ''})}
+        const states = {live: L('Live'), starting: L('Starting'), draining: L('Draining'), stopping: L('Stopping')}
+        balanceList = Array.from(out.memberList || []).map((member) => {
+            const [workLabel, workColor] = member.takesWork ? [L('Taking work'), 'positive']
+                : member.setAside ? [L('Set aside'), 'warning']
+                : !member.linked ? [L('Not linked'), 'grey'] : [states[member.state] || member.state || '', 'info']
+            return {pairedNodeId: member.pairedNodeId, instanceId: member.instanceId, workLabel, workColor,
+                inFlightText: String(member.inFlight ?? 0), requestsText: String(member.requests ?? 0),
+                failuresText: String(member.failuresInRow ?? 0), setAsidesText: String(member.setAsides ?? 0),
+                untilText: member.setAsideUntil ? ec.l10n.format(member.setAsideUntil, '') : ''}
+        })
+    ]]></script></actions>
+    <widgets>
+        <section name="BalancingError" condition="balancingError"><widgets>
+            <container-box type="warning"><box-header title="Balancing could not be read"/><box-body>
+                <label type="p" text="${balancingError}" style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Defaults"/><box-body>
+            <label type="p" style="m-muted" text="Each pairing's work goes to its live members: web requests to a terminate name by request, sticky by a cookie, so a browser session stays on one member and moves, still signed in, when that member stops; a passthrough name, a WebSocket and a tunnel by connection, sticky by the client's address; a delegated call by its conversation. A member that fails or times out several times in a row is set aside for a time, then tried again. These are the edge element of this node's conf; a host name's own cookie is set on Domains."/>
+            <form-single name="Defaults" map="defaults">
+                <field name="stickyCookie"><default-field title="Sticky cookie" tooltip="sticky-cookie: the cookie a terminate host's requests are sticky by, where the host names none. A request without it goes round robin"><display/></default-field></field>
+                <field name="setAsideText"><default-field title="A member is set aside" tooltip="set-aside-failures and set-aside-seconds"><display/></default-field></field>
+                <field-layout><field-row><field-ref name="stickyCookie"/><field-ref name="setAsideText"/></field-row></field-layout>
+            </form-single>
+        </box-body></container-box>
+
+        <container-box><box-header title="Members"/><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="Since this node started, from memory: what each member was sent and how it answered."/>
+            <form-list name="BalanceList" list="balanceList" skip-form="true" paginate="false">
+                <field name="instanceId"><default-field title="Member"><display style="text-weight-medium"/></default-field></field>
+                <field name="pairedNodeId"><default-field title="Local node"><display/></default-field></field>
+                <field name="work"><default-field title="New work">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${workColor}">${workLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: workLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="inFlightText" align="right"><default-field title="In flight" tooltip="Requests, calls and tunnel opens sent and not answered yet"><display/></default-field></field>
+                <field name="requestsText" align="right"><default-field title="Sent"><display/></default-field></field>
+                <field name="failuresText" align="right"><default-field title="Failures in a row"><display/></default-field></field>
+                <field name="setAsidesText" align="right"><default-field title="Times set aside"><display/></default-field></field>
+                <field name="untilText"><default-field title="Set aside until"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="instanceId"/><field-ref name="pairedNodeId"/></column>
+                    <column><field-ref name="work"/><field-ref name="inFlightText"/></column>
+                </columns>
+            </form-list>
+            <section name="NoBalance" condition="!balanceList.length"><widgets>
+                <label type="p" text="No member has been sent work since this node started." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

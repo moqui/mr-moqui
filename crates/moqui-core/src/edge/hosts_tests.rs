@@ -27,6 +27,7 @@ fn host(name: &str, node: &str, mode: &str) -> EdgeHostInfo {
         host_name: name.to_string(),
         paired_node_id: node.to_string(),
         mode_enum_id: mode.to_string(),
+        sticky_cookie: None,
     }
 }
 
@@ -104,7 +105,7 @@ fn a_claim_that_read_no_row_does_not_take_a_name_another_inserted_since() {
     pairing(&facade, "local-b", ACTIVE);
     add(&facade, &host("erp.example.com", "local-a", HOST_PASSTHROUGH)).unwrap();
     let err = transaction(&facade, true, || {
-        save(&facade, "erp.example.com", "local-b", HOST_TERMINATE, None)
+        save(&facade, "erp.example.com", "local-b", HOST_TERMINATE, None, None)
     })
     .unwrap_err();
     assert_eq!(err.message(), "erp.example.com: another node has this name");
@@ -113,7 +114,7 @@ fn a_claim_that_read_no_row_does_not_take_a_name_another_inserted_since() {
     assert_eq!(held[0].mode_enum_id, HOST_PASSTHROUGH);
     // the holder's own racing claim changes only the mode
     transaction(&facade, true, || {
-        save(&facade, "erp.example.com", "local-a", HOST_TERMINATE, None)
+        save(&facade, "erp.example.com", "local-a", HOST_TERMINATE, None, None)
     })
     .unwrap();
     assert_eq!(list(&facade, None).unwrap()[0].mode_enum_id, HOST_TERMINATE);
@@ -133,4 +134,123 @@ fn a_pairing_s_queue_cap_is_set_and_unset() {
     assert_eq!(rows[0].queue_max_megabytes, None);
     assert_eq!(rows[0].status_id, ACTIVE);
     assert!(!rows[0].linked);
+}
+
+/// A host's sticky cookie (plans/Edge-Node2.md §4.4): set with the host, kept when a later save names none (a
+/// Configure's host names), cleared by an empty one, and a name that is not a cookie name refused.
+#[test]
+fn a_host_keeps_its_sticky_cookie_until_one_is_given() {
+    let facade = crate::testing::open();
+    pairing(&facade, "local-a", ACTIVE);
+    let cookie = |name: &str| {
+        list(&facade, None)
+            .unwrap()
+            .into_iter()
+            .find(|host| host.host_name == name)
+            .and_then(|host| host.sticky_cookie)
+    };
+    let mut shop = host("shop.example.com", "local-a", HOST_TERMINATE);
+    shop.sticky_cookie = Some("JSESSIONID".to_string());
+    add(&facade, &shop).unwrap();
+    assert_eq!(cookie("shop.example.com").as_deref(), Some("JSESSIONID"));
+    add(&facade, &host("shop.example.com", "local-a", HOST_TERMINATE)).unwrap();
+    assert_eq!(
+        cookie("shop.example.com").as_deref(),
+        Some("JSESSIONID"),
+        "a save naming no cookie keeps it"
+    );
+    shop.sticky_cookie = Some(String::new());
+    add(&facade, &shop).unwrap();
+    assert_eq!(cookie("shop.example.com").as_deref(), Some(""), "cleared: the conf's");
+    for bad in ["a b", "a;b", "a=b", "\u{e9}t\u{e9}", &"x".repeat(MAX_COOKIE_NAME + 1)] {
+        shop.sticky_cookie = Some(bad.to_string());
+        assert!(
+            add(&facade, &shop).unwrap_err().message().contains("not a cookie name"),
+            "{bad}"
+        );
+    }
+    assert!(valid_cookie_name("moqui.session") && valid_cookie_name("__Host-sid"));
+}
+
+/// An edge member's link name on a front (plans/Edge-Node2.md §4.7): the first claim holds against another pairing and
+/// against a host name of the pairing's own, a member that comes back with another id takes it over, a member's new
+/// name replaces its old one, and a Configure or the System app cannot take or change it.
+#[test]
+fn a_link_name_is_one_members_and_no_host_name_takes_it() {
+    let facade = crate::testing::open();
+    pairing(&facade, "edge-pool", ACTIVE);
+    pairing(&facade, "local-b", ACTIVE);
+    pairing(&facade, "local-gone", "EdgeClientRevoked");
+    assert!(
+        claim_link_name(&facade, "Edge1.Example.com", "edge-pool", "edge-1")
+            .unwrap()
+            .changed
+    );
+    assert_eq!(
+        claim_link_name(&facade, "edge1.example.com", "edge-pool", "edge-1").unwrap(),
+        LinkClaim::default(),
+        "no change"
+    );
+    assert!(
+        claim_link_name(&facade, "edge2.example.com", "edge-pool", "edge-2")
+            .unwrap()
+            .changed
+    );
+    assert_eq!(
+        link_names(&facade).unwrap(),
+        vec![
+            LinkName {
+                host_name: "edge1.example.com".to_string(),
+                paired_node_id: "edge-pool".to_string(),
+                member_id: "edge-1".to_string(),
+            },
+            LinkName {
+                host_name: "edge2.example.com".to_string(),
+                paired_node_id: "edge-pool".to_string(),
+                member_id: "edge-2".to_string(),
+            },
+        ]
+    );
+    // another pairing's claim of it, as a link name or a host name, gets the generic refusal
+    let held = claim_link_name(&facade, "edge1.example.com", "local-b", "b-1").unwrap_err();
+    assert_eq!(held.message(), "edge1.example.com: another node has this name");
+    let held = add(&facade, &host("edge1.example.com", "local-b", HOST_PASSTHROUGH)).unwrap_err();
+    assert_eq!(held.message(), "edge1.example.com: another node has this name");
+    // the pairing's own Configure cannot make it a host name, nor a link name a host name it has
+    let own = add(&facade, &host("edge1.example.com", "edge-pool", HOST_TERMINATE)).unwrap_err();
+    assert!(own.message().contains("link name of a member"), "{own}");
+    add(&facade, &host("www.example.com", "edge-pool", HOST_TERMINATE)).unwrap();
+    let site = claim_link_name(&facade, "www.example.com", "edge-pool", "edge-1").unwrap_err();
+    assert!(site.message().contains("not a link name"), "{site}");
+    // a member back with another instance id takes the name; a member's new name replaces its old one
+    assert_eq!(
+        claim_link_name(&facade, "edge2.example.com", "edge-pool", "edge-2b").unwrap(),
+        LinkClaim {
+            changed: true,
+            moved_from: Some("edge-2".to_string())
+        }
+    );
+    assert!(
+        claim_link_name(&facade, "edge-one.example.com", "edge-pool", "edge-1")
+            .unwrap()
+            .changed
+    );
+    let names: Vec<(String, String)> = link_names(&facade)
+        .unwrap()
+        .into_iter()
+        .map(|name| (name.host_name, name.member_id))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            ("edge-one.example.com".to_string(), "edge-1".to_string()),
+            ("edge2.example.com".to_string(), "edge-2b".to_string()),
+        ]
+    );
+    assert!(claim_link_name(&facade, "edge3.example.com", "local-gone", "g-1")
+        .unwrap_err()
+        .message()
+        .contains("revoked"));
+    assert!(claim_link_name(&facade, "a b", "edge-pool", "edge-1").is_err());
+    assert!(claim_link_name(&facade, "edge3.example.com", "edge-pool", " ").is_err());
 }

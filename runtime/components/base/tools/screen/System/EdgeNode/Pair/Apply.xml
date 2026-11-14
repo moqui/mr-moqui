@@ -78,7 +78,7 @@ along with this software (see the LICENSE.md file). If not, see
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
         // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
-        isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
+        isEdge = running && link.takesLinks === true
         notPaired = running && !isEdge && (!link.state || link.state === 'unpaired')
         let choices = null
         try { choices = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { choices = null }

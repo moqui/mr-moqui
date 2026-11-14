@@ -110,7 +110,7 @@ grpc = [
     "hyper-util/service",
 ]
 # The edge link (plans/archive/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
-# edge node (node_role=edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
+# edge node (node_role=front_edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
@@ -184,6 +184,9 @@ rcgen = { workspace = true }
 # The ACME client of System › Certificates (src/acme, plans/Edge-Node2.md §4.8), with the HTTPS listener (axum).
 instant-acme = { workspace = true, optional = true }
 sha2 = { workspace = true }
+# A pool member's own key, which signs its edge link Hello (src/edge_link/member_key.rs, plans/Edge-Node2.md §4.11):
+# the crypto rustls already links.
+aws-lc-rs = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 # The WebSocket accept key of a forwarded upgrade on an edge node (src/edge_link/web.rs). Already in the graph.
 sha1 = { workspace = true, optional = true }
@@ -254,8 +257,6 @@ moqui-db = { workspace = true }
 # (tests/common), and its MoquiConf.xml selects a tool factory, so a test that boots it (tests/it, gate3,
 # gate3_browser, search_logs_postgres) links the crate as the default (Maximal) binary does.
 example = { workspace = true }
-# Sign a Telnyx webhook as the provider does (tests/it/edge_chat.rs): the crypto rustls already links.
-aws-lc-rs = { workspace = true }
 # Read back the xlsx render and the converted images in tests/tool_components.rs.
 calamine = { workspace = true }
 image = { workspace = true }

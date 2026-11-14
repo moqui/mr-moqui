@@ -24,7 +24,7 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 //!
-//! On an edge node (`node_role=edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
+//! On an edge node (`node_role=front_edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
 //! no row of its own, since it has no call state. Its media address and TURN URLs go in its link Hello
 //! (`moqui_core::edge::media::set_advert`), and the local node keeps its `CallMediaNode` row from the link. Its frames,
 //! replies and controls go over the link (`moqui_core::edge::signal`), its media events and captions' services are
@@ -394,6 +394,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     use moqui_core::startup::{listener, State};
     let config = match media_config() {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "rtc_media_port", true) => {
+            listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
+            listener(factory, TURN_LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
+            return None;
+        }
         Ok(Some(config)) => config,
         Ok(None) => {
             listener(factory, LISTENER, State::off("rtc_media_port is not set"));

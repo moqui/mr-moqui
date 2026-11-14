@@ -19,7 +19,9 @@
 //! the rows are what make the events survive a restart. The commits new to the repository are worked out then, from
 //! the refs before the change (`priorTips`): a collection of unreachable objects (`gc#GitRepositories`) keeps the
 //! tips of an update not yet done, so the walk gives the same answer later.
-//! The pre events of a push run in the push itself, against its quarantined objects ([`pre_receive`]).
+//! The pre events of a push run in the push itself, against its quarantined objects ([`pre_receive`]); those of every
+//! other way a branch moves (a merge, `commit#GitFiles`, `create#GitRef`, a write through `git://`, an import, a
+//! mirror's fetch) run before its ref is written, with that change's source, and a refusal stops it.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -94,6 +96,21 @@ pub(crate) struct UpdateOrigin {
     /// The bytes of the pack a push sent, as it is kept in quarantine (a thin pack completed); 0 with no pack (only
     /// deletes) and for a change that is not a push. A pre-receive rule's `packBytes`, for a quota.
     pub pack_bytes: u64,
+    /// A push to `refs/for/*` by a user with no push right: its bytes count toward the account's cap.
+    pub review_push: bool,
+    /// The change is a merge made through a service: what its pre events say of it.
+    pub merge: Option<MergeOrigin>,
+}
+
+/// A merge made by `merge#MergeRequest` or `merge#GitRefs`, for the pre events of the target's move.
+#[derive(Clone, Debug)]
+pub(crate) struct MergeOrigin {
+    /// The merge request merged; none for `merge#GitRefs`.
+    pub merge_request_id: Option<String>,
+    /// `GmmMerge`, `GmmFastForward`, `GmmSquash` or `GmmRebase`.
+    pub method: &'static str,
+    /// The source's head: what a squash or a rebase made its commits from.
+    pub source: ObjectId,
 }
 
 fn id_text(id: Option<ObjectId>) -> Value {
@@ -107,6 +124,8 @@ fn parse_id(value: Option<&Value>) -> Option<ObjectId> {
 fn now_millis() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
+
+const HOUR_MILLIS: i64 = 60 * 60 * 1000;
 
 impl GitProvider {
     /// Write a `GitUpdate` and its refs, each ref with `result` (`pending` while a push makes it), in the caller's
@@ -156,6 +175,15 @@ impl GitProvider {
                     if !origin.push_options.is_empty() {
                         update.set("pushOptions", Value::string(origin.push_options.join("\n")));
                     }
+                    if origin.pack_bytes > 0 {
+                        update.set(
+                            "packBytes",
+                            Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
+                        );
+                    }
+                    if origin.review_push {
+                        update.set("reviewPush", Value::string("Y"));
+                    }
                     update.set("ecaStatus", Value::string(status));
                     update.create(&entity)?;
                     for (reference, result) in refs {
@@ -179,6 +207,197 @@ impl GitProvider {
                 None
             }
         }
+    }
+
+    /// The bytes of the packs `user_id` pushed for review with no push right in the last `window_millis`, over
+    /// every repository (`GitUpdate.reviewPush`): what `git-server` `review-max-account-bytes` caps. A failure to
+    /// read them is logged and counts as none.
+    pub(crate) fn review_bytes_of(&self, user_id: &str, window_millis: i64) -> u64 {
+        let _rows = rows_guard();
+        let read = (|| -> Result<u64, Error> {
+            let since = moqui_lib::object::basic_convert(&Value::I64(now_millis() - window_millis), "Timestamp").value;
+            let rows = self
+                .entity()?
+                .find(GIT_UPDATE)?
+                .eq("userId", Value::string(user_id))
+                .eq("reviewPush", Value::string("Y"))
+                .condition(moqui_core::entity::Condition::greater_equal("updateDate", since))
+                .select_field("packBytes")
+                .list()?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| super::long(row.get("packBytes")))
+                .map(|bytes| u64::try_from(bytes).unwrap_or(0))
+                .sum())
+        })();
+        read.unwrap_or_else(|err| {
+            tracing::error!(user = user_id, "pushes for review not counted: {err}");
+            0
+        })
+    }
+
+    /// Why `bytes` more pushed for review by the current user, who has no push right, is over the server's caps
+    /// (`git-server` `review-max-push-bytes`, 50 MiB a push, and `review-max-account-bytes`, 200 MiB an account a
+    /// day over every repository; 0 is no cap): the objects go into the target's store, for anyone who may view it.
+    pub(crate) fn review_cap(&self, bytes: u64) -> Option<String> {
+        const MIB: u64 = 1024 * 1024;
+        let per_push: u64 = super::number_setting("review-max-push-bytes", 50 * MIB);
+        if per_push > 0 && bytes > per_push {
+            return Some(format!(
+                "GitReviewPushTooLarge: the change is {bytes} bytes; one for review is at most {per_push} (push to \
+                 a fork for more)"
+            ));
+        }
+        let per_account: u64 = super::number_setting("review-max-account-bytes", 200 * MIB);
+        if per_account > 0 {
+            let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+            let used = self.review_bytes_of(&user, 24 * 60 * 60 * 1000);
+            if used.saturating_add(bytes) > per_account {
+                return Some(format!(
+                    "GitReviewQuota: {used} bytes sent for review in the last day; with this change that is over \
+                     the {per_account} an account may send for review in a day"
+                ));
+            }
+        }
+        None
+    }
+
+    /// Count a push for review or a proposal of the current user, who has no push right, that was refused: each
+    /// costs the server its checks (the pack read, the walks of what it names), whatever becomes of it.
+    pub(crate) fn note_review_refusal(&self) {
+        let Some(user) = moqui_core::user::current_user_id()
+            .ok()
+            .flatten()
+            .filter(|user| !user.is_empty())
+        else {
+            return;
+        };
+        let hour = now_millis() / HOUR_MILLIS;
+        let mut refusals = moqui_lib::sync::lock(&self.inner.review_refusals);
+        if refusals.len() > 10_000 {
+            refusals.retain(|_, (counted, _)| *counted == hour);
+        }
+        let entry = refusals.entry(user).or_insert((hour, 0));
+        if entry.0 != hour {
+            *entry = (hour, 0);
+        }
+        entry.1 = entry.1.saturating_add(1);
+    }
+
+    /// Why the current user, who has no push right, sends nothing more for review this hour: more than `git-server`
+    /// `review-max-refused` (30; 0 is no cap) of its pushes for review and proposals were refused in it, on this
+    /// node. Asked before a push's pack is read.
+    pub(crate) fn review_refusals_over(&self) -> Option<String> {
+        let most: u32 = super::number_setting("review-max-refused", 30);
+        if most == 0 {
+            return None;
+        }
+        let user = moqui_core::user::current_user_id().ok().flatten()?;
+        let hour = now_millis() / HOUR_MILLIS;
+        let refused = moqui_lib::sync::lock(&self.inner.review_refusals)
+            .get(&user)
+            .filter(|(counted, _)| *counted == hour)
+            .map_or(0, |(_, refused)| *refused);
+        (refused >= most).then(|| {
+            format!(
+                "GitReviewRefusals: {refused} pushes for review of this account were refused in the last hour; \
+                 wait before sending another"
+            )
+        })
+    }
+
+    /// Keep who brought the commits a change is the first to bring (`GitCommitPush`, for `get#GitCommitPushers`):
+    /// those its new refs reach and the refs before did not, at most `git-server` `eca-max-commits`. A commit a
+    /// change before this one brought keeps that change's user.
+    fn record_pushers(
+        &self,
+        update: &EntityValue,
+        repository_id: &str,
+        user_id: &str,
+        store: &dyn GitStore,
+        made: &[RefUpdate],
+    ) -> Result<(), Error> {
+        const GIT_COMMIT_PUSH: &str = "moqui.resource.GitCommitPush";
+        let entity = self.entity()?;
+        if !entity.table_ready(GIT_COMMIT_PUSH) {
+            return Ok(());
+        }
+        let tips: Vec<ObjectId> = made
+            .iter()
+            .filter_map(|reference| reference.new)
+            .filter_map(|id| peel_to_commit(store, &id).ok().flatten())
+            .collect();
+        if tips.is_empty() {
+            return Ok(());
+        }
+        let hidden: Vec<ObjectId> = text(update.get("priorTips"))
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
+            .collect();
+        let commits = revwalk::new_commits(store, &tips, &hidden)?;
+        let ids: Vec<String> = commits
+            .iter()
+            .rev()
+            .take(max_commits())
+            .map(|commit| commit.id.to_string())
+            .collect();
+        let _rows = rows_guard();
+        for chunk in ids.chunks(500) {
+            let known: HashSet<String> = entity
+                .find(GIT_COMMIT_PUSH)?
+                .eq("repositoryId", Value::string(repository_id))
+                .condition(moqui_core::entity::Condition::is_in(
+                    "commitId",
+                    chunk.iter().map(Value::string).collect(),
+                ))
+                .select_field("commitId")
+                .list()?
+                .iter()
+                .filter_map(|row| text(row.get("commitId")))
+                .collect();
+            for id in chunk.iter().filter(|id| !known.contains(*id)) {
+                let mut row = EntityValue::make(&entity, GIT_COMMIT_PUSH)?;
+                row.set("repositoryId", Value::string(repository_id));
+                row.set("commitId", Value::string(id));
+                row.set("userId", Value::string(user_id));
+                row.set("updateId", update.get("updateId").cloned().unwrap_or(Value::Null));
+                row.set("pushDate", update.get("updateDate").cloned().unwrap_or(Value::Null));
+                row.create(&entity)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The heads of the current user's open merge requests pushed for review in a repository.
+    pub(crate) fn own_review_heads(&self, repo: &super::Repo) -> Result<Vec<ObjectId>, Error> {
+        let Some(user) = moqui_core::user::current_user_id()
+            .ok()
+            .flatten()
+            .filter(|user| !user.is_empty())
+        else {
+            return Ok(Vec::new());
+        };
+        let _rows = rows_guard();
+        let rows = self
+            .entity()?
+            .find("moqui.resource.GitMergeRequest")?
+            .eq("repositoryId", Value::string(&repo.definition.id))
+            .eq("authorUserId", Value::string(user))
+            .eq("pushedForReview", Value::string("Y"))
+            .condition(moqui_core::entity::Condition::is_in(
+                "statusId",
+                vec![Value::string("GmrDraft"), Value::string("GmrOpen")],
+            ))
+            .select_field("mergeRequestNum")
+            .list()?;
+        let mut heads = Vec::new();
+        for row in rows.iter() {
+            if let Some(num) = super::long(row.get("mergeRequestNum")) {
+                heads.extend(repo.store.read_ref(&super::reach::merge_request_ref(num))?);
+            }
+        }
+        Ok(heads)
     }
 
     /// Record a push's refs before they change.
@@ -582,6 +801,12 @@ impl GitProvider {
                 change_type: text(row.get("changeType")).unwrap_or_default(),
             })
             .collect();
+        // who brought the new commits, whatever rules listen: one that fails is logged and the events still run
+        if let Some(user_id) = text(update.get("userId")) {
+            if let Err(err) = self.record_pushers(update, &repository_id, &user_id, store, &made) {
+                tracing::error!(repository = %repository_id, "the pushers of new commits were not kept: {err}");
+            }
+        }
         let entity = self.entity()?;
         let transactions = entity.transactions_for(GIT_UPDATE)?;
         let mut base = BTreeMap::new();
@@ -794,7 +1019,11 @@ fn ref_value(reference: &RefUpdate, branch_ref: &str) -> Value {
 }
 
 fn ref_fields(reference: &RefUpdate, branch_ref: &str) -> Vec<(&'static str, Value)> {
+    // a push for review (refs/for/<branch>): the branch it is for
+    let review_target = reference.name.strip_prefix(super::reach::REVIEW_REFS);
     vec![
+        ("forReview", Value::Bool(review_target.is_some())),
+        ("targetBranch", review_target.map_or(Value::Null, Value::string)),
         ("refName", Value::string(&reference.name)),
         ("refType", Value::string(RefKind::of(&reference.name).name())),
         ("shortName", Value::string(short_name(&reference.name))),
@@ -868,14 +1097,90 @@ pub(crate) struct PreReceive {
     pub messages: Vec<String>,
 }
 
-/// Run the pre events of a push against `view` (the repository with the pushed objects over it): pre-receive once
-/// with every ref, then pre-ref-update for each ref the push may still make (`candidates`, by index). A ref write
-/// through Moqui (`create#GitRef`, `merge#GitRefs`) runs them the same way, with its origin's source (`write`).
+/// Whether any rule runs on a pre event (pre-receive, pre-ref-update) from `source`.
+pub(crate) fn pre_listening(source: &str) -> bool {
+    git_eca::listening(GitEvent::PreReceive, source) || git_eca::listening(GitEvent::PreRefUpdate, source)
+}
+
+/// The commits a ref would gain, oldest first, at most `git-server` `eca-max-commits` of them.
+struct Gained {
+    ids: Vec<ObjectId>,
+    /// There are more than are listed, or they could not be walked: a rule that must see every commit refuses.
+    truncated: bool,
+}
+
+/// The commits `reference` would gain, for a pre event: those its new commit reaches and its old one does not; for a
+/// ref that is new, those no branch or tag reached before (`prior_tips`), so a branch made at a commit the repository
+/// has gains nothing.
+fn gained(view: &dyn GitStore, reference: &RefUpdate, prior_tips: &[ObjectId]) -> Gained {
+    let none = |truncated: bool| Gained {
+        ids: Vec::new(),
+        truncated,
+    };
+    let Some(new) = reference.new else {
+        return none(false);
+    };
+    let new = match peel_to_commit(view, &new) {
+        Ok(Some(new)) => new,
+        // a tag of a tree or a blob brings no commit
+        Ok(None) => return none(false),
+        Err(err) => {
+            tracing::warn!("new commits of {}: {err}", reference.name);
+            return none(true);
+        }
+    };
+    let hidden: Vec<ObjectId> = match reference.old {
+        Some(old) => vec![peel_to_commit(view, &old).ok().flatten().unwrap_or(old)],
+        None => prior_tips.to_vec(),
+    };
+    match revwalk::new_commits(view, &[new], &hidden) {
+        Ok(commits) => {
+            let limit = max_commits();
+            Gained {
+                truncated: commits.len() > limit,
+                ids: commits.into_iter().rev().take(limit).map(|commit| commit.id).collect(),
+            }
+        }
+        Err(err) => {
+            tracing::warn!("new commits of {}: {err}", reference.name);
+            none(true)
+        }
+    }
+}
+
+/// `newCommitIds`, `newCommits` (each as a commit event's `commit`) and `newCommitsTruncated` of a pre event.
+fn insert_new_commits(fields: &mut BTreeMap<String, Value>, view: &dyn GitStore, ids: &[ObjectId], truncated: bool) {
+    let mut truncated = truncated;
+    let mut commits = Vec::with_capacity(ids.len());
+    for id in ids {
+        match ops::commit_details(view, id) {
+            Ok(details) => commits.push(commit_value(&details)),
+            Err(err) => {
+                // not listed, so the list is said to be short: a rule that needs every commit refuses
+                tracing::warn!("new commit {id} not read for a pre event: {err}");
+                truncated = true;
+            }
+        }
+    }
+    fields.insert(
+        "newCommitIds".to_string(),
+        Value::List(ids.iter().map(|id| Value::string(id.to_string())).collect()),
+    );
+    fields.insert("newCommits".to_string(), Value::List(commits));
+    fields.insert("newCommitsTruncated".to_string(), Value::Bool(truncated));
+}
+
+/// Run the pre events of a change against `view` (the repository with the new objects over it): pre-receive once
+/// with every ref, then pre-ref-update for each ref the change may still make (`candidates`, by index), each with the
+/// commits it would bring (`newCommits`, `newCommitIds`, `newCommitsTruncated`). `prior` is the repository's refs
+/// before the change. A push runs them with source `push`; every other way a ref moves with its origin's source
+/// (`write`, `import`, `fetch`).
 pub(crate) fn pre_receive(
     view: &dyn GitStore,
     repository_id: &str,
     branch: &str,
     origin: &UpdateOrigin,
+    prior: &[(String, ObjectId)],
     refs: &[RefUpdate],
     candidates: &[usize],
 ) -> PreReceive {
@@ -904,6 +1209,31 @@ pub(crate) fn pre_receive(
         Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
     );
     base.insert(
+        "forReview".to_string(),
+        Value::Bool(
+            candidates
+                .iter()
+                .any(|index| refs[*index].name.starts_with(super::reach::REVIEW_REFS)),
+        ),
+    );
+    // a merge through a service says so, with what it merges: a squash's commit is not the source's commits
+    let merge = origin.merge.as_ref();
+    base.insert("isMerge".to_string(), Value::Bool(merge.is_some()));
+    base.insert(
+        "mergeRequestId".to_string(),
+        merge
+            .and_then(|merge| merge.merge_request_id.clone())
+            .map_or(Value::Null, Value::string),
+    );
+    base.insert(
+        "mergeMethodEnumId".to_string(),
+        merge.map_or(Value::Null, |merge| Value::string(merge.method)),
+    );
+    base.insert(
+        "mergeSourceCommitId".to_string(),
+        merge.map_or(Value::Null, |merge| Value::string(merge.source.to_string())),
+    );
+    base.insert(
         "refUpdates".to_string(),
         Value::List(
             candidates
@@ -912,23 +1242,33 @@ pub(crate) fn pre_receive(
                 .collect(),
         ),
     );
+    let prior_tips: Vec<ObjectId> = prior
+        .iter()
+        .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+        .filter_map(|(_, id)| peel_to_commit(view, id).ok().flatten())
+        .collect();
+    let gains: Vec<Gained> = candidates
+        .iter()
+        .map(|index| gained(view, &refs[*index], &prior_tips))
+        .collect();
     if wants_receive {
         let mut fields = base.clone();
-        let tips: Vec<ObjectId> = candidates
-            .iter()
-            .filter_map(|index| refs[*index].new)
-            .filter_map(|id| peel_to_commit(view, &id).ok().flatten())
-            .collect();
-        let hidden: Vec<ObjectId> = candidates.iter().filter_map(|index| refs[*index].old).collect();
-        let new_commits: Vec<Value> = revwalk::new_commits(view, &tips, &hidden)
-            .unwrap_or_default()
-            .into_iter()
-            .rev()
-            .take(max_commits())
-            .filter_map(|commit| ops::commit_details(view, &commit.id).ok())
-            .map(|details| commit_value(&details))
-            .collect();
-        fields.insert("newCommits".to_string(), Value::List(new_commits));
+        // every commit the change brings, each once, within the same bound
+        let limit = max_commits();
+        let mut seen = HashSet::new();
+        let mut ids = Vec::new();
+        let mut truncated = gains.iter().any(|gain| gain.truncated);
+        for id in gains.iter().flat_map(|gain| &gain.ids) {
+            if !seen.insert(*id) {
+                continue;
+            }
+            if ids.len() >= limit {
+                truncated = true;
+                break;
+            }
+            ids.push(*id);
+        }
+        insert_new_commits(&mut fields, view, &ids, truncated);
         let outcome = git_eca::run_git_rules(
             &event_key(GitEvent::PreReceive, source, repository_id, None, &branch_ref),
             &fields,
@@ -941,13 +1281,13 @@ pub(crate) fn pre_receive(
         }
     }
     if wants_ref {
-        for index in candidates {
+        for (index, gain) in candidates.iter().zip(&gains) {
             let reference = &refs[*index];
             let mut fields = base.clone();
             for (name, value) in ref_fields(reference, &branch_ref) {
                 fields.insert(name.to_string(), value);
             }
-            fields.insert("newCommitIds".to_string(), new_commit_ids(view, reference));
+            insert_new_commits(&mut fields, view, &gain.ids, gain.truncated);
             let outcome = git_eca::run_git_rules(
                 &event_key(
                     GitEvent::PreRefUpdate,
@@ -966,4 +1306,32 @@ pub(crate) fn pre_receive(
         }
     }
     decided
+}
+
+/// The pre events of a change of one ref made outside [`GitProvider::write_refs`] (a write through `git://`, an
+/// import): the rules' messages go to the message facade, and a refusal is the error, with the rule's message.
+pub(crate) fn pre_check(
+    view: &dyn GitStore,
+    repository_id: &str,
+    branch: &str,
+    origin: &UpdateOrigin,
+    prior: &[(String, ObjectId)],
+    reference: &RefUpdate,
+) -> Result<(), Error> {
+    let decided = pre_receive(
+        view,
+        repository_id,
+        branch,
+        origin,
+        prior,
+        std::slice::from_ref(reference),
+        &[0],
+    );
+    for message in &decided.messages {
+        ExecutionContext::with_current(|ec| ec.message().add_message(message.clone()));
+    }
+    match decided.refused.as_ref().or_else(|| decided.refused_refs.get(&0)) {
+        Some(reason) => Err(Error::new(format!("declined: {reason}"))),
+        None => Ok(()),
+    }
 }

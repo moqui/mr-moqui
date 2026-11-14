@@ -216,7 +216,19 @@ pub struct RestClient {
     max_redirects: usize,
     redirect_any_host: bool,
     connect_timeout: Duration,
+    unix_socket: Option<std::path::PathBuf>,
+    root_certificates: Option<Vec<u8>>,
+    client_identity: Option<ClientIdentity>,
     transport: OnceLock<reqwest::blocking::Client>,
+}
+
+/// A client certificate and its private key, PEM. Its `Debug` shows neither.
+struct ClientIdentity(Vec<u8>);
+
+impl fmt::Debug for ClientIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ClientIdentity(..)")
+    }
 }
 
 impl Default for RestClient {
@@ -235,8 +247,34 @@ impl RestClient {
             max_redirects: MAX_REDIRECTS,
             redirect_any_host: false,
             connect_timeout: CONNECT_TIMEOUT,
+            unix_socket: None,
+            root_certificates: None,
+            client_identity: None,
             transport: OnceLock::new(),
         }
+    }
+
+    /// Send every request over this Unix socket (a Docker or Podman API socket): the URL's host is not resolved, and
+    /// its path and query are what the server sees. On a platform with no Unix sockets a send fails.
+    #[must_use]
+    pub fn unix_socket(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.unix_socket = Some(path.into());
+        self
+    }
+
+    /// Trust these certificates (PEM, one or more) beside the system's: a private authority's, as a Docker daemon's
+    /// TLS has.
+    #[must_use]
+    pub fn root_certificates_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
+        self.root_certificates = Some(pem.into());
+        self
+    }
+
+    /// Present this client certificate: its PEM and its private key's PEM, in one buffer.
+    #[must_use]
+    pub fn client_identity_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
+        self.client_identity = Some(ClientIdentity(pem.into()));
+        self
     }
 
     /// How long a connection may take to open, 10 seconds by default.
@@ -430,6 +468,65 @@ impl RestClient {
         })
     }
 
+    /// [`Self::open`] with a request body read from `body` as it is sent (a file, an archive being written), so a
+    /// large upload is not held in memory. `length` is its size when known; without it the body is sent chunked.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`]; `request.body` must be `None`.
+    pub fn upload(
+        &self,
+        request: OpenRequest,
+        body: Box<dyn std::io::Read + Send>,
+        length: Option<u64>,
+    ) -> Result<OpenResponse, Error> {
+        if request.body.is_some() {
+            return Err(Error::new("an upload takes its body from the reader, not the request"));
+        }
+        let parsed = reqwest::Url::parse(&request.url)
+            .map_err(|_| Error::new(format!("URL {} is not valid", redacted(&request.url))))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(Error::new(format!(
+                "URL {} must be http or https",
+                redacted(&request.url)
+            )));
+        }
+        for (name, value) in &request.headers {
+            check_header(name, value)?;
+        }
+        if self.deny_internal {
+            deny_internal_literal(&request.url)?;
+        }
+        let client = self.transport()?;
+        let method = request.method;
+        let shown = redacted(&request.url);
+        let mut builder = client.request(method.as_reqwest(), &request.url);
+        for (name, value) in &request.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let body = match length {
+            Some(length) => reqwest::blocking::Body::sized(body, length),
+            None => reqwest::blocking::Body::new(body),
+        };
+        let response = builder
+            .body(body)
+            .timeout(request.timeout.unwrap_or(self.timeout))
+            .send()
+            .map_err(|err| Error::new(format!("HTTP {method} {shown} failed")).with_source(err.without_url()))?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
+            .collect();
+        Ok(OpenResponse {
+            status,
+            headers,
+            length: response.content_length(),
+            reader: Box::new(response),
+        })
+    }
+
     fn call(&self, method: Method, url: impl Into<String>) -> Call<'_> {
         Call {
             client: self,
@@ -457,6 +554,31 @@ impl RestClient {
             ));
         if self.deny_internal {
             builder = builder.dns_resolver(std::sync::Arc::new(PublicOnly));
+        }
+        if let Some(path) = &self.unix_socket {
+            #[cfg(unix)]
+            {
+                builder = builder.unix_socket(path.clone());
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(Error::new(format!(
+                    "this platform has no Unix sockets ({})",
+                    path.display()
+                )));
+            }
+        }
+        if let Some(pem) = &self.root_certificates {
+            let certificates = reqwest::Certificate::from_pem_bundle(pem)
+                .map_err(|err| Error::new("the root certificates are not PEM").with_source(err))?;
+            for certificate in certificates {
+                builder = builder.add_root_certificate(certificate);
+            }
+        }
+        if let Some(identity) = &self.client_identity {
+            let identity = reqwest::Identity::from_pem(&identity.0)
+                .map_err(|err| Error::new("the client certificate and key are not PEM").with_source(err))?;
+            builder = builder.identity(identity);
         }
         let built = builder
             .build()

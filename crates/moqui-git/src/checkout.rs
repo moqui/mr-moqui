@@ -74,7 +74,7 @@ impl GitProvider {
             username: credentials.username.clone(),
             token: credentials.token.clone(),
         };
-        let outcome = fs::fetch(path, url, branch, &credentials, false)?;
+        let outcome = fs::fetch(path, url, branch, &credentials, false, None)?;
         outcome
             .head
             .map(|head| head.to_string())
@@ -90,7 +90,22 @@ impl GitProvider {
     pub fn write_tree(&self, repository_id: &str, revision: Option<&str>, target: &Path) -> Result<WrittenTree, Error> {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
-        write_commit(store, &repo.definition.branch, revision, target)
+        let commit = self.own_commit(&repo, revision)?.to_string();
+        write_commit(store, &repo.definition.branch, Some(&commit), target)
+    }
+
+    /// The commit `revision` names in a repository ([`commit_of`]), which must be one read by its id there
+    /// ([`GitProvider::readable_by_id`]): the store may hold other repositories' commits.
+    fn own_commit(&self, repo: &super::Repo, revision: Option<&str>) -> Result<ObjectId, Error> {
+        let commit = commit_of(repo.store.as_ref(), &repo.definition.branch, revision)?;
+        if !self.readable_by_id(repo, &commit)? {
+            return Err(Error::new(format!(
+                "no commit {} on branch {}",
+                revision.unwrap_or("head"),
+                repo.definition.branch
+            )));
+        }
+        Ok(commit)
     }
 
     /// [`Self::write_tree`] from the bare repository at `path` (a fetched branch, [`Self::fetch_branch`]).
@@ -141,7 +156,7 @@ impl GitProvider {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
         let tree_of = |revision: &str| -> Result<ObjectId, Error> {
-            let commit = commit_of(store, &repo.definition.branch, Some(revision))?;
+            let commit = self.own_commit(&repo, Some(revision))?;
             Ok(ops::read_commit(store, &commit)?.tree)
         };
         let (old, new) = (tree_of(from)?, tree_of(to)?);

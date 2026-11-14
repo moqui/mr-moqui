@@ -26,7 +26,7 @@ clients of the local node. Steps and limits: [Run-Deploy](../../../docs/Run-Depl
   `edge_ssh_tunnel_port`; for PASS `pass_backend_web_url`. Generated at the first start: `edge_link_key`, and
   `mail_dkim_key` on first use. A WebPKI certificate goes in `cert/`.
 - **Local node**: `webapp_http_host`, and a certificate in `cert/` for each passthrough name. Pairing writes
-  `edge_node_url`, `edge_node_key`, `edge_node_pin` and `edge_node_id`; the wizard writes the rest.
+  `edge_node_url`, `edge_node_key`, `edge_node_pin`, `edge_node_id` and `edge_node_pairing` (copy this `.env` to each member of a local cluster, which then links too); the wizard writes the rest.
 
 Each conf's comments say what each setting does.
 

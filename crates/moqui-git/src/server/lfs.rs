@@ -1011,6 +1011,10 @@ pub(crate) fn ssh_authenticate(username: &str, command: &str) -> Result<String, 
     let repo = open_path(&provider, &repository, service, /* logged_in */ true)
         .map_err(|refusal| Error::new(refusal.message().to_string()))?;
     let id = &repo.definition.id;
+    // a push for review brings no LFS objects: an upload needs a push right, which opening for a push no longer says
+    if matches!(operation, Operation::Upload) && !may_push(id) {
+        return Err(Error::new(format!("you may not push to repository {id}")));
+    }
     let header = issue(username, id, operation, SSH_TOKEN_SECONDS)?;
     Ok(json!({
         "href": format!("{}/git/{}.git/info/lfs", public_base_url(), path::path_of(id)),

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A member of a local cluster pooled and balanced by an edge node (conf/local-cluster/README.md; plans/Edge-Node2.md
+    §4.4): every member runs this conf, on one external database, and links to the edge node on its own with the
+    pairing's key. The edge node (node_role front_edge, conf/edge/MoquiEdgeConf.xml) pools the members linked for the
+    pairing and balances its host names over the live ones, so no load balancer of your own is needed, and the members
+    need no open port, port forward or fixed address. It is MoquiLocalConf.xml's cluster with the edge node in the load
+    balancer's place; what differs is said here. Use the Enterprise package (--enterprise), as for any cluster. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+
+    <!-- The shared database, as in MoquiLocalConf.xml: Postgres (or MySQL with the default cluster transport), its
+        settings in .env, the same on every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user,
+        entity_ds_password, and entity_ds_sslmode and entity_ds_sslrootcert for its TLS. Back it up with its own tools:
+        the backup job covers an embedded database only. -->
+    <default-property name="entity_ds_db_conf" value="postgres"/>
+
+    <!-- The same secrets on every member, as in MoquiLocalConf.xml: session_cookie_key, cluster_tls_cert,
+        cluster_tls_key and entity_ds_crypt_pass, which the first member's first start generates into its .env.
+        The pairing is the cluster's, made once on one member (System › Edge Node, Pair with an edge node), which writes
+        edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
+        edge node knows the cluster by, which keys the outbox and its receipts) to that member's .env. Copy that whole
+        .env to every other member (the secrets above, the pairing's lines, and the rest that must match, such as
+        acme_account_key, ssh_host_key and git_lfs_token_key), then add the member's own cluster_base_url; each links at
+        its next start.
+        Each member's own: its instance id (runtime/db/instance_id) and its member key (runtime/db/edge_member_key, made
+        at its first link), which the edge node pins for its id. Never copy runtime/db between members. A member made
+        again with a new key is refused as another node until its key is forgotten on the edge node (System › Edge
+        Clients › Clients, Forget key).
+        Per member in .env: cluster_base_url, https://(this member's private address):8444, which the other members
+        reach. Open 8444 between the members only. -->
+
+    <!-- Admission (plans/Edge-Node2.md §4.4): while a member is linked, a new one is admitted only when a linked
+        member's cluster lists it as live, so a member joins the cluster first (its heartbeat in the shared
+        database), then links. Anything else with the key, such as a staging copy on another database, is refused "join
+        the cluster first" and shows on the edge node's Edge Clients › Clients. With none linked the key admits, which
+        is how the pool starts. -->
+
+    <!-- How peers reach this member, as in MoquiLocalConf.xml: empty for its cluster port (TLS with the cluster
+        certificate, client certificate required), notify for Postgres LISTEN/NOTIFY on the shared database when members
+        cannot connect to each other (Postgres only), ssh through its SSH server (ssh_port; a build with the ssh
+        feature). cluster_protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1 only; members on different
+        settings or builds still reach each other. -->
+    <default-property name="cluster_transport" value=""/>
+    <default-property name="cluster_protocol" value=""/>
+
+    <!-- Web access through the edge node: the client's address comes over the link, so no webapp_trusted_proxies or
+        webapp_client_ip_header; each member's web protection counts by it. A passthrough name ends its TLS on the
+        member, so each member needs the certificate in runtime/cert (the same files on each); a terminate name ends on
+        the edge node and needs none here.
+        Balancing (on the edge node): web requests to a terminate name by request, sticky by the session cookie (the
+        name per host on Edge Clients › Domains, moqui.session by default), so a client stays on one member and moves,
+        still signed in, when that member stops; passthrough names and tunnels by connection, sticky by the client's
+        address; delegated calls by conversation; queue items one at a time per key from every linked member. Sessions
+        are rows in the shared database, so the session-config flush="guarantee" of MoquiLocalConf.xml is not needed.
+        Work from the pool (docs/Run-Deploy.md, Cluster, What is shared and what is not): any linked member sends from
+        the outbox, the items of a key in order, each once; one member sends replication and keeps the edge node's call
+        media and SIP rows, the one holding the lock row EdgeSenderLock, and the others pass it their change notes on a
+        cluster topic. Web protection's bans are shared with the other members and told up the link to the edge node,
+        which refuses that client for this pairing's names. -->
+
+    <!-- Draining (plans/Edge-Node2.md §4.4): before stopping or upgrading a member, drain it in its own System › Edge
+        Node (This node's cluster, Drain this node), or on the edge node's Edge Clients › Clients: it finishes what it
+        has and the edge node sends it no new work, and its /health answers 503. A member says on its links when it is
+        starting or stopping, so a rolling upgrade needs nothing more: drain, stop, upgrade, start, resume. Draining the
+        only live member takes the pairing's names offline at the edge node until it resumes. -->
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+</moqui-conf>

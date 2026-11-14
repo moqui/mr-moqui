@@ -215,7 +215,7 @@ fn the_dkim_domains_are_by_role_and_an_all_in_one_nodes_are_both_sides() {
     };
     assert_eq!(domains(NodeRole::Normal), ["server.example", "shared.example"]);
     assert_eq!(
-        domains(NodeRole::Edge),
+        domains(NodeRole::FrontEdge),
         ["desk.example", "shared.example"],
         "an external account is not signed for"
     );
@@ -226,7 +226,7 @@ fn the_dkim_domains_are_by_role_and_an_all_in_one_nodes_are_both_sides() {
     // a normal node does not read the copies, nor an edge node its own accounts
     let fails = || Err(moqui_lib::error::Error::new("not read"));
     assert!(role_domains(NodeRole::Normal, own, fails).is_ok());
-    assert!(role_domains(NodeRole::Edge, fails, replicated).is_ok());
+    assert!(role_domains(NodeRole::FrontEdge, fails, replicated).is_ok());
     assert!(role_domains(NodeRole::AllInOne, own, fails).is_err());
 }
 
@@ -235,7 +235,7 @@ fn an_all_in_one_nodes_own_sends_are_signed_for_the_servers_domains_only() {
     use moqui_core::edge::NodeRole;
     assert_eq!(sending_role(NodeRole::AllInOne), NodeRole::Normal);
     assert_eq!(sending_role(NodeRole::Normal), NodeRole::Normal);
-    assert_eq!(sending_role(NodeRole::Edge), NodeRole::Edge);
+    assert_eq!(sending_role(NodeRole::FrontEdge), NodeRole::FrontEdge);
 }
 
 #[test]

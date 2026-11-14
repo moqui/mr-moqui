@@ -48,6 +48,7 @@ fn change(entity: &str, pk: serde_json::Value, fields: Option<serde_json::Value>
 
 fn batch(set: &str, seq: u64, snapshot: bool, changes: Vec<Change>) -> Batch {
     Batch {
+        sender_token: 0,
         set_name: set.to_string(),
         epoch: "e1".to_string(),
         base_seq: if snapshot { 0 } else { seq - 1 },
@@ -202,7 +203,7 @@ fn a_full_send_without_the_record_drops_its_conflict() {
 
 #[test]
 fn a_dedicated_edge_node_applies_every_record() {
-    let (ctx, facade) = open(NodeRole::Edge);
+    let (ctx, facade) = open(NodeRole::FrontEdge);
     let _entered = ctx.enter();
     own_items(&facade);
     replicate(&facade);
@@ -251,7 +252,7 @@ fn a_records_claim_is_its_address_bridge_or_number() {
 /// applied for both. Once the first pairing is revoked the conflict is applied on a recheck.
 #[test]
 fn between_two_pairings_the_first_claim_holds() {
-    let (ctx, facade) = open(NodeRole::Edge);
+    let (ctx, facade) = open(NodeRole::FrontEdge);
     let _entered = ctx.enter();
     for node in [NODE, "local-b"] {
         create(

@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
             ec.web.sessionAttributes.edgeCheck = JSON.stringify({url: url, edgeName: out.edgeName || '', fingerprint: out.fingerprint || '',
                 binaryVersion: out.binaryVersion || '', linkVersion: out.linkVersion ? String(out.linkVersion) : '',
                 publicNames: Array.from(out.publicNames || []).map(String), features: Array.from(out.features || []).map(String),
-                compatible: out.compatible !== false, message: out.message || ''})
+                edgeRole: out.edgeRole || '', compatible: out.compatible !== false, message: out.message || ''})
         ]]></script></actions>
         <default-response url="."><parameter name="url"/></default-response>
         <error-response url="."/>
@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
         // an edge or all-in-one node takes links; the wizard is a local node's (plans/archive/Edge-Node.md §10)
-        isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
+        isEdge = running && link.takesLinks === true
         alreadyPaired = running && !isEdge && !!link.state && link.state !== 'unpaired'
         pairedName = link.edgeName || link.url || ''
         canPair = running && !isEdge && !alreadyPaired

@@ -19,7 +19,9 @@
 //!   secret `pass_client_secret` in the metadata.
 //! - `edge:`: on an edge node, a local node down the link: the pairing whose Configure names the call's site, else the
 //!   only one linked (`EdgeServer::pass_link`, plans/Edge-Node2.md §4.1); "local node offline" at once while that
-//!   link is down.
+//!   link is down. Of the pairing's pool, the member the session handle hashes to while a sign-in is in progress, else
+//!   the one with the fewest calls in flight (§4.4); a call that times out or loses its connection counts toward
+//!   setting its member aside.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -33,6 +35,7 @@ use moqui_lib::sync::lock;
 
 use super::proto::pass_authority_client::PassAuthorityClient;
 use super::proto::{download_part, upload_part, UploadPart};
+use crate::edge_link::accept::Picked;
 use crate::grpc_client::{DialError, H2Channel, H2Send};
 
 /// A call, an upload, and each part of a download wait at most this long, as the REST adapter's calls.
@@ -167,9 +170,10 @@ impl Sender {
     }
 }
 
-/// For `edge:`, the down connection of the local node that is the authority of `site` (`EdgeServer::pass_link`), read
-/// on the caller's thread before the call goes to the runtime; none for a direct endpoint.
-fn edge_link(endpoint: &Endpoint, site: &str) -> Result<Option<H2Send>, Error> {
+/// For `edge:`, the member of the local node's pool that is the authority of `call`'s site (`EdgeServer::pass_link`),
+/// read on the caller's thread before the call goes to the runtime, counted in flight until it drops; none for a
+/// direct endpoint.
+fn edge_link(endpoint: &Endpoint, call: &Call) -> Result<Option<Picked>, Error> {
     if *endpoint != Endpoint::Edge {
         return Ok(None);
     }
@@ -179,8 +183,22 @@ fn edge_link(endpoint: &Endpoint, site: &str) -> Result<Option<H2Send>, Error> {
             moqui_core::edge::OFFLINE
         ))
     })?;
-    let (_, send, _) = server.pass_link(site)?;
-    Ok(Some(send))
+    let picked = server.pass_link(&call.site_id, &call.session_handle)?;
+    server.count_member("moqui.edgelink.requests", "pass", &picked.node, &picked.member);
+    Ok(Some(picked))
+}
+
+/// Count a call's first answer on its member (plans/Edge-Node2.md §4.4, health): a time-out or a lost connection
+/// counts toward setting it aside, any answer (a refusal too) clears its count.
+fn note<T>(link: Option<&Picked>, answered: &Result<Result<T, tonic::Status>, tokio::time::error::Elapsed>) {
+    let (Some(picked), Some(server)) = (link, crate::edge_link::hook::edge_server()) else {
+        return;
+    };
+    match answered {
+        Ok(Err(status)) if crate::edge_link::accept::lost(status) => server.failed(picked, "pass"),
+        Ok(_) => server.succeeded(picked),
+        Err(_) => server.failed(picked, "pass"),
+    }
 }
 
 /// An HTTP/2 connection to a direct endpoint, its driver on the runtime.
@@ -220,14 +238,15 @@ async fn dial(host: &str, port: u16, tls: bool) -> Result<H2Send, Error> {
 impl PassSender for Sender {
     fn call(&self, endpoint: &str, mut call: Call) -> Result<Reply, Error> {
         let endpoint = parse_endpoint(endpoint)?;
-        let link = edge_link(&endpoint, &call.site_id)?;
+        let link = edge_link(&endpoint, &call)?;
         let direct = Arc::clone(&self.direct);
         crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
-            let mut client = Sender::client(direct, &endpoint, link).await?;
+            let mut client = Sender::client(direct, &endpoint, link.as_ref().map(|picked| picked.send.clone())).await?;
             let request = request(super::call_message(&call), &endpoint)?;
-            let answer = tokio::time::timeout(CALL_TIMEOUT, client.call(request))
-                .await
+            let answer = tokio::time::timeout(CALL_TIMEOUT, client.call(request)).await;
+            note(link.as_ref(), &answer);
+            let answer = answer
                 .map_err(|_| Error::new("the PASS authority did not answer in time"))?
                 .map_err(|status| failed(&status))?;
             Ok(super::reply_from(answer.into_inner()))
@@ -236,11 +255,11 @@ impl PassSender for Sender {
 
     fn upload(&self, endpoint: &str, mut call: Call, file: UploadFile) -> Result<Reply, Error> {
         let endpoint = parse_endpoint(endpoint)?;
-        let link = edge_link(&endpoint, &call.site_id)?;
+        let link = edge_link(&endpoint, &call)?;
         let direct = Arc::clone(&self.direct);
         crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
-            let mut client = Sender::client(direct, &endpoint, link).await?;
+            let mut client = Sender::client(direct, &endpoint, link.as_ref().map(|picked| picked.send.clone())).await?;
             let length = file.bytes.len() as u64;
             let mut parts = vec![
                 UploadPart {
@@ -260,8 +279,9 @@ impl PassSender for Sender {
                 });
             }
             let request = request(futures_util::stream::iter(parts), &endpoint)?;
-            let answer = tokio::time::timeout(CALL_TIMEOUT, client.upload(request))
-                .await
+            let answer = tokio::time::timeout(CALL_TIMEOUT, client.upload(request)).await;
+            note(link.as_ref(), &answer);
+            let answer = answer
                 .map_err(|_| Error::new("the PASS authority did not answer in time"))?
                 .map_err(|status| failed(&status))?;
             Ok(super::reply_from(answer.into_inner()))
@@ -270,15 +290,16 @@ impl PassSender for Sender {
 
     fn download(&self, endpoint: &str, mut call: Call) -> Result<Result<Download, PassError>, Error> {
         let endpoint = parse_endpoint(endpoint)?;
-        let link = edge_link(&endpoint, &call.site_id)?;
+        let link = edge_link(&endpoint, &call)?;
         let direct = Arc::clone(&self.direct);
         let operation = call.operation.clone();
         let opened = crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
-            let mut client = Sender::client(direct, &endpoint, link).await?;
+            let mut client = Sender::client(direct, &endpoint, link.as_ref().map(|picked| picked.send.clone())).await?;
             let request = request(super::call_message(&call), &endpoint)?;
-            let mut stream = tokio::time::timeout(CALL_TIMEOUT, client.download(request))
-                .await
+            let stream = tokio::time::timeout(CALL_TIMEOUT, client.download(request)).await;
+            note(link.as_ref(), &stream);
+            let mut stream = stream
                 .map_err(|_| Error::new("the PASS authority did not answer in time"))?
                 .map_err(|status| failed(&status))?
                 .into_inner();

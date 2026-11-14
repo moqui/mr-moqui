@@ -12,16 +12,25 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Edge Clients › Clients (plans/Edge-Node2.md §4.10): each pairing (one local node each until E17's pools) with its
-    link (org.moqui.edge.EdgeServices.get#EdgeClients): state, version, address, last connect, generation and the start
-    of its key; its queue (get#QueueStatus: the items waiting for it, the oldest, the failed ones) and its own queue cap
-    (update#EdgeClient queueMaxMegabytes, empty for the conf's queue-max-megabytes); and below, each pairing's
-    replicated sets as this node has applied them. Ping sends a Ping down a node's down connection and shows the round
-    trip; Revoke ends its key and closes its link. Make a pairing code (create#PairingCode) shows the code once, after
-    the redirect, as the Chat apps screen shows a new app password; only its hash is kept. Near the top is this node's
-    link key fingerprint (get#LinkStatus, read by the parent screen), for the operator to compare with what a local
-    node's Connect step shows. The parent screen shows this only on a node that takes links. Pairing codes and Revoke
-    go through the link, so they are left out while it is not running. -->
+<!-- Edge Clients › Clients (plans/Edge-Node2.md §4.4, §4.5, §4.10): each pairing with its link
+    (org.moqui.edge.EdgeServices.get#EdgeClients): state, members linked, version, address, last connect, generation
+    and the start of its key; its queue (get#QueueStatus: the items waiting for it, the oldest, the failed ones), its own
+    queue cap (update#EdgeClient queueMaxMegabytes, empty for the conf's queue-max-megabytes) and what happens to a new
+    node that would take it over (hold#NewMembers: admitted with a notice, or held for approval). Below, the members of
+    each pairing (get#EdgeMembers: from the links, the member list its linked members send and the nodes refused or held
+    lately, all in memory): each one's condition, state, version, address, heartbeat and when it was last heard, with
+    Ping (ping#EdgeClient with its instanceId: the round trip), Drain and Resume (drain#EdgeMember, asked down its link),
+    Approve for a node held for approval (approve#EdgeMember) and Forget key (forget#EdgeMember) for one not linked.
+    Takeovers (EdgeClient takeoverDate, takeoverFromId, takeoverToId): a new node that took a pairing over with none of
+    its members linked, such as a standby; the node it displaced is refused until Let it link again
+    (clear#EdgeTakeover). Deliver again since (deliver#ItemsAgain) queues again the items delivered to a pairing since a
+    time, after a standby was restored from a backup. Ping sends a Ping down a node's down connection and shows the
+    round trip; Revoke ends its key and closes its link. Make a pairing code (create#PairingCode) shows the code once,
+    after the redirect, as the Chat apps screen shows a new app password; only its hash is kept. Near the top is this
+    node's link key fingerprint (get#LinkStatus, read by the parent screen), for the operator to compare with what a
+    local node's Connect step shows. Below, each pairing's replicated sets as this node has applied them. The parent
+    screen shows this only on a node that takes links. Pairing codes, Revoke, Ping and Drain go through the link, so
+    they are left out while it is not running. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Clients" default-menu-index="1">
 
@@ -46,6 +55,54 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="pingMember">
+        <service-call name="org.moqui.edge.EdgeServices.ping#EdgeClient" in-map="{pairedNodeId:pairedNodeId, instanceId:instanceId}" out-map="pingOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Round trip to ${instanceId} of ${pairedNodeId}: ${ec.l10n.format(pingOut.rttMs, '#,##0.0')} ms</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="drainMember">
+        <service-call name="org.moqui.edge.EdgeServices.drain#EdgeMember" in-map="{pairedNodeId:pairedNodeId, instanceId:instanceId, drain:drain}" out-map="drainOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${instanceId} of ${pairedNodeId} is ${drainOut.state} now</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="approveMember">
+        <service-call name="org.moqui.edge.EdgeServices.approve#EdgeMember" in-map="{pairedNodeId:pairedNodeId, instanceId:instanceId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${instanceId} may take ${pairedNodeId} over at its next link</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="forgetMember">
+        <service-call name="org.moqui.edge.EdgeServices.forget#EdgeMember" in-map="{pairedNodeId:pairedNodeId, instanceId:instanceId}" out-map="forgetOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="forgetOut?.forgotten"><then><message type="success">The key of ${instanceId} is forgotten: its next link is a new node's</message></then>
+                <else><message type="warning">No key is pinned for ${instanceId}</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="clearTakeover">
+        <service-call name="org.moqui.edge.EdgeServices.clear#EdgeTakeover" in-map="{pairedNodeId:pairedNodeId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">The node displaced from ${pairedNodeId} may link again</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="holdNewMembers">
+        <service-call name="org.moqui.edge.EdgeServices.hold#NewMembers" in-map="{pairedNodeId:pairedNodeId, hold:hold}" out-map="holdOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="holdOut?.hold"><then><message type="success">A new node taking ${pairedNodeId} over is held for your approval</message></then>
+                <else><message type="success">A new node taking ${pairedNodeId} over is admitted, with a notice</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deliverAgain">
+        <service-call name="org.moqui.edge.EdgeServices.deliver#ItemsAgain" in-map="{pairedNodeId:pairedNodeId, sinceDate:sinceDate}" out-map="deliverOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${deliverOut.itemCount} items queued again for ${pairedNodeId}</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="setQueueCap">
         <service-call name="org.moqui.edge.EdgeServices.update#EdgeClient" in-map="{pairedNodeId:pairedNodeId, queueMaxMegabytes:queueMaxMegabytes}" out-map="capOut"/>
         <actions><if condition="!ec.message.hasError()"><then>
@@ -64,11 +121,16 @@ along with this software (see the LICENSE.md file). If not, see
         clientList = []
         cursorList = []
         nodeOptions = []
+        memberList = []
+        takeoverList = []
         clientsError = ''
+        memoryError = ''
         if (!isEdge) return
         // a probe (Practices-App-Dev §4): a failure is shown on the page rather than failing it
         let out = {}
         let queueOut = {}
+        let membersOut = {}
+        let balancingOut = {}
         ec.message.pushErrors()
         try {
             out = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeClients').call() || {}
@@ -79,6 +141,21 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.popErrors()
         }
         if (clientsError) return
+        // what is kept in memory, in a probe of its own: a failure there leaves the rows shown
+        const probe = (name) => {
+            ec.message.pushErrors()
+            try {
+                const answer = ec.service.sync().name('org.moqui.edge.EdgeServices.' + name).call() || {}
+                if (!ec.message.hasError()) return answer
+                memoryError = ec.message.getErrorsString()
+                return {}
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+        }
+        membersOut = probe('get#EdgeMembers')
+        if (!memoryError) balancingOut = probe('get#EdgeBalancing')
         // each node's queue: the items waiting for it (all kinds) and the failed ones, and the oldest waiting
         const queues = {}
         for (const kind of Array.from(queueOut.kindList || [])) {
@@ -110,6 +187,10 @@ along with this software (see the LICENSE.md file). If not, see
                 if (queue.failed) queueText += ', ' + queue.failed + ' ' + L('failed')
             }
             return {pairedNodeId: client.pairedNodeId, stateLabel, stateColor, revoked, linked: !!client.linked && !!client.down,
+                membersText: String(client.membersLinked ?? 0),
+                newNodeText: client.holdNewMember ? L('Held for approval') + (client.approvedMemberId ? ' (' + client.approvedMemberId + ' ' + L('approved') + ')' : '')
+                    : L('Admitted, with a notice'),
+                holdNewMember: !!client.holdNewMember,
                 generationText: client.generation ? String(client.generation) : '',
                 lastConnectText: client.lastConnectDate ? ec.l10n.format(client.lastConnectDate, '') : L('Never'),
                 remoteAddress: client.remoteAddress || '',
@@ -119,6 +200,46 @@ along with this software (see the LICENSE.md file). If not, see
                 capText: client.queueMaxMegabytes ? client.queueMaxMegabytes + ' MB' : L('The conf\'s')}
         })
         nodeOptions = clientList.filter((client) => !client.revoked).map((client) => ({nodeId: client.pairedNodeId}))
+        // the takeovers noted on each pairing (plans/Edge-Node2.md §4.5): the node displaced stays refused until cleared
+        takeoverList = Array.from(out.clientList || []).filter((client) => client.takeoverDate).map((client) => ({
+            pairedNodeId: client.pairedNodeId, toId: client.takeoverToId || '',
+            fromText: client.takeoverFromId || '',
+            dateText: ec.l10n.format(client.takeoverDate, ''),
+            displaced: !!client.takeoverFromId,
+            refusedText: client.takeoverFromId ? L('Refused until you let it link again') : L('May link again')}))
+        // each pairing's members (plans/Edge-Node2.md §4.4): the links, the member list they send, the refusals
+        const conditions = {ok: [L('Linked'), 'positive'], notLinked: [L('Not linked'), 'negative'],
+            staleHeartbeat: [L('Stale heartbeat'), 'warning'], otherVersion: [L('Other version'), 'warning'],
+            stopped: [L('Stopped'), 'grey'], held: [L('Held for approval'), 'warning'], refused: [L('Refused'), 'negative']}
+        const states = {live: L('Live'), starting: L('Starting'), draining: L('Draining'), stopping: L('Stopping')}
+        // the work in flight on each member, as balancing counts it
+        const inFlight = {}
+        for (const row of Array.from(balancingOut.memberList || [])) inFlight[row.pairedNodeId + ' ' + row.instanceId] = row
+        // a pairing's live members: draining the last one takes its names offline
+        const liveCount = {}
+        for (const member of Array.from(membersOut.memberList || [])) {
+            if (member.linked && member.state === 'live') liveCount[member.pairedNodeId] = (liveCount[member.pairedNodeId] || 0) + 1
+        }
+        memberList = Array.from(membersOut.memberList || []).map((member) => {
+            const work = inFlight[member.pairedNodeId + ' ' + member.instanceId]
+            const [conditionLabel, conditionColor] = conditions[member.condition] || [member.condition || '', 'grey']
+            const linked = !!member.linked
+            return {pairedNodeId: member.pairedNodeId, instanceId: member.instanceId, conditionLabel, conditionColor,
+                stateText: linked ? states[member.state] || member.state || '' : '',
+                versionText: member.version || member.binaryVersion || '',
+                remoteAddress: member.remoteAddress || '',
+                heartbeatText: member.inCluster ? age(Math.round(Number(member.heartbeatAgeMs ?? 0) / 1000))
+                    + (member.liveInCluster ? '' : ', ' + L('stale')) : linked ? L('Not in its cluster\'s list') : '',
+                lastSeenText: member.lastSeenDate ? ec.l10n.format(member.lastSeenDate, '') : '',
+                inFlightText: work ? String(work.inFlight ?? 0) + (work.setAside ? ', ' + L('set aside') : '') : '',
+                message: member.message || '',
+                canPing: linked && !!member.down && !notStarted,
+                canDrain: linked && !!member.down && !notStarted && member.state !== 'draining',
+                canResume: linked && !!member.down && !notStarted && member.state === 'draining',
+                lastLive: linked && member.state === 'live' && (liveCount[member.pairedNodeId] || 0) <= 1,
+                held: member.condition === 'held',
+                canForget: !linked}
+        })
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-mb-sm">
@@ -130,6 +251,29 @@ along with this software (see the LICENSE.md file). If not, see
                     </drop-down></default-field></field>
                     <field name="queueMaxMegabytes"><default-field title="Megabytes" tooltip="The most the items waiting for this node may take; past it the oldest fail. Empty for the conf's queue-max-megabytes, which holds for each pairing alone"><text-line size="8"/></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <container-dialog id="NewNodesDialog" button-text="New nodes" icon="sym_o_how_to_reg" width="520" title="A new node taking a pairing over" type="default" condition="nodeOptions.length">
+                <label type="p" style="m-muted" text="With none of a pairing's members linked, a node with its key and a new instance id, such as a standby, takes the pairing over. It is admitted and the administrators are told, or it waits for your approval on this page."/>
+                <form-single name="NewNodes" transition="holdNewMembers">
+                    <field name="pairedNodeId"><default-field title="Local node"><drop-down>
+                        <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
+                    </drop-down></default-field></field>
+                    <field name="hold"><default-field title="A new node"><drop-down no-current-selected-key="false">
+                        <option key="false" text="Admitted, with a notice"/>
+                        <option key="true" text="Held for approval"/>
+                    </drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <container-dialog id="DeliverAgainDialog" button-text="Deliver again" icon="sym_o_replay" width="520" title="Deliver again since a time" type="default" condition="nodeOptions.length">
+                <label type="p" style="m-muted" text="After a standby is restored from a backup, its database lacks what was delivered since. Items delivered are kept for the queue's retention period (queue-retention-days of the edge conf, 14 days in the example confs); this sends a pairing's items delivered since the time again. An item the local node has applied does nothing the second time."/>
+                <form-single name="DeliverAgain" transition="deliverAgain">
+                    <field name="pairedNodeId"><default-field title="Local node"><drop-down>
+                        <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
+                    </drop-down></default-field></field>
+                    <field name="sinceDate"><default-field title="Delivered since" tooltip="The time of the backup the local node was restored from, or a little before"><date-time/></default-field></field>
+                    <field name="submitButton"><default-field title="Deliver again"><submit confirmation="Send this pairing's items delivered since then again?"/></default-field></field>
                 </form-single>
             </container-dialog>
             <container-dialog id="PairingCodeDialog" button-text="Make a pairing code" icon="sym_o_key" width="480" title="Make a pairing code" type="primary" condition="!notStarted">
@@ -170,6 +314,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
                 </default-field></field>
                 <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
+                <field name="membersText" align="right"><default-field title="Members" tooltip="Its members linked now: every member of a local cluster links"><display/></default-field></field>
                 <field name="remoteAddress"><default-field title="Address"><display/></default-field></field>
                 <field name="versionText"><default-field title="Version"><display/></default-field></field>
                 <field name="generationText"><default-field title="Generation"><display/></default-field></field>
@@ -179,6 +324,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <display/></default-field></field>
                 <field name="capText"><default-field title="Queue cap"
                         tooltip="The most its waiting items may take: its own, or the conf's queue-max-megabytes">
+                    <display/></default-field></field>
+                <field name="newNodeText"><default-field title="A new node"
+                        tooltip="What happens to a node with a new instance id that takes the pairing over while none of its members is linked, such as a standby (New nodes sets it)">
                     <display/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
                     <link url="pingClient" link-type="hidden-form-link" icon="sym_o_network_ping" text="Ping" style="m-btn-flat"
@@ -194,6 +342,75 @@ along with this software (see the LICENSE.md file). If not, see
             </form-list>
             <section name="NoClients" condition="!clientList.length"><widgets>
                 <label type="p" text="No local node is paired yet. Make a pairing code, then pair on the local node." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+
+        <section name="Takeovers" condition="takeoverList.length"><widgets>
+            <container-box type="warning"><box-header title="Takeovers"/><box-body-nopad>
+                <label type="p" style="q-pa-sm q-mb-none" text="A node with a new instance id took these pairings over while none of their members was linked, such as a standby started when the first machine died. The node it displaced is refused, so the two never trade the link back and forth with two copies of the data. Let it link again only once it runs on the same data, as a member of the same cluster."/>
+                <form-list name="TakeoverList" list="takeoverList" skip-form="true" paginate="false">
+                    <field name="pairedNodeId"><default-field title="Local node"><display style="text-weight-medium"/></default-field></field>
+                    <field name="dateText"><default-field title="When"><display/></default-field></field>
+                    <field name="toId"><default-field title="Taken over by"><display/></default-field></field>
+                    <field name="fromText"><default-field title="From"><display/></default-field></field>
+                    <field name="refusedText"><default-field title="The node displaced"><display/></default-field></field>
+                    <field name="tools" align="right"><default-field title="">
+                        <link url="clearTakeover" link-type="hidden-form-link" icon="sym_o_lock_open" text="Let it link again" style="m-btn-flat"
+                                condition="displaced" confirmation="Let ${fromText} link to ${pairedNodeId} again? Do this only once it runs on the same data as ${toId}."
+                                parameter-map="{pairedNodeId:pairedNodeId}"/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="pairedNodeId"/><field-ref name="toId"/></column>
+                        <column><field-ref name="dateText"/><field-ref name="tools"/></column>
+                    </columns>
+                </form-list>
+            </box-body-nopad></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Members"/><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none"
+                    text="Every member of a local node's cluster links on its own. A member joins when a linked member's cluster lists it as live; anything else with the key is refused while one is linked. Drain a member before stopping it: it finishes what it has and gets no new work."/>
+            <section name="MembersError" condition="memoryError"><widgets>
+                <label type="p" text="${memoryError}" style="text-negative q-pa-sm q-mb-none"/>
+            </widgets></section>
+            <form-list name="MemberList" list="memberList" skip-form="true" paginate="false">
+                <field name="instanceId"><default-field title="Member"><display style="text-weight-medium"/></default-field></field>
+                <field name="pairedNodeId"><default-field title="Local node"><display/></default-field></field>
+                <field name="condition"><default-field title="Condition">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${conditionColor}">${conditionLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: conditionLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="stateText"><default-field title="State" tooltip="What the member says on its link: starting, live, draining or stopping. Only a live member gets new work"><display/></default-field></field>
+                <field name="versionText"><default-field title="Version"><display/></default-field></field>
+                <field name="remoteAddress"><default-field title="Address"><display/></default-field></field>
+                <field name="inFlightText" align="right"><default-field title="In flight" tooltip="Requests, calls and tunnel opens sent to it and not answered yet; Balancing has more"><display/></default-field></field>
+                <field name="heartbeatText"><default-field title="Heartbeat" tooltip="The age of its heartbeat in its cluster's list, as its linked members last sent it"><display/></default-field></field>
+                <field name="lastSeenText"><default-field title="Last heard"><display/></default-field></field>
+                <field name="message"><default-field title="Refused"><display style="text-caption"/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="pingMember" link-type="hidden-form-link" icon="sym_o_network_ping" text="Ping" style="m-btn-flat"
+                            condition="canPing" parameter-map="{pairedNodeId:pairedNodeId, instanceId:instanceId}"/>
+                    <link url="drainMember" link-type="hidden-form-link" icon="sym_o_pause_circle" text="Drain" style="m-btn-flat"
+                            condition="canDrain &amp;&amp; !lastLive" confirmation="Drain ${instanceId}? It finishes what it has and gets no new work until you resume it; the other members take it."
+                            parameter-map="{pairedNodeId:pairedNodeId, instanceId:instanceId, drain:'true'}"/>
+                    <link url="drainMember" link-type="hidden-form-link" icon="sym_o_pause_circle" text="Drain" style="m-btn-flat" btn-type="danger"
+                            condition="canDrain &amp;&amp; lastLive" confirmation="${instanceId} is the only live member of ${pairedNodeId}. Draining it takes ${pairedNodeId}'s names offline here and holds its queue delivery, until you resume it. Drain it?"
+                            parameter-map="{pairedNodeId:pairedNodeId, instanceId:instanceId, drain:'true'}"/>
+                    <link url="drainMember" link-type="hidden-form-link" icon="sym_o_play_circle" text="Resume" style="m-btn-flat"
+                            condition="canResume" parameter-map="{pairedNodeId:pairedNodeId, instanceId:instanceId, drain:'false'}"/>
+                    <link url="approveMember" link-type="hidden-form-link" icon="sym_o_how_to_reg" text="Approve" style="m-btn-flat" btn-type="primary"
+                            condition="held" confirmation="Let ${instanceId} take ${pairedNodeId} over? It gets every name of the pairing at its next link."
+                            parameter-map="{pairedNodeId:pairedNodeId, instanceId:instanceId}"/>
+                    <link url="forgetMember" link-type="hidden-form-link" icon="sym_o_key_off" text="Forget key" style="m-btn-flat"
+                            condition="canForget" confirmation="Forget the key pinned for ${instanceId}? Its next link is a new node's: admitted only when a linked member's cluster lists it, or with none linked as a takeover, with its notice or held for approval."
+                            parameter-map="{pairedNodeId:pairedNodeId, instanceId:instanceId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="instanceId"/><field-ref name="pairedNodeId"/></column>
+                    <column><field-ref name="condition"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoMembers" condition="!memberList.length"><widgets>
+                <label type="p" text="No member has linked since this node started. The members are kept in memory and come back with the first link." style="m-muted q-pa-sm q-mb-none"/>
             </widgets></section>
         </box-body-nopad></container-box>
 

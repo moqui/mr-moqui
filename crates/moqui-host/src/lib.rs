@@ -52,6 +52,8 @@ mod acme;
 pub mod chromium;
 // The database drivers (crates/moqui-drivers), at their old path.
 pub use moqui_drivers as db;
+#[cfg(feature = "git")]
+mod ci_run;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -148,6 +150,8 @@ mod git_bridge;
 mod git_http;
 #[cfg(feature = "axum")]
 mod guard;
+#[cfg(feature = "axum")]
+mod guard_share;
 #[cfg(feature = "axum")]
 mod http;
 #[cfg(feature = "axum")]
@@ -786,6 +790,23 @@ where
         [command, rest @ ..] if command == "test" => {
             test_cmd::dispatch_test(rest)?;
             Ok(None)
+        }
+        [command, rest @ ..] if command == "ci-run" => {
+            #[cfg(feature = "git")]
+            {
+                // the job's result is the exit code: 0 success, 1 failure, 2 error, 3 the job is gone
+                match ci_run::dispatch(rest)? {
+                    0 => Ok(None),
+                    code => std::process::exit(code),
+                }
+            }
+            #[cfg(not(feature = "git"))]
+            {
+                let _ = rest;
+                Err(moqui_lib::error::Error::new(
+                    "moqui ci-run is not built into this host (the git feature)",
+                ))
+            }
         }
         [command, rest @ ..] if command == "test-client" => {
             #[cfg(feature = "test-client")]
@@ -1969,6 +1990,12 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
     use moqui_core::startup::{listener, State};
     if let Some(busy) = port_check::busy(smtp::LISTENER) {
         listener(factory, smtp::LISTENER, State::Skipped(busy));
+        return None;
+    }
+    // a front node's port 25 is a TCP port to its pool, never this listener (plans/Edge-Node2.md §4.7)
+    let configured = !moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty();
+    if moqui_core::edge::front_refuses(factory, "smtp_listen_port", configured) {
+        listener(factory, smtp::LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
         return None;
     }
     match smtp::start(factory) {

@@ -27,6 +27,14 @@
 //!   here. The client's address is the one the edge node sends in [`CLIENT_HEADER`], believed only because the request
 //!   came over this authenticated connection; that header and every other forwarding header are removed before the
 //!   app sees the request, so web protection and the logs see the client, never a header a client wrote.
+//!
+//! An edge node that dials its front node (plans/Edge-Node2.md §4.7) serves its front's down connection the same way:
+//! a forwarded request goes to its app with its own web front, so a terminate host of a node linked here goes on down
+//! that node's link, and a passthrough tunnel whose server name is a passthrough host of a node linked here goes on
+//! down that node's link with a new PROXY header naming the same client. A passthrough tunnel whose ClientHello offers
+//! the link's ALPN is a local node's link to this edge member, dialed at its link name on the front: taken as a link
+//! to this node's own listener (`EdgeServer::take_link`). An SMTP tunnel from the front's mail port goes to this node's
+//! SMTP listener, which reads the client from the PROXY header the front sent first (`crate::smtp::serve_tunneled`).
 
 use std::convert::Infallible;
 use std::future::Future;
@@ -44,7 +52,8 @@ use moqui_lib::sync::lock;
 use tower::ServiceExt as _;
 
 use super::{
-    CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS,
+    CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SMTP, TUNNEL_SSH, TUNNEL_XMPP,
+    TUNNEL_XMPPS,
 };
 use crate::http::{plain, DownServe, Peer};
 
@@ -60,6 +69,9 @@ const MAX_STREAMS: u32 = 1024;
 pub struct LocalWeb {
     serve: DownServe,
     factory: Weak<ExecutionContextFactory>,
+    /// On a node that takes links and dials a front (plans/Edge-Node2.md §4.7): its own edge server, whose passthrough
+    /// hosts a tunnel from the front goes on to.
+    relay: Option<Weak<super::accept::EdgeServer>>,
 }
 
 impl LocalWeb {
@@ -73,11 +85,17 @@ impl LocalWeb {
 #[derive(Default)]
 struct Slot(Mutex<Option<LocalWeb>>);
 
-/// Keep `serve` as `factory`'s [`LocalWeb`] until [`clear`].
-pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, serve: DownServe) {
+/// Keep `serve` as `factory`'s [`LocalWeb`] until [`clear`]; `relay` is the edge server of a node that takes links,
+/// whose passthrough hosts a front's tunnel goes on to.
+pub(crate) fn install(
+    factory: &Arc<ExecutionContextFactory>,
+    serve: DownServe,
+    relay: Option<Weak<super::accept::EdgeServer>>,
+) {
     let web = LocalWeb {
         serve,
         factory: Arc::downgrade(factory),
+        relay,
     };
     *lock(&factory.extension(|_| Slot::default()).0) = Some(web);
 }
@@ -263,6 +281,38 @@ enum Destination {
         client: SocketAddr,
         direct: bool,
     },
+    /// The SMTP listener: a front's mail port, the client named in the PROXY header the tunnel starts with.
+    Smtp(Arc<ExecutionContextFactory>, SocketAddr),
+}
+
+/// Whether this node's SMTP listener runs and takes a tunnel stream.
+fn smtp_running(factory: &ExecutionContextFactory) -> bool {
+    #[cfg(feature = "inbound-smtp")]
+    {
+        crate::smtp::takes_tunnels(factory)
+    }
+    #[cfg(not(feature = "inbound-smtp"))]
+    {
+        let _ = factory;
+        false
+    }
+}
+
+/// Serve a front's SMTP tunnel on this node's SMTP listener: its PROXY header names the client.
+fn smtp<S>(factory: &ExecutionContextFactory, stream: S, front: SocketAddr)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    #[cfg(feature = "inbound-smtp")]
+    {
+        if !crate::smtp::serve_tunneled(factory, Box::new(stream), front) {
+            tracing::debug!("edge SMTP tunnel for {front}: the SMTP listener has stopped");
+        }
+    }
+    #[cfg(not(feature = "inbound-smtp"))]
+    {
+        let _ = (factory, stream, front);
+    }
 }
 
 /// Take a tunnel when its kind names a listener this node has, and serve it once the stream is open.
@@ -279,7 +329,8 @@ fn tunnel(mut request: http::Request<Incoming>, web: Option<&LocalWeb>) -> Respo
         .and_then(|value| value.parse().ok());
     let destination = match (kind, web) {
         (_, None) => return plain(404, "this node serves no tunnels on its edge link"),
-        (TUNNEL_HTTPS, Some(web)) if web.serve.tls.is_some() => Destination::Https(web.clone()),
+        // its own TLS, or a passthrough host's tunnel it passes on (an edge node behind a front)
+        (TUNNEL_HTTPS, Some(web)) if web.serve.tls.is_some() || web.relay.is_some() => Destination::Https(web.clone()),
         (TUNNEL_HTTPS, Some(_)) => return plain(404, "this node has no HTTPS listener"),
         (TUNNEL_SSH, Some(web)) => match web.factory.upgrade().filter(|factory| ssh_running(factory)) {
             None => return plain(404, "this node has no SSH server"),
@@ -306,6 +357,17 @@ fn tunnel(mut request: http::Request<Incoming>, web: Option<&LocalWeb>) -> Respo
                 },
             }
         }
+        // only on an edge-set node's front link: a local node never takes the client its edge node names for mail
+        (TUNNEL_SMTP, Some(web)) if web.relay.is_none() => {
+            return plain(404, "this node takes SMTP only from its front node")
+        }
+        (TUNNEL_SMTP, Some(web)) => match web.factory.upgrade().filter(|factory| smtp_running(factory)) {
+            None => return plain(404, "this node has no SMTP listener"),
+            Some(factory) => match client {
+                Some(client) => Destination::Smtp(factory, client),
+                None => return plain(400, "the edge node named no client"),
+            },
+        },
         _ => return plain(400, "unknown tunnel kind"),
     };
     let upgrade = hyper::upgrade::on(&mut request);
@@ -320,6 +382,7 @@ fn tunnel(mut request: http::Request<Incoming>, web: Option<&LocalWeb>) -> Respo
         match destination {
             Destination::Https(web) => passthrough(stream, web).await,
             Destination::Ssh(factory, client) => ssh(&factory, stream, client),
+            Destination::Smtp(factory, client) => smtp(&factory, stream, client),
             Destination::Xmpp {
                 factory,
                 client,
@@ -362,6 +425,48 @@ where
         tracing::debug!("edge passthrough: web protection refused {client}");
         return;
     };
+    // an edge node behind a front: a passthrough host of a node linked here goes on down its link
+    // (plans/Edge-Node2.md §4.7); anything else is this node's own
+    let stream = match web.relay.as_ref().and_then(Weak::upgrade) {
+        Some(server) => {
+            let read = tokio::time::timeout(TUNNEL_HANDSHAKE, super::accept::read_hello(&mut stream)).await;
+            let (accepted, hello) = match read {
+                Ok(Ok(read)) => read,
+                Ok(Err(err)) => {
+                    tracing::debug!("edge passthrough: the ClientHello from {client}: {err}");
+                    return;
+                }
+                Err(_) => {
+                    tracing::debug!("edge passthrough: no ClientHello from {client} in time");
+                    return;
+                }
+            };
+            // a local node's link, dialed at this edge member's link name on the front (plans/Edge-Node2.md §4.7)
+            if super::accept::offers_link(&accepted) {
+                if !server.take_link(accepted, stream, client).await {
+                    tracing::debug!("edge passthrough: a link from {client}, but this node takes no links");
+                }
+                return;
+            }
+            let node = accepted
+                .client_hello()
+                .server_name()
+                .and_then(|name| server.passthrough_node(name));
+            if let Some(node) = node {
+                if !server.takes_work(&node) {
+                    server.count("moqui.edgelink.refused", super::TUNNEL_HTTPS);
+                    tracing::debug!("edge passthrough from {client}: a passthrough host of {node}, whose link is down");
+                    return;
+                }
+                let local = SocketAddr::from(([0, 0, 0, 0], 0));
+                super::tunnel::relay_passthrough(server, stream, hello, &node, client, local).await;
+                return;
+            }
+            Prefixed::Replay(super::xmpp_domain::Prefixed::new(hello, stream))
+        }
+        None => Prefixed::Direct(stream),
+    };
+    // this node's own TLS: a relayed tunnel above needs no certificate of this node's
     let Some(tls) = web.serve.tls.clone() else {
         return;
     };
@@ -380,6 +485,52 @@ where
         }
     };
     crate::http::serve_tunneled(stream, client, web.serve.app, web.serve.shutdown).await;
+}
+
+/// A tunnel's stream, with the ClientHello read already played again when it was read to choose where it goes.
+enum Prefixed<S> {
+    Direct(S),
+    Replay(super::xmpp_domain::Prefixed<S>),
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncRead for Prefixed<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Direct(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Replay(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Prefixed<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Self::Direct(stream) => Pin::new(stream).poll_write(cx, data),
+            Self::Replay(stream) => Pin::new(stream).poll_write(cx, data),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Direct(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Replay(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Direct(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Replay(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
 }
 
 #[cfg(test)]
