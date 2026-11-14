@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use moqui_lib::env;
 use moqui_lib::node::MNode;
+use moqui_lib::vfs;
 
 use super::Error;
 
@@ -57,7 +58,7 @@ pub fn component_entity_dirs_of(framework_component_dir: &Path, components: &[Co
         .iter()
         .filter(|info| !same_directory(&info.location, framework_component_dir))
         .map(|info| info.location.join("entity"))
-        .filter(|dir| dir.is_dir())
+        .filter(|dir| vfs::is_dir(dir))
         .collect()
 }
 
@@ -182,7 +183,7 @@ impl Discovery<'_> {
 pub(super) fn effective_instance_purpose(conf: &MNode, runtime_dir: &Path) -> String {
     purpose_from(
         env::get_prop_or_env("instance_purpose"),
-        std::fs::read_to_string(runtime_dir.join(".env")).ok().as_deref(),
+        vfs::read_to_string(runtime_dir.join(".env")).ok().as_deref(),
         conf,
     )
 }
@@ -278,18 +279,18 @@ fn add_component_dir(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::new("component-dir location is empty"))?;
     let dir = resolve_location(base, &location);
-    if !dir.exists() {
+    if !vfs::exists(&dir) {
         tracing::info!("Skipping component directory {}, not found", dir.display());
         return Ok(());
     }
-    if !dir.is_dir() {
+    if !vfs::is_dir(&dir) {
         return Err(Error::new(format!(
             "component directory is not a directory: {}",
             dir.display()
         )));
     }
     let manifest = dir.join("components.xml");
-    if manifest.is_file() {
+    if vfs::is_file(&manifest) {
         let list = MNode::parse_file(&manifest)?;
         for child in list.child_iter() {
             match &*child.name_rc() {
@@ -315,16 +316,13 @@ fn add_component_dir(
         return Ok(());
     }
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(&dir)
+    for entry in vfs::read_dir(&dir)
         .map_err(|err| Error::new(format!("could not read component directory {}", dir.display())).with_source(err))?
     {
-        let entry = entry.map_err(|err| {
-            Error::new(format!("could not read component directory {}", dir.display())).with_source(err)
-        })?;
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') || !path.is_dir() || !path.join("component.xml").is_file() {
+        if name.starts_with('.') || !entry.is_dir() || !vfs::is_file(path.join("component.xml")) {
             continue;
         }
         entries.push(path);
@@ -392,14 +390,14 @@ fn unlisted_children(dir: &Path, list: &MNode) -> Vec<PathBuf> {
         .filter_map(|child| child.attribute("location").filter(|location| !location.is_empty()))
         .map(|location| resolve_location(dir, &location))
         .collect();
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = vfs::read_dir(dir) else {
         return Vec::new();
     };
     let mut unlisted: Vec<PathBuf> = entries
-        .flatten()
-        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .into_iter()
+        .filter(|entry| entry.is_dir() && !entry.file_name().to_string_lossy().starts_with('.'))
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && !listed.iter().any(|known| same_directory(known, path)))
+        .filter(|path| !listed.iter().any(|known| same_directory(known, path)))
         .collect();
     unlisted.sort();
     unlisted
@@ -409,10 +407,9 @@ fn same_directory(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
     }
-    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
+    // a directory only built into the binary (vfs) has no canonical path; its name is compared
+    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| vfs::normalize(path));
+    canonical(left) == canonical(right)
 }
 
 fn component_from_element(base: &Path, node: &MNode) -> Result<ComponentInfo, Error> {
@@ -438,20 +435,20 @@ pub fn read_component(path: &Path) -> Result<ComponentInfo, Error> {
 }
 
 fn component_from_dir(path: &Path, fallback: Option<&MNode>) -> Result<ComponentInfo, Error> {
-    if !path.exists() {
+    if !vfs::exists(path) {
         return Err(Error::new(format!(
             "Could not find component directory at: {}",
             path.display()
         )));
     }
-    if !path.is_dir() {
+    if !vfs::is_dir(path) {
         return Err(Error::new(format!(
             "Component location is not a directory: {}",
             path.display()
         )));
     }
     let manifest = path.join("component.xml");
-    let parsed = if manifest.is_file() {
+    let parsed = if vfs::is_file(&manifest) {
         Some(MNode::parse_file(&manifest)?)
     } else {
         None

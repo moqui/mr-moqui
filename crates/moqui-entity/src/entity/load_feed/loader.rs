@@ -124,7 +124,7 @@ fn load_path(
     options: &LoadOptions,
     failed_files: &mut u64,
 ) -> Result<u64, Error> {
-    if path.is_dir() {
+    if moqui_lib::vfs::is_dir(path) {
         return load_directory(facade, path, options, failed_files);
     }
     super::check::check_file(location, options, || {
@@ -161,15 +161,15 @@ const FILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 fn load_file(facade: &EntityFacade, location: &str, path: &Path, options: &LoadOptions) -> Result<u64, Error> {
     match extension(path).as_str() {
         "xml" => {
-            let file = open_data(path, location)?;
+            let file = read_data(path, location)?;
             load_xml_reader(facade, location, BufReader::new(file), options)
         }
         "csv" => {
-            let file = open_data(path, location)?;
+            let file = read_data(path, location)?;
             load_csv_reader(facade, location, file, options)
         }
         "json" => {
-            let file = open_data(path, location)?;
+            let file = read_data(path, location)?;
             load_json_reader(facade, location, BufReader::new(file), options)
         }
         "zip" => {
@@ -189,19 +189,12 @@ fn load_directory(
     failed_files: &mut u64,
 ) -> Result<u64, Error> {
     let mut names = Vec::new();
-    let read = std::fs::read_dir(path)
+    // with the files built into the binary that are not on disk (moqui_lib::vfs)
+    let read = moqui_lib::vfs::read_dir(path)
         .map_err(|err| Error::new(format!("could not read {}", path.display())).with_source(err))?;
     for entry in read {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(err) => {
-                tracing::error!(error = %err, "Skipping an entry of {} that could not be read", path.display());
-                *failed_files += 1;
-                continue;
-            }
-        };
         let child = entry.path();
-        if child.is_file() && is_data_file(&child) {
+        if entry.is_file() && is_data_file(&child) {
             names.push(child);
         }
     }
@@ -939,6 +932,12 @@ fn is_data_file(path: &Path) -> bool {
     matches!(extension(path).as_str(), "xml" | "csv" | "json" | "zip")
 }
 
+/// A data file to read, from disk or built into the binary (moqui_lib::vfs).
+fn read_data(path: &Path, location: &str) -> Result<Box<dyn std::io::Read + Send>, Error> {
+    moqui_lib::vfs::open(path).map_err(|err| Error::new(format!("could not read {location}")).with_source(err))
+}
+
+/// A zip file, which is read by seeking: from disk only, as the binary has none built in.
 fn open_data(path: &Path, location: &str) -> Result<std::fs::File, Error> {
     std::fs::File::open(path).map_err(|err| Error::new(format!("could not read {location}")).with_source(err))
 }

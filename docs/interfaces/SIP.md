@@ -648,6 +648,10 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   the only one paired. A number's fallback is read from its owner's copy, and a message the engine recorded is queued
   to the pairing whose call it was, also after a restart (its spool sidecar names the pairing). Each offer lists only
   that pairing's trunks.
+- **Not through a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19): a front node runs no SIP engine and
+  takes no call signaling. Before an edge cluster ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) the SRV
+  records and each member's `sip_public_address` are at the edge members' own addresses, with their SIP and RTP ports
+  open there; a front pairing carries no `SipNode` row.
 - **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18). Every member runs an engine and loads every
   trunk, so each places calls out and takes those a trunk sends it. Only one registers the trunks: the holder of the
   lock row `EdgeSenderLock` `sipTrunks` (a 30-second lease by the database's clock, renewed every 10 seconds, taken over

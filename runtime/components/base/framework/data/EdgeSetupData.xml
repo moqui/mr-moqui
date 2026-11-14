@@ -30,6 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.EnumerationType enumTypeId="EdgeHostMode" description="Edge Host Mode"/>
     <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>
     <moqui.basic.Enumeration enumId="EdgeHostTerminate" enumTypeId="EdgeHostMode" sequenceNum="2" description="Terminate"/>
+    <moqui.basic.Enumeration enumId="EdgeHostLinkName" enumTypeId="EdgeHostMode" sequenceNum="3" description="Link name of one member"/>
 
     <!-- The user the local node runs the edge node's delegated calls and queued items as (plans/archive/Edge-Node.md §5.2, §5.8).
         It has no password, so nobody logs in as it; the caller's identity travels as data. It holds only the

@@ -526,19 +526,22 @@ pub fn write_new_first() {
 /// How long a [`pooled`] answer is kept before `edge_node_url` is read again.
 const POOLED_READ_EVERY_MS: i64 = 10_000;
 
-/// Whether this node may be one member of a pool behind an edge node (plans/Edge-Node2.md §4.4): it dials an edge node
-/// (`edge_node_url`, read at most every [`POOLED_READ_EVERY_MS`]) and its cluster has other live members (the
-/// heartbeat's list of peers, in memory). The edge node keeps a browser on the member its session cookie hashes to, and
-/// moves it when that member goes or is drained: so a new session is written before its response, as a new cookie can
-/// hash to another member than the one that made it ([`flush_bound`]), and a live copy that sat idle is read again when
-/// it comes back ([`adopt_presented`]). A lone local node keeps both as before.
+/// Whether this node may be one member of a pool behind an edge node or a front node (plans/Edge-Node2.md §4.4, §4.7):
+/// it dials one (`edge_node_url` or `front_node_url`, read at most every [`POOLED_READ_EVERY_MS`]) and its cluster has
+/// other live members (the heartbeat's list of peers, in memory). The edge node keeps a browser on the member its
+/// session cookie hashes to, and moves it when that member goes or is drained: so a new session is written before its
+/// response, as a new cookie can hash to another member than the one that made it ([`flush_bound`]), and a live copy
+/// that sat idle is read again when it comes back ([`adopt_presented`]). A lone local node keeps both as before.
 fn pooled(factory: &ExecutionContextFactory) -> bool {
     use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
     static READ_AT: AtomicI64 = AtomicI64::new(i64::MIN);
     static DIALS: AtomicBool = AtomicBool::new(false);
     let now = now_millis();
     if now.saturating_sub(READ_AT.load(Ordering::Acquire)) > POOLED_READ_EVERY_MS {
-        let dials = !moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL).trim().is_empty();
+        // pooled by an edge node, or by a front node (plans/Edge-Node2.md §4.7)
+        let dials = [crate::edge::NODE_URL, crate::edge::FRONT_URL]
+            .iter()
+            .any(|name| !moqui_lib::env::get_prop_or_env(name).trim().is_empty());
         DIALS.store(dials, Ordering::Release);
         READ_AT.store(now, Ordering::Release);
     }

@@ -204,6 +204,23 @@ claiming its name, refuses a DMARC failure whose policy is reject (550) and file
   recipients from them, again when a batch is applied on any member (the one that applied it tells the others on the
   cluster topic `edge-state`). A message taken by any member is one queue item, delivered once to the local node; with
   one member stopped, the others take the mail, and mail out goes on, as any member claims a delivery row.
+- **Behind a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19; [Run-Deploy, Full
+  stack](../Run-Deploy.md#full-stack)). The MX points at the front, whose port 25 is an `EdgePort` row of kind `smtp`
+  (System › Edge Clients › Ports on the front, to the edge cluster's pairing; only a front node takes the kind, and it
+  binds on `edge_smtp_tunnel_host`, every address when empty, at most 128 connections at once). Each connection goes
+  down a live member's front link, by the sender's address, with a PROXY v2 header naming the sender; the member's own
+  listener serves it as its mail edge and takes the sender's address from that header only because it came over its
+  own link, so `smtp_allowed_addresses`, the per-address limits and SPF see the sender, not the front. The front relays the
+  bytes: it reads none of the mail when the sender uses STARTTLS, but a sender that does not sends it in clear past
+  the front, and a compromised front could strip the STARTTLS offer; MTA-STS for the domains makes senders that honor
+  it require TLS with a valid certificate. STARTTLS ends on the member, which picks its certificate by the server name
+  or `smtp_hostname`, so the MX name's certificate goes on every member. SPF must list the members' addresses, where
+  mail out leaves from: the wizard's `v=spf1 mx` would name the front, and its MX check expects the member's
+  `smtp_hostname`, so set both records by hand in this layout. The listener must run to take them (`smtp_listen_port`); its own port 25 may stay open for a second
+  MX record, or listen on loopback, and a PROXY header sent there is not read. Mail out leaves from each member's own
+  address, so reverse DNS, SPF and `smtp_hostname` are each member's, not the front's. A local cluster behind a front
+  alone ([Run-Deploy, A front node](../Run-Deploy.md#a-front-node)) can take its mail the same way, its members'
+  listener in internet mode; that path has no test yet.
 
 ### Mail out
 

@@ -12,11 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The binary in an empty directory (crates/moqui-embedded, docs/Run-Deploy.md "Built-in framework files"): with no
-//! `MOQUI_RUNTIME`, `moqui load` writes a skeleton runtime in `runtime` in the working directory and loads its seed
-//! data; the server on it answers `/status`, the placeholder at `/`, `/Login`, the first admin account, a REST login and
-//! logout, the entity REST interface, the tools `moqui` REST API and the html `/apps`, with no file reported as
-//! differing; and `moqui tui` shows its login. An acceptance test: it starts the embedded Postgres three times
+//! The binary in an empty directory (crates/moqui-embedded, docs/Run-Deploy.md "Built-in runtime files"): with no
+//! `MOQUI_RUNTIME`, `moqui load` makes only the directories of a runtime in `runtime` in the working directory, reads
+//! the framework, tools, webroot and conf files from the binary, and loads the seed data; the server on it answers
+//! `/status`, the placeholder at `/`, `/Login`, the first admin account, a REST login and logout, the entity REST
+//! interface, the tools `moqui` REST API and the html `/apps`, with no file on disk reported as differing; `moqui tui`
+//! shows its login; and `moqui embedded extract` writes the built-in files out, after which none is read from the
+//! binary. An acceptance test: it starts the embedded Postgres three times
 //! (`cargo test -p moqui --test cli -- --ignored skeleton`).
 
 #![cfg(target_os = "linux")]
@@ -160,8 +162,8 @@ fn form(pairs: &[(&str, &str)]) -> String {
 }
 
 #[test]
-#[ignore = "acceptance: a complete scenario, a load and a server on the embedded Postgres of a skeleton runtime"]
-fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
+#[ignore = "acceptance: a complete scenario, a load, a server and an extract on an empty runtime's embedded Postgres"]
+fn a_lone_binary_reads_its_built_in_files_in_place_and_loads_serves_and_extracts() {
     if !repo().join("runtime/install/postgres").is_dir() {
         eprintln!("skipped: no runtime/install/postgres");
         return;
@@ -178,15 +180,23 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
         String::from_utf8_lossy(&load.stderr)
     );
     assert!(load.status.success(), "{load_log}");
-    assert!(load_log.contains("wrote a skeleton runtime of"), "{load_log}");
-    assert!(load_log.contains("match the ones built into this binary"), "{load_log}");
-    assert!(runtime.join("components/base/framework/component.xml").is_file());
-    assert!(runtime.join("components/base/tools/service/moqui.rest.xml").is_file());
-    assert!(runtime
-        .join("components/base/webroot/screen/webroot/qapps.xml")
-        .is_file());
-    // only the sets the manifest lists load, so the skeleton writes it (plans/archive/Components-Dir.md)
-    assert!(runtime.join("components/components.xml").is_file());
+    assert!(load_log.contains("has no framework files on disk"), "{load_log}");
+    assert!(
+        load_log.contains("are not on disk and are read from this binary"),
+        "{load_log}"
+    );
+    assert!(
+        load_log.contains("files on disk match the ones built into this binary"),
+        "{load_log}"
+    );
+    // only the directories are made: no framework, tools, webroot or conf file, and no sets' manifest
+    for dir in ["framework", "tools", "webroot"] {
+        let dir = runtime.join("components/base").join(dir);
+        assert!(dir.is_dir(), "{}", dir.display());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "{}", dir.display());
+    }
+    assert!(!runtime.join("components/components.xml").exists());
+    assert!(!runtime.join("conf").exists());
 
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let mut child = moqui(&scratch.0)
@@ -328,10 +338,11 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     drop(server);
     let log = log.lock().unwrap();
     assert!(
-        log.contains("framework, tools and webroot files match the ones built into this binary"),
+        log.contains("framework, tools and webroot files on disk match the ones built into this binary"),
         "{log}"
     );
     assert!(!log.contains("differ from the ones built into this binary"), "{log}");
+    drop(log);
 
     // The terminal client on the same runtime, in this process: the apps ask for a login.
     let tui = moqui(&scratch.0)
@@ -341,4 +352,31 @@ fn a_lone_binary_builds_a_skeleton_runtime_that_loads_and_serves() {
     let screen = String::from_utf8_lossy(&tui.stdout);
     assert!(tui.status.success(), "{screen}{}", String::from_utf8_lossy(&tui.stderr));
     assert!(screen.contains("Log in"), "{screen}");
+
+    // The built-in files written out, the confs with them: none is read from the binary after.
+    let extract = moqui(&scratch.0).args(["embedded", "extract"]).output().unwrap();
+    let extracted = String::from_utf8_lossy(&extract.stdout);
+    assert!(
+        extract.status.success(),
+        "{extracted}{}",
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    assert!(extracted.contains("built-in files into"), "{extracted}");
+    assert!(runtime.join("components/base/framework/component.xml").is_file());
+    assert!(runtime.join("components/base/tools/service/moqui.rest.xml").is_file());
+    assert!(runtime
+        .join("components/base/webroot/screen/webroot/qapps.xml")
+        .is_file());
+    assert!(runtime.join("components/components.xml").is_file());
+    assert!(runtime.join("conf/MoquiProductionConf.xml").is_file());
+    let again = moqui(&scratch.0).args(["embedded", "extract"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&again.stdout).contains("has every built-in file already"));
+    let diff = moqui(&scratch.0).args(["embedded", "diff"]).output().unwrap();
+    let diffed = String::from_utf8_lossy(&diff.stdout);
+    assert!(diff.status.success(), "{diffed}");
+    assert!(!diffed.contains("are read from this binary"), "{diffed}");
+    assert!(
+        diffed.contains("files on disk match the ones built into this binary"),
+        "{diffed}"
+    );
 }

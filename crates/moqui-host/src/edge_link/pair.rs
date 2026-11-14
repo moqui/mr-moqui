@@ -51,6 +51,9 @@ pub struct PairConfig {
     /// certificate. A deployment leaves it `None`; it never turns the check off.
     pub trust_root: Option<CertificateDer<'static>>,
     pub connect_timeout: Duration,
+    /// Pair only with a front node (plans/Edge-Node2.md §4.7, §4.11): a node with a role of its own pairs with nothing
+    /// else. The node's role is read from its Probe answer, before the code is spent.
+    pub only_front: bool,
 }
 
 impl PairConfig {
@@ -63,6 +66,7 @@ impl PairConfig {
             expect_pin: None,
             trust_root: None,
             connect_timeout: Duration::from_secs(10),
+            only_front: false,
         }
     }
 }
@@ -77,6 +81,7 @@ impl std::fmt::Debug for PairConfig {
             .field("expect_pin", &self.expect_pin)
             .field("trust_root", &self.trust_root.is_some())
             .field("connect_timeout", &self.connect_timeout)
+            .field("only_front", &self.only_front)
             .finish()
     }
 }
@@ -370,6 +375,14 @@ pub async fn check(
     Ok(edge_info(&hello, &hex(&fingerprint)))
 }
 
+/// Why a node with a role of its own does not pair with a node of `role` (plans/Edge-Node2.md §4.7).
+pub(crate) fn not_front(role: &str) -> String {
+    format!(
+        "this node takes links (node_role is set), so it pairs only with a front node, and that node's role is {}",
+        if role.is_empty() { "not front" } else { role }
+    )
+}
+
 /// Pair with the edge node: a new key for this node, presented on a pairing connection with the operator's code; the
 /// edge node pins it and this node pins the edge node's (checked by WebPKI first).
 pub async fn pair(config: &PairConfig) -> Result<Paired, LinkError> {
@@ -392,7 +405,13 @@ pub async fn pair(config: &PairConfig) -> Result<Paired, LinkError> {
         client_config(&ServerTrust::WebPki(config.trust_root.as_ref()), Some(&identity)).map_err(LinkError::Failed)?;
     let (mut client, driver) = pairing_client(&place, tls, config.connect_timeout, ROLE_PAIR).await?;
     let fingerprint = match probe(&mut client, config.connect_timeout).await {
-        Ok((_, fingerprint)) => fingerprint,
+        Ok((probed, fingerprint)) => {
+            if config.only_front && probed.node_role != moqui_core::edge::NodeRole::Front.as_str() {
+                driver.abort();
+                return Err(LinkError::Refused(not_front(&probed.node_role)));
+            }
+            fingerprint
+        }
         Err(err) => {
             driver.abort();
             return Err(err);

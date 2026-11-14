@@ -16,7 +16,7 @@ publish = false
 moqui-client = { path = "../moqui-client" }
 moqui-lib = { path = "../moqui-lib" }
 # As the apps': the desktop's on CEF, the mobile's on wry.
-tauri = { version = "=3.0.0-alpha.5", features = ["unstable"] }
+tauri = { version = "=3.0.0-alpha.6", features = ["unstable"] }
 serde_json = "1"
 tracing = "0.1"
 

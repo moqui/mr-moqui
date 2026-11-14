@@ -18,8 +18,9 @@
 //! Postgres (its `search` schema), when the entity datasource is Postgres; or a dedicated embedded
 //! cluster under `runtime/db/search` when the entity datasource is not Postgres. The OpenSearch
 //! backend talks to the conf `cluster` over HTTP. When that cluster is local and not running, and
-//! `runtime/opensearch` holds an install, the store starts it, as `MoquiStart` does, and stops it
-//! when dropped.
+//! `runtime/opensearch` holds an install (or the binary has OpenSearch built in, `embed-opensearch`), the store starts
+//! it, as `MoquiStart` does, and stops it when dropped. The built-in one is unpacked into the install directory
+//! (`crate::embedded_programs`) and keeps its config, data and logs in `runtime/opensearch`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -141,6 +142,7 @@ fn attach_backend(
             let facade = SearchFacade::new(Arc::new(backend), entity.clone());
             if conf.semantic.enabled {
                 facade.set_embedder(embedder_of(factory, &conf.semantic));
+                facade.set_prefixes(&conf.semantic.query_prefix, &conf.semantic.document_prefix);
             }
             moqui_core::search::install(factory, facade);
             Ok((store, "Postgres"))
@@ -270,14 +272,42 @@ fn attach_opensearch(
     let backend = moqui_core::search::opensearch::OpenSearchBackend::new(cluster);
     let mut store = SearchStore::default();
     if !backend.reachable() {
-        let dir = factory.runtime_dir().join("opensearch");
-        if run_local_opensearch(factory, &dir, &cluster.url) {
-            store.opensearch = Some(OpenSearchProcess::start(&dir)?);
-            wait_for(factory, &backend, &dir)?;
+        let home = factory.runtime_dir().join("opensearch");
+        let built_in = crate::embedded_programs::Program::OpenSearch.archive().is_some();
+        if run_local_opensearch(factory, &home, built_in, &cluster.url) {
+            let program = opensearch_program(factory.runtime_dir(), &home)?;
+            store.opensearch = Some(OpenSearchProcess::start(&program, &home)?);
+            wait_for(factory, &backend, &home)?;
         }
     }
-    moqui_core::search::install(factory, SearchFacade::new(Arc::new(backend), entity.clone()));
+    let facade = SearchFacade::new(Arc::new(backend), entity.clone());
+    // The backend stores no vectors; the embedder ranks texts a caller holds (rankTexts).
+    if conf.semantic.enabled {
+        facade.set_embedder(embedder_of(factory, &conf.semantic));
+        facade.set_prefixes(&conf.semantic.query_prefix, &conf.semantic.document_prefix);
+    }
+    moqui_core::search::install(factory, facade);
     Ok(store)
+}
+
+/// The OpenSearch install to run for the runtime `runtime_dir` whose OpenSearch directory is `home`: `home` itself when it
+/// has one (`./moq opensearch-download`), else the one built into the binary, unpacked, with `home/config` seeded from
+/// its `config` the first time.
+fn opensearch_program(runtime_dir: &Path, home: &Path) -> Result<PathBuf, Error> {
+    if home.join("bin").is_dir() {
+        return Ok(home.to_path_buf());
+    }
+    let program = crate::embedded_programs::unpack(crate::embedded_programs::Program::OpenSearch, runtime_dir)?
+        .ok_or_else(|| Error::new(format!("{} has no OpenSearch install", home.display())))?;
+    let config = home.join("config");
+    if !config.exists() {
+        crate::embedded_programs::copy_dir(&program.join("config"), &config)?;
+        tracing::info!(
+            "Seeded {} from the embedded OpenSearch; edit it there",
+            config.display()
+        );
+    }
+    Ok(program)
 }
 
 /// An OpenSearch child process. Dropping it stops the process.
@@ -286,11 +316,14 @@ struct OpenSearchProcess {
 }
 
 impl OpenSearchProcess {
-    /// `bin/opensearch` in the foreground, in its own directory, as `MoquiStart.checkStartElasticSearch`
-    /// does. The install's bundled JDK is used. When the directory belongs to an `opensearch` user that
-    /// `su` can switch to, it runs as that user. Output goes to `logs/moqui-start.log` in the install.
-    fn start(dir: &Path) -> Result<Self, Error> {
-        let logs = dir.join("logs");
+    /// `bin/opensearch` of the install in `program` in the foreground, in that directory, as
+    /// `MoquiStart.checkStartElasticSearch` does. The install's bundled JDK is used. When the directory belongs to an
+    /// `opensearch` user that `su` can switch to, it runs as that user. Output goes to `logs/moqui-start.log` in `home`,
+    /// the runtime's OpenSearch directory; when the install is elsewhere (built in), its config, data and logs are in
+    /// `home` too (`OPENSEARCH_PATH_CONF`, `path.data`, `path.logs`).
+    fn start(program: &Path, home: &Path) -> Result<Self, Error> {
+        let dir = program;
+        let logs = home.join("logs");
         std::fs::create_dir_all(&logs)
             .map_err(|err| Error::new(format!("could not make {}", logs.display())).with_source(err))?;
         let log_path = logs.join("moqui-start.log");
@@ -299,7 +332,18 @@ impl OpenSearchProcess {
         let err_log = log
             .try_clone()
             .map_err(|err| Error::new("could not share the OpenSearch log file").with_source(err))?;
-        let mut command = opensearch_command(dir);
+        let paths = if program == home {
+            Vec::new()
+        } else {
+            vec![
+                format!("-Epath.data={}", home.join("data").display()),
+                format!("-Epath.logs={}", logs.display()),
+            ]
+        };
+        let mut command = opensearch_command(dir, &paths);
+        if program != home {
+            command.env("OPENSEARCH_PATH_CONF", home.join("config"));
+        }
         // systemd readiness is this process's to report, not the child's.
         command
             .current_dir(dir)
@@ -362,9 +406,9 @@ fn signal(args: &[&str]) -> std::io::Result<std::process::ExitStatus> {
 }
 
 /// Start the install in `dir` when: the `search-facade` `cluster` `run` (`opensearch_run`) is not false, `dir/bin`
-/// exists, there is no `dir/pid` (a node started with `-p pid` is managed outside this process, as Java leaves it), and
-/// the cluster url is this host.
-fn run_local_opensearch(factory: &ExecutionContextFactory, dir: &Path, url: &str) -> bool {
+/// exists or the binary has OpenSearch `built_in`, there is no `dir/pid` (a node started with `-p pid` is managed
+/// outside this process, as Java leaves it), and the cluster url is this host.
+fn run_local_opensearch(factory: &ExecutionContextFactory, dir: &Path, built_in: bool, url: &str) -> bool {
     let mut run = factory.conf_setting("search-facade/cluster", "run");
     if run.is_empty() {
         run = moqui_lib::env::get_prop_or_env("opensearch_run");
@@ -372,7 +416,7 @@ fn run_local_opensearch(factory: &ExecutionContextFactory, dir: &Path, url: &str
     if run.trim().eq_ignore_ascii_case("false") {
         return false;
     }
-    if !dir.join("bin").is_dir() || dir.join("pid").exists() {
+    if !(dir.join("bin").is_dir() || built_in) || dir.join("pid").exists() {
         return false;
     }
     local_host(url)
@@ -388,18 +432,27 @@ fn local_host(url: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
-fn opensearch_command(dir: &Path) -> Command {
+/// `bin/opensearch` of the install in `dir`, with `args`, as the `opensearch` user when [`switchable_owner`].
+fn opensearch_command(dir: &Path, args: &[String]) -> Command {
     if cfg!(windows) {
         let mut command = Command::new("cmd.exe");
-        command.args(["/c", "bin\\opensearch.bat"]);
+        command.args(["/c", "bin\\opensearch.bat"]).args(args);
         return command;
     }
     if let Some(user) = switchable_owner(dir) {
+        let mut line = "./bin/opensearch".to_string();
+        for arg in args {
+            line.push_str(" '");
+            line.push_str(&arg.replace('\'', "'\\''"));
+            line.push('\'');
+        }
         let mut command = Command::new("su");
-        command.args(["-c", "./bin/opensearch", &user]);
+        command.args(["-c", &line, &user]);
         return command;
     }
-    Command::new("./bin/opensearch")
+    let mut command = Command::new("./bin/opensearch");
+    command.args(args);
+    command
 }
 
 /// `opensearch`, when that user owns `dir`, this process runs as someone else, and `su` to it works

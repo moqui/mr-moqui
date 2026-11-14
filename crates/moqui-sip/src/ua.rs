@@ -525,6 +525,9 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// How long a re-INVITE of this side waits for an INVITE of the other side to be acknowledged; an ACK takes one trip.
+const PENDING_INVITE_WAIT: Duration = Duration::from_secs(2);
+
 fn sip_err(err: impl std::fmt::Display) -> String {
     err.to_string()
 }
@@ -897,19 +900,31 @@ impl Ua {
         });
     }
 
-    /// Sends a re-INVITE with a new offer (hold, resume); the other side's answer.
+    /// Sends a re-INVITE with a new offer (hold, resume); the other side's answer. While an INVITE of the other side is
+    /// not yet acknowledged, rsipstack sends none (RFC 3261 §14.1): that is waited out for up to [`PENDING_INVITE_WAIT`].
     pub async fn reinvite(&self, leg: &str, offer: String) -> Result<Option<String>, String> {
         let dialog = lock(&self.inner.legs)
             .get(leg)
             .and_then(|l| l.dialog.clone())
             .ok_or("noLeg")?;
-        let resp = dialog
-            .reinvite(
-                Some(vec![Header::ContentType("application/sdp".into())]),
-                Some(offer.into_bytes()),
-            )
-            .await
-            .map_err(sip_err)?;
+        let body = offer.into_bytes();
+        let started = tokio::time::Instant::now();
+        let resp = loop {
+            let sent = dialog
+                .reinvite(
+                    Some(vec![Header::ContentType("application/sdp".into())]),
+                    Some(body.clone()),
+                )
+                .await;
+            match sent {
+                Err(rsipstack::Error::DialogError(_, _, StatusCode::RequestPending))
+                    if started.elapsed() < PENDING_INVITE_WAIT =>
+                {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                sent => break sent.map_err(sip_err)?,
+            }
+        };
         Ok(resp
             .filter(|r| r.status_code.kind() == StatusCodeKind::Successful)
             .map(|r| String::from_utf8_lossy(&r.body).into_owned()))
@@ -1718,7 +1733,7 @@ impl Inner {
     // ---------- inbound ----------
 
     async fn incoming(self: Arc<Self>, mut tx: Transaction) {
-        let method = tx.original.method;
+        let method = tx.original.method.clone();
         if let Some(Dialog::Invite(mut dialog)) = self.dialogs.match_dialog(&tx) {
             if let Err(err) = dialog.handle(&mut tx).await {
                 tracing::debug!("SIP {method} in a dialog: {err}");

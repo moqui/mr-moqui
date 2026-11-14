@@ -171,3 +171,86 @@ fn a_host_keeps_its_sticky_cookie_until_one_is_given() {
     }
     assert!(valid_cookie_name("moqui.session") && valid_cookie_name("__Host-sid"));
 }
+
+/// An edge member's link name on a front (plans/Edge-Node2.md §4.7): the first claim holds against another pairing and
+/// against a host name of the pairing's own, a member that comes back with another id takes it over, a member's new
+/// name replaces its old one, and a Configure or the System app cannot take or change it.
+#[test]
+fn a_link_name_is_one_members_and_no_host_name_takes_it() {
+    let facade = crate::testing::open();
+    pairing(&facade, "edge-pool", ACTIVE);
+    pairing(&facade, "local-b", ACTIVE);
+    pairing(&facade, "local-gone", "EdgeClientRevoked");
+    assert!(
+        claim_link_name(&facade, "Edge1.Example.com", "edge-pool", "edge-1")
+            .unwrap()
+            .changed
+    );
+    assert_eq!(
+        claim_link_name(&facade, "edge1.example.com", "edge-pool", "edge-1").unwrap(),
+        LinkClaim::default(),
+        "no change"
+    );
+    assert!(
+        claim_link_name(&facade, "edge2.example.com", "edge-pool", "edge-2")
+            .unwrap()
+            .changed
+    );
+    assert_eq!(
+        link_names(&facade).unwrap(),
+        vec![
+            LinkName {
+                host_name: "edge1.example.com".to_string(),
+                paired_node_id: "edge-pool".to_string(),
+                member_id: "edge-1".to_string(),
+            },
+            LinkName {
+                host_name: "edge2.example.com".to_string(),
+                paired_node_id: "edge-pool".to_string(),
+                member_id: "edge-2".to_string(),
+            },
+        ]
+    );
+    // another pairing's claim of it, as a link name or a host name, gets the generic refusal
+    let held = claim_link_name(&facade, "edge1.example.com", "local-b", "b-1").unwrap_err();
+    assert_eq!(held.message(), "edge1.example.com: another node has this name");
+    let held = add(&facade, &host("edge1.example.com", "local-b", HOST_PASSTHROUGH)).unwrap_err();
+    assert_eq!(held.message(), "edge1.example.com: another node has this name");
+    // the pairing's own Configure cannot make it a host name, nor a link name a host name it has
+    let own = add(&facade, &host("edge1.example.com", "edge-pool", HOST_TERMINATE)).unwrap_err();
+    assert!(own.message().contains("link name of a member"), "{own}");
+    add(&facade, &host("www.example.com", "edge-pool", HOST_TERMINATE)).unwrap();
+    let site = claim_link_name(&facade, "www.example.com", "edge-pool", "edge-1").unwrap_err();
+    assert!(site.message().contains("not a link name"), "{site}");
+    // a member back with another instance id takes the name; a member's new name replaces its old one
+    assert_eq!(
+        claim_link_name(&facade, "edge2.example.com", "edge-pool", "edge-2b").unwrap(),
+        LinkClaim {
+            changed: true,
+            moved_from: Some("edge-2".to_string())
+        }
+    );
+    assert!(
+        claim_link_name(&facade, "edge-one.example.com", "edge-pool", "edge-1")
+            .unwrap()
+            .changed
+    );
+    let names: Vec<(String, String)> = link_names(&facade)
+        .unwrap()
+        .into_iter()
+        .map(|name| (name.host_name, name.member_id))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            ("edge-one.example.com".to_string(), "edge-1".to_string()),
+            ("edge2.example.com".to_string(), "edge-2b".to_string()),
+        ]
+    );
+    assert!(claim_link_name(&facade, "edge3.example.com", "local-gone", "g-1")
+        .unwrap_err()
+        .message()
+        .contains("revoked"));
+    assert!(claim_link_name(&facade, "a b", "edge-pool", "edge-1").is_err());
+    assert!(claim_link_name(&facade, "edge3.example.com", "edge-pool", " ").is_err());
+}

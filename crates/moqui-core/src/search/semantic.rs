@@ -122,6 +122,12 @@ pub struct SemanticConf {
     /// `llm:<modelId>` of that model; `hash` is [`HashEmbedder`], for development only. An
     /// application may install another with `SearchFacade::set_embedder`.
     pub embedder: Option<String>,
+    /// Text put before a query before it is embedded: the instruction a model was trained with
+    /// (`task: search result | query: ` for EmbeddingGemma). Empty for a model with none.
+    pub query_prefix: String,
+    /// Text put before a document or a ranked text before it is embedded (`title: none | text: `
+    /// for EmbeddingGemma). A change embeds stored documents again only when they are indexed again.
+    pub document_prefix: String,
 }
 
 impl Default for SemanticConf {
@@ -132,6 +138,8 @@ impl Default for SemanticConf {
             representation: "halfvec".to_string(),
             max_chars: 2000,
             embedder: None,
+            query_prefix: String::new(),
+            document_prefix: String::new(),
         }
     }
 }
@@ -169,6 +177,14 @@ impl SemanticConf {
             conf.representation = value;
         }
         conf.embedder = text("embedder");
+        // Kept as written: a prefix ends with the space its model expects.
+        let raw = |name: &str| {
+            node.attribute(name)
+                .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
+                .unwrap_or_default()
+        };
+        conf.query_prefix = raw("query-prefix");
+        conf.document_prefix = raw("document-prefix");
         if let Some(value) = text("max-chars") {
             conf.max_chars = value
                 .parse()
@@ -264,5 +280,14 @@ mod tests {
         assert!(conf.enabled);
         assert_eq!(conf.dimensions, 384);
         assert_eq!(conf.representation, "vector");
+        assert_eq!(conf.query_prefix, "");
+        let root = MNode::parse_text(
+            "search-facade",
+            r#"<search-facade><semantic query-prefix="task: search result | query: " document-prefix="title: none | text: "/></search-facade>"#,
+        )
+        .unwrap();
+        let conf = SemanticConf::from_conf(&root).unwrap();
+        assert_eq!(conf.query_prefix, "task: search result | query: ");
+        assert_eq!(conf.document_prefix, "title: none | text: ");
     }
 }

@@ -846,7 +846,8 @@ fn load_entity_files(
     let Some(facade) = conf.first_named("entity-facade") else {
         return Vec::new();
     };
-    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // a directory only built into the binary (moqui_lib::vfs) has no canonical path; its name is used
+    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| moqui_lib::vfs::normalize(path));
     let mut dirs: Vec<std::path::PathBuf> = vec![canonical(&framework_dir.join("entity"))];
     dirs.extend(component_entity_dirs.iter().map(|dir| canonical(dir)));
     let mut files: Vec<std::path::PathBuf> = Vec::new();
@@ -875,7 +876,7 @@ fn load_entity_files(
         } else {
             Some(std::path::PathBuf::from(&location))
         };
-        let Some(path) = path.filter(|path| path.is_file()) else {
+        let Some(path) = path.filter(|path| moqui_lib::vfs::is_file(path)) else {
             tracing::error!("Could not find the entity file of load-entity location {location}, not loading it");
             continue;
         };

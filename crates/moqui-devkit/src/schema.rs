@@ -151,8 +151,8 @@ fn xsd_stamp(dir: &Path) -> u64 {
             hash = hash.wrapping_mul(0x0100_0000_01b3);
         }
     };
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|read| read.flatten().map(|entry| entry.path()).collect())
+    let mut entries: Vec<PathBuf> = moqui_lib::vfs::read_dir(dir)
+        .map(|read| read.iter().map(moqui_lib::vfs::DirEntry::path).collect())
         .unwrap_or_default();
     entries.sort();
     for path in entries

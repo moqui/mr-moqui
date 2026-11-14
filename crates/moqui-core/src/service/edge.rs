@@ -99,6 +99,8 @@ fn put_edge(out: &mut BTreeMap<String, Value>, edge: &EdgeInfo) {
     out.insert("publicNames".to_string(), strings(&edge.public_names));
     out.insert("mediaAddress".to_string(), Value::string(&edge.media_address));
     out.insert("turnUrls".to_string(), strings(&edge.turn_urls));
+    // its role: a front node is kept as this node's front pairing (plans/Edge-Node2.md §4.7)
+    out.insert("edgeRole".to_string(), Value::string(&edge.role));
     out.insert("compatible".to_string(), Value::Bool(edge.compatible));
     out.insert("message".to_string(), Value::string(&edge.message));
 }
@@ -118,6 +120,15 @@ fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
     out.insert("nodeRole".to_string(), Value::string(role.as_str()));
     // any role takes links (plans/Edge-Node2.md §4.3): what a screen asks rather than the role's names
     out.insert("takesLinks".to_string(), Value::Bool(role.takes_links()));
+    // paired with a front node alone (plans/Edge-Node2.md §4.7), by what pairing wrote: the other node's role in the
+    // status is empty until its link first comes up
+    out.insert(
+        "frontOnly".to_string(),
+        Value::Bool(front_only(
+            &moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL),
+            &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_URL),
+        )),
+    );
     // a link installed with its HTTPS listener off serves no links: as with none started
     let Some(link) = crate::edge::link().ok().filter(|link| link.serving()) else {
         let built = crate::build_info::has_feature("edge") || crate::edge::link().is_ok();
@@ -156,6 +167,16 @@ fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
         })
         .collect();
     out.insert("edgeMemberList".to_string(), Value::List(members));
+    // its front pairing beside the edge pairing (plans/Edge-Node2.md §4.7); a node paired with a front alone shows it
+    // above as its only link too
+    if let Some(front) = link.front_status() {
+        out.insert("frontState".to_string(), Value::string(front.state.as_str()));
+        out.insert("frontUrl".to_string(), Value::string(&front.url));
+        out.insert("frontName".to_string(), Value::string(&front.peer.name));
+        out.insert("frontFingerprint".to_string(), Value::string(&front.peer.fingerprint));
+        out.insert("frontLastError".to_string(), Value::string(&front.last_error));
+        out.insert("frontLastConnectDate".to_string(), millis(front.last_connect));
+    }
     Ok(out)
 }
 
@@ -206,7 +227,94 @@ fn get_edge_cluster(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade
             Value::Map(row)
         })
         .collect();
-    Ok(BTreeMap::from([("memberList".to_string(), Value::List(members))]))
+    // the front node this node (and so its cluster, which shares its .env) is paired with (plans/Edge-Node2.md §4.10)
+    // from the front dialer when one runs, else from what pairing wrote (the link not serving, or its dialer not
+    // started)
+    let running = crate::edge::serving_link().and_then(|link| link.front_status());
+    let front = front_rows(
+        running.as_ref(),
+        &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_URL),
+        &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_ID),
+    );
+    Ok(BTreeMap::from([
+        ("memberList".to_string(), Value::List(members)),
+        ("frontList".to_string(), Value::List(front)),
+    ]))
+}
+
+/// Whether a node with `edge_url` (`edge_node_url`) and `front_url` (`front_node_url`) is paired with a front node
+/// alone.
+fn front_only(edge_url: &str, front_url: &str) -> bool {
+    edge_url.trim().is_empty() && !front_url.trim().is_empty()
+}
+
+/// `get#EdgeCluster`'s `frontList`: this node's link to each front node of its front pairing (plans/Edge-Node2.md
+/// §4.7), from `front` when a link serves (its link to each member of the front's cluster, else the one link), else
+/// from what pairing wrote, `url` (`front_node_url`) and `ids` (`front_node_id`), as one row `notStarted`; none without
+/// a front pairing.
+fn front_rows(front: Option<&crate::edge::LinkStatus>, url: &str, ids: &str) -> Vec<Value> {
+    struct Link<'a> {
+        instance_id: &'a str,
+        url: &'a str,
+        state: &'a str,
+        rtt_ms: Option<f64>,
+        last_connect: Option<i64>,
+        last_error: &'a str,
+    }
+    let row = |link: Link, peer: &EdgeInfo| {
+        let mut row = indexmap::IndexMap::default();
+        row.insert("instanceId".to_string(), Value::string(link.instance_id));
+        row.insert("url".to_string(), Value::string(link.url));
+        row.insert("state".to_string(), Value::string(link.state));
+        row.insert("rttMs".to_string(), link.rtt_ms.map_or(Value::Null, Value::F64));
+        row.insert("lastConnectDate".to_string(), millis(link.last_connect));
+        row.insert("lastError".to_string(), Value::string(link.last_error));
+        row.insert("frontName".to_string(), Value::string(&peer.name));
+        row.insert("fingerprint".to_string(), Value::string(&peer.fingerprint));
+        Value::Map(row)
+    };
+    match front {
+        Some(front) if front.members.is_empty() => vec![row(
+            Link {
+                instance_id: "",
+                url: &front.url,
+                state: front.state.as_str(),
+                rtt_ms: front.rtt_ms,
+                last_connect: front.last_connect,
+                last_error: &front.last_error,
+            },
+            &front.peer,
+        )],
+        Some(front) => front
+            .members
+            .iter()
+            .map(|member| {
+                row(
+                    Link {
+                        instance_id: &member.instance_id,
+                        url: &member.url,
+                        state: member.state.as_str(),
+                        rtt_ms: member.rtt_ms,
+                        last_connect: member.last_connect,
+                        last_error: &member.last_error,
+                    },
+                    &front.peer,
+                )
+            })
+            .collect(),
+        None if !url.trim().is_empty() => vec![row(
+            Link {
+                instance_id: ids.trim(),
+                url: url.trim(),
+                state: "notStarted",
+                rtt_ms: None,
+                last_connect: None,
+                last_error: "",
+            },
+            &EdgeInfo::default(),
+        )],
+        None => Vec::new(),
+    }
 }
 
 /// This node's cluster as `get#EdgeCluster` lists it with no link serving: this member's address is its
@@ -254,9 +362,14 @@ fn pair_edge_node(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
     Ok(out)
 }
 
-/// `unpair#EdgeNode`: revoke this node's key on the edge node and forget the link.
-fn unpair_edge_node(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    crate::edge::link()?.unpair()?;
+/// `unpair#EdgeNode`: revoke this node's key on the edge node and forget the link; with `front` true, its front
+/// pairing's (plans/Edge-Node2.md §4.7).
+fn unpair_edge_node(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    if flag(parameters, "front") {
+        crate::edge::link()?.unpair_front()?;
+    } else {
+        crate::edge::link()?.unpair()?;
+    }
     Ok(BTreeMap::new())
 }
 
@@ -787,15 +900,33 @@ fn host_value(host: &EdgeHostInfo) -> Value {
 }
 
 /// `get#EdgeHosts`: on a node that takes links, the public host names of the paired nodes (of one with
-/// `pairedNodeId`).
+/// `pairedNodeId`); an edge member's link name on a front (plans/Edge-Node2.md §4.7) with its `memberId`.
 fn get_edge_hosts(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     takes_links("host names")?;
     let node = text(parameters, "pairedNodeId");
     let hosts = crate::edge::hosts::list(facade, node.as_deref())?;
-    Ok(BTreeMap::from([(
-        "hostList".to_string(),
-        Value::List(hosts.iter().map(host_value).collect()),
-    )]))
+    let members: BTreeMap<String, String> = if hosts
+        .iter()
+        .any(|host| host.mode_enum_id == crate::edge::HOST_LINK_NAME)
+    {
+        crate::edge::hosts::link_names(facade)?
+            .into_iter()
+            .map(|name| (name.host_name, name.member_id))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    let rows = hosts
+        .iter()
+        .map(|host| {
+            let mut row = host_value(host);
+            if let (Value::Map(map), Some(member)) = (&mut row, members.get(&host.host_name)) {
+                map.insert("memberId".to_string(), Value::string(member));
+            }
+            row
+        })
+        .collect();
+    Ok(BTreeMap::from([("hostList".to_string(), Value::List(rows))]))
 }
 
 /// `add#EdgeHost`: on a node that takes links, a public host name for a paired node, passthrough unless `modeEnumId`

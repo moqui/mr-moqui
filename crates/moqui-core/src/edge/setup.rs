@@ -163,10 +163,11 @@ pub fn remember_ssh(factory: &ExecutionContextFactory, ssh: &SshOffer) {
 }
 
 /// The host and port git clients reach this node's SSH server at through its edge node, as last offered, while this
-/// node is paired (`edge_node_url` set): what clone URLs name when `ssh_public_host` and `ssh_public_port` are not set
-/// (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
+/// node is paired (`edge_node_url` or `front_node_url` set): what clone URLs name when `ssh_public_host` and
+/// `ssh_public_port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
 pub fn ssh_address(factory: &ExecutionContextFactory) -> Option<(String, u16)> {
-    if moqui_lib::env::get_prop_or_env(super::NODE_URL).trim().is_empty() {
+    let paired = |name: &str| !moqui_lib::env::get_prop_or_env(name).trim().is_empty();
+    if !paired(super::NODE_URL) && !paired(super::FRONT_URL) {
         return None;
     }
     lock(&factory.extension(|_| SshAddress::default()).0).clone()

@@ -82,7 +82,7 @@ pub fn framework_dir(runtime: &Path) -> PathBuf {
 }
 
 /// Whether `dir` is a runtime: it has the base set's directory. A directory test, not the framework's `component.xml`,
-/// so a runtime whose framework is missing is still found and the built-in files refill it.
+/// so a runtime whose framework is missing is still found and reads the built-in files in its place.
 #[must_use]
 pub fn is_runtime(dir: &Path) -> bool {
     set_dir(dir, Set::Base).is_dir()
@@ -100,13 +100,14 @@ pub fn set_of(runtime: &Path, dir: &Path) -> Option<Set> {
 pub fn component_dirs(runtime: &Path, sets: &[Set]) -> Vec<(Set, PathBuf)> {
     let mut found = Vec::new();
     for set in sets {
-        let Ok(entries) = std::fs::read_dir(set_dir(runtime, *set)) else {
+        // with the components built into the binary that are not on disk (moqui_lib::vfs)
+        let Ok(entries) = moqui_lib::vfs::read_dir(set_dir(runtime, *set)) else {
             continue;
         };
         let mut dirs: Vec<PathBuf> = entries
-            .flatten()
+            .into_iter()
+            .filter(moqui_lib::vfs::DirEntry::is_dir)
             .map(|entry| entry.path())
-            .filter(|dir| dir.is_dir())
             .collect();
         dirs.sort();
         found.extend(dirs.into_iter().map(|dir| (*set, dir)));

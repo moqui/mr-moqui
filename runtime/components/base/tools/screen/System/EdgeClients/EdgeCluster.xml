@@ -21,7 +21,11 @@ along with this software (see the LICENSE.md file). If not, see
     live ones with their addresses, and the local node links to each. A live member with no usable address (none, or not
     an https URL with a host) is reached only at the address the local nodes paired with, so with more than one live
     member the page warns and names it; a single edge node needs none. Read only: edge_link_url is each member's own
-    property, set in its conf or .env. A front node before the cluster is E19's. -->
+    property, set in its conf or .env. Front node (plans/Edge-Node2.md §4.7, §4.10; get#EdgeCluster frontList): the
+    front node this node is paired with, which every member dials with the shared .env, with this node's link to each
+    of the front's members, its state, round trip, last connect and last error; Unpair front is on Edge Node. On a node
+    with the edge set and no front pairing, one line in Members says how to pair with one; a front node dials none, so it has no such
+    box. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge cluster" default-menu-index="5">
 
@@ -31,6 +35,12 @@ along with this software (see the LICENSE.md file). If not, see
         clusterError = ''
         noAddressText = ''
         singleNoAddress = false
+        frontList = []
+        hasFront = false
+        front = {}
+        // a front node (the parent's frontNode) has the front set alone and dials no other node (plans/Edge-Node2.md §4.7)
+        frontRole = frontNode === true
+        pairsFront = false
         if (!isEdge) return
         let out = {}
         // a probe (Practices-App-Dev §4): a failure is shown on the page rather than failing it
@@ -66,6 +76,23 @@ along with this software (see the LICENSE.md file). If not, see
         // a single edge node is dialed at the address its local nodes paired with: it needs no edge_link_url
         if (live.length > 1) noAddressText = noAddress.join(', ')
         else singleNoAddress = noAddress.length > 0
+        // the front node it is paired with: the link to each of the front's members, from the shared .env on every member
+        const states = {connecting: [L('Connecting'), 'info'], linked: [L('Linked'), 'positive'], retrying: [L('Retrying'), 'warning'],
+            refused: [L('Refused'), 'negative'], unpaired: [L('Unpaired'), 'grey'], notStarted: [L('Not started here'), 'grey']}
+        const fronts = Array.from(out.frontList || [])
+        hasFront = fronts.length > 0
+        pairsFront = !hasFront && !frontRole
+        front = hasFront ? {name: fronts[0].frontName || fronts[0].url || L('Front node'),
+            fingerprint: fronts[0].fingerprint || ''} : {}
+        frontList = fronts.map((link) => {
+            const [stateLabel, stateColor] = states[link.state] || [link.state || '', 'grey']
+            // front_node_id, where no front link runs, is the set of the front's member ids
+            const ids = String(link.instanceId || '').split(',').map((id) => id.trim()).filter((id) => id).join(', ')
+            return {instanceId: ids || L('Not known yet'), url: link.url || '', stateLabel, stateColor,
+                rttText: link.rttMs != null ? ec.l10n.format(link.rttMs, '#,##0.0') + ' ms' : '',
+                lastConnectText: link.lastConnectDate ? ec.l10n.format(link.lastConnectDate, '') : L('Not yet'),
+                lastError: link.state !== 'linked' ? link.lastError || '' : ''}
+        })
     ]]></script></actions>
     <widgets>
         <section name="ClusterError" condition="clusterError"><widgets>
@@ -82,7 +109,15 @@ along with this software (see the LICENSE.md file). If not, see
         </widgets></section>
 
         <container-box><box-header title="Members"/><box-body-nopad>
-            <label type="p" style="m-muted q-pa-sm q-mb-none" text="Edge nodes on one database with one .env, so one link key, that each take links. Every member's answer to a local node lists the live ones with their link addresses, and the local node links to each and takes work from each; Clients shows the links to this member. Without a front node, publish an address record, an MX record and the SRV records for each member."/>
+            <section name="FrontMembersText" condition="frontRole"><widgets>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="Front nodes on one database with one .env, so one link key, that each take links. A node behind them pairs once and links to every live member at its link address. Each needs the address records of the names it answers."/>
+            </widgets></section>
+            <section name="EdgeMembersText" condition="!frontRole"><widgets>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="Edge nodes on one database with one .env, so one link key, that each take links. Every member's answer to a local node lists the live ones with their link addresses, and the local node links to each and takes work from each; Clients shows the links to this member. Without a front node, publish an address record, an MX record and the SRV records for each member."/>
+            </widgets></section>
+            <section name="NoFront" condition="pairsFront"><widgets>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No front node. Behind one (conf/full-stack), pair a member with it on Edge Node and copy the front_node lines of its .env to the other members."/>
+            </widgets></section>
             <section name="SingleNoAddress" condition="singleNoAddress"><widgets>
                 <label type="p" style="m-muted q-pa-sm q-mb-none" text="One member: local nodes dial it at the address they paired with, so it needs no link address. Set edge_link_url on each member before a second one starts."/>
             </widgets></section>
@@ -101,5 +136,30 @@ along with this software (see the LICENSE.md file). If not, see
                 </columns>
             </form-list>
         </box-body-nopad></container-box>
+
+        <section name="Front" condition="hasFront"><widgets>
+            <container-box><box-header title="Front node"/><box-toolbar>
+                <link url="../../EdgeNode" text="Edge node" icon="sym_o_cloud_sync"/>
+            </box-toolbar><box-body-nopad>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="${front.name}: this node and every other member of its cluster dial it with the shared .env, as one pairing there, and give it the names they serve. The front balances them over the live members and passes each member's own link name through to it. Media, TURN and SIP are not through the front: they are at each member's own address. Unpair front is on Edge Node."/>
+                <section name="FrontFingerprint" condition="front.fingerprint"><widgets>
+                    <label type="p" style="m-muted q-pa-sm q-mb-none text-caption" text="Link key fingerprint ${front.fingerprint}"/>
+                </widgets></section>
+                <form-list name="FrontList" list="frontList" skip-form="true" paginate="false">
+                    <field name="instanceId"><default-field title="Front member"><display style="text-weight-medium"/></default-field></field>
+                    <field name="state"><default-field title="This node's link">
+                        <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
+                    </default-field></field>
+                    <field name="url"><default-field title="Address" tooltip="front_node_url, or the front member's own link address"><display/></default-field></field>
+                    <field name="rttText" align="right"><default-field title="Round trip"><display/></default-field></field>
+                    <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
+                    <field name="lastError"><default-field title="Last error"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="instanceId"/><field-ref name="url"/></column>
+                        <column><field-ref name="state"/><field-ref name="lastError"/></column>
+                    </columns>
+                </form-list>
+            </box-body-nopad></container-box>
+        </widgets></section>
     </widgets>
 </screen>

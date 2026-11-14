@@ -120,7 +120,9 @@ OS_DIR=$RUNTIME_DIR/opensearch
 CHROMIUM_DIR=$RUNTIME_DIR/chromium
 ADDONS=$ROOT/addons.xml
 MYADDONS=$ROOT/myaddons.xml
-OPENSEARCH_VERSION=3.4.0
+# The OpenSearch version, which an embed-opensearch build embeds too: .cargo/config.toml has it.
+OPENSEARCH_VERSION=$(sed -n 's/^MOQUI_OPENSEARCH_VERSION = { value = "\([0-9.]*\)".*/\1/p' "$ROOT/.cargo/config.toml" 2>/dev/null)
+[ -n "$OPENSEARCH_VERSION" ] || OPENSEARCH_VERSION=3.4.0
 CHROMIUM_SNAPSHOTS=https://commondatastorage.googleapis.com/chromium-browser-snapshots
 PRODUCTION_CONF=conf/MoquiProductionConf.xml
 
@@ -154,10 +156,10 @@ clean-db|Database||Delete the embedded database, txlog, and OpenSearch data
 clean-log|Database||Delete the files in runtime/log
 clean-all|Database||clean-db, clean-log, runtime/tmp, and tidy-cargo (old artifacts; the latest build stays)
 tidy-cargo|Database||Delete old cargo artifacts in target/, keeping the latest build
-opensearch-download|OpenSearch|[version] [-f]|Download OpenSearch into runtime/opensearch
+opensearch-download|OpenSearch|[version] [-f] [--cache-only]|Download OpenSearch into runtime/opensearch and the embed cache
 opensearch-start|OpenSearch||Start runtime/opensearch as a daemon with a pid file
 opensearch-stop|OpenSearch||Stop the runtime/opensearch daemon
-chromium-download|Chromium|[revision] [--latest]|Download Chromium into runtime/chromium, for PDF and the browser tests
+chromium-download|Chromium|[revision] [--latest] [--cache-only]|Download Chromium into runtime/chromium (PDF, browser tests) and the embed cache
 git|Git|<git args...>|Run a git command in the root repo and each component repo
 git-status|Git|[-s]|Branch, tracking, ahead/behind, and changes in each repo
 git-pull|Git|[git pull args...]|Pull each repo and list the new commits
@@ -165,7 +167,7 @@ component-get|Components|[name...] [-t type] [-r repo]|Get components or compone
 component-depends|Components|[-t type] [-r repo]|Get missing depends-on components for runtime/components/addon
 component-create|Components|<name> [opts]|Create a component from the component template
 component-zip|Components|[name...]|Zip components in runtime/components/addon
-archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml (mr-moqui-YYYYMMDD.zip)
+archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml, or --binary: the binary alone with the runtime built in
 desktop|Package|[dev or build] [--release] [cargo args...]|Run or bundle the desktop app: the node in a Tauri window (crates/moqui-desktop)
 android|Package|[emulator, init, dev or build] [--release] [--window] [args...]|Run or build the Android app, or start its emulator (crates/moqui-mobile)
 completion|Setup|[bash or zsh] [--install]|Print or install shell completion
@@ -587,7 +589,15 @@ PACKAGE_OPTIONS_HELP='      --lite           The Lite package, target/lite/moqui
       --enterprise     The Enterprise package, target/enterprise/moqui (every feature, databases external).
                        docs/Build-Test.md lists the features of each'
 
-RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP"'
+EMBED_OPTIONS_HELP='      --embed LEVEL    The runtime built into the binary (docs/Build-Test.md, Embedded runtime and programs):
+                       framework (the default: framework, tools, a webroot stub and the confs),
+                       production (every base and add-on component less its tests and plans, the file
+                       set of ./moq archive), or all (with tests, plans and the dev and test sets)
+      --embed-opensearch  Build in OpenSearch (Linux), unpacked into install/ on its first start
+      --embed-chromium    Build in Chromium for PDF, unpacked into install/ when no other comes first'
+
+RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP
+$EMBED_OPTIONS_HELP"'
   -c, --conf FILE      Runtime conf merged over MoquiDefaultConf.xml (sets MOQUI_CONF); relative to
                        the runtime directory, like conf/MoquiProductionConf.xml, or a path
   -p, --port N         HTTP port (webapp_http_port)
@@ -630,8 +640,16 @@ is not on the PATH, moq warns, says how to install it, and builds without it. A 
 directory and size are sccache's own settings, SCCACHE_DIR and SCCACHE_CACHE_SIZE
 (docs/Build-Test.md, Compile cache).
 
+A binary can carry more than the framework: --embed production builds in every component of the
+runtime that ./moq archive would put in, so the binary alone (gzipped, ./moq archive --binary) is
+the deployment, and --embed-opensearch and --embed-chromium build in those programs, which unpack
+into install/ and run as their own processes, as the embedded Postgres does. Their archives come
+from the cache ./moq opensearch-download and ./moq chromium-download fill (got when missing).
+  ./moq build --embed production --embed-opensearch --embed-chromium
+
 Options:
 $PACKAGE_OPTIONS_HELP
+$EMBED_OPTIONS_HELP
       --               End of moq options; the rest goes to cargo
 EOF
 }
@@ -958,11 +976,13 @@ code does not recompile.
 
 Cargo names a unit's files with a hash of the compiler, the profile, the features, and the
 dependency graph. The hash changes when one of those changes, and cargo leaves the previous
-files in place. Repeated builds fill target/debug/deps and target/debug/incremental with those
-old copies. rustc already drops old incremental sessions inside one of those directories; this
-removes the directories for hashes the current build does not use. A build script's run
-fingerprint does not record the profile or the features, so each run that a kept library names
-stays, along with its output under build/.
+files in place. Repeated builds fill target/debug/build/<package> (target/debug/deps before Cargo
+1.100) and target/debug/incremental with those old copies. rustc already drops old incremental
+sessions inside one of those directories; this removes the directories for hashes the current
+build does not use. Cargo 1.100 and later do not read the earlier layout (.fingerprint, deps), so
+it goes once a profile has been built in the new one. A build script's run fingerprint does not
+record the profile or the features, so each run that a kept library names stays, along with its
+output under build/.
 
 It does not remove a package's binary (target/<profile>/moqui) or target/moqui-app. A cargo build
 that is running is left alone. load-save does not run this.
@@ -972,11 +992,18 @@ EOF
 help_opensearch_download() {
     cat <<EOF
 Downloads opensearch-min for Linux (x64 or arm64) into runtime/opensearch. The version
-defaults to $OPENSEARCH_VERSION. An archive already in runtime/ is used instead of downloading.
-OpenSearch publishes no macOS tarball; on macOS run it another way and set elasticsearch_url.
+defaults to $OPENSEARCH_VERSION (.cargo/config.toml, MOQUI_OPENSEARCH_VERSION). The download is
+checked against the SHA-512 OpenSearch publishes beside it. An archive already in runtime/ is used
+instead of downloading. OpenSearch publishes no macOS tarball; on macOS run it another way and set
+elasticsearch_url.
+
+The archive is kept in $(embed_cache_dir)
+(MOQUI_EMBED_CACHE moves it), where an --embed-opensearch build (./moq build --embed-opensearch)
+finds it; with --cache-only it only goes there, and runtime/opensearch is left alone.
 
 Options:
   -f, --force          Replace an existing runtime/opensearch, deleting its data
+      --cache-only     Only put the archive in the cache, for an --embed-opensearch build
 EOF
 }
 
@@ -1008,8 +1035,13 @@ uses (nss, nspr, expat, and the like), as the distro chromium package does. Wher
 unprivileged user namespaces (Ubuntu 23.10 and later) Chromium cannot start its sandbox without an
 AppArmor profile for runtime/chromium/chrome; this task prints how to add one, which needs sudo.
 
+The snapshot, repacked as a gzipped tar, is kept in the cache an --embed-chromium build (./moq
+build --embed-chromium) takes it from, with its revision beside it (MOQUI_EMBED_CACHE moves it);
+with --cache-only it only goes there, and runtime/chromium is left alone.
+
 Options:
       --latest         The newest snapshot (tip of tree) instead of the Stable position
+      --cache-only     Only put the archive in the cache, for an --embed-chromium build
 EOF
 }
 
@@ -1025,7 +1057,7 @@ build puts the Maximal binary in the bundle. It first writes target/moqui-app, t
 the framework and the component crates, which the app depends on. It needs the Tauri CLI of the same
 version, from cargo:
 
-    cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+    cargo install tauri-cli --version 3.0.0-alpha.6 --locked
 
 The first build downloads CEF (about 1 GB) into the tauri-cef cache (CEF_PATH to use another).
 dev runs on this repository's runtime (MOQUI_RUNTIME to use another); a bundled app keeps its
@@ -1087,7 +1119,7 @@ Other arguments go to the Tauri CLI. The Android SDK is ANDROID_HOME, else ~/And
 else the javac on the PATH (scripts/android-env.sh). It needs the Tauri CLI of the desktop app
 and the Rust targets:
 
-    cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+    cargo install tauri-cli --version 3.0.0-alpha.6 --locked
     rustup target add x86_64-linux-android aarch64-linux-android
 
 The Gradle project downloads Gradle, the Android Gradle plugin and the SDK platform it compiles
@@ -1239,8 +1271,19 @@ or tar and gzip.
   ./moq archive --release /backups/shop.zip
   ./moq archive --tgz --no-data dist/
 
+With --binary it writes the binary alone instead, gzipped (moqui-YYYYMMDD.gz), built with the same
+file set inside it (--embed production, or --embed all with --with-tests or --with-dev), and beside
+it moqui-YYYYMMDD.sha256: the checksums of the parts built in (moqui embedded checksum) and of the
+.gz. Unpacked into an empty directory, ./moqui runs from the runtime built in, unpacking Postgres
+(and OpenSearch and Chromium with --embed-opensearch and --embed-chromium) into install/ when first
+needed; the .sha256 put there as embedded.sha256 makes it check itself at startup and refuse to
+start when a part differs (docs/Run-Deploy.md, Deploy a single binary).
+  ./moq archive --binary --embed-opensearch --embed-chromium dist/
+
 Options:
 $PACKAGE_OPTIONS_HELP
+$EMBED_OPTIONS_HELP
+      --binary         The binary alone, gzipped, with the runtime built in, and its checksums
       --nobuild        Skip the build that runs first. A binary that is not there is still built
   -c, --conf FILE      The conf put in the archive as MoquiConf.xml (default
                        conf/MoquiProductionConf.xml); relative to the runtime directory, or a path
@@ -1276,6 +1319,11 @@ help_help() {
 
 # Set by parse_run_opts.
 OPT_PACKAGE=
+# Set by the --embed options (set_embed_opt) of build, run and archive: the level of the runtime built in, and the
+# programs built in.
+OPT_EMBED=
+OPT_EMBED_OPENSEARCH=
+OPT_EMBED_CHROMIUM=
 OPT_CONF=
 OPT_NOBUILD=
 OPT_LOCATION=
@@ -1305,9 +1353,12 @@ add_property() {
 # "test" (like load, but options moq does not know go to the binary, as moqui test's own --spec, --db, ...).
 # Everything else lands in OPT_REST.
 parse_run_opts() {
-    local mode=$1 arg
+    local mode=$1 arg took
     shift
     OPT_PACKAGE=
+    OPT_EMBED=
+    OPT_EMBED_OPENSEARCH=
+    OPT_EMBED_CHROMIUM=
     OPT_CONF=
     OPT_NOBUILD=
     OPT_LOCATION=
@@ -1315,6 +1366,12 @@ parse_run_opts() {
     OPT_REST=()
     while [ $# -gt 0 ]; do
         arg=$1
+        took=$(set_embed_opt "$@") || exit 1
+        if [ -n "$took" ]; then
+            set_embed_opt "$@" >/dev/null
+            shift "$took"
+            continue
+        fi
         case $arg in
             --lite) set_package lite ;;
             --debug) set_package debug ;;
@@ -1433,6 +1490,105 @@ set_package() {
     OPT_PACKAGE=$1
 }
 
+# An --embed option of build, run or archive: $1 is the option, $2 the word after it. Sets OPT_EMBED,
+# OPT_EMBED_OPENSEARCH or OPT_EMBED_CHROMIUM and prints how many words it took (1 or 2); prints nothing when $1 is not
+# one. Called in a subshell for the count and again for the setting.
+set_embed_opt() {
+    local level
+    case $1 in
+        --embed)
+            [ $# -ge 2 ] || die "--embed needs a level: framework, production or all"
+            level=$2
+            ;;
+        --embed=*) level=${1#--embed=} ;;
+        --embed-opensearch)
+            OPT_EMBED_OPENSEARCH=1
+            echo 1
+            return
+            ;;
+        --embed-chromium)
+            OPT_EMBED_CHROMIUM=1
+            echo 1
+            return
+            ;;
+        *) return ;;
+    esac
+    case $level in
+        framework | production | all) ;;
+        *) die "--embed takes framework, production or all, not '$level'" ;;
+    esac
+    [ -z "$OPT_EMBED" ] || [ "$OPT_EMBED" = "$level" ] || die "--embed $OPT_EMBED and --embed $level ask for two levels"
+    OPT_EMBED=$level
+    case $1 in --embed) echo 2 ;; *) echo 1 ;; esac
+}
+
+# The cargo features the --embed options add, each after a comma.
+embed_features() {
+    case $OPT_EMBED in
+        production) printf ',embed-production' ;;
+        all) printf ',embed-all' ;;
+    esac
+    [ -z "$OPT_EMBED_OPENSEARCH" ] || printf ',embed-opensearch'
+    [ -z "$OPT_EMBED_CHROMIUM" ] || printf ',embed-chromium'
+}
+
+# Where the program archives a build embeds are kept, as crates/moqui-embedded/build.rs finds them: MOQUI_EMBED_CACHE,
+# else moqui/embed in the user's cache directory.
+embed_cache_dir() {
+    if [ -n "${MOQUI_EMBED_CACHE:-}" ]; then
+        printf '%s\n' "$MOQUI_EMBED_CACHE"
+    elif moq_on_windows && [ -n "${LOCALAPPDATA:-}" ]; then
+        printf '%s\n' "$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || printf '%s' "$LOCALAPPDATA")/moqui/embed"
+    else
+        printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/moqui/embed"
+    fi
+}
+
+# The Rust target of this host, which names the archives in the cache: rustc's, else from uname.
+embed_host_target() {
+    local target
+    target=$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')
+    if [ -z "$target" ]; then
+        case $(uname -s)/$(uname -m) in
+            Linux/x86_64 | Linux/amd64) target=x86_64-unknown-linux-gnu ;;
+            Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-gnu ;;
+            Darwin/arm64 | Darwin/aarch64) target=aarch64-apple-darwin ;;
+            Darwin/x86_64) target=x86_64-apple-darwin ;;
+            *) die "no Rust target known for $(uname -s) $(uname -m)" ;;
+        esac
+    fi
+    printf '%s\n' "$target"
+}
+
+# What the --embed options need before cargo runs: the OpenSearch and Chromium archives in the cache (downloaded when
+# missing, unless MOQUI_OPENSEARCH_ARCHIVE or MOQUI_CHROMIUM_ARCHIVE names one), and for the production and all levels
+# the runtime to pack (MOQUI_EMBED_RUNTIME) and its component directories (MOQUI_EMBED_COMPONENTS), so a component added
+# since the last build is packed.
+prepare_embed() {
+    local cache='' target=''
+    if [ -n "$OPT_EMBED_OPENSEARCH" ] || [ -n "$OPT_EMBED_CHROMIUM" ]; then
+        cache=$(embed_cache_dir)
+        target=$(embed_host_target) || exit 1
+    fi
+    if [ -n "$OPT_EMBED_OPENSEARCH" ] && [ -z "${MOQUI_OPENSEARCH_ARCHIVE:-}" ] &&
+        [ ! -f "$cache/opensearch-$OPENSEARCH_VERSION-$target.tar.gz" ]; then
+        info "The OpenSearch archive to embed is not in $cache yet; getting it" >&2
+        (task_opensearch_download --cache-only) >&2 || die "could not get the OpenSearch archive"
+    fi
+    if [ -n "$OPT_EMBED_CHROMIUM" ] && [ -z "${MOQUI_CHROMIUM_ARCHIVE:-}" ] &&
+        [ ! -f "$cache/chromium-$target.tar.gz" ]; then
+        info "The Chromium archive to embed is not in $cache yet; getting it" >&2
+        (task_chromium_download --cache-only) >&2 || die "could not get the Chromium archive"
+    fi
+    case $OPT_EMBED in
+        production | all)
+            MOQUI_EMBED_RUNTIME=$RUNTIME_DIR
+            MOQUI_EMBED_COMPONENTS=$(cd "$RUNTIME_DIR/components" 2>/dev/null && ls -d -- */*/ 2>/dev/null | tr '\n' ' ')
+            export MOQUI_EMBED_RUNTIME MOQUI_EMBED_COMPONENTS
+            ;;
+    esac
+}
+
 binary_path() {
     local name=moqui
     if moq_on_windows; then
@@ -1450,9 +1606,10 @@ build_binary() {
     shift
     need_cargo
     [ "$package" = enterprise ] || ensure_pg_archive
+    prepare_embed
     local -a package_args
     package_args=(--profile "$(package_profile "$package")" --no-default-features
-        --features "$(package_features "$package")")
+        --features "$(package_features "$package")$(embed_features)")
     local -a addons
     local addon
     while IFS= read -r addon; do addons+=("$addon"); done \
@@ -1598,6 +1755,10 @@ lite = [\"moqui-host/lite\", \"tui\"]
 enterprise = [\"moqui-host/enterprise\", \"tui\"]
 maximal = [\"moqui-host/maximal\", \"tui\"]
 inbound-smtp = [\"moqui-host/inbound-smtp\"]
+embed-production = [\"moqui-host/embed-production\"]
+embed-all = [\"moqui-host/embed-all\"]
+embed-opensearch = [\"moqui-host/embed-opensearch\"]
+embed-chromium = [\"moqui-host/embed-chromium\"]
 tui = [\"moqui-host/tui\"${tui_features}]
 devtools = [\"moqui-host/devtools\"${devtools_features}]
 
@@ -1607,7 +1768,7 @@ moqui-core = { path = \"$ROOT/crates/moqui-core\", default-features = false }
 ${deps}
 # The global allocator, as crates/moqui has it (src/main.rs); not on MSVC.
 [target.'cfg(not(target_env = \"msvc\"))'.dependencies]
-tikv-jemallocator = \"0.6\"
+tikv-jemallocator = \"0.7\"
 
 # Its own workspace: not a member of the repository's.
 [workspace]
@@ -1691,9 +1852,19 @@ apply_run_env() {
 
 task_build() {
     local -a cargo_args
+    local took
     cargo_args=()
     OPT_PACKAGE=
+    OPT_EMBED=
+    OPT_EMBED_OPENSEARCH=
+    OPT_EMBED_CHROMIUM=
     while [ $# -gt 0 ]; do
+        took=$(set_embed_opt "$@") || exit 1
+        if [ -n "$took" ]; then
+            set_embed_opt "$@" >/dev/null
+            shift "$took"
+            continue
+        fi
         case $1 in
             --lite) set_package lite ;;
             --debug) set_package debug ;;
@@ -1712,7 +1883,7 @@ task_build() {
 }
 
 # The Tauri CLI version the desktop app is built with: the tauri crate's version in crates/moqui-desktop/Cargo.toml.
-TAURI_CLI_VERSION=3.0.0-alpha.5
+TAURI_CLI_VERSION=3.0.0-alpha.6
 # Where the AppImage step gets the helper sources quick-sharun.sh compiles in (task_desktop).
 ANYLINUX_APPIMAGES_LIB=https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/df9cd3246ccbcf61eb22fc321a52277351047b4b/useful-tools/lib
 
@@ -2819,10 +2990,11 @@ task_opensearch_stop() {
 }
 
 task_opensearch_download() {
-    local version=$OPENSEARCH_VERSION force='' arch name url archive work top pid
+    local version=$OPENSEARCH_VERSION force='' cache_only='' arch name url archive work top pid cache cached
     while [ $# -gt 0 ]; do
         case $1 in
             -f | --force) force=1 ;;
+            --cache-only) cache_only=1 ;;
             -*) die "unknown option $1" ;;
             *) version=$1 ;;
         esac
@@ -2838,7 +3010,7 @@ task_opensearch_download() {
         aarch64 | arm64) arch=arm64 ;;
         *) die "no OpenSearch tarball for $(uname -m)" ;;
     esac
-    if [ -e "$OS_DIR" ]; then
+    if [ -z "$cache_only" ] && [ -e "$OS_DIR" ]; then
         if pid=$(opensearch_pid); then
             die "OpenSearch is running in $(rel "$OS_DIR") (pid $pid); ./moq opensearch-stop first"
         fi
@@ -2847,14 +3019,29 @@ task_opensearch_download() {
     need_tool curl tar
     name=opensearch-min-$version-linux-$arch.tar.gz
     url=https://artifacts.opensearch.org/releases/core/opensearch/$version/$name
+    # kept in the cache an --embed-opensearch build embeds from (crates/moqui-embedded/build.rs)
+    cache=$(embed_cache_dir)
+    cached=$cache/opensearch-$version-$(embed_host_target).tar.gz || exit 1
     archive=$RUNTIME_DIR/$name
-    if [ -f "$archive" ]; then
-        info "Using $(rel "$archive")"
+    if [ -f "$cached" ]; then
+        info "Using $cached"
     else
-        info "Downloading $url"
-        run_cmd curl -fL --progress-bar -o "$archive.part" "$url" || die "download failed"
-        run_cmd mv "$archive.part" "$archive"
+        run_cmd mkdir -p "$cache" || die "could not make $cache"
+        if [ -f "$archive" ]; then
+            info "Using $(rel "$archive")"
+            run_cmd mv "$archive" "$cached.part" || die "could not move $(rel "$archive") to $cache"
+        else
+            info "Downloading $url"
+            run_cmd curl -fL --progress-bar -o "$cached.part" "$url" || die "download failed"
+        fi
+        verify_published_sha512 "$cached.part" "$url.sha512"
+        run_cmd mv "$cached.part" "$cached" || die "could not move the archive into $cache"
     fi
+    if [ -n "$cache_only" ]; then
+        info "OpenSearch $version is in $cached, for an --embed-opensearch build"
+        return 0
+    fi
+    archive=$cached
     rm_path "$OS_DIR"
     if dry_run; then
         show_cmd tar -xzf "$archive" -C "<temp>"
@@ -2878,8 +3065,29 @@ task_opensearch_download() {
         rmdir "$work"
         mkdir -p "$OS_DIR/logs"
     fi
-    rm_path "$archive"
-    info "OpenSearch $version is in $(rel "$OS_DIR")"
+    info "OpenSearch $version is in $(rel "$OS_DIR"); its archive stays in $cache for an --embed-opensearch build"
+}
+
+# Check the file $1 against the SHA-512 published at the url $2 (a sha512sum line), which OpenSearch publishes beside
+# each tarball; the file is removed and the task stops when it differs. When none can be read, warn and go on.
+verify_published_sha512() {
+    local file=$1 url=$2 expected actual
+    dry_run && return 0
+    expected=$(curl -fsSL --max-time 60 "$url" 2>/dev/null | awk '{print tolower($1); exit}')
+    if [ -z "$expected" ]; then
+        warn "could not read $url; the archive is not checked"
+        return 0
+    fi
+    if command -v sha512sum >/dev/null 2>&1; then
+        actual=$(sha512sum "$file" | awk '{print $1}')
+    else
+        actual=$(shasum -a 512 "$file" | awk '{print $1}')
+    fi
+    if [ "$actual" != "$expected" ]; then
+        rm -f -- "$file"
+        die "the download does not match its published SHA-512 ($url)"
+    fi
+    info "Checked against $url"
 }
 
 # ========== Chromium ==========
@@ -2932,10 +3140,11 @@ EOF
 }
 
 task_chromium_download() {
-    local revision='' latest='' plat dash zip name url archive work top
+    local revision='' latest='' cache_only='' plat dash zip name url archive work top cache cached
     while [ $# -gt 0 ]; do
         case $1 in
             --latest) latest=1 ;;
+            --cache-only) cache_only=1 ;;
             -*) die "unknown option $1" ;;
             *[!0-9]* | '') die "a revision is a snapshot number, like 1697588, not $1" ;;
             *) revision=$1 ;;
@@ -2960,7 +3169,11 @@ task_chromium_download() {
             ;;
         *) die "no Chromium snapshot for $(uname -s) $(uname -m); install Chromium another way and set moqui_chromium_path" ;;
     esac
-    need_tool curl unzip
+    need_tool curl unzip tar gzip
+    # The snapshot repacked as a gzipped tar (modes and the macOS app's links kept) is kept in the cache an
+    # --embed-chromium build embeds from (crates/moqui-embedded/build.rs), with its revision beside it.
+    cache=$(embed_cache_dir)
+    cached=$cache/chromium-$(embed_host_target).tar.gz || exit 1
     if [ -z "$revision" ]; then
         if [ -n "$latest" ]; then
             revision=$(curl -fsS --max-time 60 "$CHROMIUM_SNAPSHOTS/$plat/LAST_CHANGE" | tr -cd '0-9')
@@ -2979,10 +3192,11 @@ task_chromium_download() {
         run_cmd curl -fL --progress-bar -o "$archive.part" "$url" || die "download failed"
         run_cmd mv "$archive.part" "$archive"
     fi
-    rm_path "$CHROMIUM_DIR"
+    [ -n "$cache_only" ] || rm_path "$CHROMIUM_DIR"
     if dry_run; then
         show_cmd unzip -q "$archive" -d "<temp>"
-        show_cmd mv "<temp>/${zip%.zip}" "$CHROMIUM_DIR"
+        show_cmd tar -czf "$cached" -C "<temp>" "${zip%.zip}"
+        [ -n "$cache_only" ] || show_cmd mv "<temp>/${zip%.zip}" "$CHROMIUM_DIR"
     else
         work=$(mktemp -d "$RUNTIME_DIR/.moq-chromium.XXXXXX") || die "could not make a temp directory"
         if ! unzip -q "$archive" -d "$work"; then
@@ -2996,14 +3210,28 @@ task_chromium_download() {
                 die "unexpected layout in $(rel "$archive")"
                 ;;
         esac
-        if ! mv "$work/$top" "$CHROMIUM_DIR"; then
-            die "could not move Chromium into $(rel "$CHROMIUM_DIR")"
+        if ! { mkdir -p "$cache" && tar -czf "$cached.part" -C "$work" "$top" && mv "$cached.part" "$cached" &&
+            printf '%s %s\n' "$revision" "$zip" >"$cached.revision"; }; then
+            rm -rf "$work"
+            rm -f -- "$cached.part"
+            die "could not keep the Chromium archive in $cache"
         fi
-        rmdir "$work"
-        printf '%s %s\n' "$revision" "$zip" >"$CHROMIUM_DIR/REVISION"
+        if [ -n "$cache_only" ]; then
+            rm -rf "$work"
+        else
+            if ! mv "$work/$top" "$CHROMIUM_DIR"; then
+                die "could not move Chromium into $(rel "$CHROMIUM_DIR")"
+            fi
+            rmdir "$work"
+            printf '%s %s\n' "$revision" "$zip" >"$CHROMIUM_DIR/REVISION"
+        fi
     fi
     rm_path "$archive"
-    info "Chromium $revision is in $(rel "$CHROMIUM_DIR")"
+    if [ -n "$cache_only" ]; then
+        info "Chromium $revision is in $cached, for an --embed-chromium build"
+        return 0
+    fi
+    info "Chromium $revision is in $(rel "$CHROMIUM_DIR"); a copy stays in $cache for an --embed-chromium build"
     [ "$plat" != Linux_x64 ] || chromium_apparmor_note
 }
 
@@ -3060,14 +3288,17 @@ clean_all() {
 
 # Drop old cargo artifacts under target/ and keep the current build.
 #
-# Cargo's metadata hash (the 16 hex digits in deps/ and .fingerprint/) changes with the compiler,
-# profile, features, and dependency graph, not with a source edit. Cargo never deletes the previous
-# hash, so repeated builds leave a full copy of each unit. rustc already keeps only the newest
+# Cargo's metadata hash (the 16 hex digits in deps/ and .fingerprint/, or the unit directory
+# build/<package>/<hash>/ in the build directory layout of Cargo 1.100 and later) changes with the
+# compiler, profile, features, and dependency graph, not with a source edit. Cargo never deletes
+# the previous hash, so repeated builds leave a full copy of each unit. rustc already keeps only the newest
 # incremental session inside one incremental/<crate>-<id>/ directory; the waste is the other
 # directories. The fingerprint json identifies a unit. The newest hash of each unit is the one cargo
 # will look up next. An older hash of that same unit is unreachable. A run-build-script fingerprint
 # leaves profile, features, and path at 0, so two live runs of one package compare equal; the library
-# json names the run it compiled against, and that run's build/ directory stays.
+# json names the run it compiled against, and that run's build/ directory stays. Cargo 1.100 and
+# later never read the earlier layout (.fingerprint/, deps/, build/<package>-<hash>/), so once a
+# profile has units in the new one, every unit of the earlier layout there goes.
 tidy_cargo() {
     local tmp
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/moq-tidy.XXXXXX") || die "could not make a temp directory"
@@ -3079,16 +3310,21 @@ tidy_cargo() {
 }
 
 tidy_cargo_run() {
-    local list=$TIDY_TMP/profiles fp profile
+    local list=$TIDY_TMP/profiles profile
     [ -d "$ROOT/target" ] || {
         info "tidy-cargo: no target/ yet; nothing to remove"
         return 0
     }
-    # .fingerprint sits at target/<profile> or target/<triple>/<profile>. Do not walk into
-    # deps/ or incremental/, and never into the generated crate at target/moqui-app.
+    # A profile is target/<profile> or target/<triple>/<profile>, with .fingerprint (the earlier
+    # layout) or build/ in it. Do not walk into deps/ or incremental/, and never into the generated
+    # crate at target/moqui-app.
     find "$ROOT/target" -maxdepth 3 \
         \( -path "$ROOT/target/moqui-app" -o -path "$ROOT/target/moqui-app/*" \) -prune -o \
-        -type d -name .fingerprint -print >"$list" || die "tidy-cargo: could not read target/"
+        -type d \( -name .fingerprint -o -name build \) -print >"$TIDY_TMP/found" \
+        || die "tidy-cargo: could not read target/"
+    while IFS= read -r profile; do
+        dirname "$profile"
+    done <"$TIDY_TMP/found" | sort -u >"$list"
     if [ ! -s "$list" ]; then
         info "tidy-cargo: no old cargo artifacts to remove; the current build stays"
         return 0
@@ -3103,9 +3339,8 @@ tidy_cargo_run() {
     fi
     tidy_write_manifest_awk
     : >"$TIDY_TMP/manifest"
-    while IFS= read -r fp; do
-        [ -n "$fp" ] || continue
-        profile=$(dirname "$fp")
+    while IFS= read -r profile; do
+        [ -n "$profile" ] || continue
         tidy_manifest_profile "$profile" >>"$TIDY_TMP/manifest" || die "tidy-cargo: could not read $(rel "$profile")"
     done <"$list"
     need_tool awk
@@ -3327,6 +3562,21 @@ $1 == "K" {
     next
 }
 
+# A unit of the earlier layout in a profile Cargo 1.100 and later builds: never read again.
+$1 == "X" {
+    print $2
+    next
+}
+
+# An artifact in a unit directory of the build directory layout: its stem, for incremental/ only.
+$1 == "S" {
+    ns++
+    s_hash[ns] = $2
+    s_stem[ns] = $3
+    s_mtime[ns] = $4 + 0
+    next
+}
+
 $1 == "F" {
     hash = $2
     mtime = $3 + 0
@@ -3412,6 +3662,11 @@ END {
             print d_path[i]
         }
     }
+    for (i = 1; i <= ns; i++) {
+        if (!keep[s_hash[i]]) continue
+        stem_n[s_stem[i]]++
+        stem_mt[s_stem[i]] = stem_mt[s_stem[i]] " " s_mtime[i]
+    }
     for (i = 1; i <= nb; i++) if (!keep[b_hash[i]]) print b_path[i]
     for (i = 1; i <= np; i++) if (!keep[p_hash[i]]) print p_path[i]
 
@@ -3458,6 +3713,10 @@ EOF
     while IFS= read -r path; do
         [ -n "$path" ] || continue
         rm -rf -- "$path"
+        # build/<package> once its last unit directory is gone.
+        case ${path#"$ROOT/target/"} in
+            */build/*/*) rmdir -- "${path%/*}" 2>/dev/null || true ;;
+        esac
     done <"$TIDY_TMP/delete"
     info "tidy-cargo: removed $(tidy_human_kb "$kb") of old artifacts under target/; the current build of each package stays"
 }
@@ -3466,16 +3725,17 @@ EOF
 # tidy finishes. bash 3.2 has no dynamic file descriptors, so the numbers are fixed.
 tidy_lock_profiles() {
     command -v flock >/dev/null 2>&1 || return 0
-    local list=$1 fp profile lock n=0 fd
-    while IFS= read -r fp; do
-        [ -n "$fp" ] || continue
-        profile=$(dirname "$fp")
-        lock=$profile/.cargo-lock
-        [ -e "$lock" ] || continue
-        n=$((n + 1))
-        fd=$((19 + n))
-        tidy_open_lock "$fd" "$lock"
-        flock -n "$fd" || die "tidy-cargo: a cargo build is using $(rel "$profile"); stop it first"
+    local list=$1 profile lock n=0 fd
+    while IFS= read -r profile; do
+        [ -n "$profile" ] || continue
+        # .cargo-lock is the artifact directory's, .cargo-build-lock the build directory's (Cargo 1.100).
+        for lock in "$profile/.cargo-lock" "$profile/.cargo-build-lock"; do
+            [ -e "$lock" ] || continue
+            n=$((n + 1))
+            fd=$((19 + n))
+            tidy_open_lock "$fd" "$lock"
+            flock -n "$fd" || die "tidy-cargo: a cargo build is using $(rel "$profile"); stop it first"
+        done
     done <"$list"
 }
 
@@ -3557,19 +3817,52 @@ function incr_stem(name,    stem) {
     return stem
 }
 
+function up(path) {
+    sub(/\/[^\/]+$/, "", path)
+    return path
+}
+
+# A unit directory of the build directory layout: build/<package>/<hash>.
+function is_unit(dir) {
+    return base(dir) ~ /^[0-9a-f]{16}$/ && base(up(up(dir))) == "build"
+}
+
+# A path of the earlier layout goes whole (X) when the profile has units in the new layout.
+function old_unit(line, path) {
+    if (newlayout) printf "X\t%s\n", path
+    else print line
+}
+
 BEGIN { FS = "\t" }
 
 {
     mtime = $1 + 0
     path = $2
     name = base(path)
-    parent = path
-    sub(/\/[^\/]+$/, "", parent)
+    parent = up(path)
     parent_name = base(parent)
-    grand = parent
-    sub(/\/[^\/]+$/, "", grand)
+    grand = up(parent)
 
-    if (parent_name == ".fingerprint") {
+    if (is_unit(path)) {
+        new_unit[path] = name
+    } else if (parent_name == "fingerprint" && is_unit(grand)) {
+        if (name == "invoked.timestamp") {
+            stamp[grand] = mtime
+        } else if (name ~ /\.json$/) {
+            json_n++
+            json_path[json_n] = path
+            json_dir[json_n] = grand
+            json_name[json_n] = name
+            json_m[json_n] = mtime
+            json_new[json_n] = 1
+            has_json[grand] = 1
+        }
+    } else if (parent_name == "out" && is_unit(grand)) {
+        art_n++
+        art_name[art_n] = name
+        art_hash[art_n] = base(grand)
+        art_m[art_n] = mtime
+    } else if (parent_name == ".fingerprint") {
         unit[path] = name
     } else if (base(grand) == ".fingerprint" && name == "invoked.timestamp") {
         stamp[parent] = mtime
@@ -3597,33 +3890,53 @@ BEGIN { FS = "\t" }
 }
 
 END {
+    for (path in new_unit) {
+        hash = new_unit[path]
+        printf "P\t%s\t%s\n", path, hash
+        if (!has_json[path]) printf "K\t%s\n", hash
+    }
     for (path in unit) {
         hash = dir_hash(unit[path])
         if (hash == "") continue
+        if (newlayout) {
+            printf "X\t%s\n", path
+            continue
+        }
         printf "P\t%s\t%s\n", path, hash
         if (!has_json[path]) printf "K\t%s\n", hash
     }
     for (i = 1; i <= json_n; i++) {
         dir = json_dir[i]
-        hash = dir_hash(base(dir))
-        if (hash == "") continue
-        pkg = base(dir)
-        sub(/-[0-9a-f]{16}$/, "", pkg)
+        if (json_new[i]) {
+            hash = base(dir)
+            pkg = base(up(dir))
+        } else {
+            if (newlayout) continue
+            hash = dir_hash(base(dir))
+            if (hash == "") continue
+            pkg = base(dir)
+            sub(/-[0-9a-f]{16}$/, "", pkg)
+        }
         kind = json_name[i]
         sub(/\.json$/, "", kind)
         m = (dir in stamp) ? stamp[dir] : json_m[i]
         printf "F\t%s\t%.0f\t%s\t%s\t%s\n", hash, m, pkg, kind, json_path[i]
     }
+    for (i = 1; i <= art_n; i++) {
+        stem = file_stem(art_name[i])
+        if (stem == "") continue
+        printf "S\t%s\t%s\t%.0f\n", art_hash[i], stem, art_m[i]
+    }
     for (i = 1; i <= dep_n; i++) {
         name = base(dep_path[i])
         hash = file_hash(name)
         if (hash == "") continue
-        printf "D\t%s\t%s\t%s\t%.0f\n", dep_path[i], hash, file_stem(name), dep_m[i]
+        old_unit(sprintf("D\t%s\t%s\t%s\t%.0f", dep_path[i], hash, file_stem(name), dep_m[i]), dep_path[i])
     }
     for (i = 1; i <= build_n; i++) {
         hash = dir_hash(build_name[i])
         if (hash == "") continue
-        printf "B\t%s\t%s\n", build_path[i], hash
+        old_unit(sprintf("B\t%s\t%s", build_path[i], hash), build_path[i])
     }
     for (i = 1; i <= inc_n; i++) {
         stem = incr_stem(inc_name[i])
@@ -3634,23 +3947,32 @@ END {
 EOF
 }
 
-# One manifest line per fingerprint json, deps file, build dir, incremental dir, and fingerprint dir.
+# One manifest line per fingerprint json, deps file, build dir, incremental dir, and fingerprint dir,
+# and in the build directory layout of Cargo 1.100 and later per unit directory
+# (build/<package>/<hash>), its fingerprint json, and each file in its out/.
 tidy_manifest_profile() {
-    local profile=$1 fp=$profile/.fingerprint
-    [ -d "$fp" ] || return 0
+    local profile=$1 fp=$profile/.fingerprint newlayout=0
+    if [ -d "$profile/build" ] && [ -n "$(find "$profile/build" -mindepth 3 -maxdepth 3 -type d -name fingerprint \
+        -path '*/build/*/[0-9a-f]*/fingerprint' -print | head -n 1)" ]; then
+        newlayout=1
+    fi
     {
-        find "$fp" -mindepth 1 -maxdepth 1 -type d -print
-        find "$fp" -mindepth 2 -maxdepth 2 \( -name '*.json' -o -name 'invoked.timestamp' \) -print
-        if [ -d "$profile/deps" ]; then
-            find "$profile/deps" -maxdepth 1 -type f -print
+        if [ -d "$fp" ]; then
+            find "$fp" -mindepth 1 -maxdepth 1 -type d -print
+            find "$fp" -mindepth 2 -maxdepth 2 \( -name '*.json' -o -name 'invoked.timestamp' \) -print
+            if [ -d "$profile/deps" ]; then
+                find "$profile/deps" -maxdepth 1 -type f -print
+            fi
         fi
         if [ -d "$profile/build" ]; then
-            find "$profile/build" -mindepth 1 -maxdepth 1 -type d -print
+            find "$profile/build" -mindepth 1 -maxdepth 2 -type d -print
+            find "$profile/build" -mindepth 4 -maxdepth 4 \( -path '*/fingerprint/*' \( -name '*.json' -o -name 'invoked.timestamp' \) \
+                -o -path '*/out/*' -type f \) -print
         fi
         if [ -d "$profile/incremental" ]; then
             find "$profile/incremental" -mindepth 1 -maxdepth 1 -type d -print
         fi
-    } | tidy_batch_stat | awk -f "$TIDY_TMP/manifest.awk"
+    } | tidy_batch_stat | awk -v newlayout="$newlayout" -f "$TIDY_TMP/manifest.awk"
 }
 
 # Refuse anything that is not one artifact file or directory under target/.
@@ -3671,6 +3993,16 @@ tidy_check_build_path() {
     esac
     case $parent in
         */.fingerprint | .fingerprint | */deps | deps | */build | build | */incremental | incremental) ;;
+        */build/* | build/*)
+            # A unit directory of the build directory layout: build/<package>/<16 hex digits>.
+            case ${parent##*/build/} in
+                "" | */*) die "refusing to delete $(rel "$1")" ;;
+            esac
+            case $leaf in
+                *[!0-9a-f]*) die "refusing to delete $(rel "$1")" ;;
+            esac
+            [ "${#leaf}" -eq 16 ] || die "refusing to delete $(rel "$1")"
+            ;;
         *) die "refusing to delete $(rel "$1")" ;;
     esac
 }
@@ -4558,6 +4890,7 @@ archive_path() {
 package_name() {
     case $1 in
         # default) echo Default ;;
+        lite) echo Lite ;;
         debug) echo Debug ;;
         release) echo Maximal ;;
         enterprise) echo Enterprise ;;
@@ -4609,12 +4942,106 @@ EOF
     } >"$file"
 }
 
+# The exclude patterns of crates/moqui-embedded/archive-excludes.txt, which the runtime built into the binary leaves out
+# too, for an archive whose top directory is $1: a name at any depth, a name ending in / at the top of a component.
+archive_excludes() {
+    local name=$1 line set component dir
+    while IFS= read -r line || [ -n "$line" ]; do
+        case $line in
+            '' | '#'*) continue ;;
+            */)
+                # named one by one, since a wildcard would also take a directory of that name deeper in a component
+                for set in "${COMPONENT_SETS[@]}"; do
+                    for component in "$RUNTIME_DIR/$set"/*/; do
+                        [ -d "$component${line%/}" ] || continue
+                        dir=$name/$set/$(basename "$component")/${line%/}
+                        printf '%s\n' "$dir" "$dir/*"
+                    done
+                done
+                ;;
+            '*'*) printf '%s\n' "$line" ;;
+            *) printf '%s\n' "*/$line" "*/$line/*" ;;
+        esac
+    done <"$ROOT/crates/moqui-embedded/archive-excludes.txt"
+}
+
+# The SHA-256 of the file $1, in sha256sum's format with the file's base name.
+sha256_line() {
+    local sum
+    if command -v sha256sum >/dev/null 2>&1; then
+        sum=$(sha256sum "$1" | awk '{print $1}')
+    else
+        sum=$(shasum -a 256 "$1" | awk '{print $1}')
+    fi
+    printf '%s  %s\n' "$sum" "$(basename "$1")"
+}
+
+# ./moq archive --binary [file]: the binary alone, gzipped, with the runtime built in (--embed production unless another
+# level is asked for), and beside it the checksums of its parts and of the .gz (moqui embedded checksum), which the
+# binary checks at startup when the file is put where it looks. $1 the file name, $2 force.
+archive_binary() {
+    local file=$1 force=$2 out sums bin default
+    need_tool gzip
+    [ -n "$OPT_EMBED" ] || OPT_EMBED=production
+    default=moqui-$(date +%Y%m%d).gz
+    if [ -z "$file" ]; then
+        out=$(abs_path "$default")
+    elif [ -d "$file" ]; then
+        out=$(abs_path "${file%/}")/$default
+    else
+        case $file in *.gz) out=$(abs_path "$file") ;; *) out=$(abs_path "$file.gz") ;; esac
+    fi
+    sums=${out%.gz}.sha256
+    [ -d "$(dirname "$out")" ] || die "no directory $(rel "$(dirname "$out")") for $(basename "$out")"
+    if { [ -e "$out" ] || [ -e "$sums" ]; } && [ -z "$force" ]; then
+        die "$(rel "$out") or $(rel "$sums") is there already; -f replaces them"
+    fi
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
+    if dry_run; then
+        show_cmd gzip -9 -c "$bin" ">" "$out"
+        show_cmd "$bin" embedded checksum ">" "$sums"
+        return 0
+    fi
+    info "Writing $(rel "$out")"
+    if ! gzip -9 -c "$bin" >"$out.part"; then
+        rm -f -- "$out.part"
+        die "could not write $(rel "$out")"
+    fi
+    mv -- "$out.part" "$out" || die "could not move $(rel "$out.part") to $(rel "$out")"
+    if ! {
+        printf '# The parts built into %s (moqui embedded checksum), checked at startup when this file is the\n' \
+            "$(basename "$out" .gz)"
+        printf '# runtime'"'"'s embedded.sha256 or moqui_embedded_checksums names it, and the .gz itself\n'
+        printf '# (sha256sum -c --ignore-missing).\n'
+        run_moqui "$bin" embedded checksum && sha256_line "$out"
+    } >"$sums.part"; then
+        rm -f -- "$sums.part"
+        die "could not write $(rel "$sums")"
+    fi
+    mv -- "$sums.part" "$sums" || die "could not move $(rel "$sums.part") to $(rel "$sums")"
+    local programs
+    programs=$(embed_features | tr ',' '\n' | sed -n 's/^embed-\(opensearch\|chromium\)$/\1/p' | paste -sd, - | sed 's/,/ and /')
+    info "Created $(rel "$out") ($(tidy_human_kb "$(du -sk "$out" | awk '{print $1}')")): the $(package_name "${OPT_PACKAGE:-release}") binary with the $OPT_EMBED runtime${programs:+ and $programs} built in, and $(rel "$sums")"
+    info "To deploy: gunzip it into an empty directory and run ./moqui there; put $(basename "$sums") there as embedded.sha256 to check the binary at startup"
+}
+
 task_archive() {
     local file='' conf=$PRODUCTION_CONF force='' with_save='' no_data='' named='' tgz='' with_tests='' with_dev=''
+    local binary='' conf_given='' took
     OPT_PACKAGE=
     OPT_NOBUILD=
+    OPT_EMBED=
+    OPT_EMBED_OPENSEARCH=
+    OPT_EMBED_CHROMIUM=
     while [ $# -gt 0 ]; do
+        took=$(set_embed_opt "$@") || exit 1
+        if [ -n "$took" ]; then
+            set_embed_opt "$@" >/dev/null
+            shift "$took"
+            continue
+        fi
         case $1 in
+            --binary) binary=1 ;;
             --lite) set_package lite ;;
             --debug) set_package debug ;;
             --release) set_package release ;;
@@ -4623,9 +5050,13 @@ task_archive() {
             -c | --conf)
                 [ $# -ge 2 ] || die "$1 needs a file"
                 conf=$2
+                conf_given=1
                 shift
                 ;;
-            --conf=*) conf=${1#--conf=} ;;
+            --conf=*)
+                conf=${1#--conf=}
+                conf_given=1
+                ;;
             --tgz) tgz=1 ;;
             --with-save) with_save=1 ;;
             --with-tests) with_tests=1 ;;
@@ -4641,6 +5072,16 @@ task_archive() {
         esac
         shift
     done
+    if [ -n "$binary" ]; then
+        [ -z "$tgz$with_save$no_data$conf_given" ] ||
+            die "--binary writes the binary alone; --tgz, --with-save, --no-data and --conf are for a runtime archive"
+        if [ -n "$with_tests$with_dev" ]; then
+            [ -z "$OPT_EMBED" ] || [ "$OPT_EMBED" = all ] || die "--with-tests and --with-dev build in --embed all"
+            OPT_EMBED=all
+        fi
+        archive_binary "$file" "$force"
+        return
+    fi
     local out name
     if [ -n "$tgz" ]; then
         out=$(archive_path "$file" .tgz)
@@ -4700,9 +5141,8 @@ task_archive() {
         esac
         entries+=("$name/$base")
     done
-    excludes=("$name/db/install" "$name/db/install/*" "$name/opensearch/logs/*" "$name/opensearch/pid"
-        "*/postmaster.pid" "*/.git" "*/.git/*" "$name/components/*/*/target/*" "*/.venv/*"
-        "*/__pycache__/*" "*/.DS_Store" "*~")
+    excludes=("$name/db/install" "$name/db/install/*" "$name/opensearch/logs/*" "$name/opensearch/pid")
+    while IFS= read -r entry; do excludes+=("$entry"); done < <(archive_excludes "$name")
     [ -z "$no_data" ] || excludes+=("$name/opensearch/data/*")
     # A production archive carries no tests, plans and dev set unless asked (plans/archive/Components-Dir.md 3.6): each
     # component's test/ (its suites, agent replays and load scripts), plan/ and plans/, the test set, and the dev set.
@@ -5026,6 +5466,10 @@ client_test_components() {
 complete_run_like() {
     local cur=$1 prev=$2 positional=$3
     case $prev in
+        --embed)
+            filter_prefix "$cur" framework production all
+            return
+            ;;
         -c | --conf)
             local confs
             confs=$(filter_prefix "$cur" $(conf_names))
@@ -5038,7 +5482,8 @@ complete_run_like() {
         --https-port) filter_prefix "$cur" off; return ;;
     esac
     case $cur in
-        -*) filter_prefix "$cur" --lite --debug --release --enterprise -c --conf -p --port --https-port -D --nobuild --; return ;;
+        -*) filter_prefix "$cur" --lite --debug --release --enterprise --embed --embed-opensearch --embed-chromium -c --conf \
+            -p --port --https-port -D --nobuild --; return ;;
     esac
     printf '%s\n' "$positional"
 }
@@ -5047,7 +5492,12 @@ complete_run_like() {
 complete_task() {
     local task=$1 cur=$2 prev=$3 nargs=$4 first_arg=$5
     case $task in
-        build) filter_prefix "$cur" --lite --debug --release --enterprise ;;
+        build)
+            case $prev in
+                --embed) filter_prefix "$cur" framework production all ;;
+                *) filter_prefix "$cur" --lite --debug --release --enterprise --embed --embed-opensearch --embed-chromium ;;
+            esac
+            ;;
         run | run-production)
             local out
             out=$(complete_run_like "$cur" "$prev" @binary)
@@ -5134,8 +5584,8 @@ complete_task() {
                 *) filter_prefix "$cur" $(save_names) ;;
             esac
             ;;
-        opensearch-download) filter_prefix "$cur" -f --force "$OPENSEARCH_VERSION" ;;
-        chromium-download) filter_prefix "$cur" --latest ;;
+        opensearch-download) filter_prefix "$cur" -f --force --cache-only "$OPENSEARCH_VERSION" ;;
+        chromium-download) filter_prefix "$cur" --latest --cache-only ;;
         desktop) filter_prefix "$cur" dev build --release ;;
         android) filter_prefix "$cur" emulator init dev build --release --window ;;
         test-all | test-apps | test-framework) filter_prefix "$cur" --lite --debug --release --enterprise --nobuild ;;
@@ -5198,11 +5648,15 @@ complete_task() {
                     filter_prefix "$cur" $(conf_names)
                     return
                     ;;
+                --embed)
+                    filter_prefix "$cur" framework production all
+                    return
+                    ;;
             esac
             case $cur in
                 -*)
                     filter_prefix "$cur" --lite --debug --release --enterprise --nobuild -c --conf --tgz --with-save --with-tests --with-dev \
-                        --no-data -f --force
+                        --no-data -f --force --binary --embed --embed-opensearch --embed-chromium
                     ;;
                 *) echo @files ;;
             esac

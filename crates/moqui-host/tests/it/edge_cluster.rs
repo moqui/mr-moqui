@@ -170,7 +170,7 @@ fn replica(server: &moqui_host::Server, id: &str) -> Option<String> {
     })
 }
 
-fn client_config(root: &CertificateDer<'static>) -> Arc<rustls::ClientConfig> {
+pub(crate) fn client_config(root: &CertificateDer<'static>) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(root.clone()).unwrap();
     let mut config =

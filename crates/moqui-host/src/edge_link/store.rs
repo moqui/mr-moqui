@@ -263,6 +263,9 @@ pub(crate) enum Claimed {
     Changed,
 }
 
+/// Each member id of a pairing with its pinned key's fingerprint (`EdgeClient.memberKeys`).
+pub(crate) type PinnedKeys = Vec<(String, String)>;
+
 /// What a member's link claims ([`claim_key`]): member `member` of pairing `node` holds key `member_key` (a
 /// fingerprint), and takes the pairing over when `takeover`. `keep` are the ids never evicted past the cap.
 pub(crate) struct KeyClaim<'a> {
@@ -326,7 +329,7 @@ pub(crate) fn claim_key(
 pub(crate) struct PairingState {
     pub(crate) active: bool,
     /// Its pinned member keys, each member id and its key's fingerprint.
-    pub(crate) pins: Vec<(String, String)>,
+    pub(crate) pins: PinnedKeys,
 }
 
 /// Whether pairing `node` is active, and its pinned member keys: `None` when it has no row.

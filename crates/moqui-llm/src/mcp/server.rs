@@ -509,7 +509,7 @@ pub fn serve(factory: &Arc<ExecutionContextFactory>, request: &HttpRequest) -> A
 /// The connect-time instructions (`framework/prompt/mcp.md`); empty when the file cannot be read, logged.
 pub fn instructions(factory: &ExecutionContextFactory) -> String {
     let path = factory.framework_dir().join("prompt").join("mcp.md");
-    match std::fs::read_to_string(&path) {
+    match moqui_lib::vfs::read_to_string(&path) {
         Ok(text) => crate::prompt::prompt_text(&text),
         Err(error) => {
             tracing::error!("the MCP instructions {} could not be read: {error}", path.display());

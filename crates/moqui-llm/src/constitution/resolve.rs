@@ -105,12 +105,13 @@ pub fn instance_path(factory: &ExecutionContextFactory) -> PathBuf {
 pub fn read_file(path: &Path) -> Result<Option<(Arc<Value>, String)>, String> {
     type Cached = (SystemTime, u64, Arc<Value>, String);
     static CACHE: OnceLock<Mutex<BTreeMap<PathBuf, Cached>>> = OnceLock::new();
-    let meta = match std::fs::metadata(path) {
-        Ok(meta) => meta,
+    let stamp = match std::fs::metadata(path) {
+        Ok(meta) => (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()),
+        // the shipped one built into the binary (moqui_lib::vfs), which does not change while the process runs
+        Err(_) if moqui_lib::vfs::is_from_overlay(path) => (SystemTime::UNIX_EPOCH, 0),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("it could not be read: {error}")),
     };
-    let stamp = (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len());
     let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
     if let Ok(cache) = cache.lock() {
         if let Some((modified, len, document, hash)) = cache.get(path) {
@@ -119,7 +120,7 @@ pub fn read_file(path: &Path) -> Result<Option<(Arc<Value>, String)>, String> {
             }
         }
     }
-    let text = std::fs::read_to_string(path).map_err(|error| format!("it could not be read: {error}"))?;
+    let text = moqui_lib::vfs::read_to_string(path).map_err(|error| format!("it could not be read: {error}"))?;
     let (document, hash) = checked(&text)?;
     if let Ok(mut cache) = cache.lock() {
         cache.insert(path.to_path_buf(), (stamp.0, stamp.1, Arc::clone(&document), hash.clone()));

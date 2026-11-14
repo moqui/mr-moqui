@@ -102,11 +102,15 @@ along with this software (see the LICENSE.md file). If not, see
         const stickyDefault = balancingOut.stickyCookie || 'moqui.session'
         hostList = Array.from(hostsOut.hostList || []).map((host) => {
             const terminate = host.modeEnumId === 'EdgeHostTerminate'
+            // an edge member's own link name on a front node, passed through to that member alone (§4.7)
+            const linkName = host.modeEnumId === 'EdgeHostLinkName'
             return {hostName: host.hostName, nodeId: host.pairedNodeId, modeEnumId: host.modeEnumId,
                 hostKey: String(host.hostName).replace(/[^A-Za-z0-9]/g, '_'), terminate,
                 cookieValue: host.stickyCookie || '',
-                cookieText: !terminate ? L('By client address') : host.stickyCookie || L('The conf\'s') + ' (' + stickyDefault + ')',
-                modeLabel: terminate ? L('Terminate') : L('Passthrough'), modeColor: terminate ? 'warning' : 'positive'}
+                cookieText: linkName ? L('Member') + ' ' + (host.memberId || '') : !terminate ? L('By client address')
+                    : host.stickyCookie || L('The conf\'s') + ' (' + stickyDefault + ')',
+                modeLabel: linkName ? L('Link name') : terminate ? L('Terminate') : L('Passthrough'),
+                modeColor: linkName ? 'info' : terminate ? 'warning' : 'positive'}
         })
         domainList = Array.from(domainsOut.domainList || []).map((domain) => ({
             nodeId: domain.pairedNodeId,

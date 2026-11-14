@@ -174,8 +174,9 @@ fn kind(message: &TopicMessage) -> &str {
 /// a relay or room frame of a media node) a local node has no business sending. Each message taken is stamped with
 /// `node` ([`moqui_core::edge::signal::LINK_NODE`]), so the media driver keys its call's room by node and call (E12) and
 /// two databases' call ids never meet in one room; one that already names a node is refused. A web protection ban
-/// (17C) is taken as from the node.
-pub(crate) fn edge_takes(node: &str, member: &str) -> Take {
+/// (17C) is taken as from the node. A front node (`calls` false, plans/Edge-Node2.md §4.7) has no calls, so it takes a
+/// ban and nothing else.
+pub(crate) fn edge_takes(node: &str, member: &str, calls: bool) -> Take {
     let node = node.to_string();
     let (member, route) = (member.to_string(), route_name(&node, member));
     std::sync::Arc::new(move |topic: &str, message: &TopicMessage| {
@@ -190,7 +191,7 @@ pub(crate) fn edge_takes(node: &str, member: &str) -> Take {
             let message = stamped(&node, message)?;
             return moqui_core::edge::signal::receive(topic, &message).map_err(|err| err.message().to_string());
         }
-        if topic != moqui_core::notify::RTC_SIGNAL {
+        if topic != moqui_core::notify::RTC_SIGNAL || !calls {
             return Err(format!("local node {node} sent a message on {topic}"));
         }
         let routed;

@@ -90,11 +90,15 @@ mkdir -p "$R/target/release" "$R/runtime/components/base/framework/data" "$R/run
     "$R/runtime/install/postgres/18.6.0" "$R/runtime/db/install/18.6.0" "$R/runtime/log" "$R/runtime/tmp" "$R/runtime/opensearch/data/nodes" "$R/runtime/opensearch/logs"
 cp "$SRC/moq" "$R/moq"
 chmod +x "$R/moq"
+mkdir -p "$R/crates/moqui-embedded" "$R/.cargo"
+cp "$SRC/crates/moqui-embedded/archive-excludes.txt" "$R/crates/moqui-embedded/"
+cp "$SRC/.cargo/config.toml" "$R/.cargo/"
 cat >"$R/target/release/moqui" <<'EOF'
 #!/bin/sh
 # moqui stub: records its arguments and env, and fakes save-db / load-save.
 echo "stub: $* conf=${MOQUI_CONF:-}" >>"$(dirname "$0")/calls.log"
 case $1 in
+    embedded) [ "$2" = checksum ] && echo "0000000000000000000000000000000000000000000000000000000000000000  runtime" ;;
     save-db) echo "dump of $2" >"$3" ;;
     load-save) [ -f "$3" ] || exit 3; mkdir -p "$2/data"; cp "$3" "$2/data/restored" ;;
 esac
@@ -185,6 +189,16 @@ check "build --enterprise" 0 'cargo build --profile enterprise --no-default-feat
 check "build two packages" 1 'ask for two packages' -- dry "$M" build --release --enterprise
 check "build passes cargo args" 0 'moqui --features x$' -- dry "$M" build --debug -- --features x
 check "run --enterprise" 0 'target/enterprise/moqui$' -- dry "$M" run --enterprise
+check "build --embed" 0 'features maximal\\?,devtools\\?,embed-production -p moqui$' -- dry "$M" build --embed production
+check "build --embed=all with the programs" 0 'features lite\\?,embed-all\\?,embed-opensearch\\?,embed-chromium -p moqui$' -- \
+    dry env MOQUI_OPENSEARCH_ARCHIVE=/x MOQUI_CHROMIUM_ARCHIVE=/y "$M" build --lite --embed=all --embed-opensearch --embed-chromium
+check "build --embed framework adds no feature" 0 'features enterprise -p moqui$' -- dry "$M" build --enterprise --embed framework
+check "build --embed needs a known level" 1 'takes framework, production or all' -- dry "$M" build --embed most
+check "build two embed levels" 1 'ask for two levels' -- dry "$M" build --embed all --embed production
+check "run --embed" 0 'embed-production -p moqui$' -- dry "$M" run --embed production
+check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
+    env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+check "complete build --embed" 0 '^production$' -- "$M" __complete 3 build --embed p
 rm -f "$R/cargo.log"
 check "run --debug builds first" 0 '' -- "$M" run --debug
 check "cargo saw the debug build" 0 'cargo: build --profile dev --no-default-features --features maximal,devtools -p moqui$' -- cat "$R/cargo.log"
@@ -461,6 +475,78 @@ check "tidy-cargo removed the unreferenced build-script run" 1 '' -- test -e "$R
 check "tidy-cargo removed the unreferenced run fingerprint" 1 '' -- test -e "$R/target/debug/.fingerprint/bs-$RUNX"
 check "tidy-cargo kept both build-script libraries" 0 '' -- test -f "$R/target/debug/deps/libbs-$BS1.rlib" -a -f "$R/target/debug/deps/libbs-$BS2.rlib"
 check "tidy-cargo again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
+
+# Cargo 1.100's build directory layout: each unit in build/<package>/<hash>/, its fingerprint in
+# fingerprint/ and its files in out/. Once debug has such a unit, the earlier layout there goes.
+
+# $1 hash, $2 profile, $3 stamp, $4 crate name
+tidy_new_unit() {
+    local hash=$1 profile=$2 stamp=$3 crate=$4
+    local unit=$R/target/debug/build/$crate/$hash inc=$R/target/debug/incremental/$crate-idn$hash
+    mkdir -p "$unit/fingerprint" "$unit/out" "$inc"
+    tidy_json "$unit/fingerprint/lib-$crate.json" "$profile"
+    echo stamp >"$unit/fingerprint/invoked.timestamp"
+    echo rlib >"$unit/out/lib$crate-$hash.rlib"
+    echo session >"$inc/session"
+    touch -d "$stamp" "$unit/fingerprint/invoked.timestamp" "$unit/fingerprint/lib-$crate.json" "$unit/out/lib$crate-$hash.rlib" "$inc"
+}
+
+# $1 hash, $2 stamp, $3 dep fingerprint (decimal)
+tidy_new_bs_lib() {
+    local hash=$1 stamp=$2 dep3=$3
+    local unit=$R/target/debug/build/nbs/$hash
+    mkdir -p "$unit/fingerprint" "$unit/out"
+    printf '%s\n' '{"rustc":1,"features":"[\"http\"]","declared_features":"[\"http\"]","target":2,"profile":9,"path":3,"deps":[[1,"build_script_build",false,'"$dep3"']],"local":[],"rustflags":[],"config":5,"compile_kind":0}' >"$unit/fingerprint/lib-nbs.json"
+    echo stamp >"$unit/fingerprint/invoked.timestamp"
+    echo rlib >"$unit/out/libnbs-$hash.rlib"
+    touch -d "$stamp" "$unit/fingerprint/invoked.timestamp" "$unit/fingerprint/lib-nbs.json"
+}
+
+# $1 hash, $2 stamp, $3 16 hex digits
+tidy_new_bs_run() {
+    local hash=$1 stamp=$2 hex=$3
+    local unit=$R/target/debug/build/nbs/$hash
+    mkdir -p "$unit/fingerprint" "$unit/run" "$unit/out"
+    printf '%s\n' '{"rustc":1,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[],"local":[],"rustflags":[],"config":0,"compile_kind":0}' >"$unit/fingerprint/run-build-script-build-script-build.json"
+    printf '%s' "$hex" >"$unit/fingerprint/run-build-script-build-script-build"
+    echo out >"$unit/run/output"
+    touch -d "$stamp" "$unit/fingerprint/run-build-script-build-script-build.json"
+}
+
+NOLD=5555555555555555
+NNEW=6666666666666666
+NBS=7777777777777777
+NRUN=8888888888888888
+NRUNX=9999999999999999
+tidy_new_unit "$NOLD" 9 '2021-01-01 00:00:00' newdemo
+tidy_new_unit "$NNEW" 9 '2021-06-01 00:00:00' newdemo
+tidy_new_bs_lib "$NBS" '2021-06-01 00:00:00' 5
+tidy_new_bs_run "$NRUN" '2021-01-01 00:00:00' 0500000000000000
+tidy_new_bs_run "$NRUNX" '2021-09-01 00:00:00' 0600000000000000
+
+if have flock; then
+    touch "$R/target/debug/.cargo-build-lock"
+    flock "$R/target/debug/.cargo-build-lock" sleep 60 &
+    lockpid=$!
+    sleep 1
+    check "tidy-cargo refuses a build holding the build directory" 1 'a cargo build is using' -- "$M" tidy-cargo
+    kill "$lockpid" 2>/dev/null
+    wait "$lockpid" 2>/dev/null
+    rm -f "$R/target/debug/.cargo-build-lock"
+fi
+
+check "tidy-cargo with the build directory layout" 0 'removed .* of old artifacts under target/' -- "$M" tidy-cargo
+check "tidy-cargo removed the older unit directory" 1 '' -- test -e "$R/target/debug/build/newdemo/$NOLD"
+check "tidy-cargo kept the newer unit directory" 0 '' -- test -f "$R/target/debug/build/newdemo/$NNEW/out/libnewdemo-$NNEW.rlib"
+check "tidy-cargo removed the older unit's incremental dir" 1 '' -- test -e "$R/target/debug/incremental/newdemo-idn$NOLD"
+check "tidy-cargo kept the newer unit's incremental dir" 0 '' -- test -d "$R/target/debug/incremental/newdemo-idn$NNEW"
+check "tidy-cargo kept the build-script run a unit names" 0 '' -- test -f "$R/target/debug/build/nbs/$NRUN/run/output"
+check "tidy-cargo removed the unreferenced unit run" 1 '' -- test -e "$R/target/debug/build/nbs/$NRUNX"
+check "tidy-cargo removed the earlier layout's rlib" 1 '' -- test -e "$R/target/debug/deps/libdemo-$NEW.rlib"
+check "tidy-cargo removed the earlier layout's fingerprint" 1 '' -- test -e "$R/target/debug/.fingerprint/demo-$NEW"
+check "tidy-cargo removed the earlier layout's build-script run" 1 '' -- test -e "$R/target/debug/build/bs-$RUN2"
+check "tidy-cargo kept a deps file with no hash in the earlier layout" 0 '' -- test -f "$R/target/debug/deps/notes.txt"
+check "tidy-cargo with the build directory layout again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
 
 rm -f "$R/cargo.log"
 check "clean-all" 0 'Deleting runtime/tmp' -- "$M" clean-all
@@ -785,6 +871,13 @@ if have zip && have unzip && have tar && have gzip; then
     : >"$R/runtime/components/base/fw-z/screen/plan/Keep.xml"
     : >"$R/runtime/components/test/tc/component.xml"
     : >"$R/runtime/components/dev/dv/component.xml"
+    # the names archive-excludes.txt lists, which the runtime built into the binary leaves out too
+    mkdir -p "$R/runtime/components/base/fw-z/target/debug" "$R/runtime/components/base/fw-z/script/__pycache__" \
+        "$R/runtime/components/base/fw-z/src/target"
+    : >"$R/runtime/components/base/fw-z/target/debug/out"
+    : >"$R/runtime/components/base/fw-z/script/__pycache__/x.pyc"
+    : >"$R/runtime/components/base/fw-z/src/target/Keep.rs"
+    : >"$R/runtime/components/base/fw-z/screen/Edit.xml~"
     check "archive default name" 0 "Created $O/mr-moqui-[0-9]{8}\.zip .*expands to mr-moqui-[0-9]{8}/" -- \
         sh -c "cd '$O' && '$M' archive"
     # the name moq gave it, so a run across midnight checks the day moq saw
@@ -809,8 +902,10 @@ if have zip && have unzip && have tar && have gzip; then
         done
         check "$kind keeps a deeper test directory" 0 '' -- grep -qF " $top/components/base/fw-z/service/z/test/Keep.xml" <<<"$list"
         check "$kind keeps a deeper plan directory" 0 '' -- grep -qF " $top/components/base/fw-z/screen/plan/Keep.xml" <<<"$list"
+        check "$kind keeps a deeper target directory" 0 '' -- grep -qF " $top/components/base/fw-z/src/target/Keep.rs" <<<"$list"
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
-            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/; do
+            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/ \
+            fw-z/target/ __pycache__ 'Edit\.xml~'; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done
         rm -rf "$O/x"
@@ -874,6 +969,18 @@ if have zip && have unzip && have tar && have gzip; then
     kill "$live" 2>/dev/null
     wait "$live" 2>/dev/null
     rm -f "$R/runtime/db/embedded/data/postmaster.pid"
+    rm -f "$R/cargo.log"
+    check "archive --binary" 0 "Created $O/bin/moqui-[0-9]{8}\.gz .*production runtime built in" -- \
+        sh -c "mkdir -p '$O/bin' && '$M' archive --binary '$O/bin/'"
+    check "archive --binary builds with the production runtime" 0 'embed-production -p moqui$' -- cat "$R/cargo.log"
+    bin_gz=$(ls "$O/bin/"moqui-*.gz)
+    check "archive --binary gzips the binary" 0 '' -- sh -c "gzip -dc '$bin_gz' | cmp - '$R/target/release/moqui'"
+    check "archive --binary writes its checksums" 0 '  runtime$' -- cat "${bin_gz%.gz}.sha256"
+    check "archive --binary checksum of the .gz" 0 "  $(basename "$bin_gz")\$" -- cat "${bin_gz%.gz}.sha256"
+    check "archive --binary exists" 1 'there already; -f replaces them' -- "$M" archive --binary "$bin_gz"
+    check "archive --binary --with-tests builds all" 0 'embed-all' -- \
+        sh -c "'$M' archive --binary --with-tests -f '$O/bin/all.gz' && cat '$R/cargo.log'"
+    check "archive --binary refuses --tgz" 1 'writes the binary alone' -- "$M" archive --binary --tgz
     check "alias add-runtime" 0 './moq archive' -- "$M" add-runtime --help
     check "complete archive" 0 '^--tgz$' -- "$M" __complete 2 archive --t
 else

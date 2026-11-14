@@ -64,6 +64,10 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
   bound to the TLS session work as on its own ports. It needs no XMPP port of its own for the tunnel; Chat apps shows
   its own `xmpp_port` and `xmpp_tls_port`, so give them the edge node's numbers.
 - The SRV records name the edge node in public DNS, the local node in the office's.
+- **A front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19) has the tunnel ports too, and takes a domain from
+  a node paired with it as its front pairing (the wizard sends the XMPP domain to the front when there is one). Before
+  an edge cluster of `front_edge` members the members' own tunnel ports take the domains, with SRV records naming each
+  member; with `edge` members, which bind none, each local node's front pairing gives the front its domain.
 - `/xmpp-websocket` and uploads (`xmpp_upload_url`, `https://<domain>`) ride on web access: the XMPP domain must be
   one of the node's host names on the edge node. In terminate mode the WebSocket has no exporter, so clients sign in
   with SCRAM-SHA-256 there.

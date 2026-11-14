@@ -91,7 +91,9 @@ along with this software (see the LICENSE.md file). If not, see
             ClientHello's server name and pipes the connection down the node's link, where the local node ends TLS with
             its own certificate; while the link is down the connection is refused. In EdgeHostTerminate mode the edge
             node ends TLS with its own certificate and forwards each request down the link as HTTP/2, adding the
-            client's address; while the link is down it answers with the offline page. The edge node keeps these in
+            client's address; while the link is down it answers with the offline page. In EdgeHostLinkName mode (a front
+            node, plans/Edge-Node2.md §4.7) it is an edge member's own link name, passed through to that member alone
+            (memberId). The edge node keeps these in
             memory and loads them again when org.moqui.edge.EdgeServices changes one.</description>
         <field name="hostName" type="text-medium" is-pk="true"/>
         <field name="pairedNodeId" type="id" not-null="true"/>
@@ -100,6 +102,11 @@ along with this software (see the LICENSE.md file). If not, see
             member of the node's pool for each request (plans/Edge-Node2.md §4.4): rendezvous hashing over the live
             members, so a browser session stays on one member. Empty for the edge conf's sticky-cookie (moqui.session by
             default). No Java counterpart.</description></field>
+        <field name="memberId" type="id"><description>In EdgeHostLinkName mode, on a front node (plans/Edge-Node2.md
+            §4.7): the instance id of the edge member whose own link name this is. Its connections pass through
+            untouched to that member alone, so a local node's link (its ALPN and client certificate) reaches it; while
+            that member is not linked they are refused, never sent to another member. The front writes the row from the
+            member's Hello. No Java counterpart.</description></field>
         <field name="createdDate" type="date-time"/>
         <relationship type="one" related="moqui.edge.EdgeClient"/>
         <relationship type="one" title="EdgeHostMode" related="moqui.basic.Enumeration" short-alias="mode">
@@ -339,9 +346,11 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgePort" package="moqui.edge" use="configuration" cache="never">
         <description>On an edge node, a TCP port whose connections each go down one paired local node's link as a byte
             tunnel (plans/Edge-Node2.md §4.1, §4.10 Ports, E16): tunnelKind ssh to the node's SSH server, xmpp
-            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS. A port is one row; the edge node
-            listens on it while its pairing is active, within seconds of org.moqui.edge.EdgeServices adding it (on edge_ssh_tunnel_host or
-            edge_xmpp_host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
+            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS, and on a front node (node_role
+            front, §4.7) smtp to the SMTP listener of a member of the pairing's pool (an edge cluster's mail edge), with
+            a PROXY v2 header naming the client. A port is one row; the node listens on it while its pairing is active,
+            within seconds of org.moqui.edge.EdgeServices adding it (on edge_ssh_tunnel_host, edge_xmpp_host or
+            edge_smtp_tunnel_host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
             apart: edge_ssh_tunnel_port goes to the one active pairing, and edge_xmpp_port and edge_xmpp_tls_port to the
             node whose XMPP domain a client names.</description>
         <field name="port" type="number-integer" is-pk="true"/>

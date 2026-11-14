@@ -49,6 +49,7 @@ pub mod signer;
 pub mod string;
 pub mod source_guard;
 pub mod sync;
+pub mod vfs;
 pub mod xml_edit;
 
 /// Marker so a downstream crate links this one.

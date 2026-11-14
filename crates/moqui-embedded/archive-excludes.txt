@@ -1,0 +1,11 @@
+# What neither the runtime built into the binary (build.rs, src/select.rs) nor `./moq archive` takes from the runtime's
+# components: a name alone is left out at any depth, a name ending in `/` only at the top of a component (a component
+# crate's build output), and a leading `*` matches any start of a name. The binary also leaves out every dot file.
+# `./moq archive` adds what only an instance directory has (its database, OpenSearch logs and pid, the install).
+.git
+.venv
+__pycache__
+.DS_Store
+*~
+postmaster.pid
+target/

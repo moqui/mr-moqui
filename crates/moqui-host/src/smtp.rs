@@ -39,6 +39,11 @@
 //! On an edge node (`node_role=front_edge`) the listener takes mail for its local node's accounts and queues it for the
 //! local node instead of storing it ([`queue`], plans/archive/Edge-Node.md §5.4).
 //!
+//! Behind a front node (plans/Edge-Node2.md §4.7, E19) the front's port 25 passes each connection down an edge member's
+//! front link, a PROXY v2 header naming the client first: the listener serves it in process ([`serve_tunneled`]) and
+//! takes the client from that header, as it came over the member's own authenticated link. A connection to the
+//! listener's own port never has a PROXY header read unless `proxy-protocol` is on.
+//!
 //! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/archive/Edge-Node.md §5.4 E5b) takes mail from
 //! any address, with STARTTLS on by default and per-address limits (`max-connections-per-ip`,
 //! `connections-per-minute`, 421 past them). After the data and before the answer it checks SPF, DKIM, DMARC and ARC
@@ -468,18 +473,18 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
     };
     if edge_mode {
         let backend = queue::QueueBackend::new(Arc::downgrade(factory), config.plus_separator.clone(), options);
-        crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+        run(factory, listener, shared(config, tls, backend), watch);
     } else if all_in_one {
         // by owner (plans/archive/Edge-Node.md §10): the server's own accounts here, the paired node's queued for it
         let backend = queue::SplitBackend::new(Arc::downgrade(factory), config.plus_separator.clone(), options);
-        crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+        run(factory, listener, shared(config, tls, backend), watch);
     } else {
         let backend = FactoryBackend {
             factory: Arc::downgrade(factory),
             delimiters: config.plus_separator.clone(),
             options,
         };
-        crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+        run(factory, listener, shared(config, tls, backend), watch);
     }
     *moqui_lib::sync::lock(&factory.extension(|_| SmtpAddress::default()).0) = Some(address);
     // a send to it is mail to this node itself, which the node DKIM-signs and verifies (moqui-mail auth.rs)
@@ -716,22 +721,93 @@ impl Drop for Slot<'_> {
     }
 }
 
-/// Accept connections until `shutdown` says stop. `tls` is there when STARTTLS is on.
-pub(crate) async fn serve<B: Backend>(
-    listener: TcpListener,
-    config: SmtpConfig,
-    tls: Option<TlsAcceptor>,
-    backend: B,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) {
-    let shared = Arc::new(Shared {
+/// What takes a connection that came down an edge member's front link ([`serve_tunneled`]).
+type Tunneled = Arc<dyn Fn(Box<dyn Io>, SocketAddr) -> bool + Send + Sync>;
+
+/// The running listener's [`Tunneled`], kept on the factory.
+#[derive(Default)]
+struct SmtpTunnels(std::sync::Mutex<Option<Tunneled>>);
+
+/// Whether the SMTP listener of `factory`'s server runs, so a front's SMTP tunnel can go to it.
+pub(crate) fn takes_tunnels(factory: &ExecutionContextFactory) -> bool {
+    moqui_lib::sync::lock(&factory.extension(|_| SmtpTunnels::default()).0).is_some()
+}
+
+/// Serve `stream`, a connection a front node's SMTP port sent down this node's own front link (plans/Edge-Node2.md
+/// §4.7), on the running listener: it starts with a PROXY v1 or v2 header naming the client, which is believed because
+/// it came over that link, and its address must be allowed as a direct client's would. `front` is the client the
+/// front named for the tunnel, kept while the header names none. False when no listener runs.
+pub(crate) fn serve_tunneled(factory: &ExecutionContextFactory, stream: Box<dyn Io>, front: SocketAddr) -> bool {
+    let taker = moqui_lib::sync::lock(&factory.extension(|_| SmtpTunnels::default()).0).clone();
+    taker.is_some_and(|taker| taker(stream, front))
+}
+
+/// The listener's state, shared by its connections.
+fn shared<B: Backend>(config: SmtpConfig, tls: Option<TlsAcceptor>, backend: B) -> Arc<Shared<B>> {
+    Arc::new(Shared {
         config,
         tls,
         backend,
         active: AtomicUsize::new(0),
         sessions: AtomicU64::new(0),
         per_ip: std::sync::Mutex::new(std::collections::HashMap::new()),
-    });
+    })
+}
+
+/// The tunnel taker of the listener on `shared` until `shutdown` says stop: each connection served as one that came
+/// over a front link, its PROXY header read.
+fn tunnel_taker<B: Backend>(shared: &Arc<Shared<B>>, shutdown: &tokio::sync::watch::Receiver<bool>) -> Tunneled {
+    let (shared, shutdown) = (Arc::clone(shared), shutdown.clone());
+    Arc::new(move |stream: Box<dyn Io>, front: SocketAddr| {
+        if *shutdown.borrow() {
+            return false;
+        }
+        let (shared, shutdown) = (Arc::clone(&shared), shutdown.clone());
+        tokio::spawn(async move {
+            connection(stream, front, &shared, shutdown, Via::FrontLink).await;
+        });
+        true
+    })
+}
+
+/// Run the listener on `shared`, and keep its tunnel taker on `factory`.
+fn run<B: Backend>(
+    factory: &Arc<ExecutionContextFactory>,
+    listener: TcpListener,
+    shared: Arc<Shared<B>>,
+    watch: tokio::sync::watch::Receiver<bool>,
+) {
+    *moqui_lib::sync::lock(&factory.extension(|_| SmtpTunnels::default()).0) = Some(tunnel_taker(&shared, &watch));
+    crate::edge::handle().spawn(accept_loop(listener, shared, watch));
+}
+
+/// Accept connections until `shutdown` says stop. `tls` is there when STARTTLS is on.
+#[cfg(test)]
+pub(crate) async fn serve<B: Backend>(
+    listener: TcpListener,
+    config: SmtpConfig,
+    tls: Option<TlsAcceptor>,
+    backend: B,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    accept_loop(listener, shared(config, tls, backend), shutdown).await;
+}
+
+/// How a connection reached the listener.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Via {
+    /// Its own port: a PROXY header is read only with `proxy-protocol` on.
+    Listener,
+    /// Down this node's own front link from a front node's SMTP port (plans/Edge-Node2.md §4.7): its PROXY header names
+    /// the client.
+    FrontLink,
+}
+
+async fn accept_loop<B: Backend>(
+    listener: TcpListener,
+    shared: Arc<Shared<B>>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -745,7 +821,7 @@ pub(crate) async fn serve<B: Backend>(
                     let shared = Arc::clone(&shared);
                     let shutdown = shutdown.clone();
                     tokio::spawn(async move {
-                        connection(Box::new(stream), peer, &shared, shutdown).await;
+                        connection(Box::new(stream), peer, &shared, shutdown, Via::Listener).await;
                     });
                 }
                 Err(err) => {
@@ -771,11 +847,14 @@ async fn connection<B: Backend>(
     peer: SocketAddr,
     shared: &Shared<B>,
     shutdown: tokio::sync::watch::Receiver<bool>,
+    via: Via,
 ) {
     let id = session_id(shared);
     let peer_ip = peer.ip().to_canonical();
     let config = &shared.config;
-    if !config.allows(peer_ip) {
+    // from a front link, the client is the one its PROXY header names, checked once it is read (Session::session)
+    let proxied = config.proxy_protocol || via == Via::FrontLink;
+    if via == Via::Listener && !config.allows(peer_ip) {
         tracing::warn!("SMTP connection {id} from {peer_ip} refused: not in smtp_allowed_addresses");
         let _ = reply_now(
             &mut stream,
@@ -800,7 +879,7 @@ async fn connection<B: Backend>(
     }
     let _slot = Slot(&shared.active);
     // behind PROXY the limits count the client the header names, once it is read (Session::session)
-    let _ip_slot = match config.internet.as_ref().filter(|_| !config.proxy_protocol) {
+    let _ip_slot = match config.internet.as_ref().filter(|_| !proxied) {
         Some(internet) => match take_ip_slot(&shared.per_ip, internet, peer_ip) {
             Ok(slot) => Some(slot),
             Err(why) => {
@@ -834,6 +913,7 @@ async fn connection<B: Backend>(
         accepted: 0,
         refused: 0,
         ip_slot: None,
+        proxied,
     };
     let end = session.run().await;
     let _ = session.stream.get_mut().shutdown().await;
@@ -948,6 +1028,8 @@ struct Session<'a, B> {
     refused: usize,
     /// In internet mode behind PROXY, the place of the client the header named among its address's connections.
     ip_slot: Option<IpSlot<'a>>,
+    /// It starts with a PROXY header: `proxy-protocol` is on, or it came down a front link.
+    proxied: bool,
 }
 
 impl<B: Backend> Session<'_, B> {
@@ -1035,7 +1117,7 @@ impl<B: Backend> Session<'_, B> {
     }
 
     async fn session(&mut self) -> Result<(), End> {
-        if self.config().proxy_protocol {
+        if self.proxied {
             let source = self.read_proxy().await?;
             if let Some(source) = source {
                 let source = source.to_canonical();
@@ -1049,6 +1131,18 @@ impl<B: Backend> Session<'_, B> {
                     return Err(End::Proxy(format!("{source} is not in smtp_allowed_addresses")));
                 }
                 self.client_ip = source;
+            } else if !self.config().allows(self.client_ip) {
+                // LOCAL or UNSPEC: the client is the connection's own (from a front link, the one the front named)
+                let _ = self
+                    .reply(&format!(
+                        "554 5.7.1 {} does not take mail from this address",
+                        self.config().hostname
+                    ))
+                    .await;
+                return Err(End::Proxy(format!(
+                    "{} is not in smtp_allowed_addresses",
+                    self.client_ip
+                )));
             }
             if let Some(internet) = self.config().internet.as_ref() {
                 match take_ip_slot(&self.shared.per_ip, internet, self.client_ip) {

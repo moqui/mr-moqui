@@ -1,6 +1,6 @@
 # Edge Node 2: domains, pools, edge clusters and the front
 
-Status 2026-11-13: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), and E16's routing by owner for web, mail, chat, PASS, delegate and the queue, with claims and limits between pairings, its comms (TURN, SIP, XMPP and ports per pairing) ([§4.1](#41-domains-on-one-edge-node), As built), and its System screens and `conf/multi-domain` ([§4.10](#410-the-system-app), As built), so E16 is built; E17 part A: the roles, every member of a local cluster linking, the member list, admission, member state and drain, and failover to a standby with its notice and Deliver again since ([§4.3](#43-the-front-option-set) to [§4.5](#45-failover-to-a-standby), As built); E17 part B: balancing by protocol with sticky sessions, health and retry, and call signaling per member ([§4.4](#44-pools-load-balancing), As built); E17 part C: work from a pool (the outbox, replication by a lock row) and web protection's rules per host, shared bans and view ([§4.3](#43-the-front-option-set), [§4.4](#44-pools-load-balancing), As built); E17 part D: the Clients screen's members, takeovers, hold and Deliver again, the Balancing tab and the sticky cookie on Domains, a local node's own cluster and drain on Edge Node, and the `local-cluster` (with an edge node) and `local-failover` confs ([§4.10](#410-the-system-app), As built); E18 part A: a local node's link to every member of an edge cluster ([§4.6](#46-a-cluster-of-edge-nodes), As built); E18 part B: the edge members' in-memory state made right by a cluster notice, admission and revocation across the edge cluster, SIP trunks registered from one member and calls on every member ([§4.6](#46-a-cluster-of-edge-nodes), As built); E18 part C: the Edge cluster tab, System › Edge Node's links to each edge member and `conf/edge-cluster` ([§4.10](#410-the-system-app), As built); the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
+Status 2026-11-14: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), and E16's routing by owner for web, mail, chat, PASS, delegate and the queue, with claims and limits between pairings, its comms (TURN, SIP, XMPP and ports per pairing) ([§4.1](#41-domains-on-one-edge-node), As built), and its System screens and `conf/multi-domain` ([§4.10](#410-the-system-app), As built), so E16 is built; E17 part A: the roles, every member of a local cluster linking, the member list, admission, member state and drain, and failover to a standby with its notice and Deliver again since ([§4.3](#43-the-front-option-set) to [§4.5](#45-failover-to-a-standby), As built); E17 part B: balancing by protocol with sticky sessions, health and retry, and call signaling per member ([§4.4](#44-pools-load-balancing), As built); E17 part C: work from a pool (the outbox, replication by a lock row) and web protection's rules per host, shared bans and view ([§4.3](#43-the-front-option-set), [§4.4](#44-pools-load-balancing), As built); E17 part D: the Clients screen's members, takeovers, hold and Deliver again, the Balancing tab and the sticky cookie on Domains, a local node's own cluster and drain on Edge Node, and the `local-cluster` (with an edge node) and `local-failover` confs ([§4.10](#410-the-system-app), As built); E18 part A: a local node's link to every member of an edge cluster ([§4.6](#46-a-cluster-of-edge-nodes), As built); E18 part B: the edge members' in-memory state made right by a cluster notice, admission and revocation across the edge cluster, SIP trunks registered from one member and calls on every member ([§4.6](#46-a-cluster-of-edge-nodes), As built); E18 part C: the Edge cluster tab, System › Edge Node's links to each edge member and `conf/edge-cluster` ([§4.10](#410-the-system-app), As built); E19 part A: the front node, an edge node that dials its front, and a local node's second pairing ([§4.7](#47-a-front-node), As built); E19 part B: TCP ports on a front (SMTP to an edge cluster with a PROXY header) and the edge members' link names through it ([§4.7](#47-a-front-node), As built); E19 part C: `conf/front` and `conf/full-stack`, the guides and the front node on the System screens ([§4.9](#49-example-confs-for-each-topology), [§4.10](#410-the-system-app), As built); so E13 to E19 are built; left before 0.1.0 are the hand checks of [§2.1](#21-checks-on-a-deployed-edge-node), E19's among them (the full stack with real DNS and an mr-pass site, a front's port 25 to a local cluster, two front nodes), and after it E11 and Later. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
 with E0–E10 and E12 built: the link, web access, delegate, queue and replicate, mr-pass on gRPC, mail, chat webhooks,
 calls, SIP, the XMPP tunnel, the attach wizard and the all-in-one node. This plan carries what that one left open
 ([§2](#2-open-from-edge-node)) and adds what larger deployments need, from the user's notes and answers of Nov 12,
@@ -70,6 +70,7 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 | A real local node paired with a served all-in-one server, with the server's own mail, chat, calls, SIP and XMPP beside the node's | E12 |
 | A shell through the edge node in both web access modes, across a dropped link; the desktop app's pairing checks | [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md) |
 | Real issuance from System › Certificates, Let's Encrypt staging then production, for an edge node's terminate host and for a local node's passthrough name through the tunnel, and their renewal by the job; the set-up check through a home router | E15 |
+| The full stack with real DNS: an mr-pass site through a front node over two edge members with a local cluster as its authority (the acceptance test serves a plain screen site), mail through the front's port 25 with the SPF, MX certificate and MTA-STS of [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), each tier's node stopped in turn; a front's port 25 to a local cluster's members (no test); two front nodes as a front cluster (no test) | E19 |
 
 ### 2.2 Not built
 
@@ -125,8 +126,8 @@ sets it apart ([§4.9](#49-example-confs-for-each-topology)).
 | A local cluster | More capacity, or a member that can fail: pooled and balanced by an edge node, or behind a load balancer of your own | `conf/local-cluster/` | Built behind your own balancer, with its conf (E13); with an edge node, `MoquiPooledConf.xml` (E17) |
 | A local node with a standby | A second machine started when the first one dies | `conf/local-failover/` | Built, with its conf (E17) |
 | An edge cluster | An edge node that can fail, or more capacity at the edge | `conf/edge-cluster/` | Built (E18 parts A to C), with its conf; cascading call media between members is Later, so a phone rings only for calls whose media is on its member |
-| A front node before a local cluster | Load balancing and web protection, with none of the edge node's comms | `conf/front/` | E19 |
-| Full stack | A higher-volume shop or other public site on mr-pass: a local cluster, an edge cluster, a front node, the desktop and mobile apps | `conf/full-stack/` | E19 |
+| A front node before a local cluster | Load balancing and web protection, with none of the edge node's comms | `conf/front/` | Built (E19 part A), with its confs (part C) |
+| Full stack | A higher-volume shop or other public site on mr-pass: a local cluster, an edge cluster, a front node, the desktop and mobile apps | `conf/full-stack/` | Built (E19 parts A and B), with its confs (part C) |
 
 ```
  visitors, mail servers, providers
@@ -383,7 +384,9 @@ Every node with a role takes links. Which sets it has decides what its Hello off
 `edge` became `front_edge` everywhere: the default conf's comment, `conf/edge/MoquiEdgeConf.xml`, the docs and the
 tests; `edge` alone parses as the edge set. The offer and the Hello honour the sets (`offer.rs` `for_role`): `front`
 offers web access and the XMPP ports, with mail, chat, PASS, calls and SIP named not available; `edge` offers no web
-access or ports, and its hook installs no web front, so a host name it holds gets nothing (E19 finishes both). A screen
+access or ports, and its hook installs no web front, so a host name it holds gets nothing (E19 part A finished both: a
+front starts and serves nothing of the edge set, and an `edge` node binds no tunnel port, [§4.7](#47-a-front-node), As
+built). A screen
 asks `get#LinkStatus`'s new `takesLinks` rather than the role's names (the Edge Node screens do; Edge Clients is 16C's).
 
 **Web protection is the front's.** It is built: connection, request and body limits, overload shedding, rate limits,
@@ -887,6 +890,147 @@ planned.
 A load balancer of your own in place of a front node stays supported: before an edge cluster it must pass TLS
 through with a PROXY header, since the link needs ALPN and client certificates end to end.
 
+**As built (E19 part A, the front node and the nodes that dial it, 2026-11-14).**
+- **The front node.** `node_role=front` starts none of the edge set: call media and TURN, SIP, the SMTP listener and MX
+  delivery are not started even with their ports set (logged, and off in the startup report with "a front node
+  (node_role front) has only the front set", `moqui_core::edge::front_refuses`), an XMPP server never is on a dedicated
+  edge node, and it keeps no queue (no `queue::maintain`, no delivery down a link). On its links it refuses the edge
+  set's calls: `Deliver`, `PutContent` and `Replicate` answer "this is a front node", `Signal` takes a web protection
+  ban only, a delegated call and a PASS call fail at once (`EdgeServer` with `EdgeConfig::edge` false). Its Hello names
+  its role (`Hello.node_role`, new, filled by every node that takes links) and, as E17 built, offers web access and ports
+  only, refusing a Configure's mail, chat, PASS and SIP domain by name. A front dials no other node. Its database holds
+  only what a node that takes links writes: pairings, host names, ports, certificates. An `edge` node binds no tunnel
+  port either (its front takes them; 17A's review).
+- **The front pairing.** A node's link to a front is a second pairing beside its edge pairing: `front_node_url`,
+  `front_node_key`, `front_node_pin` and `front_node_id` (no pairing id: the queue's rows are the edge pairing's), its
+  list kept in `runtime/db/front_members`, its own `Dialer` (`LocalConfig::front`). Pairing decides where it goes by the
+  role the node's Hello names, so the System app's one Pair flow pairs either: a `front` is kept as the front pairing,
+  anything else as the edge pairing. A link whose node names another role than its pairing expects is refused, pair
+  again. Its links carry web access and ports only: no outbox, replication (not even enabled), call or SIP rows or TURN
+  secret up, and the down connection takes no queued item, delegated call or PASS call; call signaling's route stays,
+  for a web protection ban up (`guard_share` reads `front_node_id` as well as `edge_node_id`). A local node pooled by a
+  front writes a new session before its response, as one pooled by an edge node (`session::pooled` reads both URLs).
+- **What goes on which pairing.** With both, the wizard's host names and XMPP domain go to the front and its mail
+  domains, chat bridges and PASS sites to the edge pairing (`edge_link::front::split_setup`; each pairing hears every
+  Configure, as each keeps its part whole, so a cleared XMPP domain reaches the front), and the offer shown is the edge
+  pairing's with the front's web access, ports and addresses (`merge_offer`). Both parts are sent at once; a part one
+  pairing did not take is answered item by item with why (`failed_results`) and the other's answers stand, and an offer
+  that one pairing did not give shows the other's. A Configure that sets the host names clears them on the edge pairing
+  (decided in the review): a local node behind `front_edge` members that also pairs with the front gives its names to
+  the front only, where the edge members would otherwise claim them a second time. A Configure to a front carries no SIP domain. With only a
+  front pairing everything goes to it, and the front refuses what it has not. The queue, delegated calls, replication,
+  comms and PASS are the edge pairing's alone. `get#LinkStatus` shows the front pairing (`frontState`, `frontUrl`,
+  `frontName`, `frontFingerprint`, `frontLastError`, `frontLastConnectDate`) beside the edge one, and the peer's role
+  (`edgeRole`); a node paired with a front alone shows it as its only link. `unpair#EdgeNode` with `front` unpairs the
+  front pairing. System › Edge Node shows a Front node box with Unpair front, and on an edge node a Pair with a front
+  node link (minimal; 19C or later polishes the screens).
+- **An edge node that dials.** A node with the edge set (`front_edge`, `edge`, `all-in-one`) dials its front from
+  `front_node_*` as well as taking links, and pairs with a front only (`PairConfig::only_front`: the role is read from
+  the Probe answer, before the code is spent). Its down connection serves its own app with its web front
+  (`down::install` with the edge server), so a front's request for a local node's terminate host goes on down that
+  node's link with the client the front named, and a passthrough tunnel whose ClientHello names a passthrough host of a
+  node linked here goes on down that node's link (`tunnel::relay_passthrough`, a new PROXY header with the same
+  client); anything else is the node's own. It gives the front its names itself, by Configure on each new front link
+  and on a change (`hosts_changed`, else every 5 s): its sites' hosts and its chat address's host as terminate hosts, so
+  the front sees the cookie and balances them sticky by it, and with the front set every active pairing's names in their
+  own modes (`front::names_for_front`); a name the front refused is given again after a minute. Its own
+  `webapp_http_host` is not given: its System app and its link address stay its own (19B makes the edge members' link
+  names passthrough hosts on the front); an all-in-one node's is, as a terminate host, as it is a full server's app.
+  Every local node behind `front_edge` members is part of their one pairing on the front, so the front's bans, rules
+  and limits per pairing hold for the edge cluster as a whole. The Pair screens show the node's role from
+  `check#EdgeNode` (`edgeRole`) before pairing. A passthrough tunnel relayed on needs no certificate of the edge node's. The members of an edge cluster
+  share a database and a `.env`, so they are one pairing on the front, admitted by the member list and balanced as any
+  pool. `front_edge` members forward their local nodes' names (§8 item 3, built first); with `edge` members a local
+  node pairs with the front for its names (the second pairing above).
+- **Not through the front:** media, TURN and SIP go to each edge member's own address. Nothing tunnels them: the front
+  starts none of them, takes no call signaling, and a front pairing carries no call rows.
+- **The local nodes' links through the front** (each edge member's own name as a passthrough host, picked by SNI before
+  the link ALPN), TCP ports on the front (SMTP 25 with a PROXY header) are 19B (below); `conf/front` and
+  `conf/full-stack` and the guides are 19C ([§4.9](#49-example-confs-for-each-topology), As built).
+- **Two front nodes** (19C's reading): with one `front_node_url` per node, two front nodes are a cluster of front nodes
+  on one database and one `.env`, each with its own `edge_link_url`, and a node behind them links to every member as
+  with an edge cluster: the front pairing's dialer keeps the member list (`runtime/db/front_members`) as the edge
+  pairing's does. Run-Deploy says so; no test runs two front nodes yet.
+- **Tests.** Host unit tests: `front` (the names an edge node gives its front, the split, the merged offer and
+  answers, a part not taken), `signal` (a front takes a ban and no call signaling), `hook` (where a pairing goes by the
+  other node's role, the properties each pairing writes), `dial` (a pairing links only to a node of its kind both ways,
+  a front pairing's down connection takes no queued item or delegated call). `it edge_front` (regression, about 2 to 3 s each): a
+  front starts none of the edge services, its Hello names its role, an edge pairing's link to it is refused, a queued
+  item, a replication batch, a queued item's content, a delegated call and a PASS call are refused, its offer is web and
+  ports, a Configure's mail, chat and PASS are refused; an edge node
+  (`front_edge`) pairs with a front only, dials its front from its properties, gives it its local node's names in their
+  modes, and a visitor reaches the local node through the front in terminate and passthrough mode; a local node with
+  two pairings (an `edge` node and the front) sends its web name to the front and its mail domain to the edge node, is
+  reached through the front, its queue goes both ways over the edge pairing, and unpairing the front leaves the edge
+  pairing. Acceptance (run once):
+  `edge_front::acceptance_a_front_node_balances_a_local_cluster_with_web_protection` (two members of a local cluster on
+  one database linked to a front over the front pairing share a host's requests evenly, the front's web protection
+  refuses a client before any member sees it, and a signed-in browser stays on one member and moves when it stops, still
+  signed in). The full-stack scenario (an mr-pass site through a front over two edge members, with a local cluster as
+  the authority) needed 19B's link names through the front: 19B's acceptance test, with a plain screen site in place of
+  mr-pass (part B below).
+
+**As built (E19 part B, ports on a front and the edge members' link names, 2026-11-14).**
+- **SMTP on a front.** `EdgePort.tunnelKind` takes `smtp` (`moqui_core::edge::ports::SMTP`), on a front node only
+  (`node_role=front`; a node with the edge set refuses one, as it takes mail on its own listener, and a row that is
+  there anyway does not listen). On a front the usual ports of the edge set's listeners, which it never starts
+  (`smtp_listen_port`, the MX relay, XMPP, SIP, TURN, media and their ranges), are free for a row, so its port 25 can
+  be one; its web ports stay reserved. The row binds on `edge_smtp_tunnel_host` (every address when empty), takes at
+  most 128 connections at once, and sends each to a live member of the pairing chosen by the client's address (17B's
+  tunnels rule) as the tunnel kind `smtp`, a PROXY v2 header naming the client first. The member's down connection
+  gives it to its own SMTP listener in process (`smtp::serve_tunneled`), which reads the header because the connection
+  came over its own front link and checks the client against `smtp_allowed_addresses` and the per-address limits as a
+  direct client's (a LOCAL header keeps the client the front named, checked the same way); the listener's own port reads
+  no PROXY header unless `proxy-protocol` is on, and only a node with the edge set takes an SMTP tunnel, on its front
+  link. The plan said "as the
+  SSH port is": an SSH tunnel names its client in the tunnel request's header instead; SMTP uses the PROXY header the
+  listener already reads, so the same session code checks it. The Ports tab offers SMTP on a front only.
+- **The edge members' link names.** A node that takes links names its own `edge_link_url` in the Hello of its front
+  link (`Hello.link_url`, new, from `LocalConfig::link_url`; an edge member's own code path, not 19A's
+  `keep_front_names`). The front keeps the host as an `EdgeHost` row in the new mode `EdgeHostLinkName` with the
+  member's id (`EdgeHost.memberId`, new; `moqui_core::edge::hosts::claim_link_name`, `edge_link/link_names.rs`): the
+  first claim holds against other pairings, the front's own names (its own `edge_link_url` among them) are refused, a
+  member back with another id takes its name over (two members sending one name are logged each time it moves) and a
+  member's new name replaces its old one; a Configure neither removes nor takes one, and the System app cannot add one
+  (Domains shows it as "Link name" with the member, and its Remove is the only cleanup of a name no member sends). Only
+  a front node keeps one, and only from a node whose Hello names a role with the edge set (the front link's Hello now
+  names the dialing node's role). A refused claim is logged on the front; the member is not told. The row stays while the member is away, so its
+  name is refused then rather than taken by another pairing or member. In the host table a link name is a passthrough
+  route with its member (`Route::member`), and its tunnel goes to that member's link alone (`EdgeServer::link_to_member`,
+  linked with its down connection open, whatever its state: a link is not balanced work), else the connection is
+  closed.
+- **SNI before ALPN on a front.** On a front node (`front` set without the edge set) `Acceptor::accept` looks the server
+  name up first: a link name goes down its tunnel whatever link ALPN the client offers, so a local node's link
+  (`moqui-edge/1`, its client certificate) and its pairing (`moqui-edge-pair/1`) to an edge member pass through the
+  front untouched; one offering no link or ACME ALPN is refused. A link ALPN with any other name, an ordinary
+  passthrough host's too, is the front's own link (review: else a pairing claiming a name the front is dialed at would
+  take every other pairing's links). Link-name tunnels have a budget of their own beside the pairing's. Every other node keeps the ALPN first, and E15's ACME answer still comes after the
+  passthrough check on both. On the edge member, a passthrough tunnel from its front whose ClientHello offers a link
+  ALPN is taken by its own link acceptor (`EdgeServer::take_link`: the link's TLS settings with the ClientHello read
+  already, the client the front named as the remote), so `serve`, `serve_up`, `serve_down` and the pairing connection
+  now take any stream (`LinkIo`).
+- **Mail through a front.** The MX of an edge cluster's domains can point at the front; the members' own port 25 may
+  stay open for a second MX record ([Mail-Inbound](../docs/interfaces/Mail-Inbound.md), the edge node's part).
+- **Tests.** Unit: `moqui-core` `edge::ports` (an smtp row on a front only, the edge set's ports free on a front),
+  `edge::hosts` (a link name's claims), `moqui-host` `smtp` (a front link's PROXY header names the client and is
+  checked against the allow-list, a direct client's is not read), `edge_link::hosts` and `down` (an SMTP tunnel needs
+  the node's SMTP listener). `EdgeScreens.spec.js`: an smtp port refused on a node that is not a front. `it
+  edge_front_ports` (regression, about 2.5 s each): `a_front_passes_smtp_to_an_edge_member_with_the_clients_address`
+  (an edge member dialing its front from its properties names its link address there; the member's allow-list sees the
+  client the front names; a direct client's PROXY header is a command not known; an edge member refuses an smtp row)
+  and `an_edge_members_link_name_passes_through_the_front_to_it_alone` (two edge members' link names each to its own
+  member from one client address; a local node pairs and links through the front at a member's link name; a member
+  whose front link stopped has its name refused, and kept). Acceptance (run once, about 4 s):
+  `edge_front_ports::acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped` (a front before an
+  edge cluster of two members before a local cluster of two: the local members link to one edge member through the
+  front at its link name and to the other at its own address, visitors are balanced over both edge members, a
+  signed-in browser stays on one edge member and stays signed in when that edge member stops, and then when a local
+  member stops too). The site is the local cluster's own app on a terminate host, not an mr-pass site: loading mr-pass
+  and Mantle in a host test is too slow, and what the scenario checks is the path through the tiers. One test process
+  keeps one edge link hook (the last started server's), so the tests dial the edge members' front links with test
+  dialers built as `LocalConfig::front_from_properties` builds them; the SMTP test's single member dials from its
+  properties.
+
 ### 4.8 Certificates and ACME
 
 An ACME client, used from a screen and never on its own (decided Nov 12, 2026).
@@ -1010,6 +1154,20 @@ a README. It found the XSD missing `request-pool-max` and `request-queue` on `<t
 Run-Deploy's edge node section moved to Mail-Inbound's "The edge node as the gateway"; the section is about 85 lines.
 The test runtimes copy `conf/` with its subdirectories (`moqui test`'s scratch runtime), the devkit project cache
 stamps the confs in them, and `./moq`'s completion lists them.
+
+**As built (E19 part C, 2026-11-14).** `conf/front/` (`MoquiFrontConf.xml`, the front node, `node_role=front`, for
+both of its uses; `MoquiLocalConf.xml`, each member of a local cluster behind it: `MoquiPooledConf.xml` with the front
+pairing's `front_node_*` in place of `edge_node_*`, no queue, and the cluster's own mail, calls and phones, mail in by
+an `smtp` port on the front) and `conf/full-stack/` (`MoquiFrontConf.xml`, the front before an edge cluster;
+`MoquiEdgeConf.xml`, each edge member, `front_edge` by default with `edge` explained, the mr-pass sites' `root-screen`
+and `public-site` bindings, `edge_link_url` as the member's link name at the front, the SMTP listener the front's port
+25 reaches; `MoquiLocalConf.xml`, each local member, the edge pairing, the second pairing with `edge` members and the
+PASS authority). A conf of its own for each kind of node, rather than pointing at `conf/front` or `conf/local-cluster`:
+one runtime conf is merged, so a pointer cannot carry the settings, and each says only what differs from the conf its
+comments name. The READMEs have the diagrams, the `.env` names per tier, the DNS (in the full stack, which names point
+at the front and which at each edge member's own address) and the order to pair. `runtime/conf/README.md` indexes
+both, Run-Deploy has "A front node" and "Full stack" and their topology rows, and the conf test loads the six new
+files.
 
 ### 4.10 The System app
 
@@ -1143,6 +1301,32 @@ queue and sets per node, and the replica conflicts. On a node with the front set
   retired one); `it edge_cluster`'s first test checks `get#EdgeCluster`'s `linkUrlUsable` with the link running. The
   Edge Node box is not rendered with a running link: its rows are the `edgeMemberList` the unit test shapes.
 
+**As built (E19 part C, the screens, Nov 14, 2026).**
+- **Edge cluster** gains **Front node**: the front this node is paired with, which every member dials with the shared
+  `.env`, from `get#EdgeCluster`'s new `frontList` (this node's link to each member of the front's cluster, else the one
+  link, with the front's name and pinned fingerprint; where no link serves, one row from `front_node_url` and
+  `front_node_id`, not started here): each front member's link state as a chip, address, round trip, last connect and
+  last error, and a link to Edge Node, where Unpair front is. On a node with the edge set and no front pairing a line
+  says how to pair one; on a front node the tab lists its own cluster as front nodes and has no such box.
+- **Edge Node › Status** for a front pairing: paired with a front alone (a member of a local cluster behind it,
+  `conf/front`), the Link box is the front's, Setup says mail, chat, PASS, calls and phones are the node's own, and the
+  Queue and replication box gives way to a note that a front pairing carries none; This node's cluster shows while
+  paired by `front_node_url` too. The Front node box beside an edge pairing shows the front's last connect and
+  fingerprint. Edge Clients' notice for a node that takes no links names `front`.
+- **Tests.** `EdgeScreens.spec.js`'s Edge cluster feature (regression, about 0.06 s) checks `frontList` from
+  `front_node_*` and its absence, and the Front node box in its one qvt and tui render; `moqui-core` `service::edge`
+  `front_rows` (a row per front link, one from the properties, none without). A front-only pairing's Edge Node needs a
+  running link, so that page is not rendered in a spec.
+- **Review fixes (Nov 14).** `get#LinkStatus` answers `frontOnly` from what pairing wrote (`front_node_url` set,
+  `edge_node_url` not), so Edge Node shows a front-only pairing as such before its link first comes up (the front's
+  role in the status is empty until then); `frontList` falls back to the properties when a link serves but no front
+  dialer runs, and shows `front_node_id`'s ids as a list; the hint to pair a front is one line in Members. The docs
+  say how an edge member gets its first certificate (the edge cluster's own name at the members' addresses, as the
+  link server needs one before any link name's ACME challenge can pass through the front), that the front is a single
+  point for the links in the full stack unless `edge_link_url` names the member's own address, that a ban is not told
+  on past the next node, and the mail records a front needs (SPF of the members' addresses, the MX name's certificate
+  on every member, MTA-STS since the front relays the bytes).
+
 ### 4.11 Security
 
 - **Admission** is the new trust decision. A pool member holds the pairing's key and is on the member list a linked
@@ -1168,7 +1352,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 | **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens. **Built 2026-11-13**, the screens and `conf/multi-domain` last ([§4.10](#410-the-system-app), As built). Routing part: web, mail, chat webhooks, PASS by site, delegate and the queue by owner, claims and conflicts between pairings, the queue cap and MX share per pairing ([§4.1](#41-domains-on-one-edge-node), As built); the acceptance test is `edge_domains::one_node_away_or_overloaded_leaves_the_other_working` (web, mail, chat, PASS, delegate; SIP and XMPP to add) | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |
 | **E17** | **Part D built 2026-11-14** ([§4.10](#410-the-system-app), As built): Clients' members, takeovers, hold and Deliver again, the Balancing tab and the sticky cookie on Domains, a local node's own cluster and drain, the `local-cluster` with an edge node and `local-failover` confs. **Part A built 2026-11-13** ([§4.4](#44-pools-load-balancing), [§4.5](#45-failover-to-a-standby), As built): the roles, every member linking, the member list and its report, admission, member state and drain, failover with its notice, the hold and Deliver again since; tests `edge_pool` (regression) and its three acceptance tests. **Part B built 2026-11-13** ([§4.4](#44-pools-load-balancing), As built): balancing by protocol, sticky by the session cookie (a host's own name on `EdgeHost`) or the client's address, health with set-aside, a GET or HEAD sent once more, call signaling per member, `get#EdgeBalancing`; tests `edge_balance` (regression) and its two acceptance tests. The front option set and the `node_role` values (`front`, `front_edge`, `edge`); pools: the member list in memory and its report, admission, balancing by protocol with sticky sessions, health and drain, the outbox and replication from a pool; failover to a standby with its notice and Deliver again since; web protection's rules per domain, shared bans and view; the Balancing screen. **Part C built 2026-11-13**: the outbox and replication from a pool, the link's own rows from the sender, web protection's rules per host, shared bans and System › Security › Web Protection ([§4.3](#43-the-front-option-set), [§4.4](#44-pools-load-balancing), As built); tests `edge_pool_work` | Two members of a cluster link and share a host name's requests evenly; a browser session stays on one member, and moves when it stops, still signed in. Clients shows a cluster member that is live but not linked. A node on another database with the same key is refused while a member is linked. With the local node stopped, a standby started by hand takes over its names and gets the queued items once; the first machine, started again, is refused. A drained member finishes its requests and gets no new ones |
 | **E18** | The edge cluster: the list of edge members in Hello, a local node's link to each, the in-memory state made right, calls and SIP on several edge members; the Edge cluster screen. **Part A built 2026-11-14** ([§4.6](#46-a-cluster-of-edge-nodes), As built): `edge_link_url`, the list in Hello and Ping answers, a link to each member kept in `runtime/db/edge_members`, the work up one link, `get#EdgeCluster` and `edgeMemberList`; tests `edge_cluster` (regression) and its two acceptance tests. **Part B built 2026-11-14** ([§4.6](#46-a-cluster-of-edge-nodes), As built): the `edge-state` cluster notice (host table, replicated copies, revocation), admission by `EdgeMemberLinks` rows (and the missed-notice beat), the `sipTrunks` lock, a `CallMediaNode`, `SipNode` and TURN secret per edge member; tests `edge_cluster_state` (regression) and its mail acceptance test **Part C built 2026-11-14** ([§4.10](#410-the-system-app), As built): the Edge cluster tab, System › Edge Node's links to each edge member, `conf/edge-cluster`, Run-Deploy's section; Mobile-Desktop's question answered | A local node links to both members of an edge cluster. A request to either reaches it. With one edge member stopped, web, mail in and the queue go on through the other, and nothing is delivered twice. A clustered all-in-one server takes links on every member |
-| **E19** | The front node: `node_role=front`, an edge node that dials (`front_edge` behind the front first, then `edge` with a local node's second pairing), TCP ports on the front, the local nodes' links through it; the `front` and `full-stack` confs | A front node balances a local cluster with web protection and no edge node. Visitors reach an mr-pass site through a front node, balanced over two edge cluster members, sticky by session, with a local cluster as their authority. Stopping any one node below the front leaves the site up |
+| **E19** | The front node: `node_role=front`, an edge node that dials (`front_edge` behind the front first, then `edge` with a local node's second pairing), TCP ports on the front, the local nodes' links through it; the `front` and `full-stack` confs. **Part A built 2026-11-14** ([§4.7](#47-a-front-node), As built): the front node with the front set only, the front pairing (`front_node_*`) and what goes on it, an edge node that dials its front and forwards its local nodes' names, a local node with two pairings; tests `edge_front` (regression) and its acceptance test. **Part B built 2026-11-14** ([§4.7](#47-a-front-node), As built): SMTP ports on a front with a PROXY header, the edge members' link names as member-pinned passthrough hosts, picked by SNI before the ALPN on a front; tests `edge_front_ports` (regression) and the full-stack acceptance test (a plain screen site in place of mr-pass). **Part C built 2026-11-14** ([§4.9](#49-example-confs-for-each-topology), [§4.10](#410-the-system-app), As built): `conf/front` and `conf/full-stack`, Run-Deploy's sections, the guides, mr-pass's Full stack, the front node on Edge cluster and Edge Node; tests `EdgeScreens.spec.js` and `service::edge` | A front node balances a local cluster with web protection and no edge node. Visitors reach an mr-pass site through a front node, balanced over two edge cluster members, sticky by session, with a local cluster as their authority. Stopping any one node below the front leaves the site up. The acceptance test (`edge_front_ports`) serves a plain screen site; the mr-pass site is a [§2.1](#21-checks-on-a-deployed-edge-node) hand check |
 | **E11** | Filtering in moqui, as in the archived plan; after the first release | To be set when it is designed |
 | **Later** | A PASS read cache on the edge node; monitoring over the link, with the link-down alert a standby's automation would watch; sealing queued items; a local media node cascading to the edge node, and regional media nodes; cascading between edge cluster members; the voicemail fallback following rules and schedules; the wizard's undo; QUIC; DANE; typed gRPC messages and mutual TLS for direct PASS | |
 
@@ -1231,16 +1415,25 @@ builds the rest of decision 1.
 
 ## 8. For the review pass
 
-Every question is answered. These are the points this plan chose on its own, for the user's pass through it:
+Every question is answered. These are the points this plan chose on its own, for the user's pass through it, each
+with what it became (Nov 14, 2026):
 
 1. **What a front does beyond web protection as built** ([§4.3](#43-the-front-option-set)): rules per domain, shared
    bans and the view for the first release; compression, security headers per host and a static cache later. The
-   user's answer of Nov 12: good enough for now, to review.
+   user's answer of Nov 12: good enough for now, to review. **Became:** rules per host, shared bans (between members
+   and up each link, to a front too) and System › Security › Web Protection, built in E17 part C; the rest is Later
+   ([§5](#5-phases)).
 2. **Renewal.** A name the operator set up with ACME is renewed by a job, with no further step
-   ([§4.8](#48-certificates-and-acme)). It is the one thing there that runs on its own.
+   ([§4.8](#48-certificates-and-acme)). It is the one thing there that runs on its own. **Became:** built in E15,
+   `renew_AcmeCertificates_daily`, running only while a name is set up, a failure shown on the System home.
 3. **`edge` members in a full stack** need a local node to hold two pairings, one with the front and one with the
-   edge cluster ([§4.7](#47-a-front-node)). E19 builds `front_edge` members first.
+   edge cluster ([§4.7](#47-a-front-node)). E19 builds `front_edge` members first. **Became:** both built in E19 part
+   A: `front_edge` members forward their local nodes' names to the front, and with `edge` members a local node holds a
+   front pairing beside its edge pairing (`front_node_*`), the wizard's parts split between them. `conf/full-stack`
+   runs `front_edge` by default (one pairing per local node) and explains `edge`.
 4. **Additions to the simple failover** ([§4.5](#45-failover-to-a-standby)): the first machine refused while the
-   standby is linked, the notice, and Deliver again since.
+   standby is linked, the notice, and Deliver again since. **Became:** built in E17 parts A and D, with the hold for
+   approval, and the displaced node refused until an administrator lets it link again.
 5. **`node_role=edge` changes its meaning** to the edge set alone; today's edge node becomes `front_edge`
-   ([§4.3](#43-the-front-option-set)).
+   ([§4.3](#43-the-front-option-set)). **Became:** built in E17 part A, with no alias for the old meaning; the confs,
+   guides and tests say `front_edge`.

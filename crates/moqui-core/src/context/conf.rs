@@ -43,7 +43,7 @@ pub(super) fn runtime_conf_from(runtime_dir: &Path, selected: Option<&OsStr>) ->
     match selected.filter(|value| !value.is_empty()) {
         Some(value) => {
             let path = runtime_dir.join(value);
-            if path.is_file() {
+            if moqui_lib::vfs::is_file(&path) {
                 Ok(Some(path))
             } else {
                 Err(Error::new(format!("MOQUI_CONF file {} not found", path.display())))
@@ -51,10 +51,10 @@ pub(super) fn runtime_conf_from(runtime_dir: &Path, selected: Option<&OsStr>) ->
         }
         None => {
             let instance = runtime_dir.join("MoquiConf.xml");
-            if instance.is_file() {
+            if moqui_lib::vfs::is_file(&instance) {
                 return Ok(Some(instance));
             }
-            Ok(Some(runtime_dir.join("conf/MoquiDevConf.xml")).filter(|path| path.is_file()))
+            Ok(Some(runtime_dir.join("conf/MoquiDevConf.xml")).filter(|path| moqui_lib::vfs::is_file(path)))
         }
     }
 }
@@ -150,7 +150,7 @@ pub fn conf_files_of(
         let own = Some((dir.join("MoquiConf.xml"), ConfRole::Component(name.clone())));
         let test = test_confs.then(|| (dir.join("test/MoquiConf.xml"), ConfRole::ComponentTest(name.clone())));
         for (path, role) in own.into_iter().chain(test) {
-            if path.is_file() {
+            if moqui_lib::vfs::is_file(&path) {
                 files.push(ConfFile { path, role });
             }
         }

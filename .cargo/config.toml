@@ -83,6 +83,9 @@ inherits = "release"
 
 [env]
 POSTGRESQL_VERSION = { value = "=18.6.0", force = true }
+# The OpenSearch version `./moq opensearch-download` gets and an embed-opensearch build embeds (crates/moqui-embedded);
+# moq reads it from here.
+MOQUI_OPENSEARCH_VERSION = { value = "3.4.0", force = true }
 
 # The browser build (plans/archive/Wasm.md, crates/moqui-browser). Source scripts/wasm-env.sh first.
 # An ES module factory (createMoqui) for a Web Worker or Node. QuickJS needs far more than

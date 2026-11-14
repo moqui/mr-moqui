@@ -15,27 +15,58 @@
 use super::{ensure_runtime, names};
 
 #[test]
-fn a_skeleton_is_written_only_for_the_runtime_s_own_missing_framework() {
+fn a_new_runtime_gets_its_directories_and_reads_the_built_in_files_in_place() {
     let root = std::env::temp_dir().join(format!("moqui-ensure-runtime-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let runtime = root.join("runtime");
-    // MOQUI_FRAMEWORK elsewhere: nothing is written.
-    ensure_runtime(&runtime, &root.join("framework")).unwrap();
-    assert!(!runtime.exists());
     let framework = moqui_core::context::default_framework_dir(&runtime);
     ensure_runtime(&runtime, &framework).unwrap();
-    assert!(framework.join("component.xml").is_file());
-    assert!(runtime.join("components/base/tools/service/moqui.rest.xml").is_file());
-    assert!(runtime
-        .join("components/base/webroot/screen/webroot/rest.xml")
-        .is_file());
-    assert!(runtime
-        .join("components/base/webroot/screen/webroot/apps.xml")
-        .is_file());
-    // A framework that is there is left alone.
-    std::fs::remove_file(framework.join("conf/MoquiDefaultConf.xml")).unwrap();
-    ensure_runtime(&runtime, &framework).unwrap();
-    assert!(!framework.join("conf/MoquiDefaultConf.xml").exists());
+    let base = runtime.join("components/base");
+    for dir in ["framework", "tools", "webroot"] {
+        let dir = base.join(dir);
+        assert!(dir.is_dir(), "{} is made", dir.display());
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            0,
+            "nothing is written in {}",
+            dir.display()
+        );
+    }
+    assert!(!runtime.join("conf").exists(), "no conf is written");
+    assert!(moqui_core::context::layout::is_runtime(&runtime));
+
+    // Each built-in file not on disk is read in place.
+    assert!(moqui_lib::vfs::is_file(framework.join("component.xml")));
+    assert!(moqui_lib::vfs::is_file(base.join("tools/service/moqui.rest.xml")));
+    assert!(moqui_lib::vfs::is_file(base.join("webroot/screen/webroot/rest.xml")));
+    assert!(
+        moqui_lib::vfs::is_file(base.join("webroot/screen/webroot/qapps.xml")),
+        "the placeholder page"
+    );
+    assert!(moqui_lib::vfs::is_file(runtime.join("components/components.xml")));
+    assert!(moqui_lib::vfs::is_file(runtime.join("conf/MoquiProductionConf.xml")));
+    let dev = moqui_lib::vfs::read_to_string(runtime.join("conf/MoquiDevConf.xml")).unwrap();
+    assert!(dev.contains("<moqui-conf"), "{dev}");
+    let sets = moqui_core::context::layout::component_dirs(&runtime, &[moqui_core::context::layout::Set::Base]);
+    assert_eq!(sets.len(), 3, "{sets:?}");
+
+    // A file on disk is read in place of the built-in one.
+    std::fs::create_dir_all(runtime.join("conf")).unwrap();
+    std::fs::write(runtime.join("conf/MoquiDevConf.xml"), "<moqui-conf/>").unwrap();
+    assert_eq!(
+        moqui_lib::vfs::read_to_string(runtime.join("conf/MoquiDevConf.xml")).unwrap(),
+        "<moqui-conf/>"
+    );
+
+    // A framework MOQUI_FRAMEWORK names elsewhere is not made, and is mounted where it is.
+    let elsewhere = root.join("framework");
+    ensure_runtime(&runtime, &elsewhere).unwrap();
+    assert!(!elsewhere.exists());
+    assert!(moqui_lib::vfs::is_file(elsewhere.join("component.xml")));
+    for set in moqui_embedded::Set::ALL {
+        moqui_lib::vfs::unmount(&set.dir_in(&runtime, &framework));
+        moqui_lib::vfs::unmount(&set.dir_in(&runtime, &elsewhere));
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 

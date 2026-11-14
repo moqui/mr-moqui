@@ -1,24 +1,35 @@
-# The framework and tools components' runtime files and a webroot stub, built into the binary: the host compares the
-# files on disk with them at startup and logs each difference, and writes them out as a skeleton runtime when there is
-# none (runtime/README.md). Its own crate with no framework dependency, so an edit to a framework file rebuilds only
-# this crate and relinks; build.rs packs the files.
+# The runtime files built into the binary (the framework and tools components, a webroot stub and the runtime's confs,
+# and with the production or all feature the other components too): a runtime reads each one that is not on disk from
+# here, the host compares the files on disk with them at startup and logs each difference, and `moqui embedded extract`
+# writes them out (docs/Run-Deploy.md, Built-in runtime files). Its own crate with no framework dependency, so an edit
+# to a framework file rebuilds only this crate and relinks; build.rs packs the files.
 
 [package]
 name = "moqui-embedded"
-description = "The framework, tools and webroot stub files built into the binary, for the startup comparison and a skeleton runtime."
+description = "The runtime files built into the binary, read where a runtime does not have them."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# The level of the runtime built in (src/select.rs): none is the framework level; `production` is what `./moq archive`
+# puts in by default (every base and add-on component less its tests and plans), `all` adds the tests, plans and the dev
+# and test sets.
+production = []
+all = ["production"]
+# The program archives built in, unpacked into the install directory and run as their own processes: OpenSearch and
+# Chromium (src/programs.rs; build.rs finds the archives `./moq opensearch-download` and `./moq chromium-download`
+# keep). Postgres is moqui-drivers' embedded-postgres.
+opensearch = []
+chromium = []
+
 [dependencies]
 flate2 = { workspace = true }
 similar = { workspace = true }
-tar = { workspace = true }
 
 [build-dependencies]
 flate2 = { workspace = true }
-tar = { workspace = true }
 
 [lints]
 workspace = true

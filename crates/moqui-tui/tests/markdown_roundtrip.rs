@@ -43,10 +43,11 @@ fn samples() -> Vec<(String, String)> {
 }
 
 /// What the check found on Oct 21, 2026 (Revue 3.10.1): the Gallery sample, the wiki pages and plans/README.md come
-/// back as they went in. A line that starts with digits and has `. ` later in it is read as a numbered item and
-/// rewritten (`00:53` needs no quotes. An answer is:` comes back as `1. An answer is:`), and inline markup is kept as
+/// back as they went in. A line that starts with digits and has `. ` later in it was read as a numbered item and
+/// rewritten (`00:53` needs no quotes. An answer is:` came back as `1. An answer is:`), and inline markup is kept as
 /// text but drawn plain. So the TUI keeps the Markdown as the value and styles its source (3.8) rather than edit through
-/// RichTextEditor. When an upgrade changes either result, this test says so.
+/// RichTextEditor. Revue 3.15 keeps the digit line; inline markup is not checked here. When an upgrade changes a
+/// result, this test says so.
 #[test]
 fn rich_text_editor_round_trip() {
     let round = |text: &str| RichTextEditor::new().from_markdown(text.to_string()).to_markdown();
@@ -57,10 +58,6 @@ fn rich_text_editor_round_trip() {
         }
         assert_eq!(back.trim_end(), text.trim_end(), "{name}");
     }
-    let lossy = "00:53 is the time. Then save.";
-    assert_ne!(
-        round(lossy).trim_end(),
-        lossy,
-        "a digit line is no longer taken for a numbered item"
-    );
+    let digits = "00:53 is the time. Then save.";
+    assert_eq!(round(digits).trim_end(), digits, "a digit line is taken for a numbered item again");
 }

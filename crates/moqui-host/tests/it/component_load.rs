@@ -167,11 +167,9 @@ fn a_component_loads_its_entities_rules_services_and_data() {
 fn temp_dir(prefix: &str) -> PathBuf {
     static SHARED: std::sync::Once = std::sync::Once::new();
     SHARED.call_once(|| {
-        let exe = std::env::current_exe().unwrap();
-        let profile_dir = exe.ancestors().nth(2).expect("target directory");
         moqui_lib::env::set_property(
             "MOQUI_INSTALL",
-            profile_dir.join("moqui-test-install").display().to_string(),
+            crate::common::profile_dir().join("moqui-test-install").display().to_string(),
         );
     });
     let nanos = SystemTime::now()

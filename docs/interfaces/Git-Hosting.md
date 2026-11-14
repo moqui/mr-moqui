@@ -1351,8 +1351,9 @@ cluster members an edge node balances, and an edge cluster.
   node (`https://code.example.com`), not the local node's own address; with it empty, the request's own host is used,
   which is the same behind a terminate host. Leave `ssh_public_host` and `ssh_public_port` empty behind an edge node:
   the clone URLs then name the edge node's SSH tunnel to this node, as its offer says (its public name, and the
-  pairing's own SSH port, an `EdgePort` row, else `edge_ssh_tunnel_port` while it is the one active pairing). Set them
-  when clients reach SSH another way. `<git-ci server-url>` is for runners: [Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
+  pairing's own SSH port, an `EdgePort` row, else `edge_ssh_tunnel_port` while it is the one active pairing). With a
+  front pairing and an edge pairing (edge members behind a front, which bind no tunnel ports) they name the front's.
+  Set them when clients reach SSH another way. `<git-ci server-url>` is for runners: [Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
 - **A host that refuses the framework's routes** (`root-screen` `framework-routes="refuse"`, a site of its own) still
   serves `/git/` (smart HTTP and LFS), git at its pages' URLs when it is a public site's host, and `/ci/runner/`, each
   behind its own authentication and the web protection's checks; every other route of the host is Not Found there

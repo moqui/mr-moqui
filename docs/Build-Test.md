@@ -8,7 +8,8 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
 
 - [Build](#build): [Windows](#windows), [native code and C libraries](#native-code-and-c-libraries)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
-  archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
+  archive](#embedded-postgres-archive), the [embedded runtime and programs](#embedded-runtime-and-programs), the
+  [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app), the [Android app](#android-app)
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
@@ -17,8 +18,8 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
 
 ## Build
 
-Prerequisites: Rust 1.99 or newer (`rustc --version`; `rust-toolchain.toml` pins 1.99.0, which quickjs-oxide
-declares) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
+Prerequisites: Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins
+1.100.0) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
 embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once and strips of psql (it
 links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to build or test.
 
@@ -76,18 +77,19 @@ platform.
 | SQLite (`rusqlite`, bundled) | The local databases of moqui-client and moqui-browser; not the server | No pure-Rust database matches it yet. Public domain; the browser build compiles it to WebAssembly |
 | CEF, GTK 4, the system WebViews | The desktop and mobile app shells (Tauri) | A desktop or mobile UI runs on the platform's |
 
-Programs that run as their own processes are not linked and are outside this list: the embedded Postgres, Chromium
-for PDF, and the system `ssh` for git remotes.
+Programs that run as their own processes are not linked and are outside this list: the embedded Postgres, OpenSearch
+and Chromium for PDF (built in only as their archives, [Embedded runtime and programs](#embedded-runtime-and-programs)),
+and the system `ssh` for git remotes.
 
 #### Forks
 
-Two dependencies are pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because neither keeps ring out
-through a feature. Each branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
-own branch, for a pull request. Go back to the crates.io release once upstream publishes the change.
+One dependency is pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because it does not keep ring out
+through a feature. The branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
+own branch, for a pull request. Go back to the crates.io release once upstream publishes the change, as rsipstack did
+with 0.8.5.
 
 | Crate | Fork and branch (`pr/` branch) | Change |
 |---|---|---|
-| rsipstack 0.7.12 | [moqui/rsipstack](https://github.com/moqui/rsipstack) `moqui/0.7.12-crypto-features` (`pr/rustls-provider-features`) | `rustls` has no crypto provider of its own; `rustls-ring` (the default) and `rustls-aws-lc-rs` choose one. Its TLS configs come from rustls's process default, here the aws-lc-rs provider |
 | mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
 
 Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
@@ -165,6 +167,16 @@ build, with no features of its own.
 
 `mail` is `smtp` and `imap` together. The browser build has none of the core features, and no framework crate.
 
+Four more features are in no package; they are build options of any package (`./moq build --embed <level>`,
+`--embed-opensearch`, `--embed-chromium`; [Embedded runtime and programs](#embedded-runtime-and-programs)):
+
+| Feature | Crate | What it builds in |
+|---|---|---|
+| `embed-production` | host (`moqui-embedded/production`) | The whole webroot and every base and add-on component, less tests and plans: the file set of `./moq archive` |
+| `embed-all` | host (`moqui-embedded/all`) | The production level with tests, plans and the dev and test sets |
+| `embed-opensearch` | host (`moqui-embedded/opensearch`) | The OpenSearch archive (Linux), unpacked into `install/opensearch/<version>` |
+| `embed-chromium` | host (`moqui-embedded/chromium`) | The Chromium snapshot archive, unpacked into `install/chromium/<revision>` |
+
 #### When a feature is left out
 
 The definitions still load, so components, screens and service files are the same in every package:
@@ -226,6 +238,44 @@ psql; `./moq build` runs it the first time. curl uses `https_proxy` when it is s
 A plain `cargo build` of a package with embedded Postgres asks for it.
 `scripts/pg-payload.sh check` checks an archive, and every one staged under `target/`, for psql and readline.
 
+### Embedded runtime and programs
+
+Every binary carries part of the runtime (`crates/moqui-embedded`), which a runtime reads where it has no file of its
+own ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)). How much is a build option of any package:
+
+```sh
+./moq build                                    # framework: framework, tools, a webroot stub, the confs
+./moq build --embed production                 # every component ./moq archive would put in, less tests and plans
+./moq build --embed all                        # with tests, plans and the dev and test sets
+./moq build --embed production --embed-opensearch --embed-chromium
+./moq archive --binary                         # the production binary, gzipped, with its checksums
+```
+
+- **Levels.** `crates/moqui-embedded/src/select.rs` has what each level takes, and build.rs includes it; its tests
+  check the rules on scratch runtimes. A production build packs the runtime `./moq` uses (`MOQUI_EMBED_RUNTIME`, set
+  to `MOQUI_RUNTIME` or `runtime/`), so the components in `runtime/components` when it is built are the ones built in.
+  Neither the binary nor `./moq archive` takes the names `crates/moqui-embedded/archive-excludes.txt` lists. Each file
+  is deflated on its own; at the production level with mr-mantle, mr-boss and the other add-ons that is about 25 MB of
+  the binary for about 4,500 files. Cargo watches each component's top-level entries, not its `test/` or `.git`, and
+  `./moq` passes the list of component directories (`MOQUI_EMBED_COMPONENTS`), so a new component packs again.
+- **Programs.** `--embed-opensearch` and `--embed-chromium` build in the archives `./moq opensearch-download` and
+  `./moq chromium-download` keep in the embed cache (`$XDG_CACHE_HOME` or `~/.cache`, then `moqui/embed`;
+  `%LOCALAPPDATA%\moqui\embed` on Windows; `MOQUI_EMBED_CACHE` moves it): `opensearch-<version>-<target>.tar.gz`, checked
+  against the SHA-512 OpenSearch publishes, and `chromium-<target>.tar.gz`, the snapshot repacked as a gzipped tar with
+  its revision in `chromium-<target>.tar.gz.revision`. `--cache-only` fills the cache without touching `runtime/`, and
+  `./moq build` gets a missing one; `MOQUI_OPENSEARCH_ARCHIVE` and `MOQUI_CHROMIUM_ARCHIVE` name others for a plain
+  cargo build. The OpenSearch version is `.cargo/config.toml`'s `MOQUI_OPENSEARCH_VERSION`. They are large (OpenSearch
+  3.4.0 with its JDK about 270 MB, a Linux Chromium about 225 MB), each separate from the other and from the runtime
+  level. OpenSearch is Apache-2.0; Chromium is BSD-3-Clause with the third-party licences of its credits page
+  (`chrome://credits`), which a distribution of the binary carries as it would the downloaded build.
+- **Why only for delivery.** The runtime files are read from the binary in place, sealed in it; the programs are
+  unpacked into the install directory and run as their own processes, so once unpacked they are files on disk like
+  a downloaded install. They save shipping and unpacking an archive beside the binary, nothing more.
+- **Checksums.** `moqui embedded checksum` prints the SHA-256 of the `runtime`, `postgres`, `opensearch` and
+  `chromium` parts a binary has; each program's equals the `sha256sum` of the archive file in the cache. A deployment
+  that keeps them (`./moq archive --binary` writes them beside the `.gz`) has the binary check itself at startup
+  ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)).
+
 ### Instance archive
 
 `./moq archive [file]` (with the package flags and `--nobuild`) zips what one instance needs to run into `file`
@@ -247,9 +297,10 @@ mr-moqui-20261019/
 The binary takes `runtime` in the working directory when it has `components/base/`, else the working directory itself
 when it has one, so the unpacked directory runs as `cd <dir> && ./moqui`; it never looks beside the binary, so one
 binary runs several instances ([Runtime directory](Run-Deploy.md#runtime-directory-and-conf)). The binary also
-carries the framework and tools components and a webroot stub (`crates/moqui-embedded`, about 2.2 MB compressed): it
-compares the runtime's copies with them at startup and logs each difference, and writes them as a skeleton runtime
-when it finds none ([Built-in framework files](Run-Deploy.md#built-in-framework-files)). With no
+carries the framework and tools components, a webroot stub and the runtime confs (`crates/moqui-embedded`): it reads
+each of those files the runtime does not have from the binary, compares the runtime's copies with them at startup and
+logs each difference, and `moqui embedded extract` writes them out
+([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)). With no
 `MOQUI_CONF`, it merges `<runtime>/MoquiConf.xml`, else `<runtime>/conf/MoquiDevConf.xml`. `--tgz` needs GNU or BSD tar.
 The embedded database, OpenSearch and Chromium go in when they are in `runtime/`, so the embedded Postgres must be
 stopped; `--no-data` leaves out the database, OpenSearch data, `.env` and `cert/` for a fresh instance. A binary runs
@@ -261,6 +312,13 @@ regression and acceptance suites, agent replays and load scripts), `plan/` and `
 `moqui test` or client specs against itself; a demo server, whose conf loads the `demo` component from the dev set, needs
 `--with-dev`. `./moq component-zip` leaves out `test/` too, unless `--with-tests`, and the desktop app's runtime keeps
 the dev set (the tray's Developer tools) and leaves the tests out.
+
+`./moq archive --binary [file]` writes the binary alone instead, gzipped (`moqui-YYYYMMDD.gz`), built with the same
+file set in it (`--embed production`, or `--embed all` with `--with-tests` or `--with-dev`; `--embed-opensearch` and
+`--embed-chromium` add the programs), and `moqui-YYYYMMDD.sha256` beside it, the binary's `moqui embedded checksum`
+and the `.gz`'s own line. It takes the place of the zip for a deployment that unpacks one file ([Deploy a single
+binary](Run-Deploy.md#deploy-a-single-binary)); the database, `.env` and certificates are the server's own, as with
+`--no-data`.
 
 ### Build cost
 
@@ -333,7 +391,7 @@ how it runs are in its [README](../crates/moqui-desktop/README.md) and [Mobile-D
 Prerequisites, beyond those of the server build:
 
 - **Tauri CLI**, the version `./moq desktop` checks for (`TAURI_CLI_VERSION` in `moq`), from cargo, so no Node:
-  `cargo install tauri-cli --version 3.0.0-alpha.5 --locked`.
+  `cargo install tauri-cli --version 3.0.0-alpha.6 --locked`.
 - **CMake, Ninja and a C++ compiler**, which build CEF's C++ wrapper (cef-dll-sys uses the Ninja generator).
 - **Linux:** the GTK 4 development packages and pkg-config (gtk4-sys); `patchelf` for the AppImage; and `cc`, which
   quick-sharun and `./moq` use while bundling.
@@ -346,7 +404,7 @@ Prerequisites, beyond those of the server build:
 sudo apt install build-essential pkg-config cmake ninja-build libgtk-4-dev patchelf
 # macOS (with the Xcode command line tools)
 brew install cmake ninja
-cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+cargo install tauri-cli --version 3.0.0-alpha.6 --locked
 ./moq desktop build                    # target/release/bundle: .deb and .AppImage on Linux, .app and .dmg on macOS
 ```
 
@@ -372,7 +430,7 @@ desktop` lists them:
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the artifacts.
 
 On Linux, `./moq desktop build` builds with `cargo tauri build --no-bundle` and then runs `cargo tauri bundle`, with
-these workarounds for tauri-bundler 3.0.0-alpha.4:
+these workarounds for tauri-bundler 3.0.0-alpha.5 (the Tauri CLI's):
 
 - Its `.deb` and AppImage steps copy CEF's `libEGL.so` and `libGLESv2.so`, which the CEF 154 Linux distribution no
   longer has. The bundle step's `CEF_PATH` is `target/desktop-cef`, links to the distribution's files with an empty

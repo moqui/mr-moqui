@@ -132,7 +132,7 @@ impl EcaIndex {
         let mut files = 0;
         for dir in dirs {
             // A conf `load-entity` file outside the directories.
-            if dir.is_file() {
+            if moqui_lib::vfs::is_file(dir) {
                 if dir.to_string_lossy().ends_with(".eecas.xml") {
                     files += 1;
                     match MNode::parse_file(dir) {
@@ -142,7 +142,7 @@ impl EcaIndex {
                 }
                 continue;
             }
-            let read = match std::fs::read_dir(dir) {
+            let read = match moqui_lib::vfs::read_dir(dir) {
                 Ok(read) => read,
                 Err(err) => {
                     tracing::warn!(error = %err, dir = %dir.display(), "could not read eeca directory");
@@ -150,8 +150,8 @@ impl EcaIndex {
                 }
             };
             let mut paths: Vec<PathBuf> = read
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.path())
+                .iter()
+                .map(moqui_lib::vfs::DirEntry::path)
                 .filter(|path| {
                     path.file_name()
                         .and_then(|name| name.to_str())

@@ -184,7 +184,7 @@ pub fn schema_problems(xsd_dir: &Path, root: &MNode, path: &str, text: &str) -> 
 #[must_use]
 pub fn xsd_dir(factory: &ExecutionContextFactory) -> std::path::PathBuf {
     let dir = factory.framework_dir().join("xsd");
-    if dir.join("xml-screen-3.xsd").is_file() {
+    if moqui_lib::vfs::is_file(dir.join("xml-screen-3.xsd")) {
         dir
     } else {
         moqui_core::context::framework_dir().join("xsd")

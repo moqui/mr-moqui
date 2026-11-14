@@ -350,28 +350,34 @@ impl Resource for FileResource {
     }
 
     fn exists(&self) -> bool {
-        self.path.exists()
+        crate::vfs::exists(&self.path)
     }
 
     fn is_file(&self) -> bool {
-        self.path.is_file()
+        crate::vfs::is_file(&self.path)
     }
 
     fn is_directory(&self) -> bool {
-        self.path.is_dir()
+        crate::vfs::is_dir(&self.path)
     }
 
     fn read_bytes(&self) -> Result<Vec<u8>, Error> {
-        fs::read(&self.path).map_err(|err| Error::new(format!("could not read {}", self.location)).with_source(err))
+        crate::vfs::read(&self.path)
+            .map_err(|err| Error::new(format!("could not read {}", self.location)).with_source(err))
     }
 
     fn write_bytes(&self, bytes: &[u8]) -> Result<(), Error> {
         if let Some(parent) = self.path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
-                return Err(Error::new(format!(
-                    "parent directory does not exist for {}",
-                    self.location
-                )));
+                // a directory of the files built into the binary (crate::vfs) is made on disk for the file
+                if !crate::vfs::is_dir(parent) {
+                    return Err(Error::new(format!(
+                        "parent directory does not exist for {}",
+                        self.location
+                    )));
+                }
+                fs::create_dir_all(parent)
+                    .map_err(|err| Error::new(format!("could not write {}", self.location)).with_source(err))?;
             }
         }
         // A temp file beside the target, then a rename: a reader sees the old file or the new one, never a part, and
@@ -397,21 +403,21 @@ impl Resource for FileResource {
     }
 
     fn size(&self) -> Result<u64, Error> {
-        fs::metadata(&self.path)
-            .map(|meta| meta.len())
-            .map_err(|err| Error::new(format!("no size for {}", self.location)).with_source(err))
+        match fs::metadata(&self.path) {
+            Ok(meta) => Ok(meta.len()),
+            Err(_) if crate::vfs::is_from_overlay(&self.path) => crate::vfs::read(&self.path)
+                .map(|bytes| bytes.len() as u64)
+                .map_err(|err| Error::new(format!("no size for {}", self.location)).with_source(err)),
+            Err(err) => Err(Error::new(format!("no size for {}", self.location)).with_source(err)),
+        }
     }
 
     fn directory_entries(&self) -> Result<Vec<Self>, Error> {
-        let mut names = Vec::new();
-        for entry in fs::read_dir(&self.path)
+        let names: Vec<_> = crate::vfs::read_dir(&self.path)
             .map_err(|err| Error::new(format!("could not list {}", self.location)).with_source(err))?
-        {
-            let entry =
-                entry.map_err(|err| Error::new(format!("could not list {}", self.location)).with_source(err))?;
-            names.push(entry.file_name());
-        }
-        names.sort();
+            .into_iter()
+            .map(|entry| entry.file_name())
+            .collect();
         Ok(names
             .into_iter()
             .map(|name| {
@@ -434,6 +440,11 @@ impl Resource for FileResource {
             return Err(Error::new(format!("{} is not a directory", self.location)));
         }
         let child = self.child(name).ok_or_else(|| Error::new("directory name is empty"))?;
+        if !self.path.exists() {
+            // a directory of the files built into the binary (crate::vfs), made on disk for the new one
+            fs::create_dir_all(&self.path)
+                .map_err(|err| Error::new(format!("could not create {}", child.location)).with_source(err))?;
+        }
         fs::create_dir(&child.path)
             .map_err(|err| Error::new(format!("could not create {}", child.location)).with_source(err))?;
         Ok(child)

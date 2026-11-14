@@ -141,9 +141,14 @@ fn tell(factory: &ExecutionContextFactory, notice: &BanNotice) {
             tracing::warn!("web protection: a ban was not told to the cluster: {}", err.message());
         }
     }
-    // up only: the edge nodes this node is paired with (edge_node_id), never the pairings at the other end of the links
-    // this node takes
-    for edge in up_links(&moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_ID), &from) {
+    // up only: the edge nodes this node is paired with (edge_node_id) and its front node (front_node_id,
+    // plans/Edge-Node2.md §4.7), never the pairings at the other end of the links this node takes
+    let ids = [moqui_core::edge::NODE_ID, moqui_core::edge::FRONT_ID]
+        .iter()
+        .map(|name| moqui_lib::env::get_prop_or_env(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    for edge in up_links(&ids, &from) {
         if let Some(Err(err)) = moqui_core::edge::signal::send(&edge, WEB_BAN, &message) {
             tracing::debug!(
                 "web protection: a ban was not told to edge node {edge}: {}",

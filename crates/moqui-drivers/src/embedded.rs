@@ -714,6 +714,24 @@ mod cluster {
         Ok(())
     }
 
+    /// The archive built in and its Postgres version, for `moqui embedded checksum`.
+    #[must_use]
+    pub fn archive() -> Option<(&'static [u8], &'static str)> {
+        Some((ARCHIVE, SHIPPED_VERSION))
+    }
+
+    /// Unpack the Postgres built in for the runtime `runtime_dir` (`<install>/<version>`, [`super::install_dir`]) when
+    /// it is not there yet, as the first start would (`moqui embedded unpack`). Returns where it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the archive cannot be unpacked or moved into place.
+    pub fn unpack_install(runtime_dir: &Path) -> Result<PathBuf, Error> {
+        let dir = super::install_dir(runtime_dir).join(SHIPPED_VERSION);
+        install(&dir)?;
+        Ok(dir)
+    }
+
     fn driver_for(server: &PostgreSQL, password: &str, database: &str) -> PostgresDriver {
         let settings = server.settings();
         #[cfg(unix)]
@@ -1100,12 +1118,29 @@ mod cluster {
 }
 
 #[cfg(feature = "embedded-postgres")]
+pub use cluster::{archive, process_live, stop_postmaster, unpack_install};
+#[cfg(feature = "embedded-postgres")]
 pub use cluster::{
     database_dump_path, load_save, save_db, shared_install_dir, sibling_dumps, ClusterRole, EmbeddedCluster,
     StartOptions, ToolTarget,
 };
-#[cfg(feature = "embedded-postgres")]
-pub use cluster::{process_live, stop_postmaster};
+
+/// Without embedded Postgres there is no archive.
+#[cfg(not(feature = "embedded-postgres"))]
+#[must_use]
+pub fn archive() -> Option<(&'static [u8], &'static str)> {
+    None
+}
+
+/// Without embedded Postgres there is nothing to unpack.
+///
+/// # Errors
+///
+/// Always: this build has no embedded Postgres.
+#[cfg(not(feature = "embedded-postgres"))]
+pub fn unpack_install(_runtime_dir: &std::path::Path) -> Result<std::path::PathBuf, moqui_lib::error::Error> {
+    Err(moqui_lib::error::Error::new("embedded postgres is not in this build"))
+}
 
 /// `canonicalize` on Windows prefixes `\\?\`. theseus `initdb` rewrites `\` as `/` and then cannot
 /// spawn `//?/D:/.../postgres.exe`. A normal absolute path is what the postmaster can run. A path
@@ -1130,23 +1165,29 @@ fn plain_path(path: std::path::PathBuf) -> std::path::PathBuf {
     path
 }
 
-/// Where the embedded Postgres of a runtime is unpacked: `postgres` under `MOQUI_INSTALL` (a process property, then
-/// the environment variable, as `MOQUI_CONF`) when it is set, else under `install` in the runtime directory, where
-/// `./moq archive` leaves it out. Absolute, since the install path is handed on verbatim.
+/// Where the embedded Postgres of a runtime is unpacked: `postgres` under the [`install_root`]. Absolute, since the
+/// install path is handed on verbatim.
 #[must_use]
 pub fn install_dir(runtime_dir: &std::path::Path) -> std::path::PathBuf {
+    plain_path(install_root(runtime_dir).join("postgres"))
+}
+
+/// Where the programs built into the binary (Postgres, OpenSearch, Chromium) are unpacked, each in a directory of its
+/// own: `MOQUI_INSTALL` (a process property, then the environment variable, as `MOQUI_CONF`) when it is set, else
+/// `install` in the runtime directory, where `./moq archive` leaves it out. Absolute.
+#[must_use]
+pub fn install_root(runtime_dir: &std::path::Path) -> std::path::PathBuf {
     let selected = moqui_lib::env::get_property("MOQUI_INSTALL")
         .map(std::ffi::OsString::from)
         .or_else(|| std::env::var_os("MOQUI_INSTALL"))
         .filter(|dir| !dir.is_empty());
-    let root = match selected {
+    match selected {
         Some(dir) => std::path::absolute(&dir).unwrap_or_else(|_| dir.into()),
         None => std::fs::canonicalize(runtime_dir)
             .or_else(|_| std::path::absolute(runtime_dir))
             .unwrap_or_else(|_| runtime_dir.to_path_buf())
             .join("install"),
-    };
-    plain_path(root.join("postgres"))
+    }
 }
 
 /// Without embedded Postgres there is no install: the path is passed along and never used.

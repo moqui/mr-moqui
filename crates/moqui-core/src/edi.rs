@@ -996,7 +996,7 @@ fn extract_segment_ids(defs: &[SegmentDef], ids: &mut HashSet<String>) {
 /// Run the structure file at `location`. It evaluates to the structure list.
 fn read_structure(location: &str) -> Result<Value, Error> {
     let path = crate::context::locate(location)?;
-    let source = std::fs::read_to_string(&path)
+    let source = moqui_lib::vfs::read_to_string(&path)
         .map_err(|err| Error::new(format!("could not read EDI structure {location}")).with_source(err))?;
     crate::script::eval_value(&source).map_err(|err| Error::new(format!("EDI structure {location}: {err}")))
 }

@@ -394,6 +394,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     use moqui_core::startup::{listener, State};
     let config = match media_config() {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "rtc_media_port", true) => {
+            listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
+            listener(factory, TURN_LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
+            return None;
+        }
         Ok(Some(config)) => config,
         Ok(None) => {
             listener(factory, LISTENER, State::off("rtc_media_port is not set"));

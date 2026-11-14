@@ -39,6 +39,8 @@ along with this software (see the LICENSE.md file). If not, see
         isEdge = !notBuilt && takesLinks
         notStarted = isEdge && link.state === 'notStarted'
         allInOne = isEdge && link.nodeRole === 'all-in-one'
+        // a front node alone passes SMTP to a pairing (Ports, plans/Edge-Node2.md §4.7)
+        frontNode = isEdge && link.nodeRole === 'front'
         // empty while the HTTPS listener is off: the link key is loaded with it
         linkFingerprint = isEdge ? link.linkFingerprint || '' : ''
     ]]></script></always-actions>
@@ -50,7 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
         </widgets></section>
         <section name="NotEdge" condition="notEdge"><widgets>
             <container-box><box-header title="Edge clients"/><box-body>
-                <label type="p" text="This node takes no links, so no local nodes pair with it. An edge node runs with node_role set to front_edge (conf/edge/MoquiEdgeConf.xml), and a full server that also takes local nodes' links with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
+                <label type="p" text="This node takes no links, so no local nodes pair with it. An edge node runs with node_role set to front_edge (conf/edge/MoquiEdgeConf.xml), a front node with front (conf/front/MoquiFrontConf.xml), and a full server that also takes local nodes' links with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
                 <link url="../EdgeNode" text="Edge node" icon="sym_o_cloud_sync"/>
             </box-body></container-box>
         </widgets></section>

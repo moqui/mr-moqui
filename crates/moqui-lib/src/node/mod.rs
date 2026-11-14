@@ -217,7 +217,7 @@ impl MNode {
 
     pub fn parse_file(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
-        let text = std::fs::read_to_string(path)
+        let text = crate::vfs::read_to_string(path)
             .map_err(|err| Error::new(format!("could not read {}", path.display())).with_source(err))?;
         Self::parse_text(&path.display().to_string(), &text)
     }

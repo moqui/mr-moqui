@@ -5,7 +5,8 @@ also covers connecting instances to each other: PASS servers to a BOSS server, a
 group server. The first sections give the steps for the common cases; the sections after them have the detail. Building
 and the build packages are in [Build-Test](Build-Test.md).
 
-- [Quick start](#quick-start): develop on your machine, run one production server, run in a container
+- [Quick start](#quick-start): develop on your machine, run one production server, deploy a single binary, run in a
+  container
 - [Everyday commands](#everyday-commands)
 - [Choose a topology](#choose-a-topology)
 - [Production checklist](#production-checklist)
@@ -24,7 +25,7 @@ and the build packages are in [Build-Test](Build-Test.md).
 
 ### Develop on your machine
 
-You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.99.0),
+You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.100.0),
 git and bash, on Linux, macOS, or Windows. On Windows, install the MSVC toolchain (`x86_64-pc-windows-msvc`), Visual
 Studio Build Tools with the "Desktop development with C++" workload, and Git for Windows, then use `moq.cmd` instead
 of `./moq` (the binary is `target\release\moqui.exe`). The first build that needs it downloads NASM 3.02 to
@@ -96,6 +97,36 @@ On the server:
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
 
+### Deploy a single binary
+
+A binary built with the production runtime in it ([Built-in runtime files](#built-in-runtime-files)) is the whole
+deployment: no archive to unpack, and an upgrade is a new binary. On the build machine:
+
+```sh
+./moq archive --binary --embed-opensearch   # moqui-YYYYMMDD.gz and moqui-YYYYMMDD.sha256
+```
+
+`--binary` builds with `--embed production` (every base and add-on component in `runtime/components`, less tests and
+plans); `--embed-opensearch` and `--embed-chromium` add those programs when the server has none of its own. On the
+server, as in [Run one production server](#run-one-production-server) with the binary in place of the archive:
+
+```sh
+sudo install -d -o moqui -g moqui /opt/moqui /etc/moqui
+gunzip -c moqui-20261114.gz | sudo install -o moqui -g moqui -m 755 /dev/stdin /opt/moqui/moqui
+sudo install -o moqui -g moqui -m 644 moqui-20261114.sha256 /opt/moqui/embedded.sha256
+sudo tee /etc/moqui/environment > /dev/null <<'EOF'
+MOQUI_RUNTIME=/opt/moqui
+MOQUI_CONF=conf/MoquiProductionConf.xml
+EOF
+```
+
+`MOQUI_RUNTIME` makes `/opt/moqui` the runtime though it has no `components/` yet, and `MOQUI_CONF` picks the
+production conf built in (the binary alone otherwise runs the dev conf). The first start unpacks Postgres, and
+OpenSearch when it is used, into `/opt/moqui/install/`, and reads every other file from the binary. With
+`embedded.sha256` there it checks the binary against it first and does not start when a part differs; where settings
+come from the environment, set `MOQUI_EMBEDDED_SHA256_RUNTIME` and the others instead (`moqui embedded checksum --env`
+prints them). Put an edited conf or a changed file on disk and it is used in place of the built-in one.
+
 ### Run in a container
 
 ```sh
@@ -155,13 +186,14 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | A local cluster with an edge node | More capacity, or a member that can fail, with a public presence and no load balancer of your own: the edge node pools and balances the members | [`conf/local-cluster/`](../runtime/conf/local-cluster/README.md) (`MoquiPooledConf.xml`) | Members: Enterprise (`--enterprise`). Edge node: Maximal | One external Postgres for all members; the edge node keeps the pairing's queue and copies | [A local cluster with an edge node](#a-local-cluster-with-an-edge-node) |
 | A local node with a standby | A second machine, started by hand or by your own automation when the first one dies, that takes over at the edge node | [`conf/local-failover/`](../runtime/conf/local-failover/README.md) | Both: Maximal or Enterprise. Edge node: Maximal | The same external database, a promoted replica, or the last backup restored | [A local node with a standby](#a-local-node-with-a-standby) |
 | An edge cluster | An edge node that can fail, or more capacity at the edge: several edge nodes on one database, each local node linked to every one | [`conf/edge-cluster/`](../runtime/conf/edge-cluster/README.md) | Edge members: Maximal with an external database, or Enterprise. Local: Maximal or Enterprise | One external Postgres for the edge members; each local node its own | [An edge cluster](#an-edge-cluster) |
+| A front node before a local cluster | Load balancing and web protection for a local cluster, with none of an edge node's comms | [`conf/front/`](../runtime/conf/front/README.md) | Front: Maximal. Members: Enterprise (`--enterprise`) | The front its own (pairings, names, certificates); one external Postgres for the members | [A front node](#a-front-node) |
+| Full stack | A higher-volume shop or other public site on mr-pass: a front node, an edge cluster serving the sites and comms, a local cluster with the data and the PASS authority | [`conf/full-stack/`](../runtime/conf/full-stack/README.md) | Front: Maximal. Edge members: Maximal with an external database, or Enterprise. Local members: Enterprise | The front its own; one external Postgres for the edge members, another for the local members | [Full stack](#full-stack) |
 | The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | In the app; its edge or all-in-one node as above | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
 
 The conf is the runtime conf each node runs, under `runtime/`. A topology's directory has a conf for each kind of node,
 whose comments say what each setting does, and a README with its diagram, the `.env` names each node needs and the
 commands ([runtime/conf](../runtime/conf/README.md)). The sections below keep what each topology is, its steps and
-what is not built. The topologies still to come (a front node, the full stack) get their directories as they are built
-([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
+what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 
 ## Production checklist
 
@@ -200,31 +232,70 @@ and secrets ([runtime/README.md](../runtime/README.md)). The binary takes the fi
 
 The runtime is never found from where the binary is, so one binary runs several instances, each started in its own
 directory. Run a command such as `moqui load` from the instance's directory, or with `MOQUI_RUNTIME`; from anywhere
-else it finds no runtime and makes a new one there. The server and `moqui load` fill a runtime that has no framework
-component with a skeleton runtime written from the files built into the binary (below), so a lone binary starts.
+else it finds no runtime and makes a new one there. A runtime reads the files built into the binary that it does not
+have (the framework, tools, webroot and conf files, and with a production build every component; below), so a lone
+binary starts in an empty directory.
 
-### Built-in framework files
+### Built-in runtime files
 
-The binary carries a copy of the framework and tools components (less their `test/`, which holds both suites) and of a
-webroot stub, listed in `crates/moqui-embedded/webroot-files.txt`: the REST, login, error and html `/apps` screens, and
-the html render mode's style sheet and scripts with the two libraries it loads (Tom Select, SortableJS). Fonts, icons,
-`/qapps` and the web client's JavaScript libraries are not in it. It uses the copy two ways:
+The binary carries a copy of part of the runtime (`crates/moqui-embedded`), at one of three levels chosen when it is
+built (`./moq build --embed <level>`, [Embedded runtime and programs](Build-Test.md#embedded-runtime-and-programs)):
 
-- **Startup comparison.** After the factory boots, the server and `moqui load` compare the framework, tools and
-  webroot components on disk with the copies and log `N framework, tools and webroot files differ from the ones built
-  into this binary`, then one line per file: changed (with the first line that differs), missing on disk, or added on
-  disk (framework and tools; the webroot copy is a subset). The files on disk are used; the lines say why a changed
-  file may no longer fit the binary. A file the binary has compiled in (`template/XmlActions.js` and three others) is
-  marked as ignored, since its disk copy is never read. `moqui embedded diff [<component>/<path>]` prints the diffs
-  and `moqui embedded list` the built-in files.
-- **Skeleton runtime.** A runtime with no `components/base/framework/component.xml`, and no `MOQUI_FRAMEWORK`, gets
-  the framework, and tools and the webroot stub when `components/base/tools` and `components/base/webroot` are not
-  there, with a placeholder page at `/` in place of the web client, and the sets' manifest `components/components.xml`
-  when it has none (only the sets it lists load). It boots, loads the seed data, answers `/rest`
-  (with the tools `moqui` API), `/Login`, `/status` and the html `/apps` (System, Tools, Dashboards), and runs
-  `moqui tui`; links to fonts, icons and the web client are broken until the full webroot is installed, and the
-  application components are not there. `moqui embedded extract <dir>` writes the same files into a directory. Files
-  already there are never replaced.
+| Level | What is built in |
+| --- | --- |
+| `framework` (the default) | The framework and tools components less their `test/`, a webroot stub listed in `crates/moqui-embedded/webroot-files.txt` (the REST, login, error and html `/apps` screens, the html render mode's style sheet and scripts with Tom Select and SortableJS; no fonts, icons, `/qapps` or web client libraries), and the runtime's `conf/` with every example and starter conf |
+| `production` | The framework level with the whole webroot (the web client) and every other component of the base and add-on sets, each less its top-level `test/`, `plan/` and `plans/`: the file set of `./moq archive` |
+| `all` | The production level with each component's `test/`, `plan/` and `plans/`, and the dev and test sets: `./moq archive --with-tests --with-dev` |
+
+Neither the binary nor `./moq archive` takes the names `crates/moqui-embedded/archive-excludes.txt` lists (`.git`, a
+component crate's `target/`, `__pycache__`, editor backups); the binary also leaves out dot files. It uses the copy
+three ways:
+
+- **Files read in place.** Each built-in file that is not on disk is read from the binary, in any runtime; a file on
+  disk is used in its place. The framework component is the one `MOQUI_FRAMEWORK` names, tools and webroot are in
+  `components/base`, the other components in their sets under `components/`, and the confs in `conf/`, so `--conf
+  conf/MoquiProductionConf.xml` and the topology confs work with the binary alone. Without a runtime the server and
+  `moqui load` make only its directories (`components/base/framework`, `tools`, `webroot`, a directory for each other
+  built-in component, and the database and log directories when they are used). At the framework level, with a
+  placeholder page at `/` in place of the web client and the built-in sets' manifest `components/components.xml`, it
+  boots, loads the seed data, answers `/rest` (with the tools `moqui` API), `/Login`, `/status` and the html `/apps`
+  (System, Tools, Dashboards), and runs `moqui tui`; links to fonts, icons and the web client are broken until the
+  full webroot is installed. At the production level it is the whole instance ([Deploy a single
+  binary](#deploy-a-single-binary)). Every built-in component loads, as one on disk would. A file written to a
+  built-in location (an edit in System, a component put in `components/addon`) lands on disk and is used from then on.
+- **Startup comparison.** After the factory boots, the server and `moqui load` compare the components on disk with the
+  copies and log `N framework, tools and webroot files are not on disk and are read from this binary` when there are
+  some, and `N … files differ from the ones built into this binary`, then one line per file: changed (with the first
+  line that differs) or added on disk (the framework level's webroot copy is a subset). For the framework, tools and
+  webroot these are warnings, since a changed file may no longer fit the binary's code; for the other components
+  (production and all) they are information, and a component on disk in a built-in set that the binary does not have
+  is one line. A file the binary has compiled in (`template/XmlActions.js` and three others) is marked as ignored,
+  since its disk copy is never read. `moqui embedded diff [<set>/<path>]` prints the diffs (`conf/<path>` and
+  `components/<set>/<component>/<path>` too), `moqui embedded list` the built-in files and `moqui embedded info` the
+  level, sets and programs.
+- **Extract.** `moqui embedded extract` writes each built-in file that is not on disk into the runtime `moqui` uses,
+  and `moqui embedded extract <dir>` into another; files already there are never replaced. Then the runtime reads
+  none from the binary, and its files can be edited or put in git.
+
+**Programs.** Postgres (the `embedded-postgres` feature of the Lite and Maximal packages), OpenSearch (`--embed-opensearch`)
+and Chromium (`--embed-chromium`) can be built in as their archives. Each is unpacked into the install directory,
+`<MOQUI_INSTALL>/<program>/<version>` (default `install/` in the runtime, which `./moq archive` leaves out), the first
+time it is needed, and runs as its own process; unlike the runtime files they are then ordinary files on disk, so
+this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
+the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
+and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
+start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+`moqui_chromium_path` and `runtime/chromium`, before an installed one.
+
+**Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
+(the packed runtime files as built), and `postgres`, `opensearch` and `chromium` (each the `sha256sum` of the archive
+file the build embedded); `--env` prints them as `MOQUI_EMBEDDED_SHA256_<PART>=<hex>`. Before it starts, the server
+and `moqui load` check the parts named in the file `moqui_embedded_checksums` names (a property, environment
+variable or `.env` entry; it must be there), else in `<runtime>/embedded.sha256` when that is there, and in the
+`MOQUI_EMBEDDED_SHA256_*` variables, which take the place of the file's lines. A part that differs, or one named that
+the binary does not have, is logged as an error with both checksums, and the start is refused. Lines for other files
+(the `.gz` that `./moq archive --binary` writes) are skipped, so the same file serves `sha256sum -c
+--ignore-missing`. With none given nothing is checked.
 
 Keep the runtime path short. The embedded Postgres socket, `<runtime>/db/embedded/.s.PGSQL.5432`, must be under 108
 bytes, or the start fails with "postgres socket path is N bytes".
@@ -327,12 +398,13 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
-| `node_role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it (E19, [Edge-Node2 §4.3](../plans/Edge-Node2.md#43-the-front-option-set)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
+| `node_role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it ([A front node](#a-front-node), [Full stack](#full-stack)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
 | `edge_sip_enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
 | `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge_ssh_tunnel_host` |
+| `edge_smtp_tunnel_host` | empty | On a front node, the address an `EdgePort` row of kind `smtp` listens on (empty for every one): port 25 passed to an edge cluster's members with a PROXY header naming the client ([Mail-Inbound](interfaces/Mail-Inbound.md), plans/Edge-Node2.md §4.7) |
 | `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
 | `edge_call_legs_per_pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
@@ -1234,8 +1306,121 @@ The conf, the `.env` names, the DNS records and the commands are in
 - **A clustered all-in-one server** takes links on every member the same way: `node_role=all-in-one` on each, on one
   external database.
 
-**Not built**: a front node before the cluster and the full stack (E19), cascading call media between edge members
-(so a phone on one member rings for a call whose media is on another).
+**Before the cluster** a front node can face visitors and mail servers: [Full stack](#full-stack). **Not built**:
+cascading call media between edge members (so a phone on one member rings for a call whose media is on another).
+
+## A front node
+
+A front node has the front option set alone (`node_role=front`, [plan](../plans/Edge-Node2.md#47-a-front-node) §4.7):
+web access by host name, terminate or passthrough; load balancing over a pairing's members, sticky by the session
+cookie, with health and set-aside; web protection with rules per host; TLS and certificates; TCP ports; the offline
+page. It has none of the edge set (no mail, call media, TURN, SIP, XMPP server, queue, delegated calls, replication or
+mr-pass) and starts none of it even with its ports set. Its database holds its pairings, host names, ports and
+certificates, and no business data. It dials no other node: the nodes behind it pair with it and dial it.
+
+Before a local cluster it is the cluster's load balancer and web protection, with none of the edge node's comms: the
+cluster keeps its own mail, chat, calls and phones, or has none. Before an edge cluster it is the [full stack](#full-stack).
+
+```
+ visitors (and mail servers, with an smtp port)
+    |  443 (25, ...)
+ front node     conf/front/MoquiFrontConf.xml          pairings, names, certificates; no data
+    ^  each member dials 443 and keeps its own link open
+ member 1   member 2   member 3     conf/front/MoquiLocalConf.xml; 8444 between members only
+    +----------+----------+
+       shared Postgres
+```
+
+The confs, the `.env` names, the DNS and the commands are in [runtime/conf/front](../runtime/conf/front/README.md).
+
+1. Start the front node, with a certificate for its own name. Start the first member of the cluster.
+2. Make a pairing code on the front (System › Edge Clients › Clients) and pair the first member with it (System › Edge
+   Node; the Pair screen shows the role, front, before the code is spent). Run the wizard: host names and XMPP.
+3. Copy that member's `.env` to each other member, with its own `cluster_base_url`, and start it.
+
+- **The front pairing.** Pairing with a node whose role is `front` writes `front_node_url`, `front_node_key`,
+  `front_node_pin` and `front_node_id`, a pairing of its own beside any edge pairing (`edge_node_*`). It carries web
+  access and ports only: no queue, delegated calls, replication, call or SIP rows. System › Edge Node shows it, and
+  Unpair (or Unpair front, beside an edge pairing) ends it.
+- **The pool, balancing, admission, draining and shared bans** are as with an edge node
+  ([A local cluster with an edge node](#a-local-cluster-with-an-edge-node)). A ban a member starts is told up the link,
+  and the front refuses that client for the pairing's names.
+- **Mail in** through the front: port 25 as a TCP port of kind SMTP for the pairing (System › Edge Clients › Ports),
+  each connection passed to a live member's SMTP listener with a PROXY header naming the client, the listener in
+  internet mode on every member ([Mail-Inbound](interfaces/Mail-Inbound.md)); this path to a local cluster has no test
+  yet (an edge cluster's has). Mail out is the cluster's own server.
+- **Not through a front:** call media, TURN and SIP. A local cluster's calls use its own media nodes at addresses of
+  their own ([WebRTC, Cluster](interfaces/WebRTC.md#cluster)).
+- **Your own load balancer** in place of a front node stays supported ([Cluster](#cluster)). Before an edge cluster it
+  must pass TLS through with a PROXY header, since the links need ALPN and client certificates end to end.
+- **Two front nodes** are a cluster of front nodes: one external database and one `.env`, each with its own
+  `edge_link_url`, and each node behind them links to every member, as with an [edge cluster](#an-edge-cluster). The
+  names' address records name each front member.
+
+## Full stack
+
+A front node before an edge cluster, before a local cluster ([plan](../plans/Edge-Node2.md#3-topologies) §3, §4.7): for
+a higher-volume shop or other public site on mr-pass. The front faces visitors and mail servers; the edge cluster serves
+the mr-pass sites, the mail edge, chat webhooks, calls and SIP, and the queue of its local nodes; the local cluster
+holds the apps and the data and is the sites' PASS authority. Any one node below the front can stop and the site stays
+up.
+
+```
+ visitors, mail servers, chat providers                calls, TURN, SIP trunks and phones
+    |  443, 25                                              |  each edge member's own address
+ front node      conf/full-stack/MoquiFrontConf.xml          |
+    ^  each edge member dials the front: one pairing        |
+ edge 1   edge 2   conf/full-stack/MoquiEdgeConf.xml       <-+   shared Postgres
+    ^  each local member links to every edge member, at its link name through the front
+ local 1  local 2  conf/full-stack/MoquiLocalConf.xml            shared Postgres; the PASS authority
+```
+
+The confs, the `.env` names per tier, the DNS and the order to pair are in
+[runtime/conf/full-stack](../runtime/conf/full-stack/README.md). Each cluster is as in [Cluster](#cluster); the edge
+cluster as in [An edge cluster](#an-edge-cluster).
+
+1. Start the front node. Start the edge cluster and give its own name (`webapp_http_host`, at the members' own
+   addresses) a certificate (below). Pair one edge member with the front (System › Edge Node, Pair with a
+   front node) and copy the `front_node_*` lines to every edge member. On the front, add port 25 of kind SMTP for the
+   edge cluster's pairing (Edge Clients › Ports).
+2. Start the local cluster, pair one local member with the edge cluster at the edge cluster's own name, run the wizard
+   (host names, mail, chat, calls, phones, PASS), and copy its `.env` to the other local members.
+3. Create the sites on the authority with the hosts the edge members' `public-site` bindings name.
+
+- **The edge members' role.** `front_edge` (the conf's default): the members forward their local nodes' names, which
+  they give the front, and a local node has one pairing. `edge`: the members forward no web access and bind no tunnel
+  port, so each local node pairs with the front too (a second pairing, the same Pair flow) for its names, XMPP domain
+  and ports, and with the edge cluster for the rest.
+- **What the edge members give the front.** Their sites' hosts and chat address's host as terminate hosts, so the
+  front sees the session cookie and keeps a browser on one edge member; with `front_edge`, every name of their local
+  nodes in its mode. A name another pairing of the front holds is refused and given again after a minute.
+- **The local nodes' links through the front.** Each edge member names its `edge_link_url` in its Hello; the front
+  keeps the host as that member's link name (Edge Clients › Domains) and passes its connections through untouched to
+  that member alone, picked by the server name before the link's ALPN. A local node dials each edge member there, so
+  the edge members need no inbound port for links. A link name is never balanced: while its member is not linked it is
+  refused. The front is then a single point for the links as well as the web: while it is down the local nodes'
+  queue, delegated calls and replication stop too. Set an edge member's `edge_link_url` to a name at its own address
+  instead (443 open on it) to keep the links up without the front.
+- **The edge members' first certificate.** An edge member with no certificate starts no link server (no EdgeServer,
+  no relay down), and an ACME standby listener takes no links, so a link name's first certificate cannot come through
+  the front. Give the edge cluster's own name (`webapp_http_host`, its System app, with address records at the
+  members' own addresses) a certificate first: System › Certificates with ACME at a member, which answers the
+  challenge on its own 443, or a copied one in `runtime/cert`. The `AcmeCertificate` rows are shared, so every member
+  writes it. Pair the local nodes there, or at a link name once its certificate is set up the same way.
+- **Mail.** The MX of each domain names the front; its port 25 passes each connection to a live edge member's SMTP
+  listener with a PROXY header, and the member makes every check as for a direct connection. Mail out leaves from each
+  edge member's own address, so reverse DNS and SPF name the edge members: list their addresses in SPF (`ip4:`), as
+  the wizard's `v=spf1 mx` would authorize the front. STARTTLS ends on the member, so the MX name's certificate goes on
+  every member ([Mail-Inbound](interfaces/Mail-Inbound.md)).
+- **Not through the front:** call media, TURN and SIP are at each edge member's own address, with their own records
+  ([WebRTC](interfaces/WebRTC.md), [TURN](interfaces/TURN.md), [SIP](interfaces/SIP.md)).
+- **Web protection** on every tier: the front's first, by the visitor's address; each edge member's and each local
+  member's by the client its link names. A ban goes up only the links of the node that started it and is not told
+  on: a local member's ban reaches its edge members (and the front only by its own front pairing, with `edge`
+  members); an edge member's reaches the front, which refuses that client for the edge cluster's names.
+- **PASS.** The sites are on the edge members (`pass_backend_url=edge:`), each host the root of mr-pass's `Pass.xml`;
+  every edge member calls the local cluster as the authority down its own link (mr-pass's `docs/Deployment.md`, Full
+  stack).
 
 ## Cluster
 
