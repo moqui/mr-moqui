@@ -71,7 +71,7 @@ pub(super) fn grant_entities(fixture: &Fixture) {
 /// The framework's own gitECA rules (`service/Git.gitecas.xml`), which a test factory without components does not
 /// load: merge requests follow their branches, webhooks follow pushes. Not the report definitions' pull: a test factory
 /// registers no report services, so it would fail on every push.
-fn framework_rules(fixture: &Fixture) {
+pub(super) fn framework_rules(fixture: &Fixture) {
     let mut xml =
         std::fs::read_to_string(moqui_core::context::framework_dir().join("service/Git.gitecas.xml")).unwrap();
     let id = xml
@@ -783,7 +783,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
             ("requireMergeRequest", s("Y")),
             ("requiredApprovals", Value::I64(1)),
             ("dismissStaleApprovals", s("Y")),
-            ("requiredStatusContexts", s("ci/build")),
+            ("requiredStatusContexts", s("checks/build")),
         ],
     );
 
@@ -844,7 +844,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     );
     let missing: Vec<String> = list(&detail, "missingList").iter().map(text_of).collect();
     assert!(missing.iter().any(|m| m.contains("0 of 1 approvals")), "{missing:?}");
-    assert!(missing.iter().any(|m| m.contains("ci/build")), "{missing:?}");
+    assert!(missing.iter().any(|m| m.contains("checks/build")), "{missing:?}");
 
     // not yet: no approval, then no check
     let (_, errors) = call(
@@ -922,7 +922,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
         "org.moqui.git.GitReviewServices.merge#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
-    assert!(errors.contains("checks not passed: ci/build"), "{errors}");
+    assert!(errors.contains("checks not passed: checks/build"), "{errors}");
 
     // the source moves: the head follows and the approval is dismissed
     let before = work.head();
@@ -972,7 +972,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
             ("repositoryId", s("review")),
             ("commitId", s(&moved)),
             ("state", s("success")),
-            ("context", s("ci/build")),
+            ("context", s("checks/build")),
         ],
     );
     assert!(errors.contains("push right"), "{errors}");
@@ -984,7 +984,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
             ("repositoryId", s("review")),
             ("commitId", s(&moved)),
             ("state", s("success")),
-            ("context", s("ci/build")),
+            ("context", s("checks/build")),
             ("target_url", s("https://ci.example.com/run/1")),
         ],
     );
@@ -1518,7 +1518,7 @@ fn commit_statuses_post_over_rest_with_an_access_token() {
             ("state", s(state)),
             ("target_url", s("https://ci.example.com/build/7")),
             ("description", s("Build")),
-            ("context", s("ci/build")),
+            ("context", s("checks/build")),
         ]
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))

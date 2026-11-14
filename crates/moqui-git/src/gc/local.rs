@@ -353,7 +353,13 @@ pub(super) fn collect(
     let (roots, packs, loose) = {
         let _turn = moqui_lib::sync::lock(&lock);
         let (packs, loose) = list_files(&objects_dir)?;
-        (provider.gc_roots(entity, id, &store, options)?, packs, loose)
+        let mut roots = provider.gc_roots(entity, id, &store, options)?;
+        // a fork reads this directory through its alternates: what its refs reach here stays (what they reach in
+        // the fork's own directory is not here, and is passed over)
+        let network = provider.network_roots(id, definition.network.as_deref(), options)?;
+        roots.others.extend(network.refs);
+        roots.others.extend(network.others);
+        (roots, packs, loose)
     };
     let bytes_before: u64 =
         packs.iter().map(|pack| pack.bytes).sum::<u64>() + loose.iter().map(|file| file.bytes).sum::<u64>();
@@ -428,9 +434,11 @@ pub(super) fn collect(
     }
 
     // the new pack
+    // only what this directory holds: a fork reaches its parent's objects through its alternates, and leaves them
+    // where they are
     let mut packed: Vec<ObjectId> = live
         .iter()
-        .filter(|object| !kept_by_keep.contains(*object))
+        .filter(|object| scanned.contains(*object) && !kept_by_keep.contains(*object))
         .copied()
         .collect();
     packed.sort();

@@ -1477,8 +1477,9 @@ fn credentials_and_rights_are_checked() {
     git_ok(&work, &home, &["add", "."]);
     git_ok(&work, &home, &["commit", "-m", "A"]);
     git_ok(&work, &home, &["push", "origin", "main"]);
+    let pushed = git_ok(&work, &home, &["rev-parse", "HEAD"]).trim().to_string();
 
-    // the reader may clone and not push
+    // the reader may clone and push no branch (a push for review is review_tests')
     let read = fixture.dir.join("read");
     git_ok(
         &fixture.dir,
@@ -1489,7 +1490,11 @@ fn credentials_and_rights_are_checked() {
     git_ok(&read, &home, &["add", "."]);
     git_ok(&read, &home, &["commit", "-m", "B"]);
     let (ok, out) = git_in(&read, &home, &["push", "origin", "main"]);
-    assert!(!ok && out.contains("403"), "{out}");
+    assert!(!ok && out.contains("permission denied: update"), "{out}");
+    assert_eq!(
+        head_of(&fixture, "guarded", "refs/heads/main").as_deref(),
+        Some(pushed.as_str())
+    );
 
     // a wrong password, no credentials, an unknown repository, a mirror
     let wrong = base.replacen("http://", &format!("http://{WRITER}:wrong@"), 1) + "/git/guarded.git";

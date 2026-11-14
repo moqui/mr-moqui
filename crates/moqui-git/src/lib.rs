@@ -37,6 +37,8 @@ pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;
 pub(crate) mod events;
+pub(crate) mod file_commit;
+pub(crate) mod fork;
 pub(crate) mod fs;
 pub mod gc;
 pub(crate) mod hosting;
@@ -44,6 +46,7 @@ pub(crate) mod index;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
 pub(crate) mod ops;
+pub(crate) mod reach;
 pub(crate) mod revwalk;
 pub(crate) mod rules;
 pub mod server;
@@ -108,6 +111,14 @@ pub(crate) fn setting(name: &str) -> String {
 }
 
 /// [`setting`] as a number, or `default` when it is empty or not one.
+/// An attribute of the conf's `git-server`, or `default` when the conf does not have the attribute at all: for one
+/// whose empty value means something (no reserved contexts).
+pub(crate) fn setting_or(name: &str, default: &str) -> String {
+    moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().conf_setting_if_set("git-server", name))
+        .flatten()
+        .unwrap_or_else(|| default.to_string())
+}
+
 pub(crate) fn number_setting<T: std::str::FromStr>(name: &str, default: T) -> T {
     setting(name).parse().unwrap_or(default)
 }
@@ -181,6 +192,20 @@ pub(crate) struct Definition {
     pub credentials: fs::Credentials,
     /// The row has an `archivedDate`: pushes, ref writes, merges and writes are refused.
     pub archived: bool,
+    /// The root of the fork network this repository is in (`forkNetworkId`): its own id on the root.
+    pub network: Option<String>,
+}
+
+impl Definition {
+    /// The id the objects of a `db` repository are stored under: the root of its fork network, else its own.
+    pub(crate) fn objects_id(&self) -> &str {
+        self.network.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Whether the repository is a fork: in a network whose root is another repository.
+    pub(crate) fn is_fork(&self) -> bool {
+        self.network.as_deref().is_some_and(|network| network != self.id)
+    }
 }
 
 /// The repository rows changing in transactions not yet ended (an open repository of one is not kept, as each thread
@@ -229,6 +254,8 @@ struct Inner {
     archives_building: std::sync::atomic::AtomicUsize,
     /// Parsed `.gitattributes` files, by blob.
     attributes: attributes::RulesCache,
+    /// The commits each repository's refs reach, for reads by id (`reach`).
+    reach: reach::ReachCache,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
     indexes: Mutex<BoundedMap<String, Arc<Mutex<BranchIndex>>>>,
 }
@@ -305,6 +332,7 @@ impl GitProvider {
                 objects: std::sync::OnceLock::new(),
                 archives_building: std::sync::atomic::AtomicUsize::new(0),
                 attributes: attributes::rules_cache(),
+                reach: Mutex::new(HashMap::new()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
         }
@@ -361,6 +389,7 @@ impl GitProvider {
                 token: text(row.get("accessToken")),
             },
             archived: text(row.get("archivedDate")).is_some(),
+            network: text(row.get("forkNetworkId")),
         })
     }
 
@@ -376,7 +405,7 @@ impl GitProvider {
                 Box::new(fs::FsStore::open(&definition.path)?)
             }
             RepositoryKind::Local => Box::new(fs::FsStore::init(&definition.path, &definition.branch)?),
-            RepositoryKind::Db => Box::new(db::DbStore::new(self.entity()?, &definition.id, self.objects())),
+            RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &definition, self.objects())),
         };
         Ok(Repo { definition, store })
     }
@@ -1221,7 +1250,7 @@ impl GitProvider {
             }
             let other = self.definition(other)?;
             let store: Box<dyn GitStore> = match other.kind {
-                RepositoryKind::Db => Box::new(db::DbStore::new(self.entity()?, &other.id, self.objects())),
+                RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &other, self.objects())),
                 _ => Box::new(fs::FsStore::open(&other.path)?),
             };
             (store, other.branch)

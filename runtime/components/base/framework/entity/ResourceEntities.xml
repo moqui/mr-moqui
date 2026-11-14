@@ -122,12 +122,20 @@ along with this software (see the LICENSE.md file). If not, see
             read only, pushes, ref writes, merges and writes refused, left out of find#GitRepositories unless asked</description></field>
         <field name="defaultMergeMethodEnumId" type="id"><description>How a merge request merges by default: GmmMerge
             (a merge commit, the default when empty) or GmmSquash</description></field>
+        <field name="forkOfRepositoryId" type="id"><description>The repository this one was forked from
+            (fork#GitRepository); empty for one that is no fork</description></field>
+        <field name="forkNetworkId" type="id"><description>The root repository of the fork network this one is in: the
+            root's own id on the root once it has a fork, and on each fork. Empty for a repository with no fork. The
+            objects of a db network are the GitObject rows of this id; a local fork reads its parent's objects
+            directory (objects/info/alternates). docs/interfaces/Git-Hosting.md, Forks.</description></field>
         <relationship type="many" related="moqui.resource.GitRef" short-alias="refs"><key-map field-name="repositoryId"/></relationship>
         <relationship type="one" title="PushMirror" related="moqui.service.message.SystemMessageRemote" short-alias="pushMirrorRemote">
             <key-map field-name="pushMirrorRemoteId" related="systemMessageRemoteId"/></relationship>
         <relationship type="one-nofk" title="DefaultMergeMethod" related="moqui.basic.Enumeration" short-alias="defaultMergeMethod">
             <key-map field-name="defaultMergeMethodEnumId" related="enumId"/></relationship>
         <index name="GIT_REPO_PATH_KEY" unique="true"><index-field name="repositoryPathKey"/></index>
+        <index name="GIT_REPO_NETWORK"><index-field name="forkNetworkId"/></index>
+        <index name="GIT_REPO_FORK_OF"><index-field name="forkOfRepositoryId"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Git Merge Method" enumTypeId="GitMergeMethod"/>
             <moqui.basic.Enumeration enumId="GmmMerge" enumTypeId="GitMergeMethod" enumCode="merge" sequenceNum="1" description="Merge commit"/>
@@ -150,8 +158,10 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="GitObject" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <description>A git object of a db kind repository, keyed by its SHA-1 hex id, stored as storage says.
             lastUpdatedStamp is when it was written or last referenced again: gc#GitRepositories deletes only an
-            unreachable object not touched since its cutoff.</description>
-        <field name="repositoryId" type="id" is-pk="true"/>
+            unreachable object not touched since its cutoff. The objects of a fork network are stored once, under the
+            root's id (GitRepository.forkNetworkId): a fork has no rows of its own id.</description>
+        <field name="repositoryId" type="id" is-pk="true"><description>The repository, or the root of its fork
+            network</description></field>
         <field name="objectId" type="text-short" is-pk="true"/>
         <field name="objectType" type="text-short"><description>commit, tree, blob, or tag</description></field>
         <field name="objectSize" type="number-integer"><description>The size of the content</description></field>
@@ -165,6 +175,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="storedBytes" type="number-integer"><description>The size of objectData</description></field>
         <field name="objectData" type="binary-very-long"/>
         <field name="blobId" type="id-long"/>
+        <field name="addedRepositoryId" type="id"><description>The fork whose push or write first stored the object,
+            for get#GitRepositoryUsage; empty for the repository of repositoryId itself (the root of a fork network)</description></field>
         <!-- GitRepository is in the transactional group, on another database: no foreign key, read separately. -->
         <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
         <relationship type="one" related="moqui.resource.ContentBlob" short-alias="blob"/>
@@ -181,6 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
             (storedBytes).</description>
         <member-entity entity-alias="GO" entity-name="moqui.resource.GitObject"/>
         <alias entity-alias="GO" name="repositoryId"/>
+        <alias entity-alias="GO" name="addedRepositoryId"/>
         <alias entity-alias="GO" name="storage"/>
         <alias entity-alias="GO" name="objectCount" field="objectId" function="count"/>
         <alias entity-alias="GO" name="storedBytes" function="sum"/>
@@ -209,6 +222,10 @@ along with this software (see the LICENSE.md file). If not, see
             separated by spaces: the commits new to the repository are those the new refs reach and these do
             not</description></field>
         <field name="pushOptions" type="text-long"/>
+        <field name="packBytes" type="number-integer"><description>The bytes of the pack a push sent (0 or empty with
+            none)</description></field>
+        <field name="reviewPush" type="text-indicator"><description>Y for a push to refs/for/* by a user with no push
+            right: its packBytes count toward git-server review-max-account-bytes</description></field>
         <field name="ecaStatus" type="text-short"><description>recording (the refs are being changed), pending,
             running, done, failed, or none (nothing changed)</description></field>
         <field name="ecaError" type="text-long"/>
@@ -217,6 +234,19 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="many" related="moqui.resource.GitUpdateRef" short-alias="refs"><key-map field-name="updateId"/></relationship>
         <index name="GIT_UPDATE_STATUS"><index-field name="ecaStatus"/></index>
         <index name="GIT_UPDATE_REPO"><index-field name="repositoryId"/><index-field name="updateDate"/></index>
+        <index name="GIT_UPDATE_USER"><index-field name="userId"/><index-field name="updateDate"/></index>
+    </entity>
+    <entity entity-name="GitCommitPush" package="moqui.resource" use="nontransactional" cache="never">
+        <description>Who brought a commit to a repository: the user of the first push or write (a GitUpdate with a
+            user) whose refs reached it, written with the update's post events, at most git-server eca-max-commits
+            commits a change. Read by get#GitCommitPushers. A fetch of a mirror and an import have no user and write
+            none.</description>
+        <field name="repositoryId" type="id" is-pk="true"/>
+        <field name="commitId" type="text-short" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="updateId" type="id"/>
+        <field name="pushDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
     </entity>
     <entity entity-name="GitUpdateRef" package="moqui.resource" use="nontransactional" cache="never">
         <field name="updateId" type="id" is-pk="true"/>
@@ -305,7 +335,18 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="mergeRequestNum" type="number-integer"><description>Per repository from 1: !num</description></field>
         <field name="title" type="text-medium"/>
         <field name="description" type="text-very-long"/>
-        <field name="sourceRef" type="text-medium"><description>The source branch name</description></field>
+        <field name="sourceRef" type="text-medium"><description>The source branch name, of sourceRepositoryId when it
+            is set; for one pushed for review its own head ref, refs/merge-requests/[mergeRequestNum]/head</description></field>
+        <field name="sourceRepositoryId" type="id"><description>The repository of the source branch, one of the target's
+            fork network; empty: the target repository</description></field>
+        <field name="pushedForReview" type="text-indicator"><description>Y when the head came by a push to
+            refs/for/[targetRef] or a proposal of commit#GitFiles: there is no source branch, the commits are kept
+            under refs/merge-requests/[mergeRequestNum]/head only</description></field>
+        <field name="reviewTopic" type="text-short"><description>The topic of a push for review (-o topic=): a later
+            push of the same author, target and topic updates this merge request</description></field>
+        <field name="hiddenDate" type="date-time"><description>Set by the application while it holds the merge
+            request's text: its refs/merge-requests head is fetched by nobody and its commits are not read by id
+            through the services (set#MergeRequestHidden)</description></field>
         <field name="targetRef" type="text-medium"><description>The target branch name</description></field>
         <field name="statusId" type="id" enable-audit-log="true"/>
         <field name="authorUserId" type="id"/>
@@ -333,6 +374,7 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="mergeRequestId"/></relationship>
         <index name="GIT_MR_NUM" unique="true"><index-field name="repositoryId"/><index-field name="mergeRequestNum"/></index>
         <index name="GIT_MR_SOURCE"><index-field name="repositoryId"/><index-field name="sourceRef"/></index>
+        <index name="GIT_MR_SOURCE_REPO"><index-field name="sourceRepositoryId"/><index-field name="sourceRef"/></index>
         <index name="GIT_MR_AUTHOR"><index-field name="authorUserId"/><index-field name="statusId"/></index>
         <seed-data>
             <moqui.basic.StatusType statusTypeId="GitMergeRequest" description="Git Merge Request"/>

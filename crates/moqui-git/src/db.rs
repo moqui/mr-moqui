@@ -102,7 +102,13 @@ struct Row {
 
 pub(crate) struct DbStore {
     entity: EntityFacade,
+    /// The repository: whose refs these are.
     repository_id: Arc<str>,
+    /// The id the object rows are stored under: the root of the repository's fork network, else its own id, so a
+    /// network's objects are stored once and rows written before forks need no change.
+    objects_id: Arc<str>,
+    /// For a fork, its own id: what a row it adds is marked with (`addedRepositoryId`), for its usage.
+    added_by: Option<Arc<str>>,
     cache: Arc<ObjectCache>,
     /// `git-server` `db-write-format="raw"`: new rows hold the content itself, as before the zlib format, for a database read by
     /// an older version.
@@ -114,6 +120,7 @@ impl std::fmt::Debug for DbStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbStore")
             .field("repository_id", &self.repository_id)
+            .field("objects_id", &self.objects_id)
             .finish()
     }
 }
@@ -182,11 +189,30 @@ fn in_values(ids: &[ObjectId]) -> Vec<Value> {
 }
 
 impl DbStore {
+    /// The store of a repository that is in no fork network.
+    #[cfg(test)]
     pub(crate) fn new(entity: EntityFacade, repository_id: &str, cache: Arc<ObjectCache>) -> Self {
+        Self::in_network(entity, repository_id, repository_id, cache)
+    }
+
+    /// The store of the repository `definition` is the row of.
+    pub(crate) fn of(entity: EntityFacade, definition: &super::Definition, cache: Arc<ObjectCache>) -> Self {
+        Self::in_network(entity, &definition.id, definition.objects_id(), cache)
+    }
+
+    /// The store of `repository_id`, whose objects are the rows of `objects_id` (the root of its fork network).
+    pub(crate) fn in_network(
+        entity: EntityFacade,
+        repository_id: &str,
+        objects_id: &str,
+        cache: Arc<ObjectCache>,
+    ) -> Self {
         let write_raw = super::setting("db-write-format") == "raw";
         Self {
             entity,
             repository_id: Arc::from(repository_id),
+            objects_id: Arc::from(objects_id),
+            added_by: (objects_id != repository_id).then(|| Arc::from(repository_id)),
             cache,
             write_raw,
             large_object: large_object(),
@@ -194,13 +220,13 @@ impl DbStore {
     }
 
     fn cached(&self, id: &ObjectId) -> Option<(Kind, Arc<Vec<u8>>)> {
-        moqui_lib::sync::lock(&self.cache).get(&(Arc::clone(&self.repository_id), *id))
+        moqui_lib::sync::lock(&self.cache).get(&(Arc::clone(&self.objects_id), *id))
     }
 
     fn remember(&self, id: ObjectId, kind: Kind, data: &Arc<Vec<u8>>) {
         if data.len() <= CACHE_ENTRY_BYTES {
             moqui_lib::sync::lock(&self.cache).insert_sized(
-                (Arc::clone(&self.repository_id), id),
+                (Arc::clone(&self.objects_id), id),
                 (kind, Arc::clone(data)),
                 data.len() + 64,
             );
@@ -211,7 +237,7 @@ impl DbStore {
     pub(crate) fn forget(&self, ids: &[ObjectId]) {
         let mut cache = moqui_lib::sync::lock(&self.cache);
         for id in ids {
-            cache.remove(&(Arc::clone(&self.repository_id), *id));
+            cache.remove(&(Arc::clone(&self.objects_id), *id));
         }
     }
 
@@ -270,7 +296,7 @@ impl DbStore {
         self.blobs().stat(blob)?.ok_or_else(|| {
             Error::new(format!(
                 "the content blob {blob} of git object {} of repository {} is missing",
-                row.id, self.repository_id
+                row.id, self.objects_id
             ))
         })
     }
@@ -282,7 +308,7 @@ impl DbStore {
             let mut find = self
                 .entity
                 .find(GIT_OBJECT)?
-                .eq("repositoryId", Value::string(self.repository_id.as_ref()))
+                .eq("repositoryId", Value::string(self.objects_id.as_ref()))
                 .condition(Condition::is_in("objectId", in_values(chunk)));
             for field in META_FIELDS {
                 find = find.select_field(field);
@@ -347,7 +373,7 @@ impl DbStore {
             if hops > MAX_HOPS {
                 return Err(Error::new(format!(
                     "a delta chain of git repository {} is longer than {MAX_HOPS}",
-                    self.repository_id
+                    self.objects_id
                 )));
             }
             let mut next = Vec::new();
@@ -405,14 +431,14 @@ impl DbStore {
             let row = deltas.get(&current).ok_or_else(|| {
                 Error::new(format!(
                     "the delta base {current} of git object {id} of repository {} is missing",
-                    self.repository_id
+                    self.objects_id
                 ))
             })?;
             let base = row.meta.base.unwrap_or(current);
             if chain.contains(&base) {
                 return Err(Error::new(format!(
                     "git object {id} of repository {} is in a delta cycle",
-                    self.repository_id
+                    self.objects_id
                 )));
             }
             if !done.contains_key(&base) {
@@ -558,7 +584,7 @@ impl DbStore {
             let mut find = self
                 .entity
                 .find(GIT_OBJECT)?
-                .eq("repositoryId", Value::string(self.repository_id.as_ref()))
+                .eq("repositoryId", Value::string(self.objects_id.as_ref()))
                 .order_by("objectId", false)
                 .limit(5000);
             if let Some(after) = &after {
@@ -589,7 +615,7 @@ impl DbStore {
         let mut find = self
             .entity
             .find(GIT_OBJECT)?
-            .eq("repositoryId", Value::string(self.repository_id.as_ref()))
+            .eq("repositoryId", Value::string(self.objects_id.as_ref()))
             .condition(Condition::greater_equal("lastUpdatedStamp", stamp_value(since)));
         for field in META_FIELDS {
             find = find.select_field(field);
@@ -618,7 +644,7 @@ impl DbStore {
         let mut deleted = 0;
         for chunk in ids.chunks(BATCH) {
             let condition = Condition::and(vec![
-                Condition::equals("repositoryId", Value::string(self.repository_id.as_ref())),
+                Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
                 Condition::is_in("objectId", in_values(chunk)),
                 Condition::less("lastUpdatedStamp", stamp_value(cutoff)),
             ]);
@@ -645,7 +671,7 @@ impl DbStore {
             } => (Storage::Delta, Some(base), depth, Some(delta_size), data),
         };
         let condition = Condition::and(vec![
-            Condition::equals("repositoryId", Value::string(self.repository_id.as_ref())),
+            Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
             Condition::equals("objectId", Value::string(id.to_string())),
         ]);
         let columns = [
@@ -673,7 +699,7 @@ impl DbStore {
         if updated == 0 {
             return Err(Error::new(format!(
                 "GitObject {id} of {} is not there to rewrite",
-                self.repository_id
+                self.objects_id
             )));
         }
         Ok(())
@@ -685,7 +711,7 @@ impl DbStore {
         let tx = self.entity.transactions_for(GIT_OBJECT)?;
         for chunk in ids.chunks(BATCH) {
             let condition = Condition::and(vec![
-                Condition::equals("repositoryId", Value::string(self.repository_id.as_ref())),
+                Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
                 Condition::is_in("objectId", in_values(chunk)),
             ]);
             let statement = self.entity.with_entity(GIT_OBJECT, |definition, dialect, _| {
@@ -727,7 +753,7 @@ impl DbStore {
     /// Stamp every row of the repository at `millis`, as if written then.
     pub(crate) fn stamp_all(&self, millis: i64) {
         let _rows = super::rows_guard();
-        let condition = Condition::equals("repositoryId", Value::string(self.repository_id.as_ref()));
+        let condition = Condition::equals("repositoryId", Value::string(self.objects_id.as_ref()));
         let statement = self
             .entity
             .with_entity(GIT_OBJECT, |definition, dialect, _| {
@@ -852,6 +878,10 @@ impl DbStore {
                     "objectData",
                     "blobId",
                 ];
+                // the column is new: a database not yet updated has none, and only a fork writes it
+                if self.added_by.is_some() && definition.field("addedRepositoryId").is_some() {
+                    columns.push("addedRepositoryId");
+                }
                 if definition.field("lastUpdatedStamp").is_some() {
                     columns.push("lastUpdatedStamp");
                 }
@@ -886,7 +916,7 @@ impl DbStore {
         columns
             .iter()
             .map(|column| match *column {
-                "repositoryId" => Value::string(self.repository_id.as_ref()),
+                "repositoryId" => Value::string(self.objects_id.as_ref()),
                 "objectId" => Value::string(row.id.to_string()),
                 "objectType" => Value::string(row.kind.to_string()),
                 "objectSize" => i64_of(row.size),
@@ -903,6 +933,7 @@ impl DbStore {
                     _ => Value::Bytes(row.data.clone()),
                 },
                 "blobId" => row.blob_id.as_deref().map_or(Value::Null, Value::string),
+                "addedRepositoryId" => self.added_by.as_deref().map_or(Value::Null, Value::string),
                 "lastUpdatedStamp" => stamp.clone(),
                 _ => Value::Null,
             })
@@ -919,7 +950,7 @@ impl DbStore {
         let mut updated = 0;
         for chunk in ids.chunks(BATCH) {
             let condition = Condition::and(vec![
-                Condition::equals("repositoryId", Value::string(self.repository_id.as_ref())),
+                Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
                 Condition::is_in("objectId", in_values(chunk)),
                 Condition::less("lastUpdatedStamp", stamp_value(before)),
             ]);
@@ -1017,7 +1048,7 @@ impl GitStore for DbStore {
             let rows = self
                 .entity
                 .find(GIT_OBJECT)?
-                .eq("repositoryId", Value::string(self.repository_id.as_ref()))
+                .eq("repositoryId", Value::string(self.objects_id.as_ref()))
                 .condition(Condition::is_in("objectId", in_values(chunk)))
                 .select_field("objectId")
                 .list()?;
@@ -1091,7 +1122,7 @@ impl GitStore for DbStore {
         let rows = self
             .entity
             .find(GIT_OBJECT)?
-            .eq("repositoryId", Value::string(self.repository_id.as_ref()))
+            .eq("repositoryId", Value::string(self.objects_id.as_ref()))
             .condition(Condition::like(
                 "objectId",
                 Value::string(format!("{}%", prefix.to_ascii_lowercase())),
@@ -1231,7 +1262,7 @@ impl GitStore for DbStore {
             let mut find = self
                 .entity
                 .find(GIT_OBJECT)?
-                .eq("repositoryId", Value::string(self.repository_id.as_ref()))
+                .eq("repositoryId", Value::string(self.objects_id.as_ref()))
                 .eq("objectType", Value::string("commit"))
                 .order_by("objectId", false)
                 .limit(1000);

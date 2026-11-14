@@ -41,7 +41,7 @@ pub(super) enum FileContent<'a> {
 
 impl GitProvider {
     /// Whether the file at `path` is an LFS file by the attributes at the branch head.
-    fn lfs_tracked(&self, repo: &Repo, path: &[String]) -> Result<bool, Error> {
+    pub(super) fn lfs_tracked(&self, repo: &Repo, path: &[String]) -> Result<bool, Error> {
         let Some(head) = Self::head(repo)? else {
             return Ok(false);
         };

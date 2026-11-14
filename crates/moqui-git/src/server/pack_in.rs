@@ -86,6 +86,9 @@ pub(crate) struct Quarantine<'a> {
     /// The objects of the repository the pushed ones refer to, found by [`Quarantine::check_closure`]: an accepted
     /// push freshens them.
     referenced: Mutex<Vec<ObjectId>>,
+    /// Those of them a pushed commit names as a parent or a pushed tag as its target: the history the push builds
+    /// on, which must be the repository's own (`crate::reach`).
+    linked: Mutex<Vec<ObjectId>>,
 }
 
 impl std::fmt::Debug for Quarantine<'_> {
@@ -126,6 +129,7 @@ pub(crate) fn receive<'a>(
             MemoryCappedHashmap::new(DELTA_CACHE_BYTES),
         )),
         referenced: Mutex::new(Vec::new()),
+        linked: Mutex::new(Vec::new()),
     };
     let lookup = StoreFind {
         store: base,
@@ -203,6 +207,7 @@ impl Quarantine<'_> {
         let ids = self.ids();
         let in_pack: HashSet<ObjectId> = ids.iter().copied().collect();
         let mut outside: HashSet<ObjectId> = HashSet::new();
+        let mut linked: HashSet<ObjectId> = HashSet::new();
         let need = |id: ObjectId, outside: &mut HashSet<ObjectId>| {
             if !in_pack.contains(&id) {
                 outside.insert(id);
@@ -223,6 +228,9 @@ impl Quarantine<'_> {
                     for parent in commit.parents() {
                         if !shallow.contains(&parent) {
                             need(parent, &mut outside);
+                            if !in_pack.contains(&parent) {
+                                linked.insert(parent);
+                            }
                         }
                     }
                 }
@@ -239,6 +247,9 @@ impl Quarantine<'_> {
                     let tag = gix::objs::TagRef::from_bytes(&data, ops::HASH)
                         .map_err(|err| pack_error(&format!("pushed tag {id} is malformed"), err))?;
                     need(tag.target(), &mut outside);
+                    if !in_pack.contains(&tag.target()) {
+                        linked.insert(tag.target());
+                    }
                 }
                 Kind::Blob => {}
             }
@@ -253,7 +264,21 @@ impl Quarantine<'_> {
             }
         }
         *moqui_lib::sync::lock(&self.referenced) = outside;
+        *moqui_lib::sync::lock(&self.linked) = linked.into_iter().collect();
         Ok(())
+    }
+
+    /// The objects outside the pack that a pushed commit names as a parent or a pushed tag as its target, as
+    /// [`Quarantine::check_closure`] found them.
+    pub(crate) fn linked(&self) -> Vec<ObjectId> {
+        moqui_lib::sync::lock(&self.linked).clone()
+    }
+
+    /// Whether the pushed pack itself has the object.
+    pub(crate) fn holds(&self, id: &ObjectId) -> bool {
+        self.bundle
+            .as_ref()
+            .is_some_and(|bundle| bundle.index.lookup(id).is_some())
     }
 
     /// The kind of a pushed object from its entry's header (and those of its delta bases), without decoding it.

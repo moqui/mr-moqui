@@ -30,7 +30,7 @@ use super::merge::{self, Mergeability, Merged, Method, Overlay};
 use super::ops::{self, Author, CommitDetails};
 use super::revwalk::new_commits;
 use super::rules::{self, RefChangeKind};
-use super::store::{RefEdit, RefOutcome};
+use super::store::{GitStore, RefEdit, RefOutcome};
 use super::{GitProvider, Repo, RepositoryKind};
 use moqui_core::context::Error;
 
@@ -224,20 +224,37 @@ impl GitProvider {
     }
 
     /// Compare `head` against `base` (both revisions). With `diffs` each file's line diff (else only its change);
-    /// with `mergeable` a trial merge of head into base. `None` when either names no commit.
+    /// with `mergeable` a trial merge of head into base. `None` when either names no commit. `head` is a revision
+    /// of `head_repository` when one is given (another repository of the fork network, which the caller may view):
+    /// the two are then read as one store.
     pub(crate) fn compare(
         &self,
         repository_id: &str,
         base: &str,
         head: &str,
+        head_repository: Option<&str>,
         diffs: bool,
         mergeable: bool,
     ) -> Result<Option<Comparison>, Error> {
         let repo = self.repo(repository_id)?;
-        let store = repo.store.as_ref();
+        let other = match head_repository.filter(|other| *other != repository_id) {
+            Some(other) => Some(self.repo(other)?),
+            None => None,
+        };
+        let union;
+        let store: &dyn GitStore = match &other {
+            Some(other) => {
+                union = super::store::Union {
+                    first: repo.store.as_ref(),
+                    second: other.store.as_ref(),
+                };
+                &union
+            }
+            None => repo.store.as_ref(),
+        };
         let (Some(base_id), Some(head_id)) = (
             self.resolve_commit(repository_id, base)?,
-            self.resolve_commit(repository_id, head)?,
+            self.resolve_commit(head_repository.unwrap_or(repository_id), head)?,
         ) else {
             return Ok(None);
         };
@@ -525,7 +542,8 @@ impl GitProvider {
     }
 
     /// Merge `source` (a revision) into the branch `target`, by `method`. With `check_only` a trial merge that changes
-    /// nothing. The merge's commits are by the current user (a squash's author `squash_author` when given); the target
+    /// nothing. `source_label` is what the source is called in a merge commit's message when the revision is not a
+    /// branch's name (the head ref of a merge request from a fork). The merge's commits are by the current user (a squash's author `squash_author` when given); the target
     /// moves through [`Self::write_refs`], so the branch rules and gitECA events run as for a push.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn merge_refs(
@@ -538,6 +556,7 @@ impl GitProvider {
         squash_author: Option<Author>,
         check_only: bool,
         through_merge_request: bool,
+        source_label: Option<&str>,
     ) -> Result<MergeOutcome, Error> {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
@@ -565,7 +584,7 @@ impl GitProvider {
         }
         let committer = self.author();
         let overlay = Overlay::new(store);
-        let source_name = short_name(source).to_string();
+        let source_name = source_label.unwrap_or_else(|| short_name(source)).to_string();
         let target_name = short_name(&target_ref).to_string();
         let request = merge::MergeRequest {
             method,

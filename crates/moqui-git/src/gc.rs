@@ -216,11 +216,11 @@ impl Table {
 }
 
 /// The ids the run starts marking from.
-struct Roots {
+pub(crate) struct Roots {
     /// What the refs point to: each must be there.
-    refs: Vec<ObjectId>,
+    pub(crate) refs: Vec<ObjectId>,
     /// What may still be needed: changes in progress and of the reflog window.
-    others: Vec<ObjectId>,
+    pub(crate) others: Vec<ObjectId>,
 }
 
 impl GitProvider {
@@ -285,12 +285,26 @@ impl GitProvider {
                 "git repository {repository_id} is a mirror, which fetch#GitRepository keeps; it is not collected"
             )));
         }
+        if definition.kind == RepositoryKind::Db && definition.is_fork() {
+            // its objects are the network's rows: the root's run collects them, keeping what every fork reaches
+            return Ok(GcReport {
+                stopped: Some(format!(
+                    "a fork: its objects are collected with {}",
+                    definition.objects_id()
+                )),
+                ..GcReport::default()
+            });
+        }
         let run = || match definition.kind {
             RepositoryKind::Local => local::collect(self, entity, &definition, options),
             _ => {
-                let store = DbStore::new(entity.clone(), repository_id, self.objects());
-                self.gc_roots(entity, repository_id, &store, options)
-                    .and_then(|roots| collect(&store, &roots, options))
+                let store = DbStore::of(entity.clone(), &definition, self.objects());
+                let mut roots = self.gc_roots(entity, repository_id, &store, options)?;
+                // what the forks' refs reach must be there as the root's own must: the rows are theirs too
+                let network = self.network_roots(repository_id, definition.network.as_deref(), options)?;
+                roots.refs.extend(network.refs);
+                roots.others.extend(network.others);
+                collect(&store, &roots, options)
             }
         };
         if options.dry_run {
@@ -316,7 +330,7 @@ impl GitProvider {
     }
 
     /// The refs, and the ids of the changes in progress or in the reflog window.
-    fn gc_roots(
+    pub(crate) fn gc_roots(
         &self,
         entity: &EntityFacade,
         repository_id: &str,
@@ -1060,7 +1074,8 @@ impl GitProvider {
                 "git repository {repository_id} is not a db repository"
             )));
         }
-        let store = DbStore::new(self.entity()?, repository_id, self.objects());
+        // a fork has no rows of its own: the network's are checked
+        let store = DbStore::of(self.entity()?, &definition, self.objects());
         let mut ids = Vec::new();
         store.scan(&mut |row| {
             ids.push(row.id);

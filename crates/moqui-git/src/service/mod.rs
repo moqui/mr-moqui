@@ -29,6 +29,7 @@ use crate::diff::{FileChange, FileDiff};
 use crate::values::{commit_value, map, opt_text, tag_value, timestamp};
 use crate::{GitProvider, GIT_ARTIFACT_TYPE};
 
+mod commit;
 #[cfg(test)]
 mod elfinder_tests;
 #[cfg(test)]
@@ -37,6 +38,7 @@ pub mod hosting;
 #[cfg(test)]
 mod images_tests;
 mod repository;
+pub mod review;
 #[cfg(test)]
 mod script_ports_tests;
 #[cfg(test)]
@@ -56,13 +58,14 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, get_commit_diff)?;
     rust_service!(map, get_blob)?;
     rust_service!(map, get_clone_urls)?;
-    rust_service!(map, commit_files)?;
     rust_service!(map, process_update)?;
     rust_service!(map, process_pending_updates)?;
     rust_service!(map, setup_lfs)?;
     rust_service!(map, gc_repositories)?;
     rust_service!(map, fsck_repository)?;
     hosting::register(map)?;
+    review::register(map)?;
+    commit::register(map)?;
     repository::register(map)
 }
 
@@ -77,6 +80,50 @@ pub(super) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<St
 pub(super) fn add_error(text: impl Into<String>) {
     let text = text.into();
     ExecutionContext::with_current(|ctx| ctx.message().add_error(text));
+}
+
+/// The code of a refusal an application must tell from the others: an error's text starts with it and `: `
+/// (docs/interfaces/Git-Hosting.md, Error codes), as an error in the message facade carries no code of its own.
+/// `None` for a reason that has none, or that starts with a code already.
+pub(crate) fn code_of(reason: &str) -> Option<&'static str> {
+    let coded = reason
+        .split_once(": ")
+        .is_some_and(|(code, _)| code.starts_with("Git") && code.chars().all(|c| c.is_ascii_alphanumeric()));
+    if coded {
+        None
+    } else if reason.starts_with("protected branch:") {
+        Some("GitProtectedBranch")
+    } else if reason.ends_with("already exists") {
+        Some("GitRefExists")
+    } else if reason.contains("default branch cannot be deleted") {
+        Some("GitDefaultBranch")
+    } else if reason.contains("is archived") {
+        Some("GitArchived")
+    } else if reason.starts_with("no branch ") {
+        Some("GitNoSuchRef")
+    } else if reason.starts_with("stale info") {
+        Some("GitStaleRef")
+    } else {
+        None
+    }
+}
+
+/// [`add_error`] of a refusal, with its code before it when it has one ([`code_of`]).
+pub(super) fn add_refusal(reason: impl Into<String>) {
+    let reason = reason.into();
+    match code_of(&reason) {
+        Some(code) => add_error(format!("{code}: {reason}")),
+        None => add_error(reason),
+    }
+}
+
+/// While it lives, the service's reads by commit id reach the heads of hidden merge requests too: for a service
+/// called with `includeHidden` and authorization disabled (the application shows a hidden merge request to its
+/// author and its moderators, and decides who they are).
+pub(super) fn hidden_guard(parameters: &BTreeMap<String, Value>) -> crate::reach::WithHidden {
+    let asked = flag(parameters, "includeHidden")
+        && ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false);
+    crate::reach::with_hidden(asked)
 }
 
 pub(super) fn add_message(text: impl Into<String>) {
@@ -411,6 +458,7 @@ fn get_log(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Resu
     let Some((provider, id)) = viewable(parameters) else {
         return Ok(BTreeMap::new());
     };
+    let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "revision").unwrap_or_default();
     let after = text(parameters, "afterCommitId");
     let limit = number(parameters, "limit", 50);
@@ -444,6 +492,7 @@ fn get_commit(
     let Some((provider, id)) = viewable(parameters) else {
         return Ok(BTreeMap::new());
     };
+    let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "commitId").unwrap_or_default();
     let with_stats = text(parameters, "stats").is_none_or(|stats| stats != "false" && stats != "N");
     let outcome = provider.commit_changes(&id, &revision).and_then(|found| {
@@ -509,6 +558,7 @@ fn get_commit_diff(
     let Some((provider, id)) = viewable(parameters) else {
         return Ok(BTreeMap::new());
     };
+    let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "commitId").unwrap_or_default();
     let path = text(parameters, "path");
     match provider.commit_diffs(&id, &revision, path.as_deref()) {
@@ -542,6 +592,7 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
     let Some((provider, id)) = viewable(parameters) else {
         return Ok(BTreeMap::new());
     };
+    let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "revision").unwrap_or_default();
     match provider.blob_at(&id, &revision, &path_segments(parameters, "path")) {
         Ok(Some(bytes)) => {
@@ -653,55 +704,6 @@ fn process_pending_updates(
             ("processedCount", count(processed)),
             ("failedCount", count(failed)),
         ])),
-        Err(err) => {
-            add_error(err.message());
-            Ok(BTreeMap::new())
-        }
-    }
-}
-
-/// `commit#GitFiles`: commit files on the default branch in one commit with a message. Out: `commitId` (empty when
-/// nothing changed).
-fn commit_files(
-    parameters: &BTreeMap<String, Value>,
-    _facade: &EntityFacade,
-) -> Result<BTreeMap<String, Value>, LibError> {
-    let Some((provider, id)) = provider_and_id(parameters, true) else {
-        return Ok(BTreeMap::new());
-    };
-    if let Err(err) = moqui_core::user::authorize_own(GIT_ARTIFACT_TYPE, &id, "update") {
-        add_error(err.message());
-        return Ok(BTreeMap::new());
-    }
-    let Some(message) = text(parameters, "message") else {
-        add_error("message is required");
-        return Ok(BTreeMap::new());
-    };
-    let segments = |path: &str| -> Vec<String> {
-        path.split('/')
-            .filter(|segment| !segment.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
-    let mut puts = Vec::new();
-    if let Some(Value::Map(files)) = parameters.get("fileMap") {
-        for (path, content) in files {
-            let bytes = match content {
-                Value::Bytes(bytes) => bytes.clone(),
-                other => to_plain_string(other).into_bytes(),
-            };
-            puts.push((segments(path), bytes));
-        }
-    }
-    let removes: Vec<Vec<String>> = match parameters.get("removePaths") {
-        Some(Value::List(paths)) => paths.iter().map(|path| segments(&to_plain_string(path))).collect(),
-        _ => Vec::new(),
-    };
-    match provider.commit_files(&id, &message, &puts, &removes) {
-        Ok(made) => Ok(out([(
-            "commitId",
-            made.map_or(Value::Null, |id| Value::string(id.to_string())),
-        )])),
         Err(err) => {
             add_error(err.message());
             Ok(BTreeMap::new())

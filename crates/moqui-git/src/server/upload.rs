@@ -97,6 +97,10 @@ fn parse_id(text: &str) -> Result<ObjectId, Error> {
     ObjectId::from_hex(text.trim().as_bytes()).map_err(|_| Error::new(format!("not an object id: {text}")))
 }
 
+/// Which of the objects a fetch wants by id, and that no ref it was shown names, it may have: the commits the
+/// repository's readable refs reach (`crate::reach`).
+pub(crate) type WantCheck<'a> = dyn Fn(&[ObjectId]) -> Result<HashSet<ObjectId>, Error> + 'a;
+
 /// What a fetch asks for, from either protocol version.
 #[derive(Debug, Default)]
 struct Request {
@@ -146,9 +150,10 @@ impl Request {
         Ok(true)
     }
 
-    /// Resolve `deepen-not` refs, check that the wants are objects here, and that depth is not combined with the
-    /// others, as git refuses.
-    fn check(&mut self, store: &dyn GitStore, advertised: &Advertised) -> Result<(), Error> {
+    /// Resolve `deepen-not` refs, check that the wants are what the refs name or commits they reach (an object the
+    /// store has is not enough: it may be another repository's of the fork network, or a hidden merge request's), and
+    /// that depth is not combined with the others, as git refuses.
+    fn check(&mut self, advertised: &Advertised, wanted: &WantCheck<'_>) -> Result<(), Error> {
         // v0 sends deepen-relative as a capability of the first want, v2 as an argument
         if self.has("deepen-relative") {
             self.deepen.relative = true;
@@ -166,8 +171,22 @@ impl Request {
                 .ok_or_else(|| Error::new(format!("git upload-pack: ambiguous deepen-not: {name}")))?;
             self.deepen.not.push(found.id);
         }
-        for want in &self.wants {
-            if store.object_size(want)?.is_none() {
+        let named: HashSet<ObjectId> = advertised
+            .refs
+            .iter()
+            .chain(&advertised.review)
+            .flat_map(|reference| [Some(reference.id), reference.peeled])
+            .flatten()
+            .collect();
+        let by_id: Vec<ObjectId> = self
+            .wants
+            .iter()
+            .filter(|want| !named.contains(*want))
+            .copied()
+            .collect();
+        if !by_id.is_empty() {
+            let allowed = wanted(&by_id)?;
+            if let Some(want) = by_id.iter().find(|want| !allowed.contains(*want)) {
                 return Err(Error::new(format!("upload-pack: not our ref {want}")));
             }
         }
@@ -382,6 +401,7 @@ fn read_line(input: &mut dyn Read) -> Result<Option<Packet>, Error> {
 pub(crate) fn upload_v0(
     store: &dyn GitStore,
     advertised: &Advertised,
+    wanted: &WantCheck<'_>,
     input: &mut dyn Read,
     out: &mut dyn Write,
     stateless: bool,
@@ -405,7 +425,7 @@ pub(crate) fn upload_v0(
         // ls-remote, or a fetch that is already up to date
         return Ok(());
     }
-    request.check(store, advertised)?;
+    request.check(advertised, wanted)?;
     let sender = Send {
         store,
         advertised,
@@ -536,6 +556,7 @@ fn read_command(input: &mut dyn Read) -> Result<Option<(String, Vec<String>)>, E
 pub(crate) fn serve_v2(
     store: &dyn GitStore,
     advertised: &Advertised,
+    wanted: &WantCheck<'_>,
     input: &mut dyn Read,
     out: &mut dyn Write,
     stateless: bool,
@@ -544,7 +565,7 @@ pub(crate) fn serve_v2(
     while let Some((command, arguments)) = read_command(input)? {
         match command.as_str() {
             "ls-refs" => ls_refs(advertised, &arguments, out)?,
-            "fetch" => fetch_v2(store, advertised, &arguments, out, threads)?,
+            "fetch" => fetch_v2(store, advertised, wanted, &arguments, out, threads)?,
             other => return Err(Error::new(format!("unknown command '{other}'"))),
         }
         out.flush().map_err(io_error)?;
@@ -578,7 +599,24 @@ fn ls_refs(advertised: &Advertised, arguments: &[String], out: &mut dyn Write) -
             None => {}
         }
     }
-    for reference in advertised.refs.iter().filter(|reference| wanted(&reference.name)) {
+    // the head of a merge request is listed only for a prefix that names it (`git fetch origin
+    // refs/merge-requests/12/head`), never for a clone's or an `ls-remote`'s
+    let review_wanted = |name: &str| {
+        prefixes
+            .iter()
+            .any(|prefix| prefix.starts_with(crate::reach::MERGE_REQUEST_REFS) && name.starts_with(prefix))
+    };
+    let listed = advertised
+        .refs
+        .iter()
+        .filter(|reference| wanted(&reference.name))
+        .chain(
+            advertised
+                .review
+                .iter()
+                .filter(|reference| review_wanted(&reference.name)),
+        );
+    for reference in listed {
         let mut line = format!("{} {}", reference.id, reference.name);
         if let (true, Some(peeled)) = (peel, &reference.peeled) {
             line.push_str(&format!(" peeled:{peeled}"));
@@ -591,6 +629,7 @@ fn ls_refs(advertised: &Advertised, arguments: &[String], out: &mut dyn Write) -
 fn fetch_v2(
     store: &dyn GitStore,
     advertised: &Advertised,
+    wanted: &WantCheck<'_>,
     arguments: &[String],
     out: &mut dyn Write,
     threads: Option<usize>,
@@ -611,7 +650,7 @@ fn fetch_v2(
             request.caps.insert(argument.clone());
         }
     }
-    request.check(store, advertised)?;
+    request.check(advertised, wanted)?;
     let mut negotiation = Negotiation::new(store, &request.wants);
     let mut acks = Vec::new();
     for have in haves {
