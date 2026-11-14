@@ -498,6 +498,75 @@ fn a_template_send_threads_and_replies_as_the_caller_says() {
     assert_eq!(field_text(&row, "inReplyTo"), "<b@forum.example.com>");
 }
 
+/// One call's subject, sender, relay and bounce address go out over the template's (F17: a sending profile's delivery),
+/// the subject as given, never expanded; the stored message names the call's relay and subject. A call that gives none
+/// sends as the template says, and a value with a line break is left out.
+#[test]
+fn a_call_gives_its_subject_sender_relay_and_bounce_address() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    moqui_core::service::load_definitions().unwrap();
+    smtp_server(&facade, &context, "TEST_TEMPLATE_RELAY");
+    smtp_server(&facade, &context, "TEST_PROFILE_RELAY");
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailTemplate",
+        &[
+            ("emailTemplateId", "PROFILED"),
+            ("emailServerId", "TEST_TEMPLATE_RELAY"),
+            ("fromAddress", "template@example.com"),
+            ("bounceAddress", "template-bounces@example.com"),
+            ("subject", "Template ${title}"),
+        ],
+    );
+    let sink = SinkGuard::install();
+    let send = |extra: &[(&str, &str)]| {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("emailTemplateId".into(), Value::string("PROFILED"));
+        params.insert("toAddresses".into(), Value::string("member@example.com"));
+        params.insert("body".into(), Value::string("<p>Hi</p>"));
+        for (name, value) in extra {
+            params.insert((*name).into(), Value::string(*value));
+        }
+        moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("send")
+    };
+    let out = send(&[
+        ("subject", "Spring ${title}\r\nBcc: x@example.com"),
+        ("fromAddress", "news@retail.example"),
+        ("fromName", "Retail news"),
+        ("bounceAddress", "bounces+D100@bounce.retail.example"),
+        ("emailServerId", "TEST_PROFILE_RELAY"),
+    ]);
+    send(&[
+        ("bounceAddress", "bad\r\nX: y@example.com"),
+        ("fromAddress", "no-at-sign"),
+    ]);
+    let errors = context.message().errors().join("\n");
+    assert!(errors.is_empty(), "{errors}");
+    let sent = sink.messages();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].subject, "Spring ${title} Bcc: x@example.com");
+    assert_eq!(sent[0].from_address, "news@retail.example");
+    assert_eq!(sent[0].from_name, "Retail news");
+    assert_eq!(sent[0].bounce, "bounces+D100@bounce.retail.example");
+    assert!(sent[1].subject.starts_with("Template"), "{}", sent[1].subject);
+    assert_eq!(sent[1].from_address, "template@example.com");
+    assert_eq!(sent[1].bounce, "template-bounces@example.com");
+    let id = moqui_lib::object::to_plain_string(out.get("emailMessageId").expect("id"));
+    let row = facade
+        .find(MESSAGE)
+        .unwrap()
+        .eq("emailMessageId", Value::string(&id))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(field_text(&row, "emailServerId"), "TEST_PROFILE_RELAY");
+    assert_eq!(field_text(&row, "fromAddress"), "news@retail.example");
+    assert_eq!(field_text(&row, "subject"), "Spring ${title} Bcc: x@example.com");
+}
+
 #[test]
 fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
     let _lock = lock_tests();

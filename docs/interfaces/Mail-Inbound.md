@@ -210,7 +210,14 @@ certificate), a 4xx tried again from 5 minutes (`mail_delivery_retry_seconds`) d
 `mail_delivery_days` (5).
 
 - **Bounces.** Set `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the edge node) and each message
-  goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message.
+  goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message. This replaces an app's
+  own bounce address (`send#EmailTemplate`'s `bounceAddress`), so an app that reads its own bounces also reads the
+  message the edge marks bounced (`ES_BOUNCED`), as Mantle's delivery ledger does.
+- **Reports an app reads.** Without the edge's bounce domain, an app may send with a bounce address of its own per
+  message (`send#EmailTemplate`'s `bounceAddress`, as `bounces+<key>@` a domain) to a hosted account (`bounces@` it,
+  found by the plus tag), and read what comes back with `org.moqui.mail.EmailServices.read#DeliveryReport`: a delivery
+  status notification (RFC 3464) or an abuse report (ARF, RFC 5965) of the stored message, from its report part and
+  returned message, with the address it came to. Mantle's bounce intake does so.
 - **Failures.** A message no recipient got (refused at the MX, by a later bounce, or after `mail_delivery_days`) goes
   back to a mail client's Outbox with the replies as its send error, as does one the local node could not hand to the
   edge node within the queue's retention period; one some recipients got stays Sent, with the refused named in its
