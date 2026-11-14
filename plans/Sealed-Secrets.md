@@ -1,6 +1,6 @@
 # Sealed Secrets
 
-Status 2026-11-12: plan; nothing built. The threat model this plan answers is in
+Status 2026-11-14: plan; nothing built. The threat model this plan answers is in
 [Attack-Surface, Threat model: stored secrets](../docs/security/Attack-Surface.md#threat-model-stored-secrets). Its `known_gap_*` tests
 (`crates/moqui-entity/src/entity/crypto_tests.rs`) pin today's weaknesses. Each phase below that closes a gap flips its
 test and updates the threat model.
@@ -10,6 +10,14 @@ It opens its listeners only after it is unsealed, and its keys then exist only i
 database dump or backup gives ciphertext only. The plan also closes the attack classes that hit Vault and Bitwarden in
 practice: sign-in bypass at the edges, a feature that turns into code execution, tampering and side channels. An
 operator can see at any time who has access to which secret, can rotate every key, and has a runbook for a breach.
+
+This plan keeps the server's own keys. [Vault-Instances](Vault-Instances.md) keeps the other secrets:
+- the secrets people hold, in personal vaults that only a client opens;
+- the secrets of the instances a server manages, in operational vaults that are used on the server under leases.
+
+It is also the deployment side of this plan. Its manager provisions MR Moqui instances that start sealed, unseals them
+by `transit` (§3.3), files their recovery shares in their holders' personal vaults, and puts and rotates their secrets
+over a manager link.
 
 Sections: [1 deployment zones](#1-deployment-zones) · [2 what is there now](#2-what-is-there-now) ·
 [3 design](#3-design) ([3.9 less surface](#39-less-attack-surface), [3.10 access](#310-who-has-access-to-what),
@@ -41,6 +49,9 @@ Rules for the two zones:
    never crosses the link.
 5. **An all-in-one node is both zones in one process.** It has one keyring. The threat model says so, and the
    [heavy lock-down](../docs/security/Attack-Surface.md#heavy-lock-down) advice applies.
+6. **A manager is in the inner zone** ([Vault-Instances §4.9](Vault-Instances.md#49-where-the-manager-runs)). It holds
+   a transit key for each instance it manages, and their credentials in operational vaults. An outer instance it
+   manages gets no inner key from it: its transit key opens only its own root key.
 
 What a compromise of each zone gives:
 
@@ -68,6 +79,7 @@ What a compromise of each zone gives:
 | Sandbox | `ProtectSystem=strict`, but `ReadWritePaths=/opt/moqui` makes the binary, components and conf writable by the server | `systemd/moqui.service` |
 | Sign-in paths | Password, TOTP, SSO (OIDC, OAuth, SAML), API key, login key, Basic, app passwords, SSH keys, SIP digest, XMPP, device cookie, PASS client secret, `/rest/sm` HMAC, token routes. They compare usernames in different ways. Example: an app password compares ASCII case-insensitively (`user/login.rs`, about line 652). | `crates/moqui-core/src/user/`, `service/sso.rs`, `service/user_keys.rs` |
 | Backups | `pg_dump` output, without `.env`. A backup alone gives no key. | `crates/moqui-drivers/src/backup.rs` |
+| Instance credentials | `InstanceHost.password` and `tlsClientKey`, `InstanceImage.password`, `DatabaseHost.adminPassword` and `AppInstanceEnv.envValue` are `encrypt="true"` fields under the one field key. Any find decrypts them, and the env values reach containers as environment variables | `runtime/components/base/framework/entity/ServerEntities.xml`; [Vault-Instances §2](Vault-Instances.md#2-what-is-there-now) |
 
 ## 3. Design
 
@@ -147,7 +159,7 @@ Unseal methods (`seal` element in the conf):
 |---|---|---|
 | `tpm` through `systemd-creds` (TPM2, bound to PCRs) | Yes | **A home or office server. The default for BOSS.** |
 | `kms` (AWS, GCP, Azure) | Yes | Cloud hosts. The default for an edge node in the cloud. |
-| `transit` (OpenBao or Vault Transit) | Yes | Where a Vault runs already |
+| `transit` (OpenBao or Vault Transit, or the instance's manager) | Yes | Where a Vault runs already. A managed instance, whose manager keeps its transit key ([Vault-Instances §4.5](Vault-Instances.md#45-sealed-start-of-a-managed-instance)) |
 | `passphrase` (Argon2id, m=256 MiB, t=3) | No | A laptop, or the highest care |
 | `shamir` (k of n shares) | No | Separation of duties |
 | `dev` (key in `.env`, as today) | Yes | Development only. Refused when `instance_purpose` is `production`. |
@@ -157,7 +169,11 @@ shares, since `READY=1` is sent when the socket is open. Health checks and load 
 opens only after unseal.
 
 **Recovery shares** (Shamir, 3 of 5 by default) are made at init for every method. They are printed once and are never
-stored. They unseal when the TPM, KMS or passphrase is lost, and they authorize `rekey` and a new root token.
+stored on the server. On an instance with a manager, each share is instead sealed on the instance to one named
+holder's personal key and filed in that holder's personal vault
+([Vault-Instances §4.5](Vault-Instances.md#45-sealed-start-of-a-managed-instance)). No place then holds two shares, and
+the manager sees none. They unseal when the TPM, KMS, passphrase or manager is lost, and they authorize `rekey` and a
+new root token.
 
 `rekey` keeps the root key and wraps it again. `rotate-root` makes a new root key: it writes the new wrapped
 keyring and bootstrap secrets beside the old ones, switches `seal.json` in one atomic rename, then deletes the old
@@ -168,7 +184,9 @@ since an attacker may hold the old root key.
 **Backup of the seal.** A database backup is useless without the matching `seal.json`. `export-seal` writes a
 recovery bundle: `seal.json` (it holds only wrapped values), the database identity and the keyring id. The bundle is
 made at init, after each `rekey`, `rotate-root` and bootstrap-secret change, and goes with the offline backups. A
-restore on a clean host needs the bundle and the recovery shares; the TPM of the old host is not needed.
+restore on a clean host needs the bundle and the recovery shares; the TPM of the old host is not needed. A managed
+instance sends its bundle to its manager over the link, and the manager keeps it as an operational vault item beside
+the instance's backups.
 
 Commands, on the socket or in the SSH admin shell:
 
@@ -295,6 +313,9 @@ An operator can answer at any time, and for any past date: who can read this sec
   The log is kept as long as the audit log, not seven days. A decrypt of a secret marked `audit="required"` fails when
   its log line cannot be written, as Vault fails closed. Other decrypts go on, and a gap row records the time and count
   that were not logged, so the report shows the gap.
+- **Operational vaults** ([Vault-Instances §3.13](Vault-Instances.md#313-events-and-the-access-report)): their members,
+  approvers, leases and machine access join the map, and their `VaultEvent` rows join the decrypt log. The report then
+  answers who can approve the use of an environment's secrets, who did, and for which run.
 - **The Access report screen** in System joins the map, the decrypt log and the credentials, with "as of", a filter by
   secret, by user and by machine identity, and a CSV export. It needs `ADMIN_ACCESS_VIEW`; a secret's value is never
   shown.
@@ -319,6 +340,9 @@ its age, its rotation policy, and what a rotation breaks.
 | `chat_store_key_secret` | Replace it | Each browser device store is encrypted under a passphrase derived from it (`service/chat_keys.rs`); a device cannot open its store | The derived passphrase carries the key version; a device opens its store with the previous version and re-encrypts it under the current one |
 | `field-index` key | None | Lookups by value miss old rows | Versioned index (§3.2) |
 | External credentials (OAuth, SMTP, API keys, FCM) | At the provider, then Admin's write-only field | That integration until updated | A reminder from the policy age |
+| Credentials of managed instances (database, search, registry, host TLS) | By hand, in encrypted fields | The instance until it is updated | Operational vault items, rotated by the manager at the source and then on each instance ([Vault-Instances §4.7](Vault-Instances.md#47-rotation)) |
+| A managed instance's transit key, on its manager | Not built | – | `rekey` of the instance onto a new transit key ([Vault-Instances §4.5](Vault-Instances.md#45-sealed-start-of-a-managed-instance)) |
+| Manager link keys | Not built | – | A new pairing; pinned both ways, as the edge link's are ([Vault-Instances §4.4](Vault-Instances.md#44-the-manager-link)) |
 
 - **Every key gets versions**, as `git_lfs_token_key` has a previous one. New use takes the current version. A new
   signature carries its key id; today `sign_session` does not (`user/session.rs` about line 2932). A version that
@@ -357,6 +381,9 @@ its age, its rotation policy, and what a rotation breaks.
      `.env` and the runtime directory. An older snapshot or backup, or a copy of an old `.env`, holds the keys of its
      time: rotate every key and credential it held.
    - PASS or edge node only: the outer zone's keys and the PASS credential. BOSS keys are safe (S6).
+   - A manager ([Vault-Instances §4.9](Vault-Instances.md#49-where-the-manager-runs)): `rotate-root` on the manager,
+     then `rekey` of each managed instance onto a new transit key, then every operational vault item that was leased
+     or under machine access in the window, at its source. The vault events name those items.
 5. **Recover** from a known-good binary and backup on a clean host. Do not clean a compromised host.
 6. **Notify** the users and the authorities the law names, within its deadline (72 hours under the GDPR).
 7. **Learn.** A review, a test for the hole, and a change to the threat model.
@@ -372,14 +399,14 @@ Attack-Surface says what changed.
 | **S1** | `v2` AEAD field format with associated data; keyring table; the field key from the keyring, which still starts from `entity_ds_crypt_pass` until S3; blind index; rewrap job; old-format count in System | Tampering, equal-value leaks, row swap, AES-128. Also, at once: a `decrypt-alt` whose pass is still the `CHANGEME` sentinel is skipped | `known_gap_*` for constant IV and no MAC flip to control tests; a swapped ciphertext fails; a partial select and a view alias of an encrypted field decrypt; once an entity holds no old-format value, a plaintext or an old-format value put in place of a `v2` value is refused through the entity facade; the blind index finds a row under the previous and the current index key during a rewrap; a rewrap leaves no old rows, audit-log values included, survives a restart midway and does not overwrite a concurrent update (regression) |
 | **S2** | Purpose keys by HKDF; `session_cookie_key` gets a previous key and a rotation, so sessions survive a rotation; `operator rotate` | No rotation | A session signed by the previous key is accepted until it expires, then refused; a session made before two rotations in a row is still accepted; a session cookie with no key id is read (regression) |
 | **S3** | Sealed start; `seal.json`; operator socket and commands; `passphrase`, `shamir`, `tpm` (`systemd-creds`) and `dev` methods; recovery shares; `seal`; `rotate-root`; `export-seal` | Key beside the data | Sealed: no port answers; a wrong share is refused and counted; seal drops keys and closes listeners; a server that stays sealed past `TimeoutStartSec` then unseals and serves; a `rotate-root` stopped before the rename keeps the old root; a database restore with the recovery bundle and shares on a new runtime directory unseals and reads every row (regression). A full TPM reboot on a real host (acceptance, `SealedStart`) |
-| **S4** | The generator writes bootstrap secrets to `seal.json` and the others to `SecretValue`, not `.env` (before the first release a clean start; no move of an existing `.env`); external credentials by `operator secret put` and Admin's write-only fields; the embedded Postgres password into `seal.json`, with no `pgpass`; secret handles in place of secret properties | `.env` secrets | A new runtime's `.env` and runtime directory hold no secret, and a cold start with a password-protected database works; a generated secret is never in `.env` (regression) |
+| **S4** | The generator writes bootstrap secrets to `seal.json` and the others to `SecretValue`, not `.env` (before the first release a clean start; no move of an existing `.env`); external credentials by `operator secret put` and Admin's write-only fields, and on a managed instance by its manager over the link ([Vault-Instances](Vault-Instances.md) M2); the embedded Postgres password into `seal.json`, with no `pgpass`; secret handles in place of secret properties | `.env` secrets | A new runtime's `.env` and runtime directory hold no secret, and a cold start with a password-protected database works; a generated secret is never in `.env` (regression) |
 | **S5** | Memory hygiene of §3.5; ciphertext in the entity cache | Keys and secrets in dumps, swap and caches | `seal` zeroes the key buffers (unit test on the type); after `seal` the caches hold no plaintext of an encrypted field and an old handle is refused; a `seal` while a request is blocked past the time limit ends the process; the process is not dumpable (regression) |
 | **S6** | Zones: an outer keyring for PASS and edge nodes; replicated secrets re-encrypted on arrival; PASS's client credential to mTLS with a pinned key, the header secret kept for REST until PASS moves; a zone check that refuses a BOSS data key on an outer node | Outer node gives inner keys | An edge database dump and its `seal.json` decrypt no BOSS row; a replicated secret on the edge is in the edge's format (regression). Attach and replicate on two runtimes (acceptance, in Edge's suite) |
 | **S7** | Sign-in core of §3.6; canonical identity with its column and the collision check; shared lockout; scope; a lint that finds `==` on a secret | Edge sign-in bypass | Canonicalization, two accounts with the same canonical form refused, the shared count and the scope refusal, one test each (regression). The matrix of every sign-in path × wrong, expired, replay, disabled, end date, case and Unicode variant, factor skipped, other organization (acceptance, `SignInPaths`) |
 | **S8** | Code and data apart (§3.7); new unit; deploy approval | A feature turns into code execution | No upload, export, log or audit path resolves under a code directory (regression). The packaged server starts and serves under the new unit (acceptance) |
 | **S9** | Unsafe production starts (§3.8); an empty `crypt-pass` while an entity has `encrypt="true"` fields is refused on every instance | Unsafe settings | One test for each refusal (regression) |
 | **S10** | Outside review of the design and of `crypto.rs`, the keyring and the seal code; publish the result in `docs/security/` | Trust you can check | – |
-| **S11** | `kms` and `transit` methods | Root key held on the host | Unseal by each method against a stub (regression) |
+| **S11** | `kms` and `transit` methods, with a manager's transit for the instances it manages ([Vault-Instances](Vault-Instances.md) M6) | Root key held on the host | Unseal by each method against a stub (regression) |
 | **S12** | Less attack surface (§3.9): `moqui operator surface`; a test that every optional listener is off by default | Unneeded surface | The default conf binds no optional listener; the report names each bound listener (regression) |
 | **S13** | Access (§3.10): the secret access map, the dated authorization history, the decrypt log with HMAC'd values, the use log of secret handles, fail-closed `audit="required"`, the Access report screen | Not knowing who can read or did read a secret | A decrypt writes one line with no value, and two users who read one cached row write two lines; a handle use is counted; with the log store down an `audit="required"` decrypt fails and other decrypts leave a gap row; an artifact rule changed with no change of membership shows on its date; the map names a user who gains the permission and drops one who loses it, as of each date; a user without `ADMIN_ACCESS_VIEW` is refused (regression) |
 | **S14** | Key inventory and rotation (§3.11): current and previous for every generated key, `operator rotate`, the Keys screen, emergency rotation | Keys that cannot be rotated without an outage | For each signing key: a value signed by the previous version is accepted until it expires; emergency rotation refuses it at once and ends every session. For each encryption key: emergency rotation leaves every row readable; a device store opens after `chat_store_key_secret` rotates; a backup made before a rotation restores and reads (regression) |
@@ -387,7 +414,7 @@ Attack-Surface says what changed.
 
 Order: S1 and S2 make the stored data safe even before sealing. S3 and S4 remove keys from disk. S6 follows S3,
 because the outer zone needs its own seal. S7 and S8 do not depend on the others and can run beside them. S12 and S13
-need nothing else. S5 follows S4 (secret handles). S13's decrypt log follows S5 (ciphertext in the cache). S14 follows S1 and S2. S15 follows S3 (for `seal`), S13 (to scope) and S14 (to rotate).
+need nothing else. S5 follows S4 (secret handles). S13's decrypt log follows S5 (ciphertext in the cache). S14 follows S1 and S2. S15 follows S3 (for `seal`), S13 (to scope) and S14 (to rotate). Vault-Instances' M6 (managed sealed start) follows S3 and S11. Its machine access moves onto S1's keyring once S1 is built, and its vault events join S13's report.
 
 ## 5. Tests
 
@@ -406,13 +433,13 @@ need nothing else. S5 follows S4 (secret handles). S13's decrypt log follows S5 
 | Encrypt the whole database? | No. Encrypted fields plus disk encryption (LUKS) | Postgres has no transparent encryption that MR Moqui controls. The keyring protects the secrets, and LUKS protects the rest at rest. |
 | Default unseal for BOSS | `tpm` through `systemd-creds` | Unattended reboot without a key on disk. Recovery shares cover a lost TPM. |
 | Where the operator talks while sealed | A Unix socket and the SSH admin shell, never HTTP | While sealed, nothing faces the network. |
-| Client-side (zero-knowledge) vault for personal secrets | Not here | It is a new product (Bitwarden's model), not a fix. A separate proposal if wanted. |
+| Client-side (zero-knowledge) vault for personal secrets | In [Vault-Instances](Vault-Instances.md), not here | Decided with the user, Nov 14, 2026: personal vaults that only a client opens, and operational vaults for the secrets of managed instances. This plan keeps the server's own keys; that one keeps the keys people hold. |
 
 ## 7. Not in scope
 
 - Root on a running, unsealed BOSS process. No design protects against it. Vault states the same limit.
 - Business rows that are not encrypted fields. Use disk encryption.
-- A personal password manager. MR Moqui is not one, and this plan does not make it one.
+- People's secrets and the secrets of managed instances: [Vault-Instances](Vault-Instances.md).
 - Provenance of data: the source of each write, a hash-chained audit log, signed imports. The decrypt log (§3.10)
   records reads of secrets only.
 
@@ -429,4 +456,4 @@ need nothing else. S5 follows S4 (secret handles). S13's decrypt log follows S5 
 | Bitwarden | The key that encrypts data is wrapped, so a password change re-wraps one key | Root key wraps the keyring; `rekey` re-wraps only the root key; `rotate-root` replaces it |
 | Bitwarden | Encrypt-then-MAC on every field | AEAD (S1) |
 | Bitwarden, LastPass breach | Old accounts kept weak KDF settings after the default changed | The rewrap job writes each row in the current format and key version (S1, S2) |
-| Bitwarden | The server holds no key | The outer zone holds no inner key (S6) |
+| Bitwarden | The server holds no key | The outer zone holds no inner key (S6); personal vaults ([Vault-Instances](Vault-Instances.md)) |
