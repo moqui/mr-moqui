@@ -3,8 +3,8 @@
 # `cargo tree -p moqui` is the default binary. Cargo.lock is the exact resolve.
 #
 # license is CC0-1.0. The patent grant in LICENSE.md has no SPDX identifier.
-# The workspace needs Rust 1.99 (rust-toolchain.toml): quickjs-oxide declares rust-version 1.99, mail-parser 1.0 1.98,
-# and oxc 0.153 and later 1.97. This file does not set rust-version, so `cargo metadata` and `cargo tree` still run on
+# rust-toolchain.toml pins Rust 1.100. The workspace needs 1.99: quickjs-oxide declares rust-version 1.99, mail-parser
+# 1.0 1.98, and oxc 0.153 and later 1.97. This file does not set rust-version, so `cargo metadata` and `cargo tree` still run on
 # older cargo.
 
 [workspace]

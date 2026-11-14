@@ -585,10 +585,20 @@ fn template() -> &'static Template {
     TEMPLATE.get_or_init(build_template)
 }
 
-fn build_template() -> Template {
+/// The `target/<profile>` directory of this test binary, the home of the caches the test runs share. Cargo 1.100's
+/// build directory puts a test binary in `target/<profile>/build/<package>/<hash>/out/`; earlier ones in
+/// `target/<profile>/deps/`.
+pub fn profile_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    // target/<profile>/deps/<test binary>
-    let profile_dir = exe.ancestors().nth(2).expect("target directory").to_path_buf();
+    exe.ancestors()
+        .find(|dir| dir.file_name().is_some_and(|name| name == "build" || name == "deps"))
+        .and_then(Path::parent)
+        .expect("target/<profile> above the test binary")
+        .to_path_buf()
+}
+
+fn build_template() -> Template {
+    let profile_dir = profile_dir();
     let cache = profile_dir.join("moqui-test-template");
     let key = template_key();
     let fixtures = cache.join(format!("fixtures-{key}"));
@@ -1188,10 +1198,7 @@ pub fn temp_dir(prefix: &str) -> PathBuf {
 pub fn share_install() {
     static SHARED: std::sync::Once = std::sync::Once::new();
     SHARED.call_once(|| {
-        let exe = std::env::current_exe().unwrap();
-        // target/<profile>/deps/<test binary>
-        let profile_dir = exe.ancestors().nth(2).expect("target directory");
-        let install = profile_dir.join("moqui-test-install");
+        let install = profile_dir().join("moqui-test-install");
         moqui_lib::env::set_property("MOQUI_INSTALL", install.display().to_string());
     });
 }

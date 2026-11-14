@@ -24,7 +24,7 @@ and the build packages are in [Build-Test](Build-Test.md).
 
 ### Develop on your machine
 
-You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.99.0),
+You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.100.0),
 git and bash, on Linux, macOS, or Windows. On Windows, install the MSVC toolchain (`x86_64-pc-windows-msvc`), Visual
 Studio Build Tools with the "Desktop development with C++" workload, and Git for Windows, then use `moq.cmd` instead
 of `./moq` (the binary is `target\release\moqui.exe`). The first build that needs it downloads NASM 3.02 to

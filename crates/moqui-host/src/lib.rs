@@ -39,6 +39,10 @@ use moqui_mail as _;
 use moqui_report as _;
 // The Tools app's database services, in every build, the same way.
 use moqui_tools as _;
+// The DAV, VCard and ICalendar services and the co-edited document services, in every build, the same way: a build
+// without axum names neither crate elsewhere, so their entries would otherwise leave the binary.
+use moqui_collab as _;
+use moqui_dav as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;

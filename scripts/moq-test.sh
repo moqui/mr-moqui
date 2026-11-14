@@ -462,6 +462,78 @@ check "tidy-cargo removed the unreferenced run fingerprint" 1 '' -- test -e "$R/
 check "tidy-cargo kept both build-script libraries" 0 '' -- test -f "$R/target/debug/deps/libbs-$BS1.rlib" -a -f "$R/target/debug/deps/libbs-$BS2.rlib"
 check "tidy-cargo again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
 
+# Cargo 1.100's build directory layout: each unit in build/<package>/<hash>/, its fingerprint in
+# fingerprint/ and its files in out/. Once debug has such a unit, the earlier layout there goes.
+
+# $1 hash, $2 profile, $3 stamp, $4 crate name
+tidy_new_unit() {
+    local hash=$1 profile=$2 stamp=$3 crate=$4
+    local unit=$R/target/debug/build/$crate/$hash inc=$R/target/debug/incremental/$crate-idn$hash
+    mkdir -p "$unit/fingerprint" "$unit/out" "$inc"
+    tidy_json "$unit/fingerprint/lib-$crate.json" "$profile"
+    echo stamp >"$unit/fingerprint/invoked.timestamp"
+    echo rlib >"$unit/out/lib$crate-$hash.rlib"
+    echo session >"$inc/session"
+    touch -d "$stamp" "$unit/fingerprint/invoked.timestamp" "$unit/fingerprint/lib-$crate.json" "$unit/out/lib$crate-$hash.rlib" "$inc"
+}
+
+# $1 hash, $2 stamp, $3 dep fingerprint (decimal)
+tidy_new_bs_lib() {
+    local hash=$1 stamp=$2 dep3=$3
+    local unit=$R/target/debug/build/nbs/$hash
+    mkdir -p "$unit/fingerprint" "$unit/out"
+    printf '%s\n' '{"rustc":1,"features":"[\"http\"]","declared_features":"[\"http\"]","target":2,"profile":9,"path":3,"deps":[[1,"build_script_build",false,'"$dep3"']],"local":[],"rustflags":[],"config":5,"compile_kind":0}' >"$unit/fingerprint/lib-nbs.json"
+    echo stamp >"$unit/fingerprint/invoked.timestamp"
+    echo rlib >"$unit/out/libnbs-$hash.rlib"
+    touch -d "$stamp" "$unit/fingerprint/invoked.timestamp" "$unit/fingerprint/lib-nbs.json"
+}
+
+# $1 hash, $2 stamp, $3 16 hex digits
+tidy_new_bs_run() {
+    local hash=$1 stamp=$2 hex=$3
+    local unit=$R/target/debug/build/nbs/$hash
+    mkdir -p "$unit/fingerprint" "$unit/run" "$unit/out"
+    printf '%s\n' '{"rustc":1,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[],"local":[],"rustflags":[],"config":0,"compile_kind":0}' >"$unit/fingerprint/run-build-script-build-script-build.json"
+    printf '%s' "$hex" >"$unit/fingerprint/run-build-script-build-script-build"
+    echo out >"$unit/run/output"
+    touch -d "$stamp" "$unit/fingerprint/run-build-script-build-script-build.json"
+}
+
+NOLD=5555555555555555
+NNEW=6666666666666666
+NBS=7777777777777777
+NRUN=8888888888888888
+NRUNX=9999999999999999
+tidy_new_unit "$NOLD" 9 '2021-01-01 00:00:00' newdemo
+tidy_new_unit "$NNEW" 9 '2021-06-01 00:00:00' newdemo
+tidy_new_bs_lib "$NBS" '2021-06-01 00:00:00' 5
+tidy_new_bs_run "$NRUN" '2021-01-01 00:00:00' 0500000000000000
+tidy_new_bs_run "$NRUNX" '2021-09-01 00:00:00' 0600000000000000
+
+if have flock; then
+    touch "$R/target/debug/.cargo-build-lock"
+    flock "$R/target/debug/.cargo-build-lock" sleep 60 &
+    lockpid=$!
+    sleep 1
+    check "tidy-cargo refuses a build holding the build directory" 1 'a cargo build is using' -- "$M" tidy-cargo
+    kill "$lockpid" 2>/dev/null
+    wait "$lockpid" 2>/dev/null
+    rm -f "$R/target/debug/.cargo-build-lock"
+fi
+
+check "tidy-cargo with the build directory layout" 0 'removed .* of old artifacts under target/' -- "$M" tidy-cargo
+check "tidy-cargo removed the older unit directory" 1 '' -- test -e "$R/target/debug/build/newdemo/$NOLD"
+check "tidy-cargo kept the newer unit directory" 0 '' -- test -f "$R/target/debug/build/newdemo/$NNEW/out/libnewdemo-$NNEW.rlib"
+check "tidy-cargo removed the older unit's incremental dir" 1 '' -- test -e "$R/target/debug/incremental/newdemo-idn$NOLD"
+check "tidy-cargo kept the newer unit's incremental dir" 0 '' -- test -d "$R/target/debug/incremental/newdemo-idn$NNEW"
+check "tidy-cargo kept the build-script run a unit names" 0 '' -- test -f "$R/target/debug/build/nbs/$NRUN/run/output"
+check "tidy-cargo removed the unreferenced unit run" 1 '' -- test -e "$R/target/debug/build/nbs/$NRUNX"
+check "tidy-cargo removed the earlier layout's rlib" 1 '' -- test -e "$R/target/debug/deps/libdemo-$NEW.rlib"
+check "tidy-cargo removed the earlier layout's fingerprint" 1 '' -- test -e "$R/target/debug/.fingerprint/demo-$NEW"
+check "tidy-cargo removed the earlier layout's build-script run" 1 '' -- test -e "$R/target/debug/build/bs-$RUN2"
+check "tidy-cargo kept a deps file with no hash in the earlier layout" 0 '' -- test -f "$R/target/debug/deps/notes.txt"
+check "tidy-cargo with the build directory layout again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
+
 rm -f "$R/cargo.log"
 check "clean-all" 0 'Deleting runtime/tmp' -- "$M" clean-all
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"

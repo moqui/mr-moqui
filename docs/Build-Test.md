@@ -17,8 +17,8 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
 
 ## Build
 
-Prerequisites: Rust 1.99 or newer (`rustc --version`; `rust-toolchain.toml` pins 1.99.0, which quickjs-oxide
-declares) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
+Prerequisites: Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins
+1.100.0) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
 embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once and strips of psql (it
 links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to build or test.
 

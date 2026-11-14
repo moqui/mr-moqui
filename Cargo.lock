@@ -5084,7 +5084,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "hmac 0.13.0",
- "moqui-lib",
  "opus-rs",
  "serde",
  "serde_json",
