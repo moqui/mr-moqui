@@ -883,6 +883,9 @@ interface MoquiUserFacade {
     setEffectiveTime(time: TimestampInput | null): void;
     readonly passwordRules: { minLength: number; minDigits: number; minOthers: number };
     getPreference(key: string): string | null;
+    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token), `session` (a `getLoginKey` key) or `scoped` (a key for one service, which only that service's login takes); null for any other login. */
+    readonly loginKeyKind: "device" | "token" | "session" | "scoped" | null;
+    getLoginKeyKind(): "device" | "token" | "session" | "scoped" | null;
     /** The `moqui.server.Visit` id of this session, null outside one. */
     readonly visitId: string | null;
     getVisitId(): string | null;

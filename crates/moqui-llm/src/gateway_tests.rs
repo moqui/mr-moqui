@@ -288,3 +288,60 @@ fn one_of_concurrent_gateway_calls_takes_the_room_left() {
     assert_eq!(admitted, 1, "{refused:?}");
     assert!(refused.iter().all(|status| *status == 429), "{refused:?}");
 }
+
+/// With `require-client` on, an account's key needs an `LlmApiClient`; a key made for the gateway alone
+/// (`create#UserScopedKey`) is its own client, which no admin could make a row for without the key.
+#[test]
+fn require_client_takes_a_gateway_scoped_key_as_its_own_client() {
+    moqui_core::script::clear_context_stack();
+    let context = moqui_core::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><llm-facade enabled="true"><gateway enabled="true" require-client="true"/></llm-facade></moqui-conf>"#,
+    );
+    let facade = moqui_core::testing::open();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    for (entity, fields) in [
+        (
+            "moqui.security.UserAccount",
+            &[("userId", "GW_ANN"), ("username", "ann.gw")][..],
+        ),
+        ("moqui.security.UserGroup", &[("userGroupId", "GW_USERS")][..]),
+        (
+            "moqui.security.UserGroupMember",
+            &[("userGroupId", "GW_USERS"), ("userId", "GW_ANN")][..],
+        ),
+        (
+            "moqui.security.UserGroupPermission",
+            &[("userGroupId", "GW_USERS"), ("userPermissionId", "LlmGatewayUse")][..],
+        ),
+    ] {
+        let mut row = facade.make_value(entity).unwrap();
+        for (name, text) in fields {
+            row.set(*name, Value::string(*text));
+        }
+        if entity.ends_with("Member") || entity.ends_with("Permission") {
+            row.set("fromDate", moqui_core::user::now_value());
+        }
+        row.create(&facade).unwrap();
+    }
+    moqui_core::user::internal_login_user("ann.gw").unwrap();
+    let account_key = moqui_core::user::get_login_key(None).unwrap();
+    let scoped_key = moqui_core::user::get_scoped_key("gateway", "dev instance").unwrap();
+    moqui_core::user::logout().unwrap();
+    let request = |key: &str| HttpRequest {
+        method: "GET".to_string(),
+        headers: vec![("authorization".to_string(), format!("Bearer {key}"))],
+        secure: true,
+        client_ip: "127.0.0.1".to_string(),
+        ..HttpRequest::default()
+    };
+
+    let refused = authenticate(context.factory(), &facade, &request(&account_key)).unwrap_err();
+    assert_eq!(refused.status, 403, "{}", refused.body);
+    assert!(refused.body.contains("client_required"), "{}", refused.body);
+    moqui_core::user::logout().unwrap();
+
+    let caller = authenticate(context.factory(), &facade, &request(&scoped_key)).unwrap();
+    assert_eq!((caller.user_id.as_str(), caller.client), ("GW_ANN", None));
+    moqui_core::user::logout().unwrap();
+}

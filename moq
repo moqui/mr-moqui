@@ -120,6 +120,9 @@ OS_DIR=$RUNTIME_DIR/opensearch
 CHROMIUM_DIR=$RUNTIME_DIR/chromium
 ADDONS=$ROOT/addons.xml
 MYADDONS=$ROOT/myaddons.xml
+# The files components and repositories are looked up in, in order: myaddons.xml, the addons.xml files of the servers
+# it names (served_addons_load), then addons.xml.
+ADDONS_FILES=("$MYADDONS" "$ADDONS")
 # The OpenSearch version, which an embed-opensearch build embeds too: .cargo/config.toml has it.
 OPENSEARCH_VERSION=$(sed -n 's/^MOQUI_OPENSEARCH_VERSION = { value = "\([0-9.]*\)".*/\1/p' "$ROOT/.cargo/config.toml" 2>/dev/null)
 [ -n "$OPENSEARCH_VERSION" ] || OPENSEARCH_VERSION=3.4.0
@@ -4291,10 +4294,10 @@ xml_attr() {
     printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2=\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
 }
 
-# The element of type $1 with name $2, from myaddons.xml first, then addons.xml.
+# The element of type $1 with name $2, from myaddons.xml first, then the served addons.xml files, then addons.xml.
 addons_find() {
     local file line
-    for file in "$MYADDONS" "$ADDONS"; do
+    for file in "${ADDONS_FILES[@]}"; do
         while IFS= read -r line; do
             if [ "$(xml_attr "$line" name)" = "$2" ]; then
                 printf '%s\n' "$line"
@@ -4307,7 +4310,7 @@ addons_find() {
 
 addons_names() {
     local file line
-    for file in "$MYADDONS" "$ADDONS"; do
+    for file in "${ADDONS_FILES[@]}"; do
         while IFS= read -r line; do
             xml_attr "$line" name
         done < <(xml_elements "$file" "$1")
@@ -4320,24 +4323,30 @@ addons_root_attr() {
     [ -n "$line" ] && xml_attr "$line" "$2"
 }
 
-# The url template of location type $2 in repository $1, from myaddons.xml first, then addons.xml.
+# The url template of location type $2 in repository $1, from myaddons.xml first, then the served addons.xml files,
+# then addons.xml.
 addons_location() {
     local file url
-    for file in "$MYADDONS" "$ADDONS"; do
+    for file in "${ADDONS_FILES[@]}"; do
         url=$(xml_strip_comments "$file" | awk -v repo="$1" -v type="$2" '
             /<repository[[:space:]]/ {
                 inrepo = (match($0, "[[:space:]]name=\"" repo "\"") > 0)
             }
-            /<\/repository>/ { inrepo = 0 }
             inrepo && /<location[[:space:]]/ && match($0, "[[:space:]]type=\"" type "\"") {
                 if (match($0, /url="[^"]*"/)) { print substr($0, RSTART + 5, RLENGTH - 6); exit }
-            }')
+            }
+            /<\/repository>/ { inrepo = 0 }')
         if [ -n "$url" ]; then
             printf '%s\n' "$url"
             return 0
         fi
-        # A repository found in myaddons.xml without this type does not fall through to addons.xml.
-        if xml_elements "$file" repository | grep -q "[[:space:]]name=\"$1\""; then
+        # A repository found in myaddons.xml without this type does not fall through to addons.xml; one that only names
+        # a server's addons.xml (type addons) does, to that file's repository of the same name.
+        if xml_strip_comments "$file" | awk -v repo="$1" '
+            /<repository[[:space:]]/ { inrepo = (match($0, "[[:space:]]name=\"" repo "\"") > 0); if (inrepo && /<repository[^>]*\/>/) found = 1 }
+            inrepo && /<location[[:space:]]/ && !/[[:space:]]type="addons"/ { found = 1 }
+            /<\/repository>/ { inrepo = 0 }
+            END { exit !found }'; then
             return 1
         fi
     done
@@ -4452,7 +4461,7 @@ addons_name_for() {
         printf '%s\n' "$1"
         return 0
     fi
-    for file in "$MYADDONS" "$ADDONS"; do
+    for file in "${ADDONS_FILES[@]}"; do
         while IFS= read -r line; do
             if [ "$(xml_attr "$line" component-name)" = "$1" ]; then
                 xml_attr "$line" name
@@ -4570,6 +4579,51 @@ parse_component_args() {
 
 require_addons() {
     [ -f "$ADDONS" ] || [ -f "$MYADDONS" ] || die "no addons.xml or myaddons.xml in $(rel "$ROOT")"
+    served_addons_load
+}
+
+# A server's addons.xml (a group of a hosting server serves one, of its public components with their clone addresses):
+# a myaddons.xml repository's <location type="addons" url="..."/>. Each is fetched once per run, over https (http only
+# to a loopback address, or a file: URL), and searched after myaddons.xml and before addons.xml, so its components and
+# its repositories (the server's git, current and release locations) are found as if they were in myaddons.xml. Only
+# its components and repositories are read: never its root's default or default-repository. One that cannot be
+# fetched is skipped with a warning.
+SERVED_ADDONS_DIR=
+served_addons_load() {
+    local url file n=0
+    local -a urls served
+    urls=()
+    served=()
+    while IFS= read -r url; do
+        [ -z "$url" ] || urls+=("$url")
+    done < <(xml_strip_comments "$MYADDONS" | awk '
+        /<repository[[:space:]]/ { inrepo = 1 }
+        inrepo && /<location[[:space:]]/ && /[[:space:]]type="addons"/ {
+            if (match($0, /url="[^"]*"/)) print substr($0, RSTART + 5, RLENGTH - 6)
+        }
+        /<\/repository>/ { inrepo = 0 }')
+    [ ${#urls[@]} -gt 0 ] || return 0
+    need_tool curl
+    SERVED_ADDONS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/moq-addons.XXXXXX") || die "could not make a temp directory"
+    trap 'rm -rf "$SERVED_ADDONS_DIR"' EXIT
+    for url in "${urls[@]}"; do
+        case $url in
+            https://* | file://* | http://127.0.0.1[:/]* | http://localhost[:/]* | "http://[::1]"[:/]*) ;;
+            *)
+                warn "myaddons.xml: the addons.xml at $url is not https (http only to a loopback address); skipped"
+                continue
+                ;;
+        esac
+        n=$((n + 1))
+        file=$SERVED_ADDONS_DIR/served-$n.xml
+        if curl -fsSL --proto '=https,http,file' --proto-redir '=https' --max-time 30 --max-filesize 4194304 \
+            -o "$file" --url "$url" && xml_elements "$file" addons >/dev/null; then
+            served+=("$file")
+        else
+            warn "myaddons.xml: could not read an addons.xml from $url; skipped"
+        fi
+    done
+    ADDONS_FILES=("$MYADDONS" ${served[@]+"${served[@]}"} "$ADDONS")
 }
 
 task_component_get() {

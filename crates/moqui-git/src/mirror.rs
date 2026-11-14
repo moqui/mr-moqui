@@ -95,26 +95,6 @@ pub(crate) fn parse_mirror_url(url: &str, private_network: bool) -> Result<Mirro
     Ok(MirrorUrl::Ssh(parsed))
 }
 
-/// Where a mirror's credential goes: the scheme, host and port of an https URL, or the user, host and port of an ssh
-/// one, the host in lower case. A change of it needs the credential again (`store#GitRepositoryMirror`).
-pub(crate) fn credential_target(url: &str) -> String {
-    let host_port = |authority: &str, default: u16| match moqui_core::sftp::split_host_port(authority, default) {
-        Ok((host, port)) => format!("{}:{port}", host.to_ascii_lowercase()),
-        Err(_) => authority.to_ascii_lowercase(),
-    };
-    match parse_mirror_url(url, true) {
-        Ok(MirrorUrl::Http(url)) => {
-            let (scheme, rest) = url.split_once("://").unwrap_or(("", url.as_str()));
-            let scheme = scheme.to_ascii_lowercase();
-            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-            let default = if scheme == "https" { 443 } else { 80 };
-            format!("{scheme}://{}", host_port(authority, default))
-        }
-        Ok(MirrorUrl::Ssh(ssh)) => format!("ssh://{}@{}", ssh.user.unwrap_or_default(), host_port(&ssh.host, 22)),
-        Err(_) => url.trim().to_string(),
-    }
-}
-
 /// Where an ssh mirror's push connects, for its URL's `host` (`host`, `host:port`, `[v6]:port`, one parser for the
 /// check and the connection): one of the addresses the name resolves to, each of them public, so a name that resolves
 /// again to an internal address between the check and the connection (DNS rebinding) is not followed; the host key

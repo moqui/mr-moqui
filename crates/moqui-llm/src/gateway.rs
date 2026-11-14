@@ -32,8 +32,9 @@
 //! - Auth is `Authorization: Bearer <login key or app password>` (what OpenAI clients send) or HTTP Basic with an app
 //!   password, over TLS, a believed proxy's https or loopback; the user needs `LlmGatewayUse`. An app password (made
 //!   for DAV, SFTP or git) opens the gateway only when an `LlmApiClient` with the `gateway` scope names it, whatever
-//!   `require-client` says; with `require-client` (the default) a login key needs one too. The client's
-//!   `allowedAliases` and limits then apply.
+//!   `require-client` says; with `require-client` (the default) an account's login key needs one too, and a key made
+//!   for the gateway alone (`UserLoginKey.scope` `gateway`) is its own client. The client's `allowedAliases` and
+//!   limits then apply.
 //! - Before a call: the user's quota for the `gateway` scope and the client's daily tokens and cost, each with the
 //!   most the call may use (its prompt estimated and its output limit), 429 `insufficient_quota` with `Retry-After`
 //!   until the day or month ends; then the host's room for one more open call ([`Open`]); then the requests per minute
@@ -699,8 +700,8 @@ fn login_key(key: &str) -> Option<Credential> {
 /// # Errors
 ///
 /// Returns the reply to send: 401 (with `WWW-Authenticate`) without valid credentials, 403 over plain HTTP, without
-/// `LlmGatewayUse`, for an app password no `LlmApiClient` of the gateway names, or (with `require-client`) a login key
-/// none names.
+/// `LlmGatewayUse`, for an app password no `LlmApiClient` of the gateway names, or (with `require-client`) an
+/// account's login key none names.
 pub fn authenticate(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
@@ -784,7 +785,10 @@ pub fn authenticate(
                 "an app password opens the gateway only when an LlmApiClient with the gateway scope names it",
             ));
         }
-        if conf.require_client {
+        // a key made for the gateway alone is its own client: its user made it for this, it opens nothing else, and the
+        // user's own limits apply; require-client is for the account's key, which opens everything
+        let scoped = moqui_core::user::login_key_kind() == Some(moqui_core::user::LoginKeyKind::Scoped);
+        if conf.require_client && !scoped {
             return Err(error(
                 403,
                 "permission_error",

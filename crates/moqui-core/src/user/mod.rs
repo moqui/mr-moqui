@@ -56,7 +56,7 @@ pub use login::{
     logout_local, looks_like_app_password, new_app_password, note_header_login, now_value, renew_device_key,
     revoke_login_key, with_client_ip,
 };
-pub use login::{get_scoped_key, login_user_key_for, KEY_SCOPES};
+pub use login::{get_scoped_key, login_user_key_for, LoginKeyKind, KEY_SCOPES};
 pub use login::{last_auth_millis, recent_auth};
 pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
@@ -70,6 +70,7 @@ pub use preference::{
     is_in_group, set_preference, user_group_ids, user_has_permission, EXTERNAL_USER, EXTERNAL_WITHHELD,
 };
 pub use session::derived_cookie_key;
+pub use session::login_key_kind;
 pub(crate) use session::Memory;
 pub use session::{
     bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_sessions,

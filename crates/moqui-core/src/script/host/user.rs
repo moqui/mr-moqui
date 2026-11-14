@@ -85,6 +85,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "visit", [], None, visit),
         method!("ec.user", "username", [], None, leaf, username),
         method!("ec.user", "userId", [], None, leaf, user_id),
+        method!("ec.user", "loginKeyKind", [], None, leaf, login_key_kind),
         method!("ec.user", "loginRules", [], login_rules),
     ],
     hidden: &[
@@ -413,6 +414,14 @@ fn username(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn user_id(_: &mut Call<'_>) -> Result<Ret, HostError> {
     text_or_null(crate::user::current_user_id())
+}
+
+/// `loginKeyKind`: `device`, `token`, `session` or `scoped` when this request's user signed in by a login key (the
+/// `api_key` or `login_key` header, or `loginUserKey`); null for any other login and with nobody signed in.
+fn login_key_kind(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(crate::user::login_key_kind()
+        .map(|kind| kind.as_str().to_string())
+        .into())
 }
 
 fn has_permission(call: &mut Call<'_>) -> Result<Ret, HostError> {

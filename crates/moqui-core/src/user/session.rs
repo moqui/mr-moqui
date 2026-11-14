@@ -280,6 +280,9 @@ pub(crate) struct Memory {
     /// A shared device's request ([`super::device`]): the display account is this context's user for the request, and
     /// what the web session itself holds is kept here, so nothing of the device's identity is ever stored in it.
     device: Option<DeviceHold>,
+    /// The kind of login key this context's user signed in with ([`super::login::LoginKeyKind`]), for this request
+    /// only: never stored in the web session, and gone at the next login, logout or bind.
+    login_key_kind: Option<super::login::LoginKeyKind>,
 }
 
 /// The identity of the bound web session under a device's request, and what the device may open.
@@ -1454,8 +1457,19 @@ pub fn set_user(user_id: &str, username: &str) {
         session.anonymous = false;
         session.csrf_token = None;
         session.authz = AuthzCache::default();
+        session.login_key_kind = None;
         mark_column(session, Column::UserId);
     });
+}
+
+/// Note the kind of login key the user just signed in with ([`super::login::LoginKeyKind`]).
+pub(crate) fn set_login_key_kind(kind: Option<super::login::LoginKeyKind>) {
+    with_session(|session| session.login_key_kind = kind);
+}
+
+/// The kind of login key this context's user signed in with in this request; `None` for any other login.
+pub fn login_key_kind() -> Option<super::login::LoginKeyKind> {
+    with_session(|session| session.login_key_kind)
 }
 
 pub(crate) fn set_anonymous(anonymous: bool) {
@@ -1486,6 +1500,7 @@ pub fn clear_login() {
         session.anonymous = false;
         session.csrf_token = None;
         session.authz = AuthzCache::default();
+        session.login_key_kind = None;
         mark_column(session, Column::UserId);
     });
 }
@@ -1545,6 +1560,7 @@ pub struct Identity {
     /// The recent sign-in stamps (`login.rs`), so a local login does not take or drop the session user's.
     last_auth: Option<Json>,
     reauth_password: Option<Json>,
+    login_key_kind: Option<super::login::LoginKeyKind>,
 }
 
 pub fn identity() -> Identity {
@@ -1560,6 +1576,7 @@ pub fn identity() -> Identity {
         factor_required: session.attributes.get(super::login::AUTHC_FACTOR_REQUIRED).cloned(),
         last_auth: session.attributes.get(super::login::LAST_AUTH).cloned(),
         reauth_password: session.attributes.get(super::login::REAUTH_PASSWORD).cloned(),
+        login_key_kind: session.login_key_kind,
     })
 }
 
@@ -1573,6 +1590,7 @@ pub fn restore_identity(identity: &Identity) {
         session.time_zone.clone_from(&identity.time_zone);
         session.csrf_token.clone_from(&identity.csrf_token);
         session.authz = identity.authz.clone();
+        session.login_key_kind = identity.login_key_kind;
         mark_column(session, Column::UserId);
         mark_column(session, Column::Locale);
         mark_column(session, Column::TimeZone);
@@ -1915,6 +1933,7 @@ fn install_thread(factory: &Arc<ExecutionContextFactory>, id: &str) -> Result<()
         session.csrf_token = live.columns.session_token.clone();
         session.anonymous = live.anonymous;
         session.attributes = live.attributes.clone();
+        session.login_key_kind = None;
         project_known(session);
         session.bound_id = Some(id.to_string());
         session.factory = Some(Arc::clone(factory));
@@ -2354,6 +2373,7 @@ fn clear_bind() {
     with_session(|session| {
         session.bound_id = None;
         session.factory = None;
+        session.login_key_kind = None;
         session.dirty_columns.clear();
         session.dirty_json.clear();
     });

@@ -1660,8 +1660,9 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
      task's trailer;
    - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the alias as `llm_openai_model`, and as
      `llm_openai_api_key` a key the server makes for its gateway alone, never your account's key), applied at the next
-     start. The lines you had before are kept and put back by Remove. The gateway needs `LlmGatewayUse`, and, while its
-     `require-client` is on, an `LlmApiClient` row naming the key on the group server (or `require-client` off);
+     start. The lines you had before are kept and put back by Remove. The gateway needs `LlmGatewayUse`; the key,
+     made for the gateway alone, is its own client, so its `require-client` asks no `LlmApiClient` row of it
+     ([Gateway](ai/Gateway.md));
    - git's credential for the server's host: git's own helper (the default), or the token of the connection.
 
    For git over SSH, add your public key on the server's Git access screen instead. Settings › Group servers shows each
@@ -1729,6 +1730,15 @@ with no names) and `default-repository` on its root.
 | `./moq component-create <name>` | Make a component from the component template, `runtime/components/dev/template`: an entity, services, a REST API, screens, data and specs; `--rest` or `--screens` for one part |
 | `./moq component-zip [name...]` | Zip components |
 | `./moq git <args>`, `git-status`, `git-pull` | Run git in the root repository and every component repository |
+
+A `myaddons.xml` repository can name a server's `addons.xml`, such as the one a group of a hosting server serves of its
+public components with their clone addresses (`B/<group>/-/addons.xml` on an MR PASS server):
+`<repository name="team"><location type="addons" url="https://team.example.com/B/acme/-/addons.xml"/></repository>`.
+The get tasks fetch it once per run (https; http only to a loopback address; or a `file:` URL) and look components and
+repositories up in it after `myaddons.xml` and before `addons.xml`, so `./moq component-get acme-site` clones from the
+server's own git location. Its root's `default` and `default-repository` are not used. One that cannot be read, or is
+not https, is skipped with a warning. A repository entry with only the `addons` location leaves the others to the
+served file's repository of the same name; one with a `git` location of its own uses that.
 
 The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev` puts the named components in
 `runtime/components/dev`. A component with a `Cargo.toml` is linked into the binary on the next build

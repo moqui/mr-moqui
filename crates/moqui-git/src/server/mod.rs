@@ -571,19 +571,22 @@ fn may_push(id: &str) -> bool {
 /// Whether the logged-in user may do `action` (view, create, update, delete) on repository `id`: by `AT_GIT_REPOSITORY`
 /// authorization, or as a member of the drive the repository holds (`ResourceDrive.repositoryId`), by the drive's own
 /// rule (`FileServices.get#DriveAccess`): view to fetch, edit to push new refs and fast-forwards on a drive that is not
-/// read only, manage to force a push or delete a ref. Asked once per request and action.
+/// read only, manage to force a push or delete a ref. The drive's answer is kept in the context by user and
+/// repository, so after a login of another user in the same context (`internalLoginUser`, a local login) a check is
+/// that user's own. (`as_user` runs in a context of its own.)
 ///
 /// With no user logged in the same records are asked, as no user: only those of `ALL_USERS` apply, and an
 /// `authzServiceName` of one is called with an empty `userId`, so it can let anyone view a public repository. Such a
 /// refusal records no `ArtifactAuthzFailure`: a git client's first request has no credentials.
 pub(crate) fn permitted(id: &str, action: &str) -> bool {
-    let Some(_user) = current_user() else {
+    let Some(user) = current_user() else {
         return moqui_core::user::authorize_own_unrecorded(GIT_ARTIFACT_TYPE, id, action).is_ok();
     };
     if moqui_core::user::authorize_own(GIT_ARTIFACT_TYPE, id, action).is_ok() {
         return true;
     }
-    let key = format!("git.driveAccess.{id}");
+    // a user id holds no space, so the key cannot be another user's and repository's
+    let key = format!("git.driveAccess.{user} {id}");
     let cached = ExecutionContext::with_current(|ec| ec.shared_map().get(&key).cloned()).flatten();
     let (level, can_write) = match cached.and_then(|value| {
         moqui_lib::object::to_plain_string(&value)

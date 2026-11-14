@@ -746,6 +746,51 @@ EOF
     # Back to the fixture defaults, with the components the later checks expect in place again.
     "$M" component-get comp-b comp-c >/dev/null
 
+    # A server's addons.xml through a myaddons.xml repository entry (a group's served addons.xml): its components and
+    # repositories are found after myaddons.xml, never its root's default or default-repository; one that cannot be
+    # read, or is not https, is skipped with a warning.
+    if have curl; then
+        mkrepo comp-f '<component name="comp-f" version="1.0"/>'
+        mkdir -p "$FIX/served"
+        cat >"$FIX/served/addons.xml" <<EOF
+<addons default="comp-a" default-repository="nope">
+    <repository name="served.example">
+        <location type="git" url="file://$FIX/repos/\${name}.git"/>
+    </repository>
+    <component name="comp-f" group="acme" version="1.0" repository="served.example"/>
+</addons>
+EOF
+        cp "$R/myaddons.xml" "$FIX/myaddons.xml.bak"
+        served_entry() {
+            awk -v line="    <repository name=\"$1\"><location type=\"addons\" url=\"$2\"/></repository>" \
+                '/<\/addons>/ { print line } { print }' "$R/myaddons.xml" >"$R/myaddons.xml.moq-tmp" &&
+                cat "$R/myaddons.xml.moq-tmp" >"$R/myaddons.xml"
+            rm -f "$R/myaddons.xml.moq-tmp"
+        }
+        check "component-get finds nothing served before the entry" 1 'not a component' -- "$M" component-get comp-f
+        served_entry team "file://$FIX/served/addons.xml"
+        check "component-get from a served addons.xml" 0 "Getting comp-f .*file://$FIX/repos/comp-f.git" -- \
+            "$M" component-get comp-f
+        check "the served component is cloned" 0 '' -- test -f "$R/runtime/components/addon/comp-f/component.xml"
+        rm -rf "$R/runtime/components/addon/comp-c"
+        check "a served root's default-repository is not used" 0 "file://$FIX/repos/comp-c.git" -- \
+            dry "$M" component-get -t git comp-c
+        rm -rf "$R/runtime/components/addon/comp-f"
+        # an entry named as the server's repository falls through to the served file's locations
+        cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
+        served_entry served.example "file://$FIX/served/addons.xml"
+        check "an addons-only entry falls through to the served repository" 0 "file://$FIX/repos/comp-f.git" -- \
+            dry "$M" component-get comp-f
+        served_entry gone "file://$FIX/served/missing.xml"
+        served_entry plain "http://example.com/addons.xml"
+        check "an unreadable served addons.xml is skipped" 0 'could not read an addons.xml from file://.*missing.xml' -- \
+            dry "$M" component-get comp-f
+        check "a served addons.xml over plain http is skipped" 0 'example.com/addons.xml is not https' -- \
+            dry "$M" component-get comp-f
+        cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
+        "$M" component-get comp-c >/dev/null
+    fi
+
     check "git in each repo" 0 '== runtime/components/addon/comp-a \(master\)' -- "$M" git rev-parse --abbrev-ref HEAD
     check "git failure exit" 1 'git failed in:' -- "$M" git rev-parse --verify nope
     echo change >>"$R/runtime/components/addon/comp-a/component.xml"

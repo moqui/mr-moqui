@@ -803,9 +803,9 @@ authorization disabled):
   write access), sent as basic authorization. Or an SSH URL (`git@github.com:owner/repo.git`,
   `ssh://git@host:port/owner/repo.git`) with `hostKeyFingerprint` (`SHA256:...`, required) and a private key or a
   password in `credential`. The credential is kept encrypted and is never in a log, an error, `lastError` or a URL
-  (nor is a `Basic` header value). It goes only where it was given for: a change of the URL's scheme, host or port, of
-  its user or `username`, or of `hostKeyFingerprint` needs the credential again in the same call, or
-  `clearCredential` (another path on the same host keeps it).
+  (nor is a `Basic` header value). It goes only where it was given for: any change of the URL (another path on the
+  same host too, where the same token reaches the editor's own repositories), of `username`, or of
+  `hostKeyFingerprint` needs the credential again in the same call, or `clearCredential`.
 - **Whose.** The credential rides on the delete right of who gave it (`createdByUserId`, set when the mirror is made
   and each time a credential is given): a push of a mirror whose giver no longer has that right pauses it (`enabled`
   N, `lastResult` `paused`, `lastError` says why) without using the credential, until an administrator gives the
