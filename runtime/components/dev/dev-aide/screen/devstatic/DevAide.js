@@ -305,11 +305,16 @@
                 // git depth (P8): Branches, Tags and Stashes under Advanced; a running network command's last line; the
                 // diff's hunks; the conflicted file open in the conflict view; the Commits tab's paging and path
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
+                // the checks of the commits shown (21.5), the commit whose checks are open, and the agreement (21.7)
+                logStates: {}, checksCommit: null, agreement: null,
                 logPage: 0, logMore: false, logPath: "", tree: null
             };
         },
         computed: {
             root() { return this.roots.find((item) => item.id === this.rootId) || null; },
+            // the repository a connected group server hosts for this root's remote (21.3), and whether the user may push there
+            hosted() { return (this.root && this.root.hosted && this.root.hosted.repository) || null; },
+            mayPush() { const access = this.hosted && this.hosted.access; return !access || !!(access.canCreate || access.canUpdate); },
             isGit() { return !!(this.root && this.root.kind === "git" && this.gitAvailable); },
             current() { return this.tabs.find((tab) => tab.path === this.active) || null; },
             groups() { return pure.groupChanges(this.status && this.status.entries); },
@@ -392,7 +397,7 @@
         },
         watch: {
 
-            tab(name) { if (["branches", "tags", "stashes", "settings"].indexOf(name) >= 0) this.loadGit(); },
+            tab(name) { if (["branches", "tags", "stashes", "settings", "mergeRequests", "sessions"].indexOf(name) >= 0) this.loadGit(); },
             advanced(on) { store.set("advanced", on); if (!on && ["branches", "tags", "stashes"].indexOf(this.tab) >= 0) this.tab = "code"; },
             active() { this.remember(); },
             // a visual view reads the outline of the text as it changes, in Text or by its own operations
@@ -468,6 +473,8 @@
                 return this.get("status", { rootId: this.rootId }).then((status) => {
                     this.status = status;
                     if (!this.commitForm.task && status.currentTask) this.commitForm.task = status.currentTask;
+                    // the agreement of a hosted repository, asked of the server once per root (21.7)
+                    if (this.hosted && (!this.agreement || this.agreement.rootId !== this.rootId)) this.loadAgreement();
                 }, this.fail);
             },
             loadDir(path) {
@@ -500,6 +507,7 @@
                     });
                     this.offerDraft(tab, this.rootId);
                     this.loadSchema(tab);
+                    this.loadThreads(tab);
                     this.takeDraft(tab, this.rootId);
                     if (how.view && how.view !== "text") this.setView(tab, how.view);
                 }, (error) => { tab.reading = false; this.tabs = pure.closeTab(this.tabs, path, this.active).tabs; this.fail(error); });
@@ -1131,6 +1139,42 @@
                     target + " to confirm.", prompt: { model: "", type: "text" }, cancel: true, ok: { label: "Force push", color: "negative" } })
                     .onOk((typed) => this.network("push", { forceWithLease: true, confirmRef: typed }).catch(() => {}));
             },
+            // Push; on a hosted repository a branch other than its default one may open a merge request after (21.4)
+            push() {
+                return this.network("push").then((answer) => {
+                    const branch = this.status && this.status.branch;
+                    if (!answer || !this.hosted || !branch || branch === this.hosted.defaultBranch) return answer;
+                    this.$q.notify({ type: "info", timeout: 10000, closeBtn: "Close", message: "Pushed " + branch + ". Open a merge request into " +
+                        this.hosted.defaultBranch + "?", actions: [{ label: "Open", color: "white", handler: () => this.openMergeRequest(branch) }] });
+                    return answer;
+                }, () => null);
+            },
+            openMergeRequest(branch) {
+                return this.ask("Title of the merge request of " + branch, "").then((title) => {
+                    if (title === null || title === undefined) return null;
+                    return this.post("openMergeRequest", { rootId: this.rootId, sourceBranch: branch, title }).then((answer) => {
+                        const made = answer.mergeRequest || {};
+                        this.note("Opened merge request !" + made.mergeRequestNum + " into " + made.target);
+                        return made;
+                    }, this.fail);
+                });
+            },
+            // push to review (Dogfood F5): for a user who may view the hosted repository and not push to it
+            propose() {
+                const target = (this.hosted && this.hosted.defaultBranch) || "main";
+                this.$q.dialog({ title: "Propose your commits for " + target, message: "They go to " + (this.hosted ? this.hosted.repositoryPath : "the server") +
+                    " for review as a merge request (refs/for/" + target + "). A title (or leave it for the last commit's):",
+                    prompt: { model: "", type: "text" }, cancel: true, ok: { label: "Propose" } }).onOk((title) => {
+                    this.busy = "propose";
+                    const id = "git-" + Date.now().toString(36);
+                    this.progress = { id, what: "propose", line: "" };
+                    this.post("propose", { rootId: this.rootId, targetBranch: target, title: title || "", topic: (this.status && this.status.branch) || "",
+                        operationId: id }).then((answer) => {
+                        this.busy = ""; this.progress = null;
+                        this.note("Proposed for " + answer.target + (answer.output ? ": " + answer.output.trim().split("\n").pop() : ""));
+                    }, (error) => { this.busy = ""; this.progress = null; this.fail(error); });
+                });
+            },
             publish() {
                 this.$q.dialog({ title: "Publish the site's changes", message: "Commit the site component's " + this.siteChanges +
                     " changed files and push them. A summary (or leave it for one that names the files):",
@@ -1165,9 +1209,51 @@
                     const commits = answer.commits || [];
                     this.log = more ? this.log.concat(commits) : commits;
                     this.logPage = page; this.logMore = commits.length === 100;
+                    this.commitStates(commits.slice(0, 50).map((commit) => commit.id)).then((states) => { this.logStates = Object.assign({}, more ? this.logStates : {}, states); });
                 }, this.fail);
             },
             history(path) { this.logPath = path || ""; this.commitDetail = null; this.diff = null; this.tab = "commits"; this.loadLog(); },
+            // ---- a group server's review, checks and agreement (21.4, 21.5, 21.7) ----
+            // the combined check state of each commit, on a hosted repository: { id: failure | pending | success }
+            commitStates(ids) {
+                const wanted = (ids || []).filter((id) => id);
+                if (!this.hosted || !wanted.length) return Promise.resolve({});
+                return this.get("commitStates", { rootId: this.rootId, commitIds: wanted.join(",") }).then((answer) => answer.states || {}, () => ({}));
+            },
+            stateColor(state) { return state === "failure" ? "negative" : state === "pending" ? "warning" : state === "success" ? "positive" : "grey"; },
+            openChecks(commitId) { if (commitId) this.loadGit().then(() => { this.checksCommit = commitId; }); },
+            // the open threads of the merge request whose branch is checked out, on this file: marks in the gutter
+            loadThreads(tab) {
+                if (!this.hosted || !tab || tab.binary) return;
+                this.get("fileThreads", { rootId: this.rootId, path: tab.path }).then((answer) => { tab.threads = answer.threads || []; }, () => { tab.threads = []; });
+            },
+            threadMarks(tab) {
+                const threads = (tab && tab.threads) || [];
+                if (!threads.length) return null;
+                return threads.map((thread) => {
+                    const first = (thread.comments || [])[0] || {};
+                    return { from: thread.newLine, to: thread.newLine, commit: "thread", author: first.author || "", time: 0,
+                        summary: (thread.comments || []).map((comment) => (comment.author || "") + ": " + (comment.body || "")).join("\n") };
+                });
+            },
+            // whether the next commit's author has signed the hosted repository's agreement, as the server reports it
+            loadAgreement() {
+                if (!this.hosted) { this.agreement = null; return; }
+                const rootId = this.rootId;
+                this.get("agreement", { rootId }).then((answer) => { if (this.rootId === rootId) this.agreement = Object.assign({ rootId }, answer); }, () => {});
+            },
+            // Sign: your line under both lists of AUTHORS.md, committed alone, by you (an agent has no tool for it)
+            signAgreement() {
+                const agreement = this.agreement || {};
+                this.$q.dialog({ title: "Sign the contributor agreement", message: "Your line goes under both lists of AUTHORS.md, as \"" + (agreement.line || "- Written in <year> by <legal name> - <account>") +
+                    "\", and is committed alone. Your legal name:", prompt: { model: "", type: "text" }, cancel: true }).onOk((legalName) => {
+                    if (!legalName) return;
+                    this.post("signAgreement", { rootId: this.rootId, legalName }).then((answer) => {
+                        this.note("Signed: " + answer.line + ". Push it to the server."); this.agreement = Object.assign({}, this.agreement, { signedHere: true });
+                        this.refreshStatus(); this.loadLog();
+                    }, this.fail);
+                });
+            },
             replay(kind) {
                 const commit = this.commitDetail;
                 if (!commit) return;
@@ -1284,10 +1370,14 @@
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
-    <q-btn dense flat no-caps :label="'Push' + (status && status.ahead ? ' ' + status.ahead : '')" :disable="!isGit || !canWrite || (root && root.publishBranchRequired)" :loading="busy === 'push'" @click="network('push')"></q-btn>
+    <q-btn v-if="mayPush" dense flat no-caps :label="'Push' + (status && status.ahead ? ' ' + status.ahead : '')" :disable="!isGit || !canWrite || (root && root.publishBranchRequired)" :loading="busy === 'push'" @click="push()"></q-btn>
+    <q-btn v-else dense flat no-caps label="Propose" :disable="!isGit || !canWrite" :loading="busy === 'propose'" @click="propose()" id="DevPropose">
+      <q-tooltip>You may not push to {{hosted.repositoryPath}}: your commits go to the server for review as a merge request</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Commit…" :disable="!isGit || !canWrite" @click="tab = 'changes'"></q-btn>
     <q-btn dense unelevated no-caps color="primary" :label="'Publish' + (siteChanges ? ' ' + siteChanges : '')" :disable="!isGit || !canWrite || !siteChanges" :loading="busy === 'publish'" @click="publish" id="DevPublish"></q-btn>
   </div>
+  <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
+    for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">A change needs a restart to apply.
     <template v-slot:action><q-btn dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
   </q-banner>
@@ -1298,6 +1388,8 @@
     <q-tab v-if="advanced" name="branches" label="Branches" :disable="!isGit" id="DevBranchesTab"></q-tab>
     <q-tab v-if="advanced" name="tags" label="Tags" :disable="!isGit"></q-tab>
     <q-tab v-if="advanced" name="stashes" label="Stashes" :disable="!isGit"></q-tab>
+    <q-tab v-if="hosted" name="mergeRequests" label="Merge requests" :disable="!isGit" id="DevMergeRequestsTab"></q-tab>
+    <q-tab name="sessions" label="Sessions" :disable="!isGit" id="DevSessionsTab"></q-tab>
     <q-tab name="settings" label="Settings" :disable="!isGit"></q-tab>
     <q-tab v-if="review" name="review" :label="'Review ' + review.files.length" id="DevReviewTab"></q-tab>
     <q-space></q-space>
@@ -1316,6 +1408,8 @@
     <m-dev-git-tags v-if="tab === 'tags'" :ws="this" :key="'t' + rootId"></m-dev-git-tags>
     <m-dev-git-stashes v-if="tab === 'stashes'" :ws="this" :key="'s' + rootId"></m-dev-git-stashes>
     <m-dev-git-settings v-if="tab === 'settings'" :ws="this" :key="'g' + rootId"></m-dev-git-settings>
+    <m-dev-git-merge-requests v-if="tab === 'mergeRequests' && hosted" :ws="this" :key="'m' + rootId"></m-dev-git-merge-requests>
+    <m-dev-git-sessions v-if="tab === 'sessions'" :ws="this" :key="'w' + rootId"></m-dev-git-sessions>
   </template>
   <q-separator></q-separator>
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">
@@ -1435,7 +1529,7 @@
             <div v-if="current.outlineError" class="text-caption text-negative q-px-sm" id="DevOutlineError">The text does not parse, so the view shows it as it last parsed: {{current.outlineError}}</div>
           </div>
           <m-code-editor v-show="!currentSpec" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
-              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || null" :schema="current.schema" :lint="lintOf(current)" height="100%"
+              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || threadMarks(current)" :schema="current.schema" :lint="lintOf(current)" height="100%"
               :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
               :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
         </template>
@@ -1505,6 +1599,9 @@
         </div>
       </template>
       <q-separator class="q-my-sm"></q-separator>
+      <div v-if="agreement && agreement.required && !agreement.signed && !agreement.signedHere" class="row items-center no-wrap text-caption text-warning q-mb-xs" id="DevAgreementWarning">
+        <span class="col">{{agreement.authorEmail || "The commit's author"}} has not signed {{hosted && hosted.repositoryPath}}'s contributor agreement: the server may not take these commits.</span>
+        <q-btn v-if="agreement.hasAuthorsFile" dense flat no-caps size="sm" label="Sign" :disable="!canWrite" @click="signAgreement" id="DevSignAgreement"></q-btn></div>
       <q-input dense outlined v-model="commitForm.summary" label="Summary" id="DevCommitSummary"></q-input>
       <q-input dense outlined type="textarea" autogrow v-model="commitForm.body" label="Body" class="q-mt-xs"></q-input>
       <div class="row items-center no-wrap q-mt-xs">
@@ -1543,6 +1640,8 @@
       <q-item v-for="commit in log" :key="commit.id" clickable @click="openCommit(commit)" :active="commitDetail && commitDetail.id === commit.id">
         <q-item-section><q-item-label class="ellipsis">{{commit.subject}}</q-item-label>
           <q-item-label caption>{{commit.shortId}} · {{commit.authorName}} · {{commit.date.slice(0, 10)}}</q-item-label></q-item-section>
+        <q-item-section side v-if="logStates[commit.id]"><q-badge :color="stateColor(logStates[commit.id])" :label="logStates[commit.id]"
+            class="cursor-pointer" @click.stop="openChecks(commit.id)" :data-state="logStates[commit.id]"></q-badge></q-item-section>
       </q-item>
       <q-item v-if="logMore" clickable @click="loadLog(true)" id="DevLogMore"><q-item-section class="text-caption">More commits…</q-item-section></q-item>
     </q-list>
@@ -1573,6 +1672,9 @@
       <m-diff-view v-if="diff && !tree" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
+  <q-dialog :model-value="!!checksCommit" @update:model-value="(open) => { if (!open) checksCommit = null; }">
+    <q-card style="width: 52rem; max-width: 95vw"><m-dev-git-checks v-if="checksCommit && gitLoaded" :ws="this" :commit-id="checksCommit" @close="checksCommit = null"></m-dev-git-checks></q-card>
+  </q-dialog>
   <q-dialog v-model="artifactGoto.open" aria-labelledby="DevGotoArtifactTitle">
     <q-card style="width: 44rem; max-width: 95vw">
       <q-card-section class="q-pb-none"><h2 class="text-h6 q-my-none" id="DevGotoArtifactTitle">Go to artifact</h2></q-card-section>

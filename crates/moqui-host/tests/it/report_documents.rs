@@ -185,6 +185,7 @@ fn verify_documents(opensearch_url: Option<&str>, vector: bool) {
                 representation: "vector".into(),
                 max_chars: 4000,
                 embedder: Some("hash".into()),
+                ..search::semantic::SemanticConf::default()
             })
             .unwrap();
         assert!(

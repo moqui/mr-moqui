@@ -34,6 +34,7 @@ Screens, forms, templates and the clients.
 |---|---|
 | [Screen-Output.md](ui/Screen-Output.md) | A screen's response kept whole or sent as it renders: the `stream-threshold`, what streams, headers and failures after the head, list rows read from a cursor as they are written, templates that write as they render |
 | [Qvt-Client.md](ui/Qvt-Client.md) | The client of the `qvt` render mode and the `/qapps` shell: page shell, screen loading, the `m-*` widgets |
+| [Semantic-Find.md](ui/Semantic-Find.md) | Ctrl+F by meaning: `MoquiFind.js`, `/find/rank`, `ec.search.rankTexts`, and the embedding model it needs |
 | [Desktop-Client.md](ui/Desktop-Client.md) | The desktop app as a client of a server: accounts, device modes and `<client-conf>`, the offline store, the outbox, the bundled Comms screens, crypto and calls |
 | [Mobile-Client.md](ui/Mobile-Client.md) | The Android app as a client of a server: what differs from the desktop client |
 | [TUI.md](ui/TUI.md) | The terminal UI: `moqui tui`, the `tui` render mode, the apps over SSH, and agents driving it |

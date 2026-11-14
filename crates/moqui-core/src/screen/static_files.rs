@@ -89,9 +89,11 @@ pub fn file_under(
     {
         return None;
     }
-    // A link in the directory must not lead out of it.
+    // A link in the directory must not lead out of it. A file built into the binary (moqui_lib::vfs) is no link.
     if let (Some(file), Some(dir)) = (
-        resource.file_path(),
+        resource
+            .file_path()
+            .filter(|file| !moqui_lib::vfs::is_from_overlay(file)),
         factory
             .resource()
             .get(base)

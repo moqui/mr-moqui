@@ -237,7 +237,45 @@ a fetch, as they stop every fetch. The access token is kept encrypted on the Git
 
 The services are `preview#ComponentDeploy` (`url`, `branch`, `storage`, `directory`, `username`, `accessToken`),
 `deploy#Component` (`mode` now, restart or restart-now), `discard#ComponentDeploy`, `preview#ComponentUpdate` and
-`update#Component` (`mode` now or restart-now).
+`update#Component` (`mode` now or restart-now), and for a source server's deployment `deploy#AttestedComponent`
+(`attestation`, `signature`, `dataTypes`; out `componentName`, `commitId`, `deployStatus`, `deploymentId`, `report`),
+below.
+
+## The gate
+
+A server can be kept to commits that passed a pipeline on the server that hosts their repository (a source server's
+deployment, [Pipelines](../interfaces/Pipelines.md#deployments)). In its conf:
+
+```xml
+<component-deploy require-passed-run="true" attestation-secret="${component_deploy_attestation_key}"
+        max-age-seconds="300"/>
+```
+
+and in `runtime/.env` a secret of at least 16 characters (`openssl rand -hex 32`):
+`component_deploy_attestation_key=...`. Give the same secret to the source server as its environment's token
+(`store#CiEnvironment` `token`), with this server's base URL as the environment's `targetUrl`.
+
+- **Attested deploys.** `deploy#AttestedComponent` (REST `POST /rest/s1/moqui/components/deploy`, no session) takes
+  `attestation`, a JSON text that names a repository URL, a branch, a commit, a component, the pipeline and run that
+  passed, the environment, the source's deployment and when it was signed, and `signature`, its HMAC-SHA256 under the
+  secret. It verifies the signature over the text as sent, then that the text is no older than `max-age-seconds` (and
+  not ahead of the clock), and that it is newer than the last attestation the component took
+  (`DeployedComponent.attestedDate`, so none is replayed). Then it fetches the branch from the URL, with the database
+  storage, and deploys the component while the branch's head is still that commit; a component deployed from that URL
+  already is updated to it (up to date when it is there). The attestation is the authority: no user signs in, the
+  attestation stands for `COMPONENT_DEPLOY` for that component at that commit only, and on a production instance
+  `component_deploy_enabled=true` is still needed. Each is audited (`moqui.monitor.audit`, with the source's
+  deployment, environment, pipeline and run) and kept in `DeployedComponentHistory`. A signature that does not verify
+  counts as a failed sign-in for web protection. With no secret, the service refuses everything.
+- **`require-passed-run="true"`.** `deploy#Component` and `update#Component` refuse to put a commit in place unless the
+  request is an attested one for that component and commit, so **Deploy**, **Update** and their restart forms on
+  System › Components are refused, whoever asks; `load#Component` (a directory, which has no commit) is refused too.
+  Fetch and preview still work. The other members of a cluster apply what the deploying member did from the shared
+  repository, as for any deploy.
+
+The setting is live (a conf reload applies it). What it does not cover: whoever edits the conf (`CONF_EDIT`) or the
+runtime's files turns it off or puts a component in a component directory for the next start; it keeps the server's
+own deploy services to attested commits, not its file system. See [Attack-Surface](../security/Attack-Surface.md#component-deploy-and-conf-reload).
 
 ## Clusters and containers
 

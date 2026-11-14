@@ -70,6 +70,7 @@ fn profile(id: &str, username: &str, roles: &[&str]) -> SsoProfile {
         attributes,
         roles: roles.iter().map(|role| (*role).to_string()).collect(),
         id_token: None,
+        user_info_url: None,
     }
 }
 
@@ -705,4 +706,110 @@ fn a_provider_signs_in_only_the_accounts_linked_to_it_and_no_closed_one() {
     claims.insert("locale".to_string(), Value::string("fr"));
     let mapped = map_fields(&facade, "OTHER_FLOW", &claims).unwrap();
     assert_eq!(mapped.keys().collect::<Vec<_>>(), ["locale"]);
+}
+
+/// The conf's `login` `sso-linked-service` in these tests: each call a row, its parameters in the description.
+const LINKED_STUB: &str = r#"<services>
+    <service verb="note" noun="Linked">
+        <in-parameters><parameter name="userId"/><parameter name="authFlowId"/><parameter name="providerHost"/>
+            <parameter name="externalUserId"/><parameter name="login"/><parameter name="email"/>
+            <parameter name="emailVerified" type="Boolean"/><parameter name="urlsOverridden" type="Boolean"/></in-parameters>
+        <actions><script><![CDATA[
+            const row = ec.entity.makeValue('moqui.basic.Enumeration')
+            row.enumId = 'SSO_LINKED_' + ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'SsoLinkedTest').count()
+            row.enumTypeId = 'SsoLinkedTest'
+            row.description = [userId, authFlowId, providerHost, externalUserId, login, email, emailVerified, urlsOverridden].join('|')
+            row.create()
+        ]]></script></actions>
+    </service>
+</services>"#;
+
+/// A sign-in through a provider tells the conf's `sso-linked-service` once, after its transaction commits, with the
+/// profile's identity; a write of `externalUserId` by hand tells it nothing.
+#[test]
+fn the_sso_linked_service_hears_of_a_sign_in_once_and_not_of_a_manual_link() {
+    use crate::sso::{FlowConfig, FlowKind, OauthConfig};
+    use crate::transaction::TransactionAttribute;
+    let facade = crate::testing::open();
+    let context = ExecutionContextFactory::test_context_in(
+        r#"<moqui-conf><user-facade><login sso-linked-service="test.SsoLinked.note#Linked"/></user-facade></moqui-conf>"#,
+        crate::service::ServicePools::idle(),
+        crate::context::framework_dir(),
+    );
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let dir = std::env::temp_dir().join(format!("moqui-sso-linked-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("service/test")).unwrap();
+    let stub = dir.join("service/test/SsoLinked.xml");
+    std::fs::write(&stub, LINKED_STUB).unwrap();
+    let mut paths = crate::service::define::configured_paths().unwrap();
+    paths.push(stub);
+    crate::service::lint(&paths).unwrap();
+    let flow_row = {
+        let _authz = context.disable_authz();
+        seed(
+            &facade,
+            "moqui.basic.EnumerationType",
+            &[("enumTypeId", Value::string("SsoLinkedTest"))],
+        );
+        flow(&facade)
+    };
+    let flow = FlowConfig {
+        auth_flow_id: "TEST_FLOW".into(),
+        kind: FlowKind::Oauth(OauthConfig {
+            client_type: "OctGitHub".into(),
+            ..OauthConfig::default()
+        }),
+        deny_internal: true,
+    };
+    let mut given = profile("4242", "gh.linked", &[]);
+    given.attributes.insert("login".to_string(), Value::string("octo"));
+    given.user_info_url = Some("https://API.github.com/user".into());
+    let calls = || {
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .disable_authz()
+            .eq("enumTypeId", Value::string("SsoLinkedTest"))
+            .use_cache(false)
+            .list()
+            .unwrap()
+            .iter()
+            .map(|row| field(row, "description"))
+            .collect::<Vec<_>>()
+    };
+    let tx = facade.transactions_for(ACCOUNT).unwrap();
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        let username = super::sign_in(&facade, &flow_row, &flow, &given, false, None)?;
+        assert_eq!(username, "gh.linked");
+        // not yet: the sign-in's transaction has not committed
+        assert!(calls().is_empty());
+        Ok(())
+    })
+    .unwrap();
+    let user_id = crate::user::current_user_id().unwrap().unwrap();
+    assert_eq!(
+        calls(),
+        [format!(
+            "{user_id}|TEST_FLOW|api.github.com|4242|octo|gh.linked@example.com|true|false"
+        )]
+    );
+    assert!(
+        context.message().errors().is_empty(),
+        "{:?}",
+        context.message().errors()
+    );
+
+    // a link written by hand is no sign-in
+    {
+        let _authz = context.disable_authz();
+        let mut parameters = BTreeMap::new();
+        parameters.insert("userId".to_string(), Value::string(&user_id));
+        parameters.insert("externalUserId".to_string(), Value::string("9999"));
+        call("org.moqui.impl.UserServices.update#UserAccount", parameters).unwrap();
+    }
+    assert_eq!(field(&account(&facade, &user_id), "externalUserId"), "9999");
+    assert_eq!(calls().len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
 }

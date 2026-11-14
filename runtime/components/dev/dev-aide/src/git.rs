@@ -152,6 +152,17 @@ impl Git {
         stdin: Option<&str>,
         progress: Option<Progress>,
     ) -> Result<Output, Error> {
+        // a command that changes a repository, or reaches a remote, is never run under a fence or in a sim (an agent's
+        // read tool, a preview): it would be real, and nothing undoes it
+        if mode != Mode::Read {
+            let target = format!("git {}", args.first().copied().unwrap_or(""));
+            let effect = if mode == Mode::Network {
+                moqui_core::entity::fence::Effect::RemoteCall
+            } else {
+                moqui_core::entity::fence::Effect::Process
+            };
+            crate::workspace::unfenced(effect, &target)?;
+        }
         let repo_lock = (mode != Mode::Read).then(|| write_lock(repo));
         let _held = repo_lock.as_deref().map(lock);
         let mut command = Command::new(&self.command);

@@ -272,6 +272,11 @@ fn each_role_offers_only_its_own_sets() {
             available: true,
             ..Default::default()
         }),
+        ssh: Some(super::proto::SshOffer {
+            available: true,
+            host: "edge.example.com".to_string(),
+            port: 2222,
+        }),
         ..Default::default()
     };
     // plans/Edge-Node2.md §4.3: a front node web access and ports only, an edge node behind a front none of them
@@ -279,6 +284,7 @@ fn each_role_offers_only_its_own_sets() {
     super::offer::for_role(&mut front, NodeRole::Front);
     assert!(front.web.as_ref().is_some_and(|web| !web.modes.is_empty()));
     assert!(front.xmpp.as_ref().is_some_and(|xmpp| xmpp.available));
+    assert!(front.ssh.as_ref().is_some_and(|ssh| ssh.available));
     assert!(!front.mail.as_ref().is_some_and(|mail| mail.available));
     assert!(!front.calls.as_ref().is_some_and(|calls| calls.available));
     assert!(front.not_available.iter().any(|area| area == "mail"));
@@ -289,6 +295,7 @@ fn each_role_offers_only_its_own_sets() {
         .as_ref()
         .is_some_and(|web| web.modes.is_empty() && web.public_names.is_empty()));
     assert!(!edge.xmpp.as_ref().is_some_and(|xmpp| xmpp.available));
+    assert!(!edge.ssh.as_ref().is_some_and(|ssh| ssh.available));
     assert!(edge.mail.as_ref().is_some_and(|mail| mail.available));
     assert!(edge.not_available.iter().any(|area| area == "web"));
     for role in [NodeRole::FrontEdge, NodeRole::AllInOne] {
@@ -373,4 +380,39 @@ fn a_member_key_file_that_is_not_one_names_itself_and_the_remedy() {
         "no part file left"
     );
     let _ = std::fs::remove_dir_all(&runtime);
+}
+
+/// The SSH tunnel offered to a local node (E16) reaches its services as the host and port its clone URLs name; a port
+/// that is not one, or none, is no tunnel.
+#[test]
+fn the_ssh_tunnel_of_an_offer_is_its_host_and_port() {
+    let offer = |available: bool, port: u32| super::proto::Offer {
+        ssh: Some(super::proto::SshOffer {
+            available,
+            host: "edge.example.com".to_string(),
+            port,
+        }),
+        ..Default::default()
+    };
+    let ssh = super::offer::offer_of(offer(true, 2222)).ssh;
+    assert!(ssh.available);
+    assert_eq!((ssh.host.as_str(), ssh.port), ("edge.example.com", 2222));
+    assert!(!super::offer::offer_of(offer(true, 70_000)).ssh.available, "not a port");
+    assert!(!super::offer::offer_of(offer(false, 22)).ssh.available);
+    assert!(!super::offer::offer_of(super::proto::Offer::default()).ssh.available);
+}
+
+/// When the pairing's ports cannot be read (here, no entity facade), the SSH offer names no port: the conf's tunnel
+/// port may be another pairing's, so it is not offered as if this node were the one pairing.
+#[test]
+fn an_ssh_offer_whose_ports_were_not_read_names_no_port() {
+    let context = moqui_core::context::ExecutionContextFactory::test_context();
+    let mut ssh = super::proto::SshOffer {
+        available: true,
+        host: "edge.example.com".to_string(),
+        port: 2222,
+    };
+    super::offer::ssh_node(context.factory(), "local-1", &mut ssh);
+    assert_eq!(ssh.port, 0);
+    assert!(!ssh.available);
 }

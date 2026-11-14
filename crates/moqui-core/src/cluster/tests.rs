@@ -1295,13 +1295,31 @@ struct Deliver {
     remote: EntityFacade,
     fail: AtomicBool,
     hold: AtomicBool,
+    /// Posts waiting on `hold` now: a test waits for the sender to be held ([`Deliver::wait_held`]) before it queues
+    /// what must wait behind the held post.
+    held: AtomicUsize,
     bodies: Mutex<Vec<serde_json::Value>>,
+}
+
+impl Deliver {
+    /// Wait until the sender is held in a post.
+    fn wait_held(&self) {
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while self.held.load(Ordering::SeqCst) == 0 {
+            assert!(std::time::Instant::now() < until, "the sender was not held");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
 }
 
 impl Sender for Deliver {
     fn post(&self, _base_url: &str, topic: &str, payload: &[u8]) -> Result<super::PostOutcome, Error> {
-        while self.hold.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(5));
+        if self.hold.load(Ordering::SeqCst) {
+            self.held.fetch_add(1, Ordering::SeqCst);
+            while self.hold.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            self.held.fetch_sub(1, Ordering::SeqCst);
         }
         if self.fail.load(Ordering::SeqCst) {
             return Err(Error::new("peer unreachable"));
@@ -1330,6 +1348,7 @@ fn deliver_to(
         remote: remote.facade.clone(),
         fail: AtomicBool::new(false),
         hold: AtomicBool::new(false),
+        held: AtomicUsize::new(0),
         bodies: Mutex::new(Vec::new()),
     });
     super::install_sender(ctx.factory(), Arc::clone(&deliver) as Arc<dyn Sender>);
@@ -1384,9 +1403,11 @@ fn two_rows_changed_in_one_batch_are_both_fresh_on_the_peer() {
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     assert_eq!(remote.cached("C1"), None);
     assert_eq!(remote.cached("C2").as_deref(), Some("old"));
-    // The sender is held on another write, so the two below wait together.
+    // The sender is held on another write, so the two below wait together: once it is in that write's post, else it
+    // may take that write and the two below as one batch.
     deliver.hold.store(true, Ordering::SeqCst);
     write_both(&facade, &remote, "C0", "first");
+    deliver.wait_held();
     facade.begin(ROW, None).unwrap();
     write_both(&facade, &remote, "C1", "new");
     write_both(&facade, &remote, "C2", "new");
@@ -1632,4 +1653,32 @@ fn a_peer_that_joins_after_an_empty_read_gets_the_next_write() {
         bodies.iter().any(|body| body["primaryKey"]["enumId"] == "ALONE-2"),
         "{bodies:?}"
     );
+}
+
+/// A live member with another SSH host key is named; one with none, a stale one, this member and a member with the
+/// same key are not; nothing is named while this member has no SSH server.
+#[test]
+fn a_live_member_with_another_ssh_host_key_is_named() {
+    let member = |id: &str, heartbeat: Option<i64>, ssh_fp: &str| super::LoadedMember {
+        instance_id: id.to_string(),
+        base_url: String::new(),
+        heartbeat,
+        session_fp: String::new(),
+        cert_fp: String::new(),
+        ssh_fp: ssh_fp.to_string(),
+        version: String::new(),
+        edge_link_url: String::new(),
+    };
+    let members = [
+        member("self", Some(1_000), "SHA256:a"),
+        member("same", Some(1_000), "SHA256:a"),
+        member("other", Some(1_000), "SHA256:b"),
+        member("none", Some(1_000), ""),
+        member("stale", Some(1), "SHA256:c"),
+    ];
+    assert_eq!(
+        super::ssh_key_differs(&members, "self", "SHA256:a", 1_100, 500),
+        ["other"]
+    );
+    assert!(super::ssh_key_differs(&members, "self", "", 1_100, 500).is_empty());
 }

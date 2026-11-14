@@ -368,6 +368,8 @@ impl GitProvider {
         }
         let store = repo.store.as_ref();
         let entity = self.entity()?;
+        // the lease before this process's lock, so no writer holds the lock while it waits on another member
+        let shared = self.shared_turn(repository_id, repo.definition.kind)?;
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
         // the row as it is now: archived or deleted since the repository was opened, no ref is written
@@ -476,6 +478,8 @@ impl GitProvider {
             self.record_refused(repository_id, &origin, &refs_before, &recorded);
             return Ok(results);
         }
+        // still this member's to write, now (fencing: lease.rs)
+        crate::lease::check(shared.as_ref())?;
         if let Some(overlay) = overlay {
             overlay.flush()?;
         }

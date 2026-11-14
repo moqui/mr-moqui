@@ -1,0 +1,415 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Dev AIDE with a group server (plans/design-dev-aide.md 21, P11), implemented in the dev-aide crate
+    (src/hosting/): the connections (what each server offers, the user's token there, what Connect sets from it), the
+    hosted repository of a working tree, and its merge requests: listed, opened, proposed by a push to refs/for and
+    checked out; Fork where the server offers forks. Every call goes to the server's REST as the connected user, and the
+    server decides; a header login reads and never connects or writes. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== connections (21.2) ========== -->
+
+    <service verb="get" noun="Servers" type="rust" location="dev_aide::hosting::connect::get_servers" allow-remote="false" read-only="true">
+        <description>The user's group servers and the instance's: label, base URL, state (connected, signed-out,
+            reachable, unreachable), what each offers, what Connect would set (plan) and what it set (setup); never a
+            token. ownOrigin is this instance's address, the redirect of a sign-in.</description>
+        <out-parameters>
+            <parameter name="servers" type="List"/>
+            <parameter name="ownOrigin"/>
+        </out-parameters>
+    </service>
+    <service verb="start" noun="Connect" type="rust" location="dev_aide::hosting::connect::start_connect" allow-remote="false">
+        <description>Ask the server at baseUrl what it offers, keep the connection, and start the sign-in there as an
+            installed app does: the URL to open (its /sso/appLogin with a PKCE challenge, a state and this instance's
+            /qapps/dev/Settings/serverSignedIn as the loopback redirect), good for 15 minutes. With no authFlowId the
+            server's own login.</description>
+        <in-parameters>
+            <parameter name="baseUrl" required="true"/>
+            <parameter name="label"/>
+            <parameter name="authFlowId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serverId"/>
+            <parameter name="authorizeUrl"/>
+            <parameter name="redirectUri"/>
+            <parameter name="loopback" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="finish" noun="Connect" type="rust" location="dev_aide::hosting::connect::finish_connect" allow-remote="false">
+        <description>The server's sign-in came back (code and state, or error): the code is taken at its /sso/appToken
+            with the PKCE verifier for a login key, kept as the user's token for that server (encrypted, sent only to
+            its address), and the server asked again as the user.</description>
+        <in-parameters>
+            <parameter name="state" required="true"/>
+            <parameter name="code"/>
+            <parameter name="error"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serverId"/>
+            <parameter name="statusText"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="ServerToken" type="rust" location="dev_aide::hosting::connect::store_server_token" allow-remote="false">
+        <description>An access token made on the server's Git access page, for a kept server (serverId) or a new one
+            (baseUrl, label); the server is asked again as the user.</description>
+        <in-parameters>
+            <parameter name="serverId"/>
+            <parameter name="baseUrl"/>
+            <parameter name="label"/>
+            <parameter name="username"/>
+            <parameter name="token" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serverId"/>
+            <parameter name="statusText"/>
+        </out-parameters>
+    </service>
+    <service verb="refresh" noun="Server" type="rust" location="dev_aide::hosting::connect::refresh_server" allow-remote="false">
+        <description>Ask a server again what it offers and whether the user's token is good.</description>
+        <in-parameters><parameter name="serverId" required="true"/></in-parameters>
+        <out-parameters><parameter name="server" type="Map"/></out-parameters>
+    </service>
+    <service verb="apply" noun="ServerSetup" type="rust" location="dev_aide::hosting::connect::apply_server_setup" allow-remote="false">
+        <description>What the user confirmed of a server's plan: the myaddons.xml repository of its git URL (and as the
+            default repository), the moqui-rest task source (made the current one), the LLM gateway's .env lines, and
+            git's credential for its host (helper: git's own helpers; stored: the user's token). myaddons.xml and .env
+            are the instance's: the full tier, not on a shared server. Kept on the connection for Remove.</description>
+        <in-parameters>
+            <parameter name="serverId" required="true"/>
+            <parameter name="addons" type="Boolean"/>
+            <parameter name="repositoryName"/>
+            <parameter name="defaultRepository" type="Boolean"/>
+            <parameter name="taskSource" type="Boolean"/>
+            <parameter name="gateway" type="Boolean"/>
+            <parameter name="gatewayAlias"/>
+            <parameter name="gitCredential"><description>helper or stored</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="done" type="List"/></out-parameters>
+    </service>
+    <service verb="remove" noun="Server" type="rust" location="dev_aide::hosting::connect::remove_server" allow-remote="false">
+        <description>A connection of the user's, its token and what Connect set: the task source, the myaddons.xml
+            repository, the .env lines still as it wrote them, the roots' hosted repositories.</description>
+        <in-parameters><parameter name="serverId" required="true"/></in-parameters>
+        <out-parameters><parameter name="removed" type="List"/></out-parameters>
+    </service>
+
+    <!-- ========== the hosted repository and its merge requests (21.3, 21.4) ========== -->
+
+    <service verb="resolve" noun="RootHosting" type="rust" location="dev_aide::hosting::review::resolve_root_hosting" allow-remote="false">
+        <description>The repository a connected server hosts for a root's remote (origin first), asked now and kept on
+            the root: its id and path, default branch, the user's rights, merge request settings, who keeps it and the
+            agreement. None when no connected server knows it.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+        <out-parameters><parameter name="hosted" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="MergeRequests" type="rust" location="dev_aide::hosting::review::get_merge_requests" allow-remote="false" read-only="true">
+        <description>The hosted repository's merge requests: mine, review (waiting for my review), open or all.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="filter" default-value="open"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequests" type="List"/>
+            <parameter name="repository" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::get_merge_request" allow-remote="false" read-only="true">
+        <description>One merge request by its number: as the list has it, with its description, head commit,
+            approvals, checks and what keeps it from merging (missing).</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="mergeRequest" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="Issue" type="rust" location="dev_aide::hosting::review::get_issue" allow-remote="false" read-only="true">
+        <description>An issue (a work item) on the hosted repository's server by its id: issueId, title, status, type,
+            description, url. The offer's tasks.issuePath with {id}, else Mantle's workEfforts/{id}.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="issueId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="issue" type="Map"/></out-parameters>
+    </service>
+    <service verb="open" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::open_merge_request" allow-remote="false">
+        <description>Open a merge request of a pushed branch (the current one by default) into the target (the
+            repository's default branch by default), titled by the head commit unless given, on the server as the user.
+            The extend tier, for site components.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="sourceBranch"/>
+            <parameter name="targetBranch"/>
+            <parameter name="title"/>
+            <parameter name="description"/>
+            <parameter name="sourceRepositoryId"><description>A fork of the repository that has the source branch</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="mergeRequest" type="Map"/></out-parameters>
+    </service>
+    <service verb="propose" noun="Changes" type="rust" location="dev_aide::hosting::review::propose_changes" allow-remote="false">
+        <description>Push to review, for a user who may view the hosted repository and not push to it: HEAD to
+            refs/for/[target] with the topic and title as push options; the server opens a merge request, or updates the
+            user's of the same topic.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="targetBranch"/>
+            <parameter name="topic"/>
+            <parameter name="title"/>
+            <parameter name="operationId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="target"/>
+        </out-parameters>
+    </service>
+    <service verb="checkout" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::checkout_merge_request" allow-remote="false">
+        <description>Check out a merge request: refs/merge-requests/[n]/head fetched into a local branch (mr/[n] by
+            default) and switched to. Never by force: a new branch is made from the head; the merge request's own mr/[n]
+            takes a new head only when it has no commits of its own that the head lacks; another branch that exists is
+            refused. The answer warns that the code checked out runs in this instance.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="branch"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="branch"/>
+            <parameter name="output"/>
+            <parameter name="warning"><description>That the code checked out now runs in this instance (hot reload)</description></parameter>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="fork" noun="Repository" type="rust" location="dev_aide::hosting::review::fork_repository" allow-remote="false">
+        <description>The user's fork of the hosted repository, made by the server where it offers forks (an application
+            such as Smithy), added as the remote fork.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="remote"/>
+            <parameter name="url"/>
+            <parameter name="repositoryPath"/>
+            <parameter name="repositoryId"/>
+        </out-parameters>
+    </service>
+    <!-- ========== review (21.4, P12): threads in the diff and the gutter, a reply, resolve and a review ========== -->
+
+    <service verb="get" noun="ReviewThreads" type="rust" location="dev_aide::hosting::threads::get_review_threads" allow-remote="false" read-only="true">
+        <description>A merge request's review threads (of path when given), from the application's REST of a
+            repository it keeps, else the framework's: each threadId, path, oldLine, newLine, resolved, outdated and its
+            comments (author, created, body, bodyFormat markdown or html). threadsAvailable false on a server that keeps
+            none.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threads" type="List"/>
+            <parameter name="threadsAvailable" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="MergeRequestChanges" type="rust" location="dev_aide::hosting::threads::get_merge_request_changes" allow-remote="false" read-only="true">
+        <description>What a merge request changes, for the merge view: its base and head commits, its files and its
+            threads. diffRefused (with reason) when the application refuses the diff, as Smithy does for an unsigned
+            author.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="checkAuthors" type="Boolean"><description>Also ask the agreement of each commit's author
+                (the hosting tool does, and gives an agent no diff of an unsigned one)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="baseCommitId"/>
+            <parameter name="headCommitId"/>
+            <parameter name="files" type="List"/>
+            <parameter name="threads" type="List"/>
+            <parameter name="threadsAvailable" type="Boolean"/>
+            <parameter name="diffRefused" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="unsignedAuthors" type="List"><description>With checkAuthors: the authors who have not
+                signed where the server requires it (or, for a repository an application keeps, whose agreement the
+                server did not decide)</description></parameter>
+            <parameter name="authorsRefusal"><description>With checkAuthors: why the authors are not all known (no
+                commit list, a cut list, a commit with no author email, more than 20 authors); the diff is then not an
+                agent's</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="MergeRequestFile" type="rust" location="dev_aide::hosting::threads::get_merge_request_file" allow-remote="false" read-only="true">
+        <description>One file of a merge request at its base and its head (the server's blob of each), with its
+            threads, for the merge view.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="baseCommitId"/>
+            <parameter name="headCommitId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="path"/>
+            <parameter name="original"/>
+            <parameter name="modified"/>
+            <parameter name="threads" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="ReviewComment" type="rust" location="dev_aide::hosting::threads::create_review_comment" allow-remote="false">
+        <description>A comment on the server as the user (an EXTERNAL write): a reply (threadId), a new thread on a line
+            of a file (path with newLine, or oldLine for the old side), or on the merge request. From a session only.
+            held when it waits for a moderator.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="body" required="true" allow-html="safe"/>
+            <parameter name="threadId"/>
+            <parameter name="path"/>
+            <parameter name="commitId"/>
+            <parameter name="oldLine"/>
+            <parameter name="newLine"/>
+            <parameter name="lineText"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadId"/>
+            <parameter name="held" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="resolve" noun="ReviewThread" type="rust" location="dev_aide::hosting::threads::resolve_review_thread" allow-remote="false">
+        <description>A thread resolved on the server, or reopened (resolved false). From a session only.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="threadId" required="true"/>
+            <parameter name="resolved"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadId"/>
+            <parameter name="resolved" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="submit" noun="Review" type="rust" location="dev_aide::hosting::threads::submit_review" allow-remote="false">
+        <description>A review of a merge request on the server: approve, comment or request_changes, with its text. From
+            a session only.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="decision" required="true"/>
+            <parameter name="body" allow-html="safe"/>
+        </in-parameters>
+        <out-parameters><parameter name="decision"/></out-parameters>
+    </service>
+    <service verb="get" noun="FileThreads" type="rust" location="dev_aide::hosting::threads::get_file_threads" allow-remote="false" read-only="true">
+        <description>The open threads on a file of the merge request whose branch is checked out (mr/[n], or the source
+            branch of an open merge request), for the editor's gutter.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequestNum"/>
+            <parameter name="threads" type="List"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== checks (21.5, P12) ========== -->
+
+    <service verb="get" noun="CommitStates" type="rust" location="dev_aide::hosting::checks::get_commit_states" allow-remote="false" read-only="true">
+        <description>The combined state of the statuses of each commit (commitIds, comma separated, at most 50): states,
+            a map of commit id to failure, pending or success; a commit with none is left out.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="commitIds" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="states" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="Checks" type="rust" location="dev_aide::hosting::checks::get_checks" allow-remote="false" read-only="true">
+        <description>A commit's checks: its statuses (context, state, description, url) and its pipeline runs with their
+            jobs, and whether the user may re-run each.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="commitId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="state"/>
+            <parameter name="statuses" type="List"/>
+            <parameter name="runs" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Job" type="rust" location="dev_aide::hosting::checks::get_job" allow-remote="false" read-only="true">
+        <description>A job of a run: the job, its steps, its log from offset (nextOffset and finished to follow a running
+            job), and its failed tests, each with a link (path and line) into the working tree where it has the file.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="offset"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="job" type="Map"/>
+            <parameter name="steps" type="List"/>
+            <parameter name="failedTests" type="List"/>
+            <parameter name="text"/>
+            <parameter name="nextOffset"/>
+            <parameter name="finished" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="rerun" noun="Check" type="rust" location="dev_aide::hosting::checks::rerun_check" allow-remote="false">
+        <description>A pipeline run again (runNum), or one of its jobs (jobRunId, with its runNum), on the server as the
+            user, who may: through the framework's REST, or for a repository an application keeps through its
+            operations (Smithy's rerunPipelineRun and retryJobRun). From a session only.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="runNum"/>
+            <parameter name="jobRunId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runNum"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== the contributor agreement (21.7, P12) ========== -->
+
+    <service verb="get" noun="Agreement" type="rust" location="dev_aide::hosting::agreement::get_agreement" allow-remote="false" read-only="true">
+        <description>Whether the next commit's author (git's user.email in the working tree, or authorEmail) has signed
+            the hosted repository's agreement, as the server reports it: known, required, signed, signUrl, message, and
+            the line Sign would add.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="authorEmail"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="known" type="Boolean"/>
+            <parameter name="required" type="Boolean"/>
+            <parameter name="signed" type="Boolean"/>
+            <parameter name="authorEmail"/>
+            <parameter name="signUrl"/>
+            <parameter name="message"/>
+            <parameter name="application"/>
+            <parameter name="hasAuthorsFile" type="Boolean"/>
+            <parameter name="line"/>
+        </out-parameters>
+    </service>
+    <service verb="sign" noun="Agreement" type="rust" location="dev_aide::hosting::agreement::sign_agreement" allow-remote="false">
+        <description>The user's signature added under both lists of the working tree's AUTHORS.md and committed alone,
+            by the user: "- Written in [years] by [legalName] - [username]" (the account on the server by default).
+            Refused while AUTHORS.md has changes of its own, and from a header login: a person signs, no agent.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="legalName" required="true"/>
+            <parameter name="years"/>
+            <parameter name="username"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"/>
+            <parameter name="line"/>
+            <parameter name="signed" type="Boolean"/>
+        </out-parameters>
+    </service>
+</services>

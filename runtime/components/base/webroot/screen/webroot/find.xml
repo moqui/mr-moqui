@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The semantic find of a page (js/MoquiFind.js, docs/ui/Semantic-Find.md): /find/rank takes the JSON {query, texts, limit}
+    of a signed-in page and answers {matches: [{index, score, meaning, words}]}, best first, from
+    org.moqui.search.SearchServices.rank#Texts. With no embedding model it answers 503 and the page finds by words. The
+    session and its CSRF token are checked as for any post. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
+    <transition name="rank" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            const params = ec.web.parameters
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const out = ec.service.sync().name('org.moqui.search.SearchServices.rank#Texts').parameters({query: params.query || '',
+                        texts: Array.isArray(params.texts) ? params.texts : [], limit: params.limit || 10}).call() || {}
+                if (ec.message.hasError()) {
+                    const errors = ec.message.errorsString; ec.message.clearErrors()
+                    ec.web.sendJsonError(out.available === false ? 503 : 400, errors)
+                } else ec.web.sendJsonResponse({matches: out.matches || []})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets/>
+</screen>

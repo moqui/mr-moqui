@@ -72,8 +72,8 @@ fn every_other_request_is_the_sites_page() {
         None,
         "LFS has .git"
     );
-    // the first segment is the framework's
-    for first in ["git", "rest", "apps", "qapps", "Login", "static"] {
+    // the first segment is the framework's (moqui_core::web::reserved), a host route's among them
+    for first in ["git", "ci", "dav", "mcp", "rest", "apps", "qapps", "Login", "static"] {
         assert_eq!(
             on_site("GET", &format!("/{first}/mr-moqui/info/refs"), upload),
             None,

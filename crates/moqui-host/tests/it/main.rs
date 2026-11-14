@@ -51,6 +51,7 @@ mod database_external;
 mod database_jobs;
 mod etl_runs;
 mod devaide;
+mod devaide_group;
 #[cfg(all(feature = "rtc", feature = "sip"))]
 mod edge_allinone;
 mod edge_balance;

@@ -149,6 +149,18 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="GmmRebase" enumTypeId="GitMergeMethod" enumCode="rebase" sequenceNum="4" description="Rebase"/>
         </seed-data>
     </entity>
+    <entity entity-name="GitLease" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A lease one cluster member holds on a named git resource until leaseUntil, renewed while held
+            (docs/interfaces/Git-Hosting.md, Shared storage in a cluster): repository:[repositoryId] for the writers
+            of a repository on shared storage and for a fork against a delete, fetch-due for the pass of mirror
+            fetches, push-mirror:[repositoryId] for a push to a push mirror, ci-pool:[runnerPoolId] for the starts and
+            claims of a runner pool. Taken by a conditional update committed at once; a lapsed lease (a member that
+            stopped) is taken over. No Java counterpart.</description>
+        <field name="leaseName" type="id-long" is-pk="true"/>
+        <field name="holderId" type="text-medium"><description>The take that holds it (process, time, count); empty when free</description></field>
+        <field name="leaseUntil" type="date-time"/>
+        <field name="takenDate" type="date-time"/>
+    </entity>
     <entity entity-name="GitRepositoryPathRedirect" package="moqui.resource" use="nontransactional">
         <description>A path a repository had before it was renamed or moved (set#GitRepositoryPath): git over HTTP, SSH
             and LFS at the path reaches repositoryId, until another repository takes the path.</description>
@@ -306,6 +318,47 @@ along with this software (see the LICENSE.md file). If not, see
                     sendServiceName="org.moqui.git.GitServices.send#GitWebhookDelivery" contentType="application/json"/>
         </seed-data>
     </entity>
+    <entity entity-name="GitRepositoryMirror" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A push mirror of a repository (store#GitRepositoryMirror, docs/interfaces/Git-Hosting.md Push
+            mirrors): another server the refs its patterns cover are pushed to, each forced to the local value, after
+            each change and from a queue with back-off (nextAttemptDate, run#GitRepositoryMirrors). One push of a mirror
+            runs at a time across a cluster (the GitLease git-mirror:[mirrorId]). No Java counterpart.</description>
+        <field name="mirrorId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="url" type="text-medium"><description>https://host/owner/repo.git (no user or password in it), or
+            an ssh URL (ssh://git@host/owner/repo.git, git@host:owner/repo.git) with hostKeyFingerprint</description></field>
+        <field name="username" type="text-medium"><description>For https: the user of the credential (GitHub takes
+            any, such as x-access-token, with a token); for ssh, when the URL names none</description></field>
+        <field name="credential" type="text-very-long" encrypt="true"><description>For https a password or token; for
+            ssh a private key (PEM or OpenSSH) or a password. Never returned (find#GitRepositoryMirrors says
+            hasCredential), never in a log or an error.</description></field>
+        <field name="hostKeyFingerprint" type="text-medium"><description>For ssh: the server's host key, SHA256:...</description></field>
+        <field name="refPattern" type="text-medium"><description>Comma separated patterns of branches and tags
+            (refs/heads/*, main, refs/tags/v*, main:mirror); every branch and tag when empty</description></field>
+        <field name="deleteRefs" type="text-indicator"><description>Y: refs of the mirror the patterns cover that are gone
+            here are deleted there</description></field>
+        <field name="enabled" type="text-indicator"><description>N: not pushed</description></field>
+        <field name="createdByUserId" type="id"><description>Who stored it, or last gave its credential: told when its
+            pushes start to fail (notification topic GitMirrorFailure). Its pushes are held to this user's delete right
+            on the repository: one who lost it pauses the mirror (enabled N) instead of using the credential.</description></field>
+        <field name="storedAuthzDisabled" type="text-indicator"><description>Y when it (or its credential) was stored
+            with authorization disabled, by the application: its pushes are not held to createdByUserId's right</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastPushDate" type="date-time"><description>When a push last worked</description></field>
+        <field name="lastResult" type="text-long"><description>What the last push did, or failed</description></field>
+        <field name="lastError" type="text-long"><description>Why the last push failed, the credential taken out;
+            empty after one that worked</description></field>
+        <field name="nextAttemptDate" type="date-time"><description>When it is to be pushed: now when a push is asked
+            for, later after a failure; empty when it is current</description></field>
+        <field name="attemptCount" type="number-integer"><description>Failures in a row since the last push that worked</description></field>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <index name="GIT_MIRROR_REPO"><index-field name="repositoryId"/></index>
+        <index name="GIT_MIRROR_NEXT"><index-field name="nextAttemptDate"/></index>
+        <seed-data>
+            <moqui.security.user.NotificationTopic topic="GitMirrorFailure" description="A push mirror's pushes fail"
+                    typeString="danger" showAlert="Y" persistOnSend="Y" receiveNotifications="Y"/>
+        </seed-data>
+    </entity>
     <entity entity-name="GitBranchRule" package="moqui.resource" use="nontransactional" cache="never">
         <description>A protected branch (or tag) of a repository, enforced by the git server before a pushed ref moves and
             by the ref and merge services: a pattern that starts with refs/ is matched against the full ref name, any
@@ -358,6 +411,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="targetRef" type="text-medium"><description>The target branch name</description></field>
         <field name="statusId" type="id" enable-audit-log="true"/>
         <field name="authorUserId" type="id"/>
+        <field name="importedByUserId" type="id"><description>Who imported it (create#MergeRequest imported) for
+            another author: counted as an author, so their approval does not count; set for an imported one only</description></field>
         <field name="createdDate" type="date-time"/>
         <field name="lastUpdatedDate" type="date-time"/>
         <field name="headCommitId" type="text-short"><description>The source's head when last refreshed</description></field>

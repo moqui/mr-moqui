@@ -2236,3 +2236,75 @@ For a repository whose agreement is on (docs/dev/Contributions.md; Dogfood §10)
 - A browser smoke for a review thread in the merge view, as P8's smokes are.
 - Signing in through the browser handoff has its test with F17.
 
+
+
+**P11, built** (Nov 14, 2026): F17 (`/sso/appLogin` takes any loopback redirect, `webapp_app_loopback_redirect`, and
+with no `authFlowId` the server's own login after a sign-out), F18 (`/rest/s1/moqui/hosting/offer|repository|agreement`;
+`git-server offer-service` and `agreement-check-service`), Dogfood F9 (the hosting REST in `moqui.rest.xml`,
+`org.moqui.git.GitRestServices`, merge requests and runs by number, `git-server rest-write-check-service` with
+`GitKeptByApplication`). Dev AIDE: `DevAideServer`, `DevAideCredential.serverId`/`useForGit`, Settings › Group servers
+(Connect by the app sign-in or a pasted token; the myaddons.xml repository, task source, gateway `.env` lines and git
+credential it sets, which Remove takes back), the hosted repository on `DevAideRoot` with each user's rights in a
+preference, the Merge requests tab with Check out, Propose (`refs/for/<branch>` with push options), Fork through the
+application's REST, Push and Publish that open a merge request. A repository an application keeps (`keptBy`) goes
+through that application's REST, the rest through the framework's. Differences: the framework REST has no fork (the
+application's rule) and no threads (Mantle's); the rights are per user, not on the root; `myaddons.xml` and `.env` are
+the full tier's and not on a shared server. Checked: `devaide_group` (the instance as its own group server), moqui-git
+`service::rest`, `sso_app`, `dev-aide`, `GroupServers.spec.js`. Not built: the provider choice in Connect, a merge
+request from a fork in the UI, the offer's task app, issues in the panel, a browser smoke; Smithy's side is checked
+by its REST contract only.
+
+**P12, built** (Nov 14, 2026): review threads through the framework's REST (`git/{id}/mergeRequests/{n}/threads`,
+`.../threads/{threadId}/resolve`: `find#ReviewThreads`, `create#ReviewComment`, `resolve#ReviewThread`, answered by
+`git-server review-thread-service`, interface `handle#GitReviewThread`, an application's such as Mantle's; the offer's
+`rest.reviewThreads`), and through Smithy's operations for a repository it keeps (`changes`' `threadList`, `comments`,
+`threads/{id}/resolve`, `reviews`). Dev AIDE (`hosting/threads.rs`, `checks.rs`, `agreement.rs`): the Merge requests
+tab's Review (the changes in `m-diff-view` from the server's blobs, threads by file and line, reply, resolve and
+reopen, a comment on a line, a review); open threads of the checked-out merge request (`mr/<n>`, or an open one's
+source branch) in the editor's gutter; check chips on Commits and Branches, a commit's checks (statuses, runs, jobs), a
+job's log followed while it runs, its failed tests as links to the working tree's file and line, Re-run and Retry; the
+agreement warning in Changes and Sign (`AUTHORS.md` under both lists, committed alone; refused while the file has
+changes, from a header login, and to agents). F19: `ci.xml` is checked by `moqui check` against `git-ci-3.xsd`;
+`moqui check --agreement` asks the group server (`MOQUI_GROUP_SERVER`, `MOQUI_GROUP_TOKEN`) and fails a commit by an
+author who has not signed unless it stages only `AUTHORS.md`. With the P11 review's fixes: the REST names no keeper of
+a repository the caller may not view, a hidden merge request is its author's and answers as a missing number, the
+keeper allows only an explicit true, a page of merge requests is at most 200; Connect writes a key for the gateway
+alone (`UserLoginKey.scope`, `create#UserScopedKey`), keeps the developer's `.env` lines (encrypted) and
+`myaddons.xml` entries, and Remove restores them and ends its keys on the server (`revoke#UserHeldKey`); the app
+sign-in keeps a signed-in browser signed in and asks for its password, names the loopback port, is never framed, and
+takes only `127.0.0.1` or `[::1]` (this replaces P11's sign-out and any loopback host); Check out never forces a branch
+and warns that the code runs here; a server's links, fork URL and addons template are checked to be its own; the
+hosted state of a shared root is per user. Differences: the gutter marks use the editor's blame gutter (a thread per
+line, its comments as the title); a comment on a line is made from the review panel by its line number, not by
+clicking the merge view; the framework's threads need the application's service (with none, no threads); a re-run of
+a repository an application keeps goes through the framework's REST, which the application may refuse. Checked:
+moqui-git `service::rest`, moqui-core `sso_app` and `user_keys`, moqui-devkit `a_ci_file` and `an_unsigned`, dev-aide
+`hosting`, `devaide_group` (the instance as its own group server, with a stub application for threads and the
+agreement), `GroupServers.spec.js`. Not built: a browser smoke of a thread in the merge view; a job's log and failed
+tests against a real run; an `LlmApiClient` for a scoped key while the gateway's `require-client` is on; Run locally and
+the hosting tool (P13).
+
+**P13, built** (Nov 14, 2026): the `hosting` tool (`src/agent/hosting.rs`, lazy as `vcs` is) reads `merge_requests`,
+`merge_request` (`get#MergeRequest`), `changes` (the files, or one file at its base and head), `threads`, `checks`,
+`job` (the log's last 20,000 characters and the failed tests) and `issue` (`get#Issue`: the offer's `tasks.issuePath`,
+else Mantle's `workEfforts/{id}`), and writes `open_merge_request`, `comment` and `reply`, each an EXTERNAL approval
+whose card names the server, repository, merge request, file and line and shows the text; approve, merge, re-run,
+retry, resolve, close, sign, push and fork answer `not_offered`. It runs HostingServices as the user; the server's
+answers reach the model as `<untrusted from="group-server">`; a merge request's diff is refused ("the authors have not
+signed") when a commit author is known, required and unsigned (`get#MergeRequestChanges` `checkAuthors`) or the
+application says `diffRefused`. Its reads run under the read fence with a remote permit for the hosted server's
+origin, the client lifting the fence for that GET alone after `check_remote`; `need_hosted` does not resolve under a
+fence. Worktrees (`src/worktree.rs`): `create#`, `remove#` (refused with uncommitted changes unless `discardChanges`;
+the branch stays) and `get#Worktrees`, under `runtime/worktrees`, a `DevAideRoot` with `worktreeOf`, `conversationId`,
+`worktreeBranch`, `worktreeUserId`, mirroring its main tree's components and never reloaded; a conversation's tools
+are rooted in its worktree (`agent::session_context`); the Workspace's Sessions tab and a banner say a worktree is not
+loaded (question 19 as proposed). Run locally (`src/local_run.rs`): `get#LocalJobs` and `start#LocalRun` read `ci.xml`
+with `moqui_git::ci::file::parse` and `ci::plan::plan`, write a script under `runtime/tmp/dev-aide-run` (the job's and
+CI's variables, each secret's variable unset, each step `sh -c`, stopping at a failure unless continue-on-error) and
+open a host session with it typed in (`open#TerminalSession` `input`); the checks dialog shows the combination, steps,
+variables and unset secrets first and says it is not the job's image (question 20 as proposed). Checked: dev-aide
+`local_run::`, `worktree::`, `hosting::`; `devaide_group` (the tool's reads under the fence, the unsigned diff refused,
+approve and merge not offered, the comment card, refused in a sim and posted after, two sessions' worktrees isolated
+with the removal rules, a matrix job's local jobs); `DevAide.spec.js`; cargo lint, lint-min. Not built: a pty test of
+`input`, a header-login test of the tool's writes, a local container run (Dogfood F8), ending a worktree with its
+conversation, a browser smoke.

@@ -255,6 +255,7 @@ fn get_component(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "moq".to_string());
+    crate::workspace::unfenced(moqui_core::entity::fence::Effect::Process, "moq component-get")?;
     let mut command = Command::new(&program);
     command.arg("component-get");
     if flag(parameters, "dev") {

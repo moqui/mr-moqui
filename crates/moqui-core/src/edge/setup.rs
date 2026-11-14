@@ -138,6 +138,41 @@ pub struct SipOffer {
     pub other_nodes: bool,
 }
 
+/// The edge node's SSH tunnel to this node's SSH server (E16): where its git clients connect.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SshOffer {
+    /// A tunnel port goes to this node.
+    pub available: bool,
+    /// The edge node's public name.
+    pub host: String,
+    /// This node's own port (an `EdgePort` row), else `edge_ssh_tunnel_port` while it is the one active pairing; 0
+    /// while off.
+    pub port: u16,
+}
+
+/// The SSH address the edge node last offered this local node, kept in memory per factory ([`remember_ssh`]).
+#[derive(Default)]
+struct SshAddress(Mutex<Option<(String, u16)>>);
+
+/// Keep the SSH part of an offer this local node was given ([`ssh_address`]): the local node asks for the offer as each
+/// link comes up, and the wizard's offer and Configure answers keep it current. An offer with no SSH tunnel for this
+/// node, or no host, forgets it.
+pub fn remember_ssh(factory: &ExecutionContextFactory, ssh: &SshOffer) {
+    let address = (ssh.available && ssh.port > 0 && !ssh.host.is_empty()).then(|| (ssh.host.clone(), ssh.port));
+    *lock(&factory.extension(|_| SshAddress::default()).0) = address;
+}
+
+/// The host and port git clients reach this node's SSH server at through its edge node, as last offered, while this
+/// node is paired (`edge_node_url` or `front_node_url` set): what clone URLs name when `ssh_public_host` and
+/// `ssh_public_port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
+pub fn ssh_address(factory: &ExecutionContextFactory) -> Option<(String, u16)> {
+    let paired = |name: &str| !moqui_lib::env::get_prop_or_env(name).trim().is_empty();
+    if !paired(super::NODE_URL) && !paired(super::FRONT_URL) {
+        return None;
+    }
+    lock(&factory.extension(|_| SshAddress::default()).0).clone()
+}
+
 /// What an edge node offers a local node.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeOffer {
@@ -151,6 +186,7 @@ pub struct EdgeOffer {
     pub xmpp: XmppOffer,
     pub calls: CallsOffer,
     pub sip: SipOffer,
+    pub ssh: SshOffer,
     /// Areas not built yet: none now.
     pub not_available: Vec<String>,
     /// The edge node's public addresses, when it names them (`edge_public_addresses`).

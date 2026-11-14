@@ -795,11 +795,17 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
 
     // Parameters live in a context frame for the request, so nothing leaks into the next one.
     let _frame = ContextFrame::push();
+    // `context` names the context itself, so a parameter of that name (GitHub's commit status field, which outside CI
+    // posts) is not put there: it stays among the request's parameters, which a REST service and a transition's
+    // service call read
     for (name, value) in job.parameters {
+        if name == "context" {
+            continue;
+        }
         script::set_context_name(name, value.clone())?;
     }
     for (name, value) in &info.inline_parameters {
-        if !job.parameters.contains_key(name) {
+        if name != "context" && !job.parameters.contains_key(name) {
             script::set_context_name(name, Value::string(value))?;
         }
     }

@@ -39,6 +39,10 @@ use moqui_mail as _;
 use moqui_report as _;
 // The Tools app's database services, in every build, the same way.
 use moqui_tools as _;
+// The DAV, VCard and ICalendar services and the co-edited document services, in every build, the same way: a build
+// without axum names neither crate elsewhere, so their entries would otherwise leave the binary.
+use moqui_collab as _;
+use moqui_dav as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
@@ -65,7 +69,9 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+mod embedded_checksum;
 mod embedded_files;
+mod embedded_programs;
 // gRPC clients on HTTP/2 connections of our own: the cluster's, the PASS authority's and the edge link's.
 #[cfg(feature = "grpc")]
 mod grpc_client;
@@ -901,12 +907,14 @@ fn usage_error(args: &[String]) -> moqui_lib::error::Error {
 }
 
 /// `MOQUI_RUNTIME`, default [`default_runtime_dir`], and `MOQUI_FRAMEWORK`, default `framework` beside the runtime.
-/// Like Moqui's `moqui.runtime`: an install runs from its own directory unless told otherwise.
+/// Like Moqui's `moqui.runtime`: an install runs from its own directory unless told otherwise. The files built into the
+/// binary are mounted on them ([`embedded_files::mount`]), so every command reads the ones not on disk from the binary.
 fn runtime_framework_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
     let runtime = std::env::var_os("MOQUI_RUNTIME")
         .filter(|dir| !dir.is_empty())
         .map_or_else(default_runtime_dir, Into::into);
     let framework = framework_from_env(&runtime);
+    embedded_files::mount(&runtime, &framework);
     (runtime, framework)
 }
 
@@ -919,7 +927,7 @@ fn default_runtime_dir() -> std::path::PathBuf {
 
 /// `runtime` in `start` when it is a runtime (`context::layout::is_runtime`); else `start` itself when it is one (an unpacked
 /// archive, or `/opt/moqui`, started in its own directory); else `runtime` in `start`, a new one that the server and
-/// `moqui load` fill with a skeleton runtime from the files built into the binary.
+/// `moqui load` make the basic structure of, reading the files built into the binary in place.
 fn runtime_dir_in(start: &std::path::Path) -> std::path::PathBuf {
     let local = start.join("runtime");
     if !moqui_core::context::layout::is_runtime(&local) && moqui_core::context::layout::is_runtime(start) {
@@ -1236,6 +1244,7 @@ fn load_embedded(
     flags: &LoadFlags,
 ) -> Result<LoadReport, moqui_lib::error::Error> {
     create_dir(runtime_dir)?;
+    embedded_checksum::verify(runtime_dir)?;
     embedded_files::ensure_runtime(runtime_dir, framework_dir)?;
     create_dir(cluster_dir)?;
     let runtime_dir = canonical_dir(runtime_dir)?;
@@ -1637,6 +1646,7 @@ fn boot_server_factory(
 
     let boot_started = std::time::Instant::now();
     create_dir(runtime_dir)?;
+    embedded_checksum::verify(runtime_dir)?;
     embedded_files::ensure_runtime(runtime_dir, framework_dir)?;
     create_dir(cluster_dir)?;
     let runtime_dir = canonical_dir(runtime_dir)?;
@@ -2117,6 +2127,10 @@ pub fn build_features() -> Vec<&'static str> {
         ("sip", cfg!(feature = "sip")),
         ("xmpp", cfg!(feature = "xmpp")),
         ("edge", cfg!(feature = "edge")),
+        ("embed-production", cfg!(feature = "embed-production")),
+        ("embed-all", cfg!(feature = "embed-all")),
+        ("embed-opensearch", cfg!(feature = "embed-opensearch")),
+        ("embed-chromium", cfg!(feature = "embed-chromium")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))
@@ -2528,18 +2542,16 @@ fn framework_xml_paths(framework_dir: &std::path::Path) -> Result<Vec<std::path:
             continue;
         };
         let path = resolve_framework_location(framework_dir, &location)?;
-        if path.is_file() {
+        if moqui_lib::vfs::is_file(&path) {
             push_unique(&mut paths, &mut seen, path);
         }
     }
     let mut extras = Vec::new();
     let dir = framework_dir.join("entity");
-    let read = std::fs::read_dir(&dir)
+    // with the files built into the binary that are not on disk (moqui_lib::vfs)
+    let read = moqui_lib::vfs::read_dir(&dir)
         .map_err(|err| moqui_lib::error::Error::new(format!("could not read {}", dir.display())).with_source(err))?;
     for entry in read {
-        let entry = entry.map_err(|err| {
-            moqui_lib::error::Error::new(format!("could not read {}", dir.display())).with_source(err)
-        })?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) == Some("xml") {
             extras.push(path);
@@ -2557,7 +2569,7 @@ fn push_unique(
     seen: &mut std::collections::BTreeSet<std::path::PathBuf>,
     path: std::path::PathBuf,
 ) {
-    let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let key = std::fs::canonicalize(&path).unwrap_or_else(|_| moqui_lib::vfs::normalize(&path));
     if seen.insert(key) {
         paths.push(path);
     }
@@ -2596,12 +2608,12 @@ fn entity_names(
     let mut seen = std::collections::BTreeSet::new();
     let mut paths = framework_xml_paths(framework_dir)?;
     for dir in entity_dirs.iter().skip(1) {
-        let read = std::fs::read_dir(dir).map_err(|err| {
+        let read = moqui_lib::vfs::read_dir(dir).map_err(|err| {
             moqui_lib::error::Error::new(format!("could not read {}", dir.display())).with_source(err)
         })?;
         let mut found: Vec<std::path::PathBuf> = read
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
+            .iter()
+            .map(moqui_lib::vfs::DirEntry::path)
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("xml"))
             .collect();
         found.sort();

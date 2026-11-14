@@ -127,3 +127,23 @@ fn an_xmpp_connection_goes_to_the_pairing_whose_domain_it_names() {
         XmppRoute::Refused(why) if why.contains("local-1, local-2")
     ));
 }
+
+/// A ban a pairing told the edge node refuses that client's connections to the pairing's tunnel ports (SSH, XMPP), as
+/// it refuses its requests to the pairing's hosts; another pairing's ports and other clients are not refused.
+#[test]
+fn a_client_a_pairing_banned_is_refused_on_its_tunnel_ports() {
+    let guard = crate::guard::tests::guard(r#"<web-protection enabled="true"/>"#, "");
+    let banned: std::net::IpAddr = "203.0.113.8".parse().unwrap();
+    let other: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+    assert_eq!(banned_by_node(&guard, "local-1", banned), None);
+    assert!(guard.apply_shared(banned, 60, "node local-1: auth-failure", Some("local-1")));
+    assert!(banned_by_node(&guard, "local-1", banned).is_some_and(|why| why.contains("local-1")));
+    assert_eq!(
+        banned_by_node(&guard, "local-2", banned),
+        None,
+        "another pairing's ports"
+    );
+    assert_eq!(banned_by_node(&guard, "local-1", other), None, "another client");
+    // the connection itself was admitted: the ban holds only for the pairing's own
+    assert!(guard.admit(banned).is_some());
+}

@@ -39,7 +39,10 @@
         host. The settings and DNS to publish: docs/interfaces/Mail-Inbound.md, The edge node as the gateway. -->
     <default-property name="edge_mail_mta" value="moqui"/>
     <default-property name="smtp_internet" value="true"/>
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+    <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
+        trusts on that mail: smtp_authserv_id, else smtp_hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"
+            authserv-id="${smtp_authserv_id ?: smtp_hostname}"/>
 
     <!-- Chat bridges and SMS (plans/archive/Edge-Node.md §5.4, §10): a network's webhook URL is this node's,
         /channels/{chatBridgeId}/webhook, for the server's own bridges and the paired node's alike. The server's own

@@ -297,6 +297,12 @@ impl Session {
         self.input.send(bytes).await.is_ok()
     }
 
+    /// Text the session's program reads as if typed, before any client attached: a host session opened with an
+    /// `input` (the Dev AIDE's Run locally). False when the queue is full or the program no longer reads.
+    pub fn type_in(&self, bytes: Vec<u8>) -> bool {
+        self.input.try_send(bytes).is_ok()
+    }
+
     /// Whether the client's page looks at the session now.
     pub async fn view(&self, client: u64, visible: bool) {
         let _ = self.commands.send(Command::View { client, visible }).await;

@@ -37,6 +37,12 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><service-call name="org.moqui.git.GitServices.push#GitMirror" in-map="{repositoryId:repositoryId}"
                 async="true"/></actions>
     </giteca>
+    <!-- The GitRepositoryMirror rows (docs/interfaces/Git-Hosting.md, Push mirrors): each enabled one is marked due and
+        started on the service pool; the queue (run#GitRepositoryMirrors) retries a failure with its back-off. -->
+    <giteca rule-name="Push mirror rows follow their repositories" id="FrameworkPushRepositoryMirrors" event="post-receive"
+            source="push,fetch,import,write" priority="9" run-on-error="true">
+        <actions><service-call name="org.moqui.git.GitServices.queue#GitRepositoryMirrorPushes" in-map="{repositoryId:repositoryId}"/></actions>
+    </giteca>
     <!-- Pipelines (docs/interfaces/Pipelines.md): a no-op when the engine is off here or the commit has no ci.xml and no
         component.xml. Not for a mirror's fetch or an import: nobody with the update right pushed those commits. A
         merge request's runs follow its events (GitCi.secas.xml). -->

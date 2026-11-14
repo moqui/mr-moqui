@@ -14,7 +14,9 @@
 
 //! The client side of git-receive-pack, a push to another server (protocol v0, one stateful conversation, as over
 //! SSH): read the server's refs, send a command for each ref to change and one pack of the objects it lacks, and
-//! read its `report-status`. A push mirror forces each ref to the local one and deletes nothing.
+//! read its `report-status`. A push mirror forces each ref to the local one; a `GitRepositoryMirror` with `deleteRefs`
+//! also deletes the refs its patterns cover that are gone here. Over HTTPS the same request and report go through
+//! [`super::smart_http`].
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
@@ -158,34 +160,85 @@ pub(crate) struct PushOutcome {
     pub objects: usize,
 }
 
-/// Push `refs` (remote name, local id) over one receive-pack conversation: `input` is what the server writes,
-/// `output` what it reads. A ref already at its id is left out; when none is left nothing is sent but a flush.
-pub(crate) fn push(
-    store: &dyn GitStore,
+/// One ref a push changes: its value on the server (`None`: it is made) and its new one (`None`: it is deleted).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Command {
+    pub old: Option<ObjectId>,
+    pub new: Option<ObjectId>,
+    pub name: String,
+}
+
+/// The commands that bring the server's refs to `refs` (remote name, local id), each forced to the local id, and, with
+/// `delete_covered`, a delete of each ref of the server those maps cover that `refs` does not name (a mirror's
+/// `deleteRefs`). A ref already at its id is counted in `outcome.current`.
+pub(crate) fn commands(
+    remote: &RemoteRefs,
     refs: &[(String, ObjectId)],
-    input: &mut dyn Read,
-    output: &mut dyn Write,
-) -> Result<PushOutcome, Error> {
-    let remote = read_advertisement(input)?;
-    let mut outcome = PushOutcome::default();
+    delete_covered: Option<&[RefMap]>,
+    outcome: &mut PushOutcome,
+) -> Vec<Command> {
     let mut commands = Vec::new();
     for (name, id) in refs {
         let old = remote.refs.get(name).copied();
         if old == Some(*id) {
             outcome.current += 1;
         } else {
-            commands.push((old, *id, name.clone()));
+            commands.push(Command {
+                old,
+                new: Some(*id),
+                name: name.clone(),
+            });
         }
     }
-    if commands.is_empty() {
-        pktline::flush(output).map_err(io_error)?;
-        output.flush().map_err(io_error)?;
-        return Ok(outcome);
+    if let Some(maps) = delete_covered {
+        let mut gone: Vec<(&String, &ObjectId)> = remote
+            .refs
+            .iter()
+            .filter(|(name, _)| !name.ends_with("^{}") && covered(maps, name))
+            .filter(|(name, _)| !refs.iter().any(|(kept, _)| kept == *name))
+            .collect();
+        gone.sort();
+        commands.extend(gone.into_iter().map(|(name, id)| Command {
+            old: Some(*id),
+            new: None,
+            name: name.clone(),
+        }));
     }
-    let requested = requested(&remote)?;
+    commands
+}
+
+/// Whether a remote ref is one `maps` write: the `to` side of one of them names it, or is a prefix of it.
+pub(crate) fn covered(maps: &[RefMap], remote_name: &str) -> bool {
+    maps.iter().any(|map| match map.to.strip_suffix('*') {
+        Some(prefix) => remote_name.starts_with(prefix),
+        None => remote_name == map.to,
+    })
+}
+
+/// Write a push's request: the commands (the first with the capabilities asked for) and their flush, then one pack of
+/// the objects the server lacks, none when every command is a delete (as git does). The objects sent.
+pub(crate) fn write_request(
+    store: &dyn GitStore,
+    remote: &RemoteRefs,
+    commands: &[Command],
+    output: &mut dyn Write,
+) -> Result<usize, Error> {
+    let deletes = commands.iter().any(|command| command.new.is_none());
+    if deletes && !remote.caps.contains("delete-refs") {
+        return Err(Error::new(
+            "the server does not offer delete-refs, so refs cannot be deleted there",
+        ));
+    }
+    let requested = requested(remote)?;
     let zero = ObjectId::null(gix::hash::Kind::Sha1);
-    for (index, (old, new, name)) in commands.iter().enumerate() {
-        let mut line = format!("{} {new} {name}", old.unwrap_or(zero)).into_bytes();
+    for (index, command) in commands.iter().enumerate() {
+        let mut line = format!(
+            "{} {} {}",
+            command.old.unwrap_or(zero),
+            command.new.unwrap_or(zero),
+            command.name
+        )
+        .into_bytes();
         if index == 0 {
             line.push(0);
             line.extend_from_slice(requested.as_bytes());
@@ -194,30 +247,58 @@ pub(crate) fn push(
         pktline::data(output, &line).map_err(io_error)?;
     }
     pktline::flush(output).map_err(io_error)?;
+    let wants: Vec<ObjectId> = commands.iter().filter_map(|command| command.new).collect();
+    if wants.is_empty() {
+        output.flush().map_err(io_error)?;
+        return Ok(0);
+    }
     let remote_ids: Vec<ObjectId> = remote.refs.values().copied().collect();
     let haves: Vec<ObjectId> = store.contains_many(&remote_ids)?.into_iter().collect();
-    let wants: Vec<ObjectId> = commands.iter().map(|(_, new, _)| *new).collect();
     let planned = plan::plan(store, &wants, &haves, &[], &HashSet::new(), &[])?;
-    outcome.objects = planned.objects.len();
     let deltas = pack_out::Deltas {
         ofs: remote.caps.contains("ofs-delta"),
         thin: None,
     };
     pack_out::write_pack(store, &planned.objects, deltas, super::pack_threads(), output)?;
     output.flush().map_err(io_error)?;
+    Ok(planned.objects.len())
+}
+
+/// Push `refs` (remote name, local id) over one receive-pack conversation: `input` is what the server writes,
+/// `output` what it reads. A ref already at its id is left out; when none is left nothing is sent but a flush. With
+/// `delete_covered`, the server's refs those maps cover that `refs` does not name are deleted.
+pub(crate) fn push(
+    store: &dyn GitStore,
+    refs: &[(String, ObjectId)],
+    delete_covered: Option<&[RefMap]>,
+    input: &mut dyn Read,
+    output: &mut dyn Write,
+) -> Result<PushOutcome, Error> {
+    let remote = read_advertisement(input)?;
+    let mut outcome = PushOutcome::default();
+    let commands = commands(&remote, refs, delete_covered, &mut outcome);
+    if commands.is_empty() {
+        pktline::flush(output).map_err(io_error)?;
+        output.flush().map_err(io_error)?;
+        return Ok(outcome);
+    }
+    outcome.objects = write_request(store, &remote, &commands, output)?;
     read_report(input, &mut outcome)?;
     Ok(outcome)
 }
 
-/// The capabilities a push asks for, of those the server offers: `report-status` (required), `ofs-delta`, and, as git
-/// does, the client's `agent` only when the server names its own.
+/// The capabilities a push asks for, of those the server offers: `report-status` (required), `ofs-delta`,
+/// `delete-refs`, and, as git does, the client's `agent` only when the server names its own.
 pub(crate) fn requested(remote: &RemoteRefs) -> Result<String, Error> {
     if !remote.caps.contains("report-status") {
         return Err(Error::new("the server does not offer report-status"));
     }
     let mut requested = String::from("report-status");
-    if remote.caps.contains("ofs-delta") {
-        requested.push_str(" ofs-delta");
+    for cap in ["ofs-delta", "delete-refs"] {
+        if remote.caps.contains(cap) {
+            requested.push(' ');
+            requested.push_str(cap);
+        }
     }
     if remote.caps.iter().any(|cap| cap.starts_with("agent=")) {
         requested.push_str(&format!(" agent={}", super::agent()));
@@ -226,7 +307,7 @@ pub(crate) fn requested(remote: &RemoteRefs) -> Result<String, Error> {
 }
 
 /// `unpack ok` (or why the server could not read the pack), then `ok <ref>` or `ng <ref> <reason>` each.
-fn read_report(input: &mut dyn Read, outcome: &mut PushOutcome) -> Result<(), Error> {
+pub(crate) fn read_report(input: &mut dyn Read, outcome: &mut PushOutcome) -> Result<(), Error> {
     let first = pktline::read(input).map_err(io_error)?.and_then(|packet| packet.text());
     match first.as_deref() {
         Some("unpack ok") => {}

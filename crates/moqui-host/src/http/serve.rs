@@ -521,6 +521,24 @@ fn git_page_uri<B>(web: &WebApp, request: &hyper::Request<B>) -> Option<http::Ur
     http::Uri::from_parts(parts).ok()
 }
 
+/// The deadline of a request at `path` (the one it is served at), `limit` the conf's `request-timeout`: none for one
+/// that runs as long as it needs (`streaming`: a socket or a multipart upload, whose screen has the deadline once it
+/// has arrived), git (its own idle timeout), the CI runner REST, DAV, XMPP uploads and the LLM gateway's model calls
+/// (docs/security/Attack-Surface.md). On an edge node a request it `forwarded` to a member has none either: the member
+/// applies its own, with the exemptions only it can tell (git at a public site's page URL, whose site rows the edge
+/// node does not have), and the forward's waits bound it here (`crate::edge_link::web::Waits`).
+pub(crate) fn request_deadline(
+    limit: Option<Duration>,
+    path: &str,
+    streaming: bool,
+    forwarded: bool,
+) -> Option<Duration> {
+    let exempt = ["/xmpp-upload/", "/git/", "/ci/runner/", "/dav/", "/llm/v1"]
+        .iter()
+        .any(|prefix| path.starts_with(prefix));
+    limit.filter(|_| !streaming && !exempt && !forwarded)
+}
+
 /// Serve one request with `web`, from `peer`: the URI length and web protection checks, then on an edge node the
 /// forward of a terminate host down its link, else the router, either under the request deadline. The listeners'
 /// connections and the edge link's down connection call it (plans/archive/Edge-Node.md §5.3).
@@ -561,6 +579,8 @@ where
             .or_else(|| request.uri().authority().map(axum::http::uri::Authority::as_str))
             .unwrap_or_default(),
     );
+    // a CI token whose answer says it was found good is recorded for web protection, here and on an edge node in front
+    let ci_token = crate::guard::ci_credential(request.uri().path(), request.headers());
     let uri_length = request.uri().path_and_query().map_or(0, |whole| whole.as_str().len());
     let refused = if uri_length > limits.max_uri {
         Some(plain(414, "the request URI is too long"))
@@ -606,7 +626,6 @@ where
             Some(uri) => match web.guard.check_served_path(client, &host, uri.path()) {
                 Ok(()) => {
                     *request.uri_mut() = uri;
-                    request.extensions_mut().insert(crate::git_http::GitPageRequest);
                     None
                 }
                 Err(refused) => Some(*refused.response),
@@ -614,19 +633,10 @@ where
             None => None,
         },
     };
-    let path = request.uri().path();
-    let deadline = limits.request.filter(|_| {
-        !socket
-            && !path.starts_with("/xmpp-upload/")
-            && !path.starts_with("/git/")
-            && !path.starts_with("/ci/runner/")
-            && !path.starts_with("/dav/")
-            && !path.starts_with("/llm/v1")
-            && !upload
-    });
     // on an edge node, a terminate host's request goes through the router's request log and telemetry like any other,
     // and down its node's link at the router's edge-forward layer
     let mut refused = refused;
+    let mut forwarded = false;
     if refused.is_none() {
         let target = web
             .edge
@@ -638,6 +648,8 @@ where
                 refused = Some(plain(403, "forbidden"));
             }
             Some((front, target)) => {
+                // only a forward down a link names a node; a redirect or the offline page is answered here
+                forwarded = target.node().is_some();
                 request.extensions_mut().insert(Forward {
                     front: Arc::clone(front),
                     target,
@@ -647,6 +659,7 @@ where
             None => {}
         }
     }
+    let deadline = request_deadline(limits.request, request.uri().path(), socket || upload, forwarded);
     let call = refused.is_none().then(|| {
         let routed = web.router.clone().oneshot(request);
         async move {
@@ -656,17 +669,46 @@ where
             }
         }
     });
+    let guard = Arc::clone(&web.guard);
+    // the edge node in front reads the marker from this node's answer, and removes it
+    let keep_marker = peer.via == moqui_core::web::RequestVia::Edge;
     async move {
         let Some(call) = call else {
             return Ok(refused.unwrap_or_else(|| plain(500, "refused")));
         };
-        Ok(match deadline {
+        let mut response = match deadline {
             Some(deadline) => match tokio::time::timeout(deadline, call).await {
                 Ok(response) => response,
                 Err(_) => plain(504, "the request took too long"),
             },
             None => call.await,
-        })
+        };
+        ci_token_answer(&guard, &host, ci_token.as_deref(), &mut response, keep_marker);
+        Ok(response)
+    }
+}
+
+/// Record what the answer to a request with the CI token `token` says of it (crate::guard): found good (the
+/// [`crate::guard::CI_TOKEN_HEADER`] marker), or refused (401, or 410 for a job that ended). The marker is removed unless
+/// `keep_marker` (the request came down an edge node's link, which records it too); one in the answer of a request
+/// without a CI token is removed and believed for nothing.
+pub(crate) fn ci_token_answer(
+    guard: &Guard,
+    host: &str,
+    token: Option<&str>,
+    response: &mut Response,
+    keep_marker: bool,
+) {
+    let verified = response.headers().contains_key(crate::guard::CI_TOKEN_HEADER);
+    if let Some(token) = token {
+        if verified {
+            guard.ci_token_verified(host, token);
+        } else if matches!(response.status().as_u16(), 401 | 410) {
+            guard.ci_token_failed(host, token);
+        }
+    }
+    if verified && !(keep_marker && token.is_some()) {
+        response.headers_mut().remove(crate::guard::CI_TOKEN_HEADER);
     }
 }
 

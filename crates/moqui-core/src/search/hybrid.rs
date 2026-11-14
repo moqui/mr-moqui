@@ -120,7 +120,7 @@ pub fn lexical_query(request: &SearchRequest, options: &HybridOptions) -> Query 
     }
 }
 
-/// A hybrid search.
+/// A hybrid search. `embed_text` is what the semantic branch embeds: the text with the model's query prefix.
 ///
 /// # Errors
 ///
@@ -131,6 +131,7 @@ pub fn search(
     request: &SearchRequest,
     options: &HybridOptions,
     embedder: Option<&dyn Embedder>,
+    embed_text: &str,
 ) -> Result<SearchPage, Error> {
     let have = backend.capabilities();
     let text = options.text.trim();
@@ -154,7 +155,7 @@ pub fn search(
         counted.push(fuzzy);
     }
     if let Some(embedder) = embedder.filter(|_| !text.is_empty() && have.contains(&Capability::Semantic)) {
-        let vector = embedder.embed(&[text.to_string()])?.pop().unwrap_or_default();
+        let vector = embedder.embed(&[embed_text.to_string()])?.pop().unwrap_or_default();
         let hits = backend.semantic_search(mappings, &vector, embedder.model(), request.filter.as_ref(), k)?;
         branches.push((options.weights.semantic, hits));
     }
@@ -168,7 +169,8 @@ pub fn search(
     Ok(page_of(fused, request, &lexical, total, TotalRelation::Eq))
 }
 
-/// A semantic-only search: the nearest neighbors of the text's embedding.
+/// A semantic-only search: the nearest neighbors of the embedding of `embed_text`, the text with the model's query
+/// prefix.
 ///
 /// # Errors
 ///
@@ -179,10 +181,11 @@ pub fn semantic_search(
     request: &SearchRequest,
     options: &HybridOptions,
     embedder: &dyn Embedder,
+    embed_text: &str,
 ) -> Result<SearchPage, Error> {
     let k = branch_window(request, options);
     let vector = embedder
-        .embed(&[options.text.trim().to_string()])?
+        .embed(&[embed_text.to_string()])?
         .pop()
         .unwrap_or_default();
     let hits = backend.semantic_search(mappings, &vector, embedder.model(), request.filter.as_ref(), k)?;

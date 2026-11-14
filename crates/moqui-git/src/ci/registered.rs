@@ -24,12 +24,26 @@ use moqui_core::entity::{EntityFacade, EntityValue};
 
 use super::{field, long, opt, token, JOB_RUN, PIPELINE_RUN, RUNNER, RUNNER_POOL};
 
-/// Give a pool of registered runners a new registration token, replacing the one it had. The token, shown once.
+/// How a new pool token is made.
+#[derive(Clone, Debug, Default)]
+pub struct TokenOptions {
+    /// Days it registers runners for; the conf's `git-ci` `pool-token-days` (7) when `None`.
+    pub valid_days: Option<u64>,
+    /// Revoke the pool's runners too: a pool token that leaked may have registered some.
+    pub revoke_runners: bool,
+}
+
+/// Give a pool of registered runners a new registration token, replacing the one it had, good for the days of
+/// `options`. The token, shown once, and when it expires (epoch milliseconds).
 ///
 /// # Errors
 ///
 /// When there is no such pool, or it is not of registered runners.
-pub fn new_pool_token(entity: &EntityFacade, runner_pool_id: &str) -> Result<String, Error> {
+pub fn new_pool_token(
+    entity: &EntityFacade,
+    runner_pool_id: &str,
+    options: &TokenOptions,
+) -> Result<(String, i64), Error> {
     let _rows = crate::rows_guard();
     let pool = super::one(entity, RUNNER_POOL, "runnerPoolId", runner_pool_id)?
         .ok_or_else(|| Error::new(format!("no runner pool {runner_pool_id}")))?;
@@ -39,19 +53,63 @@ pub fn new_pool_token(entity: &EntityFacade, runner_pool_id: &str) -> Result<Str
         )));
     }
     let (plain, hashed) = token::new_token(token::POOL_PREFIX)?;
+    let days = options
+        .valid_days
+        .unwrap_or_else(|| super::number_setting("pool-token-days", 7));
+    let expires = super::now_millis().saturating_add(i64::try_from(days).unwrap_or(i64::MAX / 86_400_000) * 86_400_000);
     super::set_fields(
         entity,
         RUNNER_POOL,
         "runnerPoolId",
         runner_pool_id,
         None,
-        vec![("registrationTokenHash", Value::string(hashed))],
+        vec![
+            ("registrationTokenHash", Value::string(hashed)),
+            ("registrationTokenExpireDate", moqui_core::user::stamp_value(expires)),
+        ],
     )?;
-    Ok(plain)
+    if options.revoke_runners {
+        let runners = entity
+            .find(RUNNER)?
+            .eq("runnerPoolId", Value::string(runner_pool_id))
+            .eq("statusId", Value::string("active"))
+            .list()?;
+        for runner in runners.iter() {
+            if let Some(id) = field(runner, "runnerId") {
+                revoke(entity, &id)?;
+            }
+        }
+    }
+    Ok((plain, expires))
+}
+
+/// Revoke a registered runner: its token is refused from then on (it asks for no job and registers nothing), and the
+/// job it runs ends as an error. Whether it was active.
+///
+/// # Errors
+///
+/// When its rows cannot be read or written.
+pub fn revoke(entity: &EntityFacade, runner_id: &str) -> Result<bool, Error> {
+    let _rows = crate::rows_guard();
+    let Some(runner) = super::one(entity, RUNNER, "runnerId", runner_id)? else {
+        return Ok(false);
+    };
+    let revoked = super::set_fields(
+        entity,
+        RUNNER,
+        "runnerId",
+        runner_id,
+        Some("active"),
+        vec![("statusId", Value::string("revoked"))],
+    )?;
+    if let Some(job) = field(&runner, "currentJobRunId") {
+        super::engine::finish_job(entity, &job, &super::engine::Outcome::error("The runner was revoked"))?;
+    }
+    Ok(revoked)
 }
 
 /// Register a runner in the pool of `pool_token`. Its id and its runner token, shown once; `None` for a token that is
-/// no enabled pool's.
+/// no enabled pool's, or a pool that has its most runners ([`register_in`]).
 pub fn register(
     entity: &EntityFacade,
     pool_token: &str,
@@ -61,7 +119,54 @@ pub fn register(
     let Some(pool_id) = token::pool_of(entity, pool_token)? else {
         return Ok(None);
     };
+    register_in(entity, &pool_id, name, platform)
+}
+
+/// The most active runners a pool of registered runners has (`git-ci` `max-runners-per-pool`).
+pub const DEFAULT_MAX_RUNNERS: u64 = 50;
+
+/// Register a runner in the pool `pool_id`, its pool token already found good: its id and its runner token, shown once;
+/// `None` when the pool has `max-runners-per-pool` (50) active runners already. A pool token that leaked can then mint
+/// only so many runner tokens, each a credential the web protection exempts once found good; revoke a runner, or make
+/// a new pool token that revokes them, to register more.
+pub fn register_in(
+    entity: &EntityFacade,
+    pool_id: &str,
+    name: &str,
+    platform: Option<&str>,
+) -> Result<Option<(String, String)>, Error> {
     let _rows = crate::rows_guard();
+    // 0 is no cap, as the other CI caps
+    let max = match super::setting("max-runners-per-pool").trim().parse::<u64>() {
+        Ok(0) => i64::MAX,
+        Ok(max) => i64::try_from(max).unwrap_or(i64::MAX),
+        Err(_) => i64::try_from(DEFAULT_MAX_RUNNERS).unwrap_or(i64::MAX),
+    };
+    // the count and the insert under the pool's lease, so registrations at once, on any member, cannot pass the cap
+    // together; a pool whose lease another member keeps past a few seconds is refused as full, to be tried again
+    let _turn = if max < i64::MAX {
+        match super::engine::pool_turn(entity, pool_id)? {
+            Some(turn) => Some(turn),
+            None => {
+                tracing::warn!(pool = pool_id, "a runner was not registered: the pool's lease is held");
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
+    let active = entity
+        .find(RUNNER)?
+        .eq("runnerPoolId", Value::string(pool_id))
+        .eq("statusId", Value::string("active"))
+        .count()?;
+    if active >= max {
+        tracing::warn!(
+            pool = pool_id,
+            "a runner was not registered: the pool has max-runners-per-pool runners"
+        );
+        return Ok(None);
+    }
     let (plain, hashed) = token::new_token(token::RUNNER_PREFIX)?;
     let mut row = EntityValue::make(entity, RUNNER)?;
     row.set_sequenced_id_primary(entity)?;
@@ -93,6 +198,13 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     let Some((runner_id, pool_id)) = token::runner_of(entity, runner_token)? else {
         return Err(Error::new("the runner token is not valid"));
     };
+    claim_for(entity, &runner_id, &pool_id)
+}
+
+/// [`claim`] for the active runner `runner_id` of pool `pool_id`, its token already looked up (the runner REST counts
+/// its requests by runner once the token is known good).
+pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Result<Option<Claimed>, Error> {
+    let (runner_id, pool_id) = (runner_id.to_string(), pool_id.to_string());
     let _rows = crate::rows_guard();
     super::set_fields(
         entity,
@@ -108,6 +220,15 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     if !super::is_yes(&pool, "enabled") || field(&pool, "poolKind").as_deref() != Some("registered") {
         return Ok(None);
     }
+    let pool_owner = field(&pool, "ownerId");
+    // a registered runner keeps its machine from one job to the next, so on a server with tenants (a run check) its
+    // pool is one owner's: one stored before that rule, or with its owner taken off, gets no job
+    if pool_owner.is_none() && !super::setting("run-check-service").is_empty() {
+        return Err(Error::new(format!(
+            "runner pool {pool_id} has no ownerId: on a server with git-ci run-check-service a pool of registered \
+             runners serves one owner, since a runner is not cleaned between jobs"
+        )));
+    }
     // a runner runs one job at a time
     let busy = entity
         .find(JOB_RUN)?
@@ -117,17 +238,8 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
     if busy > 0 {
         return Ok(None);
     }
-    let running = entity
-        .find(JOB_RUN)?
-        .eq("statusId", Value::string("running"))
-        .eq("runnerPoolId", Value::string(&pool_id))
-        .count()?;
-    if running >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
-        return Ok(None);
-    }
     let trusted = super::is_yes(&pool, "trusted");
     let pool_name = field(&pool, "poolName").unwrap_or_else(|| "default".to_string());
-    let pool_owner = field(&pool, "ownerId");
     let queued = entity
         .find(JOB_RUN)?
         .eq("statusId", Value::string("queued"))
@@ -135,6 +247,19 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
         .order_by("jobRunId", false)
         .limit(200)
         .list()?;
+    // nothing queued: no lease taken (a runner asks every few seconds)
+    if queued.is_empty() {
+        return Ok(None);
+    }
+    // the count and the claim under the pool's lease, so two members never both take its last place
+    let Some(_turn) = super::engine::pool_turn(entity, &pool_id)? else {
+        return Ok(None);
+    };
+    // under the pool's lease, so no claim of this runner is between its reservation and its job's claim
+    free_stale_job(entity, &runner_id)?;
+    if super::engine::running_in(entity, &pool_id)? >= long(&pool, "maxConcurrent").unwrap_or(1).max(1) {
+        return Ok(None);
+    }
     for job in queued.iter() {
         // the pool the application named, else the pool's name
         let named = match field(job, "runnerPoolId") {
@@ -151,6 +276,10 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
         else {
             continue;
         };
+        // a run that ended (cancelled as this claim read its jobs) gives none
+        if field(&run, "statusId").is_some_and(|status| super::ENDED.contains(&status.as_str())) {
+            continue;
+        }
         if super::is_yes(&run, "trusted") != trusted
             || pool_owner
                 .as_ref()
@@ -158,19 +287,93 @@ pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed
         {
             continue;
         }
-        let Some(job_token) = super::engine::claim_job(entity, &run, job, &pool, Some(&runner_id))? else {
-            continue;
-        };
+        // the owner's own pool before a shared one, as the engine picks (pool_for): a shared pool takes no job of an
+        // owner that has its own
+        if pool_owner.is_none() && field(&run, "ownerId").is_some() {
+            if let super::engine::PoolChoice::Pool(chosen) = super::engine::pool_for(entity, &run, job)? {
+                if field(&chosen, "ownerId").is_some() {
+                    continue;
+                }
+            }
+        }
         let job_run_id = field(job, "jobRunId").unwrap_or_default();
-        super::set_fields(
-            entity,
-            RUNNER,
-            "runnerId",
-            &runner_id,
-            None,
-            vec![("currentJobRunId", Value::string(&job_run_id))],
-        )?;
+        // the runner first, by one conditional update: of two claims of one runner at once (two members, two
+        // requests) only one gets a job
+        if !reserve_runner(entity, &runner_id, &job_run_id)? {
+            return Ok(None);
+        }
+        // from here every way out but the job's claim gives the runner back, or it would stay reserved for a job it
+        // never runs and ask in vain from then on
+        let job_token = match super::engine::claim_job(entity, &run, job, &pool, Some(&runner_id)) {
+            Ok(Some(job_token)) => job_token,
+            Ok(None) => {
+                release_runner(entity, &runner_id, &job_run_id);
+                continue;
+            }
+            Err(err) => {
+                // a claim that failed after the job was claimed gave the job back itself (claim_job)
+                release_runner(entity, &runner_id, &job_run_id);
+                return Err(err);
+            }
+        };
         return Ok(Some(Claimed { job_run_id, job_token }));
     }
     Ok(None)
+}
+
+/// `GitRunner.currentJobRunId = job_run_id` where it names no job, committed at once: whether this claim has the
+/// runner.
+fn reserve_runner(entity: &EntityFacade, runner_id: &str, job_run_id: &str) -> Result<bool, Error> {
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals("runnerId", Value::string(runner_id)),
+        moqui_core::entity::Condition::is_null("currentJobRunId"),
+    ]);
+    Ok(crate::conditional::update_where(
+        entity,
+        RUNNER,
+        &[("currentJobRunId", Value::string(job_run_id))],
+        &condition,
+        crate::conditional::Commit::Own,
+    )? > 0)
+}
+
+/// Give the runner back when the job it was reserved for went to another claim.
+fn release_runner(entity: &EntityFacade, runner_id: &str, job_run_id: &str) {
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals("runnerId", Value::string(runner_id)),
+        moqui_core::entity::Condition::equals("currentJobRunId", Value::string(job_run_id)),
+    ]);
+    let released = crate::conditional::update_where(
+        entity,
+        RUNNER,
+        &[("currentJobRunId", Value::Null)],
+        &condition,
+        crate::conditional::Commit::Own,
+    );
+    if let Err(err) = released {
+        tracing::error!(
+            runner = runner_id,
+            "a runner reserved for a job it is not running was not freed: {err}"
+        );
+    }
+}
+
+/// Free a runner whose `currentJobRunId` names a job it is not running: one that has ended or is gone (a member that
+/// stopped before it freed it), or one that is not running with this runner (a claim that failed or stopped between
+/// the reservation and the job's claim, or a job another claim took). Called under the pool's lease, where no claim of
+/// this runner is between the two, after its running jobs were counted.
+fn free_stale_job(entity: &EntityFacade, runner_id: &str) -> Result<(), Error> {
+    let Some(runner) = super::one(entity, RUNNER, "runnerId", runner_id)? else {
+        return Ok(());
+    };
+    let Some(current) = field(&runner, "currentJobRunId") else {
+        return Ok(());
+    };
+    let running_here = super::one(entity, JOB_RUN, "jobRunId", &current)?.is_some_and(|job| {
+        field(&job, "statusId").as_deref() == Some("running") && field(&job, "runnerId").as_deref() == Some(runner_id)
+    });
+    if !running_here {
+        release_runner(entity, runner_id, &current);
+    }
+    Ok(())
 }

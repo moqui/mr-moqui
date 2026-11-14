@@ -5,7 +5,8 @@ also covers connecting instances to each other: PASS servers to a BOSS server, a
 group server. The first sections give the steps for the common cases; the sections after them have the detail. Building
 and the build packages are in [Build-Test](Build-Test.md).
 
-- [Quick start](#quick-start): develop on your machine, run one production server, run in a container
+- [Quick start](#quick-start): develop on your machine, run one production server, deploy a single binary, run in a
+  container
 - [Everyday commands](#everyday-commands)
 - [Choose a topology](#choose-a-topology)
 - [Production checklist](#production-checklist)
@@ -24,7 +25,7 @@ and the build packages are in [Build-Test](Build-Test.md).
 
 ### Develop on your machine
 
-You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.99.0),
+You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.100.0),
 git and bash, on Linux, macOS, or Windows. On Windows, install the MSVC toolchain (`x86_64-pc-windows-msvc`), Visual
 Studio Build Tools with the "Desktop development with C++" workload, and Git for Windows, then use `moq.cmd` instead
 of `./moq` (the binary is `target\release\moqui.exe`). The first build that needs it downloads NASM 3.02 to
@@ -95,6 +96,36 @@ On the server:
 6. Back up `/opt/moqui/.env` with the database. It holds `entity_ds_crypt_pass`, the key of the encrypted fields.
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
+
+### Deploy a single binary
+
+A binary built with the production runtime in it ([Built-in runtime files](#built-in-runtime-files)) is the whole
+deployment: no archive to unpack, and an upgrade is a new binary. On the build machine:
+
+```sh
+./moq archive --binary --embed-opensearch   # moqui-YYYYMMDD.gz and moqui-YYYYMMDD.sha256
+```
+
+`--binary` builds with `--embed production` (every base and add-on component in `runtime/components`, less tests and
+plans); `--embed-opensearch` and `--embed-chromium` add those programs when the server has none of its own. On the
+server, as in [Run one production server](#run-one-production-server) with the binary in place of the archive:
+
+```sh
+sudo install -d -o moqui -g moqui /opt/moqui /etc/moqui
+gunzip -c moqui-20261114.gz | sudo install -o moqui -g moqui -m 755 /dev/stdin /opt/moqui/moqui
+sudo install -o moqui -g moqui -m 644 moqui-20261114.sha256 /opt/moqui/embedded.sha256
+sudo tee /etc/moqui/environment > /dev/null <<'EOF'
+MOQUI_RUNTIME=/opt/moqui
+MOQUI_CONF=conf/MoquiProductionConf.xml
+EOF
+```
+
+`MOQUI_RUNTIME` makes `/opt/moqui` the runtime though it has no `components/` yet, and `MOQUI_CONF` picks the
+production conf built in (the binary alone otherwise runs the dev conf). The first start unpacks Postgres, and
+OpenSearch when it is used, into `/opt/moqui/install/`, and reads every other file from the binary. With
+`embedded.sha256` there it checks the binary against it first and does not start when a part differs; where settings
+come from the environment, set `MOQUI_EMBEDDED_SHA256_RUNTIME` and the others instead (`moqui embedded checksum --env`
+prints them). Put an edited conf or a changed file on disk and it is used in place of the built-in one.
 
 ### Run in a container
 
@@ -201,31 +232,70 @@ and secrets ([runtime/README.md](../runtime/README.md)). The binary takes the fi
 
 The runtime is never found from where the binary is, so one binary runs several instances, each started in its own
 directory. Run a command such as `moqui load` from the instance's directory, or with `MOQUI_RUNTIME`; from anywhere
-else it finds no runtime and makes a new one there. The server and `moqui load` fill a runtime that has no framework
-component with a skeleton runtime written from the files built into the binary (below), so a lone binary starts.
+else it finds no runtime and makes a new one there. A runtime reads the files built into the binary that it does not
+have (the framework, tools, webroot and conf files, and with a production build every component; below), so a lone
+binary starts in an empty directory.
 
-### Built-in framework files
+### Built-in runtime files
 
-The binary carries a copy of the framework and tools components (less their `test/`, which holds both suites) and of a
-webroot stub, listed in `crates/moqui-embedded/webroot-files.txt`: the REST, login, error and html `/apps` screens, and
-the html render mode's style sheet and scripts with the two libraries it loads (Tom Select, SortableJS). Fonts, icons,
-`/qapps` and the web client's JavaScript libraries are not in it. It uses the copy two ways:
+The binary carries a copy of part of the runtime (`crates/moqui-embedded`), at one of three levels chosen when it is
+built (`./moq build --embed <level>`, [Embedded runtime and programs](Build-Test.md#embedded-runtime-and-programs)):
 
-- **Startup comparison.** After the factory boots, the server and `moqui load` compare the framework, tools and
-  webroot components on disk with the copies and log `N framework, tools and webroot files differ from the ones built
-  into this binary`, then one line per file: changed (with the first line that differs), missing on disk, or added on
-  disk (framework and tools; the webroot copy is a subset). The files on disk are used; the lines say why a changed
-  file may no longer fit the binary. A file the binary has compiled in (`template/XmlActions.js` and three others) is
-  marked as ignored, since its disk copy is never read. `moqui embedded diff [<component>/<path>]` prints the diffs
-  and `moqui embedded list` the built-in files.
-- **Skeleton runtime.** A runtime with no `components/base/framework/component.xml`, and no `MOQUI_FRAMEWORK`, gets
-  the framework, and tools and the webroot stub when `components/base/tools` and `components/base/webroot` are not
-  there, with a placeholder page at `/` in place of the web client, and the sets' manifest `components/components.xml`
-  when it has none (only the sets it lists load). It boots, loads the seed data, answers `/rest`
-  (with the tools `moqui` API), `/Login`, `/status` and the html `/apps` (System, Tools, Dashboards), and runs
-  `moqui tui`; links to fonts, icons and the web client are broken until the full webroot is installed, and the
-  application components are not there. `moqui embedded extract <dir>` writes the same files into a directory. Files
-  already there are never replaced.
+| Level | What is built in |
+| --- | --- |
+| `framework` (the default) | The framework and tools components less their `test/`, a webroot stub listed in `crates/moqui-embedded/webroot-files.txt` (the REST, login, error and html `/apps` screens, the html render mode's style sheet and scripts with Tom Select and SortableJS; no fonts, icons, `/qapps` or web client libraries), and the runtime's `conf/` with every example and starter conf |
+| `production` | The framework level with the whole webroot (the web client) and every other component of the base and add-on sets, each less its top-level `test/`, `plan/` and `plans/`: the file set of `./moq archive` |
+| `all` | The production level with each component's `test/`, `plan/` and `plans/`, and the dev and test sets: `./moq archive --with-tests --with-dev` |
+
+Neither the binary nor `./moq archive` takes the names `crates/moqui-embedded/archive-excludes.txt` lists (`.git`, a
+component crate's `target/`, `__pycache__`, editor backups); the binary also leaves out dot files. It uses the copy
+three ways:
+
+- **Files read in place.** Each built-in file that is not on disk is read from the binary, in any runtime; a file on
+  disk is used in its place. The framework component is the one `MOQUI_FRAMEWORK` names, tools and webroot are in
+  `components/base`, the other components in their sets under `components/`, and the confs in `conf/`, so `--conf
+  conf/MoquiProductionConf.xml` and the topology confs work with the binary alone. Without a runtime the server and
+  `moqui load` make only its directories (`components/base/framework`, `tools`, `webroot`, a directory for each other
+  built-in component, and the database and log directories when they are used). At the framework level, with a
+  placeholder page at `/` in place of the web client and the built-in sets' manifest `components/components.xml`, it
+  boots, loads the seed data, answers `/rest` (with the tools `moqui` API), `/Login`, `/status` and the html `/apps`
+  (System, Tools, Dashboards), and runs `moqui tui`; links to fonts, icons and the web client are broken until the
+  full webroot is installed. At the production level it is the whole instance ([Deploy a single
+  binary](#deploy-a-single-binary)). Every built-in component loads, as one on disk would. A file written to a
+  built-in location (an edit in System, a component put in `components/addon`) lands on disk and is used from then on.
+- **Startup comparison.** After the factory boots, the server and `moqui load` compare the components on disk with the
+  copies and log `N framework, tools and webroot files are not on disk and are read from this binary` when there are
+  some, and `N … files differ from the ones built into this binary`, then one line per file: changed (with the first
+  line that differs) or added on disk (the framework level's webroot copy is a subset). For the framework, tools and
+  webroot these are warnings, since a changed file may no longer fit the binary's code; for the other components
+  (production and all) they are information, and a component on disk in a built-in set that the binary does not have
+  is one line. A file the binary has compiled in (`template/XmlActions.js` and three others) is marked as ignored,
+  since its disk copy is never read. `moqui embedded diff [<set>/<path>]` prints the diffs (`conf/<path>` and
+  `components/<set>/<component>/<path>` too), `moqui embedded list` the built-in files and `moqui embedded info` the
+  level, sets and programs.
+- **Extract.** `moqui embedded extract` writes each built-in file that is not on disk into the runtime `moqui` uses,
+  and `moqui embedded extract <dir>` into another; files already there are never replaced. Then the runtime reads
+  none from the binary, and its files can be edited or put in git.
+
+**Programs.** Postgres (the `embedded-postgres` feature of the Lite and Maximal packages), OpenSearch (`--embed-opensearch`)
+and Chromium (`--embed-chromium`) can be built in as their archives. Each is unpacked into the install directory,
+`<MOQUI_INSTALL>/<program>/<version>` (default `install/` in the runtime, which `./moq archive` leaves out), the first
+time it is needed, and runs as its own process; unlike the runtime files they are then ordinary files on disk, so
+this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
+the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
+and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
+start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+`moqui_chromium_path` and `runtime/chromium`, before an installed one.
+
+**Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
+(the packed runtime files as built), and `postgres`, `opensearch` and `chromium` (each the `sha256sum` of the archive
+file the build embedded); `--env` prints them as `MOQUI_EMBEDDED_SHA256_<PART>=<hex>`. Before it starts, the server
+and `moqui load` check the parts named in the file `moqui_embedded_checksums` names (a property, environment
+variable or `.env` entry; it must be there), else in `<runtime>/embedded.sha256` when that is there, and in the
+`MOQUI_EMBEDDED_SHA256_*` variables, which take the place of the file's lines. A part that differs, or one named that
+the binary does not have, is logged as an error with both checksums, and the start is refused. Lines for other files
+(the `.gz` that `./moq archive --binary` writes) are skipped, so the same file serves `sha256sum -c
+--ignore-missing`. With none given nothing is checked.
 
 Keep the runtime path short. The embedded Postgres socket, `<runtime>/db/embedded/.s.PGSQL.5432`, must be under 108
 bytes, or the start fails with "postgres socket path is N bytes".
@@ -865,7 +935,7 @@ every host gets `webroot.xml`, the apps on paths under it, until a `root-screen`
   |---|---|
   | not set | The root's own screens and the shared static files. The token routes, the servlets and the sockets answer as on every host (Moqui Java's behaviour) |
   | `include` | The root's own screens first, then `webroot.xml`'s for a first path name the root does not have: the shell (`/qapps`), sign-in, the apps, `/rest`, the PWA files and Web Push |
-  | `refuse` | The root's own screens and the shared static files only. `/Login`, `/apps`, `/qapps`, `/rest`, the token routes, the servlets, the sockets, `/dav`, `/health`, `/metrics` and the gRPC services of the HTTPS listener are Not Found there, so nobody signs in to the framework on the host. Git at a public site's page URL is the one exception, on a host that is also a `public-site`'s. Use it for a public site |
+  | `refuse` | The root's own screens and the shared static files only. `/Login`, `/apps`, `/qapps`, `/rest`, the token routes, the servlets, the sockets, `/dav`, `/health`, `/metrics` and the gRPC services of the HTTPS listener are Not Found there, so nobody signs in to the framework on the host. Git and CI runners are the exception, each behind its own authentication and web protection: `/git/` (smart HTTP and LFS), git at a public site's page URL on a host that is also a `public-site`'s, and `/ci/runner/`. Use it for a public site |
 
 - **Links.** A link made in a request to such a host keeps that host, with the webapp's scheme and port: only a host a
   `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
@@ -980,6 +1050,7 @@ address.
 | Phones: trunks, outside phones, the fallback while the local node is away | [SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away) |
 | XMPP clients through the tunnel ports | [XMPP](interfaces/XMPP.md#behind-an-edge-node) |
 | SSH through the tunnel port | [`MoquiEdgeConf.xml`](../runtime/conf/edge/MoquiEdgeConf.xml)'s comments; [Attack-Surface](security/Attack-Surface.md#edge-node), SSH tunnel port |
+| Git hosting and CI: the URLs, the SSH tunnel's clone URLs, uploads, refusing hosts, runners' tokens | [Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool), [Pipelines](interfaces/Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool) |
 | Work over the link: delegated services, the queue, replicated sets | the `<edge>` element in `MoquiEdgeConf.xml` and `MoquiDefaultConf.xml`; [plan](../plans/archive/Edge-Node.md) §5.2 |
 
 System › Edge Node shows the outbox and the replicated sets, with Pause and Resync; Edge Clients shows each node's
@@ -1121,6 +1192,9 @@ The cluster itself is as in [Cluster](#cluster): one external database, the same
   says when it is starting or stopping. Drain, stop, upgrade, start, resume, one member at a time.
 - **Work from the pool**, replication and shared bans: [Cluster, What is shared and what is
   not](#what-is-shared-and-what-is-not), With an edge node.
+- **Git hosting and CI** behind the edge node and in the pool (the URLs to set, the SSH tunnel, the shared SSH host
+  key and LFS key): [Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool),
+  [Pipelines](interfaces/Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
 - **Drain the last live member** only to take the pairing offline: its names get the offline page, or a refused
   connection, until it resumes.
 
@@ -1138,9 +1212,16 @@ A member whose requests fail or time out three times in a row is set aside for 3
 member set aside they are all tried. A request that fails before any byte of an answer goes once more to another
 member when it is a GET or HEAD with no body, or when it was never sent; nothing else is sent twice. A member that
 stops moves only its own clients, and they stay signed in: sessions are rows in the pool's database. The defaults are
-the `<edge>` element's `sticky-cookie`, `set-aside-failures` and `set-aside-seconds`; Edge Clients › Balancing shows them
-with each member's requests in flight and in all and whether it is set aside (`get#EdgeBalancing`), and the `moqui.edgelink.requests`,
-`retries` and `set_asides` counters name the pairing and the member.
+the `<edge>` element's `sticky-cookie`, `set-aside-failures` and `set-aside-seconds`. A forwarded request waits for its
+answer while its body keeps moving, a gap of `forward-idle-seconds` (120) at most, and then `forward-head-seconds`
+(3600) once it is all sent, so an upload answered once it is stored (Git LFS, CI artifacts) is not cut off. A GET or
+HEAD with no body waits `forward-first-byte-seconds` (30) for its answer's head, so one held by a hung member goes to
+another and the hung one is set aside; a first-byte timeout that goes to no other member (there is none, or it was the
+second try) is not counted against the member, and any other request with no body (a POST) is never sent again and
+waits `forward-head-seconds`. The edge node's own `request-timeout` does not apply to a request it forwards;
+the member's does. System › Edge Clients › Balancing shows each member's requests in flight and in all and whether it
+is set aside (`get#EdgeBalancing`), and the `moqui.edgelink.requests`, `retries` and `set_asides` counters name the
+pairing and the member.
 
 ## A local node with a standby
 
@@ -1372,6 +1453,11 @@ node](#a-local-cluster-with-an-edge-node).
 - **The same secrets on every member**: `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key` and
   `entity_ds_crypt_pass`. Startup fails when a live member has a different session key or certificate, with
   "session_cookie_key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
+  For git hosting, `ssh_host_key` and `git_lfs_token_key` too: behind a load balancer or an edge node's pool a client's
+  SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
+  key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
+  host key differs from a live member's warns at startup; no member row shows the LFS key. Copying the first member's
+  whole `.env` gives each the same ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
 - **A distinct instance id**: each member keeps its own in `runtime/db/instance_id` (or `instance_id`). It is not in
   `.env`, so copying `.env` between members is safe.
 
@@ -1401,8 +1487,9 @@ values are in the conf's comments.
 - **Shared**: scheduled jobs take a lock row, so each job runs on one member at a time. Content blobs, `db` git
   repositories, sessions and the LLM quotas are in the database.
 - **Not shared**:
-  - `local` and `remote` git repositories are on one member's disk. Use `db` repositories, or send `/git` and SSH to
-    that member.
+  - `local` and `remote` git repositories are on disk under `runtime/git`. In a cluster they are allowed only with
+    the conf setting that says `runtime/git` is on storage every member mounts, and refused without it; else use
+    `db` repositories ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
   - Files on disk are each member's own: the SFTP root (`runtime://sftp`), and any setting that names a directory,
     such as `pass_media_root`. Share the directory between the members.
   - The LLM gateway's requests-per-minute and the web protection's limits are counted on each member separately. A
@@ -1554,42 +1641,48 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
 
 ### Each dev instance
 
-1. **Credential.** On the group server, make an access token: Projects › Code › Git access, or Commons › Settings ›
-   Account. It is shown once. It is a login key, and it serves as:
-   - the password for git over HTTPS;
-   - the dev-aide task source's token;
-   - the gateway key, once it has an `LlmApiClient` row.
+1. **Connect.** In Dev AIDE (`/qapps/dev`) › Settings › Group servers, give the group server's address
+   (`https://team.example.com`) and Connect. The browser opens the group server's sign-in, as the desktop app's does:
+   sign in there (with its identity provider, or its own login) and confirm. The dev instance gets a login key of
+   your account, kept encrypted and sent only to that server ([Logging in](interfaces/Git-Hosting.md#logging-in); the
+   redirect is the dev instance's own loopback address by its IP literal, `http://127.0.0.1:8080/...` even when the
+   page is at `localhost`, so you may be asked to sign in to the dev instance at `127.0.0.1` once). A browser signed
+   in to the group server already stays signed in there and enters its password again on the confirmation. A server
+   without the sign-in takes an access token pasted from its Git access page (Projects › Code › Git access, or Commons
+   › Settings › Account) instead.
+2. **Confirm what Connect sets**, each a checkbox, from what the server offers
+   (`/rest/s1/moqui/hosting/offer`):
+   - the repository entry in `myaddons.xml` (not in git) for the server's git URL, and optionally as the
+     `default-repository` when the file names none; then `./moq component-get acme-site`. The repository ids (or
+     paths) on the group server are the component names. A repository of the same name that you wrote is not replaced:
+     give the server's another name;
+   - the task source (`moqui-rest`) with your token: Tasks lists your work items, and commits carry the current
+     task's trailer;
+   - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the alias as `llm_openai_model`, and as
+     `llm_openai_api_key` a key the server makes for its gateway alone, never your account's key), applied at the next
+     start. The lines you had before are kept and put back by Remove. The gateway needs `LlmGatewayUse`, and, while its
+     `require-client` is on, an `LlmApiClient` row naming the key on the group server (or `require-client` off);
+   - git's credential for the server's host: git's own helper (the default), or the token of the connection.
 
-   For git over SSH, add your public key on the same Git access screen instead.
-2. **Repositories.** Put the team's repository and components in your `myaddons.xml`, which is not in git:
-
-   ```xml
-   <addons>
-       <repository name="team">
-           <location type="git" url="https://team.example.com/git/${name}.git"/>
-       </repository>
-       <component name="acme-site" repository="team"/>
-   </addons>
-   ```
-
-   Then run `./moq component-get acme-site`. The repository ids on the group server must be the component names. Keep
-   the token in a git credential helper (`git config --global credential.helper store`, or the OS keychain). With
-   `default-repository="team"` on `<addons>`, every component comes from the group server.
-3. **Models.** Point the default model endpoint at the gateway, in `runtime/.env` or with `-D`. The URL has no `/v1`,
-   since the endpoint adds `/v1/chat/completions`.
-
-   ```sh
-   llm_openai_url=https://team.example.com/llm
-   llm_openai_api_key=<access token>
-   llm_openai_model=<alias>
-   ```
-
-4. **Tasks.** In Dev AIDE (`/qapps/dev`) › Tasks, add a source of kind `moqui-rest` with the base URL
-   `https://team.example.com` and the token. It lists your work items from `/rest/s1/mantle/my/tasks`. A task app with
-   the group server's base URL (Dev AIDE › Settings) opens them there. Commits from the Workspace carry the current
-   task's trailer.
-5. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
+   For git over SSH, add your public key on the server's Git access screen instead. Settings › Group servers shows each
+   connection's state, Check, Sign in again and Remove, which takes back what Connect set and nothing else: a
+   `myaddons.xml` repository only as Connect wrote it, the `.env` lines only while they are as it wrote them (yours put
+   back), and the keys it was given ended on the server (the gateway's, and the sign-in's; a pasted token stays, as it
+   may serve elsewhere).
+3. **The Workspace** then knows the hosted repository of each working tree whose remote is the server's (a Merge
+   requests tab with Review: the changes in the merge view with the server's threads, a reply, resolve, a comment on a
+   line and a review; open threads in the editor's gutter on a checked-out merge request; Propose in place of Push for
+   a repository you may only view, Fork where the server makes forks, Publish to a publish branch opening a merge
+   request; check chips on Commits and Branches with the runs, a job's log, its failed tests as links and Re-run; the
+   contributor agreement's warning and Sign). Checking out a merge request runs its code here (the file watcher
+   reloads it): read it first. Merging stays on the server's page. For a pre-commit hook or a coding agent in a
+   terminal, `moqui check --agreement` asks the server the same (`MOQUI_GROUP_SERVER`, `MOQUI_GROUP_TOKEN`).
+4. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
    not be reachable from the network.
+
+The same by hand, as before Connect: a `myaddons.xml` repository (`<repository name="team"><location type="git"
+url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_openai_*` lines in `runtime/.env`, a
+`moqui-rest` task source with the token in Dev AIDE › Tasks, and the token in a git credential helper.
 
 ### The shared dev-aide server
 
@@ -1601,7 +1694,10 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
 3. Put its users in `DEV_AIDE_EXTENDERS`, who may write site components and publish them, or `DEV_AIDE_USERS`, who may
    do everything.
 4. Network git (fetch, pull, push, clone) is off on a shared server until an admin turns it on in Dev AIDE › Settings,
-   with a deploy token or per-user tokens from the group server.
+   with a deploy token or per-user tokens from the group server. Each user connects to the group server as
+   themselves (Settings › Group servers); a shared server's address is not loopback, so the group server lists its
+   `/qapps/dev/Settings/serverSignedIn` URL in `webapp_app_redirect_uris`, or its users paste a token. Connect's
+   `myaddons.xml` and `.env` items are not offered on a shared server.
 5. Commits carry the logged-in user as author. A save checks the file on disk by its hash, so a save over another
    user's change offers Compare instead of overwriting it.
 
@@ -1613,8 +1709,9 @@ everyone's schema, and any instance could run the team's jobs. Each dev instance
 hand a database to someone else, send a `./moq save-db` save and the matching `entity_ds_crypt_pass`.
 
 **Not built**:
-- Moqui is not an identity provider, so a dev instance cannot log in through the group server. Point both at one
-  external OIDC provider, or keep separate accounts.
+- Moqui is not an identity provider, so a dev instance's own users do not log in through the group server (Connect
+  only gets the dev instance a key of the user's account there). Point both at one external OIDC provider, or keep
+  separate accounts.
 - Pushing a hosted repository to another server; a `remote` repository is a read-only mirror.
 - OAuth or OIDC tokens for MCP and A2A; they take login keys and app passwords.
 

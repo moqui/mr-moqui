@@ -48,11 +48,40 @@ struct Watchers {
     told: i64,
 }
 
-/// Per factory: the mask patterns of running jobs (decrypted once a job), and who watches which log, by job run.
+/// The mask patterns of a job are made again from its secrets after this long, and let go when not used for this
+/// long: a job that ended on another cluster member is never forgotten here by [`forget`].
+const MASK_MILLIS: i64 = 5 * 60 * 1000;
+
+/// The mask patterns of a job, and when they were made.
+type MadeMasks = (Arc<Vec<String>>, i64);
+
+/// Per factory: the mask patterns of running jobs (decrypted once a job, each with when it was made), and who watches
+/// which log, by job run.
 #[derive(Default)]
 struct LogState {
-    masks: Mutex<HashMap<String, Arc<Vec<String>>>>,
+    masks: Mutex<HashMap<String, MadeMasks>>,
     watchers: Mutex<HashMap<String, Watchers>>,
+}
+
+impl LogState {
+    /// The patterns of a job made less than [`MASK_MILLIS`] before `now`, after letting go of every older one.
+    fn known(&self, job_run_id: &str, now: i64) -> Option<Arc<Vec<String>>> {
+        let mut masks = moqui_lib::sync::lock(&self.masks);
+        masks.retain(|_, (_, made)| now - *made < MASK_MILLIS);
+        masks.get(job_run_id).map(|(patterns, _)| Arc::clone(patterns))
+    }
+
+    fn keep(&self, job_run_id: String, patterns: Arc<Vec<String>>, now: i64) {
+        moqui_lib::sync::lock(&self.masks).insert(job_run_id, (patterns, now));
+    }
+
+    /// Let go of the watchers of jobs nobody read in the last [`WATCH_MILLIS`].
+    fn sweep_watchers(&self, now: i64) {
+        moqui_lib::sync::lock(&self.watchers).retain(|_, watchers| {
+            watchers.read.retain(|_, read| now - *read < WATCH_MILLIS);
+            !watchers.read.is_empty()
+        });
+    }
 }
 
 fn state() -> Option<Arc<LogState>> {
@@ -63,10 +92,8 @@ fn state() -> Option<Arc<LogState>> {
 fn patterns(entity: &EntityFacade, job: &EntityValue) -> Arc<Vec<String>> {
     let id = field(job, "jobRunId").unwrap_or_default();
     let state = state();
-    if let Some(known) = state
-        .as_ref()
-        .and_then(|state| moqui_lib::sync::lock(&state.masks).get(&id).cloned())
-    {
+    let now = super::now_millis();
+    if let Some(known) = state.as_ref().and_then(|state| state.known(&id, now)) {
         return known;
     }
     let made = (|| -> Result<Vec<String>, Error> {
@@ -90,7 +117,7 @@ fn patterns(entity: &EntityFacade, job: &EntityValue) -> Arc<Vec<String>> {
         Vec::new()
     }));
     if let Some(state) = state {
-        moqui_lib::sync::lock(&state.masks).insert(id, Arc::clone(&made));
+        state.keep(id, Arc::clone(&made), now);
     }
     made
 }
@@ -109,6 +136,7 @@ pub(crate) fn watch(job_run_id: &str) {
         return;
     };
     let now = super::now_millis();
+    state.sweep_watchers(now);
     let mut watchers = moqui_lib::sync::lock(&state.watchers);
     let entry = watchers.entry(job_run_id.to_string()).or_default();
     entry.read.retain(|_, read| now - *read < WATCH_MILLIS);
@@ -355,3 +383,7 @@ pub fn read(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "log_tests.rs"]
+mod tests;

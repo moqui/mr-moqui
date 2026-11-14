@@ -18,6 +18,9 @@
         sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
         (docs/tools/Component-Deploy.md). -->
     <default-property name="component_deploy_enabled" value=""/>
+    <!-- The secret this server issued to a source server for attested deploys (component-deploy attestation-secret):
+        at least 16 characters, set in runtime/.env; empty takes none. -->
+    <default-property name="component_deploy_attestation_key" value=""/>
 
     <!-- Locale and Time Zone Properties -->
     <default-property name="default_locale" value="en_US"/>
@@ -157,6 +160,8 @@
     <default-property name="git_public_url" value=""/>
     <default-property name="git_lfs_token_key" value="CHANGEME" is-secret="true"/>
     <default-property name="git_lfs_token_key_previous" value="" is-secret="true"/>
+    <!-- true when runtime/git (and every localPath) is on storage every cluster member mounts (git-server shared-storage). -->
+    <default-property name="git_shared_storage" value="false"/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts (smtp-server below). Off while smtp_listen_port is
@@ -867,6 +872,9 @@
                         path="/git/**,/**/info/refs,/**/git-upload-pack,/**/git-receive-pack,/**/*.git/info/lfs/**"/>
 
                 <ban name="auth-failure" events="auth-failure" threshold="20" seconds="600" duration="900"/>
+                <!-- a well-formed CI token that is not known (runners share addresses, so more are allowed than of
+                    auth-failure; a token of a job that ended is no failure) -->
+                <ban name="ci-token-failure" events="ci-token-failure" threshold="100" seconds="600" duration="900"/>
                 <ban name="abuse" events="rate-limited,denied" threshold="300" seconds="60" duration="300"/>
 
                 <!-- a rule with a name merges by it, so a component can change it or turn it off with enabled="false" -->
@@ -906,7 +914,7 @@
             to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
             attribute, which would replace these defaults. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -1301,18 +1309,30 @@
         what it names, and after review-max-refused refused pushes for review or proposals in an hour (per node; 0:
         no cap) the account sends no more that hour.
         merge-request-url is the page told to the client ({repositoryPath}, {repositoryId}, {mergeRequestNum},
-        {mergeRequestId}; after public-url when it starts with /). A commit is read or fetched by its id only when a
+        {mergeRequestId}; a full URL, http:// or https://, as given, so it may name an app's pages on another host or
+        under a mount; anything else follows public-url). A commit is read or fetched by its id only when a
         ref reaches it, from at most reach-max-commits commits kept in memory per repository; get#GitCommitRefs reads
         at most contains-max-commits. Commit status contexts that start with one of reserved-status-contexts (comma
         separated; none by default, a hosting application sets agreement/,ci/) are written with authorization
         disabled only. The head ref of a merge request closed unmerged is deleted review-ref-retention-days after. committer-name and committer-email are the committer
         of a commit#GitFiles commit whose author the application gives.
+        The REST resources of repositories, merge requests and pipeline runs (docs/interfaces/Git-Hosting.md, REST) ask
+        rest-write-check-service (org.moqui.git.GitServices.check#GitRestWrite) before each write on a repository, so an
+        application that keeps a repository (its own rules, pages and REST) refuses and names its own REST; offer-service
+        (add#GitHostingOffer) adds what the application offers to /rest/s1/moqui/hosting/offer; agreement-check-service
+        (check#GitAuthorSigned) answers whether an author signed a repository's contributor agreement; review-thread-service
+        (handle#GitReviewThread) keeps merge requests' review threads (an application's, such as Mantle's) for the REST.
+        None when empty.
+        In a cluster (docs/interfaces/Git-Hosting.md, Shared storage in a cluster) a local or remote repository needs
+        runtime/git on storage every member mounts, said by shared-storage (git_shared_storage); without it a cluster
+        member refuses a new one and warns of the ones it has. With it a push or write waits at most
+        shared-lock-wait-seconds for another member's write to the same repository.
     -->
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
-            lfs-max-object-size="5368709120" lfs-upload-check-service="" eca-max-commits="10000"
+            lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
             archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"
@@ -1322,16 +1342,20 @@
             review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
             review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
             review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
-            merge-request-url="" reach-max-commits="1000000" contains-max-commits="200000"
-            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""/>
+            merge-request-url="" rest-write-check-service="" offer-service="" agreement-check-service="" review-thread-service=""
+            reach-max-commits="1000000" contains-max-commits="200000"
+            reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""
+            shared-storage="${git_shared_storage}" shared-lock-wait-seconds="120"/>
 
     <!--
         Pipelines: the CI engine over the hosted repositories (docs/interfaces/Pipelines.md). With enabled empty the
         engine queues runs only while there is an enabled GitRunnerPool, so a server that runs no CI writes no
         statuses. server-url is the URL runners reach this server by (the git public URL when empty). The
         run-check-service is asked before a run is queued (org.moqui.git.GitCiServices.check#PipelineRun) and the
-        run-url-service, else the run-url template, gives the target of the commit statuses. A job never runs on
-        this server: the limits here are what a ci.xml may ask for and what a runner may send.
+        run-url-service, else the run-url template, gives the target of the commit statuses; a server whose accounts
+        sign themselves up sets run-check-service, so the application decides whether a public account's own
+        repository runs without approval. A job never runs on this server: the limits here are what a ci.xml may ask
+        for and what a runner may send.
     -->
     <git-ci enabled="${git_ci_enabled}" server-url="${git_ci_server_url}" server-id="" run-check-service=""
             run-url-service="" run-url=""
@@ -1344,7 +1368,9 @@
             cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
             container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
-            container-tmp-mb="1024"/>
+            container-tmp-mb="1024" container-workspace-mb="4096" max-services="4" schedule-min-minutes="15"
+            pool-token-days="7" max-repository-upload-bytes="0" max-owner-upload-bytes="0"
+            deploy-timeout-seconds="600" deploy-private-network="false"/>
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
@@ -1456,6 +1482,15 @@
         account's data for offline use. A build embeds its own in its runtime conf (device-mode personal for a person's
         own device, shared for a hot desk or point of sale); choose has the sign-in ask. The server does not read it. -->
     <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+
+    <!-- Deploying a component on this server (docs/tools/Component-Deploy.md "The gate"). attestation-secret is the
+        secret this server issued to a source server (the token of the source's environment): with it,
+        deploy#AttestedComponent (REST POST /rest/s1/moqui/components/deploy) takes a deploy whose attestation, signed
+        with it and at most max-age-seconds old, says the commit passed the environment's pipeline. With
+        require-passed-run true, deploy#Component, update#Component and load#Component refuse anything else: a deploy
+        from this server's own pages needs such an attestation too. -->
+    <component-deploy require-passed-run="false" attestation-secret="${component_deploy_attestation_key}"
+            max-age-seconds="300"/>
 
     <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
     <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"

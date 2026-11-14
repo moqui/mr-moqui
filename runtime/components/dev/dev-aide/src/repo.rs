@@ -240,7 +240,7 @@ fn discard_hunks(
 
 // ---- branches ----
 
-const REF_FORMAT: &str = "--format=%(refname)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(committerdate:iso-strict)%1f%(contents:subject)";
+const REF_FORMAT: &str = "--format=%(refname)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(committerdate:iso-strict)%1f%(objectname)%1f%(contents:subject)";
 
 /// A branch against its upstream.
 #[derive(Debug, PartialEq)]
@@ -282,13 +282,14 @@ fn get_branches(
     let mut remote = Vec::new();
     for line in listed.lines() {
         let fields: Vec<&str> = line.split('\u{1f}').collect();
-        if fields.len() < 7 {
+        if fields.len() < 8 {
             continue;
         }
         let Tracking { ahead, behind, gone } = track(fields[3]);
+        // the head commit: the status chip of the branch (plans/design-dev-aide.md 21.5)
         let row = json!({
             "name": fields[1], "upstream": fields[2], "ahead": ahead, "behind": behind, "gone": gone,
-            "current": fields[4] == "*", "date": fields[5], "subject": fields[6],
+            "current": fields[4] == "*", "date": fields[5], "commit": fields[6], "subject": fields[7],
         });
         if fields[0].starts_with("refs/heads/") {
             local.push(row);
@@ -883,7 +884,7 @@ fn add_remote(
     let (name, url) = (text(parameters, "name"), text(parameters, "url"));
     valid_branch(&name)?;
     valid_url(&url)?;
-    branch_write(ec, parameters, &["remote", "add", &name, &url], "remote add")
+    branch_write(ec, parameters, &["remote", "add", "--", &name, &url], "remote add")
 }
 
 fn set_remote_url(
@@ -894,7 +895,12 @@ fn set_remote_url(
     let (name, url) = (text(parameters, "name"), text(parameters, "url"));
     valid_branch(&name)?;
     valid_url(&url)?;
-    branch_write(ec, parameters, &["remote", "set-url", &name, &url], "remote set-url")
+    branch_write(
+        ec,
+        parameters,
+        &["remote", "set-url", "--", &name, &url],
+        "remote set-url",
+    )
 }
 
 fn remove_remote(

@@ -118,6 +118,9 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="retry_GitWebhookDeliveries_frequent" description="Retry Git webhook deliveries"
             serviceName="org.moqui.git.GitServices.retry#GitWebhookDeliveries" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="run_GitRepositoryMirrors_frequent" description="Push Git repository push mirrors that are due"
+            serviceName="org.moqui.git.GitServices.run#GitRepositoryMirrors" cronExpression="0 * * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="fetch_AllGitRepositories_frequent" description="Fetch remote Git repository mirrors"
             serviceName="org.moqui.git.GitServices.fetch#AllGitRepositories" cronExpression="0 0/5 * * * ?" paused="N"
             errorHistoryOnly="Y"/>
@@ -240,6 +243,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <moqui.security.UserPermission userPermissionId="DashboardRemote" description="OpenSearch Dashboards access through /dashboard"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DashboardRemote" fromDate="0"/>
+
+    <!-- The operator of the CI's runner pools (find#, store#, delete#RunnerPool, create#RunnerPoolToken, revoke#Runner) -->
+    <moqui.security.UserPermission userPermissionId="GIT_CI_ADMIN" description="Run the CI's runner pools, registered runners and their tokens"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="GIT_CI_ADMIN" fromDate="0"/>
 
     <!-- Handy cron strings: [0 0 2 * * ?] every night at 2:00 am, [0 0/15 * * * ?] every 15 minutes, [0 0/2 * * * ?] every 2 minutes -->
 

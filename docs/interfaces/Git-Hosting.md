@@ -19,8 +19,9 @@ packs. The CI engine that runs a repository's pipelines for its pushes and merge
 `<path>` is the repository's `repositoryPath` (`moqui/mr-moqui`), or its `repositoryId`, which always works too and is
 the only address of a repository with no path. `org.moqui.git.GitServices.get#GitCloneUrls` gives the HTTPS and SSH
 URLs with the path (and the path itself, `repositoryPath`), from `git_public_url` (else the webapp host and port
-properties), and `ssh_public_host` and `ssh_public_port` (else the webapp host and `ssh_port`). The SSH username is
-the Moqui username.
+properties), and `ssh_public_host` and `ssh_public_port` (else, on a node paired with an edge node, the host and port
+of the edge node's SSH tunnel to it; else the webapp host and `ssh_port`). The SSH username is the Moqui username.
+Behind a front or edge node: [Behind a front or edge node, and in a pool](#behind-a-front-or-edge-node-and-in-a-pool).
 
 ### Repository paths
 
@@ -116,6 +117,25 @@ first branch pushed) its default branch.
   to what it should serve at once (hundreds), keeps `max-sessions-per-user` small, and raises
   `max-sessions-per-source` where many users come from one address (an office, a CI provider); the git pool
   (`git-server` `max-concurrent`) still bounds the work done at once.
+
+- **An installed app** (a dev instance's Dev AIDE connecting to its group server, plans/design-dev-aide.md 21.2; the
+  desktop and mobile apps) gets a login key without a pasted token: it opens `/sso/appLogin` in the browser with a PKCE
+  challenge, a state and its redirect URI; the browser signs in (at an identity provider, or with no `authFlowId` at
+  this server's own login; a browser signed in already stays signed in and enters the account's password, and its
+  second factor, again on the confirmation, or, with no password here, signs out and in again from it); the user
+  confirms (the form answers only the sign-in it was shown for, not one another start put in its place), on a page that names the port the code goes to and
+  says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
+  with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
+  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp_app_redirect_uris` exactly, or any loopback one
+  by its IP literal (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
+  `localhost`) unless `webapp_app_loopback_redirect` is false. It is on by default: any program on the user's computer
+  may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
+  app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
+  is not on loopback is listed in `webapp_app_redirect_uris`, or its users paste a token.
+- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
+  (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
+  user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's
+  own only). The REST has both as `hosting/gatewayKey` and `hosting/keyRevoke` (POST).
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
@@ -625,6 +645,9 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitReviewRefusals` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | too many of the account's pushes for review and proposals were refused this hour (`review-max-refused`) |
 | `GitReviewPushTooWide` | a push to `refs/for/` | it builds on more commits of the repository than `review-max-built-on` |
 | `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
+| `GitNeedsSharedStorage` | a write, `init#GitRepository`, `fetch#GitRepository`, `fork#GitRepository` | a new `local` or `remote` repository on a cluster member without `git-server` `shared-storage` ([shared storage](#shared-storage-in-a-cluster)) |
+| `GitLeaseBusy` | a push, a write, `fork#GitRepository`, `delete#GitRepository` | another cluster member writes the repository past `shared-lock-wait-seconds` |
+| `GitKeptByApplication` | the writes of the [REST](#rest) | the application that keeps the repository takes this change through its own REST |
 | `KeyInUse` | `UserServices.create#UserSshKey` | the key is an account's already |
 
 Over git the same texts are a ref's reason (`! [remote rejected] main -> main (GitProtectedBranch: protected branch:
@@ -723,8 +746,8 @@ asker may not read and is not attached to a hidden merge request's head by a use
 honoured with authorization disabled only: the application writes and reads the checks of a hidden head.
 
 **Reserved contexts.** A hosting application that writes checks of its own (a contributor agreement check) or runs
-the framework's [pipelines](Pipelines.md#statuses) names their prefixes in `git-server` `reserved-status-contexts`
-(`agreement/,ci/`): such a context is then refused from a user, whatever their rights (`GitReservedContext`), and
+the framework's [pipelines](Pipelines.md#statuses) and [deployments](Pipelines.md#deployments) names their prefixes in
+`git-server` `reserved-status-contexts` (`agreement/,ci/,deploy/`): such a context is then refused from a user, whatever their rights (`GitReservedContext`), and
 written with authorization disabled only, so a branch rule that requires it cannot be met by someone who may push
 posting it themselves. None is reserved by default: an outside CI posts `ci/...` with a user's token, as above.
 
@@ -763,7 +786,55 @@ do, and the framework's own, which queues its [pipeline runs](Pipelines.md#event
 
 ### Push mirrors
 
-A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
+A repository has any number of push mirrors (`moqui.resource.GitRepositoryMirror`, plans/Dogfood.md F6), each kept
+by `org.moqui.git.GitServices` with the delete right on the repository, as its webhooks and branch rules are (or
+authorization disabled):
+
+| Service | |
+|---|---|
+| `store#GitRepositoryMirror` | `repositoryId*`, `mirrorId` (none: a new one), `url`, `username`, `credential`, `hostKeyFingerprint`, `refPattern`, `deleteRefs`, `enabled`, `clearRefPattern`, `clearCredential` → `mirrorId`. An empty or null value keeps the one stored; `clearRefPattern` empties the patterns and `clearCredential` the username and credential |
+| `find#GitRepositoryMirrors` | `repositoryId*` → `mirrorList`: each row with `hasCredential`, never the credential |
+| `delete#GitRepositoryMirror` | `mirrorId*` → `deleted` |
+| `push#GitRepositoryMirror` | `mirrorId*` → `queued`: a push now, whatever the back-off; while one runs on any member, an error starting `GitMirrorBusy: ` |
+| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute) |
+
+- **Where.** `url` is `https://host/owner/repo.git` with no user or password in it (refused), the credential apart:
+  `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
+  write access), sent as basic authorization. Or an SSH URL (`git@github.com:owner/repo.git`,
+  `ssh://git@host:port/owner/repo.git`) with `hostKeyFingerprint` (`SHA256:...`, required) and a private key or a
+  password in `credential`. The credential is kept encrypted and is never in a log, an error, `lastError` or a URL
+  (nor is a `Basic` header value). It goes only where it was given for: a change of the URL's scheme, host or port, of
+  its user or `username`, or of `hostKeyFingerprint` needs the credential again in the same call, or
+  `clearCredential` (another path on the same host keeps it).
+- **Whose.** The credential rides on the delete right of who gave it (`createdByUserId`, set when the mirror is made
+  and each time a credential is given): a push of a mirror whose giver no longer has that right pauses it (`enabled`
+  N, `lastResult` `paused`, `lastError` says why) without using the credential, until an administrator gives the
+  credential again and enables it. A mirror stored with authorization disabled (`storedAuthzDisabled` Y, the
+  application's) is not held to it.
+- **What.** `refPattern`: comma-separated patterns of branches and tags (`refs/heads/*`, `main`, `refs/tags/v*`,
+  `main:mirror`), every branch and tag when empty; a pattern of other refs (a merge request's head, the framework's
+  `refs/moqui-*`) is refused. A push forces each ref the patterns cover to the local value; with `deleteRefs` Y the
+  refs of the mirror the patterns cover that are gone here are deleted there. It is a mirror: nothing is pushed to it
+  by hand.
+- **When.** The framework's post-receive rule (`queue#GitRepositoryMirrorPushes`, after each push, fetch, import or
+  write) marks each enabled mirror due (`nextAttemptDate` now) and starts its push on the service pool; a new or
+  re-enabled mirror is due at once. A failure counts (`attemptCount`), is kept (`lastResult`, `lastError`) and puts the
+  next try off by 1 minute, doubling to 6 hours; a later change still pushes at once. A success clears them. One push
+  of a mirror runs at a time across a cluster (the GitLease `git-mirror:<mirrorId>`): a push asked for while one runs
+  is pushed by that one before it lets go, with the refs as they are then. A push (up to 30 minutes) checks its lease
+  right before it records its outcome, so one that lost it to another member records nothing.
+- **Told.** The first failure after a success is a notification (topic `GitMirrorFailure`, kept and shown) to the user
+  who stored the mirror (`createdByUserId`); an application that wants a repository's owners told subscribes them or
+  reads the rows.
+- **Out.** Each push asks the [outbound check](#outbound-check) (`kind` `push-mirror`); a refusal is the push's
+  `not pushed: <message>` error. The address rules are the webhooks': no loopback, private or link-local address (by
+  name or written out), and no plain `http://`, unless `git-server` `webhook-private-network="true"`; no redirect is
+  followed. An SSH push connects to an address the name resolved to in the one check that all its addresses are
+  public, not to the name again (the host key is pinned). HTTPS is git's smart HTTP (`GET info/refs?service=git-receive-pack`, then `POST git-receive-pack`, the
+  request written to a file under `runtime/tmp` and sent from it), with 60 seconds to read the refs (at most 32 MiB)
+  and 30 minutes for the push, its report at most 1 MiB. Refused in sim mode.
+
+**The older push mirror.** A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
 fetch, import or write, by the framework's post-receive rule (`push#GitMirror`; Push Mirror Now on the repository's
 screen). The `SystemMessageRemote` holds where and how: `sendUrl` the SSH URL (`git@github.com:owner/repo.git` or
 `ssh://git@host:port/owner/repo.git`), `privateKey` and `publicKey` (a deploy key with write access), and
@@ -776,6 +847,49 @@ holds up no other rule; pushes of one repository take turns, and each sends the 
 change, or Push Mirror Now, pushes again. A push ends as git's does: it waits for the mirror's `git-receive-pack` to
 end, so the mirror's own post-receive hooks finish.
 
+### Fetching refs
+
+`GitServices.fetch#GitRefs` (`repositoryId*`, `remoteUrl*`, `username`, `password`, `refMap*`: remote ref → local
+ref) → `fetched` (the local refs written, or already at the remote's value), `problems` brings named refs of another
+server into a repository of any store, over the same smart HTTP client and address rules as a push mirror: one
+`git-upload-pack` request with the tips of the refs a reader reads (branches, tags, merge request heads that are not
+hidden; up to 256) as haves, one pack back. GitHub's importer fetches `refs/pull/<n>/head` to
+`refs/merge-requests/<n>/head` this way. It needs the delete right on the repository (as a push mirror), or
+authorization disabled, and asks the [outbound check](#outbound-check) first (`kind` `fetch`; a refusal is the error
+`not fetched: <message>`).
+
+- Local refs only under `refs/merge-requests/`, `refs/heads/` and `refs/tags/`; any other (`refs/moqui-*` among
+  them), a remote ref that is not there or that the remote did not send, and a branch or tag a rule refused are
+  `problems`, and the rest is fetched.
+- The objects come in as a push's: into quarantine, each within `max-object-size`, checked to be whole, accepted under
+  the repository's lock and lease. With authorization on the [reachability](#reachability) rules hold as for a push:
+  a ref's new value the pack did not bring must be the caller's (an id the store holds that is not, such as a hidden
+  merge request's head, is asked of the remote as one the store does not hold, and is a problem when the remote does
+  not send it), and what the pack builds on and names outside itself (parents, tree entries, a thin pack's delta
+  bases) must be what the caller reads, else the fetch fails and writes nothing. With authorization disabled (the
+  application's importer) they do not hold it back. LFS objects are not fetched (a file in LFS comes as its pointer).
+- A branch or tag moves as a push's does: the [branch rules](#branch-rules) (with authorization on), its pre events,
+  then a `GitUpdate` and the post events of the rules that take `source` `fetch` (webhooks, push mirrors; no
+  pipeline). A merge request's ref moves with no event, as the review services move it: with authorization disabled
+  any, and with it on only the first head of an [imported](#imported-merge-requests) merge request (no head yet, no
+  ref), which then records it as its `headCommitId`; any other is refused, since a head moved under a merge request
+  would carry its approvals to another commit.
+- The password is sent as basic authorization, never logged, and taken out of every error and problem.
+
+### Outbound check
+
+What a repository sends out of the server, its webhook deliveries and its push mirror's pushes, waits on the
+application when `git-server` `outbound-check-service` names a service (interface `check#GitOutbound`; none by
+default). It is asked, with authorization off, before a push's or an event's deliveries are queued (once, when the
+repository has webhooks that take it), before a push mirror pushes, before `fetch#GitRefs` reaches another server and
+before a deployment calls its environment's target ([Pipelines](Pipelines.md#deployments)), with `repositoryId`, `kind`
+(`webhook`, `push-mirror`, `fetch` or `deploy`) and `event` (for a deployment, its environment). `allowed` false (or `N`) holds them: no delivery is queued, and the push mirror records
+`not pushed: <message>` as its `lastPushMirrorError`. A service that fails holds them too. An application that hides a
+repository from all but its owners (or suspends one) answers false for it, as its run check (`git-ci`
+`run-check-service`, [Pipelines](Pipelines.md)) refuses its runs; deliveries queued before it was hidden are still
+sent, and a `test#GitWebhook` ping by an owner is sent. The service is asked of each push, so it should be a cheap
+read.
+
 ### Merge requests
 
 `org.moqui.git.GitReviewServices` keeps a merge request into a target branch of a repository
@@ -787,7 +901,7 @@ end, so the mirror's own post-receive hooks finish.
 
 | Service | |
 |---|---|
-| `create#MergeRequest` | of a branch of the repository by a user who may push; with `sourceRepositoryId`, of a fork's branch by a user who may view the target and has the update right on the fork; one open request per source and target; head, merge base and mergeability read now. With authorization disabled only: `mergeRequestNum`, a free number (an import) |
+| `create#MergeRequest` | of a branch of the repository by a user who may push; with `sourceRepositoryId`, of a fork's branch by a user who may view the target and has the update right on the fork; one open request per source and target; head, merge base and mergeability read now. With authorization disabled only: `mergeRequestNum`, a free number (an import). Imported (`imported`, with authorization disabled or the delete right): see below |
 | `update#MergeRequest` | title, description, target (a branch of the repository, else `GitNoSuchRef`), draft (marked ready), merge method, delete the source after; by the author or a user with update |
 | `set#MergeRequestReviewers` | replace, add or remove reviewers (not the author) |
 | `submit#MergeRequestReview` | approve, request changes or comment, at the current head; only a user who may push (update) approves, a viewer comments or requests changes; the author does not approve their own |
@@ -797,6 +911,21 @@ end, so the mirror's own post-receive hooks finish.
 | `find#MergeRequests` | of the repositories the user may view: by repository, status, author, reviewer, waiting for a user's review, target, title |
 | `get#MergeRequestApprovals` | the approvals that count toward the branch rules, as `merge#MergeRequest` counts them |
 | `get#MergeRequestDiff` | its commits and diffs as `get#GitCompare` gives them |
+
+#### Imported merge requests
+
+`create#MergeRequest` with `imported` true brings a merge request of another server (a GitHub pull request) in the
+state it has there, by the application (authorization disabled) or the repository's administrator (the delete right):
+`statusId` (`GmrOpen`, `GmrDraft`, `GmrMerged` or `GmrClosed`), `createdDate`, `mergedDate`, `closedDate`,
+`authorUserId` (another account, such as a placeholder of an imported author), and `mergeRequestNum` as given
+(`GitNumberTaken` when taken). Its head is set (`refs/merge-requests/<n>/head`) when `headCommitId` (with
+`pushedForReview`, after [`fetch#GitRefs`](#fetching-refs)) is in the store, or the source branch is there; it is
+compared with the target when the target branch is there; otherwise it is kept with no head (a target or a source that
+is gone is no refusal). An administrator's `headCommitId` must be a commit of the repository they read (one that is
+not there is refused alike); an administrator imports one with no head and then fetches its first head into its ref
+with `fetch#GitRefs`. The importer is kept (`importedByUserId`) and counts as an author: their approval is refused and
+not counted. Nothing fires: no `queue#MergeRequestEvent`, so no webhook, no pipeline run and no
+application handler of it; it does not start hidden unless `hidden` is given.
 
 #### Merge request refs
 
@@ -920,8 +1049,9 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
   `review-max-refused` (30; 0 for no cap) of an account's pushes for review and proposals were refused in an hour
   the next are refused before their pack is read (`GitReviewRefusals`), until the hour is over.
 - **The answer** names the merge request by number and id, and its page when `git-server` `merge-request-url` is set
-  (`/{repositoryPath}/-/merge-requests/{mergeRequestNum}`; also `{repositoryId}` and `{mergeRequestId}`; after the
-  public URL when it starts with `/`).
+  (`/{repositoryPath}/-/merge-requests/{mergeRequestNum}`; also `{repositoryId}` and `{mergeRequestId}`). A full URL
+  (`https://...`) is taken as given, so an application can name its pages on another host or under a mount; anything
+  else is a path after the public URL.
 - **Events.** The push is in the push log under `refs/for/<branch>`, and its commit, ref-update and post-receive
   events run as any push's (the ref is of type `other`). The merge request's own events are the same as for one
   opened by the service: `create#MergeRequest` runs, so the service ECA rules on it do, and webhooks get `opened`,
@@ -934,6 +1064,86 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
   its commits are never read before the application has looked, and the application shows it
   (`set#MergeRequestHidden` with `hidden` false) from its handler of the `opened` event, at once or when a
   moderator lets it through. Without the setting the application may hide one from that handler instead.
+
+### REST
+
+The framework's REST for hosting is in the `moqui` root resource (`tools/service/moqui.rest.xml`), in OpenAPI at
+`/rest/service.swagger/moqui.json` (plans/Dogfood.md F9, plans/design-dev-aide.md F18). Every path is open to a
+signed-in user (`MOQUI_API_GIT`, `MOQUI_API_HOSTING` in `ToolsSecurityData.xml`) and the services under it check the
+repository's rights as they do without REST, so an access token (a login key) reaches what its account may; a
+repository the caller may not view answers as one that is not there. Merge requests and pipeline runs are named by
+their numbers in the repository (`!3`, run 12); the services behind them are `org.moqui.git.GitRestServices`, which
+call `GitServices`, `GitReviewServices` and `GitCiServices`.
+
+| Path under `/rest/s1/moqui` | Methods | Service |
+|---|---|---|
+| `git/{repositoryId}` | GET | `get#Repository`: path, default branch, archived, fork of, the caller's rights (`access`), clone URLs, the default branch's rules and push to review (`mergeRequests`), who keeps it (`keptBy`), the agreement for the caller |
+| `git/{repositoryId}/cloneUrls`, `/branchRules`, `/tree`, `/compare` | GET | `get#GitCloneUrls`, `get#GitBranchRules`, `get#GitTree`, `get#GitCompare` |
+| `git/{repositoryId}/blob` | GET | `get#Blob`: `get#GitBlob`, a file that is not text as `base64` |
+| `git/{repositoryId}/refs` | GET, POST, DELETE | `get#GitRefs`; `create#Ref`, `delete#Ref` |
+| `git/{repositoryId}/commits`, `/commits/{commitId}`, `/commits/{commitId}/diff`, `/commits/{commitId}/refs` | GET | `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitCommitRefs` |
+| `git/{repositoryId}/commits/{commitId}/statuses` | GET, POST | `get#GitCommitStatuses`; `create#CommitStatus` ([commit statuses](#commit-statuses)) |
+| `git/{repositoryId}/agreement` | GET | `get#AuthorSigned` |
+| `git/{repositoryId}/writeCheck` | GET | `verify#Write`: what the application that keeps the repository says of an `operation`, before a client offers the control |
+| `git/{repositoryId}/mergeRequests` | GET, POST | `find#MergeRequests` (`filter`: `mine`, `review`, `open`, `all`); `create#MergeRequest` |
+| `git/{repositoryId}/mergeRequests/{mergeRequestNum}` | GET, PATCH | `get#MergeRequest`, `update#MergeRequest` |
+| `.../mergeRequests/{n}/close`, `/reopen`, `/reviews`, `/merge` | POST | `close#MergeRequest`, `reopen#MergeRequest`, `submit#MergeRequestReview`, `merge#MergeRequest` |
+| `.../mergeRequests/{n}/reviewers` | PUT | `set#MergeRequestReviewers` |
+| `.../mergeRequests/{n}/diff`, `/approvals` | GET | `get#MergeRequestDiff`, `get#MergeRequestApprovals` |
+| `git/{repositoryId}/pipelines/...`, `/jobs/...`, `/artifacts/...` | | [Pipelines](Pipelines.md#rest) |
+| `hosting/offer` | GET, with no credentials too | `get#HostingOffer`: what the server offers a client |
+| `hosting/repository` | GET `url` | `resolve#RepositoryUrl`: the repository a clone, SSH or page URL names, as `get#Repository` |
+| `hosting/mergeRequests` | GET | `find#MergeRequests` across the repositories the caller may view |
+| `hosting/agreement` | GET | `get#AuthorSigned` |
+| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway alone), `revoke#UserHeldKey` |
+| `.../mergeRequests/{n}/threads` | GET, POST | `find#ReviewThreads` (`path`), `create#ReviewComment` (a new thread on a line, or a reply: `threadId`) |
+| `.../mergeRequests/{n}/threads/{threadId}/resolve` | POST | `resolve#ReviewThread` (`resolved`, true by default) |
+
+**Threads.** Line comments and review threads are an application's (Mantle's `get#ReviewThreads`,
+`create#ReviewComment`, `resolve#ReviewThread`, and Smithy's posts with anchors): the framework keeps the merge request,
+its reviewers, their reviews and its merge. Its REST reaches the threads through `git-server` `review-thread-service`
+(interface `handle#GitReviewThread`: operation `find`, `comment` or `resolve`), called as the caller once the merge
+request's gates passed, a write once the keeper allows `mergeRequest.comment` or `mergeRequest.resolveThread`; with no
+service there are none (`threadsAvailable` false) and a comment is refused. The REST passes the path's merge request
+and the caller's `threadId`; the service refuses a thread of another merge request as one that is not there. The offer's `rest.reviewThreads` says
+which. A repository an application keeps is commented through the application's REST (Smithy's `comments`).
+
+**The gates of the REST.** A caller who may not view a repository is told it is not there before the keeping
+application is asked, so no keeper of a private repository is named. A merge request the application holds hidden
+(`hiddenDate`) is not there for anyone but its author, in the same words as a number that is not there, and a
+framework service's `No merge request <id>` is said as `No merge request !<n> in <repository>`. The keeper's check
+allows only an explicit `allowed` true. One page of `find#MergeRequests` is at most 200.
+
+**What the server offers** (`get#HostingOffer`), to a caller with or without credentials: `baseUrl`; `user` (`signedIn`,
+`username`: whether the caller's credentials were good); `git` (`httpsBase`, `httpsUrlTemplate` and `sshUrlTemplate`
+with `${name}`, as a `myaddons.xml` location takes them, `sshHost`, `sshPort`, `pushToReview`, `mergeRequestRefs`);
+`rest` (the paths above and the OpenAPI document); `signIn` (an installed app's sign-in: `appLogin`, `appToken`,
+`appProviders`, `loopbackRedirect`, `keyRevoke`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM
+gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether the key needs an `LlmApiClient`,
+docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`. `git-server` `offer-service` (interface
+`add#GitHostingOffer`, with the offer and the user, authorization off) returns the offer as the application has it:
+its REST (`application`: `name`, `restBase`), its task source (`tasks`: `kind`, `path`, and a task app's paths),
+whether it makes forks, and so on. It is asked for callers with no credentials too, so it gives no one's data.
+
+**An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed
+addresses, gate and conversation) names `git-server` `rest-write-check-service` (interface `check#GitRestWrite`; none by
+default). It is asked, with authorization off, before each write on a repository through this REST, with
+`repositoryId`, `operation` (`ref.create`, `ref.delete`, `commitStatus.create`, `mergeRequest.create`,
+`mergeRequest.update`, `mergeRequest.close`, `mergeRequest.reopen`, `mergeRequest.reviewers`, `mergeRequest.review`,
+`mergeRequest.merge`, `pipeline.run`, `pipeline.rerun`, `pipeline.cancel`, `pipeline.approve`, `job.retry`), `userId` and
+`mergeRequestId`, and answers `allowed`, `message`, `application` and `restUrl` (its own REST for the repository). `allowed`
+false (or `N`) refuses the write with `GitKeptByApplication: <message> (use <restUrl>)`; a service that fails refuses
+too. It is also asked with `operation` `read` by `get#Repository` and `resolve#RepositoryUrl`, whose `keptBy` then
+names the application and its REST, so a client goes there for that repository (the Dev AIDE does,
+plans/design-dev-aide.md 21.4). An application answers allowed for the writes it lets through this REST (it may run
+its own checks first), and false for the rest. Reads are not asked: the repository's authorization service already
+decides who reads.
+
+**The contributor agreement.** `get#AuthorSigned` answers whether an author (`authorUserId` or `authorEmail`, the
+caller when both are empty) has signed a repository's agreement (docs/dev/Contributions.md), from `git-server`
+`agreement-check-service` (interface `check#GitAuthorSigned`: `known`, `required`, `signed`, `message`, `signUrl`).
+With none, or one that does not decide the repository, `known` is false, with the application that keeps it and its
+REST, where a client asks next.
 
 ## Projects and tasks
 
@@ -961,6 +1171,60 @@ task's branch by the project's `WstBranchPattern`; review comments on a line are
 `CommunicationEventGitAnchor` (`create#ReviewComment`, `resolve#ReviewThread`, `get#ReviewThreads`). A task's Source tab links commits,
 branches and tags by hand; its summary shows them, and the project summary the repositories and tags.
 `Project/GitCommit` shows a commit: its message, people, parents, linked tasks, and each changed file's diff.
+
+## Shared storage in a cluster
+
+A `db` repository is rows of the database every cluster member shares, so it needs nothing in a cluster or behind a
+front or edge node that balances requests over the members of a pool (git over HTTP carries no session cookie and goes
+round robin; SSH goes by the client's address). A `local` or `remote` repository is a directory, of one node unless
+`runtime/git` (and every `localPath`) is on storage every member mounts, which the conf says with `git-server`
+`shared-storage="true"` (`git_shared_storage`).
+
+A node is a cluster member when another member's heartbeat is live in `moqui.server.ClusterMember`, or it is set up to
+be one (`cluster_base_url`, `cluster_transport`); once seen to be one it stays one until it restarts, though every
+peer's heartbeat lapse, and an answer that could not be read is not kept. A thread with no context reads this and the
+conf through the provider's own factory. On a member **without** shared storage:
+
+- a new `local` or `remote` repository is refused (`GitNeedsSharedStorage`): the first write or `init#GitRepository`
+  of one whose directory is not there yet, a mirror's first `fetch#GitRepository`, and a fork of a `local`
+  repository. Use kind `db`, or set up shared storage;
+- the ones it has are named at start, each in a warning, and keep working as they did (the node starts; failure
+  tolerance): requests that reach another member for them fail there, and two members' copies would differ, so move
+  them to `db` or to shared storage.
+
+**With** shared storage every writer of an on-disk repository (a push, a ref write, a merge, a `git://` write,
+`commit#GitFiles`, an import, a fetch of a mirror, the merge request heads, the steps of `gc#GitRepositories` that
+rewrite it) takes the repository's lease, `moqui.resource.GitLease` `repository:<repositoryId>`, and then the lock of
+its own process (the lease first, so no writer holds the lock while it waits on another member), so two members never
+write the same directory at once: one waits for the other, at most `shared-lock-wait-seconds` (120; then
+`GitLeaseBusy`). A lease is one conditional `UPDATE` committed at once, renewed while held (scheduled by one thread of
+the process, each renewal on a thread of its own, so one renewal the database holds does not lose the others; on
+Postgres the renewal's clock read and update each wait at most a sixth of the lease's time, while on MySQL, whose
+client cannot change an open connection's read timeout, they wait up to the datasource's `read-timeout` (600 s by
+default) and the renewer marks the lease lost once it goes stale meanwhile; a lease let go within its first renewal
+interval costs none; a lease marked lost is renewed no more, and its row is kept until it lapses at its time, so a write
+that passed its check just before the loss has the rest of the lease's time as its margin)
+and taken over once it lapses (60 seconds after a member that held it stopped); its times are the database's clock
+(read by the statement its dialect takes, every 30 seconds; a read that fails keeps the offset last read, is warned of
+and is tried again at the next use), so the members' clocks do not matter. Its holder
+id is the process and 128 random bits. A lease is fenced: one whose renewal found another holder, or that went
+unrenewed for nearly its time (a lost database connection, a long pause), is lost, and a writer checks its lease right
+before what must happen under it (a ref update, a push's objects taken from quarantine, gc's deletes), renewing it on
+the condition that the row still names it and has not lapsed; a writer that lost it stops with `GitLeaseLost` and
+writes nothing. A lease taken again on its thread shares the first take, and the last of them let go releases it, on
+whatever thread; a take again of one that was lost takes the lease anew in the database. A mirror's fetch stages the
+remote's refs and checks its lease again right before its refs move, after the long network read. `fetch#AllGitRepositories` runs on one member at a time (`fetch-due`), and the pushes of a repository
+to its push mirror take turns across the members (`push-mirror:<repositoryId>`).
+
+What a member keeps in memory of an on-disk repository is checked against the disk on use rather than told of other
+members' writes: gix reads the loose refs and `packed-refs` (by its modification time) at each read and looks for a new
+pack on a miss, a branch's path index is brought to the head read then, and the commits the refs reach are read again
+within two seconds. The `GitRepository` row of an open repository is forgotten when another member's write of it
+reaches this one as the cluster's entity cache invalidation.
+
+For every kind, a fork holds its source's lease until the fork's transaction ends, and `delete#GitRepository` marks
+the repository going and looks for forks under it, so a fork on one member and a delete on another never leave a fork
+whose source is gone (`GitHasForks`).
 
 ## Storage of db repositories
 
@@ -1088,6 +1352,52 @@ patterns to `.gitattributes` (images, video, audio, PDFs and archives when empty
 it is made (`init#GitRepository` with `contentRepository`, the tools screen's Content option, and the Content option of
 a project's new repository). A web site's images and their variants (`convert#Image` writes an image and its sizes in
 one commit) can so live in a `db` repository, with their history, in the database.
+
+## Behind a front or edge node, and in a pool
+
+The same in every topology: one node, a cluster behind a load balancer, a local node behind a front or edge node
+([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node)), several local nodes on one edge node, a pool of
+cluster members an edge node balances, and an edge cluster.
+
+- **What is forwarded.** A host in `terminate` mode ends its TLS on the edge node, which sends each request down the
+  local node's link as HTTP/2, with the bodies streamed both ways: a clone, a push, an LFS object and a CI upload are
+  never held whole on the edge node. The edge node bounds the member taking the request, each gap in a request body as
+  it goes down (`<edge forward-idle-seconds>`, 120) and the wait for the answer's head once the body is all sent
+  (`forward-head-seconds`, 3600), so an LFS PUT answered only once its object is stored is not cut off. The edge
+  node's own `request-timeout` does not apply to a request it forwards (it cannot tell git at a public site's page URL,
+  having no site rows); the local node applies its own, with git's exemption. A host in
+  `passthrough` mode ends its TLS on the local node: the edge node pipes the connection's bytes. Git at a page's URL
+  on a public-site host is rewritten to its `/git/` path on the local node, as without an edge node; the edge node
+  sees the request as any other.
+- **The client's address** arrives from the edge node: `X-Moqui-Edge-Client` on the link's down connection, which
+  the local node believes only there (a client's own is removed), or a PROXY v2 header on a passthrough or SSH
+  tunnel. The local node's web protection, its anonymous limits, the push log and the access checks see the client,
+  not the edge node. Credentials are taken as over HTTPS when the edge node took the request over TLS.
+- **The URLs.** `git-server` `public-url` (`git_public_url`) names the public URL clients use, the host on the edge
+  node (`https://code.example.com`), not the local node's own address; with it empty, the request's own host is used,
+  which is the same behind a terminate host. Leave `ssh_public_host` and `ssh_public_port` empty behind an edge node:
+  the clone URLs then name the edge node's SSH tunnel to this node, as its offer says (its public name, and the
+  pairing's own SSH port, an `EdgePort` row, else `edge_ssh_tunnel_port` while it is the one active pairing). With a
+  front pairing and an edge pairing (edge members behind a front, which bind no tunnel ports) they name the front's.
+  Set them when clients reach SSH another way. `<git-ci server-url>` is for runners: [Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
+- **A host that refuses the framework's routes** (`root-screen` `framework-routes="refuse"`, a site of its own) still
+  serves `/git/` (smart HTTP and LFS), git at its pages' URLs when it is a public site's host, and `/ci/runner/`, each
+  behind its own authentication and the web protection's checks; every other route of the host is Not Found there
+  (`moqui_core::web::reserved`, which scripts read as `ec.web.reservedPaths`).
+- **The SSH tunnel.** The edge node pipes each connection to its SSH tunnel port down the link to the local node's
+  SSH server (`ssh_port`), which needs no open port of its own: `edge_ssh_tunnel_port` to the one active pairing, or
+  a pairing's own port (System › Edge Clients › Ports). At most `<edge ssh-tunnels>` (256) connections per port at
+  once. A client that a pairing's shared ban names is refused on that pairing's tunnel ports as on its hosts.
+- **Web protection.** The edge node applies its own rules before a request goes down, and the local node applies its
+  rules to the client's address after. A ban the local node starts (a client failing to log in) is told up to the
+  edge node, which refuses that client for that pairing's hosts and tunnel ports. CI runner requests, and a job's
+  fetch, with a token found good are counted per token ([Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool)).
+- **In a pool or a cluster** (a load balancer, or an edge node's pool, which sends an LFS request or an SSH
+  connection to any member and after a failover to another): every member has the same `ssh_host_key`, or clients
+  are told the host key changed, and the same `git_lfs_token_key`, or a member refuses the tokens another issued
+  ([Run-Deploy](../Run-Deploy.md#requirements)). A member whose SSH host key differs from a live member's warns at
+  startup. `db` repositories are in the shared database. `local` and `remote` repositories are allowed in a cluster
+  only with the conf setting that says `runtime/git` is on storage every member mounts; without it they are refused.
 
 ## Limits
 

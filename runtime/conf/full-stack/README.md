@@ -44,9 +44,10 @@ with the front as well, for its names, XMPP domain and ports.
 - **Each edge member, its own**: `cluster_base_url`, `edge_link_url=https://edge1.example.com` (its link name, at the
   front), `smtp_hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
   `sip_public_address` (its own address). Never copy `runtime/db`.
-- **Every local member, the same**: the database and secrets, and once paired: `edge_node_url`, `edge_node_key`,
-  `edge_node_pin`, `edge_node_id`, `edge_node_pairing`; with `edge` members also `front_node_*`; the PASS client
-  lines the wizard writes (`pass_edge_client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
+- **Every local member, the same**: the database and secrets (for git hosting `ssh_host_key` and
+  `git_lfs_token_key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge_node_url`,
+  `edge_node_key`, `edge_node_pin`, `edge_node_id`, `edge_node_pairing`; with `edge` members also `front_node_*`; the
+  PASS client lines the wizard writes (`pass_edge_client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
 - **Each local member, its own**: `cluster_base_url`. Never copy `runtime/db`.
 
 ## DNS

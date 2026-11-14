@@ -22,8 +22,19 @@ set +u
 . "$root/scripts/wasm-env.sh"
 set -u
 (cd "$root" && cargo build -p moqui-browser --target wasm32-unknown-emscripten "${flag[@]}")
-# cargo copies the .js and .wasm up a level but not the preload .data, so take all three from deps.
-deps=$target_dir/wasm32-unknown-emscripten/$profile/deps
+# cargo copies the .js and .wasm up a level but not the preload .data, so take all three from where the link wrote them:
+# build/moqui-browser/<hash>/out since Cargo 1.100's build directory layout, deps before it. The newest is this build's.
+profile_dir=$target_dir/wasm32-unknown-emscripten/$profile
+deps=
+for wasm in "$profile_dir"/build/moqui-browser/*/out/moqui_browser.wasm "$profile_dir"/deps/moqui_browser.wasm; do
+    if [ -f "$wasm" ] && { [ -z "$deps" ] || [ "$wasm" -nt "$deps/moqui_browser.wasm" ]; }; then
+        deps=$(dirname "$wasm")
+    fi
+done
+if [ -z "$deps" ]; then
+    echo "no moqui_browser.wasm under $profile_dir" >&2
+    exit 1
+fi
 mkdir -p "$out"
 cp "$deps/moqui_browser.wasm" "$deps/moqui_browser.data" "$out/"
 # EXPORT_ES6 output; .mjs so Node loads it as a module without a package.json.

@@ -25,15 +25,15 @@ use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::media::SipTrunkState;
 use moqui_core::edge::setup::{
     self, CallsOffer, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer, SipOffer,
-    XmppOffer,
+    SshOffer, XmppOffer,
 };
 use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 use moqui_lib::error::Error;
 
 use super::proto::{
     CallsOffer as ProtoCalls, ChatOffer as ProtoChat, ConfigureReply, ConfigureRequest, HostSetting,
-    MailOffer as ProtoMail, Offer, PassOffer as ProtoPass, SipOffer as ProtoSip, SipTrunk, WebOffer,
-    XmppOffer as ProtoXmpp, XmppSetup,
+    MailOffer as ProtoMail, Offer, PassOffer as ProtoPass, SipOffer as ProtoSip, SipTrunk, SshOffer as ProtoSsh,
+    WebOffer, XmppOffer as ProtoXmpp, XmppSetup,
 };
 use super::{hosts, store, EdgeConfig};
 
@@ -167,6 +167,12 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             },
             None => ProtoSip::default(),
         }),
+        // the conf's SSH tunnel port; a node's own EdgePort row, and whether the conf's goes to it, are [`ssh_node`]'s
+        ssh: Some(ProtoSsh {
+            available: config.ssh_tunnel.is_some(),
+            host: config.public_names.first().cloned().unwrap_or_default(),
+            port: config.ssh_tunnel.map_or(0, |address| u32::from(address.port())),
+        }),
         not_available: setup::NOT_AVAILABLE.iter().map(|area| (*area).to_string()).collect(),
         addresses,
         node_hosts: Vec::new(),
@@ -183,6 +189,7 @@ pub(crate) fn for_role(offer: &mut Offer, role: moqui_core::edge::NodeRole) {
     if !role.has_front() {
         offer.web = Some(WebOffer::default());
         offer.xmpp = Some(ProtoXmpp::default());
+        offer.ssh = Some(ProtoSsh::default());
         without.extend(["web", "xmpp"]);
     }
     if !role.has_edge() {
@@ -307,6 +314,37 @@ pub(crate) fn xmpp_node(factory: &ExecutionContextFactory, node: &str, xmpp: &mu
     xmpp.available = xmpp.port > 0 || xmpp.tls_port > 0;
 }
 
+/// The SSH part of the offer to local node `node` (E16): the port of its own `EdgePort` row of kind ssh when it has
+/// one, else the conf's `edge_ssh_tunnel_port` while it is the one active pairing (the port goes to no other), else
+/// none. A node with no front set offers none (`for_role`). A read that fails is logged and offers no port: the conf's
+/// port may be another pairing's, and the next offer (at the next link) reads again.
+pub(crate) fn ssh_node(factory: &ExecutionContextFactory, node: &str, ssh: &mut ProtoSsh) {
+    let read = store::facade(factory).and_then(|facade| {
+        let rows = moqui_core::edge::ports::list(&facade, Some(node))?;
+        Ok((rows, moqui_core::edge::claims::active_nodes(&facade)?))
+    });
+    let (rows, only) = match read {
+        Ok((rows, active)) => {
+            let only = matches!(active.as_slice(), [only] if only == node);
+            (rows, only)
+        }
+        Err(err) => {
+            tracing::error!("Edge offer to {node}: its SSH port was not read, so none is offered: {err}");
+            (Vec::new(), false)
+        }
+    };
+    let own = rows
+        .iter()
+        .find(|row| row.tunnel_kind == super::TUNNEL_SSH)
+        .map(|row| u32::from(row.port));
+    ssh.port = match own {
+        Some(port) => port,
+        None if only => ssh.port,
+        None => 0,
+    };
+    ssh.available = ssh.port > 0;
+}
+
 /// What this edge node offers local node `node` now, with its host names here. Nothing in it depends on the other
 /// nodes linked now (`_linked`): each area is by pairing (E16).
 pub(crate) fn offer(
@@ -319,6 +357,13 @@ pub(crate) fn offer(
     offer.node_hosts = hosts::list(factory, Some(node))?.iter().map(host_setting).collect();
     if let Some(xmpp) = offer.xmpp.as_mut() {
         xmpp_node(factory, node, xmpp);
+    }
+    if let Some(ssh) = offer
+        .ssh
+        .as_mut()
+        .filter(|_| moqui_core::edge::settings(factory).role.has_front())
+    {
+        ssh_node(factory, node, ssh);
     }
     // the media driver keys rooms by node and call (E12) and each pairing has its own TURN secret (E16), so other
     // pairings take nothing from this one's calls: `other_nodes` stays false
@@ -704,6 +749,7 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
     let xmpp = offer.xmpp.unwrap_or_default();
     let calls = offer.calls.unwrap_or_default();
     let sip = offer.sip.unwrap_or_default();
+    let ssh = offer.ssh.unwrap_or_default();
     // a port that is not one (0, or past u16 from a newer peer) is off
     let port = |port: u32| u16::try_from(port).unwrap_or(0);
     EdgeOffer {
@@ -758,6 +804,11 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
                 .collect(),
             fallbacks: u64::from(sip.fallbacks),
             other_nodes: sip.other_nodes,
+        },
+        ssh: SshOffer {
+            available: ssh.available && port(ssh.port) > 0,
+            host: ssh.host,
+            port: port(ssh.port),
         },
         not_available: offer.not_available,
         addresses: offer.addresses,

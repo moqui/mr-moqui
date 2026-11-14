@@ -41,6 +41,105 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters><parameter name="pushResult"/></out-parameters>
     </service>
+    <!-- Push mirrors: moqui.resource.GitRepositoryMirror (docs/interfaces/Git-Hosting.md, Push mirrors) -->
+    <service verb="store" noun="GitRepositoryMirror" type="rust" location="moqui_git::service::mirror::store_mirror">
+        <description>Create a push mirror of a repository (no mirrorId) or change one. url is https (no user or
+            password in it; http and internal addresses only with git-server webhook-private-network) or ssh, which
+            needs hostKeyFingerprint. refPattern: comma separated patterns of branches and tags, every branch and tag
+            when empty. An empty credential keeps the one stored; it is kept encrypted and never returned. A new or
+            re-enabled mirror is pushed soon. A change of where the credential goes (the url's scheme, host or port, its
+            user or username, hostKeyFingerprint) needs the credential again in the same call, or clearCredential. Who
+            gives the credential (or makes the mirror) is createdByUserId: a push of a mirror whose giver no longer has
+            the delete right pauses it (enabled N) without using the credential, unless it was stored with
+            authorization disabled (storedAuthzDisabled). Needs the delete right on the repository (as its webhooks
+            do), or authorization disabled.</description>
+        <in-parameters>
+            <parameter name="mirrorId"/>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="url"><description>Required for a new mirror</description></parameter>
+            <parameter name="username"/>
+            <parameter name="credential" allow-html="any"><description>https: a password or token; ssh: a private key or a password</description></parameter>
+            <parameter name="hostKeyFingerprint"/>
+            <parameter name="refPattern"/>
+            <parameter name="deleteRefs"><description>Y or N (N for a new one)</description></parameter>
+            <parameter name="enabled"><description>Y or N (Y for a new one)</description></parameter>
+            <parameter name="clearRefPattern" type="Boolean" default="false"><description>Empty refPattern (every
+                branch and tag): a null refPattern is not told from one left out</description></parameter>
+            <parameter name="clearCredential" type="Boolean" default="false"><description>Remove the username and
+                the credential</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="mirrorId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="GitRepositoryMirror" type="rust" location="moqui_git::service::mirror::delete_mirror">
+        <description>Delete a push mirror. Needs the delete right on its repository, or authorization disabled.</description>
+        <in-parameters><parameter name="mirrorId" required="true"/></in-parameters>
+        <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="find" noun="GitRepositoryMirrors" type="rust" location="moqui_git::service::mirror::find_mirrors">
+        <description>The push mirrors of a repository, each with hasCredential and never the credential. Needs the delete
+            right on the repository, or authorization disabled.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="mirrorList" type="List"><description>Maps: mirrorId, repositoryId, url, username,
+                hostKeyFingerprint, refPattern, deleteRefs, enabled, hasCredential, lastPushDate, lastResult, lastError,
+                nextAttemptDate, attemptCount, createdByUserId, createdDate</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="push" noun="GitRepositoryMirror" type="rust" location="moqui_git::service::mirror::push_mirror_now">
+        <description>Push a mirror soon (on the service pool; else the queue's next run), whatever its back-off. While a
+            push of it runs, on any cluster member, an error whose message starts with "GitMirrorBusy: ". Needs the
+            delete right on its repository, or authorization disabled.</description>
+        <in-parameters><parameter name="mirrorId" required="true"/></in-parameters>
+        <out-parameters><parameter name="queued" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="run" noun="GitRepositoryMirrors" type="rust" location="moqui_git::service::mirror::run_mirrors"
+            authenticate="anonymous-all" transaction="ignore">
+        <description>The queue of push mirrors (the run_GitRepositoryMirrors_frequent ServiceJob, each minute): push each
+            enabled mirror whose nextAttemptDate has come, or the one named now. A push forces each ref its patterns
+            cover to the local value and, with deleteRefs, deletes those gone here; it asks git-server
+            outbound-check-service first. A success clears lastError and nextAttemptDate (a push asked for while it ran
+            is pushed again at once); a failure sets lastError (the credential taken out), counts, and puts the next try
+            off 1 minute doubling to 6 hours; the first failure after a success is a notification (topic
+            GitMirrorFailure) to the user who stored the mirror. A mirror another push holds is passed over. Refused in
+            sim mode.</description>
+        <in-parameters><parameter name="mirrorId"/></in-parameters>
+        <out-parameters>
+            <parameter name="pushedIds" type="List"/>
+            <parameter name="failedIds" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="queue" noun="GitRepositoryMirrorPushes" type="rust" location="moqui_git::service::mirror::queue_mirror_pushes">
+        <description>For the framework's post-receive gitECA rule (Git.gitecas.xml): a push of each enabled mirror of
+            the repository now (nextAttemptDate, then on the service pool).</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="queuedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="fetch" noun="GitRefs" type="rust" location="moqui_git::service::mirror::fetch_refs" transaction="ignore">
+        <description>Fetch refs of another server into a repository of any store, over https (http and internal
+            addresses only with git-server webhook-private-network), each local ref forced to the remote's value. Local
+            refs only under refs/merge-requests/, refs/heads/ and refs/tags/. The objects come in as a push's do (one
+            pack, each object within git-server max-object-size, checked to be whole) and, with authorization on, are
+            held to a push's reachability rules: the haves are the refs a reader reads, a ref's new value the pack did
+            not bring is the caller's, and what the pack builds on is what the caller reads. A branch or tag moves as a
+            push's does (with authorization on its branch rules, then its pre events, a GitUpdate and the post events);
+            a merge request's ref moves with no event, with authorization disabled, or else only as the first head of an
+            imported merge request, which records it. Asks git-server outbound-check-service first (kind fetch). Needs
+            the delete right on the repository (as a push mirror), or authorization disabled. The password is never
+            logged and is taken out of every error.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="remoteUrl" required="true"><description>https://host/owner/repo.git, no credential in it</description></parameter>
+            <parameter name="username"/>
+            <parameter name="password" allow-html="any"/>
+            <parameter name="refMap" type="Map" required="true"><description>Remote ref to local ref
+                (refs/pull/12/head: refs/merge-requests/12/head)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fetched" type="List"><description>The local refs written, or already at the remote's value</description></parameter>
+            <parameter name="problems" type="List"><description>Why the others were not: a remote ref not there, a
+                local ref refused, a branch a rule refused</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="init" noun="GitRepository" type="rust" location="moqui_git::service::init_repository">
         <description>Make a repository ready: create the bare repository of a local kind (a local repository is also
             created on its first use), fetch a remote kind for the first time. A db kind needs nothing.</description>
@@ -728,6 +827,113 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="objectCount" type="Integer"/>
             <parameter name="objectList" type="List"><description>Maps: oid, size</description></parameter>
         </in-parameters>
+    </service>
+    <service verb="check" noun="GitOutbound" type="interface">
+        <description>The service git-server outbound-check-service names: asked before a repository's webhook
+            deliveries are queued (once per push or event, when it has webhooks that take it), before its push
+            mirror pushes (pushMirrorRemoteId and each GitRepositoryMirror), before fetch#GitRefs reaches another
+            server for it and before a deployment calls its environment's target, with authorization off. allowed false (or N) holds them: nothing is queued, and the push
+            mirror records the message as its error. An application that hides or suspends a repository answers false
+            for it. A service that fails holds them too. Deliveries already queued are still sent.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="kind" required="true"><description>webhook, push-mirror, fetch or deploy</description></parameter>
+            <parameter name="event"><description>The webhook event (push, merge_request...), the deployment's
+                environment; empty for a push mirror</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="GitRestWrite" type="interface">
+        <description>The service git-server rest-write-check-service names: asked, with authorization off, before each
+            write on a repository through the framework's REST (org.moqui.git.GitRestServices, /rest/s1/moqui/git), and
+            with operation read by resolve#RepositoryUrl and get#Repository to learn who keeps the repository. An
+            application that keeps a repository (its own roles, gate and conversation, as Smithy does) answers allowed
+            false for the writes it does not take this way, with a message and restUrl, the base of its own REST for
+            the repository, which the refusal names; application names it in either case. A service that fails refuses
+            the write, and so does an answer that leaves allowed empty: only allowed true lets a write through. The
+            repository's own rights are checked by the services, as without it, and a caller who may not view the
+            repository is told it is not there before this service is asked.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="operation" required="true"><description>read, ref.create, ref.delete, commitStatus.create,
+                mergeRequest.create, mergeRequest.update, mergeRequest.close, mergeRequest.reopen, mergeRequest.reviewers,
+                mergeRequest.review, mergeRequest.comment, mergeRequest.resolveThread, mergeRequest.merge, pipeline.run, pipeline.rerun, pipeline.cancel, pipeline.approve,
+                job.retry</description></parameter>
+            <parameter name="userId"/>
+            <parameter name="mergeRequestId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="application"><description>The application that keeps the repository (smithy); empty for
+                none</description></parameter>
+            <parameter name="restUrl"><description>Its REST for the repository, a full URL or a path on this server</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="add" noun="GitHostingOffer" type="interface">
+        <description>The service git-server offer-service names: given what the framework offers (get#HostingOffer's
+            offer) and the current user, the offer as the application has it, which replaces it: its REST
+            (application: name, restBase), its task source (tasks: kind, path), whether forks are made and where
+            (forks), its agreement check (agreement: path), and anything else a client may read. Called with
+            authorization off, also for a caller with no credentials, so it gives no one's data.</description>
+        <in-parameters>
+            <parameter name="offer" type="Map" required="true"/>
+            <parameter name="userId"/>
+        </in-parameters>
+        <out-parameters><parameter name="offer" type="Map"/></out-parameters>
+    </service>
+    <service verb="check" noun="GitAuthorSigned" type="interface">
+        <description>The service git-server agreement-check-service names: whether an author (a user of this server,
+            or an email address) has signed the contributor agreement of a repository (docs/dev/Contributions.md).
+            known false when the repository has no agreement this service decides.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="authorUserId"/>
+            <parameter name="authorEmail"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="known" type="Boolean"/>
+            <parameter name="required" type="Boolean"><description>The repository's agreement is on</description></parameter>
+            <parameter name="signed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="signUrl"><description>Where the author signs</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="handle" noun="GitReviewThread" type="interface">
+        <description>The service git-server review-thread-service names: the review threads (line comments) of a merge
+            request, which are an application's (Mantle's get#ReviewThreads, create#ReviewComment and
+            resolve#ReviewThread), for the framework's REST (/rest/s1/moqui/git/[repositoryId]/mergeRequests/[n]/threads).
+            Called as the caller, with authorization as it is, once the REST checked that the caller may view the
+            repository and the merge request (a hidden one is its author's) and, for a write, that the application that
+            keeps the repository allows it (mergeRequest.comment, mergeRequest.resolveThread). operation find: threadList
+            (each threadId, path, oldLine, newLine, commitId, lineText, outdated, resolved, and its commentList of
+            commentId, authorName, entryDate, body, bodyFormat), of path when given; comment: a new thread on a line (path
+            and oldLine or newLine) or on the merge request, or a reply to threadId: threadId and held (it waits for a
+            moderator); resolve: threadId resolved, or reopened with resolved false. The REST binds the call to the
+            merge request of its path (mergeRequestId) and passes threadId as the caller gave it: the service must
+            refuse a threadId (for a reply or a resolve) that is not a thread of that mergeRequestId, in the same words
+            as one that is not there, so a viewer of one merge request cannot reach another's threads.</description>
+        <in-parameters>
+            <parameter name="operation" required="true"><description>find, comment or resolve</description></parameter>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="path"/>
+            <parameter name="threadId"/>
+            <parameter name="body" allow-html="safe"/>
+            <parameter name="commitId"/>
+            <parameter name="oldLine" type="Integer"/>
+            <parameter name="newLine" type="Integer"/>
+            <parameter name="lineText"/>
+            <parameter name="resolved" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadList" type="List"/>
+            <parameter name="threadId"/>
+            <parameter name="held" type="Boolean"/>
+        </out-parameters>
     </service>
     <service verb="set" noun="GitRepositoryPath" type="rust" location="moqui_git::service::hosting::set_repository_path">
         <description>Set the path git URLs carry for a repository (moqui/mr-moqui: /git/moqui/mr-moqui.git, SSH

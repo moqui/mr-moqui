@@ -62,6 +62,8 @@ pub(in crate::service) fn register(
     rust_service!(map, get_device_keys)?;
     rust_service!(map, revoke_device_key)?;
     rust_service!(map, renew_device_key)?;
+    rust_service!(map, create_scoped_key)?;
+    rust_service!(map, revoke_held_key)?;
     rust_service!(map, get_scram_credentials)?;
     rust_service!(map, check_plain_password)?;
     Ok(())
@@ -708,6 +710,42 @@ fn renew_device_key(
             Ok(BTreeMap::new())
         }
     }
+}
+
+/// `create#UserScopedKey`: a new key of the current user that opens only `scope` (`gateway`, the LLM gateway), named
+/// `deviceName` in the user's device list, given once as `loginKey` (`user::get_scoped_key`): what a client keeps where
+/// the account's own key would open everything.
+fn create_scoped_key(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    if current_user().is_none() {
+        add_error("Sign in first");
+        return Ok(BTreeMap::new());
+    }
+    let scope = text(parameters, "scope").unwrap_or_else(|| "gateway".to_string());
+    match crate::user::get_scoped_key(&scope, &text(parameters, "deviceName").unwrap_or_default()) {
+        Ok(key) => Ok(out([("loginKey", Value::string(key)), ("scope", Value::string(scope))])),
+        Err(err) => {
+            add_error(err.message().to_string());
+            Ok(BTreeMap::new())
+        }
+    }
+}
+
+/// `revoke#UserHeldKey`: end a key of the current user by the key itself (`loginKey`, as its holder keeps it): a
+/// client that is let go ends the keys it held, its scoped ones and the one it signs in with (`user::revoke_login_key`).
+/// Out: `revoked`, false for a key that is not the user's.
+fn revoke_held_key(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(key) = text(parameters, "loginKey") else {
+        add_error("loginKey is required");
+        return Ok(BTreeMap::new());
+    };
+    let revoked = crate::user::revoke_login_key(&key)?;
+    Ok(out([("revoked", Value::Bool(revoked))]))
 }
 
 #[cfg(test)]

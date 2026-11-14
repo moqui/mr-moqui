@@ -92,7 +92,7 @@ impl FakeTrunk {
 
     /// The next request of `method`, skipping retransmissions and anything else.
     async fn request(&self, method: Method) -> (Request, SocketAddr) {
-        self.try_request(method, WAIT)
+        self.try_request(method.clone(), WAIT)
             .await
             .unwrap_or_else(|| panic!("no {method}"))
     }
@@ -665,8 +665,15 @@ async fn hold_by_reinvite_both_ways() {
     }
     let ok = trunk.response(200).await;
     assert!(String::from_utf8_lossy(&ok.body).contains("a=recvonly"));
+    // and acknowledges the answer: until then that INVITE transaction holds back a new one from this side (RFC 3261 §14.1)
+    let ack = format!(
+        "ACK {contact} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-hold1-ack\r\nMax-Forwards: 70\r\nFrom: {to_header}\r\n\
+         To: {from_header}\r\nCall-ID: {call_id}\r\nCSeq: 10 ACK\r\nContent-Length: 0\r\n\r\n",
+        trunk.addr
+    );
+    trunk.send(&ack, h.addr).await;
 
-    // this side holds
+    // this side holds, at once: the ACK may still be on its way
     let mut ours = local.clone();
     ours.direction = Direction::SendOnly;
     ours.version = 2;

@@ -21,6 +21,7 @@
 //! is a new unsigned binary, which the Keychain would ask about again.
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use moqui_client::keys::{FileKeyStore, KeyStore, Keys};
 use moqui_lib::error::Error;
@@ -32,17 +33,35 @@ const SERVICE: &str = crate::os::IDENTIFIER;
 struct OsKeyStore;
 
 impl OsKeyStore {
+    /// Makes this OS's store keyring-core's default, once: the Keychain, the Credential Manager or the Secret Service.
+    fn open_store() -> Result<(), String> {
+        static OPENED: OnceLock<Result<(), String>> = OnceLock::new();
+        OPENED
+            .get_or_init(|| {
+                #[cfg(target_os = "macos")]
+                let store = apple_native_keyring_store::keychain::Store::new();
+                #[cfg(windows)]
+                let store = windows_native_keyring_store::Store::new();
+                #[cfg(all(unix, not(target_os = "macos")))]
+                let store = zbus_secret_service_keyring_store::Store::new();
+                keyring_core::set_default_store(store.map_err(|err| err.to_string())?);
+                Ok(())
+            })
+            .clone()
+    }
+
     /// Whether the store answers: a missing entry does, a store that is not there or locked out does not.
     fn available() -> Result<(), String> {
-        let entry = keyring::Entry::new(SERVICE, "availability-check").map_err(|err| err.to_string())?;
+        Self::open_store()?;
+        let entry = keyring_core::Entry::new(SERVICE, "availability-check").map_err(|err| err.to_string())?;
         match entry.get_password() {
-            Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(_) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(err) => Err(err.to_string()),
         }
     }
 
-    fn entry(account: &str) -> Result<keyring::Entry, Error> {
-        keyring::Entry::new(SERVICE, account).map_err(|err| Error::new(format!("key store: {err}")))
+    fn entry(account: &str) -> Result<keyring_core::Entry, Error> {
+        keyring_core::Entry::new(SERVICE, account).map_err(|err| Error::new(format!("key store: {err}")))
     }
 }
 
@@ -50,7 +69,7 @@ impl KeyStore for OsKeyStore {
     fn get(&self, account: &str) -> Option<String> {
         match Self::entry(account).ok()?.get_password() {
             Ok(key) => Some(key).filter(|key| !key.is_empty()),
-            Err(keyring::Error::NoEntry) => None,
+            Err(keyring_core::Error::NoEntry) => None,
             Err(err) => {
                 tracing::warn!("The key of {account} could not be read from the key store: {err}");
                 None
@@ -66,7 +85,7 @@ impl KeyStore for OsKeyStore {
 
     fn delete(&self, account: &str) -> Result<(), Error> {
         match Self::entry(account)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(err) => Err(Error::new(format!("key store: {err}"))),
         }
     }

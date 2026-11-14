@@ -265,7 +265,7 @@ impl ExecutionContextFactory {
     pub fn boot(runtime_dir: impl AsRef<Path>) -> Result<Arc<Self>, Error> {
         let runtime_dir = canonicalize_dir(runtime_dir.as_ref())?;
         let framework_dir = canonicalize_dir(&default_framework_dir(&runtime_dir))?;
-        if !framework_dir.join("component.xml").is_file() {
+        if !moqui_lib::vfs::is_file(framework_dir.join("component.xml")) {
             return Err(Error::new(format!(
                 "framework directory {} has no component.xml",
                 framework_dir.display()
@@ -298,7 +298,7 @@ impl ExecutionContextFactory {
             runtime_dir.display(),
             framework_dir.display()
         );
-        if !framework_dir.join("component.xml").is_file() {
+        if !moqui_lib::vfs::is_file(framework_dir.join("component.xml")) {
             return Err(Error::new(format!(
                 "framework directory {} has no component.xml",
                 framework_dir.display()

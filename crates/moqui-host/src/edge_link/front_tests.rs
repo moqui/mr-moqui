@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use moqui_core::edge::setup::{Configured, EdgeOffer, EdgeSetup, HostResult, XmppOffer};
+use moqui_core::edge::setup::{Configured, EdgeOffer, EdgeSetup, HostResult, SshOffer, XmppOffer};
 use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 
 use super::{failed_results, merge_configured, merge_offer, names_of, split_setup};
@@ -140,6 +140,11 @@ fn the_offer_takes_web_access_and_ports_from_the_front() {
             port: 5222,
             ..XmppOffer::default()
         },
+        ssh: SshOffer {
+            available: true,
+            host: "front.example.com".to_string(),
+            port: 2222,
+        },
         not_available: vec!["mail".to_string()],
         ..EdgeOffer::default()
     };
@@ -152,6 +157,7 @@ fn the_offer_takes_web_access_and_ports_from_the_front() {
     assert_eq!(merged.host_modes, front.host_modes);
     assert_eq!(merged.node_hosts, front.node_hosts);
     assert_eq!(merged.xmpp.port, 5222);
+    assert_eq!(merged.ssh, front.ssh, "the SSH tunnel port is the front's");
     assert_eq!(merged.addresses, edge.addresses, "the front named none");
     assert!(merged.not_available.is_empty(), "{:?}", merged.not_available);
 

@@ -83,10 +83,6 @@ use super::{
 };
 use crate::tls_pin::{hex, public_key_sha256, Pin, PinVerifier};
 
-/// What [`EdgeServer::stale_links`] finds: the pairings no longer active, and the links (pairing, member) whose key is
-/// forgotten or another.
-type StaleLinks = (Vec<String>, Vec<(String, String)>);
-
 /// What a front node answers a call of the edge set's: the queue, replication, a delegated call, PASS
 /// (plans/Edge-Node2.md §4.7).
 pub(crate) const FRONT_REFUSES: &str =
@@ -493,6 +489,13 @@ pub(crate) struct Picked {
     pub generation: u64,
     pub send: hyper::client::conn::http2::SendRequest<tonic::body::Body>,
     pub flight: Flight,
+}
+
+/// The links an edge member holds that another member's change ended (`EdgeServer::stale_links`): the pairings no
+/// longer active, and each member whose pinned key is forgotten or another, by pairing.
+struct StaleLinks {
+    revoked: Vec<String>,
+    forgotten: Vec<(String, String)>,
 }
 
 /// The edge node's links and paired nodes.
@@ -1211,21 +1214,21 @@ impl EdgeServer {
         let mut revoked = Vec::new();
         let mut forgotten = Vec::new();
         for (node, members) in held {
-            let Some((active, pins)) = store::pairing_state(factory, &node)? else {
+            let Some(state) = store::pairing_state(factory, &node)? else {
                 revoked.push(node);
                 continue;
             };
-            if !active {
+            if !state.active {
                 revoked.push(node);
                 continue;
             }
             for (member, key) in members {
-                if pool::key_matches(&pins, &member, &key) != Some(true) {
+                if pool::key_matches(&state.pins, &member, &key) != Some(true) {
                     forgotten.push((node.clone(), member));
                 }
             }
         }
-        Ok((revoked, forgotten))
+        Ok(StaleLinks { revoked, forgotten })
     }
 
     /// Keep this edge member's `EdgeMemberLinks` row (plans/Edge-Node2.md §4.6, §4.11) and check its links against the
@@ -1266,7 +1269,7 @@ impl EdgeServer {
                 })
                 .await;
             match done {
-                Ok(Some((revoked, forgotten))) => {
+                Ok(Some(StaleLinks { revoked, forgotten })) => {
                     for node in revoked {
                         // closed, not marked revoked: its key is checked as each new link opens, and a pairing made
                         // again is let in whether or not this member heard of it

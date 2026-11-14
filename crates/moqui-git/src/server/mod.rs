@@ -43,6 +43,7 @@ pub(crate) mod receive;
 #[cfg(test)]
 mod repository_tests;
 pub(crate) mod review;
+pub(crate) mod smart_http;
 #[cfg(test)]
 pub(crate) mod tests;
 pub(crate) mod upload;
@@ -297,7 +298,7 @@ pub(crate) fn pack_threads() -> Option<usize> {
     positive_setting("pack-threads")
 }
 
-fn max_object_size() -> Option<usize> {
+pub(crate) fn max_object_size() -> Option<usize> {
     Some(positive_setting("max-object-size").unwrap_or(512 * 1024 * 1024))
 }
 
@@ -401,6 +402,8 @@ enum Refusal {
     Unavailable(String),
     /// Too many requests with no credentials are served now: 503 with `Retry-After`.
     Busy(String),
+    /// A credential that was good and is no longer (the job token of a job that ended): 410, no failed sign-in.
+    Gone(String),
 }
 
 /// What a request with no credentials is told, whatever the reason: nothing of the answer tells a repository that is
@@ -459,7 +462,8 @@ impl Refusal {
             | Self::Forbidden(text)
             | Self::NotFound(text)
             | Self::Unavailable(text)
-            | Self::Busy(text) => text,
+            | Self::Busy(text)
+            | Self::Gone(text) => text,
         }
     }
 }
@@ -741,6 +745,7 @@ fn refuse_http(out: &mut dyn HttpResponder, refusal: &Refusal) {
         Refusal::Unauthenticated(_) => 401,
         Refusal::Forbidden(_) => 403,
         Refusal::NotFound(_) => 404,
+        Refusal::Gone(_) => 410,
         Refusal::Unavailable(_) | Refusal::Busy(_) => 503,
     };
     let mut headers = vec![("Content-Type", "text/plain; charset=utf-8".to_string())];
@@ -959,6 +964,20 @@ pub fn serve_ssh(
 
 /// Unique names for quarantine directories.
 static QUARANTINES: AtomicU64 = AtomicU64::new(0);
+
+/// A new quarantine directory for objects coming into `store`: in its own objects directory when it is on disk (so
+/// accepting is a rename), else under `scratch`.
+pub(crate) fn quarantine_in(store: &dyn GitStore, scratch: &std::path::Path) -> std::path::PathBuf {
+    let name = format!(
+        "incoming-{}-{}",
+        std::process::id(),
+        QUARANTINES.fetch_add(1, Ordering::Relaxed)
+    );
+    match store.disk_path() {
+        Some(path) => path.join("objects").join(name),
+        None => scratch.join(name),
+    }
+}
 
 /// One conversation with a client about one repository.
 struct Session<'a> {
@@ -1318,17 +1337,25 @@ impl Session<'_> {
             .provider
             .begin_update(&definition.id, &origin, &refs_before, &recorded);
         if !accepted.is_empty() {
+            // with the other cluster members' writers of a repository on shared storage too (shared.rs): the lease
+            // before this process's lock, so no push holds the lock while it waits on another member
+            let shared = self.provider.shared_turn(&definition.id, definition.kind);
             let lock = self.provider.lock_of(&definition.id);
             let _turn = moqui_lib::sync::lock(&lock);
             // the row as it is now, under the lock: a repository archived or deleted while the pack came in takes
-            // nothing (delete#GitRepository marks it first, so no object is stored under an id that is going)
-            let stored = self
-                .provider
-                .still_writable(&definition.id)
-                .and_then(|()| match quarantine.as_mut() {
-                    Some(received) => received.accept().map(|_| ()),
-                    None => Ok(()),
-                });
+            // nothing (delete#GitRepository marks it first, so no object is stored under an id that is going); and
+            // the lease still this member's (fencing: crate::lease)
+            let stored = match &shared {
+                Ok(lease) => self
+                    .provider
+                    .still_writable(&definition.id)
+                    .and_then(|()| crate::lease::check(lease.as_ref())),
+                Err(err) => Err(Error::new(err.message())),
+            }
+            .and_then(|()| match quarantine.as_mut() {
+                Some(received) => received.accept().map(|_| ()),
+                None => Ok(()),
+            });
             match stored {
                 Err(err) => {
                     tracing::error!(repository = %definition.id, "pushed objects not stored: {err}");
@@ -1353,7 +1380,11 @@ impl Session<'_> {
                     let moved = if edits.is_empty() {
                         Ok(Vec::new())
                     } else {
-                        store.update_refs(&edits, request.has("atomic"))
+                        match &shared {
+                            Ok(lease) => crate::lease::check(lease.as_ref()),
+                            Err(err) => Err(Error::new(err.message())),
+                        }
+                        .and_then(|()| store.update_refs(&edits, request.has("atomic")))
                     };
                     match moved {
                         Ok(outcomes) => {

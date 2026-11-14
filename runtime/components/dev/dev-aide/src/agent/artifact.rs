@@ -31,7 +31,7 @@ use moqui_llm::tools::schema::{object, Property};
 use moqui_llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
-use super::{arg, context, list_arg};
+use super::{arg, list_arg, session_context};
 use crate::roots;
 use crate::tier::Tier;
 use crate::workspace::Context;
@@ -111,8 +111,8 @@ impl AgentTool for ArtifactTool {
         &self.0
     }
 
-    fn call(&self, _ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
-        match run(&args) {
+    fn call(&self, ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
+        match run(ctx, &args) {
             Ok(answer) => super::json(&answer),
             Err(error) => error.outcome(),
         }
@@ -252,8 +252,8 @@ pub(crate) fn project_file(project: &ProjectIndex, named: &str) -> Result<PathBu
     })
 }
 
-fn run(args: &Json) -> Result<Json, ToolError> {
-    let context = context(Tier::View)?;
+fn run(ctx: &TurnContext<'_>, args: &Json) -> Result<Json, ToolError> {
+    let context = session_context(ctx, Tier::View)?;
     let action = arg(args, "action").unwrap_or("find");
     let project = project_of(&context, args, action == "describe")?;
     let named_project = project.as_deref().map(project_json);

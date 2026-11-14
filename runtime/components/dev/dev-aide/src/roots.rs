@@ -63,6 +63,21 @@ pub struct Root {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_branch: Option<String>,
     pub publish_branch_required: bool,
+    /// The repository a connected group server hosts for this working tree's remote (plans/design-dev-aide.md 21.3):
+    /// `serverId`, `remote` and `repository` as the server answered, when it was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosted: Option<serde_json::Value>,
+    /// A worktree of an agent's session (21.8, `crate::worktree`): the id of the root it is a worktree of. Its
+    /// components are that root's, at the same places, and none of them is loaded from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_of: Option<String>,
+    /// The Assist conversation whose tools are rooted in this worktree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    /// Who made the worktree: only their session's tools are rooted in it, and only they (or an administrator) remove
+    /// it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_user_id: Option<String>,
 }
 
 fn path_string<S: serde::Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
@@ -145,6 +160,9 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
     let mut labels: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut read_only: BTreeMap<PathBuf, bool> = BTreeMap::new();
     let mut publish: BTreeMap<PathBuf, (Option<String>, bool)> = BTreeMap::new();
+    let mut hosted: BTreeMap<PathBuf, serde_json::Value> = BTreeMap::new();
+    // a worktree root's main tree and conversation (21.8)
+    let mut worktrees: BTreeMap<PathBuf, (PathBuf, Option<String>, Option<String>)> = BTreeMap::new();
     for (location, label) in &settings.roots {
         let path = canonical(location);
         if path.is_dir() {
@@ -183,12 +201,31 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 }
                 read_only.insert(path.clone(), text("readOnly") == "Y");
                 let branch = Some(text("publishBranch")).filter(|branch| !branch.is_empty());
+                if !text("hostedServerId").is_empty() {
+                    let repository: serde_json::Value =
+                        serde_json::from_str(&text("hostedJson")).unwrap_or(serde_json::Value::Null);
+                    hosted.insert(
+                        path.clone(),
+                        serde_json::json!({ "serverId": text("hostedServerId"), "remote": text("hostedRemote"),
+                            "repository": repository, "date": text("hostedDate") }),
+                    );
+                }
+                if !text("worktreeOf").is_empty() {
+                    worktrees.insert(
+                        path.clone(),
+                        (
+                            canonical(Path::new(&text("worktreeOf"))),
+                            Some(text("conversationId")).filter(|id| !id.is_empty()),
+                            Some(text("worktreeUserId")).filter(|id| !id.is_empty()),
+                        ),
+                    );
+                }
                 publish.insert(path, (branch, text("publishBranchRequired") == "Y"));
             }
         }
     }
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
-    found
+    let mut all: Vec<Root> = found
         .into_iter()
         .map(|Found { path, kind, components }| {
             let base = path
@@ -213,6 +250,21 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 })
                 .collect();
             let (publish_branch, publish_branch_required) = publish.remove(&path).unwrap_or((None, false));
+            let hosted = hosted.remove(&path).map(|mut hosted| {
+                // the rights are each user's own, as they resolved it (hosting::review::HOSTED_ACCESS)
+                let own: serde_json::Value = moqui_core::user::get_preference(&format!("DEV_AIDE_HOSTED_ACCESS.{id}"))
+                    .ok()
+                    .flatten()
+                    .and_then(|text| serde_json::from_str(&text).ok())
+                    .unwrap_or_default();
+                let mine = own["base"] == hosted["repository"]["serverBase"];
+                hosted["repository"]["access"] = if mine {
+                    own["access"].clone()
+                } else {
+                    serde_json::Value::Null
+                };
+                hosted
+            });
             Root {
                 label: labels.remove(&path).unwrap_or_else(|| base.clone()),
                 id,
@@ -221,11 +273,30 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 read_only: read_only.remove(&path).unwrap_or(false),
                 publish_branch,
                 publish_branch_required,
+                hosted,
+                worktree_of: None,
+                conversation_id: None,
+                worktree_user_id: None,
                 kind,
                 path,
             }
         })
-        .collect()
+        .collect();
+    // a worktree has its main tree's components at the same places, and is upstream as that tree is
+    for (path, (main_path, conversation, user)) in worktrees {
+        let Some(main) = all.iter().find(|root| root.path == main_path).cloned() else {
+            continue;
+        };
+        if let Some(root) = all.iter_mut().find(|root| root.path == path) {
+            root.worktree_of = Some(main.id.clone());
+            root.conversation_id = conversation;
+            root.worktree_user_id = user;
+            root.components = main.components.clone();
+            root.upstream = main.upstream;
+            root.read_only = root.read_only || main.read_only;
+        }
+    }
+    all
 }
 
 /// The root of id `id`.

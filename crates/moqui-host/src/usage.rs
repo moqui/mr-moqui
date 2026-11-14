@@ -41,7 +41,7 @@ Check
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
-  embedded         list | diff [path] | extract <dir>       The framework, tools and webroot files built into this binary
+  embedded         info | list | diff | extract | checksum  The runtime and programs built into this binary
 
 Test
   test             [component ...] [options]                Run component JavaScript specs
@@ -77,8 +77,10 @@ Environment
                      directory or absolute. Unset uses MoquiConf.xml in the runtime directory,
                      else conf/MoquiDevConf.xml, when that file exists. runtime/.env is read after
                      the conf merge and does not select it.
-  MOQUI_INSTALL      Where the embedded Postgres is unpacked, in <dir>/postgres (default: install
-                     in the runtime directory)
+  MOQUI_INSTALL      Where the programs built in are unpacked, in <dir>/postgres, <dir>/opensearch and
+                     <dir>/chromium (default: install in the runtime directory)
+  MOQUI_EMBEDDED_SHA256_RUNTIME, _POSTGRES, _OPENSEARCH, _CHROMIUM
+                     The checksum each part built in must have, checked at startup (moqui help embedded)
   webapp_http_port   HTTP port (default 8080). webapp_https_listen_port defaults to 8443 and cluster_https_port
                      to 8444. webapp_https_port is the HTTPS port in generated URLs (empty is 443).
   entity_ds_db_conf  postgres, mysql, or mysql8 for an external server; otherwise embedded
@@ -244,7 +246,8 @@ set the directory. The default is types/ inside the runtime directory. This does
 
 const CHECK: &str = "\
 moqui check [paths] [--extensions] [--json] [--server URL] [--project DIR | --java DIR]
-    Check Moqui XML files: schema, references, expressions.
+moqui check --agreement
+    Check Moqui XML files: schema, references, expressions; or the contributor agreement.
 
 Checks each file (a directory: the XML files in it) against the framework's XSDs, the names it uses
 (entities, fields, services, service parameters, locations) against the loaded definitions, and its
@@ -264,11 +267,21 @@ runtime/, read with MR Moqui's framework conf (beside this executable, or MOQUI_
 reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java checkout is found when
 MOQUI_RUNTIME is its runtime or the working directory is in it. With --server, the project is a
 directory on the server's machine, read there into memory on first use and kept fresh with its files
-(no restart). A definition that does not resolve is logged and left out.
+(no restart). A definition that does not resolve is logged and left out. A repository's ci.xml is checked
+against git-ci-3.xsd as any other.
+
+--agreement asks the repository's group server whether the next commit's author (git's user.email) has
+signed its contributor agreement (AUTHORS.md; /rest/s1/moqui/hosting/agreement): the server is
+MOQUI_GROUP_SERVER, else the origin of an https origin remote. The key MOQUI_GROUP_TOKEN is sent only to
+MOQUI_GROUP_SERVER when the origin remote is on it (the same origin, or for SSH the same host), never to a
+server read from the remote alone, and no redirect is followed; plain http only to a loopback IP literal.
+An author who has not signed fails it (exit 1), for a pre-commit hook, unless the commit stages only
+AUTHORS.md (the signature itself); a server that cannot be asked or does not decide it is a warning.
 
   moqui check
   moqui check runtime/components/addon/my-site/service/my/MyServices.xml
   moqui check --extensions --json
+  moqui check --agreement
 ";
 
 const REFS: &str = "\
@@ -570,7 +583,7 @@ Options:
 const CI_RUN: &str = "\
 moqui ci-run [--workspace DIR] [--shell SHELL]
 moqui ci-run register [--name NAME] [--platform TEXT]
-moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL]
+moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL] [--keep-processes]
     The runner of a pipeline job (docs/interfaces/Pipelines.md). With no command it runs the one job
     its environment names, as the server starts it in the job's container: it gets the job, checks
     the commit out shallow with git, restores the caches, runs each step with the shell in the
@@ -605,6 +618,9 @@ Options
   --interval SECONDS              poll: the wait between asks with no job (10).
   --work DIR                      poll: where each job gets a directory, removed after it
                                   (moqui-ci in the temporary directory).
+  --keep-processes                poll: leave the processes of the runner's user a job left running;
+                                  by default each is killed after the job (never as root), so a runner
+                                  runs as a user of its own.
 ";
 
 const HELP: &str = "\
@@ -620,23 +636,55 @@ moqui help <command> and moqui <command> --help (or -h) print that command.
 ";
 
 const EMBEDDED: &str = "\
-moqui embedded list | diff [<component>/<path>] | extract <runtime dir>
-    The framework and tools components and the webroot stub built into this binary.
+moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>]
+moqui embedded checksum [--env] [runtime|postgres|opensearch|chromium ...]
+moqui embedded unpack [postgres|opensearch|chromium|all ...]
+    The runtime files and the programs built into this binary.
 
-At startup moqui compares the framework, tools and webroot components with these files and logs each
-file that differs (changed, missing, or added on disk); the files on disk are used. With no runtime, or a
-runtime with no framework component, it writes these files there as a skeleton runtime that boots, loads
-the seed data, answers /rest, /Login, /status and the html /apps (System, Tools, Dashboards), and runs
-moqui tui. Fonts, icons, /qapps and the web client's libraries are not in it. See runtime/README.md.
+The runtime built in is at one of three levels, chosen when the binary is built (./moq build --embed):
+framework (the framework and tools components less their tests, a webroot stub and the runtime confs),
+production (also the whole webroot and every base and add-on component less its tests and plans: the file
+set of ./moq archive) or all (also the tests, plans and the dev and test sets). A runtime reads each of
+these files that is not on disk from the binary; a file on disk is used in its place. With no runtime
+moqui makes only its directories; at the framework level the runtime boots, loads the seed data, answers
+/rest, /Login, /status and the html /apps (System, Tools, Dashboards), and runs moqui tui, and at the
+production level it is the whole instance. At startup moqui logs how many files it reads from the binary,
+and each file on disk that differs from the built-in one (changed, added on disk, or a component the
+binary does not have): as warnings for the framework, tools and webroot, as information for the other
+components. See docs/Run-Deploy.md, Built-in runtime files.
 
-  list      Every built-in file, as framework/<path>, tools/<path> or webroot/<path>, with its size.
-  diff      A unified diff of each changed file (built in as the old side; a missing or added file is one
-            line), or of the one file named.
-  extract   Write a skeleton runtime into the directory; files already there are kept.
+Postgres (embedded-postgres), OpenSearch and Chromium (./moq build --embed-opensearch, --embed-chromium)
+may be built in too. Each is unpacked into the install directory (MOQUI_INSTALL, default install/ in the
+runtime) the first time it is needed and runs as its own process; OpenSearch keeps its config, data and
+logs in runtime/opensearch. An install in runtime/opensearch or runtime/chromium comes first.
 
+  info      The level, the files and size of each set, the components and the programs built in.
+  list      Every built-in file, as framework/<path>, tools/<path>, webroot/<path>,
+            components/<set>/<component>/<path>, skeleton/<path> or conf/<path>, with its size.
+  diff      A unified diff of each changed file (built in as the old side; an added file is one line,
+            files not on disk one count), or of the one file named.
+  extract   Write each built-in file that is not on disk into the runtime (the one moqui uses, or the
+            directory named); files already there are kept.
+  checksum  The SHA-256 of each part built in, in sha256sum format, or of the parts named: runtime (the
+            packed runtime files), postgres, opensearch and chromium (each the archive file the build
+            embedded). --env prints them as MOQUI_EMBEDDED_SHA256_<PART>=<hex>.
+  unpack    Unpack the programs built in into the install directory now, as their first use would (for
+            a container image); all, or none named, is every one the binary has.
+
+Checksums at startup: the server and moqui load check each part named in the file moqui_embedded_checksums
+names (a property, environment variable or .env entry), else <runtime>/embedded.sha256 when it is there,
+and in MOQUI_EMBEDDED_SHA256_RUNTIME, _POSTGRES, _OPENSEARCH and _CHROMIUM, which take the place of the
+file's line. A part that differs, or one named that the binary does not have, is logged and moqui does not
+start. Lines naming other files are skipped, so the file also serves sha256sum -c --ignore-missing.
+
+  moqui embedded info
   moqui embedded diff
   moqui embedded diff framework/conf/MoquiDefaultConf.xml
+  moqui embedded diff components/addon/mr-mantle/component.xml
   moqui embedded extract /tmp/runtime
+  moqui embedded checksum > runtime/embedded.sha256
+  moqui embedded checksum --env runtime
+  moqui embedded unpack all
 ";
 
 const VERSION: &str = "\
@@ -933,7 +981,10 @@ pub fn command_usage(command: &str) -> Error {
         }
         "help" => "moqui help [command]",
         "version" => "moqui version",
-        "embedded" => "moqui embedded list | diff [<component>/<path>] | extract <runtime dir>",
+        "embedded" => {
+            "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
+             | unpack [<program>...]"
+        }
         _ => "moqui [command] [args...]",
     };
     let help = if command_help(command).is_some() {

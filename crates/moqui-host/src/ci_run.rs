@@ -139,6 +139,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 .clamp(2, 3600);
             let work = option(args, "--work").map_or_else(|| std::env::temp_dir().join("moqui-ci"), PathBuf::from);
             let shell = option(args, "--shell");
+            let keep_processes = args.iter().any(|arg| arg == "--keep-processes");
             loop {
                 let claimed = runner::http::call(&server, "claim", &runner_token, &serde_json::json!({}));
                 match claimed {
@@ -146,9 +147,18 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                         if let (Some(job), Some(token)) = (answer["jobRunId"].as_str(), answer["token"].as_str()) {
                             let dir = work.join(job);
                             let _ = std::fs::remove_dir_all(&dir);
+                            let began = std::time::Instant::now();
                             let code = run_one(&server, job, token, dir.join("src"), shell.clone());
                             eprintln!("job run {job} ended with exit code {code}");
                             let _ = std::fs::remove_dir_all(&dir);
+                            // a registered runner is not cleaned between jobs but for this: what the job left
+                            // running does not see the next one (the runner runs as a user of its own)
+                            if !keep_processes {
+                                let killed = runner::end_leftovers(began.elapsed().as_secs() + 1);
+                                if killed > 0 {
+                                    eprintln!("killed {killed} processes job run {job} left");
+                                }
+                            }
                             if once {
                                 return Ok(code);
                             }

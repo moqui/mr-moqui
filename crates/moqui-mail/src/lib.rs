@@ -95,6 +95,7 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: FEATURES,
         register_services: register,
+        after_boot: warn_authserv,
         before_shutdown: stop_idle,
         ..moqui_core::extension::Extension::EMPTY
     }
@@ -153,6 +154,37 @@ fn stop_idle(factory: &ExecutionContextFactory) {
 
 #[cfg(not(feature = "imap"))]
 fn stop_idle(_factory: &ExecutionContextFactory) {}
+
+/// At boot, on a node that receives mail without a listener of its own, warn when `smtp_authserv_id` is empty
+/// ([`delivery::authserv_warning`]). A node with the listener warns as it starts it (the host's `smtp.rs`).
+#[cfg(feature = "imap")]
+fn warn_authserv(factory: &ExecutionContextFactory) {
+    let (options, _) = delivery::listener_options(factory);
+    let settings = moqui_core::edge::settings(factory);
+    let paired = !settings.takes_links()
+        && !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)
+            .trim()
+            .is_empty();
+    // an incoming IMAP or POP3 server: synced mail, whose Authentication-Results are the provider's
+    let synced = || {
+        factory.entity().is_some_and(|facade| {
+            facade
+                .find("moqui.basic.email.EmailServer")
+                .and_then(|find| {
+                    find.condition(moqui_core::entity::Condition::is_not_null("storeHost"))
+                        .disable_authz()
+                        .count()
+                })
+                .is_ok_and(|count| count > 0)
+        })
+    };
+    if let Some(warning) = delivery::authserv_warning(&options.authserv_id, paired, synced) {
+        tracing::warn!("{warning}");
+    }
+}
+
+#[cfg(not(feature = "imap"))]
+fn warn_authserv(_factory: &ExecutionContextFactory) {}
 
 /// A mail service body, registered under this crate's path.
 macro_rules! mail_service {

@@ -15,8 +15,10 @@
 //! What a job uploads (docs/interfaces/Pipelines.md "Artifacts, reports and caches"): artifacts, JUnit reports and cache
 //! archives, each a content blob streamed in with a size limit, and a `GitRunArtifact` row with its size, checksum
 //! and expiry. A report's failed tests become `GitRunTestFailure` rows. A cache is per repository and key, kept apart
-//! for protected refs: a run for a protected ref reads only caches such a run wrote, and an untrusted run writes
-//! none. The daily retention removes what expired; `gc#ContentBlobs` then deletes the blobs.
+//! for protected refs: a run for a protected ref reads only caches such a run wrote, an untrusted run reads only
+//! caches no protected run wrote and writes none. What a repository and an owner keep is capped (`git-ci`
+//! `max-repository-upload-bytes`, `max-owner-upload-bytes`), and every upload a job makes counts toward
+//! `max-artifacts`. The daily retention removes what expired; `gc#ContentBlobs` then deletes the blobs.
 
 use std::io::Read;
 
@@ -84,11 +86,13 @@ fn days(name: &str, default: u64) -> i64 {
     i64::try_from(super::number_setting(name, default)).unwrap_or(i64::MAX / DAY_MILLIS)
 }
 
-/// The cache a run reads for `key`: one a run of its own class wrote, and for a run that is not for a protected ref,
-/// one a protected run wrote when there is no other.
+/// The cache a run reads for `key`: one a run of its own class wrote, and for a trusted run that is not for a
+/// protected ref, one a protected run wrote when there is no other. An untrusted run never reads a protected run's
+/// cache, which a build with secrets may have filled.
 pub fn find_cache(entity: &EntityFacade, run: &EntityValue, key: &str) -> Result<Option<EntityValue>, Error> {
     let _rows = crate::rows_guard();
     let protected = is_yes(run, "protectedRef");
+    let trusted = is_yes(run, "trusted");
     let rows = entity
         .find(RUN_ARTIFACT)?
         .eq("repositoryId", opt(field(run, "repositoryId")))
@@ -99,6 +103,7 @@ pub fn find_cache(entity: &EntityFacade, run: &EntityValue, key: &str) -> Result
     let mut rows: Vec<&EntityValue> = rows
         .iter()
         .filter(|row| !protected || is_yes(row, "protectedRef"))
+        .filter(|row| trusted || !is_yes(row, "protectedRef"))
         .collect();
     rows.sort_by_key(|row| is_yes(row, "protectedRef") != protected);
     Ok(rows.first().map(|row| (*row).clone()))
@@ -171,7 +176,14 @@ pub fn store(
 ) -> Result<Option<String>, Error> {
     let _rows = crate::rows_guard();
     let job_run_id = field(job, "jobRunId").unwrap_or_default();
-    let protected = is_yes(run, "protectedRef");
+    // a cache of a job that was given secrets (an environment's allowedRefs on a branch no rule protects) is of the
+    // protected class too: a build with secrets may have left them in it, and no untrusted run reads it (find_cache)
+    let protected = is_yes(run, "protectedRef")
+        || (upload.kind == Kind::Cache && {
+            let spec: serde_json::Value =
+                serde_json::from_str(&field(job, "jobSpec").unwrap_or_default()).unwrap_or(serde_json::Value::Null);
+            !super::trust::secrets_for(entity, run, &spec, false)?.is_empty()
+        });
     if upload.kind == Kind::Cache {
         if !is_yes(run, "trusted") {
             return Err(Error::new("an untrusted run reads caches and writes none"));
@@ -190,18 +202,59 @@ pub fn store(
         if !stored.is_empty() {
             return Ok(None);
         }
-    } else {
-        let max = i64::try_from(super::number_setting("max-artifacts", 100)).unwrap_or(100);
-        let count = entity
-            .find(RUN_ARTIFACT)?
-            .eq("jobRunId", Value::string(&job_run_id))
-            .count()?;
-        if count >= max {
-            return Err(Error::new(format!("a job uploads at most {max} artifacts and reports")));
+    }
+    // every upload of a job counts, its caches too
+    let max = i64::try_from(super::number_setting("max-artifacts", 100)).unwrap_or(100);
+    let count = entity
+        .find(RUN_ARTIFACT)?
+        .eq("jobRunId", Value::string(&job_run_id))
+        .count()?;
+    if count >= max {
+        return Err(Error::new(format!(
+            "a job uploads at most {max} artifacts, reports and caches"
+        )));
+    }
+    // what the repository and the run's owner keep, each against its cap; the upload is cut at what is left
+    let owner = field(run, "ownerId");
+    let mut room = upload.kind.max_bytes();
+    // the cap that cuts the upload, when one does: an upload past it is refused as the quota's, not the kind's limit
+    let mut capped: Option<(&str, &str, u64)> = None;
+    let caps = [
+        (
+            "max-repository-upload-bytes",
+            "repositoryId",
+            field(run, "repositoryId"),
+            "repository",
+        ),
+        ("max-owner-upload-bytes", "ownerId", owner.clone(), "owner"),
+    ];
+    for (setting, key, id, what) in &caps {
+        let cap = super::number_setting(setting, 0);
+        let Some(id) = id.as_ref().filter(|_| cap > 0) else {
+            continue;
+        };
+        if *key == "ownerId" {
+            backfill_owners(entity);
+        }
+        let used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        if used >= cap {
+            return Err(quota(what, used, cap, setting));
+        }
+        if cap - used < room {
+            room = cap - used;
+            capped = Some((what, setting, cap));
         }
     }
     let blobs = BlobStore::new(entity.clone());
-    let info = blobs.put(input, &Expected::default(), upload.kind.max_bytes())?;
+    let info = match blobs.put(input, &Expected::default(), room) {
+        Ok(info) => info,
+        Err(err) => {
+            return Err(match capped {
+                Some((what, setting, cap)) => quota(what, cap.saturating_sub(room), cap, setting),
+                None => err.into(),
+            })
+        }
+    };
     let now = super::now_millis();
     let retention = match upload.kind {
         Kind::Artifact => upload
@@ -217,6 +270,7 @@ pub fn store(
     row.set("jobRunId", Value::string(&job_run_id));
     row.set("pipelineRunId", opt(field(run, "pipelineRunId")));
     row.set("repositoryId", opt(field(run, "repositoryId")));
+    row.set("ownerId", opt(owner));
     row.set("artifactKind", Value::string(upload.kind.name()));
     row.set("name", Value::string(upload.name));
     row.set("path", opt(upload.path.map(str::to_string)));
@@ -235,6 +289,20 @@ pub fn store(
         row.set("lastUsedDate", moqui_core::user::stamp_value(now));
     }
     row.create(entity)?;
+    // two uploads at once may each have fit what was left: counted again with this one stored, the one that went past
+    // a cap is taken back. Its content blob is left to gc#ContentBlobs, which deletes a blob no row references: blobs
+    // are kept by their content, so the same bytes may be another upload's
+    for (setting, key, id, what) in &caps {
+        let cap = super::number_setting(setting, 0);
+        let Some(id) = id.as_ref().filter(|_| cap > 0) else {
+            continue;
+        };
+        let used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        if used > cap {
+            row.delete(entity)?;
+            return Err(quota(what, used - info.size, cap, setting));
+        }
+    }
     if upload.kind == Kind::Report {
         // a report that does not parse is still a download
         if let Err(err) = record_failures(entity, &job_run_id, &blobs, &info) {
@@ -242,6 +310,88 @@ pub fn store(
         }
     }
     Ok(field(&row, "artifactId"))
+}
+
+/// The refusal of an upload past a storage cap.
+fn quota(what: &str, used: u64, cap: u64, setting: &str) -> Error {
+    Error::new(format!(
+        "GitCiStorageQuota: the {what} keeps {used} bytes of artifacts, reports and caches, and its cap is {cap} \
+         (git-ci {setting})"
+    ))
+}
+
+/// Give the artifacts stored before they carried their run's owner (`ownerId` empty) their run's, so an owner's cap
+/// counts them: a batch at a time, once a process has none left. A failure is logged; the count goes on.
+fn backfill_owners(entity: &EntityFacade) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DONE.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    const BATCH: i64 = 1000;
+    // (rows read, rows given an owner): done when a batch was not full or filled nothing (runs with no owner)
+    let filled = (|| -> Result<(usize, i64), Error> {
+        let rows = entity
+            .find(RUN_ARTIFACT)?
+            .condition(Condition::is_null("ownerId"))
+            .select_field("pipelineRunId")
+            .limit(BATCH)
+            .list()?;
+        let runs: std::collections::BTreeSet<String> =
+            rows.iter().filter_map(|row| field(row, "pipelineRunId")).collect();
+        let mut given = 0;
+        for run_id in &runs {
+            let Some(owner) = super::one(entity, super::PIPELINE_RUN, "pipelineRunId", run_id)?
+                .and_then(|run| field(&run, "ownerId"))
+            else {
+                continue;
+            };
+            given += entity
+                .find(RUN_ARTIFACT)?
+                .eq("pipelineRunId", Value::string(run_id))
+                .condition(Condition::is_null("ownerId"))
+                .update_all([("ownerId".to_string(), Value::string(owner))])?;
+        }
+        Ok((rows.len(), given))
+    })();
+    match filled {
+        Ok((read, given)) if i64::try_from(read).unwrap_or(BATCH) < BATCH || given == 0 => {
+            DONE.store(true, std::sync::atomic::Ordering::Release);
+        }
+        Ok(_) => {}
+        Err(err) => tracing::error!("the owners of older CI artifacts were not filled in: {err}"),
+    }
+}
+
+/// The bytes of the artifacts, reports and caches stored with `key` (`repositoryId` or `ownerId`) `id`.
+pub(crate) fn stored_bytes(entity: &EntityFacade, key: &str, id: &str) -> Result<i64, Error> {
+    Ok(entity
+        .find(RUN_ARTIFACT)?
+        .eq(key, Value::string(id))
+        .select_field("sizeBytes")
+        .list()?
+        .iter()
+        .map(|row| long(row, "sizeBytes").unwrap_or(0))
+        .sum())
+}
+
+/// The bytes of each kind of upload stored with `key` `id`: (artifacts and reports, caches).
+pub(crate) fn stored_by_kind(entity: &EntityFacade, key: &str, id: &str) -> Result<(i64, i64), Error> {
+    let rows = entity
+        .find(RUN_ARTIFACT)?
+        .eq(key, Value::string(id))
+        .select_field("sizeBytes")
+        .select_field("artifactKind")
+        .list()?;
+    let (mut files, mut caches) = (0, 0);
+    for row in rows.iter() {
+        let size = long(row, "sizeBytes").unwrap_or(0);
+        if field(row, "artifactKind").as_deref() == Some("cache") {
+            caches += size;
+        } else {
+            files += size;
+        }
+    }
+    Ok((files, caches))
 }
 
 /// The stored content of an artifact row, to read in ranges.

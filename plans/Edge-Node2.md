@@ -505,7 +505,7 @@ as now.
 | Delegated calls | Call | The call's conversation: a phone call's or a call session's id, so one call's events reach one member |
 | Queue delivery down | Item | Nothing more: an item's key already goes one at a time, and receipts are rows in the pool's database, so any member applies an item once |
 | Call signaling | Message | The member whose socket bound the leg |
-| XMPP and SSH tunnels | Connection | The client's address. To one member until checked: XMPP sessions are per member, and each member has its own SSH host key |
+| XMPP and SSH tunnels | Connection | The client's address. To one member until checked: XMPP sessions are per member; the members share one SSH host key (`ssh_host_key`) and one LFS token key (`git_lfs_token_key`), so a client that lands on another member after a failover sees the same host and its LFS tokens still hold (a member whose SSH host key differs from a live member's warns at startup) |
 | Mail, webhooks, media | Not balanced: they end on the edge node, and their work goes down as queue items or delegated calls | |
 
 **Health.**

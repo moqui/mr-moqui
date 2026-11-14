@@ -351,25 +351,12 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
         .map(|(name, value)| (name, to_plain_string(&value)))
         .collect();
     let profile = crate::sso::client()?.complete(&flow, &pending, &callback)?;
-    let username = profile
-        .username
-        .clone()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| LibError::new(format!("AuthFlow {auth_flow_id}: the provider gave no username")))?;
-    let username = sync_account(facade, &flow_row, &profile, &username)?;
     let reauth = stored
         .get("reauth")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let started_at = stored.get("startedAt").and_then(serde_json::Value::as_i64);
-    let authenticated_at = sign_in_time(&flow, &profile, reauth, started_at, crate::user::now_millis());
-    if reauth && authenticated_at.is_none() {
-        tracing::warn!(
-            "SSO re-authentication of {username} through AuthFlow {auth_flow_id}: the provider did not sign the user in again \
-             (no auth_time after the request), so it is not a recent sign-in"
-        );
-    }
-    crate::user::login_external_user(&username, authenticated_at).map_err(|err| LibError::new(err.message()))?;
+    let username = sign_in(facade, &flow_row, &flow, &profile, reauth, started_at)?;
     set_session_attribute(EXTERNAL_LOGOUT, Some("true"));
     set_session_attribute(FLOW_ID, Some(&auth_flow_id));
     set_session_attribute(ID_TOKEN, profile.id_token.as_deref());
@@ -387,6 +374,138 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
     }
     tracing::info!("SSO login of {username} through AuthFlow {auth_flow_id}");
     Ok(())
+}
+
+/// The sign-in of a completed flow: the account synced, the user logged in, and the conf's `login`
+/// `sso-linked-service` told of the provider id the account now holds ([`note_linked`]). The username logged in.
+fn sign_in(
+    facade: &EntityFacade,
+    flow_row: &EntityValue,
+    flow: &FlowConfig,
+    profile: &SsoProfile,
+    reauth: bool,
+    started_at: Option<i64>,
+) -> Result<String, LibError> {
+    let auth_flow_id = &flow.auth_flow_id;
+    let username = profile
+        .username
+        .clone()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| LibError::new(format!("AuthFlow {auth_flow_id}: the provider gave no username")))?;
+    let username = sync_account(facade, flow_row, profile, &username)?;
+    let authenticated_at = sign_in_time(flow, profile, reauth, started_at, crate::user::now_millis());
+    if reauth && authenticated_at.is_none() {
+        tracing::warn!(
+            "SSO re-authentication of {username} through AuthFlow {auth_flow_id}: the provider did not sign the user in again \
+             (no auth_time after the request), so it is not a recent sign-in"
+        );
+    }
+    crate::user::login_external_user(&username, authenticated_at).map_err(|err| LibError::new(err.message()))?;
+    if let Some(user_id) = crate::user::current_user_id()?.filter(|id| !id.is_empty()) {
+        note_linked(facade, flow_row, flow, profile, &user_id);
+    }
+    Ok(username)
+}
+
+/// The host of a URL, lower case: `None` for one with no host.
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = if host.starts_with('[') {
+        host.split_inclusive(']').next().unwrap_or(host)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    Some(host.to_ascii_lowercase()).filter(|host| !host.is_empty())
+}
+
+/// Tell the conf's `login` `sso-linked-service` (none by default) that a real sign-in through a provider linked or
+/// confirmed the account's provider id (`UserAccount.externalUserId`), so an application can tie its own records to the
+/// identity (Smithy's imported GitHub authors). In: `userId`, `authFlowId`, `providerHost` (the host of the user info
+/// endpoint, else of the ID token's issuer), `externalUserId`, `login` (the provider's username when the profile has
+/// one), `email` and `emailVerified` (the provider's `email_verified` claim is true), and `urlsOverridden` (the flow sets
+/// an endpoint or discovery URL of its own instead of its client type's). Called once the sign-in's transaction commits
+/// (at once with none), with authorization disabled; a failure is logged and never undoes or blocks the sign-in. A
+/// write of `externalUserId` by hand is not a sign-in and calls nothing.
+fn note_linked(facade: &EntityFacade, flow_row: &EntityValue, flow: &FlowConfig, profile: &SsoProfile, user_id: &str) {
+    let service = crate::user::policy::sso_linked_service();
+    if service.is_empty() || profile.id.is_empty() {
+        return;
+    }
+    let claim = |name: &str| {
+        profile
+            .attributes
+            .get(name)
+            .filter(|value| !is_empty(value))
+            .map(to_plain_string)
+            .filter(|text| !text.trim().is_empty())
+    };
+    let provider_host = profile
+        .user_info_url
+        .as_deref()
+        .and_then(url_host)
+        .or_else(|| claim("iss").as_deref().and_then(url_host))
+        .unwrap_or_default();
+    let login = ["login", "preferred_username", "username"]
+        .iter()
+        .find_map(|name| claim(name))
+        .unwrap_or_default();
+    let urls_overridden = match &flow.kind {
+        FlowKind::Oauth(config) => {
+            !(config.authorize_url.trim().is_empty()
+                && config.token_url.trim().is_empty()
+                && config.user_info_url.trim().is_empty())
+        }
+        FlowKind::Oidc(config) => !(config.discovery_uri.trim().is_empty() && config.base_uri.trim().is_empty()),
+    };
+    let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
+    for (name, value) in [
+        ("userId", Value::string(user_id)),
+        ("authFlowId", Value::string(field(flow_row, "authFlowId"))),
+        ("providerHost", Value::string(provider_host)),
+        ("externalUserId", Value::string(&profile.id)),
+        ("login", Value::string(login)),
+        ("email", Value::string(claim("email").unwrap_or_default())),
+        (
+            "emailVerified",
+            Value::Bool(claim("email_verified").as_deref() == Some("true")),
+        ),
+        ("urlsOverridden", Value::Bool(urls_overridden)),
+    ] {
+        parameters.insert(name.to_string(), value);
+    }
+    let run = move || {
+        let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+        let options = CallOptions {
+            disable_authz: true,
+            ..CallOptions::default()
+        };
+        let outcome = sync_with(&service, &parameters, &options);
+        let errors = mark
+            .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
+            .unwrap_or_default();
+        let user = parameters.get("userId").map(to_plain_string).unwrap_or_default();
+        match outcome {
+            Err(err) => tracing::error!("sso-linked-service {service} failed for {user}: {}", err.message()),
+            Ok(_) if !errors.is_empty() => {
+                tracing::error!("sso-linked-service {service} failed for {user}: {}", errors.join("; "));
+            }
+            Ok(_) => {}
+        }
+    };
+    let tx = facade
+        .transactions_for(ACCOUNT)
+        .ok()
+        .filter(crate::transaction::TransactionManager::in_transaction);
+    match tx {
+        Some(tx) => {
+            if let Err(err) = tx.on_commit(run) {
+                tracing::error!("sso-linked-service not scheduled after the sign-in of {user_id}: {err}");
+            }
+        }
+        None => run(),
+    }
 }
 
 /// How long before the login request an ID token's `auth_time` may be and still answer a re-authentication (clock skew

@@ -749,7 +749,7 @@ fn service_file_of(name: &str) -> Option<PathBuf> {
     service_roots()
         .iter()
         .map(|root| root.join(&relative))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| moqui_lib::vfs::is_file(candidate))
 }
 
 /// The `service` directories of the framework and then each component, in Java's search order: the classpath first,
@@ -796,14 +796,13 @@ pub(crate) fn service_names_in_files() -> Vec<String> {
 }
 
 fn names_in_dir(root: &Path, dir: &Path, names: &mut BTreeSet<String>) {
-    let Ok(read) = std::fs::read_dir(dir) else {
+    let Ok(read) = moqui_lib::vfs::read_dir(dir) else {
         return;
     };
-    let mut paths: Vec<PathBuf> = read.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
-    paths.sort();
-    for path in paths {
+    for entry in read {
+        let path = entry.path();
         let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        if path.is_dir() {
+        if entry.is_dir() {
             names_in_dir(root, &path, names);
         } else if file_name.ends_with(".xml")
             && ![".secas.xml", ".emecas.xml", ".gitecas.xml", ".rest.xml"]
@@ -827,9 +826,11 @@ static FILE_NAMES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMa
 /// The names of the `service` and `service-include` elements of the file at `relative` in a `service` directory, read
 /// again only when the file's modification time or length changed since the last read.
 fn names_in_file(path: &Path, relative: &Path, names: &mut BTreeSet<String>) {
+    // a file built into the binary (moqui_lib::vfs) does not change while the process runs
     let stamp = std::fs::metadata(path)
         .ok()
-        .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())));
+        .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())))
+        .or_else(|| moqui_lib::vfs::is_from_overlay(path).then_some((std::time::UNIX_EPOCH, 0)));
     if let Some((modified, len)) = stamp {
         let held = moqui_lib::sync::lock(&FILE_NAMES)
             .get(path)
@@ -982,7 +983,7 @@ pub fn check(paths: &[PathBuf]) -> Result<Vec<String>, Error> {
 fn comment_failures(files: &BTreeSet<PathBuf>) -> Vec<String> {
     let mut failures = Vec::new();
     for path in files {
-        let Ok(text) = std::fs::read_to_string(path) else {
+        let Ok(text) = moqui_lib::vfs::read_to_string(path) else {
             continue;
         };
         for line in moqui_lib::node::malformed_comments(&text) {
@@ -1076,7 +1077,7 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
         };
         for file in &group.files {
             registry.loaded.files.remove(file);
-            if seen.insert(file.clone()) && file.is_file() {
+            if seen.insert(file.clone()) && moqui_lib::vfs::is_file(file) {
                 paths.push(file.clone());
             }
         }
@@ -1089,7 +1090,7 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
         seeds.extend(group.names);
     }
     for file in &changed {
-        if seen.insert(file.clone()) && file.is_file() {
+        if seen.insert(file.clone()) && moqui_lib::vfs::is_file(file) {
             paths.push(file.clone());
         }
     }
@@ -1377,7 +1378,7 @@ fn load_file(
     if let Some((_, relative)) = &place {
         for root in roots {
             let other = root.join(relative);
-            if other != path && other.is_file() {
+            if other != path && moqui_lib::vfs::is_file(&other) {
                 pending.push(other);
             }
         }
@@ -2105,7 +2106,7 @@ pub fn configured_service_files() -> Result<Vec<PathBuf>, Error> {
     configured_paths()
 }
 
-fn configured_paths() -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn configured_paths() -> Result<Vec<PathBuf>, Error> {
     let configured = ExecutionContext::with_current(|ec| ec.factory().conf_text().to_string())
         .filter(|conf| !conf.trim().is_empty())
         .map(|conf| MNode::parse_shared("moqui-conf", &conf))

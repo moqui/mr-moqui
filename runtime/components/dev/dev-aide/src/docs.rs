@@ -218,11 +218,16 @@ fn export_artifact_docs(
         }
     }
     for relative in &writes.remove {
-        let done = checked(relative).and_then(|path| match std::fs::remove_file(&path) {
-            Ok(()) => Ok(true),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(err) => Err(LibError::new(format!("{}: {err}", path.display()))),
-        });
+        let done = checked(relative)
+            .and_then(|path| {
+                crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, &path.display().to_string())
+                    .map(|()| path)
+            })
+            .and_then(|path| match std::fs::remove_file(&path) {
+                Ok(()) => Ok(true),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(err) => Err(LibError::new(format!("{}: {err}", path.display()))),
+            });
         match done {
             Ok(true) => removed += 1,
             Ok(false) => {}

@@ -40,6 +40,10 @@ The gateway is off by default; while it is off everything under `/llm/v1` answer
   aliases, and its `dailyTokens`, `dailyCost` and `requestsPerMinute` apply on top of the user's own limits (a client
   cannot raise what its user may use). `lastUsedDate` is noted at most once a minute.
 
+A key for the gateway alone (`create#UserScopedKey`, `UserLoginKey.scope` `gateway`; `/rest/s1/moqui/hosting/gatewayKey`)
+opens the gateway as its user's login key does, and nothing else: a dev instance's Connect writes one into its `.env`
+in place of the account's key (docs/Run-Deploy.md). It is a login key to `require-client` and the client rows.
+
 ## Calling it
 
 Any OpenAI client works with `base_url` `https://<host>/llm/v1` and the key as its API key:

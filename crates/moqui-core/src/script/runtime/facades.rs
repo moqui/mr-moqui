@@ -84,7 +84,7 @@ pub(crate) fn read_module(location: &str) -> Result<(super::ScriptText, bool), E
     }
     let path = crate::context::locate(location)?;
     let modified = modified_of(&path);
-    let text = std::fs::read_to_string(&path)
+    let text = moqui_lib::vfs::read_to_string(&path)
         .map_err(|err| Error::new(format!("could not read script {location}")).with_source(err))?;
     let inert = crate::script::parse::module_is_inert(&text);
     let text: Arc<str> = crate::script::parse::file_function(&text).into();

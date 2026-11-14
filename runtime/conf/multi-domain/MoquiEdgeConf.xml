@@ -60,7 +60,10 @@
     <default-property name="smtp_internet" value="true"/>
     <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
     <default-property name="edge_mail_relay_port" value="10025"/>
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+    <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
+        trusts on that mail: smtp_authserv_id, else smtp_hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"
+            authserv-id="${smtp_authserv_id ?: smtp_hostname}"/>
 
     <!-- Chat bridges and SMS (docs/interfaces/Chat-Bridges.md): ids come from separate databases and two pairings may
         have the same one, so a webhook goes by the request's host name first. At a pairing's terminate host name only

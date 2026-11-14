@@ -122,6 +122,76 @@ fn the_balancing_defaults_and_their_conf() {
     );
 }
 
+/// A forwarded request's waits and the SSH tunnels at once: long by default, so an upload answered once it is stored
+/// is not cut off; a conf sets each, and zero or a bad number keeps at least one second (one tunnel).
+#[test]
+fn the_forward_waits_and_ssh_tunnels_and_their_conf() {
+    let defaults = EdgeSettings::default();
+    assert_eq!(defaults.forward_idle, Duration::from_secs(120));
+    assert_eq!(defaults.forward_head, Duration::from_secs(3600));
+    assert_eq!(defaults.ssh_tunnels, 256);
+    let settings = EdgeSettings::parse(
+        &conf(
+            r#"<moqui-conf><edge forward-idle-seconds="30" forward-head-seconds="7200" ssh-tunnels="1024"/></moqui-conf>"#,
+        ),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(
+        (settings.forward_idle, settings.forward_head, settings.ssh_tunnels),
+        (Duration::from_secs(30), Duration::from_secs(7200), 1024)
+    );
+    let settings = EdgeSettings::parse(
+        &conf(r#"<moqui-conf><edge forward-idle-seconds="0" forward-head-seconds="x" ssh-tunnels="0"/></moqui-conf>"#),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(
+        (settings.forward_idle, settings.forward_head, settings.ssh_tunnels),
+        (Duration::from_secs(1), Duration::from_secs(3600), 1)
+    );
+}
+
+/// A request with no body waits a short time for its answer's head (so a hung member's GET goes to another member),
+/// never longer than the head wait; a huge number of seconds or tunnels is capped (a day; MAX_SSH_TUNNELS) rather than
+/// overflowing the clock it is added to or the semaphore it sizes.
+#[test]
+fn the_first_byte_wait_and_the_caps_on_huge_numbers() {
+    assert_eq!(EdgeSettings::default().forward_first_byte, Duration::from_secs(30));
+    let settings = EdgeSettings::parse(
+        &conf(r#"<moqui-conf><edge forward-first-byte-seconds="12"/></moqui-conf>"#),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(settings.forward_first_byte, Duration::from_secs(12));
+    let settings = EdgeSettings::parse(
+        &conf(r#"<moqui-conf><edge forward-first-byte-seconds="90" forward-head-seconds="20"/></moqui-conf>"#),
+        NodeRole::FrontEdge,
+    );
+    assert_eq!(
+        settings.forward_first_byte,
+        Duration::from_secs(20),
+        "at most the head wait"
+    );
+    let huge = u64::MAX.to_string();
+    let settings = EdgeSettings::parse(
+        &conf(&format!(
+            r#"<moqui-conf><edge forward-idle-seconds="{huge}" forward-head-seconds="{huge}" forward-first-byte-seconds="{huge}" set-aside-seconds="{huge}" ssh-tunnels="{huge}"/></moqui-conf>"#
+        )),
+        NodeRole::FrontEdge,
+    );
+    let day = Duration::from_secs(86_400);
+    assert_eq!(
+        (
+            settings.forward_idle,
+            settings.forward_head,
+            settings.forward_first_byte,
+            settings.set_aside_for
+        ),
+        (day, day, day, day)
+    );
+    assert_eq!(settings.ssh_tunnels, MAX_SSH_TUNNELS);
+    let later = std::time::Instant::now() + settings.forward_head + settings.forward_idle;
+    assert!(later > std::time::Instant::now());
+}
+
 /// A spec step run as an edge node (`withProperty("node_role", ...)`) on a node that started as a normal node read the
 /// edge settings first, and every spec after it in that process delegated its calls to a link that was not there. Boot
 /// now holds the node to the role it booted with, whatever is read later for another role.

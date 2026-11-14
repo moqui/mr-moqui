@@ -26,17 +26,24 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use moqui_core::context::ExecutionContext;
-use moqui_core::entity::{Condition, EntityFacade, EntityValue};
+use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::rust_service;
 
 use super::file::Event;
 use super::queue::{self, RunRequest};
 use super::{
-    engine, field, field_value, int, is_yes, long, millis, opt, yes_no, CI_ENVIRONMENT, CI_SECRET, JOB_RUN, JOB_STEP,
-    PIPELINE_RUN, RUNNER_POOL, RUNNER_USAGE, RUN_ARTIFACT, TEST_FAILURE,
+    engine, field, field_value, int, is_yes, long, millis, JOB_RUN, JOB_STEP, PIPELINE_RUN, RUNNER_USAGE, RUN_ARTIFACT,
+    TEST_FAILURE,
 };
 use crate::values::map;
 use crate::GitProvider;
+
+mod deploys;
+mod pools;
+mod secrets;
+
+#[cfg(test)]
+pub(crate) use pools::OPERATOR_PERMISSION;
 
 type Parameters = BTreeMap<String, Value>;
 type Out = Result<BTreeMap<String, Value>, LibError>;
@@ -53,21 +60,17 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, get_job_run)?;
     rust_service!(map, get_job_log)?;
     rust_service!(map, get_run_artifact)?;
+    rust_service!(map, send_run_artifact)?;
+    rust_service!(map, set_run_artifact_keep)?;
+    rust_service!(map, get_pipeline_definitions)?;
     rust_service!(map, run_pipeline)?;
     rust_service!(map, rerun_pipeline_run)?;
     rust_service!(map, cancel_pipeline_run)?;
     rust_service!(map, retry_job_run)?;
     rust_service!(map, approve_pipeline_run)?;
-    rust_service!(map, find_runner_pools)?;
-    rust_service!(map, store_runner_pool)?;
-    rust_service!(map, delete_runner_pool)?;
-    rust_service!(map, create_runner_pool_token)?;
-    rust_service!(map, find_ci_secrets)?;
-    rust_service!(map, store_ci_secret)?;
-    rust_service!(map, delete_ci_secret)?;
-    rust_service!(map, find_ci_environments)?;
-    rust_service!(map, store_ci_environment)?;
-    rust_service!(map, delete_ci_environment)?;
+    pools::register(map)?;
+    secrets::register(map)?;
+    deploys::register(map)?;
     rust_service!(map, get_runner_usage)?;
     rust_service!(map, delete_repository_runs)?;
     Ok(())
@@ -143,6 +146,11 @@ fn refuse(repository_id: &str, what: &str) {
 /// Whether the caller reads `run`: it may view the repository, and a hidden run only with authorization disabled and
 /// `includeHidden`, or as the user it was made for.
 fn readable(run: &EntityValue, parameters: &Parameters) -> bool {
+    readable_with(run, flag(parameters, "includeHidden"))
+}
+
+/// [`readable`], with `include_hidden` for the parameter.
+fn readable_with(run: &EntityValue, include_hidden: bool) -> bool {
     let repository = field(run, "repositoryId").unwrap_or_default();
     if !may(&repository, "view") {
         return false;
@@ -150,7 +158,7 @@ fn readable(run: &EntityValue, parameters: &Parameters) -> bool {
     if !is_yes(run, "hidden") {
         return true;
     }
-    (authz_disabled() && flag(parameters, "includeHidden"))
+    (authz_disabled() && include_hidden)
         || (current_user().is_some() && current_user() == field(run, "triggeredByUserId"))
 }
 
@@ -431,15 +439,22 @@ fn start_queued_job_runs(_parameters: &Parameters, facade: &EntityFacade) -> Out
     ]))
 }
 
-/// `end#OverdueJobRuns`: the job that ends runs past their time and removes what they left. Out: `timedOutCount`,
-/// `lostCount`, `unclaimedCount`, `removedCount`.
+/// `end#OverdueJobRuns`: the job that ends runs past their time and removes what they left, and starts again a
+/// deploy step left waiting (or fails one that never ended). Out: `timedOutCount`, `lostCount`, `unclaimedCount`,
+/// `removedCount`, `deployStartedCount`, `deployFailedCount`.
 fn end_overdue_job_runs(_parameters: &Parameters, facade: &EntityFacade) -> Out {
     let ended = engine::end_overdue(facade, super::now_millis())?;
+    let (deploy_started, deploy_failed) = super::deploy::resume(facade, super::now_millis()).unwrap_or_else(|err| {
+        tracing::error!("waiting deploy steps were not looked at: {err}");
+        (0, 0)
+    });
     Ok(out([
         ("timedOutCount", int(i64::try_from(ended.timed_out).unwrap_or(0))),
         ("lostCount", int(i64::try_from(ended.lost).unwrap_or(0))),
         ("unclaimedCount", int(i64::try_from(ended.unclaimed).unwrap_or(0))),
         ("removedCount", int(ended.removed)),
+        ("deployStartedCount", int(i64::try_from(deploy_started).unwrap_or(0))),
+        ("deployFailedCount", int(i64::try_from(deploy_failed).unwrap_or(0))),
     ]))
 }
 
@@ -626,14 +641,23 @@ fn artifact_value(artifact: &EntityValue) -> Value {
         ("keep", Value::Bool(is_yes(artifact, "keep"))),
         copy("expireDate"),
         copy("createdDate"),
+        ("fileName", Value::string(file_name(artifact))),
         (
-            "fileName",
-            Value::string(match field(artifact, "artifactKind").as_deref() {
-                Some("artifact") => format!("{}.tar.gz", field(artifact, "name").unwrap_or_default()),
-                _ => field(artifact, "name").unwrap_or_default(),
-            }),
+            "location",
+            Value::string(super::location::location_of(
+                &field(artifact, "artifactId").unwrap_or_default(),
+                &file_name(artifact),
+            )),
         ),
     ])
+}
+
+/// The name an artifact or report downloads as: an artifact's `.tar.gz`, a report's own name.
+pub(crate) fn file_name(artifact: &EntityValue) -> String {
+    match field(artifact, "artifactKind").as_deref() {
+        Some("artifact") => format!("{}.tar.gz", field(artifact, "name").unwrap_or_default()),
+        _ => field(artifact, "name").unwrap_or_default(),
+    }
 }
 
 /// `get#JobLog`: a piece of a job's log. While the job runs: the chunks after `afterChunkSeq`, at most `limit`
@@ -685,29 +709,7 @@ fn get_job_log(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// from `offset`, so a download is read in pieces. A cache is not found. Out: `artifact`, `bytes`, `nextOffset`,
 /// `done`.
 fn get_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(id) = text(parameters, "artifactId") else {
-        add_error("artifactId is required");
-        return none();
-    };
-    let found = {
-        let _rows = crate::rows_guard();
-        let artifact = super::one(facade, RUN_ARTIFACT, "artifactId", &id)?
-            .filter(|artifact| field(artifact, "artifactKind").as_deref() != Some("cache"));
-        match artifact {
-            Some(artifact) => field(&artifact, "pipelineRunId")
-                .map(|run| super::one(facade, PIPELINE_RUN, "pipelineRunId", &run))
-                .transpose()?
-                .flatten()
-                .map(|run| (artifact, run)),
-            None => None,
-        }
-    };
-    let Some((artifact, _run)) = found.filter(|(_, run)| readable(run, parameters)) else {
-        add_error("no such artifact");
-        return none();
-    };
-    let Some((blobs, info)) = super::artifact::content(facade, &artifact)? else {
-        add_error("the artifact's content is gone");
+    let Some((artifact, blobs, info)) = readable_artifact(parameters, facade)? else {
         return none();
     };
     let offset = u64::try_from(number(parameters, "offset", 0).max(0))
@@ -725,6 +727,220 @@ fn get_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("bytes", Value::Bytes(bytes)),
         ("nextOffset", int(i64::try_from(next).unwrap_or(i64::MAX))),
         ("done", Value::Bool(next >= info.size)),
+    ]))
+}
+
+/// `send#RunArtifact`: send an artifact or a report of a run as this request's response, streamed from its content
+/// blob a window at a time (with `Range`, `ETag` and `If-Range`), as `ec.web.sendResourceResponse` sends a file; for a
+/// screen's download transition, so the application copies nothing to a file. Read as `get#RunArtifact` is (the
+/// view right on the repository). `inline` shows a passive file (an image, a PDF, plain text); a job's HTML, SVG, XML
+/// or JavaScript is still an attachment unless `inlineActive` is also set, since a job's output is not the
+/// application's own (shown inline it is sandboxed either way, `moqui_core::web::FileDisposition`). Out: `artifact`.
+fn send_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    let Some((artifact, blobs, info)) = readable_artifact(parameters, facade)? else {
+        return none();
+    };
+    let value = artifact_value(&artifact);
+    let file_name = Some(file_name(&artifact))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "artifact".to_string());
+    let opened = moqui_core::context::Opened {
+        stat: moqui_core::context::ResourceStat {
+            is_file: true,
+            size: info.size,
+            last_modified: None,
+        },
+        source: blobs.source(&info),
+    };
+    let disposition = match (flag(parameters, "inline"), flag(parameters, "inlineActive")) {
+        (false, _) => moqui_core::web::FileDisposition::Attachment,
+        (true, false) => moqui_core::web::FileDisposition::Inline,
+        (true, true) => moqui_core::web::FileDisposition::InlineActive,
+    };
+    if let Err(err) = moqui_core::web::send_file_response(&opened, &file_name, disposition) {
+        add_error(format!("the artifact's content cannot be read: {}", err.message()));
+        return none();
+    }
+    Ok(out([("artifact", value)]))
+}
+
+/// The artifact or report `artifactId` names, with its content, when the caller reads its run; else the error
+/// recorded (the same for one that is not there) and `None`. A cache is not found.
+fn readable_artifact(
+    parameters: &Parameters,
+    facade: &EntityFacade,
+) -> Result<
+    Option<(
+        EntityValue,
+        moqui_core::resource::blob::BlobStore,
+        moqui_core::resource::blob::BlobInfo,
+    )>,
+    LibError,
+> {
+    let Some(id) = text(parameters, "artifactId") else {
+        add_error("artifactId is required");
+        return Ok(None);
+    };
+    match read_artifact(facade, &id, flag(parameters, "includeHidden"))? {
+        ArtifactRead::Found(artifact, blobs, info) => Ok(Some((artifact, blobs, info))),
+        ArtifactRead::NotFound => {
+            add_error("no such artifact");
+            Ok(None)
+        }
+        ArtifactRead::ContentGone => {
+            add_error("the artifact's content is gone");
+            Ok(None)
+        }
+    }
+}
+
+/// What a reader of an artifact or report finds ([`read_artifact`]).
+pub(crate) enum ArtifactRead {
+    Found(
+        EntityValue,
+        moqui_core::resource::blob::BlobStore,
+        moqui_core::resource::blob::BlobInfo,
+    ),
+    /// Not there, a cache, or of a run the caller does not read: one answer for all.
+    NotFound,
+    ContentGone,
+}
+
+/// The artifact or report `id` with its content, when the caller reads its run (the view right on the repository; a
+/// hidden run's with authorization disabled and `include_hidden`, or as the user it was made for): the one check of
+/// `get#`, `send#RunArtifact` and the `ci-artifact://` locations (`super::location`).
+pub(crate) fn read_artifact(
+    facade: &EntityFacade,
+    id: &str,
+    include_hidden: bool,
+) -> Result<ArtifactRead, moqui_core::context::Error> {
+    let found = artifact_and_run(facade, id)?;
+    let Some((artifact, _run)) = found.filter(|(_, run)| readable_with(run, include_hidden)) else {
+        return Ok(ArtifactRead::NotFound);
+    };
+    Ok(match super::artifact::content(facade, &artifact)? {
+        Some((blobs, info)) => ArtifactRead::Found(artifact, blobs, info),
+        None => ArtifactRead::ContentGone,
+    })
+}
+
+/// The artifact or report `id` (never a cache) and its run, read with authorization off.
+fn artifact_and_run(
+    facade: &EntityFacade,
+    id: &str,
+) -> Result<Option<(EntityValue, EntityValue)>, moqui_core::context::Error> {
+    let _rows = crate::rows_guard();
+    let artifact = super::one(facade, RUN_ARTIFACT, "artifactId", id)?
+        .filter(|artifact| field(artifact, "artifactKind").as_deref() != Some("cache"));
+    Ok(match artifact {
+        Some(artifact) => field(&artifact, "pipelineRunId")
+            .map(|run| super::one(facade, PIPELINE_RUN, "pipelineRunId", &run))
+            .transpose()?
+            .flatten()
+            .map(|run| (artifact, run)),
+        None => None,
+    })
+}
+
+/// `set#RunArtifactKeep`: keep an artifact or a report of a run past its expiry (`keep`: a release's, which the daily
+/// retention then leaves), or let it expire again. Needs the update right on the repository, or authorization
+/// disabled; a hidden run's is found as `get#RunArtifact` finds it. A cache is not found. Out: `artifact`.
+fn set_run_artifact_keep(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    let Some(id) = text(parameters, "artifactId") else {
+        add_error("artifactId is required");
+        return none();
+    };
+    let found = artifact_and_run(facade, &id)?.filter(|(_, run)| readable(run, parameters));
+    let Some((_, run)) = found else {
+        add_error("no such artifact");
+        return none();
+    };
+    let repository = field(&run, "repositoryId").unwrap_or_default();
+    if !may(&repository, "update") {
+        refuse(&repository, "keeping an artifact of its runs");
+        return none();
+    }
+    let keep = flag(parameters, "keep");
+    let artifact = {
+        let _rows = crate::rows_guard();
+        super::set_fields(
+            facade,
+            RUN_ARTIFACT,
+            "artifactId",
+            &id,
+            None,
+            vec![("keep", Value::string(if keep { "Y" } else { "N" }))],
+        )?;
+        super::one(facade, RUN_ARTIFACT, "artifactId", &id)?
+    };
+    Ok(out([(
+        "artifact",
+        artifact.as_ref().map_or(Value::Null, artifact_value),
+    )]))
+}
+
+/// `get#PipelineDefinitions`: the pipelines a commit defines, as the engine reads them (its `ci.xml`, else the built-in
+/// pipeline of a component), so an application need not parse the file: for each `pipelineName`, `events`, `manual`
+/// (it has the manual event, so `run#Pipeline` runs it), `branches`, `tags`, `cron` and `jobNames`. `revision` is a
+/// branch, a tag, a ref or a commit (the default branch when empty). Needs the view right. Out: `commitId`, `source`
+/// (file, builtin or none; invalid with `errorMessage` for a file that is not valid), `pipelineList`.
+fn get_pipeline_definitions(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let Some(repository) = text(parameters, "repositoryId") else {
+        add_error("repositoryId is required");
+        return none();
+    };
+    if !may(&repository, "view") {
+        refuse(&repository, "reading its pipelines");
+        return none();
+    }
+    let Some(provider) = provider() else { return none() };
+    let revision = text(parameters, "revision").unwrap_or_default();
+    let Some(commit) = provider.resolve_commit(&repository, &revision)? else {
+        add_error(format!("repository {repository} has no revision {revision}"));
+        return none();
+    };
+    let commit = commit.to_string();
+    let (source, error, pipelines) = match queue::definition(&provider, &repository, &commit)? {
+        queue::Definition::File(file) => ("file", None, file.pipelines),
+        queue::Definition::Builtin(pipeline) => ("builtin", None, vec![pipeline]),
+        queue::Definition::Invalid(message) => ("invalid", Some(message), Vec::new()),
+        queue::Definition::None => ("none", None, Vec::new()),
+    };
+    let strings = |items: &[String]| Value::List(items.iter().map(Value::string).collect());
+    let list = pipelines
+        .iter()
+        .map(|pipeline| {
+            let mut job_names: Vec<String> = Vec::new();
+            for job in &pipeline.jobs {
+                if !job_names.contains(&job.name) {
+                    job_names.push(job.name.clone());
+                }
+            }
+            map([
+                ("pipelineName", Value::string(&pipeline.name)),
+                (
+                    "events",
+                    Value::List(
+                        pipeline
+                            .events
+                            .iter()
+                            .map(|event| Value::string(event.name()))
+                            .collect(),
+                    ),
+                ),
+                ("manual", Value::Bool(pipeline.events.contains(&Event::Manual))),
+                ("branches", strings(&pipeline.branches)),
+                ("tags", strings(&pipeline.tags)),
+                ("cron", pipeline.cron.as_deref().map_or(Value::Null, Value::string)),
+                ("jobNames", strings(&job_names)),
+            ])
+        })
+        .collect();
+    Ok(out([
+        ("commitId", Value::string(&commit)),
+        ("source", Value::string(source)),
+        ("errorMessage", error.map_or(Value::Null, Value::string)),
+        ("pipelineList", Value::List(list)),
     ]))
 }
 
@@ -874,6 +1090,11 @@ fn retry_job_run(parameters: &Parameters, facade: &EntityFacade) -> Out {
         refuse(&repository, "running a job again");
         return none();
     }
+    // the application's check is asked again: a run it would refuse or hold now is not run again
+    if let Err(why) = super::queue::check_again(&run) {
+        add_error(why);
+        return none();
+    }
     match engine::retry_job(facade, &field(&job, "jobRunId").unwrap_or_default()) {
         Ok(id) => Ok(out([
             ("jobRunId", Value::string(id)),
@@ -892,6 +1113,32 @@ fn approve_pipeline_run(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(run) = run_to_change(facade, parameters, "approving a pipeline run", false)? else {
         return none();
     };
+    // a run with a job in an environment that requires approval: a maintainer's (the delete right), and never the
+    // approval of who triggered it, the pusher of its commit (plans/Dogfood.md §8.4, §8.6)
+    let repository = field(&run, "repositoryId").unwrap_or_default();
+    let specs: Vec<serde_json::Value> =
+        engine::current_jobs(facade, &field(&run, "pipelineRunId").unwrap_or_default())?
+            .iter()
+            .filter_map(|job| serde_json::from_str(&field(job, "jobSpec").unwrap_or_default()).ok())
+            .collect();
+    let environments =
+        super::trust::approval_environments(facade, &repository, field(&run, "ownerId").as_deref(), specs.iter())?;
+    if !environments.is_empty() {
+        if !may(&repository, "delete") {
+            add_error(format!(
+                "approving a run in environment {} needs the delete right on repository {repository} (a maintainer)",
+                environments.join(", ")
+            ));
+            return none();
+        }
+        if current_user().is_some() && current_user() == field(&run, "triggeredByUserId") {
+            add_error(format!(
+                "a run in environment {} is approved by another than who triggered it",
+                environments.join(", ")
+            ));
+            return none();
+        }
+    }
     match engine::approve_run(
         facade,
         &field(&run, "pipelineRunId").unwrap_or_default(),
@@ -906,506 +1153,6 @@ fn approve_pipeline_run(parameters: &Parameters, facade: &EntityFacade) -> Out {
             none()
         }
     }
-}
-
-// ---- pools ----
-
-fn pool_value(pool: &EntityValue) -> Value {
-    let copy = |name: &'static str| (name, field_value(pool, name));
-    map([
-        copy("runnerPoolId"),
-        copy("poolName"),
-        copy("description"),
-        copy("ownerId"),
-        copy("instanceHostId"),
-        copy("poolKind"),
-        ("trusted", Value::Bool(is_yes(pool, "trusted"))),
-        ("enabled", Value::Bool(is_yes(pool, "enabled"))),
-        copy("maxConcurrent"),
-        copy("allowedImages"),
-        copy("cpuLimit"),
-        copy("memoryMb"),
-        copy("diskMb"),
-        copy("pidsLimit"),
-        copy("maxMinutes"),
-        copy("egressRule"),
-        copy("serverUrl"),
-        (
-            "hasRegistrationToken",
-            Value::Bool(field(pool, "registrationTokenHash").is_some()),
-        ),
-    ])
-}
-
-/// `find#RunnerPools`: the pools, with the jobs running and queued in each. Out: `poolList`.
-fn find_runner_pools(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let _rows = crate::rows_guard();
-    let mut find = facade.find(RUNNER_POOL)?;
-    if let Some(owner) = text(parameters, "ownerId") {
-        find = find.eq("ownerId", Value::string(owner));
-    }
-    let mut pools = Vec::new();
-    for pool in find.order_by("poolName", false).list()?.iter() {
-        let id = field(pool, "runnerPoolId").unwrap_or_default();
-        let count = |status: &str| -> Result<i64, LibError> {
-            facade
-                .find(JOB_RUN)?
-                .eq("statusId", Value::string(status))
-                .eq("runnerPoolId", Value::string(&id))
-                .count()
-        };
-        let Value::Map(mut entries) = pool_value(pool) else {
-            continue;
-        };
-        entries.insert("runningCount".to_string(), int(count("running")?));
-        entries.insert("queuedCount".to_string(), int(count("queued")?));
-        pools.push(Value::Map(entries));
-    }
-    Ok(out([("poolList", Value::List(pools))]))
-}
-
-/// `store#RunnerPool`: make or change a pool. Out: `runnerPoolId`.
-fn store_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let _rows = crate::rows_guard();
-    let existing = match text(parameters, "runnerPoolId") {
-        Some(id) => super::one(facade, RUNNER_POOL, "runnerPoolId", &id)?,
-        None => None,
-    };
-    let creating = existing.is_none();
-    let mut pool = match existing {
-        Some(pool) => pool,
-        None => {
-            let mut pool = EntityValue::make(facade, RUNNER_POOL)?;
-            match text(parameters, "runnerPoolId") {
-                Some(id) => pool.set("runnerPoolId", Value::string(id)),
-                None => pool.set_sequenced_id_primary(facade)?,
-            }
-            pool.set("poolName", Value::string("default"));
-            pool.set("poolKind", Value::string("container"));
-            pool.set("trusted", Value::string("Y"));
-            pool.set("enabled", Value::string("Y"));
-            pool.set("maxConcurrent", int(1));
-            pool
-        }
-    };
-    for name in [
-        "poolName",
-        "description",
-        "ownerId",
-        "instanceHostId",
-        "allowedImages",
-        "cpuLimit",
-        "egressRule",
-        "serverUrl",
-    ] {
-        if parameters.contains_key(name) {
-            pool.set(name, opt(text(parameters, name)));
-        }
-    }
-    for name in ["maxConcurrent", "memoryMb", "diskMb", "pidsLimit", "maxMinutes"] {
-        if parameters.contains_key(name) {
-            pool.set(
-                name,
-                text(parameters, name).map_or(Value::Null, |_| int(number(parameters, name, 0))),
-            );
-        }
-    }
-    for name in ["trusted", "enabled"] {
-        if parameters.contains_key(name) {
-            pool.set(name, yes_no(flag(parameters, name)));
-        }
-    }
-    if let Some(kind) = text(parameters, "poolKind") {
-        if !matches!(kind.as_str(), "container" | "registered") {
-            add_error("poolKind is container or registered");
-            return none();
-        }
-        pool.set("poolKind", Value::string(kind));
-    }
-    if field(&pool, "poolName").is_none_or(|name| !super::file::valid_name(&name)) {
-        add_error("poolName must be letters, digits, dot, dash and underscore");
-        return none();
-    }
-    if field(&pool, "poolKind").as_deref() == Some("container") && field(&pool, "instanceHostId").is_none() {
-        add_error("a pool of containers needs an instanceHostId");
-        return none();
-    }
-    if creating {
-        pool.create(facade)?;
-    } else {
-        pool.update(facade)?;
-    }
-    Ok(out([("runnerPoolId", field_value(&pool, "runnerPoolId"))]))
-}
-
-/// `delete#RunnerPool`: remove a pool with no running job; its queued jobs are then errors when they would start.
-fn delete_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(id) = text(parameters, "runnerPoolId") else {
-        add_error("runnerPoolId is required");
-        return none();
-    };
-    let _rows = crate::rows_guard();
-    let running = facade
-        .find(JOB_RUN)?
-        .eq("statusId", Value::string("running"))
-        .eq("runnerPoolId", Value::string(&id))
-        .count()?;
-    if running > 0 {
-        add_error(format!("runner pool {id} has {running} running jobs"));
-        return none();
-    }
-    facade
-        .find(super::RUNNER)?
-        .eq("runnerPoolId", Value::string(&id))
-        .delete_all()?;
-    facade
-        .find(RUNNER_POOL)?
-        .eq("runnerPoolId", Value::string(&id))
-        .delete_all()?;
-    none()
-}
-
-/// `create#RunnerPoolToken`: a new registration token for a pool of registered runners, replacing the one it had.
-/// Out: `token`, shown once.
-fn create_runner_pool_token(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(id) = text(parameters, "runnerPoolId") else {
-        add_error("runnerPoolId is required");
-        return none();
-    };
-    match super::registered::new_pool_token(facade, &id) {
-        Ok(token) => Ok(out([("token", Value::string(token))])),
-        Err(err) => {
-            add_error(err.message());
-            none()
-        }
-    }
-}
-
-// ---- secrets and environments ----
-
-/// Whose rows a secret or environment service is for: a repository's (the caller needs the update right), or an
-/// owner's (the caller's authorization is disabled). `None` with the error recorded.
-fn scope_of(parameters: &Parameters, what: &str) -> Option<(Option<String>, Option<String>)> {
-    match (text(parameters, "repositoryId"), text(parameters, "ownerId")) {
-        (Some(repository), None) => {
-            if may(&repository, "update") {
-                Some((Some(repository), None))
-            } else {
-                refuse(&repository, what);
-                None
-            }
-        }
-        (None, Some(owner)) => {
-            if authz_disabled() {
-                Some((None, Some(owner)))
-            } else {
-                add_error(format!(
-                    "{what} of an owner is the application's (authorization disabled)"
-                ));
-                None
-            }
-        }
-        _ => {
-            add_error("one of repositoryId and ownerId is required");
-            None
-        }
-    }
-}
-
-fn scoped(
-    facade: &EntityFacade,
-    entity_name: &str,
-    scope: &(Option<String>, Option<String>),
-) -> Result<moqui_core::entity::EntityFind, LibError> {
-    let find = facade.find(entity_name)?;
-    Ok(match scope {
-        (Some(repository), _) => find.eq("repositoryId", Value::string(repository)),
-        (None, Some(owner)) => find
-            .eq("ownerId", Value::string(owner))
-            .condition(Condition::is_null("repositoryId")),
-        (None, None) => find,
-    })
-}
-
-/// `find#CiSecrets`: the secrets of a repository or an owner, without their values. Out: `secretList`.
-fn find_ci_secrets(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(scope) = scope_of(parameters, "reading the secrets") else {
-        return none();
-    };
-    let _rows = crate::rows_guard();
-    let environments: BTreeMap<String, String> = scoped(facade, CI_ENVIRONMENT, &scope)?
-        .list()?
-        .iter()
-        .filter_map(|row| Some((field(row, "environmentId")?, field(row, "name")?)))
-        .collect();
-    let secrets: Vec<Value> = scoped(facade, CI_SECRET, &scope)?
-        .order_by("name", false)
-        .list()?
-        .iter()
-        .map(|secret| {
-            let copy = |name: &'static str| (name, field_value(secret, name));
-            map([
-                copy("secretId"),
-                copy("name"),
-                copy("scope"),
-                copy("environmentId"),
-                (
-                    "environmentName",
-                    opt(field(secret, "environmentId").and_then(|id| environments.get(&id).cloned())),
-                ),
-                copy("createdByUserId"),
-                copy("createdDate"),
-                copy("lastUsedDate"),
-            ])
-        })
-        .collect();
-    Ok(out([("secretList", Value::List(secrets))]))
-}
-
-/// `store#CiSecret`: make a secret, or change one (`secretId`): its `value` is written and never read back; left
-/// out on a change, the value stays. `scope` is protected (the default), tags or environment (with
-/// `environmentId`). Out: `secretId`.
-fn store_ci_secret(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(scope) = scope_of(parameters, "writing a secret") else {
-        return none();
-    };
-    let _rows = crate::rows_guard();
-    let existing = match text(parameters, "secretId") {
-        Some(id) => {
-            let found = scoped(facade, CI_SECRET, &scope)?
-                .eq("secretId", Value::string(&id))
-                .one()?;
-            if found.is_none() {
-                add_error(format!("no secret {id}"));
-                return none();
-            }
-            found
-        }
-        None => None,
-    };
-    let name = text(parameters, "name").or_else(|| existing.as_ref().and_then(|row| field(row, "name")));
-    let Some(name) = name.filter(|name| {
-        name.len() <= 128
-            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            && !name.starts_with(|ch: char| ch.is_ascii_digit())
-    }) else {
-        add_error("name is required: letters, digits and underscore, as an environment variable's");
-        return none();
-    };
-    let secret_scope = text(parameters, "scope")
-        .or_else(|| existing.as_ref().and_then(|row| field(row, "scope")))
-        .unwrap_or_else(|| "protected".to_string());
-    if !matches!(secret_scope.as_str(), "protected" | "tags" | "environment") {
-        add_error("scope is protected, tags or environment");
-        return none();
-    }
-    let environment = if secret_scope == "environment" {
-        let id =
-            text(parameters, "environmentId").or_else(|| existing.as_ref().and_then(|row| field(row, "environmentId")));
-        let known = match &id {
-            Some(id) => scoped(facade, CI_ENVIRONMENT, &scope)?
-                .eq("environmentId", Value::string(id))
-                .one()?
-                .is_some(),
-            None => false,
-        };
-        if !known {
-            add_error("a secret of the environment scope needs an environmentId of the same repository or owner");
-            return none();
-        }
-        id
-    } else {
-        None
-    };
-    let own_id = existing.as_ref().and_then(|row| field(row, "secretId"));
-    let taken = scoped(facade, CI_SECRET, &scope)?
-        .eq("name", Value::string(&name))
-        .list()?
-        .iter()
-        .any(|row| field(row, "secretId") != own_id && field(row, "environmentId") == environment);
-    if taken {
-        add_error(format!("a secret named {name} is already there"));
-        return none();
-    }
-    let creating = existing.is_none();
-    let mut row = match existing {
-        Some(row) => row,
-        None => {
-            let Some(_) = text(parameters, "value") else {
-                add_error("value is required");
-                return none();
-            };
-            let mut row = EntityValue::make(facade, CI_SECRET)?;
-            row.set_sequenced_id_primary(facade)?;
-            row.set("repositoryId", opt(scope.0.clone()));
-            row.set("ownerId", opt(scope.1.clone()));
-            row.set("createdByUserId", opt(current_user()));
-            row.set("createdDate", moqui_core::user::now_value());
-            row
-        }
-    };
-    row.set("name", Value::string(&name));
-    row.set("scope", Value::string(&secret_scope));
-    row.set("environmentId", opt(environment));
-    if let Some(value) = parameters
-        .get("value")
-        .filter(|value| !is_empty(value))
-        .map(to_plain_string)
-    {
-        if value.len() > 64 * 1024 {
-            add_error("a secret's value is at most 64 KB");
-            return none();
-        }
-        row.set("secretValue", Value::string(value));
-    }
-    if creating {
-        row.create(facade)?;
-    } else {
-        row.update(facade)?;
-    }
-    Ok(out([("secretId", field_value(&row, "secretId"))]))
-}
-
-/// `delete#CiSecret`. Out: `deleted`.
-fn delete_ci_secret(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(scope) = scope_of(parameters, "deleting a secret") else {
-        return none();
-    };
-    let Some(id) = text(parameters, "secretId") else {
-        add_error("secretId is required");
-        return none();
-    };
-    let _rows = crate::rows_guard();
-    let deleted = scoped(facade, CI_SECRET, &scope)?
-        .eq("secretId", Value::string(id))
-        .delete_all()?;
-    Ok(out([("deleted", Value::Bool(deleted > 0))]))
-}
-
-/// `find#CiEnvironments`: the environments of a repository (the caller views it) or an owner. Out:
-/// `environmentList`, without the target's token.
-fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let scope = match (text(parameters, "repositoryId"), text(parameters, "ownerId")) {
-        (Some(repository), None) if may(&repository, "view") => (Some(repository), None),
-        (Some(repository), None) => {
-            add_error(format!("repository {repository} not found"));
-            return none();
-        }
-        _ => match scope_of(parameters, "reading the environments") {
-            Some(scope) => scope,
-            None => return none(),
-        },
-    };
-    let _rows = crate::rows_guard();
-    let environments: Vec<Value> = scoped(facade, CI_ENVIRONMENT, &scope)?
-        .order_by("name", false)
-        .list()?
-        .iter()
-        .map(|row| {
-            let copy = |name: &'static str| (name, field_value(row, name));
-            map([
-                copy("environmentId"),
-                copy("name"),
-                copy("targetUrl"),
-                copy("requiredPipeline"),
-                ("approvalRequired", Value::Bool(is_yes(row, "approvalRequired"))),
-                ("hasToken", Value::Bool(field(row, "targetToken").is_some())),
-                copy("lastCommitId"),
-                copy("lastDeployDate"),
-            ])
-        })
-        .collect();
-    Ok(out([("environmentList", Value::List(environments))]))
-}
-
-/// `store#CiEnvironment`: make or change an environment. The target's `token` is written and never read back. Out:
-/// `environmentId`.
-fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(scope) = scope_of(parameters, "writing an environment") else {
-        return none();
-    };
-    let _rows = crate::rows_guard();
-    let existing = match text(parameters, "environmentId") {
-        Some(id) => {
-            let found = scoped(facade, CI_ENVIRONMENT, &scope)?
-                .eq("environmentId", Value::string(&id))
-                .one()?;
-            if found.is_none() {
-                add_error(format!("no environment {id}"));
-                return none();
-            }
-            found
-        }
-        None => None,
-    };
-    let name = text(parameters, "name").or_else(|| existing.as_ref().and_then(|row| field(row, "name")));
-    let Some(name) = name.filter(|name| super::file::valid_name(name)) else {
-        add_error("name is required: letters, digits, dot, dash and underscore");
-        return none();
-    };
-    let own_id = existing.as_ref().and_then(|row| field(row, "environmentId"));
-    let taken = scoped(facade, CI_ENVIRONMENT, &scope)?
-        .eq("name", Value::string(&name))
-        .list()?
-        .iter()
-        .any(|row| field(row, "environmentId") != own_id);
-    if taken {
-        add_error(format!("an environment named {name} is already there"));
-        return none();
-    }
-    let creating = existing.is_none();
-    let mut row = match existing {
-        Some(row) => row,
-        None => {
-            let mut row = EntityValue::make(facade, CI_ENVIRONMENT)?;
-            row.set_sequenced_id_primary(facade)?;
-            row.set("repositoryId", opt(scope.0.clone()));
-            row.set("ownerId", opt(scope.1.clone()));
-            row
-        }
-    };
-    row.set("name", Value::string(&name));
-    for field_name in ["targetUrl", "requiredPipeline"] {
-        if parameters.contains_key(field_name) {
-            row.set(field_name, opt(text(parameters, field_name)));
-        }
-    }
-    if parameters.contains_key("approvalRequired") {
-        row.set("approvalRequired", yes_no(flag(parameters, "approvalRequired")));
-    }
-    if let Some(token) = text(parameters, "token") {
-        row.set("targetToken", Value::string(token));
-    }
-    if creating {
-        row.create(facade)?;
-    } else {
-        row.update(facade)?;
-    }
-    Ok(out([("environmentId", field_value(&row, "environmentId"))]))
-}
-
-/// `delete#CiEnvironment`: refused while a secret is scoped to it. Out: `deleted`.
-fn delete_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
-    let Some(scope) = scope_of(parameters, "deleting an environment") else {
-        return none();
-    };
-    let Some(id) = text(parameters, "environmentId") else {
-        add_error("environmentId is required");
-        return none();
-    };
-    let _rows = crate::rows_guard();
-    let secrets = facade
-        .find(CI_SECRET)?
-        .eq("environmentId", Value::string(&id))
-        .count()?;
-    if secrets > 0 {
-        add_error(format!("environment {id} has {secrets} secrets scoped to it"));
-        return none();
-    }
-    let deleted = scoped(facade, CI_ENVIRONMENT, &scope)?
-        .eq("environmentId", Value::string(id))
-        .delete_all()?;
-    Ok(out([("deleted", Value::Bool(deleted > 0))]))
 }
 
 // ---- usage, and a repository that goes ----
@@ -1455,6 +1202,12 @@ fn get_runner_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
             .count()?,
         _ => 0,
     };
+    // what is stored now, for a quota: artifacts and reports, and caches
+    let (artifact_bytes, cache_bytes) = match &scope {
+        (Some(repository), _) => super::artifact::stored_by_kind(facade, "repositoryId", repository)?,
+        (None, Some(owner)) => super::artifact::stored_by_kind(facade, "ownerId", owner)?,
+        (None, None) => (0, 0),
+    };
     Ok(out([
         ("periodKey", Value::string(period)),
         ("minutesUsed", int(minutes)),
@@ -1462,6 +1215,8 @@ fn get_runner_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("untrustedMinutesUsed", int(untrusted)),
         ("jobCount", int(i64::try_from(rows.len()).unwrap_or(0))),
         ("runningCount", int(running)),
+        ("artifactBytes", int(artifact_bytes)),
+        ("cacheBytes", int(cache_bytes)),
     ]))
 }
 

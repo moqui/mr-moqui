@@ -153,14 +153,16 @@ pub(crate) fn failed_results(part: &EdgeSetup, pairing: &str, why: &str) -> Vec<
 }
 
 /// The offer a local node with two pairings shows (plans/Edge-Node2.md §4.7): its edge pairing's, with the front's web
-/// access (its names, modes and this node's hosts there), XMPP ports and public addresses. What the front offers is
-/// taken off the edge offer's areas not available.
+/// access (its names, modes and this node's hosts there), XMPP and SSH ports and public addresses. What the front
+/// offers is taken off the edge offer's areas not available.
 pub(crate) fn merge_offer(edge: EdgeOffer, front: EdgeOffer) -> EdgeOffer {
     let mut merged = edge;
     merged.public_names = front.public_names;
     merged.host_modes = front.host_modes;
     merged.node_hosts = front.node_hosts;
     merged.xmpp = front.xmpp;
+    // the SSH tunnel port is the front set's too (an edge node behind a front binds none): clone URLs name the front's
+    merged.ssh = front.ssh;
     if !front.addresses.is_empty() {
         merged.addresses = front.addresses;
     }

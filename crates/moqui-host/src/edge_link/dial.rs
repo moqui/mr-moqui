@@ -1527,6 +1527,8 @@ async fn link_once(
     // each edge member is a media node and SIP node of its own: its rows and TURN secret from its own link
     // (plans/Edge-Node2.md §4.6)
     let _media = MediaRows::start(&config, &up, &shared);
+    // where the edge node takes this node's SSH clients, for its clone URLs (docs/interfaces/Git-Hosting.md)
+    remember_ssh(&config, &up);
     let connected = moqui_core::user::now_millis();
     shared.failures.store(0, Ordering::Release);
     shared.update(|status| {
@@ -1623,6 +1625,35 @@ async fn link_once(
             }
         }
     }
+}
+
+/// Ask the edge node's offer on a link that came up and keep its SSH part ([`moqui_core::edge::setup::remember_ssh`]),
+/// in the background: the clone URLs of this node name the edge node's SSH tunnel when its own `ssh_public_*` are not
+/// set. A failure is logged at debug and the last offer kept; the wizard's offer and Configure keep it current too. With
+/// a front pairing as well, only its links: the SSH tunnel port is the front's, and an edge node behind it binds none
+/// (plans/Edge-Node2.md §4.7).
+fn remember_ssh(config: &LocalConfig, up: &UpLink) {
+    if !config.front
+        && !moqui_lib::env::get_prop_or_env(moqui_core::edge::FRONT_URL)
+            .trim()
+            .is_empty()
+    {
+        return;
+    }
+    let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) else {
+        return;
+    };
+    let (client, timeout) = (up.client.clone(), config.connect_timeout);
+    tokio::spawn(async move {
+        match offer_on(Some(client), timeout).await {
+            Ok(offer) => {
+                if let Some(factory) = factory.upgrade() {
+                    moqui_core::edge::setup::remember_ssh(&factory, &offer.ssh);
+                }
+            }
+            Err(err) => tracing::debug!("Edge link: the offer's SSH tunnel was not read: {err}"),
+        }
+    });
 }
 
 /// The route of call signaling to one edge member over its link (moqui_core::edge::signal), while the link lasts; each

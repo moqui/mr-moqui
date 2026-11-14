@@ -582,7 +582,11 @@ impl ResourceFacade {
         if !resource.exists() || !resource.is_file() {
             return Ok(None);
         }
-        if let Some(path) = resource.file_path() {
+        // a file built into the binary (moqui_lib::vfs) is not on disk: it is read whole below
+        if let Some(path) = resource
+            .file_path()
+            .filter(|path| !moqui_lib::vfs::is_from_overlay(path))
+        {
             let source = crate::resource::source::FileSource::open(path)?;
             let stat = ResourceStat {
                 is_file: true,
@@ -686,7 +690,20 @@ impl ResourceFacade {
         }
         let path = self.writable_path(location)?;
         let Ok(meta) = std::fs::metadata(&path) else {
-            return Ok(None);
+            // a file or directory built into the binary that is not on disk (moqui_lib::vfs)
+            if moqui_lib::vfs::is_file(&path) {
+                let size = moqui_lib::vfs::read(&path).map_or(0, |bytes| bytes.len() as u64);
+                return Ok(Some(ResourceStat {
+                    is_file: true,
+                    size,
+                    last_modified: None,
+                }));
+            }
+            return Ok(moqui_lib::vfs::is_dir(&path).then_some(ResourceStat {
+                is_file: false,
+                size: 0,
+                last_modified: None,
+            }));
         };
         let last_modified = meta
             .modified()
@@ -719,12 +736,12 @@ impl ResourceFacade {
                 .collect::<Vec<_>>()
         } else {
             let path = self.writable_path(location)?;
-            let read = std::fs::read_dir(&path).map_err(|err| io_error(location, &err))?;
+            // with the files built into the binary that are not on disk (moqui_lib::vfs)
+            let read = moqui_lib::vfs::read_dir(&path).map_err(|err| io_error(location, &err))?;
             let mut entries = Vec::new();
             for entry in read {
-                let entry = entry.map_err(|err| io_error(location, &err))?;
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let is_file = entry.file_type().map_err(|err| io_error(location, &err))?.is_file();
+                let is_file = entry.is_file();
                 entries.push(ResourceEntry {
                     location: join_location(location, &name),
                     name,

@@ -1568,3 +1568,104 @@ fn commit_statuses_post_over_rest_with_an_access_token() {
     );
     assert_eq!(list(&statuses, "statusList").len(), 1, "only the writer's status");
 }
+
+const OUTBOUND_CHECK: &str = r#"<services>
+    <service verb="check" noun="Outbound">
+        <implements service="org.moqui.git.GitServices.check#GitOutbound"/>
+        <actions><script><![CDATA[
+            allowed = repositoryId !== 'kept-hidden'
+            if (!allowed) message = 'hidden by its owner (' + kind + ' ' + event + ')'
+        ]]></script></actions>
+    </service>
+</services>"#;
+
+/// `git-server` `outbound-check-service`: a repository the application holds (one it hides from all but its owners)
+/// has no webhook delivery queued and its push mirror does not push, its refusal recorded as the mirror's error; one
+/// it allows sends as usual.
+#[test]
+fn the_outbound_check_holds_a_hidden_repositorys_webhooks_and_push_mirror() {
+    let fixture = fixture_with(
+        "hosting-outbound",
+        moqui_core::context::framework_dir(),
+        r#"<git-server webhook-private-network="true" outbound-check-service="test.GitOutbound.check#Outbound"/>"#,
+    );
+    grant_entities(&fixture);
+    {
+        moqui_core::testing::seed_status_flows(&fixture.entity);
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        std::fs::create_dir_all(fixture.dir.join("service/test")).unwrap();
+        let stub = fixture.dir.join("service/test/GitOutbound.xml");
+        std::fs::write(&stub, OUTBOUND_CHECK).unwrap();
+        let failures = moqui_core::service::lint(&[
+            moqui_core::context::framework_dir().join("service/org/moqui/git/GitServices.xml"),
+            stub,
+        ])
+        .unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        create(
+            &fixture.entity,
+            "moqui.service.message.SystemMessageType",
+            &[
+                ("systemMessageTypeId", "GitWebhook"),
+                ("sendServiceName", "org.moqui.git.GitServices.send#GitWebhookDelivery"),
+            ],
+        );
+    }
+    let (url, _seen) = webhook_receiver(vec![200]);
+    for id in ["kept-hidden", "shown"] {
+        define(&fixture, id, "db");
+        ok(
+            &fixture,
+            WRITER,
+            "org.moqui.git.GitServices.store#GitWebhook",
+            &[
+                ("repositoryId", s(id)),
+                ("url", s(&url)),
+                ("events", s("merge_request")),
+            ],
+        );
+    }
+    // the delivery is sent at once on the service pool, which a test factory does not run: that error is not the
+    // check's
+    let queued = |id: &str| {
+        let (out, _) = call(
+            &fixture,
+            WRITER,
+            "org.moqui.git.GitServices.queue#GitWebhookEvent",
+            &[
+                ("repositoryId", s(id)),
+                ("event", s("merge_request")),
+                ("payload", Value::Map(Default::default())),
+            ],
+        );
+        out.get("queuedCount").map(to_plain_string).unwrap_or_default()
+    };
+    assert_eq!(queued("kept-hidden"), "0");
+    assert_eq!(queued("shown"), "1");
+
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find("moqui.resource.GitRepository")
+            .unwrap()
+            .eq("repositoryId", s("kept-hidden"))
+            .update_all([("pushMirrorRemoteId".to_string(), s("NoSuchRemote"))])
+            .unwrap();
+    }
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.push#GitMirror",
+        &[("repositoryId", s("kept-hidden"))],
+    );
+    assert!(errors.contains("hidden by its owner (push-mirror )"), "{errors}");
+    let repository = row(&fixture, "moqui.resource.GitRepository", "repositoryId", "kept-hidden");
+    assert!(
+        field(&repository, "lastPushMirrorError").starts_with("not pushed: hidden by its owner"),
+        "{}",
+        field(&repository, "lastPushMirrorError")
+    );
+}

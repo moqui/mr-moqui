@@ -607,9 +607,11 @@ impl Peer {
                 });
             }
         }
+        // No sustained padding beyond str0m's own floor: its probes find the capacity for the desired rate, and padding
+        // kept up toward a layer that does not fit holds the estimate up on a link that cannot carry it.
         self.rtc
             .bwe()
-            .set_desired_bitrate(Bitrate::kbps(desired.max(config.layer_kbps[0])));
+            .set_bitrate(Bitrate::ZERO, Bitrate::kbps(desired.max(config.layer_kbps[0])));
     }
 
     pub fn handle_track_open(&mut self, track_in: Weak<TrackIn>) {

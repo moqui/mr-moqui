@@ -283,6 +283,7 @@ fn remove_screen(
     let before = std::fs::read(&resolved.path)
         .ok()
         .map(|bytes| crate::workspace::sha256(&bytes));
+    crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
     std::fs::remove_file(&resolved.path).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
     if directory.is_dir() {
         let _ = std::fs::remove_dir_all(&directory);
@@ -324,6 +325,7 @@ fn move_screen(
     let old_location = location_of(root, &from.relative).unwrap_or_default();
     let new_location = location_of(root, &to.relative).unwrap_or_default();
     let refs = screen_refs(&context, &old_location)?;
+    crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, &to.relative)?;
     if let Some(parent) = to.path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| LibError::new(err.to_string()))?;
     }

@@ -34,7 +34,7 @@ moqui-client → moqui-lib
 
 | Crate | What belongs there |
 | --- | --- |
-| `moqui-lib` | Helpers that need no ExecutionContext and know nothing of the framework: text, numbers, dates, XML nodes, barcodes, `sync`. |
+| `moqui-lib` | Helpers that need no ExecutionContext and know nothing of the framework: text, numbers, dates, XML nodes, barcodes, `sync`, and `vfs` (files read from disk or from an overlay such as the built-in files). |
 | `moqui-db` | The entity model, SQL text and dialects. No facades and no database driver. |
 | `moqui-entity` | The entity facade, the transaction manager and the `DbDriver` port. No ExecutionContext: what it needs of the thread's context (the user, authorization, scripts, services, entity ECA rules) it calls through `moqui_entity::hooks`, which core fills. Core re-exports it at `moqui_core::entity`, `transaction`, `driver` and `context::Error`; code above core uses those paths. |
 | `moqui-core` | The framework: the ExecutionContext and facades, screens, services, scripts. Synchronous, on `std::thread`. |
@@ -47,7 +47,7 @@ moqui-client → moqui-lib
 | `moqui-calc` | CalcGrid, database-driven spreadsheets ([IronCalc-DB](../../plans/IronCalc-DB.md)): workbooks on the IronCalc engine whose data sheets are filled through the data grid's reader, their rooms, and `org.moqui.calc.CalcServices`. A framework crate, as `moqui-collab`, on `moqui-tools` too; the host links it under its `xlsx` feature. |
 | `moqui-dav` | The DAV server (WebDAV over the drives, CalDAV and CardDAV), the `VCard` and `ICalendar` tools and the elFinder connector. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-devkit` | The development kit: reload and the file watcher (its `watch` feature), `moqui check`, the artifact index, the Groovy converter, typegen (`moqui types`) and the spec runner (`moqui test`). A framework crate, linked in every host build; what core itself needs (`is_dev_instance`, restart, the observed calls) stays in `moqui_core::devtools`. |
-| `moqui-embedded` | The framework and tools components and the webroot stub built into the binary (build.rs packs them): the startup comparison with the runtime's files and the skeleton runtime. No framework dependency, so a framework file edit rebuilds only it and relinks. |
+| `moqui-embedded` | The runtime files built into the binary, at the level its features choose (the framework and tools components, the webroot stub and the runtime confs; with `production` or `all` every component; `src/select.rs`, which build.rs includes, has the rules), each file deflated on its own: read where the runtime has no file (the host mounts them with `moqui_lib::vfs`), the startup comparison with the runtime's files, and `moqui embedded extract`; and under `opensearch` and `chromium` those programs' archives, which the host unpacks. No framework dependency, so a framework file edit rebuilds only it and relinks. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
 | `moqui-drivers` | The database drivers: Postgres on the host's own blocking client, MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens the entity facade over them. No Tokio. The host links it as `moqui_host::db` and forwards its features. |
 | `moqui-host` | The process edge: the HTTP server (Tokio, axum), process spawn, the integration tests. |

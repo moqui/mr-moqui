@@ -140,6 +140,10 @@ pub(crate) fn create(template: &Path, target: &Path, name: &str, part: Part) -> 
     let manifest = target.join("component.xml");
     let text =
         std::fs::read_to_string(&manifest).map_err(|err| LibError::new(format!("{}: {err}", manifest.display())))?;
+    crate::workspace::unfenced(
+        moqui_core::entity::fence::Effect::Resource,
+        &manifest.display().to_string(),
+    )?;
     std::fs::write(&manifest, text.replace(" disabled=\"true\"", ""))
         .map_err(|err| LibError::new(format!("{}: {err}", manifest.display())))
 }
@@ -152,6 +156,7 @@ pub(crate) fn copy_template(
     content: &dyn Fn(&str) -> String,
     file_name: &dyn Fn(&str) -> String,
 ) -> Result<(), LibError> {
+    crate::workspace::unfenced(moqui_core::entity::fence::Effect::Resource, &to.display().to_string())?;
     std::fs::create_dir_all(to).map_err(|err| LibError::new(format!("{}: {err}", to.display())))?;
     let entries = std::fs::read_dir(from).map_err(|err| LibError::new(format!("{}: {err}", from.display())))?;
     for entry in entries.flatten() {

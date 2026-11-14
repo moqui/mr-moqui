@@ -594,6 +594,23 @@ pub struct Offer {
     pub calls: ::core::option::Option<CallsOffer>,
     #[prost(message, optional, tag = "10")]
     pub sip: ::core::option::Option<SipOffer>,
+    #[prost(message, optional, tag = "11")]
+    pub ssh: ::core::option::Option<SshOffer>,
+}
+/// SSH (E16): the edge node's tunnel port to the asking node's SSH server, and the host its SSH clients reach it at, so
+/// the local node's clone URLs name them when its own ssh_public_host and ssh_public_port are not set.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SshOffer {
+    /// A tunnel port goes to the asking node.
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// The edge node's public name (its first public name, webapp_http_host).
+    #[prost(string, tag = "2")]
+    pub host: ::prost::alloc::string::String,
+    /// The node's own EdgePort row of kind ssh, else edge_ssh_tunnel_port while the node is the one active pairing; 0
+    /// when neither.
+    #[prost(uint32, tag = "3")]
+    pub port: u32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferRequest {}

@@ -498,3 +498,54 @@ fn view_email_message_sends_the_png_and_marks_a_known_message() {
         ExecutionContext::with_current(|ec| ec.message().errors_string()).unwrap_or_default()
     }
 }
+
+/// A user's file shown inline is sandboxed and never sniffed; an active type is sent inline only when asked for.
+#[test]
+fn a_users_inline_file_is_sandboxed_and_active_types_are_attachments() {
+    let header = |headers: &[(String, String)], wanted: &str| {
+        headers
+            .iter()
+            .find(|(name, _)| name == wanted)
+            .map(|(_, value)| value.clone())
+    };
+    let shown = super::file_headers("report.html", "report.html", true, false);
+    assert_eq!(header(&shown, "Content-Security-Policy").as_deref(), Some("sandbox"));
+    assert_eq!(header(&shown, "X-Content-Type-Options").as_deref(), Some("nosniff"));
+    // browsers will not show a PDF in a sandbox
+    let pdf = super::file_headers("report.pdf", "report.pdf", true, false);
+    assert_eq!(header(&pdf, "Content-Security-Policy"), None);
+    assert_eq!(header(&pdf, "X-Content-Type-Options").as_deref(), Some("nosniff"));
+    let saved = super::file_headers("report.html", "report.html", false, false);
+    assert!(header(&saved, "Content-Disposition").is_some_and(|value| value.starts_with("attachment")));
+    assert_eq!(header(&saved, "Content-Security-Policy"), None);
+    for active in [
+        "text/html",
+        "image/svg+xml",
+        "application/xml",
+        "application/javascript",
+        "application/atom+xml",
+    ] {
+        assert!(super::is_active_content_type(active), "{active}");
+    }
+    for passive in [
+        "image/png",
+        "application/pdf",
+        "text/plain",
+        "application/json",
+        "text/css",
+    ] {
+        assert!(!super::is_active_content_type(passive), "{passive}");
+    }
+}
+
+/// A user's file asked inline (`sendResourceResponse(location, true)`, a PASS download whose authority says inline)
+/// is an attachment when its type can run script, and shown sandboxed otherwise, a PDF unsandboxed.
+#[test]
+fn a_users_file_asked_inline_is_shown_only_when_passive_and_then_sandboxed() {
+    use super::user_file_inline;
+    assert_eq!(user_file_inline("text/html; charset=utf-8", true), (false, false));
+    assert_eq!(user_file_inline("image/svg+xml", true), (false, false));
+    assert_eq!(user_file_inline("image/png", true), (true, true));
+    assert_eq!(user_file_inline("application/pdf", true), (true, false));
+    assert_eq!(user_file_inline("image/png", false), (false, false));
+}

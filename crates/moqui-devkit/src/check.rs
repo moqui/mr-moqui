@@ -184,7 +184,7 @@ pub fn schema_problems(xsd_dir: &Path, root: &MNode, path: &str, text: &str) -> 
 #[must_use]
 pub fn xsd_dir(factory: &ExecutionContextFactory) -> std::path::PathBuf {
     let dir = factory.framework_dir().join("xsd");
-    if dir.join("xml-screen-3.xsd").is_file() {
+    if moqui_lib::vfs::is_file(dir.join("xml-screen-3.xsd")) {
         dir
     } else {
         moqui_core::context::framework_dir().join("xsd")
@@ -612,9 +612,77 @@ impl<'a> LineIndex<'a> {
     }
 }
 
+/// What `moqui check --agreement` (F19, plans/design-dev-aide.md 21.7) says of a commit about to be made, from the group
+/// server's answer (`/rest/s1/moqui/hosting/agreement`: `known`, `required`, `signed`, `signUrl`) and the files staged
+/// for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgreementVerdict {
+    /// Signed, or the repository has no agreement on.
+    Fine,
+    /// The server does not decide it here (no agreement check); the message says where to ask.
+    Unknown(String),
+    /// The author has not signed and the commit is the signature itself (only `AUTHORS.md`): it goes ahead.
+    Signing,
+    /// The author has not signed: a warning, which fails the hook, with where to sign.
+    Unsigned(String),
+}
+
+/// The verdict of `answer` for `email` and the `staged` paths.
+#[must_use]
+pub fn agreement_verdict(answer: &serde_json::Value, email: &str, staged: &[String]) -> AgreementVerdict {
+    let flag = |key: &str| answer[key].as_bool() == Some(true);
+    if !flag("known") {
+        let by = answer["application"].as_str().filter(|name| !name.is_empty());
+        return AgreementVerdict::Unknown(match by {
+            Some(application) => format!("the server does not decide the agreement here: {application} keeps it"),
+            None => "the server decides no contributor agreement for this repository".to_string(),
+        });
+    }
+    if !flag("required") || flag("signed") {
+        return AgreementVerdict::Fine;
+    }
+    if !staged.is_empty()
+        && staged
+            .iter()
+            .all(|path| path == "AUTHORS.md" || path.ends_with("/AUTHORS.md"))
+    {
+        return AgreementVerdict::Signing;
+    }
+    let sign = answer["signUrl"]
+        .as_str()
+        .filter(|url| !url.is_empty())
+        .map(|url| format!(": sign at {url}"))
+        .unwrap_or_else(|| ": add your line under both lists of AUTHORS.md and commit it alone".to_string());
+    AgreementVerdict::Unsigned(format!(
+        "{} has not signed this repository's contributor agreement{sign}",
+        if email.is_empty() { "the commit's author" } else { email }
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unsigned_author_is_warned_unless_the_commit_is_the_signature() {
+        let unsigned =
+            serde_json::json!({ "known": true, "required": true, "signed": false, "signUrl": "https://h/x" });
+        let staged = vec!["service/a.xml".to_string()];
+        assert!(matches!(agreement_verdict(&unsigned, "a@example.com", &staged),
+            AgreementVerdict::Unsigned(text) if text.contains("a@example.com") && text.contains("https://h/x")));
+        assert_eq!(
+            agreement_verdict(&unsigned, "a@example.com", &["AUTHORS.md".to_string()]),
+            AgreementVerdict::Signing
+        );
+        let signed = serde_json::json!({ "known": true, "required": true, "signed": true });
+        assert_eq!(agreement_verdict(&signed, "", &staged), AgreementVerdict::Fine);
+        let off = serde_json::json!({ "known": true, "required": false });
+        assert_eq!(agreement_verdict(&off, "", &staged), AgreementVerdict::Fine);
+        let kept = serde_json::json!({ "known": false, "application": "smithy" });
+        assert!(
+            matches!(agreement_verdict(&kept, "", &staged), AgreementVerdict::Unknown(text) if text.contains("smithy"))
+        );
+    }
 
     #[test]
     fn a_parse_error_position_is_the_numbers_after_line_and_column() {

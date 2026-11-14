@@ -167,6 +167,29 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="report" type="Map"/><parameter name="restarting" type="Boolean"/></out-parameters>
     </service>
+    <service verb="deploy" noun="AttestedComponent" type="rust"
+            location="moqui_devkit::deploy::services::deploy_attested_component" authenticate="false"
+            allow-remote="true">
+        <description>A source server's deploy step (docs/tools/Component-Deploy.md "The gate"; REST POST
+            /rest/s1/moqui/components/deploy): the attestation, signed with the secret this server issued
+            (component-deploy attestation-secret) and at most max-age-seconds old, says a commit of a repository passed
+            its environment's pipeline; the branch is fetched and, while its head is still that commit, the component
+            is deployed (kept in the database) or updated to it. No user signs in: the attestation is the authority,
+            for that component at that commit only. An attestation no newer than the last one the component took is
+            refused, and a signature that does not verify counts as a failed sign-in.</description>
+        <in-parameters>
+            <parameter name="attestation" required="true" allow-html="any"><description>The attestation's JSON text, as signed</description></parameter>
+            <parameter name="signature" required="true"><description>sha256= and the HMAC-SHA256 in hex</description></parameter>
+            <parameter name="dataTypes" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="componentName"/>
+            <parameter name="commitId"/>
+            <parameter name="deployStatus"><description>deployed, or up-to-date</description></parameter>
+            <parameter name="deploymentId"/>
+            <parameter name="report" type="Map"/>
+        </out-parameters>
+    </service>
     <service verb="discard" noun="ComponentDeploy" type="rust"
             location="moqui_devkit::deploy::services::discard_component_deploy" allow-remote="false">
         <description>Drop what preview#ComponentDeploy staged: its files and its row.</description>

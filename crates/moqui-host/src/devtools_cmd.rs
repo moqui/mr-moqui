@@ -77,6 +77,7 @@ struct CheckArgs {
     paths: Vec<PathBuf>,
     json: bool,
     extensions: bool,
+    agreement: bool,
     server: Option<String>,
     project: Option<ProjectArg>,
 }
@@ -86,6 +87,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
         paths: Vec::new(),
         json: false,
         extensions: false,
+        agreement: false,
         server: None,
         project: None,
     };
@@ -94,6 +96,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
         match arg.as_str() {
             "--json" => parsed.json = true,
             "--extensions" => parsed.extensions = true,
+            "--agreement" => parsed.agreement = true,
             "--server" => {
                 parsed.server = Some(
                     rest.next()
@@ -118,6 +121,9 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
 pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
     let args = parse_check(args)?;
     crate::logging::install_with_console(Some(tracing::Level::ERROR));
+    if args.agreement {
+        return check_agreement();
+    }
     let paths = if args.paths.is_empty() && !args.extensions {
         changed_files()?
     } else {
@@ -201,6 +207,167 @@ pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
         )));
     }
     Ok(())
+}
+
+/// `moqui check --agreement` (F19, plans/design-dev-aide.md 21.7): whether the next commit's author (git's
+/// `user.email`) has signed the contributor agreement of the repository at `origin`, as its group server says
+/// (`hosting/repository` for the remote, then `hosting/agreement`). The server is `MOQUI_GROUP_SERVER`, else the
+/// origin of an https remote; the key is `MOQUI_GROUP_TOKEN` (a login key or access token of that server), else none
+/// (a public repository). An unsigned author fails the hook (exit 1) unless the commit stages only `AUTHORS.md`, the
+/// signature itself; a server that cannot be asked, or that does not decide the agreement, is a warning.
+fn check_agreement() -> Result<(), Error> {
+    use moqui_devkit::check::AgreementVerdict;
+    let remote = git(&["remote", "get-url", "origin"]).map(|out| out.trim().to_string())?;
+    let email = git(&["config", "--get", "user.email"])
+        .map(|out| out.trim().to_string())
+        .unwrap_or_default();
+    let staged: Vec<String> = git(&["diff", "--cached", "--name-only"])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let warn = |text: &str| {
+        eprintln!("moqui check --agreement: warning: {text}");
+        Ok(())
+    };
+    let parsed = reqwest::Url::parse(&remote).ok();
+    // the remote's user part (a token in a URL) is never sent
+    let asked = match parsed {
+        Some(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.to_string()
+        }
+        None => remote.clone(),
+    };
+    let configured = std::env::var("MOQUI_GROUP_SERVER").ok();
+    let target = match agreement_server(configured.as_deref(), &remote) {
+        Ok(target) => target,
+        Err(why) => return warn(&why),
+    };
+    let server = target.base.clone();
+    // no redirect is followed: the key goes to the server named and nowhere it points
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(concat!("moqui-check/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|err| Error::new(format!("HTTP client: {err}")))?;
+    let token = if target.send_token {
+        std::env::var("MOQUI_GROUP_TOKEN").unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let get = |path: &str, query: &[(&str, &str)]| -> Result<serde_json::Value, String> {
+        let mut url = reqwest::Url::parse(&format!("{server}{path}")).map_err(|err| err.to_string())?;
+        url.query_pairs_mut().extend_pairs(query);
+        let mut request = client.get(url).header("accept", "application/json");
+        if !token.is_empty() {
+            request = request.header("api_key", token.as_str());
+        }
+        let response = request.send().map_err(|err| err.to_string())?;
+        let status = response.status();
+        let body = response.text().map_err(|err| err.to_string())?;
+        if !status.is_success() {
+            return Err(format!("{server} answered {status}"));
+        }
+        serde_json::from_str(&body).map_err(|err| format!("{server} answered no JSON: {err}"))
+    };
+    let repository = match get("/rest/s1/moqui/hosting/repository", &[("url", asked.as_str())]) {
+        Ok(answer) if answer["found"].as_bool() == Some(true) => answer["repository"]["repositoryId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        Ok(_) => return warn(&format!("{server} has no repository at {asked} you may see")),
+        Err(err) => return warn(&err),
+    };
+    let answer = match get(
+        "/rest/s1/moqui/hosting/agreement",
+        &[("repositoryId", repository.as_str()), ("authorEmail", email.as_str())],
+    ) {
+        Ok(answer) => answer,
+        Err(err) => return warn(&err),
+    };
+    match moqui_devkit::check::agreement_verdict(&answer, &email, &staged) {
+        AgreementVerdict::Fine => {
+            eprintln!("moqui check --agreement: {repository}: signed");
+            Ok(())
+        }
+        AgreementVerdict::Signing => {
+            eprintln!("moqui check --agreement: {repository}: a commit of the signature");
+            Ok(())
+        }
+        AgreementVerdict::Unknown(text) => warn(&text),
+        AgreementVerdict::Unsigned(text) => {
+            eprintln!("moqui check --agreement: {repository}: {text}");
+            Err(Error::new("moqui check --agreement: the author has not signed"))
+        }
+    }
+}
+
+/// Where `moqui check --agreement` asks, and whether `MOQUI_GROUP_TOKEN` goes with it.
+#[derive(Debug, PartialEq, Eq)]
+struct AgreementServer {
+    base: String,
+    send_token: bool,
+}
+
+/// Whether `url` is https, or http to a loopback IP literal (never a name), with no user part.
+fn safe_server(url: &reqwest::Url) -> bool {
+    // the parser keeps a name a name (`127.0.0.1.evil.example`), so only an IP literal parses as an address
+    let loopback = url
+        .host_str()
+        .and_then(|host| host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().ok())
+        .is_some_and(|ip| ip.is_loopback());
+    url.username().is_empty()
+        && url.password().is_none()
+        && (url.scheme() == "https" || (url.scheme() == "http" && loopback))
+}
+
+/// The server of `moqui check --agreement`: `configured` (`MOQUI_GROUP_SERVER`) when set, else the origin of an https
+/// `remote`. The token is sent only to a configured server that the remote is on (the same origin, or for an SSH remote
+/// the same host): a server read from the remote alone could be anyone's, so it is asked with no token. An address
+/// that is not https, or http to a loopback IP literal, is refused.
+fn agreement_server(configured: Option<&str>, remote: &str) -> Result<AgreementServer, String> {
+    let remote_url = reqwest::Url::parse(remote.trim()).ok();
+    // an scp-like SSH remote (user@host:path) has no scheme the parser takes: its host
+    let remote_host = remote_url
+        .as_ref()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .or_else(|| {
+            let (authority, _) = remote.trim().split_once(':')?;
+            (!authority.contains('/')).then(|| authority.rsplit('@').next().unwrap_or("").to_ascii_lowercase())
+        });
+    let configured = configured.map(str::trim).filter(|base| !base.is_empty());
+    let (base, send_token) = match configured {
+        Some(configured) => {
+            let url =
+                reqwest::Url::parse(configured).map_err(|err| format!("MOQUI_GROUP_SERVER {configured}: {err}"))?;
+            let on_it = match &remote_url {
+                Some(remote) if matches!(remote.scheme(), "https" | "http") => remote.origin() == url.origin(),
+                _ => remote_host.is_some() && remote_host.as_deref() == url.host_str(),
+            };
+            (configured.trim_end_matches('/').to_string(), on_it)
+        }
+        None => {
+            let origin = remote_url
+                .filter(|url| url.scheme() == "https")
+                .map(|url| url.origin().ascii_serialization())
+                .ok_or_else(|| {
+                    "no group server: set MOQUI_GROUP_SERVER to the server's address (the origin remote is not https)"
+                        .to_string()
+                })?;
+            (origin, false)
+        }
+    };
+    let url = reqwest::Url::parse(&base).map_err(|err| format!("{base}: {err}"))?;
+    if !safe_server(&url) {
+        return Err(format!(
+            "{base} is not an https address: nothing is sent over plain http"
+        ));
+    }
+    Ok(AgreementServer { base, send_token })
 }
 
 fn line_of(problem: &Problem, cwd: &Path) -> String {

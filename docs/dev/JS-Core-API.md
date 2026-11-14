@@ -154,10 +154,11 @@ the user services call.
 | `endVisit(visitId)` | Ends another session of the signed-in user; how many web sessions ended. An error for the current visit or another user's |
 | `getClientIp()` | The request's client address; empty outside a request |
 | `loginUser(username, password)` | Whether the user is logged in. A failure adds its message to `ec.message` and returns false; false with no message when a second factor is still needed |
-| `internalLoginUser(username)` | Logs the user in without a password; a failure is a message and false |
+| `internalLoginUser(username)` | Logs the user in without a password; a failure is a message and false. A job's login borrows the account: it leaves `UserAccount.hasLoggedOut` as it is (a person's sign-in, a second factor's code, clears it) |
 | `loginUserKey(loginKey)` | Whether the login key logged its user in; a key that does not adds an error message |
 | `loginAnonymousIfNoUser()` | With nobody logged in the session becomes anonymous; whether this call did that |
-| `logoutUser()` | Logs out; true unless it failed |
+| `logoutUser()` | Logs out; true unless it failed. It marks the account `hasLoggedOut`, which ends its sessions in every browser |
+| `logoutLocal()` | Ends this context's login only (Java's `logoutLocal`), writing nothing to the account: the end of a job's `internalLoginUser`, so the person's own sessions go on; true unless it failed |
 | `getLoginKey(expireHours)` | A new login key (an API key) of the signed-in user; an error with nobody signed in |
 | `passwordRules` | The password policy of the conf: `{minLength, minDigits, minOthers}` |
 | `loginRules` | The login policy of the conf: `{maxFailures, disableMinutes, historyLimit, emailExpireHours, emailRequireChange}` |
@@ -1090,6 +1091,8 @@ empty, and a send needs a request.
 | `getWebappRootUrl(requireFullUrl, useEncryption)` | Empty when a path-only link will do, else the scheme and host of the conf webapp. The request's `Host` only when a `root-screen` pattern other than `.*` names it (a site of its own, [Run-Deploy](../Run-Deploy.md#several-sites-by-host-name)), with the conf's scheme and port; never another `Host` header |
 | `getWebappRootUrl(webappName, servletContextPath, requireFullUrl, useEncryption)` | The same for a named webapp |
 | `getResourceDistinctValue()` | A value that changes when the server starts, for the `?v=` of asset links |
+| `reservedPaths` | The first path segments the framework reserves on every host, an array of text as written (`Login`): the host's own routes (`git`, `ci`, `dav`, `mcp`, `assist`, `.well-known`...), the framework's screens and its sign-in, token and asset paths, whether or not this binary's features serve them now. `ci` and `.well-known` are in it though the host uses only some of their sub-paths (`reservedSubPaths`): an app keeps the names that own everything under them (a repository group, a mount, a handle) off every one of these, since `/ci/runner` would shadow a group `ci`'s `runner`, comparing without case where its names are. There with no request too ([Attack-Surface](../security/Attack-Surface.md)) |
+| `reservedSubPaths` | The sub-paths the host uses of `ci` and `.well-known`, `segment/sub-path` (`ci/runner`, `.well-known/caldav`, `.well-known/carddav`, `.well-known/agent-card.json`, `.well-known/mcp.json`, `.well-known/ai-catalog.json`). A site page's route or redirect stays off these and the wholly reserved segments (`reservedPaths` without `ci` and `.well-known`), and may take the rest: `/.well-known/security.txt`, `/ci` |
 | `rotateSession()` | Gives the browser a new session id after authentication, keeping the session's state |
 | `declineSession()` | Sends this response no session: no session or visitor cookie and no session token ([Attack-Surface](../security/Attack-Surface.md)) |
 | `getPageMessages()` | The messages, errors and validation errors for the page, the saved ones first: each `{message, typeString}`, a validation error also with `field` and `form` |
@@ -1166,6 +1169,8 @@ is `documentType` (one id, a comma separated list or a list) or `indexName`.
 | `indexExists(target)` | Whether the index is there |
 | `documentTypes(target)` | The document ids of a type name or an options map |
 | `embedPending(options)` | Stores embeddings for `{indexName or documentType, batch, maxChars}`; how many |
+| `hasEmbedder()` | Whether an embedding model is installed |
+| `rankTexts(options)` | Ranks the `texts` of `{query, texts, limit}` (default 10) against `query` by meaning and words: `[{index, score, meaning, words}]`, best first, `index` the text's position. Needs an embedder (`search-facade semantic`); an empty query only embeds the texts, which are kept in memory for later calls. See [Semantic find](../ui/Semantic-Find.md) |
 | `processFeedPending(ids, stuckMinutes)` | Delivers the pending data feed rows of the ids, or every one: `{documentsIndexed, documentsDeleted, rowsDone, rowsLeft, rowsHeld, rowsStuck, rowsPending, oldestPendingSeconds, stuckError}` |
 | `rebuildFeed(options)` | Indexes the documents of `{dataFeedId, dataDocumentId, fromUpdateStamp, thruUpdateStamp, batchSize}` again; the count |
 | `flatten(map)` | A map with dotted keys |

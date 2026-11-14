@@ -131,6 +131,10 @@ along with this software (see the LICENSE.md file). If not, see
             files in place, loaded and its data loaded at the next start), failed, or removed (left out at the next
             start).</description></field>
         <field name="lastReport" type="text-very-long"/>
+        <field name="attestedDeploymentId" type="id"><description>The source server's deployment of the last attested
+            deploy (component-deploy, docs/tools/Component-Deploy.md "The gate")</description></field>
+        <field name="attestedDate" type="date-time"><description>When that attestation was issued: an attestation
+            issued at or before it is refused, so none is replayed</description></field>
         <field name="changedDate" type="date-time"/>
         <field name="changedByUserId" type="id"/>
         <relationship type="one-nofk" related="moqui.resource.GitRepository" short-alias="gitRepository"/>

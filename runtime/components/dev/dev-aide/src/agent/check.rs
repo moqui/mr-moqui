@@ -24,7 +24,7 @@ use moqui_llm::tools::schema::{object, Property};
 use moqui_llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
-use super::{arg, context, file};
+use super::{arg, file, session_context};
 use crate::tier::Tier;
 use crate::workspace::Context;
 
@@ -61,16 +61,16 @@ impl AgentTool for CheckTool {
         &self.0
     }
 
-    fn call(&self, _ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
-        match run(&args) {
+    fn call(&self, ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
+        match run(ctx, &args) {
             Ok(answer) => super::json(&answer),
             Err(error) => error.outcome(),
         }
     }
 }
 
-fn run(args: &Json) -> Result<Json, ToolError> {
-    let context = context(Tier::View)?;
+fn run(ctx: &TurnContext<'_>, args: &Json) -> Result<Json, ToolError> {
+    let context = session_context(ctx, Tier::View)?;
     if let Some(project) = super::artifact::project_of(&context, args, true)? {
         return check_in_project(&project, args);
     }

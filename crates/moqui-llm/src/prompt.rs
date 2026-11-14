@@ -198,7 +198,7 @@ pub const PROMPT_FILES: &[&str] = &[
 impl PromptTexts {
     /// The files of `dir` (the framework's `prompt/`).
     pub fn load(dir: &Path) -> Self {
-        let read = |name: &str| match std::fs::read_to_string(dir.join(name)) {
+        let read = |name: &str| match moqui_lib::vfs::read_to_string(dir.join(name)) {
             Ok(text) => prompt_text(&text),
             Err(error) => {
                 tracing::error!(

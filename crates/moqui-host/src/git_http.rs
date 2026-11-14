@@ -69,16 +69,30 @@ impl HttpResponder for Responder {
             .head
             .take()
             .ok_or_else(|| std::io::Error::other("the response head was already sent"))?;
-        let headers = headers
+        let mut headers: Vec<(String, String)> = headers
             .iter()
             .map(|(name, value)| ((*name).to_string(), value.clone()))
             .collect();
+        // a CI token the work found good, for web protection here and on an edge node in front (crate::guard)
+        if moqui_core::web::take_token_verified() {
+            headers.push((crate::guard::CI_TOKEN_HEADER.to_string(), "verified".to_string()));
+        }
         head.send((status, headers))
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the git client went away"))
     }
 
     fn body(&mut self) -> &mut dyn std::io::Write {
         &mut self.body
+    }
+}
+
+/// The web protection event of a refused credential: a well-formed CI token counts toward the `ci-token-failure` ban,
+/// whose threshold allows for runners that share an address, anything else toward `auth-failure`'s (crate::guard).
+fn failure_event(ci_token: bool) -> Event {
+    if ci_token {
+        Event::CiTokenFailure
+    } else {
+        Event::AuthFailure
     }
 }
 
@@ -114,17 +128,11 @@ async fn feed(mut body: axum::body::Body, tx: mpsc::Sender<Chunk>, limit: u64, i
     }
 }
 
-/// The mark of a request that was git's at a page's URL on a public-site host and is served as its `/git/` request
-/// (`http::serve`): a host that refuses the framework's routes still passes it to the git handler, and nothing else
-/// under `/git/` (plans/Edge-Node2.md §4.2).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct GitPageRequest;
-
 /// The `/git/...` path a request at a page's URL on a public-site host is served at, when it is git's (plans/Dogfood.md
 /// D4: the page URL itself clones): `GET <path>/info/refs?service=git-upload-pack` (or `git-receive-pack`), `POST
 /// <path>/git-upload-pack` or `git-receive-pack`, and Git LFS under `<path>.git/info/lfs/`, each with or without
-/// `.git` after the path, where `<path>` is a repository path whose first segment is not `git` or another framework
-/// route. The shape is checked first, with suffix tests only, so a page request costs no more; `is_site_host` is asked
+/// `.git` after the path, where `<path>` is a repository path whose first segment is not reserved by the framework
+/// (`moqui_core::web::reserved`, `git` among them). The shape is checked first, with suffix tests only, so a page request costs no more; `is_site_host` is asked
 /// last. The repository itself is looked up by the git server: one that is not there is answered as under `/git/`.
 pub(crate) fn page_request(
     method: &str,
@@ -149,7 +157,8 @@ pub(crate) fn page_request(
         return None;
     }
     let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if first == "git" || moqui_core::screen::is_public_site_framework_route(first) {
+    // a repository's first segment is a name that owns everything under it, so a partly reserved one is refused too
+    if moqui_core::web::reserved::is_reserved_name(first) {
         return None;
     }
     let (repository, _) = server::path::split_request(path)?;
@@ -221,6 +230,7 @@ pub(crate) async fn handle(
         return plain(413, &format!("the git request is over {limit} bytes"));
     }
     let secure = secure(&state, over_tls, &parts.headers, peer);
+    let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
     let git_request = GitHttpRequest {
         repository,
         service,
@@ -244,10 +254,12 @@ pub(crate) async fn handle(
             head: Some(head_tx),
             body: ChannelWriter::new(out_tx, idle),
         };
+        moqui_core::web::take_token_verified();
         server::serve_http(&git_request, &mut reader, &mut responder);
         let _ = std::io::Write::flush(&mut responder.body);
+        moqui_core::web::take_token_verified();
         if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
+            guard.record(client, failure_event(token_shaped));
         }
         Ok(())
     });
@@ -311,6 +323,7 @@ async fn handle_lfs(
     }
     let Origin { peer, client, over_tls } = from;
     let secure = secure(&state, over_tls, &parts.headers, peer);
+    let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
     let request = lfs::LfsHttpRequest {
         repository,
         method: parts.method.as_str().to_string(),
@@ -335,10 +348,12 @@ async fn handle_lfs(
             head: Some(head_tx),
             body: ChannelWriter::new(out_tx, idle),
         };
+        moqui_core::web::take_token_verified();
         lfs::serve_lfs(&request, &mut reader, &mut responder);
         let _ = std::io::Write::flush(&mut responder.body);
+        moqui_core::web::take_token_verified();
         if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
+            guard.record(client, failure_event(token_shaped));
         }
         Ok(())
     });
@@ -398,6 +413,7 @@ pub(crate) async fn handle_runner(
     if content_length.is_some_and(|length| length > limit) {
         return plain(413, &format!("the runner request is over {limit} bytes"));
     }
+    let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
     let runner_request = runner_http::RunnerHttpRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().strip_prefix("/ci/runner/").unwrap_or("").to_string(),
@@ -419,10 +435,12 @@ pub(crate) async fn handle_runner(
             head: Some(head_tx),
             body: ChannelWriter::new(out_tx, idle),
         };
+        moqui_core::web::take_token_verified();
         runner_http::serve(&runner_request, &mut reader, &mut responder);
         let _ = std::io::Write::flush(&mut responder.body);
+        moqui_core::web::take_token_verified();
         if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
+            guard.record(client, failure_event(token_shaped));
         }
         Ok(())
     });

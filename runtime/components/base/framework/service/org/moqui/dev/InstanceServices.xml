@@ -67,8 +67,9 @@ along with this software (see the LICENSE.md file). If not, see
         and runCleanupService; the CI engine (crates/moqui-git/src/ci/driver) calls them with authorization disabled. -->
     <service verb="start" noun="InstanceRun" type="interface">
         <description>Start a container that runs once and ends: no privilege, no host socket or path, a non-root user,
-            the limits given, and the labels, which tie it to its job run. Service containers are started first, each
-            reached from the run by its name.</description>
+            the limits given, and the labels, which tie it to its job run. Service containers are started first, kept
+            in as the run is, each reached from the run by its name on a network of the run's own, which reaches out
+            only as networkMode does.</description>
         <in-parameters>
             <parameter name="instanceHostId" required="true"/>
             <parameter name="name" required="true"/>
@@ -81,7 +82,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="memoryMb" type="Integer"/>
             <parameter name="diskMb" type="Integer"/>
             <parameter name="pidsLimit" type="Integer"/>
-            <parameter name="networkMode"><description>bridge when empty; none, or a network of the host</description></parameter>
+            <parameter name="networkMode"><description>bridge when empty; none, or a network of the host (never host
+                or container:...)</description></parameter>
+            <parameter name="pullImages" type="Boolean"><description>Pull an image the host does not have; false (an
+                untrusted pool's run): such an image is an error</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="instanceRef"><description>The container's id on the host</description></parameter></out-parameters>
     </service>
@@ -97,22 +101,27 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="remove" noun="InstanceRun" type="interface">
         <description>Remove a run's container, running or not, with its volumes; with labelName and labelValue every
-            container of that label too (the run's service containers) and the run's network.</description>
+            container of that label too that has every label of filterLabels (the run's service containers, of this
+            server) and the run's network.</description>
         <in-parameters>
             <parameter name="instanceHostId" required="true"/>
             <parameter name="instanceRef"/>
             <parameter name="labelName"/>
             <parameter name="labelValue"/>
+            <parameter name="filterLabels" type="Map"/>
+            <parameter name="networkName"><description>The run's network, removed once nothing is on it</description></parameter>
         </in-parameters>
     </service>
     <service verb="cleanup" noun="InstanceRuns" type="interface">
         <description>Remove the containers that have every label of filterLabels and whose labelName label is not one
-            of keepValues: what ended or lost runs left.</description>
+            of keepValues, made before createdBefore: what ended or lost runs left (one made after the list of runs to
+            keep was read may be a run that just started).</description>
         <in-parameters>
             <parameter name="instanceHostId" required="true"/>
             <parameter name="labelName" required="true"/>
             <parameter name="keepValues" type="List"/>
             <parameter name="filterLabels" type="Map"/>
+            <parameter name="createdBefore" type="Long"><description>Epoch seconds; none when empty</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
     </service>

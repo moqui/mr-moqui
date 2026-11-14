@@ -131,12 +131,29 @@ fn down_request(method: http::Method) -> http::Request<tonic::body::Body> {
     request
 }
 
+const WAITS: Waits = Waits {
+    open: Duration::from_secs(5),
+    idle: Duration::from_secs(5),
+    head: Duration::from_secs(5),
+    first_byte: Duration::from_millis(300),
+};
+
 /// One try and its outcomes: the answer's body or the failure, each member's outcome in order, and whether another
 /// member was asked for.
 async fn tried(
     first: &SendRequest<tonic::body::Body>,
     second: &SendRequest<tonic::body::Body>,
     method: http::Method,
+) -> (Result<String, String>, Vec<(String, bool)>, bool) {
+    tried_within(first, Some(second), method, WAITS).await
+}
+
+/// [`tried`] within `waits`, with no other member when `second` is none.
+async fn tried_within(
+    first: &SendRequest<tonic::body::Body>,
+    second: Option<&SendRequest<tonic::body::Body>>,
+    method: http::Method,
+    waits: Waits,
 ) -> (Result<String, String>, Vec<(String, bool)>, bool) {
     let outcomes = std::sync::Mutex::new(Vec::new());
     let asked = std::sync::atomic::AtomicBool::new(false);
@@ -151,9 +168,9 @@ async fn tried(
         |failed| {
             assert_eq!(failed, "member-a");
             asked.store(true, std::sync::atomic::Ordering::SeqCst);
-            Some(picked("member-b", second))
+            second.map(|second| picked("member-b", second))
         },
-        Duration::from_secs(5),
+        waits,
         |picked, ok| outcomes.lock().unwrap().push((picked.member.clone(), ok)),
     )
     .await;
@@ -231,6 +248,98 @@ async fn a_get_that_fails_before_an_answer_goes_once_more_and_a_post_never() {
     assert_eq!(closed_seen.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
+/// A member whose service never answers: it holds each request, counting them, as a member stuck on a lock or a
+/// worker that never returns does.
+async fn hung_member() -> (
+    SendRequest<tonic::body::Body>,
+    Arc<std::sync::atomic::AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&seen);
+    let serving = tokio::spawn(async move {
+        let service = hyper::service::service_fn(move |_request: http::Request<hyper::body::Incoming>| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move {
+                std::future::pending::<()>().await;
+                Ok::<_, std::io::Error>(http::Response::new(String::new()))
+            }
+        });
+        let _ = hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .serve_connection(TokioIo::new(server), service)
+            .await;
+    });
+    let (send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .handshake(TokioIo::new(client))
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    (send, seen, serving)
+}
+
+/// A GET to a member that never answers waits only the first-byte wait (not the long head wait meant for an answer
+/// after a stored body), then goes once more to another member, and the hung one's outcome is a failure, which sets
+/// it aside once it has failed `set-aside-failures` times in a row (plans/Edge-Node2.md §4.4). A POST with no body
+/// to it is never sent again, so it waits the head wait, not the first-byte wait, and goes to no other member.
+#[tokio::test]
+async fn a_get_held_by_a_hung_member_goes_to_another_and_the_hung_one_fails() {
+    let (hung, hung_seen, _a) = hung_member().await;
+    let (answering, answering_seen, _b) = member("member-b", true).await;
+    let started = std::time::Instant::now();
+    let (answered, outcomes, asked) = tried(&hung, &answering, http::Method::GET).await;
+    assert_eq!(answered.as_deref(), Ok("member-b"));
+    assert!(asked);
+    assert_eq!(
+        outcomes,
+        [("member-a".to_string(), false), ("member-b".to_string(), true)]
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "within the first-byte wait, not the head wait: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(hung_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(answering_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let waits = Waits {
+        head: Duration::from_millis(900),
+        ..WAITS
+    };
+    let started = std::time::Instant::now();
+    let (answered, outcomes, asked) = tried_within(&hung, Some(&answering), http::Method::POST, waits).await;
+    assert_eq!(answered.unwrap_err(), "TimedOut");
+    assert!(
+        started.elapsed() >= Duration::from_millis(850),
+        "a POST waits the head wait: {:?}",
+        started.elapsed()
+    );
+    assert!(!asked);
+    assert_eq!(outcomes, [("member-a".to_string(), false)]);
+    assert_eq!(answering_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// A first-byte wait that runs out on a GET that is not sent again says only that the answer is slow: with no other
+/// member, or on the second try, it is not counted against the member (no outcome), so slow pages do not set aside a
+/// whole pool. The first try's, followed by a second, is counted.
+#[tokio::test]
+async fn a_first_byte_timeout_not_followed_by_another_try_is_not_counted() {
+    let (hung, _, _a) = hung_member().await;
+    let (answered, outcomes, asked) = tried_within(&hung, None, http::Method::GET, WAITS).await;
+    assert_eq!(answered.unwrap_err(), "FirstByteTimedOut");
+    assert!(asked, "another member was asked for, and there was none");
+    assert!(outcomes.is_empty(), "{outcomes:?}");
+
+    let (other_hung, _, _b) = hung_member().await;
+    let (answered, outcomes, _) = tried(&hung, &other_hung, http::Method::HEAD).await;
+    assert_eq!(answered.unwrap_err(), "FirstByteTimedOut");
+    assert_eq!(
+        outcomes,
+        [("member-a".to_string(), false)],
+        "only the try that was followed by another"
+    );
+}
+
 #[test]
 fn only_a_get_or_head_with_no_body_may_go_twice() {
     assert!(may_send_again(&http::Method::GET, true, false));
@@ -258,4 +367,133 @@ fn the_sticky_cookie_is_read_from_every_cookie_header() {
     assert_eq!(sticky_value(&headers, "JSESSIONID"), None);
     headers.insert(header::COOKIE, HeaderValue::from_static("moqui.session="));
     assert_eq!(sticky_value(&headers, "moqui.session"), None, "an empty one is none");
+}
+
+/// A request body fed by a test: each chunk as it is sent, ended when the sender drops.
+struct Fed(tokio::sync::mpsc::Receiver<bytes::Bytes>);
+
+impl hyper::body::Body for Fed {
+    type Data = bytes::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        self.0
+            .poll_recv(cx)
+            .map(|chunk| chunk.map(|chunk| Ok(hyper::body::Frame::data(chunk))))
+    }
+}
+
+/// A member that reads a request's whole body before it answers, `then` after the body ended: as an LFS PUT or a CI
+/// upload is answered once the object is stored. The bytes it read go in its answer.
+async fn storing_member(then: Duration) -> (SendRequest<tonic::body::Body>, tokio::task::JoinHandle<()>) {
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let serving = tokio::spawn(async move {
+        let service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| async move {
+            use hyper::body::Body as _;
+            let mut body = request.into_body();
+            let mut read = 0usize;
+            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+                if let Ok(data) = frame?.into_data() {
+                    read += data.len();
+                }
+            }
+            tokio::time::sleep(then).await;
+            Ok::<_, hyper::Error>(http::Response::new(read.to_string()))
+        });
+        let _ = hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .serve_connection(TokioIo::new(server), service)
+            .await;
+    });
+    let (send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .handshake(TokioIo::new(client))
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    (send, serving)
+}
+
+/// A PUT of `chunks` chunks of 64 KiB, each `gap` after the last, to `send` within `waits`: the bytes the member read,
+/// or the failure.
+async fn upload(
+    send: &SendRequest<tonic::body::Body>,
+    chunks: usize,
+    gap: Duration,
+    waits: Waits,
+) -> Result<String, String> {
+    let (feed, fed) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move {
+        for _ in 0..chunks {
+            tokio::time::sleep(gap).await;
+            if feed.send(bytes::Bytes::from(vec![7u8; 64 * 1024])).await.is_err() {
+                return;
+            }
+        }
+    });
+    let (body, progress) = watched(tonic::body::Body::new(Fed(fed)), false);
+    let mut request = down_request(http::Method::PUT);
+    *request.body_mut() = body;
+    request.extensions_mut().insert(progress);
+    let (answered, _) = send_once_more(
+        picked("member-a", send),
+        request,
+        None::<fn() -> http::Request<tonic::body::Body>>,
+        |_| None,
+        waits,
+        |_, _| {},
+    )
+    .await;
+    match answered {
+        Ok(response) => {
+            use hyper::body::Body as _;
+            let mut body = response.into_body();
+            let mut text = Vec::new();
+            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+                if let Ok(data) = frame.unwrap().into_data() {
+                    text.extend_from_slice(&data);
+                }
+            }
+            Ok(String::from_utf8(text).unwrap())
+        }
+        Err(failed) => Err(format!("{failed:?}")),
+    }
+}
+
+/// An answer that comes only after the whole request body is stored is not cut off by a short timeout: the body may
+/// take far longer than the open wait while it keeps moving, and the head may come well after it ends, within the
+/// head wait. A body that stops moving for the idle wait, or a head later than the head wait, is timed out (504).
+#[tokio::test]
+async fn an_answer_after_a_slow_large_body_is_waited_for() {
+    let waits = Waits {
+        open: Duration::from_millis(100),
+        idle: Duration::from_millis(400),
+        head: Duration::from_millis(800),
+        // a request with a body never waits by this
+        first_byte: Duration::from_millis(50),
+    };
+    // 16 chunks 50 ms apart (800 ms, eight times the open wait), stored for 300 ms before the answer
+    let (storing, _a) = storing_member(Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    let answered = upload(&storing, 16, Duration::from_millis(50), waits).await;
+    assert_eq!(
+        answered.as_deref(),
+        Ok("1048576"),
+        "the whole body was read and answered"
+    );
+    assert!(
+        started.elapsed() > Duration::from_millis(900),
+        "{:?}",
+        started.elapsed()
+    );
+
+    // a body that stalls past the idle wait
+    let answered = upload(&storing, 2, Duration::from_millis(700), waits).await;
+    assert_eq!(answered.unwrap_err(), "TimedOut");
+
+    // a head that comes later than the head wait after the body ended
+    let (slow, _b) = storing_member(Duration::from_millis(1500)).await;
+    let answered = upload(&slow, 2, Duration::from_millis(10), waits).await;
+    assert_eq!(answered.unwrap_err(), "TimedOut");
 }

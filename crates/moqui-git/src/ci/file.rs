@@ -32,6 +32,8 @@ pub struct Limits {
     pub max_timeout_minutes: u32,
     pub default_timeout_minutes: u32,
     pub max_fetch_depth: u32,
+    /// Service containers of one job.
+    pub max_services: usize,
 }
 
 impl Default for Limits {
@@ -45,6 +47,7 @@ impl Default for Limits {
             max_timeout_minutes: 360,
             default_timeout_minutes: 60,
             max_fetch_depth: 50,
+            max_services: 4,
         }
     }
 }
@@ -184,6 +187,27 @@ pub struct Artifact {
     pub name: String,
     pub path: String,
     pub retention_days: Option<u32>,
+}
+
+/// The longest cache key, once each `${hash:file}` is its 16 hex digits.
+pub const MAX_CACHE_KEY: usize = 200;
+
+/// Whether a cache key is one the server stores: no `/` outside its `${hash:file}` parts (whose file may be in a
+/// directory), and at most [`MAX_CACHE_KEY`] characters once each is its hash.
+pub fn valid_cache_key(key: &str) -> bool {
+    let mut rest = key;
+    let mut length = 0usize;
+    while let Some((before, after)) = rest.split_once("${hash:") {
+        if before.contains('/') {
+            return false;
+        }
+        length += before.chars().count() + 16;
+        let Some((_, after)) = after.split_once('}') else {
+            return false;
+        };
+        rest = after;
+    }
+    !rest.contains('/') && !key.trim().is_empty() && length + rest.chars().count() <= MAX_CACHE_KEY
 }
 
 /// A name of a pipeline, a job, an axis, a service or an artifact: what a status context, a host name and a file
@@ -376,6 +400,15 @@ fn job_of(node: &MNode, limits: &Limits) -> Result<Job, FileError> {
                 if job.services.iter().any(|other| other.name == service.name) {
                     return error(&child, format!("two services are named {}", service.name));
                 }
+                if job.services.len() >= limits.max_services {
+                    return error(
+                        &child,
+                        format!(
+                            "job {} has more than this server's limit of {} services",
+                            job.name, limits.max_services
+                        ),
+                    );
+                }
                 job.services.push(service);
             }
             "matrix" => {
@@ -431,6 +464,16 @@ fn job_of(node: &MNode, limits: &Limits) -> Result<Job, FileError> {
                     return error(
                         &child,
                         format!("the cache path '{}' must be inside the checkout", cache.path),
+                    );
+                }
+                if !valid_cache_key(&cache.key) {
+                    return error(
+                        &child,
+                        format!(
+                            "the cache key '{}' must have no / outside ${{hash:...}} and be at most {MAX_CACHE_KEY} \
+                             characters",
+                            cache.key
+                        ),
                     );
                 }
                 job.caches.push(cache);

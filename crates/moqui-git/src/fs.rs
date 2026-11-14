@@ -253,7 +253,8 @@ pub(crate) struct FetchOutcome {
 pub(crate) type FetchGate<'a> =
     &'a mut dyn FnMut(&FsStore, &[(String, ObjectId)], &[RefChange]) -> Vec<(usize, String)>;
 
-/// Where a gated fetch keeps the remote's branches and tags until its gate has passed them: no ref a clone is given.
+/// Where a mirror's fetch keeps the remote's branches and tags until its gate has passed them and its fence holds: no
+/// ref a clone is given.
 const INCOMING: &str = "refs/moqui-incoming/";
 
 /// The refs a mirror keeps: every branch and tag.
@@ -269,9 +270,10 @@ fn mirrored_refs(store: &FsStore) -> Result<Vec<(String, ObjectId)>, Error> {
 
 /// Fetch `url` into the bare repository at `path` (created when it is not there), replacing local refs with the
 /// remote's: a remote repository is a mirror. With `mirror` every branch and tag is fetched and a local one the remote
-/// no longer has is deleted (gix does not prune); without it only `branch`, for an import. With a `gate` (a mirror's)
-/// the remote's refs are fetched under [`INCOMING`] first, and a local branch or tag changes only when the gate
-/// passes that change.
+/// no longer has is deleted (gix does not prune); without it only `branch`, for an import. A mirror's refs are fetched
+/// under [`INCOMING`] first, and a local branch or tag changes only when the `gate`, if any, passes that change, and
+/// once `fence` passes right before the refs are written: the fetch itself is a long network read, and a cluster
+/// member whose lease lapsed during it writes nothing (`Lease::check`).
 pub(crate) fn fetch(
     path: &Path,
     url: &str,
@@ -279,18 +281,16 @@ pub(crate) fn fetch(
     credentials: &Credentials,
     mirror: bool,
     gate: Option<FetchGate<'_>>,
+    fence: &dyn Fn() -> Result<(), Error>,
 ) -> Result<FetchOutcome, Error> {
     let store = FsStore::init(path, branch)?;
     let before = mirrored_refs(&store)?;
     let repo = store.local();
-    let gate = gate.filter(|_| mirror);
-    let specs: Vec<String> = if gate.is_some() {
+    let specs: Vec<String> = if mirror {
         MIRRORED
             .iter()
             .map(|prefix| format!("+{prefix}*:{INCOMING}{}*", prefix.trim_start_matches("refs/")))
             .collect()
-    } else if mirror {
-        MIRRORED.iter().map(|prefix| format!("+{prefix}*:{prefix}*")).collect()
     } else {
         vec![format!("+refs/heads/{branch}:refs/heads/{branch}")]
     };
@@ -330,7 +330,7 @@ pub(crate) fn fetch(
         .and_then(|prepare| prepare.receive(gix::progress::Discard, &interrupt))
         .map_err(|err| Error::new(format!("fetching {}: {err}", moqui_core::outbound::redacted(url))))?;
     let mut refused = Vec::new();
-    if let Some(gate) = gate {
+    if mirror {
         let remote_names: HashSet<String> = outcome
             .ref_map
             .remote_refs
@@ -363,7 +363,7 @@ pub(crate) fn fetch(
                 });
             }
         }
-        let declined = gate(&store, &before, &changes);
+        let declined = gate.map_or_else(Vec::new, |gate| gate(&store, &before, &changes));
         let mut edits = Vec::new();
         for (index, change) in changes.iter().enumerate() {
             match declined.iter().find(|(refused, _)| *refused == index) {
@@ -375,6 +375,9 @@ pub(crate) fn fetch(
                 }),
             }
         }
+        // right before the refs move: the lease may have lapsed while the fetch read the network (what it staged
+        // is left under INCOMING, which the next fetch replaces)
+        fence()?;
         for (edit, outcome) in edits.iter().zip(store.update_refs(&edits, false)?) {
             if outcome != RefOutcome::Updated {
                 tracing::warn!("{} of {} was not fetched: it moved", edit.name, path.display());
@@ -389,27 +392,6 @@ pub(crate) fn fetch(
             })
             .collect();
         store.update_refs(&done, false)?;
-    } else if mirror {
-        let remote_names: HashSet<String> = outcome
-            .ref_map
-            .remote_refs
-            .iter()
-            .map(|reference| reference.unpack().0.to_string())
-            .collect();
-        let gone: Vec<RefEdit> = mirrored_refs(&store)?
-            .into_iter()
-            .filter(|(name, _)| !remote_names.contains(name))
-            .map(|(name, id)| RefEdit {
-                name,
-                expected: Some(id),
-                new: None,
-            })
-            .collect();
-        for (edit, outcome) in gone.iter().zip(store.update_refs(&gone, false)?) {
-            if outcome != RefOutcome::Updated {
-                tracing::warn!("{} of {} was not pruned: it moved", edit.name, path.display());
-            }
-        }
     }
     let after = mirrored_refs(&store)?;
     Ok(FetchOutcome {

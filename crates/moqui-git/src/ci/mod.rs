@@ -18,7 +18,9 @@
 //! the server: the engine ([`engine`]) starts a container through the pool's host type ([`driver`]) or leaves the job
 //! for a registered runner ([`registered`]), and the runner (`moqui ci-run`, [`runner`]) talks to the runner REST
 //! ([`runner_http`]) with a job token ([`token`]) that also reads the repository at the job's commit. What an untrusted
-//! run may have is decided in [`trust`]. The application's services are in [`service`].
+//! run may have is decided in [`trust`]. A deployment ([`deploy`]) runs an environment's pipeline with the deploy event
+//! and posts an attestation of the passed run ([`attest`]) to its target. The application's services are in
+//! [`service`].
 
 use std::collections::BTreeMap;
 
@@ -28,11 +30,14 @@ use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{EntityFacade, EntityValue};
 
 pub mod artifact;
+pub mod attest;
 pub mod builtin;
+pub mod deploy;
 pub mod driver;
 pub mod engine;
 pub mod file;
 pub mod junit;
+pub(crate) mod location;
 pub mod log;
 pub mod plan;
 pub mod queue;
@@ -95,6 +100,7 @@ pub(crate) fn limits() -> file::Limits {
         max_timeout_minutes: small("max-timeout-minutes", default.max_timeout_minutes),
         default_timeout_minutes: small("default-timeout-minutes", default.default_timeout_minutes),
         max_fetch_depth: small("max-fetch-depth", default.max_fetch_depth),
+        max_services: number("max-services", default.max_services),
     }
 }
 
@@ -148,6 +154,11 @@ pub(crate) fn one(entity: &EntityFacade, entity_name: &str, key: &str, id: &str)
 
 /// Set fields of the row of `entity_name` whose key field `key` is `id`, when `status` is still its `statusId`
 /// (any when `None`). Whether a row changed: a claim another worker made first gives false.
+///
+/// With a `status` this is one conditional `UPDATE ... WHERE key = ? AND statusId = ?` in the caller's transaction,
+/// whose row count says whether it applied, so two members (or two threads) that move the same row from one state
+/// never both do (docs/interfaces/Pipelines.md, "The engine"): a read and an update by key, as `update_all` makes,
+/// let both through. The audit log of `statusId` is written as an entity update writes it.
 pub(crate) fn set_fields(
     entity: &EntityFacade,
     entity_name: &str,
@@ -156,16 +167,106 @@ pub(crate) fn set_fields(
     status: Option<&str>,
     fields: Vec<(&str, Value)>,
 ) -> Result<bool, Error> {
-    let mut find = entity.find(entity_name)?.eq(key, Value::string(id));
-    if let Some(status) = status {
-        find = find.eq("statusId", Value::string(status));
+    let Some(status) = status.filter(|_| !entity.sim_active()) else {
+        let mut find = entity.find(entity_name)?.eq(key, Value::string(id));
+        if let Some(status) = status {
+            find = find.eq("statusId", Value::string(status));
+        }
+        let changed = find.update_all(fields.into_iter().map(|(name, value)| (name.to_string(), value)))?;
+        return Ok(changed > 0);
+    };
+    let changed = update_when(entity, entity_name, key, id, status, &fields, Commit::Caller)?;
+    if changed {
+        audit_status(entity, entity_name, id, status, &fields);
     }
-    let changed = find.update_all(fields.into_iter().map(|(name, value)| (name.to_string(), value)))?;
-    Ok(changed > 0)
+    Ok(changed)
+}
+
+pub(crate) use crate::conditional::Commit;
+
+/// `UPDATE entity SET fields, lastUpdatedStamp WHERE key = id AND statusId = status`: whether the row changed.
+pub(crate) fn update_when(
+    entity: &EntityFacade,
+    entity_name: &str,
+    key: &str,
+    id: &str,
+    status: &str,
+    fields: &[(&str, Value)],
+    commit: Commit,
+) -> Result<bool, Error> {
+    let condition = moqui_core::entity::Condition::and(vec![
+        moqui_core::entity::Condition::equals(key, Value::string(id)),
+        moqui_core::entity::Condition::equals("statusId", Value::string(status)),
+    ]);
+    Ok(crate::conditional::update_where(entity, entity_name, fields, &condition, commit)? > 0)
+}
+
+/// The audit log of a `statusId` a conditional update moved from `was`, when the entity audits it (as
+/// `EntityAuditLog` rows an entity update writes). A failure is logged: the move itself is made.
+pub(crate) fn audit_status(entity: &EntityFacade, entity_name: &str, id: &str, was: &str, fields: &[(&str, Value)]) {
+    let Some((_, new)) = fields.iter().find(|(name, _)| *name == "statusId") else {
+        return;
+    };
+    if entity.flags().disable_audit_log {
+        return;
+    }
+    let audited = entity
+        .with_entity(entity_name, |definition, _, _| {
+            Ok(definition
+                .field("statusId")
+                .is_some_and(|field| matches!(field.enable_audit_log.as_deref(), Some("true" | "update"))))
+        })
+        .unwrap_or(false);
+    if !audited {
+        return;
+    }
+    let written = (|| -> Result<(), Error> {
+        let mut row = EntityValue::make(entity, "moqui.entity.EntityAuditLog")?;
+        row.set_sequenced_id_primary(entity)?;
+        row.set("changedEntityName", Value::string(entity_name));
+        row.set("changedFieldName", Value::string("statusId"));
+        row.set("pkPrimaryValue", Value::string(id));
+        row.set("oldValueText", Value::string(was));
+        row.set("newValueText", Value::string(to_plain_string(new)));
+        row.set("changedDate", moqui_core::user::now_value());
+        if let Some(user_id) = moqui_core::user::current_user_id().ok().flatten() {
+            row.set("changedByUserId", Value::string(user_id));
+        }
+        row.create(entity)?;
+        Ok(())
+    })();
+    if let Err(err) = written {
+        tracing::warn!(
+            entity = entity_name,
+            id,
+            "the audit log of a status move was not written: {err}"
+        );
+    }
+}
+
+/// Run `body`, a call whose errors in the message facade are its answer: the errors it left are taken from the facade
+/// (those before it stay) and are its error when it gave none, or are added to the one it gave.
+pub(crate) fn with_errors_taken<T>(body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+    let outcome = body();
+    let errors = mark
+        .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
+        .unwrap_or_default();
+    match outcome {
+        Ok(_) if !errors.is_empty() => Err(Error::new(errors.join("\n"))),
+        // the facade's errors are the service's own words: kept with the failure, not dropped
+        Err(err) if !errors.is_empty() => {
+            let message = err.message().to_string();
+            let mut lines: Vec<String> = errors.into_iter().filter(|error| *error != message).collect();
+            lines.insert(0, message);
+            Err(Error::new(lines.join("\n")))
+        }
+        outcome => outcome,
+    }
 }
 
 /// Call the service the conf names, with authorization disabled, as the LFS upload check is called. `None` when no
-/// service is named.
+/// service is named. Its errors are its answer, not left in the message facade ([`with_errors_taken`]).
 pub(crate) fn call_hook(
     conf_name: &str,
     parameters: BTreeMap<String, Value>,
@@ -178,7 +279,9 @@ pub(crate) fn call_hook(
         disable_authz: true,
         ..moqui_core::service::call::CallOptions::default()
     };
-    Some(moqui_core::service::call::sync_checked(&name, &parameters, &options))
+    Some(with_errors_taken(|| {
+        moqui_core::service::call::sync_checked(&name, &parameters, &options)
+    }))
 }
 
 pub(crate) fn parameters(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<String, Value> {
@@ -233,3 +336,11 @@ pub(crate) fn delete_repository_rows(entity: &EntityFacade, repository_id: &str)
     }
     Ok(runs.len())
 }
+
+#[cfg(test)]
+#[path = "claim_tests.rs"]
+mod claim_tests;
+
+#[cfg(test)]
+#[path = "safety_tests.rs"]
+mod safety_tests;

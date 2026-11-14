@@ -173,6 +173,10 @@ pub(crate) fn start(
                 Ok(identity) => {
                     let mut config = EdgeConfig::from_properties(&instance_id(factory));
                     config.offline_page = offline_page(factory);
+                    config.forward_idle = settings.forward_idle;
+                    config.forward_head = settings.forward_head;
+                    config.forward_first_byte = settings.forward_first_byte;
+                    config.max_ssh_tunnels = settings.ssh_tunnels;
                     config.capabilities = super::offer::areas(factory, &config);
                     let server = EdgeServer::new(factory, config, &identity.fingerprint, shutdown.clone());
                     super::accept::acceptor(&server, resolver, &identity).map(|acceptor| (server, acceptor))
@@ -591,6 +595,15 @@ impl Hook {
         }
     }
 
+    /// Keep where the pairing with the ports (the front's when this node has two, plans/Edge-Node2.md §4.7) takes this
+    /// node's SSH clients, from its offer or Configure answer, for clone URLs
+    /// ([`moqui_core::edge::setup::remember_ssh`]).
+    fn remember_ssh(&self, offer: &EdgeOffer) {
+        if let Ok(factory) = self.factory() {
+            moqui_core::edge::setup::remember_ssh(&factory, &offer.ssh);
+        }
+    }
+
     fn env_path(&self) -> Result<std::path::PathBuf, Error> {
         Ok(self.factory()?.runtime_dir().join(".env"))
     }
@@ -976,8 +989,11 @@ impl EdgeLink for Hook {
         let (edge, front) = self.up_clients()?;
         let (edge, front) = match (edge, front) {
             (Some(client), None) | (None, Some(client)) => {
-                return crate::edge::block_on(async move { super::dial::offer_on(client, OFFER_TIMEOUT).await })?
-                    .map_err(Error::new);
+                let offer = crate::edge::block_on(async move { super::dial::offer_on(client, OFFER_TIMEOUT).await })?
+                    .map_err(Error::new)?;
+                // where its one pairing takes this node's SSH clients, for its clone URLs
+                self.remember_ssh(&offer);
+                return Ok(offer);
             }
             (Some(edge), Some(front)) => (edge, front),
             (None, None) => return Err(Error::new("this node is not paired with an edge node")),
@@ -990,6 +1006,10 @@ impl EdgeLink for Hook {
                 super::dial::offer_on(front, OFFER_TIMEOUT)
             )
         })?;
+        // the SSH tunnel port is the front's (an edge node behind a front binds none), as the merged offer has it
+        if let Ok(front) = &front {
+            self.remember_ssh(front);
+        }
         match (edge, front) {
             (Ok(edge), Ok(front)) => Ok(super::front::merge_offer(edge, front)),
             (Ok(edge), Err(err)) => {
@@ -1010,10 +1030,12 @@ impl EdgeLink for Hook {
             // with one pairing, all to it: a front refuses what it has not
             (None, Some(front)) => {
                 let setup = setup.clone();
-                return crate::edge::block_on(async move {
+                let configured = crate::edge::block_on(async move {
                     super::dial::configure_on(front, &setup, CALL_TIMEOUT, true).await
                 })?
-                .map_err(Error::new);
+                .map_err(Error::new)?;
+                self.remember_ssh(&configured.offer);
+                return Ok(configured);
             }
             (Some(edge), None) => {
                 let setup = setup.clone();
@@ -1022,6 +1044,7 @@ impl EdgeLink for Hook {
                 })?
                 .map_err(Error::new)?;
                 self.note_configured(&configured);
+                self.remember_ssh(&configured.offer);
                 return Ok(configured);
             }
             (Some(edge), Some(front)) => (edge, front),
@@ -1042,6 +1065,10 @@ impl EdgeLink for Hook {
         }
         if let Ok(configured) = &edge_answer {
             self.note_configured(configured);
+        }
+        // the SSH tunnel port is the front's, as the merged offer has it
+        if let Ok(configured) = &front_answer {
+            self.remember_ssh(&configured.offer);
         }
         let mut failed = Vec::new();
         if let Err(why) = &edge_answer {

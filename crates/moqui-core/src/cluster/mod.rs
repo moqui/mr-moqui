@@ -433,6 +433,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     let fingerprints = configured_fingerprints()?;
     let base_url = cluster_base_url()?;
     reject_peer_mismatch(&facade, factory, &instance_id, &fingerprints)?;
+    warn_ssh_key_mismatch(&facade, factory, &instance_id);
     let member = Member {
         instance_id: instance_id.clone(),
         base_url,
@@ -961,6 +962,40 @@ fn reject_peer_mismatch(
         }
     }
     Ok(())
+}
+
+/// Warn when a live member's SSH host key is another than this member's. Behind one name (a load balancer, an edge
+/// node's pool and its SSH tunnel) a client may reach any member, and after a failover another one, so the members
+/// share `ssh_host_key`, as they share `git_lfs_token_key` (which no member row shows): with another key a client is
+/// told the host key changed. Only a warning: a cluster whose members are reached each by its own name may keep its own.
+fn warn_ssh_key_mismatch(facade: &EntityFacade, factory: &ExecutionContextFactory, instance_id: &str) {
+    let ours = env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY);
+    let Ok(members) = load_members(facade) else {
+        return;
+    };
+    let others = ssh_key_differs(&members, instance_id, &ours, db_now(facade), window_millis(factory));
+    if !others.is_empty() {
+        tracing::warn!(
+            "ssh_host_key differs from the live cluster members {}: behind a load balancer or an edge node's pool a git \
+             client reaching another member is told the host key changed; give every member the same ssh_host_key \
+             (and git_lfs_token_key)",
+            others.join(", ")
+        );
+    }
+}
+
+/// The live members other than `instance_id` whose SSH host key fingerprint is set and is not `ours`; none while
+/// `ours` is empty (no SSH server here).
+fn ssh_key_differs(members: &[LoadedMember], instance_id: &str, ours: &str, now: i64, window: i64) -> Vec<String> {
+    if ours.is_empty() {
+        return Vec::new();
+    }
+    members
+        .iter()
+        .filter(|member| member.instance_id != instance_id && is_live(member.heartbeat, now, window))
+        .filter(|member| !member.ssh_fp.is_empty() && member.ssh_fp != ours)
+        .map(|member| member.instance_id.clone())
+        .collect()
 }
 
 /// Start the heartbeat thread: [`heartbeat`] every scheduler interval. It runs on a thread of its own, not as a
@@ -1517,10 +1552,13 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
 
 /// The database server's time in epoch milliseconds, else this host's.
 pub(crate) fn db_now(facade: &EntityFacade) -> i64 {
+    // the statement the database's dialect takes (Oracle FROM DUAL, DB2 and Derby VALUES)
     let read = facade
-        .transactions_for(MEMBER)
+        .with_group(MEMBER, |_, dialect, _, tx| {
+            Ok((dialect.current_timestamp_sql(), tx.clone()))
+        })
         .map_err(Error::from)
-        .and_then(|tx| with_reserve_tx(&tx, |conn| conn.query("SELECT CURRENT_TIMESTAMP", &[])).map_err(Error::from));
+        .and_then(|(sql, tx)| with_reserve_tx(&tx, |conn| conn.query(sql, &[])).map_err(Error::from));
     read.ok()
         .and_then(|rows| {
             rows.first()

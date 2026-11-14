@@ -16,8 +16,10 @@
         content_ds_db_conf names another (docs/Run-Deploy.md, Content database). -->
     <default-property name="entity_ds_db_conf" value="postgres"/>
 
-    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and entity_ds_crypt_pass.
-        The first member's first start generates them into its .env; copy that .env to each other member before its
+    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and entity_ds_crypt_pass,
+        and for git hosting ssh_host_key and git_lfs_token_key, as the load balancer sends a client's SSH connections
+        and LFS requests to any member (a member with another SSH host key warns at startup).
+        The first member's first start generates them into its .env; copy that whole .env to each other member before its
         first start. A start fails when a live member has another session key or certificate. Each member keeps its own
         instance id in runtime/db/instance_id, not in .env, so copying .env is safe.
         Per member in .env: cluster_base_url, https://(this member's private address):8444, which the other members

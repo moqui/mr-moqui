@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Worktrees for agents' sessions (plans/design-dev-aide.md 21.8, question 19), implemented in the dev-aide crate
+    (src/worktree.rs): a git worktree of a working tree under the runtime's worktrees directory, on a branch of its own,
+    kept as a temporary root bound to an Assist conversation, whose file and git tools are rooted in it. Not loaded: its
+    files are checked and committed, not run live. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="Worktrees" type="rust" location="dev_aide::worktree::get_worktrees" allow-remote="false" read-only="true">
+        <description>The worktree roots (of rootId, or of a conversation, or all): rootId, label, location, mainRootId,
+            conversationId, branch, changes (uncommitted files); note says they are not loaded.</description>
+        <in-parameters>
+            <parameter name="rootId"/>
+            <parameter name="conversationId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="worktrees" type="List"/>
+            <parameter name="note"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Worktree" type="rust" location="dev_aide::worktree::create_worktree" allow-remote="false">
+        <description>A worktree of rootId for an agent's session (conversationId), on branch (a new agent/[tag] by
+            default, or a branch of the repository not checked out elsewhere): git worktree add under the runtime's
+            worktrees directory, kept as a root labelled "worktree of X".</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="conversationId"/>
+            <parameter name="branch"/>
+            <parameter name="label"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="location"/>
+            <parameter name="branch"/>
+            <parameter name="note"/>
+        </out-parameters>
+    </service>
+    <service verb="remove" noun="Worktree" type="rust" location="dev_aide::worktree::remove_worktree" allow-remote="false">
+        <description>A worktree root removed (git worktree remove) with its row: refused while it has uncommitted
+            changes unless discardChanges. Its branch stays, with its commits.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="discardChanges" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="branch"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
+</services>

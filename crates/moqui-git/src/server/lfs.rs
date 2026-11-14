@@ -333,6 +333,7 @@ fn refuse(out: &mut dyn HttpResponder, refusal: &Refusal) {
         Refusal::Unauthenticated(_) => 401,
         Refusal::Forbidden(_) => 403,
         Refusal::NotFound(_) => 404,
+        Refusal::Gone(_) => 410,
         Refusal::Unavailable(_) | Refusal::Busy(_) => 503,
     };
     let text = json!({ "message": refusal.message() }).to_string();

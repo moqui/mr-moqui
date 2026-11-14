@@ -410,3 +410,37 @@ fn service_reload_phases_as_loaded_files_grow() {
         );
     }
 }
+
+/// A repository's `ci.xml` is checked by its schema (`git-ci-3.xsd`, F19): a typo in an attribute or an element is a
+/// warning, a missing required attribute too, and a good file has no problem; its `service` containers are not
+/// service references.
+#[test]
+fn a_ci_file_is_checked_by_its_schema() {
+    let bed = bed("ci-check");
+    let good = r#"<ci>
+    <pipeline name="test" on="push merge-request">
+        <job name="unit" image="rust:1">
+            <service name="db" image="postgres:16"/>
+            <step name="test" run="cargo test"/>
+        </job>
+    </pipeline>
+</ci>"#;
+    // the framework's XSDs, as a runtime has them
+    let xsd = bed.dir.join("framework/xsd");
+    std::fs::create_dir_all(&xsd).unwrap();
+    for entry in std::fs::read_dir(moqui_core::context::framework_dir().join("xsd")).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), xsd.join(entry.file_name())).unwrap();
+    }
+    let path = bed.write("ci.xml", good);
+    let problems = crate::check::check_text(bed.factory(), &path, good);
+    assert!(problems.is_empty(), "{problems:?}");
+    let bad = good
+        .replace(r#"image="rust:1""#, r#"imag="rust:1""#)
+        .replace("<step ", "<stpe ");
+    let problems = crate::check::check_text(bed.factory(), &path, &bad);
+    let rules: Vec<&str> = problems.iter().map(|problem| problem.rule.as_str()).collect();
+    assert!(rules.contains(&"schema.unknown-attribute"), "{problems:?}");
+    assert!(rules.contains(&"schema.missing-attribute"), "{problems:?}");
+    assert!(rules.contains(&"schema.unknown-element"), "{problems:?}");
+}

@@ -27,7 +27,7 @@ use moqui_llm::tools::schema::{object, Property};
 use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
-use super::{arg, context, list_arg};
+use super::{arg, list_arg, session_context, session_root};
 use crate::tier::Tier;
 
 const VCS: &str = "org.moqui.devaide.VcsServices.";
@@ -105,13 +105,9 @@ fn service(name: &str, parameters: &[(&str, String)]) -> Result<Json, ToolError>
 }
 
 fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError> {
-    let context = context(Tier::View)?;
-    let root = arg(args, "root")
-        .ok_or_else(|| ToolError::new("no_root", "Name the root."))?
-        .to_string();
-    context
-        .root(&root)
-        .map_err(|err| ToolError::new("no_root", err.to_string()))?;
+    let context = session_context(ctx, Tier::View)?;
+    // in a session with a worktree of the root, its worktree (21.8)
+    let root = session_root(&context, arg(args, "root").unwrap_or(""))?;
     let path = arg(args, "path").unwrap_or("").to_string();
     match arg(args, "action").unwrap_or("status") {
         "status" => Ok(super::json(&service("get#Status", &[("rootId", root)])?)),

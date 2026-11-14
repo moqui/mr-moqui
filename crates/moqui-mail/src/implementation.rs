@@ -1262,7 +1262,7 @@ fn expand_text(text: &str) -> Result<String, Error> {
 
 fn read_location(location: &str) -> Result<Vec<u8>, Error> {
     let path = moqui_core::context::locate(location).map_err(|err| Error::new(err.message()))?;
-    std::fs::read(&path).map_err(|err| Error::new(format!("could not read attachment {location}: {err}")))
+    moqui_lib::vfs::read(&path).map_err(|err| Error::new(format!("could not read attachment {location}: {err}")))
 }
 
 fn fallback_type(given: &str, filename: &str, default: &str) -> String {

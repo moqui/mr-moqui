@@ -204,7 +204,7 @@ fn authenticate(
     }
     // A request repeating Basic credentials for the user its session already holds keeps its id.
     let same_user = session::current_username()?.as_deref() == Some(username);
-    finish_login(facade, account, Some(password), true)?;
+    finish_login(facade, account, Some(password), true, true)?;
     note_recent_auth(&user_id);
     Ok(Checked::LoggedIn { rotate: !same_user })
 }
@@ -406,7 +406,7 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
     let finishes_factor = !username.is_empty()
         && session::session_attribute_flag(AUTHC_FACTOR_REQUIRED)
         && session::session_attribute(PRE_AUTHC_USERNAME).as_deref() == Some(username);
-    internal_login(username, false).1?;
+    internal_login(username, false, finishes_factor).1?;
     if finishes_factor {
         if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
             note_recent_auth(&user_id);
@@ -423,7 +423,19 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or needs a password change.
 pub fn internal_login_queued_user(username: &str) -> Result<(), Error> {
-    internal_login(username, true).1
+    internal_login(username, true, false).1
+}
+
+/// The sign-in of a person by an SSH key the host checked to be theirs (an active `UserSshKey`): [`internal_login_user`]
+/// as a person's sign-in, which clears the account's `hasLoggedOut` as a password or a login key does, so a sign-out
+/// elsewhere earlier does not end the sessions this sign-in starts. The operations of the session after it borrow the
+/// login ([`internal_login_user`], [`logout_local`]) and leave the flag as it is.
+///
+/// # Errors
+///
+/// Returns an error when the account is unknown, disabled, terminated, a display account, or needs a password change.
+pub fn login_ssh_key_user(username: &str) -> Result<(), Error> {
+    internal_login(username, false, true).1
 }
 
 /// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person
@@ -434,7 +446,7 @@ pub(crate) fn is_display_account(account: &EntityValue) -> bool {
 
 /// [`internal_login_user`], with the user id of the account once it passed the gate (None before), for the login history.
 /// `queued` is [`internal_login_queued_user`]'s.
-fn internal_login(username: &str, queued: bool) -> (Option<String>, Result<(), Error>) {
+fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>, Result<(), Error>) {
     if username.is_empty() {
         return (None, Err(Error::new("No username specified")));
     }
@@ -462,14 +474,14 @@ fn internal_login(username: &str, queued: bool) -> (Option<String>, Result<(), E
         return (None, Err(Error::new(INVALID_LOGIN)));
     }
     let user_id = Some(text_field(&account, "userId")).filter(|id| !id.is_empty());
-    let result = post_password(&account, now).and_then(|()| finish_login(&facade, &account, None, false));
+    let result = post_password(&account, now).and_then(|()| finish_login(&facade, &account, None, false, person));
     (user_id, result)
 }
 
 /// [`internal_login`] for a key, app password or identity provider login, recorded in the login history when the
 /// account is known.
 fn recorded_login(username: &str) -> Result<(), Error> {
-    let (user_id, result) = internal_login(username, false);
+    let (user_id, result) = internal_login(username, false, true);
     if let Some(user_id) = user_id {
         save_history(&user_id, result.is_ok());
     }
@@ -500,7 +512,17 @@ pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Res
 ///
 /// Returns [`INVALID_LOGIN`](Error) when the key is empty, unknown, or expired, or the account cannot log in.
 pub fn login_user_key(key: &str) -> Result<(), Error> {
-    noting_invalid(check_login_key(key, None))
+    noting_invalid(check_login_key(key, None, None))
+}
+
+/// [`login_user_key`] for the one service `scope` names (`gateway`, the LLM gateway): an account's key, or a key made
+/// for that scope alone ([`get_scoped_key`]), which every other login refuses.
+///
+/// # Errors
+///
+/// Returns [`INVALID_LOGIN`](Error) as [`login_user_key`] does, and for a key of another scope.
+pub fn login_user_key_for(key: &str, scope: &str) -> Result<(), Error> {
+    noting_invalid(check_login_key(key, None, Some(scope)))
 }
 
 /// Recheck a socket's hashed login key without logging in, writing history, or changing its session.
@@ -519,7 +541,7 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
         return Ok(None);
     };
     let now = now_millis();
-    if field_millis(&row, "thruDate").is_some_and(|thru| now > thru) {
+    if field_millis(&row, "thruDate").is_some_and(|thru| now > thru) || !text_field(&row, "scope").is_empty() {
         return Ok(None);
     }
     let user_id = text_field(&row, "userId");
@@ -530,8 +552,9 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
 }
 
 /// `session_user`, when the session is already signed in, is the only user the key may log in: a key for another
-/// user is refused before the login, so it never takes over that session or its attributes.
-fn check_login_key(key: &str, session_user: Option<&str>) -> Result<(), Error> {
+/// user is refused before the login, so it never takes over that session or its attributes. A key made for one scope
+/// (`UserLoginKey.scope`) logs in only where `scope` names it.
+fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -> Result<(), Error> {
     if key.is_empty() {
         return Err(Error::new(INVALID_LOGIN));
     }
@@ -547,6 +570,10 @@ fn check_login_key(key: &str, session_user: Option<&str>) -> Result<(), Error> {
     };
     let user_id = text_field(&row, "userId");
     if session_user.is_some_and(|signed_in| signed_in != user_id) {
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    let key_scope = text_field(&row, "scope");
+    if !key_scope.is_empty() && Some(key_scope.as_str()) != scope {
         return Err(Error::new(INVALID_LOGIN));
     }
     if let Some(thru) = field_millis(&row, "thruDate") {
@@ -728,6 +755,36 @@ pub fn get_device_key(device: &str) -> Result<String, Error> {
     )
 }
 
+/// The scopes a key may be made for alone ([`get_scoped_key`]): `gateway`, the LLM gateway's `/llm/v1`.
+pub const KEY_SCOPES: [&str; 1] = ["gateway"];
+
+/// A new key of the logged-in user that opens only `scope` (one of [`KEY_SCOPES`]), named `device` in the user's
+/// device list and good for the conf's `login-key/@device-expire-hours`: a dev instance keeps one for a group server's
+/// LLM gateway (plans/design-dev-aide.md 21.2), where the account's own key would open everything.
+///
+/// # Errors
+///
+/// Returns an error for a scope not in [`KEY_SCOPES`], when nobody is logged in, or when a write fails.
+pub fn get_scoped_key(scope: &str, device: &str) -> Result<String, Error> {
+    if !KEY_SCOPES.contains(&scope) {
+        return Err(Error::new(format!("{scope} is not a scope a key is made for")));
+    }
+    let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
+        return Err(Error::of_kind(
+            crate::context::ErrorKind::AuthenticationRequired,
+            "No active user, cannot get login key",
+        ));
+    };
+    let device: String = device.trim().chars().take(255).collect();
+    let device = if device.is_empty() { scope.to_string() } else { device };
+    make_key(
+        &user_id,
+        policy::login_key_device_expire_hours(),
+        Some(device.as_str()),
+        Some(scope),
+    )
+}
+
 /// End the logged-in user's login key `key` (as the client holds it), as a device signing out does. Answers whether
 /// there was such a key of the user's.
 ///
@@ -841,6 +898,10 @@ fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
 }
 
 fn make_login_key_for(user_id: &str, hours: f64, device: Option<&str>) -> Result<String, Error> {
+    make_key(user_id, hours, device, None)
+}
+
+fn make_key(user_id: &str, hours: f64, device: Option<&str>, scope: Option<&str>) -> Result<String, Error> {
     let login_key = super::factor::random_string(40)?;
     let hashed = password::hash_login_key(&login_key)?;
     let from = now_millis();
@@ -855,6 +916,9 @@ fn make_login_key_for(user_id: &str, hours: f64, device: Option<&str>) -> Result
     row.set("thruDate", stamp_value(thru));
     if let Some(device) = device {
         row.set("deviceName", Value::string(device));
+    }
+    if let Some(scope) = scope {
+        row.set("scope", Value::string(scope));
     }
     // Java creates the key with requireNewTransaction, so a caller's rollback does not lose it.
     let tx = facade.transactions_for(USER_LOGIN_KEY)?;
@@ -885,7 +949,7 @@ pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>) -> Resu
         return Ok(false);
     };
     let signed_in = session::current_user_id()?.filter(|id| !id.is_empty());
-    noting_invalid(check_login_key(key, signed_in.as_deref()))?;
+    noting_invalid(check_login_key(key, signed_in.as_deref(), None))?;
     Ok(true)
 }
 
@@ -912,6 +976,21 @@ pub fn logout_anonymous_only() {
     if session::current_username().ok().flatten().is_none() {
         session::set_anonymous(false);
     }
+}
+
+/// End this context's login only (`ec.user.logoutLocal()`), as Java's `logoutLocal`: the end of a job's borrowed
+/// sign-in (an internal login as a user to do work as them). Nothing is written to the account, so its `hasLoggedOut`
+/// stays as it is and the person's own sessions go on; the user and anonymous flag are cleared here.
+///
+/// # Errors
+///
+/// Returns an error when the bound session cannot be flushed. The login is cleared either way.
+pub fn logout_local() -> Result<(), Error> {
+    session::set_session_attribute(LAST_AUTH, None);
+    session::set_session_attribute(REAUTH_PASSWORD, None);
+    session::clear_login();
+    forget_shell_providers();
+    session::flush_after_logout()
 }
 
 /// Clear the in-memory user and anonymous flag. Sets `hasLoggedOut` on the account.
@@ -1235,7 +1314,16 @@ fn rehash_legacy(facade: &EntityFacade, account: &EntityValue, plain: &str) -> R
     )
 }
 
-fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str>, rehash: bool) -> Result<(), Error> {
+/// The login of `account`. `person`: a person signs in (a password, the code of a second factor, a key, an app
+/// password, an identity provider), which clears the account's `hasLoggedOut`; a job's or a worker's internal login
+/// borrows the account and leaves the flag as it is, so it does not bring back the sessions a sign-out ended.
+fn finish_login(
+    facade: &EntityFacade,
+    account: &EntityValue,
+    plain: Option<&str>,
+    rehash: bool,
+    person: bool,
+) -> Result<(), Error> {
     let user_id = text_field(account, "userId");
     let username = text_field(account, "username");
     if user_id.is_empty() || username.is_empty() {
@@ -1258,10 +1346,13 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
             fields.push(("passwordBase64", Value::string("N")));
         }
     }
-    if needs_reset(account) {
+    let logged_out = text_field(account, "hasLoggedOut") == "Y";
+    if failed_or_disabled(account) {
         fields.push(("successiveFailedLogins", Value::I64(0)));
         fields.push(("disabled", Value::string("N")));
         fields.push(("disabledDateTime", Value::Null));
+    }
+    if person && logged_out {
         fields.push(("hasLoggedOut", Value::string("N")));
     }
     // The account's update and the visit's link to it in one transaction-cache frame (plans/archive/TX-Cache.md F3).
@@ -1367,11 +1458,15 @@ fn legacy_hash(account: &EntityValue) -> bool {
     )
 }
 
-fn needs_reset(account: &EntityValue) -> bool {
+/// Whether the account has failed logins counted or is disabled (what a login that passes resets).
+fn failed_or_disabled(account: &EntityValue) -> bool {
     field_i64(account, "successiveFailedLogins").unwrap_or(0) != 0
         || text_field(account, "disabled") == "Y"
         || field_millis(account, "disabledDateTime").is_some()
-        || text_field(account, "hasLoggedOut") == "Y"
+}
+
+fn needs_reset(account: &EntityValue) -> bool {
+    failed_or_disabled(account) || text_field(account, "hasLoggedOut") == "Y"
 }
 
 fn still_disabled(account: &EntityValue, now: i64) -> bool {

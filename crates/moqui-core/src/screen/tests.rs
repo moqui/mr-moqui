@@ -1163,3 +1163,19 @@ fn a_render_mode_parameter_of_tui_renders_standalone_json() {
     let doc: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|err| panic!("{err}: {text}"));
     assert!(!text.contains("did not render as JSON"), "{doc}");
 }
+
+/// A request parameter named `context` (GitHub's commit status field) does not fail the request: it is not put in the
+/// context, whose name it is, and the REST service still gets it among its parameters.
+#[test]
+fn a_parameter_named_context_reaches_a_rest_service() {
+    let world = World::open(authz_conf());
+    world.load_service_rest();
+    world.user("admin", Some("ADMIN"));
+    world.allow_entity("ADMIN");
+    world.enumeration_type();
+    let root = webroot().to_string_lossy().into_owned();
+    let mut get = request("GET", "/rest/s1/moqui/basic/enumTypes?context=x");
+    get.set_header("authorization", basic("admin"));
+    let response = serve_at(&world.factory, get, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+}

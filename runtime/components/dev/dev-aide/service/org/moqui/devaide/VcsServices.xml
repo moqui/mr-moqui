@@ -154,9 +154,18 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
             <parameter name="forceWithLease" type="Boolean"/>
             <parameter name="confirmRef"><description>The remote branch (origin/main), typed back to confirm a force push.</description></parameter>
+            <parameter name="openMergeRequest" type="Boolean"><description>Then open a merge request of the branch on the
+                root's hosted repository (plans/design-dev-aide.md 21.4), into targetBranch (its default branch when
+                empty), titled title (the head commit's summary when empty).</description></parameter>
+            <parameter name="targetBranch"/>
+            <parameter name="title"/>
+            <parameter name="description"/>
         </in-parameters>
         <out-parameters>
             <parameter name="output"/>
+            <parameter name="mergeRequest" type="Map"/>
+            <parameter name="mergeRequestError"><description>Why the merge request was not opened; the push stands</description></parameter>
+            <parameter name="message"/>
         </out-parameters>
     </service>
     <service verb="switch" noun="Branch" type="rust" location="dev_aide::vcs::switch_branch" allow-remote="false">
@@ -189,7 +198,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="publish" noun="Site" type="rust" location="dev_aide::vcs::publish_site" allow-remote="false">
-        <description>Stage the site component's changes in the root, commit them (summary, or Customize: the files) with the task trailer, and push: to the publish branch when one is set for the root or the user, else to the current branch.</description>
+        <description>Stage the site component's changes in the root, commit them (summary, or Customize: the files) with the task trailer, and push: to the publish branch when one is set for the root or the user, else to the current branch. To a publish branch of a root with a hosted repository, a merge request of it into the current branch is opened too (mergeRequest), or the message says why not.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="operationId"><description>Names the command for its DevGitProgress notifications and Cancel.</description></parameter>
@@ -207,6 +216,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="message"/>
             <parameter name="files" type="List"/>
             <parameter name="output"/>
+            <parameter name="mergeRequest" type="Map"/>
         </out-parameters>
     </service>
     <service verb="get" noun="Hunks" type="rust" location="dev_aide::repo::get_hunks" allow-remote="false" read-only="true">

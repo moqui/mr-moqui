@@ -63,13 +63,18 @@ pub fn is_trusted(event: Event, origin: &Origin<'_>) -> bool {
     }
 }
 
-/// Whether a branch rule names `ref_name`: a secret of the `protected` or `tags` scope is given only then. Never for
-/// a merge request's run, whose commits are not the protected branch's yet.
+/// Whether `ref_name` is protected: a branch rule that names it restricts who pushes to it directly (a push group,
+/// or a merge request required with at least one approval), so what is on it was pushed by one of those or merged by
+/// review. A merge request with no approval required is no review (a Developer merges their own), and a rule that only
+/// keeps a branch from a force push or a delete protects nothing a secret needs. A secret of the `protected` or
+/// `tags` scope is given only then. Never for a merge request's run, whose commits are not the protected branch's yet.
 pub fn is_protected(entity: &EntityFacade, repository_id: &str, event: Event, ref_name: &str) -> Result<bool, Error> {
     if event == Event::MergeRequest {
         return Ok(false);
     }
-    Ok(!crate::rules::rules_for(entity, repository_id, ref_name)?.is_empty())
+    Ok(crate::rules::rules_for(entity, repository_id, ref_name)?
+        .iter()
+        .any(|rule| rule.push_group.is_some() || (rule.require_merge_request && rule.required_approvals >= 1)))
 }
 
 /// A secret a job is given: the variable and the value.
@@ -86,32 +91,107 @@ impl std::fmt::Debug for Given {
     }
 }
 
-fn scope_allows(secret: &EntityValue, run: &EntityValue, environment_id: Option<&str>) -> bool {
+fn scope_allows(secret: &EntityValue, run: &EntityValue, environment: Option<&EntityValue>) -> bool {
     let protected = is_yes(run, "protectedRef");
     let is_tag = field(run, "refName").is_some_and(|name| name.starts_with("refs/tags/"));
     match field(secret, "scope").as_deref() {
         Some("protected") => protected,
         Some("tags") => protected && is_tag,
         Some("environment") => {
+            let Some(environment) = environment else {
+                return false;
+            };
             let wanted = field(secret, "environmentId");
-            wanted.is_some() && wanted.as_deref() == environment_id
+            wanted.is_some() && wanted == field(environment, "environmentId") && environment_allows(environment, run)
         }
         _ => false,
     }
 }
 
+/// Whether a run may have the secrets of `environment`: never a merge request's (its commits are not the branch's
+/// yet, whatever the job names); a run of a protected ref, or of a branch the environment allows (`allowedRefs`); and
+/// with `approvalRequired`, a run someone approved.
+pub(crate) fn environment_allows(environment: &EntityValue, run: &EntityValue) -> bool {
+    if field(run, "event").as_deref() == Some("merge-request") || field(run, "mergeRequestId").is_some() {
+        return false;
+    }
+    if is_yes(environment, "approvalRequired") && field(run, "approvalState").as_deref() != Some("approved") {
+        return false;
+    }
+    if is_yes(run, "protectedRef") {
+        return true;
+    }
+    allowed_ref(environment, &field(run, "refName").unwrap_or_default())
+}
+
+/// Whether the environment's `allowedRefs` names `ref_name` (a full ref): a pattern that starts with `refs/` is
+/// matched against the ref, any other against a branch's name. Its secrets go to such a ref's runs, and a deployment
+/// of such a branch is taken, besides those of protected refs.
+pub(crate) fn allowed_ref(environment: &EntityValue, ref_name: &str) -> bool {
+    let branch = ref_name.strip_prefix("refs/heads/");
+    field(environment, "allowedRefs")
+        .unwrap_or_default()
+        .split_whitespace()
+        .any(|pattern| {
+            if pattern.starts_with("refs/") {
+                crate::rules::glob(pattern, ref_name)
+            } else {
+                branch.is_some_and(|branch| crate::rules::glob(pattern, branch))
+            }
+        })
+}
+
 /// The environment a job names, by its name, of the run's repository or owner.
-fn environment_id(entity: &EntityFacade, run: &EntityValue, name: &str) -> Result<Option<String>, Error> {
-    let repository = field(run, "repositoryId").unwrap_or_default();
+fn environment_of(entity: &EntityFacade, run: &EntityValue, name: &str) -> Result<Option<EntityValue>, Error> {
+    environment_named(
+        entity,
+        &field(run, "repositoryId").unwrap_or_default(),
+        field(run, "ownerId").as_deref(),
+        name,
+    )
+}
+
+/// The environments of `specs` (the jobs' `jobSpec`s, each naming its `environment`) that require approval
+/// (`approvalRequired`), by name, of the repository or its owner: a run with such a job waits for a maintainer's
+/// approval before it is queued, and is approved only by another than who triggered it (plans/Dogfood.md §8.4, §8.6).
+pub(crate) fn approval_environments<'a>(
+    entity: &EntityFacade,
+    repository_id: &str,
+    owner_id: Option<&str>,
+    specs: impl IntoIterator<Item = &'a serde_json::Value>,
+) -> Result<Vec<String>, Error> {
+    let mut names: Vec<String> = Vec::new();
+    for spec in specs {
+        let Some(name) = spec["environment"].as_str().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        if names.iter().any(|known| known == name) {
+            continue;
+        }
+        if environment_named(entity, repository_id, owner_id, name)?
+            .is_some_and(|environment| is_yes(&environment, "approvalRequired"))
+        {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+pub(crate) fn environment_named(
+    entity: &EntityFacade,
+    repository: &str,
+    owner: Option<&str>,
+    name: &str,
+) -> Result<Option<EntityValue>, Error> {
     let found = entity
         .find(CI_ENVIRONMENT)?
-        .eq("repositoryId", Value::string(&repository))
+        .eq("repositoryId", Value::string(repository))
         .eq("name", Value::string(name))
         .one()?;
-    if let Some(row) = found {
-        return Ok(field(&row, "environmentId"));
+    if found.is_some() {
+        return Ok(found);
     }
-    let Some(owner) = field(run, "ownerId") else {
+    let Some(owner) = owner else {
         return Ok(None);
     };
     Ok(entity
@@ -121,7 +201,7 @@ fn environment_id(entity: &EntityFacade, run: &EntityValue, name: &str) -> Resul
         .list()?
         .iter()
         .find(|row| field(row, "repositoryId").is_none())
-        .and_then(|row| field(row, "environmentId")))
+        .cloned())
 }
 
 /// The secrets the job of `spec` (its `jobSpec`) is given in `run`: none for an untrusted run; otherwise each one it
@@ -148,7 +228,7 @@ pub fn secrets_for(
         return Ok(Vec::new());
     }
     let environment = match spec["environment"].as_str() {
-        Some(name) => environment_id(entity, run, name)?,
+        Some(name) => environment_of(entity, run, name)?,
         None => None,
     };
     let repository = field(run, "repositoryId").unwrap_or_default();
@@ -180,7 +260,7 @@ pub fn secrets_for(
         candidates.sort_by_key(|row| field(row, "scope").as_deref() != Some("environment"));
         let Some(secret) = candidates
             .iter()
-            .find(|secret| scope_allows(secret, run, environment.as_deref()))
+            .find(|secret| scope_allows(secret, run, environment.as_ref()))
         else {
             continue;
         };

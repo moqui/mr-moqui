@@ -62,13 +62,19 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
             }
         }
         ("POST", "/v1.40/images/create") => (200, "{\"status\":\"Pulling\"}\n{\"status\":\"Done\"}\n".to_string()),
+        ("POST", "/v1.40/networks/create") if body["Name"] == "moqui-ci-TAKEN-net" => (
+            409,
+            json!({"message": "network with name moqui-ci-TAKEN-net already exists"}).to_string(),
+        ),
         ("POST", "/v1.40/networks/create") => (201, json!({"Id": "n1"}).to_string()),
+        ("POST", path) if path.starts_with("/v1.40/networks/") && path.ends_with("/connect") => (200, String::new()),
         ("GET", "/v1.40/containers/json") => (
             200,
             json!([
-                {"Id": "old1", "Labels": {"moqui.ci.job": "J-ENDED", "moqui.ci.server": "this"}},
-                {"Id": "live", "Labels": {"moqui.ci.job": "J-RUNNING", "moqui.ci.server": "this"}},
-                {"Id": "old2", "Labels": {"moqui.ci.job": "J-LOST", "moqui.ci.server": "this"}},
+                {"Id": "old1", "Created": 1000, "Labels": {"moqui.ci.job": "J-ENDED", "moqui.ci.server": "this"}},
+                {"Id": "live", "Created": 1000, "Labels": {"moqui.ci.job": "J-RUNNING", "moqui.ci.server": "this"}},
+                {"Id": "old2", "Created": 1000, "Labels": {"moqui.ci.job": "J-LOST", "moqui.ci.server": "this"}},
+                {"Id": "fresh", "Created": 9000, "Labels": {"moqui.ci.job": "J-NEW", "moqui.ci.server": "this"}},
             ])
             .to_string(),
         ),
@@ -80,6 +86,28 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
             200,
             json!({"State": {"Status": "exited", "Running": false, "ExitCode": 137}}).to_string(),
         ),
+        // a created container's own user, from its image: one image runs as root
+        ("GET", path) if path.starts_with("/v1.40/containers/c") && path.ends_with("/json") => {
+            let index: usize = path
+                .trim_start_matches("/v1.40/containers/c")
+                .trim_end_matches("/json")
+                .parse()
+                .unwrap_or(usize::MAX);
+            let image = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, target, _)| method == "POST" && target.starts_with("/v1.40/containers/create"))
+                .nth(index)
+                .map(|(_, _, body)| body["Image"].as_str().unwrap_or_default().to_string())
+                .unwrap_or_default();
+            let user = match image.as_str() {
+                "runs-as-root:1" => "",
+                "named-user:1" => "app",
+                _ => "1000:1000",
+            };
+            (200, json!({"Config": {"User": user}}).to_string())
+        }
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
         ("POST", path) if path.ends_with("/start") => (204, String::new()),
         ("DELETE", path) if path.starts_with("/v1.40/networks/") => {
@@ -138,8 +166,12 @@ struct Api {
 impl Api {
     /// A context with one instance host `H`, reached as `protocol` says.
     fn new(protocol: &str, address: &str, port: Option<u16>, seen: Seen) -> Self {
+        Self::with_conf(protocol, address, port, seen, r#"<git-ci server-id="this"/>"#)
+    }
+
+    fn with_conf(protocol: &str, address: &str, port: Option<u16>, seen: Seen, conf: &str) -> Self {
         let context = ExecutionContextFactory::test_context_in(
-            r#"<moqui-conf><git-ci server-id="this"/></moqui-conf>"#,
+            &format!("<moqui-conf>{conf}</moqui-conf>"),
             moqui_core::service::ServicePools::idle(),
             std::path::PathBuf::from("."),
         );
@@ -162,6 +194,10 @@ impl Api {
     }
 
     fn tcp() -> Self {
+        Self::tcp_with(r#"<git-ci server-id="this"/>"#)
+    }
+
+    fn tcp_with(conf: &str) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen: Seen = Seen::default();
@@ -171,7 +207,7 @@ impl Api {
                 serve(stream, &shared);
             }
         });
-        Self::new("http", "127.0.0.1", Some(port), seen)
+        Self::with_conf("http", "127.0.0.1", Some(port), seen, conf)
     }
 
     /// Call a run service of the driver. Its result, and the errors it left.
@@ -227,6 +263,7 @@ fn start_parameters(image: &str) -> Vec<(&'static str, Value)> {
         ("diskMb", Value::I64(10_000)),
         ("pidsLimit", Value::I64(512)),
         ("networkMode", Value::string("ci-egress")),
+        ("pullImages", Value::Bool(true)),
     ]
 }
 
@@ -241,7 +278,8 @@ fn a_jobs_container_has_limits_and_no_way_out() {
     assert_eq!(body["Cmd"], json!(["moqui", "ci-run"]));
     assert_eq!(body["User"], "1000:1000");
     assert_eq!(body["WorkingDir"], "/workspace");
-    assert_eq!(body["Volumes"], json!({"/workspace": {}}));
+    // the working directory is no unbounded volume: with diskMb it is on the sized root filesystem
+    assert!(body.get("Volumes").is_none());
     assert_eq!(body["Labels"], json!({"moqui.ci.job": "J1", "moqui.ci.server": "this"}));
     let env: Vec<&str> = body["Env"]
         .as_array()
@@ -254,7 +292,10 @@ fn a_jobs_container_has_limits_and_no_way_out() {
     assert_eq!(host["Privileged"], false);
     assert_eq!(host["CapDrop"], json!(["ALL"]));
     assert_eq!(host["SecurityOpt"], json!(["no-new-privileges"]));
-    assert_eq!(host["ReadonlyRootfs"], true);
+    assert_eq!(host["Init"], true, "an init reaps orphans");
+    // the root the pool's diskMb sizes holds the working directory, so it is writable
+    assert_eq!(host["ReadonlyRootfs"], false);
+    assert!(host["Tmpfs"].get("/workspace").is_none());
     // no host path and no host socket is mounted, and no port is published
     assert_eq!(host["Binds"], json!([]));
     assert_eq!(host["PublishAllPorts"], false);
@@ -265,7 +306,43 @@ fn a_jobs_container_has_limits_and_no_way_out() {
     assert_eq!(host["PidsLimit"], 512);
     assert_eq!(host["StorageOpt"], json!({"size": "10000m"}));
     assert_eq!(host["NetworkMode"], "ci-egress");
-    assert!(host["Tmpfs"]["/tmp"].as_str().unwrap().contains("size=1024m"));
+    assert!(host["Tmpfs"]["/tmp"]
+        .as_str()
+        .unwrap()
+        .contains("size=1024m,uid=1000,gid=1000"));
+    // with no diskMb the root is read only and the working directory a sized tmpfs
+    let mut no_disk = parameters.clone();
+    no_disk.remove("diskMb");
+    let body = create_body(&no_disk, &Hardening::default(), None);
+    assert_eq!(body["HostConfig"]["ReadonlyRootfs"], true);
+    assert!(body["HostConfig"]["Tmpfs"]["/workspace"]
+        .as_str()
+        .unwrap()
+        .contains("size=4096m,uid=1000,gid=1000"));
+    // never the host's network or another container's
+    for rule in ["host", "HOST", "container:abc"] {
+        let mut escaping = parameters.clone();
+        escaping.insert("networkMode".to_string(), Value::string(rule));
+        assert_eq!(
+            create_body(&escaping, &Hardening::default(), None)["HostConfig"]["NetworkMode"],
+            "none"
+        );
+        assert!(!super::valid_egress(rule));
+    }
+    // root in any form is no container user
+    for user in ["0", "0:0", "00", "0:1000", "root", "root:x", "ROOT"] {
+        assert!(super::is_root_user(user), "{user}");
+    }
+    for user in ["1000:1000", "nobody", "10"] {
+        assert!(!super::is_root_user(user), "{user}");
+    }
+    // container-user="image" takes only a numeric uid other than 0: a name may be uid 0 in the image's passwd
+    for user in ["1000", "1000:1000", " 10 ", "65534:0"] {
+        assert!(super::is_numeric_user(user), "{user}");
+    }
+    for user in ["", "0", "0:1000", "00", "root", "app", "nobody", "1000x", ":1000"] {
+        assert!(!super::is_numeric_user(user), "{user}");
+    }
     // with service containers the job is on its own network; with no limits none are sent; the image's user by conf
     let bare: BTreeMap<String, Value> = [("image".to_string(), Value::string("i"))].into_iter().collect();
     let relaxed = Hardening {
@@ -329,6 +406,18 @@ fn the_run_services_speak_the_docker_api() {
     assert_eq!(targets[2], "POST /v1.40/containers/create?name=moqui-ci-J1");
     assert!(targets[3].ends_with("/start"), "{targets:?}");
 
+    // an untrusted pool's run pulls nothing: an image the host does not have is an error
+    api.seen.lock().unwrap().clear();
+    let mut untrusted = start_parameters("registry.example.com/ci/needs-pull:2");
+    untrusted.retain(|(name, _)| *name != "pullImages");
+    let (out, errors) = api.call(start_run_docker, &untrusted);
+    assert!(out.is_empty());
+    assert!(errors.contains("is not on the host"), "{errors}");
+    assert!(!api
+        .seen()
+        .iter()
+        .any(|(_, target, _)| target.starts_with("/v1.40/images/create")));
+
     // service containers: a network of the job's own, each service on it by its name, then the job
     api.seen.lock().unwrap().clear();
     let mut with_service = start_parameters("moqui-build:1");
@@ -342,10 +431,22 @@ fn the_run_services_speak_the_docker_api() {
     let seen = api.seen();
     assert_eq!(seen[0].1, "/v1.40/networks/create");
     assert_eq!(seen[0].2["Name"], "moqui-ci-J1-net");
+    // the pool's egress is a network of the host: the job's own network reaches nothing outside it
+    assert_eq!(seen[0].2["Internal"], true);
     assert_eq!(seen[1].1, "/v1.40/containers/create?name=moqui-ci-J1-db");
     assert_eq!(seen[1].2["Image"], "postgres:16");
     assert_eq!(seen[1].2["Labels"]["moqui.ci.job"], "J1");
-    assert_eq!(seen[1].2["HostConfig"]["Privileged"], false);
+    // kept in as the job is
+    let service_host = &seen[1].2["HostConfig"];
+    assert_eq!(service_host["Privileged"], false);
+    assert_eq!(service_host["CapDrop"], json!(["ALL"]));
+    assert!(service_host.get("CapAdd").is_none());
+    assert_eq!(service_host["Init"], true);
+    assert_eq!(seen[1].2["User"], "1000:1000");
+    assert_eq!(service_host["NanoCpus"], 1_500_000_000i64);
+    assert_eq!(service_host["MemorySwap"], 2048i64 * 1024 * 1024);
+    assert_eq!(service_host["StorageOpt"], json!({"size": "10000m"}));
+    assert_eq!(service_host["PidsLimit"], 512);
     assert_eq!(
         seen[1].2["NetworkingConfig"]["EndpointsConfig"]["moqui-ci-J1-net"]["Aliases"],
         json!(["db"])
@@ -353,6 +454,26 @@ fn the_run_services_speak_the_docker_api() {
     assert!(seen[2].1.ends_with("/start"));
     assert_eq!(seen[3].1, "/v1.40/containers/create?name=moqui-ci-J1");
     assert_eq!(seen[3].2["HostConfig"]["NetworkMode"], "moqui-ci-J1-net");
+    // and the job on the pool's network too, so its egress is the pool's
+    assert_eq!(seen[4].1, "/v1.40/networks/ci-egress/connect");
+    assert!(seen[4].2["Container"].as_str().is_some_and(|id| id.starts_with('c')));
+    assert!(seen[5].1.ends_with("/start"));
+    // a pool on the bridge: the job's network reaches out as the bridge does
+    api.seen.lock().unwrap().clear();
+    let mut bridged = with_service.clone();
+    bridged.retain(|(name, _)| *name != "networkMode");
+    let (_, errors) = api.call(start_run_docker, &bridged);
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(api.seen()[0].2["Internal"], false);
+    assert!(!api.seen().iter().any(|(_, target, _)| target.ends_with("/connect")));
+    // a network of that name there already is another run's: an error, nothing started
+    api.seen.lock().unwrap().clear();
+    let mut taken = with_service.clone();
+    taken.retain(|(name, _)| *name != "name");
+    taken.push(("name", Value::string("moqui-ci-TAKEN")));
+    let (out, errors) = api.call(start_run_docker, &taken);
+    assert!(out.is_empty());
+    assert!(errors.contains("409"), "{errors}");
 
     // a host that refuses: the daemon's words, and nothing started
     api.seen.lock().unwrap().clear();
@@ -387,6 +508,8 @@ fn the_run_services_speak_the_docker_api() {
             ("instanceRef", Value::string("c0")),
             ("labelName", Value::string("moqui.ci.job")),
             ("labelValue", Value::string("J1")),
+            ("filterLabels", map(&[("moqui.ci.server", "this")])),
+            ("networkName", Value::string("moqui-ci-J1-net")),
         ],
     );
     assert!(errors.is_empty(), "{errors}");
@@ -400,6 +523,8 @@ fn the_run_services_speak_the_docker_api() {
         "{targets:?}"
     );
     assert!(targets[0].contains("moqui.ci.job%3DJ1"), "{targets:?}");
+    // only this server's containers of that job run
+    assert!(targets[0].contains("moqui.ci.server%3Dthis"), "{targets:?}");
     assert!(
         targets.contains(&"DELETE /v1.40/containers/c0?force=true&v=true".to_string()),
         "{targets:?}"
@@ -414,6 +539,7 @@ fn the_run_services_speak_the_docker_api() {
             ("labelName", Value::string("moqui.ci.job")),
             ("keepValues", Value::List(vec![Value::string("J-RUNNING")])),
             ("filterLabels", map(&[("moqui.ci.server", "this")])),
+            ("createdBefore", Value::I64(5000)),
         ],
     );
     assert!(errors.is_empty(), "{errors}");
@@ -426,8 +552,11 @@ fn the_run_services_speak_the_docker_api() {
     assert!(targets[0].contains("moqui.ci.server%3Dthis"), "{targets:?}");
     assert!(targets.contains(&"DELETE /v1.40/containers/old1?force=true&v=true".to_string()));
     assert!(targets.contains(&"DELETE /v1.40/containers/old2?force=true&v=true".to_string()));
+    // kept, and made after the list of running jobs was read (a job that just started)
     assert!(
-        !targets.iter().any(|target| target.contains("/containers/live")),
+        !targets
+            .iter()
+            .any(|target| target.contains("/containers/live") || target.contains("/containers/fresh")),
         "{targets:?}"
     );
 }
@@ -486,4 +615,34 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         errors.contains("the client certificate and key are not PEM"),
         "{errors}"
     );
+}
+
+/// With `container-user="image"` the container runs as its image's user, which is inspected before it starts: an
+/// image with no user, root or a user name (which may be uid 0 in the image) is refused and what was made is removed;
+/// one with a numeric uid of its own starts.
+#[test]
+fn an_image_user_that_is_root_is_refused_before_it_starts() {
+    let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("runs-as-root:1"));
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("may run as root"), "{errors}");
+    let seen = api.seen();
+    assert!(
+        !seen.iter().any(|(_, target, _)| target.ends_with("/start")),
+        "never started: {seen:?}"
+    );
+    assert!(seen
+        .iter()
+        .any(|(method, target, _)| method == "DELETE" && target.contains("/containers/c0")));
+    assert!(seen[0].2.get("User").is_none(), "no user set: the image's");
+
+    let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("named-user:1"));
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("numeric uid"), "{errors}");
+
+    let api = Api::tcp_with(r#"<git-ci server-id="this" container-user="image"/>"#);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
+    assert!(errors.is_empty(), "{errors}");
+    assert!(out.contains_key("instanceRef"));
 }

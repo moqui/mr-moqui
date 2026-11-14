@@ -34,24 +34,29 @@ pub(crate) mod blame;
 pub(crate) mod browse;
 pub mod checkout;
 pub mod ci;
+mod conditional;
 pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;
 pub(crate) mod events;
+pub(crate) mod fetch_refs;
 pub(crate) mod file_commit;
 pub(crate) mod fork;
 pub(crate) mod fs;
 pub mod gc;
 pub(crate) mod hosting;
 pub(crate) mod index;
+pub(crate) mod lease;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
+pub(crate) mod mirror;
 pub(crate) mod ops;
 pub(crate) mod reach;
 pub(crate) mod revwalk;
 pub(crate) mod rules;
 pub mod server;
 pub mod service;
+pub(crate) mod shared;
 pub(crate) mod storage;
 pub(crate) mod store;
 #[cfg(test)]
@@ -88,13 +93,19 @@ struct Slot(std::sync::OnceLock<GitProvider>);
 fn construct(factory: &Arc<ExecutionContextFactory>) -> Result<Arc<dyn moqui_core::native::ResourceProvider>, Error> {
     let resources = factory.resource();
     let provider = GitProvider::new(resources.entity_slot(), resources.runtime_dir().to_path_buf());
+    provider.set_factory(factory);
     // archives nobody used for a while, and what a writer that died left (get#GitArchive)
     archive::sweep_at_start(resources.runtime_dir());
+    // on a cluster member: the rows other members write, and the on-disk repositories it cannot share (shared.rs)
+    provider.listen_for_row_changes(factory);
+    provider.warn_unshared_after_start(factory);
     factory
         .extension(|_| Slot::default())
         .0
         .set(provider.clone())
         .map_err(|_| Error::new("the git resource scheme is installed twice"))?;
+    // a CI run's artifacts and reports as locations, so every transport that sends a file sends one (ci/location.rs)
+    resources.install_provider(ci::location::SCHEME, Arc::new(ci::location::ArtifactLocations))?;
     Ok(Arc::new(provider))
 }
 
@@ -117,6 +128,70 @@ pub fn provider(factory: &ExecutionContextFactory) -> Option<GitProvider> {
 pub(crate) fn setting(name: &str) -> String {
     moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().conf_setting("git-server", name))
         .unwrap_or_default()
+}
+
+/// What a repository sends out of the server: its webhooks' deliveries, its push mirror's pushes, a fetch with a
+/// credential, and a deployment's call to its target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Outbound {
+    Webhook,
+    PushMirror,
+    Fetch,
+    Deploy,
+}
+
+impl Outbound {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Webhook => "webhook",
+            Self::PushMirror => "push-mirror",
+            Self::Fetch => "fetch",
+            Self::Deploy => "deploy",
+        }
+    }
+}
+
+/// Ask the conf's `git-server` `outbound-check-service` whether repository `repository_id` may send `kind` out now
+/// (docs/interfaces/Git-Hosting.md, "Outbound check"): before a webhook delivery is queued, before a push mirror
+/// pushes, before `fetch#GitRefs` reaches another server with a credential and before a deployment calls its target,
+/// so an application that hides or suspends a repository stops what it would tell or copy elsewhere. In
+/// `repositoryId`, `kind` (`webhook`, `push-mirror`, `fetch` or `deploy`) and `event` (the webhook event, the
+/// deployment's environment, empty for a push); out `allowed`
+/// (false or N refuses) and `message`. With no service, allowed; a service that fails refuses (its errors are its
+/// answer). Called with authorization disabled. Why not, when refused.
+pub(crate) fn outbound_allowed(repository_id: &str, kind: Outbound, event: &str) -> Result<(), String> {
+    let name = setting("outbound-check-service");
+    if name.is_empty() {
+        return Ok(());
+    }
+    let parameters: std::collections::BTreeMap<String, Value> = [
+        ("repositoryId", Value::string(repository_id)),
+        ("kind", Value::string(kind.name())),
+        ("event", Value::string(event)),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_string(), value))
+    .collect();
+    let options = moqui_core::service::call::CallOptions {
+        disable_authz: true,
+        ..moqui_core::service::call::CallOptions::default()
+    };
+    let out = ci::with_errors_taken(|| moqui_core::service::call::sync_checked(&name, &parameters, &options))
+        .map_err(|err| format!("the outbound check failed: {}", err.message()))?;
+    let refused = out
+        .get("allowed")
+        .filter(|value| !moqui_lib::object::is_empty(value))
+        .map(moqui_lib::object::to_plain_string)
+        .is_some_and(|allowed| matches!(allowed.as_str(), "false" | "N"));
+    if refused {
+        let message = out
+            .get("message")
+            .map(moqui_lib::object::to_plain_string)
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| "the application holds what this repository sends out".to_string());
+        return Err(message);
+    }
+    Ok(())
 }
 
 /// [`setting`] as a number, or `default` when it is empty or not one.
@@ -262,6 +337,14 @@ struct Inner {
     review_refusals: Mutex<HashMap<String, (i64, u32)>>,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
     indexes: Mutex<BoundedMap<String, Arc<Mutex<BranchIndex>>>>,
+    /// Whether this node is a cluster member, and when that was read ([`GitProvider::clustered`]).
+    clustered: Mutex<Option<(std::time::Instant, bool)>>,
+    /// Set once this node was seen to be a cluster member: it stays one for refusing new on-disk repositories, even
+    /// while every peer's heartbeat is down (shared.rs).
+    was_clustered: std::sync::atomic::AtomicBool,
+    /// The factory this provider is its `git` scheme's, for what it reads with no context entered (a background
+    /// thread): the conf's settings and the cluster's members. Weak, as the factory holds the provider.
+    factory: std::sync::OnceLock<std::sync::Weak<ExecutionContextFactory>>,
 }
 
 impl std::fmt::Debug for GitProvider {
@@ -339,6 +422,9 @@ impl GitProvider {
                 reach: Mutex::new(reach::ReachSets::default()),
                 review_refusals: Mutex::new(HashMap::new()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
+                clustered: Mutex::new(None),
+                was_clustered: std::sync::atomic::AtomicBool::new(false),
+                factory: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -409,7 +495,12 @@ impl GitProvider {
                 }
                 Box::new(fs::FsStore::open(&definition.path)?)
             }
-            RepositoryKind::Local => Box::new(fs::FsStore::init(&definition.path, &definition.branch)?),
+            RepositoryKind::Local => {
+                if !definition.path.join("HEAD").is_file() {
+                    self.may_make_on_disk(&definition.id)?;
+                }
+                Box::new(fs::FsStore::init(&definition.path, &definition.branch)?)
+            }
             RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &definition, self.objects())),
         };
         Ok(Repo { definition, store })
@@ -577,6 +668,8 @@ impl GitProvider {
         repo: &Repo,
         edits: impl FnMut(Option<&ops::CommitInfo>) -> Result<Option<(Vec<Edit>, String)>, Error>,
     ) -> Result<Option<ObjectId>, Error> {
+        // the lease before this process's lock, so no writer holds the lock while it waits on another member
+        let shared = self.shared_turn(&repo.definition.id, repo.definition.kind)?;
         let lock = self.lock_of(&repo.definition.id);
         let _turn = moqui_lib::sync::lock(&lock);
         // the row as it is now: archived or deleted since the repository was opened, nothing is written
@@ -598,6 +691,8 @@ impl GitProvider {
         let committer = self.author();
         let author = self.version_author(&committer);
         let store = repo.store.as_ref();
+        // still this member's to write, now (fencing: lease.rs)
+        lease::check(shared.as_ref())?;
         let made = ops::commit_as(
             store,
             &repo.definition.branch,
@@ -952,6 +1047,10 @@ impl GitProvider {
                 "git repository {repository_id} is not a remote mirror; import#GitRepository copies from another repository"
             )));
         }
+        // the mirror's first fetch makes its directory
+        if !definition.path.join("HEAD").is_file() {
+            self.may_make_on_disk(repository_id)?;
+        }
         let url = definition
             .remote_url
             .clone()
@@ -1001,8 +1100,11 @@ impl GitProvider {
             }
         };
         let outcome = {
+            // the lease before this process's lock, so no writer holds the lock while it waits on another member
+            let shared = self.shared_turn(repository_id, definition.kind)?;
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
+            lease::check(shared.as_ref())?;
             fs::fetch(
                 &definition.path,
                 &url,
@@ -1014,6 +1116,8 @@ impl GitProvider {
                 } else {
                     None
                 },
+                // and again right before the refs move, after the long network read
+                &|| lease::check(shared.as_ref()),
             )
         };
         self.refresh(repository_id);
@@ -1072,6 +1176,11 @@ impl GitProvider {
     /// repository is recorded on its row and logged, and the others are still fetched. (fetched, failed) ids.
     pub fn fetch_due(&self) -> Result<(Vec<String>, Vec<String>), Error> {
         let entity = self.entity()?;
+        // one member of a cluster fetches at a time; another's pass that finds it held leaves this one to it
+        let Some(_pass) = lease::try_take(&entity, "fetch-due", lease::TTL)? else {
+            tracing::debug!("the git mirror fetches are being made by another cluster member");
+            return Ok((Vec::new(), Vec::new()));
+        };
         let rows_authz = rows_guard();
         let rows = entity
             .find(GIT_REPOSITORY)?
@@ -1113,6 +1222,14 @@ impl GitProvider {
                 .entry(repository_id.to_string())
                 .or_default(),
         );
+        // the pushes of one repository take turns across the cluster's members too: the lease first, so no push of
+        // this process holds the lock while it waits on another member's
+        let _pushing = lease::take(
+            &self.entity()?,
+            &format!("push-mirror:{repository_id}"),
+            lease::TTL,
+            lease::DEFAULT_WAIT,
+        )?;
         let _turn = moqui_lib::sync::lock(&lock);
         let row = {
             let _rows = rows_guard();
@@ -1125,11 +1242,16 @@ impl GitProvider {
         let Some(remote_id) = text(row.get("pushMirrorRemoteId")) else {
             return Ok(None);
         };
-        let outcome = self.push_mirror_to(
-            repository_id,
-            &remote_id,
-            &text(row.get("pushMirrorRefs")).unwrap_or_default(),
-        );
+        // the application's outbound check (a hidden or suspended repository is copied nowhere): its refusal is the
+        // push's outcome, recorded as a failure would be
+        let outcome = match outbound_allowed(repository_id, Outbound::PushMirror, "") {
+            Ok(()) => self.push_mirror_to(
+                repository_id,
+                &remote_id,
+                &text(row.get("pushMirrorRefs")).unwrap_or_default(),
+            ),
+            Err(why) => Err(Error::new(format!("not pushed: {why}"))),
+        };
         let error = outcome.as_ref().err().map(Error::message);
         self.kept(repository_id, || {
             let _rows = rows_guard();
@@ -1190,7 +1312,7 @@ impl GitProvider {
         let pushed = {
             let io = server::push::ExecIo(std::cell::RefCell::new(exec.as_mut()));
             let mut output = std::io::BufWriter::with_capacity(64 * 1024, &io);
-            let pushed = server::push::push(repo.store.as_ref(), &refs, &mut &io, &mut output);
+            let pushed = server::push::push(repo.store.as_ref(), &refs, None, &mut &io, &mut output);
             drop(output);
             pushed
         };
@@ -1240,6 +1362,9 @@ impl GitProvider {
         let done = match definition.kind {
             RepositoryKind::Local => {
                 let existed = definition.path.join("HEAD").is_file();
+                if !existed {
+                    self.may_make_on_disk(repository_id)?;
+                }
                 fs::FsStore::init(&definition.path, &definition.branch)?;
                 if existed {
                     format!(
@@ -1360,7 +1485,15 @@ impl GitProvider {
                 "git-import-{repository_id}-{}",
                 jiff::Timestamp::now().as_millisecond()
             ));
-            fs::fetch(&path, &source, &definition.branch, &definition.credentials, false, None)?;
+            fs::fetch(
+                &path,
+                &source,
+                &definition.branch,
+                &definition.credentials,
+                false,
+                None,
+                &|| Ok(()),
+            )?;
             scratch = Some(path.clone());
             (Box::new(fs::FsStore::open(&path)?), definition.branch.clone())
         };
@@ -1384,6 +1517,8 @@ impl GitProvider {
             .read_ref(&ops::branch_ref(from_branch))?
             .ok_or_else(|| Error::new(format!("the source has no branch {from_branch}")))?;
         let repo = self.repo(repository_id)?;
+        // the lease before this process's lock, so no writer holds the lock while it waits on another member
+        let shared = self.shared_turn(repository_id, repo.definition.kind)?;
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
         self.still_writable(repository_id)?;
@@ -1421,6 +1556,7 @@ impl GitProvider {
                 &reference,
             )?;
         }
+        lease::check(shared.as_ref())?;
         if !repo.store.compare_and_set_ref(&name, current, head)? {
             return Err(Error::new(format!(
                 "branch {branch} of {repository_id} moved during the import"

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Run locally (plans/design-dev-aide.md 21.5, question 20), implemented in the dev-aide crate (src/local_run.rs):
+    one job of the working tree's ci.xml, its script steps and its variables, run in a host session of the Terminal on
+    this machine, not in the job's image, with none of its secrets. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="LocalJobs" type="rust" location="dev_aide::local_run::get_local_jobs" allow-remote="false" read-only="true">
+        <description>The jobs of the working tree's ci.xml (or why there are none: no file, an error with its line):
+            each pipeline, job, image, its matrix combinations (matrixKeys, and combinations: each with its steps,
+            variables, the script it runs whole and that script's digest), and the secrets it asks for, which a local
+            run does not have.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="jobs" type="List"/>
+            <parameter name="error"/>
+            <parameter name="note"/>
+        </out-parameters>
+    </service>
+    <service verb="start" noun="LocalRun" type="rust" location="dev_aide::local_run::start_local_run" allow-remote="false">
+        <description>Run one job (pipeline, job, matrixKey: one combination of a matrix job, the first by default) of
+            the working tree's ci.xml in a new host session of the Terminal, in the working tree: its steps in order as
+            the job runs them (sh -c each, stopping at one that fails unless continue-on-error), with its variables and
+            CI's own, and its secrets' variables unset, only when the script is the one get#LocalJobs showed (its digest).
+            The script is the server user's alone (0600 in a 0700 directory) and removes itself when it ends; it is
+            typed into the server user's shell. Not the job's image. From a session only.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="pipeline" required="true"/>
+            <parameter name="job" required="true"/>
+            <parameter name="matrixKey"/>
+            <parameter name="digest" required="true"><description>The digest of the script get#LocalJobs showed: a
+                script rebuilt to something else (ci.xml changed since) is refused</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sessionId"/>
+            <parameter name="script"/>
+            <parameter name="note"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+</services>

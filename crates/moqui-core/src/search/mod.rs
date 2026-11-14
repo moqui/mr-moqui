@@ -34,6 +34,7 @@ pub mod opensearch;
 pub mod parse;
 pub mod postgres;
 pub mod query;
+pub mod rank;
 pub mod semantic;
 pub mod telemetry;
 pub mod time;
@@ -527,6 +528,10 @@ pub struct SearchFacade {
     generation: AtomicU64,
     /// The local embedding model, when one is installed.
     embedder: RwLock<Option<semantic::SharedEmbedder>>,
+    /// The query and document prefixes of the embedding model (`semantic query-prefix`, `document-prefix`).
+    prefixes: RwLock<(String, String)>,
+    /// The vectors of the texts [`Self::rank_texts`] ranked.
+    text_vectors: Mutex<rank::VectorCache>,
 }
 
 impl SearchFacade {
@@ -538,6 +543,8 @@ impl SearchFacade {
             ensured: Mutex::new(HashSet::new()),
             generation: AtomicU64::new(0),
             embedder: RwLock::new(None),
+            prefixes: RwLock::new((String::new(), String::new())),
+            text_vectors: Mutex::new(rank::VectorCache::default()),
         }
     }
 
@@ -557,6 +564,49 @@ impl SearchFacade {
 
     pub fn embedder(&self) -> Option<semantic::SharedEmbedder> {
         read(&self.embedder).clone()
+    }
+
+    /// Set the text put before a query, and before a document, when it is embedded: the instructions the model was
+    /// trained with (`semantic query-prefix` and `document-prefix`).
+    pub fn set_prefixes(&self, query: &str, document: &str) {
+        *write(&self.prefixes) = (query.to_string(), document.to_string());
+    }
+
+    /// `query` with the query prefix before it.
+    fn query_text(&self, query: &str) -> String {
+        format!("{}{query}", read(&self.prefixes).0)
+    }
+
+    /// `texts` (at most [`rank::MAX_TEXTS`], each cut to [`rank::MAX_CHARS`] characters) ranked against `query` by
+    /// meaning and words, best first, at most `limit`: the semantic find of a page. The texts' vectors are kept in
+    /// memory, so a call with an empty query embeds the texts for the calls after it and ranks none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no embedder is installed, there are too many texts, or the model fails.
+    pub fn rank_texts(&self, query: &str, texts: &[String], limit: usize) -> Result<Vec<rank::RankedText>, Error> {
+        let embedder = self.embedder().ok_or_else(|| {
+            Error::new("no embedding model is installed: search-facade semantic needs enabled=\"true\" and an embedder")
+        })?;
+        if texts.len() > rank::MAX_TEXTS {
+            return Err(Error::new(format!(
+                "{} texts is more than the {} one call ranks",
+                texts.len(),
+                rank::MAX_TEXTS
+            )));
+        }
+        let texts: Vec<String> = texts.iter().map(|text| rank::clip(text)).collect();
+        let document_prefix = read(&self.prefixes).1.clone();
+        let vectors = lock(&self.text_vectors).vectors(&*embedder, &document_prefix, &texts)?;
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query_vector = embedder
+            .embed_quick(&[self.query_text(query)])?
+            .pop()
+            .unwrap_or_default();
+        Ok(rank::rank(query, &query_vector, &texts, &vectors, limit))
     }
 
     /// Embed documents of `target` that have no current embedding, at most `batch` per document
@@ -589,7 +639,10 @@ impl SearchFacade {
             }
             let texts: Vec<String> = pending
                 .iter()
-                .map(|item| semantic::embedding_text(&mapping, &item.body, max_chars))
+                .map(|item| {
+                    let text = semantic::embedding_text(&mapping, &item.body, max_chars);
+                    format!("{}{text}", read(&self.prefixes).1)
+                })
                 .collect();
             let results = embed_each(&*embedder, &texts)?;
             // No document of the batch embedded: the model is failing, not a document.
@@ -982,13 +1035,15 @@ impl SearchFacade {
             Retrieval::Lexical => self.backend.search(&mappings, request),
             Retrieval::Hybrid(options) => {
                 let embedder = self.embedder();
-                hybrid::search(&*self.backend, &mappings, request, options, embedder.as_deref())
+                let query = self.query_text(options.text.trim());
+                hybrid::search(&*self.backend, &mappings, request, options, embedder.as_deref(), &query)
             }
             Retrieval::Semantic(options) => {
                 let embedder = self
                     .embedder()
                     .ok_or_else(|| capability_error(Capability::Semantic, self.backend.name()))?;
-                hybrid::semantic_search(&*self.backend, &mappings, request, options, &*embedder)
+                let query = self.query_text(options.text.trim());
+                hybrid::semantic_search(&*self.backend, &mappings, request, options, &*embedder, &query)
             }
         }?;
         for hit in &mut page.hits {

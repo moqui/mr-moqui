@@ -17,6 +17,7 @@ use super::*;
 fn memory() -> MemDriver {
     MemDriver {
         store: Arc::new(Mutex::new(BTreeMap::new())),
+        whole: Arc::default(),
         tape: None,
     }
 }

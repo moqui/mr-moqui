@@ -688,7 +688,7 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         result_word(&arc.result().to_string()),
     );
     Verdict {
-        field: results.to_header(),
+        field: safe_mailfrom(results.to_header(), &session.mail_from),
         dmarc: action,
         summary,
         temp_error: false,
@@ -697,6 +697,54 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         } else {
             dmarc.domain().to_string()
         },
+    }
+}
+
+/// `field` with its `smtp.mailfrom` written safely. A reverse path whose local part is quoted may hold `;`,
+/// parentheses, quotes, backslashes and spaces (RFC 5321); mail-auth quotes it as RFC 8601 says, but a reader that
+/// splits the field on `;` would take what the sender wrote inside the quotes for results of this server's own
+/// (`dmarc=pass header.from=bank.example`). RFC 8601 lets the property be the domain alone, which is what SPF checked:
+/// such a path is written as its domain, and the property is left out when that is not a plain domain name. A path
+/// mail-auth writes bare, or quotes only for `=` (an SRS address), is kept as it is.
+pub(crate) fn safe_mailfrom(field: String, mail_from: &str) -> String {
+    let unsafe_char = |ch: char| ch.is_control() || matches!(ch, ';' | '(' | ')' | '"' | '\\' | ' ');
+    if !mail_from.chars().any(unsafe_char) {
+        return field;
+    }
+    // what mail-auth wrote (its push_quoted_pvalue): `"` and `\` escaped, control characters left out
+    let mut quoted = String::from(" smtp.mailfrom=\"");
+    for ch in mail_from.chars() {
+        match ch {
+            '"' | '\\' => {
+                quoted.push('\\');
+                quoted.push(ch);
+            }
+            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' => {}
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    let domain = mail_from.rsplit_once('@').map(|(_, domain)| domain).filter(|domain| {
+        !domain.is_empty()
+            && domain
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+    });
+    let written = domain
+        .map(|domain| format!(" smtp.mailfrom={domain}"))
+        .unwrap_or_default();
+    if field.contains(&quoted) {
+        return field.replacen(&quoted, &written, 1);
+    }
+    // SPF reported the HELO identity: the path is not in the field
+    if !field.contains(" smtp.mailfrom=") {
+        return field;
+    }
+    // not as mail-auth writes it: no field is better than one a sender wrote part of
+    tracing::warn!("Authentication-Results: the MAIL FROM was not found as written; the field is left with no results");
+    match field.split_once(';') {
+        Some((head, _)) => format!("{head}; none (the MAIL FROM could not be written)\r\n"),
+        None => field,
     }
 }
 

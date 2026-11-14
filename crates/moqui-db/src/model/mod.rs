@@ -459,7 +459,7 @@ impl EntityModel {
         let mut documents = Vec::new();
         let mut problems = Vec::new();
         for path in paths {
-            if path.is_file() {
+            if moqui_lib::vfs::is_file(path) {
                 documents.extend(entity_document(path, &mut problems));
             } else {
                 documents.extend(entity_documents(path, &mut problems)?);
@@ -658,12 +658,11 @@ enum Completion {
 
 /// The `entities` documents of the `*.xml` files in `directory`; one that does not parse is logged and left out.
 fn entity_documents(directory: &Path, problems: &mut Vec<String>) -> Result<Vec<MNode>, Error> {
-    let entries = std::fs::read_dir(directory)
+    // with the files built into the binary that are not on disk (moqui_lib::vfs)
+    let entries = moqui_lib::vfs::read_dir(directory)
         .map_err(|err| Error::new(format!("could not read {}", directory.display())).with_source(err))?;
     let mut paths = Vec::new();
     for entry in entries {
-        let entry =
-            entry.map_err(|err| Error::new(format!("could not read {}", directory.display())).with_source(err))?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) == Some("xml") {
             paths.push(path);

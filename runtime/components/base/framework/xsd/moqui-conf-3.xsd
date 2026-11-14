@@ -47,6 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="client-conf"/>
                 <xs:element minOccurs="0" ref="dev-reload"/>
                 <xs:element minOccurs="0" ref="dev-aide"/>
+                <xs:element minOccurs="0" ref="component-deploy"/>
                 <xs:element minOccurs="0" ref="entity-facade"/>
                 <xs:element minOccurs="0" ref="database-list"/>
                 <xs:element minOccurs="0" ref="repository-list"/>
@@ -466,7 +467,9 @@ along with this software (see the LICENSE.md file). If not, see
                             host. include: its own screens first, then the default root's for a first path name it does not
                             have (the shell, sign-in, the apps, /rest, the error screens). refuse: its own screens and the
                             shared static files only; the token routes, the servlets and the host's own routes (sockets,
-                            /dav, /health, /metrics...) are Not Found on the host.</xs:documentation></xs:annotation>
+                            /dav, /health, /metrics...) are Not Found on the host, but for git (/git/, LFS, and git at a
+                            public site's page URL) and the CI runner REST (/ci/runner/), each behind its own
+                            authentication.</xs:documentation></xs:annotation>
                         <xs:simpleType><xs:restriction base="xs:token">
                             <xs:enumeration value="include"/>
                             <xs:enumeration value="refuse"/>
@@ -801,7 +804,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="name" type="xs:string" use="required"/>
                     <xs:attribute name="events" type="xs:string"><xs:annotation><xs:documentation>
                         Comma separated: auth-failure (credentials that were not valid: a login form, Basic auth, an API
-                        or login key, git), rate-limited (a 429), denied (a rule refused the request).</xs:documentation></xs:annotation></xs:attribute>
+                        or login key, git), rate-limited (a 429), denied (a rule refused the request), ci-token-failure
+                        (a well-formed CI job, runner or pool token that was not known).</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="threshold" type="xs:string"/>
                     <xs:attribute name="seconds" type="xs:string"/>
                     <xs:attribute name="duration" type="xs:string"/>
@@ -987,6 +991,14 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>Ignored: the password a login tried is never stored, as that is too much
                     security risk (UserLoginHistory.passwordUsed is removed). Kept so a Java conf that sets it is still
                     valid.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sso-linked-service" type="xs:string"><xs:annotation><xs:documentation>A service told of
+                each real SSO sign-in (an OAuth or OpenID Connect flow, org.moqui.sso.AuthServices.handle#Callback) that
+                links or confirms the account's provider id (UserAccount.externalUserId), once the sign-in's transaction
+                commits, with authorization disabled: userId, authFlowId, providerHost (the host of the user info
+                endpoint), externalUserId, login (the provider's username), email, emailVerified (Boolean) and
+                urlsOverridden (Boolean: the flow sets an endpoint or discovery URL of its own). A failure is logged and
+                never blocks the sign-in; a write of externalUserId by hand calls nothing. None when empty.
+                docs/security/Recent-Auth.md, SSO sign-in hook.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <!-- Future security settings:
@@ -1330,7 +1342,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element name="semantic" minOccurs="0"><xs:complexType>
                 <xs:annotation><xs:documentation>Semantic and hybrid retrieval on the postgres backend. Off unless enabled;
                     needs the pgvector extension (not bundled with embedded Postgres) and an embedder. Enabling it
-                    rebuilds the search tables. The embed#PendingDocuments service fills the embeddings.</xs:documentation></xs:annotation>
+                    rebuilds the search tables. The embed#PendingDocuments service fills the embeddings. The embedder
+                    also ranks the texts of a page's semantic find (rank#Texts, docs/ui/Semantic-Find.md), on any
+                    backend and without pgvector.</xs:documentation></xs:annotation>
                 <xs:attribute name="enabled" type="boolean" default="false"/>
                 <xs:attribute name="dimensions" type="xs:positiveInteger" default="1024"><xs:annotation><xs:documentation>
                     The embedder's vector size.</xs:documentation></xs:annotation></xs:attribute>
@@ -1344,6 +1358,13 @@ along with this software (see the LICENSE.md file). If not, see
                     (a model's api-config may ask for them). hash installs a deterministic word-hash embedder for
                     development and tests; it has no semantic quality. With none, an application installs its model on
                     the search facade.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="query-prefix" type="xs:string"><xs:annotation><xs:documentation>
+                    Text put before a query when it is embedded: the instruction the model was trained with ("task:
+                    search result | query: " for EmbeddingGemma). Kept as written, with its last space.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="document-prefix" type="xs:string"><xs:annotation><xs:documentation>
+                    Text put before a document, and before a text ec.search.rankTexts ranks, when it is embedded ("title:
+                    none | text: " for EmbeddingGemma). Stored documents get it when they are indexed
+                    again.</xs:documentation></xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
         </xs:sequence>
         <xs:attribute name="backend" type="xs:string" default="postgres"><xs:annotation><xs:documentation>
@@ -1750,6 +1771,8 @@ along with this software (see the LICENSE.md file). If not, see
             repositories (docs/interfaces/Git-Hosting.md).</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="public-url" type="xs:string"><xs:annotation><xs:documentation>The base URL clone URLs show; from the webapp host and port when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="shared-storage" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>runtime/git (and every localPath) is on storage every cluster member mounts. A local or remote repository is one directory, so on a cluster member without this a new one is refused (GitNeedsSharedStorage) and the ones there are named in a warning at start; with it the writers of one take its lease (moqui.resource.GitLease) as well as this process's lock, and the pass of mirror fetches runs on one member at a time. db repositories need nothing (docs/interfaces/Git-Hosting.md, Shared storage in a cluster).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="shared-lock-wait-seconds" type="non-neg-int-expandable" default="120"><xs:annotation><xs:documentation>With shared-storage, how long a push or write waits for another member's write to the same repository before it is refused (GitLeaseBusy).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-token-key" type="xs:string"><xs:annotation><xs:documentation>The key Git LFS action tokens are signed with.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-token-key-previous" type="xs:string"><xs:annotation><xs:documentation>A key that still reads while lfs-token-key is changed.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-concurrent" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>Clones and pushes that run at once, on threads of their own.</xs:documentation></xs:annotation></xs:attribute>
@@ -1762,6 +1785,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="pack-threads" type="xs:string"><xs:annotation><xs:documentation>Threads that compress and index packs; all cores when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allow-http" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take credentials over plain HTTP.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-max-object-size" type="non-neg-int-expandable" default="5368709120"><xs:annotation><xs:documentation>The largest Git LFS object, in bytes.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="outbound-check-service" type="xs:string"><xs:annotation><xs:documentation>A service asked before a repository's webhook deliveries are queued and before its push mirror pushes (org.moqui.git.GitServices.check#GitOutbound): allowed false holds them, so an application that hides or suspends a repository stops what it would tell or copy elsewhere. None when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="rest-write-check-service" type="xs:string"><xs:annotation><xs:documentation>A service asked before each write on a repository through the framework's REST (/rest/s1/moqui/git; org.moqui.git.GitServices.check#GitRestWrite): allowed false refuses the write with its message and names the application's own REST (restUrl), so a repository an application keeps is changed only by its rules. None when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="offer-service" type="xs:string"><xs:annotation><xs:documentation>A service that adds to what the server offers its clients (/rest/s1/moqui/hosting/offer; org.moqui.git.GitServices.add#GitHostingOffer): an application's REST, its task source, its forks, its agreement check. None when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="review-thread-service" type="xs:string"><xs:annotation><xs:documentation>A service that keeps the review threads (line comments) of merge requests for the framework's REST (/rest/s1/moqui/git/[repositoryId]/mergeRequests/[n]/threads; org.moqui.git.GitServices.handle#GitReviewThread, operations find, comment and resolve): an application's, such as Mantle's. With none the REST answers no threads and refuses a comment.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="agreement-check-service" type="xs:string"><xs:annotation><xs:documentation>A service that answers whether an author has signed a repository's contributor agreement (org.moqui.git.GitServices.check#GitAuthorSigned), for get#GitAuthorSigned and /rest/s1/moqui/hosting/agreement. With none the answer is that it is not known here.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-upload-check-service" type="xs:string"><xs:annotation><xs:documentation>A service asked before Git LFS objects new to a repository are accepted (org.moqui.git.GitServices.check#GitLfsUpload), for an application's quota; its errors refuse the upload. None when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="blame-max-bytes" type="non-neg-int-expandable" default="1048576"><xs:annotation><xs:documentation>The largest file get#GitBlame blames, in bytes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="blame-max-lines" type="non-neg-int-expandable" default="50000"><xs:annotation><xs:documentation>The most lines of a file get#GitBlame blames.</xs:documentation></xs:annotation></xs:attribute>
@@ -1785,7 +1813,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="review-max-refused" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>After this many pushes for review and proposals of one account with no push right were refused in an hour, on this node, the account's next ones that hour are refused before anything is read (GitReviewRefusals); 0 for no cap.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="push-max-commands" type="non-neg-int-expandable" default="100000"><xs:annotation><xs:documentation>The most commands (refs), the most shallow lines and the most push options (each) of one push from a user who may push.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="push-max-request-bytes" type="non-neg-int-expandable" default="16777216"><xs:annotation><xs:documentation>The most bytes of the commands, shallow lines and push options of one push from a user who may push; the pack is not counted (max-push-size).</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="merge-request-url" type="xs:string"><xs:annotation><xs:documentation>The page of a merge request, told to the client of a push for review: {repositoryPath}, {repositoryId}, {mergeRequestNum} and {mergeRequestId} are filled in, and one that starts with / follows public-url. None when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="merge-request-url" type="xs:string"><xs:annotation><xs:documentation>The page of a merge request, told to the client of a push for review: {repositoryPath}, {repositoryId}, {mergeRequestNum} and {mergeRequestId} are filled in. A full URL (http:// or https://) is taken as given, so it may name an application's pages on another host or under a mount; anything else is a path that follows public-url. None when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="reach-max-commits" type="non-neg-int-expandable" default="1000000"><xs:annotation><xs:documentation>The most commits of a repository's history kept in memory to answer which commits its refs reach, for reads and fetches by commit id; in a larger history an older commit is not read by its id.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="contains-max-commits" type="non-neg-int-expandable" default="200000"><xs:annotation><xs:documentation>The most commits one get#GitCommitRefs call reads; past it the answer is truncated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="reserved-status-contexts" type="xs:string" default=""><xs:annotation><xs:documentation>Prefixes of commit status contexts that create#GitCommitStatus takes only with authorization disabled (the system: an agreement check, the CI engine), separated by commas. Empty (the default): none, as an outside CI posts its checks (ci/...) with a user's token; a hosting application that writes checks of its own sets it (agreement/,ci/).</xs:documentation></xs:annotation></xs:attribute>
@@ -1810,7 +1838,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="enabled" type="xs:string"><xs:annotation><xs:documentation>true or false; empty: on while there is an enabled GitRunnerPool.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="server-url" type="xs:string"><xs:annotation><xs:documentation>The URL runners reach this server by; the git public URL when empty. A pool may have its own.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="server-id" type="xs:string"><xs:annotation><xs:documentation>The label that tells this server's containers from another's on a shared host; the public URL's host when empty.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="run-check-service" type="xs:string"><xs:annotation><xs:documentation>Asked before a run is queued: allow, wait or refuse, trust, owner and pool (org.moqui.git.GitCiServices.check#PipelineRun).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="run-check-service" type="xs:string"><xs:annotation><xs:documentation>Asked before a run is queued, and again before a job of an ended run runs again: allow, wait or refuse, trust, owner and pool (org.moqui.git.GitCiServices.check#PipelineRun). A server whose accounts sign themselves up sets it: the application decides whether a public account's own repository runs without approval.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="run-url-service" type="xs:string"><xs:annotation><xs:documentation>Gives the page of a run for its statuses' target (org.moqui.git.GitCiServices.get#PipelineRunUrl).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="run-url" type="xs:string"><xs:annotation><xs:documentation>The page of a run when no service is named: a template with {repositoryId}, {repositoryPath}, {pipelineRunId}, {runNum} and {jobRunId}.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="builtin-enabled" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>A repository with a component.xml and no ci.xml gets the built-in pipeline.</xs:documentation></xs:annotation></xs:attribute>
@@ -1822,6 +1850,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="max-jobs" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>Jobs of a pipeline, after its matrices are expanded.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-matrix" type="non-neg-int-expandable" default="20"><xs:annotation><xs:documentation>Combinations of one job's matrix.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-steps" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>Steps of a job.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-services" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>Service containers of a job.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="schedule-min-minutes" type="non-neg-int-expandable" default="15"><xs:annotation><xs:documentation>A scheduled pipeline runs at most once in this many minutes, whatever its cron says.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="pool-token-days" type="non-neg-int-expandable" default="7"><xs:annotation><xs:documentation>How long a registration token of a pool of registered runners registers runners, unless create#RunnerPoolToken says otherwise.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-timeout-minutes" type="non-neg-int-expandable" default="360"><xs:annotation><xs:documentation>The longest time limit a job may ask for.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="default-timeout-minutes" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>The time limit of a job that asks for none.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-fetch-depth" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>The deepest history a job's checkout may fetch with its job token.</xs:documentation></xs:annotation></xs:attribute>
@@ -1830,7 +1861,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="max-artifact-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>Bytes of one artifact.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-report-bytes" type="non-neg-int-expandable" default="16777216"><xs:annotation><xs:documentation>Bytes of one report.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-cache-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>Bytes of one cache archive.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="max-artifacts" type="non-neg-int-expandable" default="100"><xs:annotation><xs:documentation>Artifacts and reports of one job.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-artifacts" type="non-neg-int-expandable" default="100"><xs:annotation><xs:documentation>Uploads of one job: artifacts, reports and caches.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-repository-upload-bytes" type="non-neg-int-expandable" default="0"><xs:annotation><xs:documentation>Bytes of artifacts, reports and caches a repository keeps; an upload past it is refused (GitCiStorageQuota), and one that would pass it cut. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-owner-upload-bytes" type="non-neg-int-expandable" default="0"><xs:annotation><xs:documentation>The same for the runs' owner (GitPipelineRun.ownerId) over all its repositories. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="artifact-retention-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>How long an artifact is kept when its element names no retention-days.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-artifact-retention-days" type="non-neg-int-expandable" default="365"><xs:annotation><xs:documentation>The longest retention an artifact may ask for.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="log-retention-days" type="non-neg-int-expandable" default="90"><xs:annotation><xs:documentation>How long logs and reports are kept.</xs:documentation></xs:annotation></xs:attribute>
@@ -1838,12 +1871,15 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="lost-seconds" type="non-neg-int-expandable" default="180"><xs:annotation><xs:documentation>A running job whose runner has not called for this long is checked on its host, and ended when its container is gone or has exited.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="queue-timeout-minutes" type="non-neg-int-expandable" default="1440"><xs:annotation><xs:documentation>A queued job no runner took in this long is an error.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="runner-max-requests-per-minute" type="non-neg-int-expandable" default="1200"><xs:annotation><xs:documentation>Runner REST requests of one job, or one registered runner, in a minute.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="runner-max-registrations-per-minute" type="non-neg-int-expandable" default="10"><xs:annotation><xs:documentation>Runner registrations of one pool (its pool token found good) in a minute; past it 429. Counted by each cluster member for the requests it serves (in memory), so a cluster of n members allows up to n times it; max-runners-per-pool is the cap across the cluster.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-runners-per-pool" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>The most active runners a pool of registered runners holds; a registration past it is refused (409) until one is revoked, so a pool token that leaked mints only so many runner tokens. Counted under the pool's lease, across the cluster. 0 is no cap.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="runner-command" type="xs:string" default="moqui ci-run"><xs:annotation><xs:documentation>The command of a job's container, split at spaces.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="start-inline" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>Start a run's jobs soon after it is queued; false leaves them to the start job.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="container-user" type="xs:string" default="1000:1000"><xs:annotation><xs:documentation>The user of a job's container; image for the image's own. Never root.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="container-read-only-root" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>A job's container has a read-only root, with a volume at its working directory and a tmpfs at /tmp.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="container-workdir" type="xs:string" default="/workspace"><xs:annotation><xs:documentation>The working directory of a job's container, a volume removed with it.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="container-tmp-mb" type="non-neg-int-expandable" default="1024"><xs:annotation><xs:documentation>The size of the tmpfs at /tmp of a job's container.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="container-user" type="xs:string" default="1000:1000"><xs:annotation><xs:documentation>The user of a job's container and its services; image for the image's own, which is then inspected before the container starts and refused unless its USER is a numeric uid other than 0 (no USER, uid 0, root, or a name, which the image may map to uid 0). Never root.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="container-read-only-root" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>A job's container, and its service containers, have a read-only root with a sized tmpfs at /tmp and the working directory on a sized tmpfs; with the pool's diskMb the working directory is on the root filesystem diskMb sizes, which is then writable.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="container-workdir" type="xs:string" default="/workspace"><xs:annotation><xs:documentation>The working directory of a job's container.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="container-tmp-mb" type="non-neg-int-expandable" default="1024"><xs:annotation><xs:documentation>The size of the tmpfs at /tmp of a job's container and of its service containers.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="container-workspace-mb" type="non-neg-int-expandable" default="4096"><xs:annotation><xs:documentation>The size of the tmpfs of a job's working directory when its pool sets no diskMb; it counts toward the pool's memoryMb.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -1997,6 +2033,37 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="set-aside-seconds" type="non-neg-int-expandable" default="30">
                 <xs:annotation><xs:documentation>How long a member is set aside before it is tried again.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="forward-idle-seconds" type="non-neg-int-expandable" default="120">
+                <xs:annotation><xs:documentation>On a node with the front set, a terminate host's request forwarded down
+                    a link: the longest gap in its body as it goes down before it is answered 504. The member taking
+                    the request (10 seconds), this gap and forward-head-seconds bound a request with a body, so an
+                    upload answered once it is stored (Git LFS, CI artifacts) takes as long as its body takes to send.
+                    This node's own request-timeout (web-protection requests) does not apply to a forwarded request:
+                    the member applies its own. At least 1, at most 86400.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="forward-head-seconds" type="non-neg-int-expandable" default="3600">
+                <xs:annotation><xs:documentation>The longest wait for a forwarded request's answer head once its body is
+                    all sent, before it is answered 504; never shorter than forward-idle-seconds after the body last
+                    moved. At least 1, at most 86400.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="forward-first-byte-seconds" type="non-neg-int-expandable" default="30">
+                <xs:annotation><xs:documentation>The longest wait for the answer head of a forwarded GET or HEAD with
+                    no body, at most forward-head-seconds; any other request with no body (a POST, a DELETE) is never
+                    sent again and waits forward-head-seconds. Past it the GET or HEAD goes once more to another member
+                    and the first member counts a failure toward set-aside-failures, so a hung member is set aside;
+                    when it goes to no other member (none, or the second try) the timeout is not counted, since it says
+                    only that the answer is slow. A GET whose answer takes longer to start (a slow report) is answered
+                    504, so raise it for one. At least 1.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="ssh-tunnels" type="non-neg-int-expandable" default="256">
+                <xs:annotation><xs:documentation>SSH connections piped at once by the SSH tunnel port
+                    (edge_ssh_tunnel_port), and by each pairing's own SSH port (an EdgePort row); each also counts
+                    toward a link's tunnels. At least 1.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType>
@@ -2367,6 +2434,25 @@ along with this software (see the LICENSE.md file). If not, see
 
             <xs:attribute name="username" type="xs:string"/>
             <xs:attribute name="password" type="xs:string"/>
+            <xs:attribute name="deploy-timeout-seconds" type="xs:string" default="600"><xs:annotation><xs:documentation>How long a deployment's target is given to fetch and deploy a commit (docs/interfaces/Pipelines.md "Deployments").</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deploy-private-network" type="xs:string" default="false"><xs:annotation><xs:documentation>true: a deployment may call a target at a loopback, private or link-local address (an internal staging host, the instance and itself); refused otherwise, as webhooks are.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="component-deploy">
+        <xs:annotation><xs:documentation>Deploying a component on this server (docs/tools/Component-Deploy.md "The
+            gate"): the attested deploys a source server's deployments make, and the gate that refuses any
+            other.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="require-passed-run" type="xs:string" default="false"><xs:annotation><xs:documentation>true:
+                deploy#Component, update#Component and load#Component refuse to deploy a commit unless the request
+                carries an attestation, signed with attestation-secret, that the commit passed its environment's
+                pipeline on the source server; a deploy from this server's own pages is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="attestation-secret" type="xs:string"><xs:annotation><xs:documentation>The secret this
+                server issued to the source server (its environment's token), at least 16 characters; empty takes no
+                attested deploy. Set it from a property in runtime/.env (component_deploy_attestation_key).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-age-seconds" type="xs:string" default="300"><xs:annotation><xs:documentation>The
+                oldest attestation taken, by the time the source signed it.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

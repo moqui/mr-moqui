@@ -78,7 +78,32 @@ pub struct EdgeSettings {
     pub set_aside_failures: u32,
     /// How long a member is set aside before it is tried again (`set-aside-seconds`).
     pub set_aside_for: Duration,
+    /// On a node with the front set, a request forwarded down a link: the longest gap in its body as it goes
+    /// (`forward-idle-seconds`), and the longest wait for its answer's head once its body is all sent
+    /// (`forward-head-seconds`). An upload whose answer comes once it is stored is bounded by neither while it moves.
+    pub forward_idle: Duration,
+    pub forward_head: Duration,
+    /// The longest wait for the answer's head of a forwarded GET or HEAD with no body (`forward-first-byte-seconds`,
+    /// at most `forward-head-seconds`): short, so one a hung member holds goes once more to another member and the
+    /// hung one is set aside before the client gives up. Any other request waits `forward_head`.
+    pub forward_first_byte: Duration,
+    /// SSH connections an SSH tunnel port pipes at once (`ssh-tunnels`), at least 1 and at most [`MAX_SSH_TUNNELS`].
+    pub ssh_tunnels: usize,
 }
+
+/// The default of `forward-idle-seconds`.
+pub const DEFAULT_FORWARD_IDLE: Duration = Duration::from_secs(120);
+/// The default of `forward-head-seconds`.
+pub const DEFAULT_FORWARD_HEAD: Duration = Duration::from_secs(3600);
+/// The default of `forward-first-byte-seconds`.
+pub const DEFAULT_FORWARD_FIRST_BYTE: Duration = Duration::from_secs(30);
+/// The default of `ssh-tunnels`.
+pub const DEFAULT_SSH_TUNNELS: usize = 256;
+/// The most `ssh-tunnels`: far below what a semaphore holds, and more connections than one port pipes.
+pub const MAX_SSH_TUNNELS: usize = 1_000_000;
+/// The longest of the waits in seconds (`set-aside-seconds` and the `forward-*-seconds`): a day. A larger number
+/// would overflow the clock it is added to.
+pub const MAX_WAIT: Duration = Duration::from_secs(86_400);
 
 /// The longest wait between a receiver's refusals of an item.
 pub const MAX_RETRY: Duration = Duration::from_secs(600);
@@ -98,6 +123,10 @@ impl Default for EdgeSettings {
             sticky_cookie: crate::user::SESSION_COOKIE_NAME.to_string(),
             set_aside_failures: 3,
             set_aside_for: Duration::from_secs(30),
+            forward_idle: DEFAULT_FORWARD_IDLE,
+            forward_head: DEFAULT_FORWARD_HEAD,
+            forward_first_byte: DEFAULT_FORWARD_FIRST_BYTE,
+            ssh_tunnels: DEFAULT_SSH_TUNNELS,
         }
     }
 }
@@ -165,7 +194,16 @@ impl EdgeSettings {
             ),
         }
         settings.set_aside_failures = u32::try_from(number("set-aside-failures", 3)).unwrap_or(3).max(1);
-        settings.set_aside_for = Duration::from_secs(number("set-aside-seconds", 30));
+        settings.set_aside_for = Duration::from_secs(number("set-aside-seconds", 30)).min(MAX_WAIT);
+        let at_least_one =
+            |name: &str, default: Duration| Duration::from_secs(number(name, default.as_secs()).max(1)).min(MAX_WAIT);
+        settings.forward_idle = at_least_one("forward-idle-seconds", DEFAULT_FORWARD_IDLE);
+        settings.forward_head = at_least_one("forward-head-seconds", DEFAULT_FORWARD_HEAD);
+        settings.forward_first_byte =
+            at_least_one("forward-first-byte-seconds", DEFAULT_FORWARD_FIRST_BYTE).min(settings.forward_head);
+        settings.ssh_tunnels = usize::try_from(number("ssh-tunnels", DEFAULT_SSH_TUNNELS as u64))
+            .unwrap_or(MAX_SSH_TUNNELS)
+            .clamp(1, MAX_SSH_TUNNELS);
         for delegate in edge.named_iter("delegate") {
             let service = delegate.attribute("service").unwrap_or_default();
             let service = service.trim();

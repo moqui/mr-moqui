@@ -14,7 +14,9 @@
 
 //! Finding and starting Chromium, for the PDF engine ([`crate::pdf`]) and the browser of `moqui test-client`
 //! (`test_client/browser.rs`): the places a binary may be, the launch arguments both use, and the DevTools address the
-//! browser writes once it listens. Not vendored: `./moq chromium-download` puts one in `runtime/chromium`.
+//! browser writes once it listens. Not vendored: `./moq chromium-download` puts one in `runtime/chromium`, and a binary
+//! built with `embed-chromium` carries one, unpacked into the install directory when nothing configured or downloaded
+//! comes first (`crate::embedded_programs`).
 
 use std::path::{Path, PathBuf};
 use std::process::Child;
@@ -99,7 +101,8 @@ fn common_locations() -> Vec<PathBuf> {
 }
 
 /// Every Chromium and Chrome there is, in order: `configured` when it names a file (`configured_name` says where it
-/// came from, for the warning when it does not), the one of [`downloaded_chromium`], then [`PATH_NAMES`] on the
+/// came from, for the warning when it does not), the one of [`downloaded_chromium`], the one built into the binary
+/// when neither is there (unpacked then, [`embedded_chromium`]), then [`PATH_NAMES`] on the
 /// `PATH` and the [`common_locations`] of this OS, Chromium before Google Chrome and Microsoft Edge. One binary under
 /// several names (chromium-browser a link to chromium, /usr/bin/google-chrome to /opt/google/chrome) is there once.
 fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name: &str, what: &str) -> Vec<Found> {
@@ -125,6 +128,14 @@ fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name:
                 Err(_) => "runtime/chromium".to_string(),
             };
             found.push(Found { place, path });
+        }
+        if found.is_empty() {
+            if let Some((revision, path)) = embedded_chromium(runtime_dir) {
+                found.push(Found {
+                    place: format!("{EMBEDDED_PLACE} (snapshot {revision})"),
+                    path,
+                });
+            }
         }
     }
     let search = std::env::var_os("PATH").unwrap_or_default();
@@ -156,6 +167,32 @@ fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name:
     found
 }
 
+/// How [`found_binaries`] names the Chromium built into the binary.
+const EMBEDDED_PLACE: &str = "the Chromium built into this binary";
+
+/// The Chromium built into the binary for the runtime `runtime_dir`, unpacked when it is not yet, with its revision;
+/// `None` when the binary has none or it cannot be unpacked (logged).
+fn embedded_chromium(runtime_dir: &Path) -> Option<(&'static str, PathBuf)> {
+    let program = crate::embedded_programs::Program::Chromium;
+    let revision = program.archive()?.version;
+    match crate::embedded_programs::unpack(program, runtime_dir) {
+        Ok(Some(dir)) => {
+            let path = crate::embedded_programs::chromium_binary(&dir);
+            path.is_file().then_some((revision, path))
+        }
+        Ok(None) => None,
+        Err(err) => {
+            tracing::warn!("Chromium: could not unpack the one built into this binary: {err}");
+            None
+        }
+    }
+}
+
+/// Whether a Chromium was found where a snapshot build is (downloaded or built in), which has no AppArmor profile.
+fn is_snapshot(place: &str) -> bool {
+    place.starts_with("runtime/chromium") || place.starts_with(EMBEDDED_PLACE)
+}
+
 /// Whether a binary is Chromium itself rather than Google Chrome or Microsoft Edge, from its path.
 fn is_chromium(path: &Path) -> bool {
     let text = path.to_string_lossy().to_ascii_lowercase();
@@ -164,7 +201,8 @@ fn is_chromium(path: &Path) -> bool {
 
 /// Look at every place a Chromium may be, log each one found, and choose one for PDF: `configured` (the `pdf`
 /// `chromium-path`, `moqui_chromium_path`) when it names a file, else the first of [`found_binaries`]: the one of
-/// [`downloaded_chromium`], then an installed Chromium, then an installed Google Chrome or Microsoft Edge.
+/// [`downloaded_chromium`], then the one built in, then an installed Chromium, then an installed Google Chrome or
+/// Microsoft Edge.
 ///
 /// # Errors
 ///
@@ -181,7 +219,7 @@ pub fn find_chromium(runtime_dir: &Path, configured: &str) -> Result<PathBuf, St
             chosen.path.display(),
             chosen.place
         );
-        if chosen.place.starts_with("runtime/chromium") {
+        if is_snapshot(&chosen.place) {
             check_apparmor_profile(&chosen.path);
         }
         return Ok(chosen.path.clone());
@@ -219,7 +257,7 @@ pub fn find_test_browser(runtime_dir: Option<&Path>, configured: &str) -> Result
                 one.path.display(),
                 one.place
             );
-            if one.place.starts_with("runtime/chromium") {
+            if is_snapshot(&one.place) {
                 check_apparmor_profile(&one.path);
             }
             Ok(one.path.clone())

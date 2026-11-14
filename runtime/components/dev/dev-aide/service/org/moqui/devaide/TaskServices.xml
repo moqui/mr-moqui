@@ -42,7 +42,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="store" noun="TaskSource" type="rust" location="dev_aide::tasks::store_task_source" allow-remote="false">
-        <description>The user's own moqui-rest source, new or changed; an empty token on a change keeps the stored one.</description>
+        <description>The user's own moqui-rest source, new or changed; an empty token on a change keeps the stored one.
+            A source Connect made reads with its group server's token, sent only to the server's own origin; given
+            another baseUrl it is a source of its own, with no server and a token it needs given here.</description>
         <in-parameters>
             <parameter name="taskSourceId"/>
             <parameter name="label"/>

@@ -203,11 +203,11 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
     let started = std::time::Instant::now();
     for component in factory.components().iter() {
         let dir = component.location.join("service");
-        let Ok(read) = std::fs::read_dir(&dir) else {
+        // with the files built into the binary that are not on disk (moqui_lib::vfs), sorted by name
+        let Ok(read) = moqui_lib::vfs::read_dir(&dir) else {
             continue;
         };
-        let mut paths: Vec<_> = read.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
-        paths.sort();
+        let paths: Vec<_> = read.iter().map(moqui_lib::vfs::DirEntry::path).collect();
         for path in paths {
             let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
             let is_seca = name.ends_with(".secas.xml");

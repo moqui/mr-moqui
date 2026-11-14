@@ -33,8 +33,9 @@ const CREATE_STATUS: &str = "org.moqui.git.GitServices.create#GitCommitStatus";
 const DESCRIPTION_MAX: usize = 250;
 
 /// The page of a run, for a status's target: what the conf's `git-ci` `run-url-service` answers (in `repositoryId`,
-/// `pipelineRunId`, `runNum`, `jobRunId`; out `url`), else its `run-url` template with `{repositoryId}`,
-/// `{repositoryPath}`, `{pipelineRunId}`, `{runNum}` and `{jobRunId}`, else none.
+/// `pipelineRunId`, `runNum`, `jobRunId`; out `url`), else (no service, no URL from it, or a service that failed) its
+/// `run-url` template with `{repositoryId}`, `{repositoryPath}`, `{pipelineRunId}`, `{runNum}` and `{jobRunId}`, else
+/// none. An application answers no URL for a repository whose page is not its own.
 pub fn run_url(run: &EntityValue, job_run_id: Option<&str>) -> Option<String> {
     let repository = field(run, "repositoryId").unwrap_or_default();
     let run_id = field(run, "pipelineRunId").unwrap_or_default();
@@ -48,23 +49,32 @@ pub fn run_url(run: &EntityValue, job_run_id: Option<&str>) -> Option<String> {
             ("jobRunId", opt(job_run_id.map(str::to_string))),
         ]),
     );
-    let url = match asked {
-        Some(Ok(out)) => out
-            .get("url")
-            .map(moqui_lib::object::to_plain_string)
-            .unwrap_or_default(),
+    let answered = match asked {
+        Some(Ok(out)) => out.get("url").map(moqui_lib::object::to_plain_string),
         Some(Err(err)) => {
             tracing::warn!(run = %run_id, "the run URL service failed: {err}");
-            String::new()
+            None
         }
-        None => super::setting("run-url")
+        None => None,
+    };
+    pick_url(answered, || {
+        super::setting("run-url")
             .replace("{repositoryId}", &repository)
             .replace("{repositoryPath}", &crate::server::path::path_of(&repository))
             .replace("{pipelineRunId}", &run_id)
             .replace("{runNum}", &run_num)
-            .replace("{jobRunId}", job_run_id.unwrap_or_default()),
-    };
-    Some(url).filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+            .replace("{jobRunId}", job_run_id.unwrap_or_default())
+    })
+}
+
+/// The service's URL when it gave one, else the template's; either only as an http(s) URL.
+fn pick_url(answered: Option<String>, template: impl FnOnce() -> String) -> Option<String> {
+    let web = |url: &String| url.starts_with("https://") || url.starts_with("http://");
+    answered
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .or_else(|| Some(template()))
+        .filter(web)
 }
 
 /// Write a status of `commit_id`, as the system. Its id.
@@ -167,3 +177,7 @@ pub fn write_job(entity: &EntityFacade, run: &EntityValue, job: &EntityValue, de
         tracing::warn!(job = %job_run_id, "the commit status of a job run was not written: {err}");
     }
 }
+
+#[cfg(test)]
+#[path = "status_tests.rs"]
+mod tests;

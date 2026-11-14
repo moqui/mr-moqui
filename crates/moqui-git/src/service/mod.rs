@@ -29,6 +29,8 @@ use crate::diff::{FileChange, FileDiff};
 use crate::values::{commit_value, map, opt_text, tag_value, timestamp};
 use crate::{GitProvider, GIT_ARTIFACT_TYPE};
 
+#[cfg(test)]
+mod clone_url_tests;
 pub(crate) mod commit;
 #[cfg(test)]
 mod elfinder_tests;
@@ -40,6 +42,8 @@ pub mod hosting;
 #[cfg(test)]
 mod images_tests;
 mod repository;
+pub(crate) mod mirror;
+pub(crate) mod rest;
 pub mod review;
 #[cfg(test)]
 mod script_ports_tests;
@@ -68,6 +72,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     hosting::register(map)?;
     review::register(map)?;
     commit::register(map)?;
+    rest::register(map)?;
+    mirror::register(map)?;
     repository::register(map)
 }
 
@@ -618,7 +624,10 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 
 /// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<path>.git`, the path the repository's
 /// `repositoryPath`, else its id), `sshUrl` when the SSH server is on (`ssh-server` `port`, and `enabled` not false),
-/// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`.
+/// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`. The SSH host and
+/// port are `public-host` and `public-port` when either is set; else, on a node paired with an edge node whose offer
+/// names an SSH tunnel to it, that tunnel's host and port (`moqui_core::edge::setup::ssh_address`); else
+/// `webapp_http_host` and the server's own port.
 fn get_clone_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -627,6 +636,28 @@ fn get_clone_urls(
         return Ok(BTreeMap::new());
     };
     let id = crate::server::path::path_of(&id);
+    let http = format!("{}/git/{id}.git", crate::server::public_base_url());
+    let ssh = ssh_host_port().map(|(host, port)| {
+        let user = moqui_core::user::current_username()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "username".to_string());
+        if port == "22" {
+            format!("{user}@{host}:{id}.git")
+        } else {
+            format!("ssh://{user}@{host}:{port}/{id}.git")
+        }
+    });
+    Ok(out([
+        ("httpsUrl", Value::string(http)),
+        ("sshUrl", ssh.map_or(Value::Null, Value::string)),
+        ("repositoryPath", Value::string(id)),
+    ]))
+}
+
+/// The host and port SSH clone URLs name, from the `ssh-server` settings and an edge node's tunnel; none while the SSH
+/// server is off ([`get_clone_urls`], the hosting offer).
+pub(crate) fn ssh_host_port() -> Option<(String, String)> {
     let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
     // an `ssh-server` attribute, else its property
     let ssh_setting = |name: &str, property_name: &str| {
@@ -638,36 +669,61 @@ fn get_clone_urls(
             configured
         }
     };
-    let http = format!("{}/git/{id}.git", crate::server::public_base_url());
-    let ssh_port = Some(ssh_setting("public-port", "ssh_public_port"))
-        .filter(|port| !port.is_empty())
-        .unwrap_or_else(|| ssh_setting("port", "ssh_port"));
-    let ssh_enabled =
-        ExecutionContext::with_current(|ec| ec.factory().conf_flag("ssh-server", "enabled", true)).unwrap_or(true);
-    let ssh = (ssh_enabled && !ssh_port.is_empty() && ssh_port != "0").then(|| {
+    let public_host = ssh_setting("public-host", "ssh_public_host");
+    let public_port = ssh_setting("public-port", "ssh_public_port");
+    // behind an edge node, with neither public setting: the edge node's SSH tunnel, as its offer named it
+    let edge = (public_host.is_empty() && public_port.is_empty())
+        .then(|| ExecutionContext::with_current(|ec| moqui_core::edge::setup::ssh_address(ec.factory())).flatten())
+        .flatten();
+    SshAddress {
+        enabled: ExecutionContext::with_current(|ec| ec.factory().conf_flag("ssh-server", "enabled", true))
+            .unwrap_or(true),
+        public_host,
+        public_port,
+        edge,
+        http_host: property("webapp_http_host"),
+        host: ssh_setting("host", "ssh_host"),
+        port: ssh_setting("port", "ssh_port"),
+    }
+    .host_and_port()
+}
+
+/// What an SSH clone URL is made of ([`get_clone_urls`]): the `ssh-server` settings and the edge node's SSH tunnel.
+struct SshAddress {
+    enabled: bool,
+    public_host: String,
+    public_port: String,
+    /// The edge node's tunnel, host and port, when this node is paired and neither public setting is set.
+    edge: Option<(String, u16)>,
+    http_host: String,
+    host: String,
+    port: String,
+}
+
+impl SshAddress {
+    /// The host and port an SSH clone URL names; none while the SSH server is off (or listens on port 0 with nothing
+    /// in front of it). The edge node's tunnel only while this node's own server listens behind it.
+    fn host_and_port(self) -> Option<(String, String)> {
+        let behind = self.edge.is_none() || !self.port.is_empty();
+        let port = match &self.edge {
+            Some((_, port)) => port.to_string(),
+            None if !self.public_port.is_empty() => self.public_port,
+            None => self.port,
+        };
+        if !self.enabled || !behind || port.is_empty() || port == "0" {
+            return None;
+        }
         let host = [
-            ssh_setting("public-host", "ssh_public_host"),
-            property("webapp_http_host"),
-            ssh_setting("host", "ssh_host"),
+            self.edge.map(|(host, _)| host).unwrap_or_default(),
+            self.public_host,
+            self.http_host,
+            self.host,
         ]
         .into_iter()
         .find(|host| !host.is_empty() && host != "0.0.0.0")
         .unwrap_or_else(|| "localhost".to_string());
-        let user = moqui_core::user::current_username()
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "username".to_string());
-        if ssh_port == "22" {
-            format!("{user}@{host}:{id}.git")
-        } else {
-            format!("ssh://{user}@{host}:{ssh_port}/{id}.git")
-        }
-    });
-    Ok(out([
-        ("httpsUrl", Value::string(http)),
-        ("sshUrl", ssh.map_or(Value::Null, Value::string)),
-        ("repositoryPath", Value::string(id)),
-    ]))
+        Some((host, port))
+    }
 }
 
 // ---- gitECA events ----

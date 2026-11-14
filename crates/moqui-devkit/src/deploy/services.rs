@@ -38,6 +38,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, remove_component)?;
     rust_service!(map, preview_component_deploy)?;
     rust_service!(map, deploy_component)?;
+    rust_service!(map, deploy_attested_component)?;
     rust_service!(map, discard_component_deploy)?;
     rust_service!(map, preview_component_update)?;
     rust_service!(map, update_component)?;
@@ -231,6 +232,11 @@ fn load_component(
         return Ok(out);
     };
     let name = parameter(parameters, "componentName");
+    // a directory has no commit to attest: the gate refuses it (docs/tools/Component-Deploy.md "The gate")
+    if crate::deploy::require_passed_run(&factory) {
+        add_error(crate::deploy::GATE_REFUSAL.to_string());
+        return Ok(out);
+    }
     let Some((mode, restart)) = mode_of(parameters, "Load") else {
         return Ok(out);
     };
@@ -346,6 +352,46 @@ fn deploy_component(
     }
     restart_after(&report, restart, &mut out);
     out.insert("report".to_string(), json_value(&report));
+    Ok(out)
+}
+
+/// `deploy#AttestedComponent`: a source server's deploy step (REST `POST /rest/s1/moqui/components/deploy`, no
+/// session): the `attestation` text and its `signature`, made with the secret this server issued (`component-deploy`
+/// `attestation-secret`), say a commit passed its environment's pipeline; that commit, still the branch's head, is
+/// deployed or the component updated to it, with its data of `dataTypes`. The attestation is the authority, so no
+/// user signs in. Out: `componentName`, `commitId`, `deployStatus` (deployed or up-to-date), `deploymentId`,
+/// `report`.
+fn deploy_attested_component(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    let Some(factory) = entered_factory() else {
+        return Ok(out);
+    };
+    // the attestation's text is signed as it was sent: not trimmed
+    let attestation = parameters
+        .get("attestation")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    match crate::deploy::git::deploy_attested(
+        &factory,
+        &attestation,
+        &parameter(parameters, "signature"),
+        &list_parameter(parameters, "dataTypes"),
+    ) {
+        Ok(done) => {
+            out.insert("componentName".to_string(), Value::string(&done.component));
+            out.insert("commitId".to_string(), Value::string(&done.commit));
+            out.insert("deployStatus".to_string(), Value::string(&done.status));
+            out.insert("deploymentId".to_string(), Value::string(&done.deployment_id));
+            if let Some(report) = &done.report {
+                out.insert("report".to_string(), json_value(report));
+            }
+        }
+        Err(err) => add_error(err),
+    }
     Ok(out)
 }
 

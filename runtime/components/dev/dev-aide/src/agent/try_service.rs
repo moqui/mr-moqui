@@ -88,6 +88,37 @@ impl AgentTool for TryServiceTool {
     }
 }
 
+/// Why `service` is not tried in the sim, if it is not: a service of the Dev AIDE's own that is not read-only, or any
+/// of the Terminal's. Those write files, run git, call a group server or start programs, none of which goes into the
+/// sim's overlay; the fence refuses them as well (`workspace::unfenced`), and this says so before anything runs.
+#[must_use]
+pub fn sim_refusal(service: &str) -> Option<String> {
+    let info = moqui_core::service::info::service_detail(service);
+    let text = |key: &str| {
+        info.as_ref()
+            .and_then(|info| info.get(key))
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    let read_only = matches!(
+        info.as_ref().and_then(|info| info.get("readOnly")),
+        Some(Value::Bool(true))
+    );
+    // the Terminal's services start programs on the host, which nothing undoes: none runs from a sim, read-only or not
+    if service.starts_with("org.moqui.terminal.") || text("location").starts_with("moqui_host::term::") {
+        return Some(format!(
+            "{service} is a Terminal service that starts programs on the host: the sim cannot hold that"
+        ));
+    }
+    // one not found is judged by its name: never let through unread
+    let own = service.starts_with("org.moqui.devaide.") || text("location").starts_with("dev_aide::");
+    (own && !read_only).then(|| {
+        format!(
+            "{service} is a Dev AIDE service that writes files, runs git or calls a server: the sim cannot hold that"
+        )
+    })
+}
+
 fn parameters_of(args: &Json) -> BTreeMap<String, Value> {
     match moqui_lib::json::from_json(args.get("parameters").unwrap_or(&Json::Null)) {
         Value::Map(map) => map
@@ -117,7 +148,13 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
             .hint("Find it with the artifact tool: action find, kinds service."));
     }
     let parameters = parameters_of(args);
-    if args.get("real").and_then(Json::as_bool).unwrap_or(false) {
+    let real_run = args.get("real").and_then(Json::as_bool).unwrap_or(false);
+    if !real_run {
+        if let Some(why) = sim_refusal(&service) {
+            return Err(ToolError::new("not_in_sim", why).hint("Run it with real=true, which the user approves."));
+        }
+    }
+    if real_run {
         if context.tier == Tier::View {
             return Err(ToolError::new(
                 "not_allowed",
