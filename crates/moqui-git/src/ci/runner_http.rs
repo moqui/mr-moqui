@@ -167,12 +167,15 @@ fn read_json(request: &RunnerHttpRequest, body: &mut dyn Read) -> Result<serde_j
 
 /// The running job of a job token and its run, for a request at `jobs/<job_run_id>/...`.
 fn job_of(entity: &EntityFacade, bearer: &str, job_run_id: &str) -> Result<(EntityValue, EntityValue), Refused> {
-    let Some(auth) = token::job_of(entity, bearer)? else {
-        moqui_core::web::note_auth_failure();
-        return Err(Refused::new(
-            401,
-            "the job token is not valid: its job has ended, or it is not a job token",
-        ));
+    let auth = match token::job_token(entity, bearer)? {
+        token::JobToken::Running(auth) => auth,
+        // a runner's call after its job was cancelled or timed out, or on another member that ended it: no failed
+        // sign-in, and the runner stops without trying again (docs/interfaces/Pipelines.md, "Job tokens")
+        token::JobToken::Ended => return Err(Refused::new(410, "the job has ended: its token takes no more calls")),
+        token::JobToken::Unknown => {
+            moqui_core::web::note_auth_failure();
+            return Err(Refused::new(401, "the job token is not valid: it is not a job token"));
+        }
     };
     if auth.job_run_id != job_run_id {
         return Err(Refused::new(403, "the job token is for another job run"));
@@ -182,9 +185,9 @@ fn job_of(entity: &EntityFacade, bearer: &str, job_run_id: &str) -> Result<(Enti
     }
     let _rows = crate::rows_guard();
     let job = super::one(entity, JOB_RUN, "jobRunId", &auth.job_run_id)?
-        .ok_or_else(|| Refused::new(401, "the job run is gone"))?;
+        .ok_or_else(|| Refused::new(410, "the job run is gone"))?;
     let run = super::one(entity, PIPELINE_RUN, "pipelineRunId", &auth.pipeline_run_id)?
-        .ok_or_else(|| Refused::new(401, "the pipeline run is gone"))?;
+        .ok_or_else(|| Refused::new(410, "the pipeline run is gone"))?;
     if millis(&job, "lastContactDate").is_none_or(|last| now_millis() - last > CONTACT_MILLIS) {
         super::set_fields(
             entity,
@@ -428,6 +431,7 @@ fn job_request(
 
 /// Serve one request of the runner REST, in an entered context. A refusal is its status with `{"error": ...}`.
 pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn HttpResponder) {
+    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
     let outcome = (|| -> Result<Option<serde_json::Value>, Refused> {
         let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
             .ok_or_else(|| Refused::new(503, "no execution context"))?;
@@ -483,7 +487,9 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
         Ok(None) => {}
         Err(Refused(status, message)) => {
             // what a service left in the message facade is this request's, and is answered here
-            ExecutionContext::with_current(|ec| ec.message().clear_errors());
+            if let Some(mark) = mark {
+                ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark));
+            }
             respond(out, status, &json!({ "error": message }));
         }
     }

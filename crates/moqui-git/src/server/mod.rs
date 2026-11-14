@@ -1320,15 +1320,18 @@ impl Session<'_> {
         if !accepted.is_empty() {
             let lock = self.provider.lock_of(&definition.id);
             let _turn = moqui_lib::sync::lock(&lock);
+            // with the other cluster members' writers of a repository on shared storage too (shared.rs)
+            let shared = self.provider.shared_turn(&definition.id, definition.kind);
             // the row as it is now, under the lock: a repository archived or deleted while the pack came in takes
             // nothing (delete#GitRepository marks it first, so no object is stored under an id that is going)
-            let stored = self
-                .provider
-                .still_writable(&definition.id)
-                .and_then(|()| match quarantine.as_mut() {
-                    Some(received) => received.accept().map(|_| ()),
-                    None => Ok(()),
-                });
+            let stored = match &shared {
+                Ok(_) => self.provider.still_writable(&definition.id),
+                Err(err) => Err(Error::new(err.message())),
+            }
+            .and_then(|()| match quarantine.as_mut() {
+                Some(received) => received.accept().map(|_| ()),
+                None => Ok(()),
+            });
             match stored {
                 Err(err) => {
                     tracing::error!(repository = %definition.id, "pushed objects not stored: {err}");

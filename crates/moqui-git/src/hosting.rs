@@ -370,6 +370,7 @@ impl GitProvider {
         let entity = self.entity()?;
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
+        let _shared = self.shared_turn(repository_id, repo.definition.kind)?;
         // the row as it is now: archived or deleted since the repository was opened, no ref is written
         self.still_writable(repository_id)?;
         // the change's own objects are read over the store until the change may be made, as a push's wait in

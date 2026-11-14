@@ -72,25 +72,63 @@ pub struct JobAuth {
     pub merge_request_id: Option<String>,
 }
 
-/// The running job `token` is for. `None` for a token that is not a job token, is not known, whose job has ended (its
-/// hash is cleared then) or is past its time.
+/// Whether `token` has the form of a token of `prefix`: the prefix and 64 lowercase hex digits ([`new_token`]).
+pub fn well_formed(token: &str, prefix: &str) -> bool {
+    token
+        .strip_prefix(prefix)
+        .is_some_and(|rest| rest.len() == 64 && rest.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+}
+
+/// What a job token is now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JobToken {
+    /// The token of a running job, within its time.
+    Running(JobAuth),
+    /// The token of a job that has ended (cancelled, timed out, finished) or is past its time: the runner REST answers
+    /// 410 Gone, which is no failed sign-in.
+    Ended,
+    /// Not a job token, or not one this server made: 401.
+    Unknown,
+}
+
+/// The running job `token` is for. `None` for a token that is not a job token, is not known, whose job has ended or
+/// is past its time.
 pub fn job_of(entity: &EntityFacade, token: &str) -> Result<Option<JobAuth>, Error> {
-    if !token.starts_with(JOB_PREFIX) {
-        return Ok(None);
+    Ok(match job_token(entity, token)? {
+        JobToken::Running(auth) => Some(auth),
+        JobToken::Ended | JobToken::Unknown => None,
+    })
+}
+
+/// What `token` is: a running job's (and what it stands for), an ended job's, or unknown. A job keeps its token's hash
+/// when it ends, so a runner's late call (after a cancel or a timeout) is told the job is gone; nothing takes the token
+/// of a job that is not running.
+pub fn job_token(entity: &EntityFacade, token: &str) -> Result<JobToken, Error> {
+    if !well_formed(token, JOB_PREFIX) {
+        return Ok(JobToken::Unknown);
     }
     let _rows = crate::rows_guard();
     let Some(job) = entity
         .find(JOB_RUN)?
         .eq("tokenHash", Value::string(hash(token)))
-        .eq("statusId", Value::string("running"))
         .one()?
     else {
-        return Ok(None);
+        return Ok(JobToken::Unknown);
     };
-    if millis(&job, "tokenExpireDate").is_none_or(|expires| expires <= now_millis()) {
-        return Ok(None);
+    if field(&job, "statusId").as_deref() != Some("running")
+        || millis(&job, "tokenExpireDate").is_none_or(|expires| expires <= now_millis())
+    {
+        return Ok(JobToken::Ended);
     }
-    let (Some(job_run_id), Some(pipeline_run_id)) = (field(&job, "jobRunId"), field(&job, "pipelineRunId")) else {
+    let Some(auth) = auth_of(entity, &job)? else {
+        return Ok(JobToken::Ended);
+    };
+    Ok(JobToken::Running(auth))
+}
+
+/// What the running job row `job` stands for; `None` when its run is gone.
+fn auth_of(entity: &EntityFacade, job: &moqui_core::entity::EntityValue) -> Result<Option<JobAuth>, Error> {
+    let (Some(job_run_id), Some(pipeline_run_id)) = (field(job, "jobRunId"), field(job, "pipelineRunId")) else {
         return Ok(None);
     };
     let Some(run) = super::one(entity, PIPELINE_RUN, "pipelineRunId", &pipeline_run_id)? else {
@@ -128,11 +166,13 @@ pub fn pool_of(entity: &EntityFacade, token: &str) -> Result<Option<String>, Err
         return Ok(None);
     }
     let _rows = crate::rows_guard();
+    // a token past its expiry registers nothing
     Ok(entity
         .find(RUNNER_POOL)?
         .eq("registrationTokenHash", Value::string(hash(token)))
         .eq("poolKind", Value::string("registered"))
         .eq("enabled", Value::string("Y"))
         .one()?
+        .filter(|row| millis(row, "registrationTokenExpireDate").is_none_or(|expires| expires > now_millis()))
         .and_then(|row| field(&row, "runnerPoolId")))
 }

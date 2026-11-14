@@ -297,16 +297,31 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="runnerPoolId" required="true"/></in-parameters>
     </service>
     <service verb="create" noun="RunnerPoolToken" type="rust" location="moqui_git::ci::service::create_runner_pool_token">
-        <description>A new registration token for a pool of registered runners, replacing the one it had. It is
-            stored hashed and shown once.</description>
-        <in-parameters><parameter name="runnerPoolId" required="true"/></in-parameters>
-        <out-parameters><parameter name="token"/></out-parameters>
+        <description>A new registration token for a pool of registered runners, replacing the one it had: stored
+            hashed, shown once, and good for validDays (git-ci pool-token-days, 7). With revokeRunners the pool's
+            runners are revoked too, as for a token that leaked. An operator's (GIT_CI_ADMIN, or authorization
+            disabled).</description>
+        <in-parameters>
+            <parameter name="runnerPoolId" required="true"/>
+            <parameter name="validDays" type="Integer"/>
+            <parameter name="revokeRunners" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="token"/>
+            <parameter name="expireDate" type="Timestamp"/>
+        </out-parameters>
+    </service>
+    <service verb="revoke" noun="Runner" type="rust" location="moqui_git::ci::service::revoke_runner">
+        <description>Revoke a registered runner (GitRunner.statusId revoked): its token is refused from now on and
+            the job it runs ends as an error. An operator's.</description>
+        <in-parameters><parameter name="runnerId" required="true"/></in-parameters>
+        <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
     </service>
 
     <!-- ========== secrets and environments ========== -->
     <service verb="find" noun="CiSecrets" type="rust" location="moqui_git::ci::service::find_ci_secrets">
-        <description>The secrets of a repository (the caller needs the update right) or of an owner (authorization
-            disabled), without their values.</description>
+        <description>The secrets of a repository (the caller needs the delete right, a maintainer's) or of an owner
+            (authorization disabled), without their values.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
@@ -315,8 +330,10 @@ along with this software (see the LICENSE.md file). If not, see
             environmentId, environmentName, createdByUserId, createdDate, lastUsedDate</description></parameter></out-parameters>
     </service>
     <service verb="store" noun="CiSecret" type="rust" location="moqui_git::ci::service::store_ci_secret">
-        <description>Make a secret or change one. The value is encrypted, written here and never read back; left out
-            on a change, it stays. A name taken in the same scope is an error.</description>
+        <description>Make a secret or change one, of a repository (the delete right, a maintainer's) or of an owner
+            (authorization disabled). The value is encrypted, written here and never read back; left out on a change,
+            it stays, unless the change moves the secret to another scope or environment, which needs a new value. A
+            name taken in the same scope is an error.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
@@ -329,6 +346,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="secretId"/></out-parameters>
     </service>
     <service verb="delete" noun="CiSecret" type="rust" location="moqui_git::ci::service::delete_ci_secret">
+        <description>Remove a secret of a repository (the delete right) or of an owner (authorization disabled).</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
@@ -346,9 +364,11 @@ along with this software (see the LICENSE.md file). If not, see
             targetUrl, requiredPipeline, approvalRequired, hasToken, lastCommitId, lastDeployDate</description></parameter></out-parameters>
     </service>
     <service verb="store" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::store_ci_environment">
-        <description>Make or change an environment of a repository (the update right) or of an owner (authorization
-            disabled). The target's token is encrypted and never read back. The target, the required pipeline and the
-            approval are kept for deployments (plans/Dogfood.md §8.6), which are not built yet.</description>
+        <description>Make or change an environment of a repository (the delete right, a maintainer's) or of an owner
+            (authorization disabled). The target's token is encrypted and never read back. Its secrets go only to a
+            run of a protected ref or of a branch allowedRefs names, never to a merge request's, and with
+            approvalRequired only to an approved run. The target and the required pipeline are kept for deployments
+            (plans/Dogfood.md §8.6), which are not built yet.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
@@ -358,11 +378,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="token" allow-html="any"/>
             <parameter name="requiredPipeline"/>
             <parameter name="approvalRequired" type="Boolean"/>
+            <parameter name="allowedRefs"><description>Branch patterns, separated by spaces, whose runs get the
+                environment's secrets besides protected refs'</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="environmentId"/></out-parameters>
     </service>
     <service verb="delete" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::delete_ci_environment">
-        <description>Remove an environment; refused while a secret is scoped to it.</description>
+        <description>Remove an environment (the delete right on its repository, or authorization disabled); refused
+            while a secret is scoped to it.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
@@ -387,6 +410,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="untrustedMinutesUsed" type="Integer"/>
             <parameter name="jobCount" type="Integer"/>
             <parameter name="runningCount" type="Integer"/>
+            <parameter name="artifactBytes" type="Long"><description>The artifacts and reports stored now</description></parameter>
+            <parameter name="cacheBytes" type="Long"><description>The caches stored now</description></parameter>
         </out-parameters>
     </service>
     <service verb="delete" noun="RepositoryRuns" type="rust" location="moqui_git::ci::service::delete_repository_runs">

@@ -464,22 +464,26 @@ impl GitProvider {
         };
         let transactions = entity.transactions_for(GIT_REPOSITORY)?;
         let in_transaction = transactions.in_transaction();
-        let marked = self.mark_going(&entity, repository_id)?;
-        if marked {
-            self.refresh(repository_id);
-            if in_transaction {
-                let (provider, id) = (self.clone(), repository_id.to_string());
-                transactions.on_rollback(move || provider.unmark_going(&id))?;
-            }
-        }
         {
             // no push or write of this process stores while the rows go; one that waited reads the mark next
             let lock = self.lock_of(repository_id);
             let _writer = moqui_lib::sync::lock(&lock);
+            // nor a fork or writer of another cluster member: the mark and the look for forks under the repository's
+            // lease, which a fork holds until its transaction ends (shared.rs)
+            let lease = self.repository_lease(repository_id)?;
+            let marked = self.mark_going(&entity, repository_id)?;
+            if marked {
+                self.refresh(repository_id);
+                if in_transaction {
+                    let (provider, id) = (self.clone(), repository_id.to_string());
+                    transactions.on_rollback(move || provider.unmark_going(&id))?;
+                }
+            }
             // a repository others were forked from keeps their objects (a db network's rows are its own; a local
             // fork reads its directory): it goes after its forks, or stays, archived. Looked for under the mark and
             // the lock, which a fork being made takes too, so none is made after this
             let forks = self.forks_of(repository_id)?;
+            drop(lease);
             if !forks.is_empty() {
                 if marked && !in_transaction {
                     self.unmark_going(repository_id);

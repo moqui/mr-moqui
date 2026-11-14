@@ -115,6 +115,19 @@ impl GitProvider {
         // first, and then looks for forks under this lock) or archived is not forked
         let lock = self.lock_of(source_id);
         let _turn = moqui_lib::sync::lock(&lock);
+        // and with a delete on another cluster member: the source's lease, kept until this transaction ends, so a
+        // delete that takes it next finds the fork's row (shared.rs, docs/interfaces/Git-Hosting.md)
+        let lease = self.repository_lease(source_id)?;
+        let transactions = entity.transactions_for(GIT_REPOSITORY)?;
+        let _lease = if transactions.in_transaction() {
+            lease.until_transaction_end(&transactions)?;
+            None
+        } else {
+            Some(lease)
+        };
+        if source.definition.kind == RepositoryKind::Local {
+            self.may_make_on_disk(repository_id)?;
+        }
         if self.definition(source_id)?.archived {
             return Err(Error::new(format!(
                 "GitArchived: git repository {source_id} is archived or being deleted, and is not forked"
@@ -338,6 +351,7 @@ impl GitProvider {
         let lock = self.lock_of(to);
         let copied = {
             let _turn = moqui_lib::sync::lock(&lock);
+            let _shared = self.shared_turn(to, target.definition.kind)?;
             self.still_writable(to)?;
             super::server::copy_objects(
                 source.store.as_ref(),
@@ -361,6 +375,7 @@ impl GitProvider {
         let name = super::reach::merge_request_ref(num);
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
+        let _shared = self.shared_turn(repository_id, repo.definition.kind)?;
         self.still_writable(repository_id)?;
         for _ in 0..4 {
             let current = repo.store.read_ref(&name)?;

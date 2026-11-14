@@ -371,6 +371,7 @@ impl GitProvider {
             // one that is not deleted is logged and the others still go
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
+            let _shared = self.shared_turn_of(repository_id)?;
             // still closed, now that the lock is held: one reopened since keeps its head
             let still_closed = entity
                 .find("moqui.resource.GitMergeRequest")?

@@ -66,6 +66,9 @@ pub struct RunSpec {
     pub disk_mb: Option<i64>,
     pub pids_limit: Option<i64>,
     pub network_mode: Option<String>,
+    /// Pull an image the host does not have: a trusted pool's run. An untrusted pool's image must be on the host
+    /// already, so a run nobody reviewed cannot make the host fetch what it names.
+    pub pull_images: bool,
 }
 
 /// What a host says of a run.
@@ -99,12 +102,14 @@ fn host_service(entity: &EntityFacade, host_id: &str, field_name: &str) -> Resul
     })
 }
 
+/// Call a host type's service. The errors it leaves in the message facade are its answer, taken from the facade into
+/// the result, so the caller's earlier errors stay and none of the host's is left behind.
 fn call(name: &str, input: BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
     let options = moqui_core::service::call::CallOptions {
         disable_authz: true,
         ..moqui_core::service::call::CallOptions::default()
     };
-    moqui_core::service::call::sync_checked(name, &input, &options)
+    super::with_errors_taken(|| moqui_core::service::call::sync_checked(name, &input, &options))
 }
 
 /// Start `spec` on a host. The container's id there.
@@ -144,6 +149,7 @@ pub fn start(entity: &EntityFacade, host_id: &str, spec: &RunSpec) -> Result<Str
                 "networkMode",
                 spec.network_mode.clone().map_or(Value::Null, Value::string),
             ),
+            ("pullImages", Value::Bool(spec.pull_images)),
         ]),
     )?;
     out.get("instanceRef")
@@ -173,7 +179,8 @@ pub fn inspect(entity: &EntityFacade, host_id: &str, instance_ref: &str) -> Resu
     })
 }
 
-/// Remove the container `instance_ref`, running or not, with the service containers and the network of its job.
+/// Remove the container `instance_ref`, running or not, with the service containers and the network of its job: only
+/// this server's (by its label), so another server's job run of the same id on a shared host is left alone.
 pub fn remove(entity: &EntityFacade, host_id: &str, instance_ref: &str, job_run_id: &str) -> Result<(), Error> {
     let service = host_service(entity, host_id, "runRemoveService")?;
     call(
@@ -183,13 +190,16 @@ pub fn remove(entity: &EntityFacade, host_id: &str, instance_ref: &str, job_run_
             ("instanceRef", Value::string(instance_ref)),
             ("labelName", Value::string(LABEL_JOB)),
             ("labelValue", Value::string(job_run_id)),
+            ("filterLabels", string_map(&[(LABEL_SERVER.to_string(), server_id())])),
+            ("networkName", Value::string(network_name(&container_name(job_run_id)))),
         ]),
     )?;
     Ok(())
 }
 
-/// Remove the containers this server made on a host whose job run is not in `keep`. The count removed.
-pub fn cleanup(entity: &EntityFacade, host_id: &str, keep: &[String]) -> Result<i64, Error> {
+/// Remove the containers this server made on a host before `created_before` (epoch seconds) whose job run is not in
+/// `keep`: one made after `keep` was read may be a job that just started. The count removed.
+pub fn cleanup(entity: &EntityFacade, host_id: &str, keep: &[String], created_before: i64) -> Result<i64, Error> {
     let service = host_service(entity, host_id, "runCleanupService")?;
     let out = call(
         &service,
@@ -198,6 +208,7 @@ pub fn cleanup(entity: &EntityFacade, host_id: &str, keep: &[String]) -> Result<
             ("labelName", Value::string(LABEL_JOB)),
             ("keepValues", Value::List(keep.iter().map(Value::string).collect())),
             ("filterLabels", string_map(&[(LABEL_SERVER.to_string(), server_id())])),
+            ("createdBefore", Value::I64(created_before)),
         ]),
     )?;
     Ok(out
@@ -227,6 +238,33 @@ pub fn server_id() -> String {
     } else {
         host
     }
+}
+
+/// [`server_id`] as a part of a container's or network's name: the characters Docker takes in a name, others as `-`.
+pub fn server_name_part() -> String {
+    let part: String = server_id()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .take(63)
+        .collect();
+    part.trim_matches(|ch| ch == '-' || ch == '.').to_string()
+}
+
+/// The name of a job run's container on its host: this server's id in it, so two servers on one host never take each
+/// other's.
+pub fn container_name(job_run_id: &str) -> String {
+    format!("moqui-ci-{}-{job_run_id}", server_name_part())
+}
+
+/// The network of a job with service containers, by its container's name.
+pub fn network_name(container: &str) -> String {
+    format!("{container}-net")
 }
 
 /// The instance host row `host_id`.

@@ -62,6 +62,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, store_runner_pool)?;
     rust_service!(map, delete_runner_pool)?;
     rust_service!(map, create_runner_pool_token)?;
+    rust_service!(map, revoke_runner)?;
     rust_service!(map, find_ci_secrets)?;
     rust_service!(map, store_ci_secret)?;
     rust_service!(map, delete_ci_secret)?;
@@ -874,6 +875,11 @@ fn retry_job_run(parameters: &Parameters, facade: &EntityFacade) -> Out {
         refuse(&repository, "running a job again");
         return none();
     }
+    // the application's check is asked again: a run it would refuse or hold now is not run again
+    if let Err(why) = super::queue::check_again(&run) {
+        add_error(why);
+        return none();
+    }
     match engine::retry_job(facade, &field(&job, "jobRunId").unwrap_or_default()) {
         Ok(id) => Ok(out([
             ("jobRunId", Value::string(id)),
@@ -937,8 +943,26 @@ fn pool_value(pool: &EntityValue) -> Value {
     ])
 }
 
+/// The permission of who runs the CI's pools (registered runners and their tokens, container hosts): an operator.
+pub(crate) const OPERATOR_PERMISSION: &str = "GIT_CI_ADMIN";
+
+/// Whether the caller runs the pools: authorization disabled (the application), or the `GIT_CI_ADMIN` permission.
+/// The error recorded when not.
+fn operator(what: &str) -> bool {
+    if authz_disabled() || moqui_core::user::has_permission(OPERATOR_PERMISSION).unwrap_or(false) {
+        return true;
+    }
+    add_error(format!(
+        "{what} is an operator's: the {OPERATOR_PERMISSION} permission, or authorization disabled"
+    ));
+    false
+}
+
 /// `find#RunnerPools`: the pools, with the jobs running and queued in each. Out: `poolList`.
 fn find_runner_pools(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !operator("reading the runner pools") {
+        return none();
+    }
     let _rows = crate::rows_guard();
     let mut find = facade.find(RUNNER_POOL)?;
     if let Some(owner) = text(parameters, "ownerId") {
@@ -966,6 +990,9 @@ fn find_runner_pools(parameters: &Parameters, facade: &EntityFacade) -> Out {
 
 /// `store#RunnerPool`: make or change a pool. Out: `runnerPoolId`.
 fn store_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !operator("changing a runner pool") {
+        return none();
+    }
     let _rows = crate::rows_guard();
     let existing = match text(parameters, "runnerPoolId") {
         Some(id) => super::one(facade, RUNNER_POOL, "runnerPoolId", &id)?,
@@ -1030,6 +1057,25 @@ fn store_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error("a pool of containers needs an instanceHostId");
         return none();
     }
+    // a registered runner keeps its machine from one job to the next (its files, what a job left running), so its
+    // pool is one tenant's; a pool of containers, a fresh container a job, may be shared. A server with the run check
+    // has tenants (the application names each run's owner); one without has one, whose runs have no owner, and its
+    // pool is that tenant's
+    if field(&pool, "poolKind").as_deref() == Some("registered")
+        && field(&pool, "ownerId").is_none()
+        && !super::setting("run-check-service").is_empty()
+    {
+        add_error(
+            "a pool of registered runners needs an ownerId: a runner is not cleaned between jobs, so it serves one owner",
+        );
+        return none();
+    }
+    if let Some(rule) = field(&pool, "egressRule").filter(|rule| !super::driver::docker::valid_egress(rule)) {
+        add_error(format!(
+            "egressRule {rule} is the host's network or another container's: bridge, none, or a network of the host"
+        ));
+        return none();
+    }
     if creating {
         pool.create(facade)?;
     } else {
@@ -1040,6 +1086,9 @@ fn store_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
 
 /// `delete#RunnerPool`: remove a pool with no running job; its queued jobs are then errors when they would start.
 fn delete_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !operator("deleting a runner pool") {
+        return none();
+    }
     let Some(id) = text(parameters, "runnerPoolId") else {
         add_error("runnerPoolId is required");
         return none();
@@ -1068,12 +1117,41 @@ fn delete_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `create#RunnerPoolToken`: a new registration token for a pool of registered runners, replacing the one it had.
 /// Out: `token`, shown once.
 fn create_runner_pool_token(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !operator("making a runner pool token") {
+        return none();
+    }
     let Some(id) = text(parameters, "runnerPoolId") else {
         add_error("runnerPoolId is required");
         return none();
     };
-    match super::registered::new_pool_token(facade, &id) {
-        Ok(token) => Ok(out([("token", Value::string(token))])),
+    let days = number(parameters, "validDays", 0);
+    let options = super::registered::TokenOptions {
+        valid_days: u64::try_from(days).ok().filter(|days| *days > 0),
+        revoke_runners: flag(parameters, "revokeRunners"),
+    };
+    match super::registered::new_pool_token(facade, &id, &options) {
+        Ok((token, expires)) => Ok(out([
+            ("token", Value::string(token)),
+            ("expireDate", moqui_core::user::stamp_value(expires)),
+        ])),
+        Err(err) => {
+            add_error(err.message());
+            none()
+        }
+    }
+}
+
+/// `revoke#Runner`: a registered runner's token is refused from now on, and the job it runs ends as an error.
+fn revoke_runner(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !operator("revoking a runner") {
+        return none();
+    }
+    let Some(id) = text(parameters, "runnerId") else {
+        add_error("runnerId is required");
+        return none();
+    };
+    match super::registered::revoke(facade, &id) {
+        Ok(revoked) => Ok(out([("revoked", Value::Bool(revoked))])),
         Err(err) => {
             add_error(err.message());
             none()
@@ -1083,15 +1161,21 @@ fn create_runner_pool_token(parameters: &Parameters, facade: &EntityFacade) -> O
 
 // ---- secrets and environments ----
 
-/// Whose rows a secret or environment service is for: a repository's (the caller needs the update right), or an
-/// owner's (the caller's authorization is disabled). `None` with the error recorded.
+/// Whose rows a secret or environment service is for: a repository's (the caller needs the delete right, a
+/// maintainer's: a developer with the update right could otherwise point a secret at a branch or an environment it
+/// pushes to and read it), or an owner's (the caller's authorization is disabled). `None` with the error recorded.
 fn scope_of(parameters: &Parameters, what: &str) -> Option<(Option<String>, Option<String>)> {
     match (text(parameters, "repositoryId"), text(parameters, "ownerId")) {
         (Some(repository), None) => {
-            if may(&repository, "update") {
+            if may(&repository, "delete") {
                 Some((Some(repository), None))
+            } else if may(&repository, "view") {
+                add_error(format!(
+                    "{what} needs the delete right on repository {repository} (a maintainer's)"
+                ));
+                None
             } else {
-                refuse(&repository, what);
+                add_error(format!("repository {repository} not found"));
                 None
             }
         }
@@ -1217,6 +1301,14 @@ fn store_ci_secret(parameters: &Parameters, facade: &EntityFacade) -> Out {
     } else {
         None
     };
+    // a secret moved to another scope or environment takes a new value: its old one was given for the old one only
+    let moved = existing.as_ref().is_some_and(|row| {
+        field(row, "scope").as_deref() != Some(secret_scope.as_str()) || field(row, "environmentId") != environment
+    });
+    if moved && text(parameters, "value").is_none() {
+        add_error("a secret moved to another scope or environment needs a new value");
+        return none();
+    }
     let own_id = existing.as_ref().and_then(|row| field(row, "secretId"));
     let taken = scoped(facade, CI_SECRET, &scope)?
         .eq("name", Value::string(&name))
@@ -1365,7 +1457,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
     };
     row.set("name", Value::string(&name));
-    for field_name in ["targetUrl", "requiredPipeline"] {
+    for field_name in ["targetUrl", "requiredPipeline", "allowedRefs"] {
         if parameters.contains_key(field_name) {
             row.set(field_name, opt(text(parameters, field_name)));
         }
@@ -1455,6 +1547,12 @@ fn get_runner_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
             .count()?,
         _ => 0,
     };
+    // what is stored now, for a quota: artifacts and reports, and caches
+    let (artifact_bytes, cache_bytes) = match &scope {
+        (Some(repository), _) => super::artifact::stored_by_kind(facade, "repositoryId", repository)?,
+        (None, Some(owner)) => super::artifact::stored_by_kind(facade, "ownerId", owner)?,
+        (None, None) => (0, 0),
+    };
     Ok(out([
         ("periodKey", Value::string(period)),
         ("minutesUsed", int(minutes)),
@@ -1462,6 +1560,8 @@ fn get_runner_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("untrustedMinutesUsed", int(untrusted)),
         ("jobCount", int(i64::try_from(rows.len()).unwrap_or(0))),
         ("runningCount", int(running)),
+        ("artifactBytes", int(artifact_bytes)),
+        ("cacheBytes", int(cache_bytes)),
     ]))
 }
 
