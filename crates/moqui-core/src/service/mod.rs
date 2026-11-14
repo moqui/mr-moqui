@@ -61,6 +61,7 @@ pub mod mail_capture;
 mod outbox;
 pub mod pool;
 mod protocol_admin;
+mod web_protection;
 mod recent_auth;
 mod remote;
 mod request_pool;

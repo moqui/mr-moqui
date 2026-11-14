@@ -510,10 +510,44 @@ pub fn live_session_user_id(factory: &ExecutionContextFactory, session_id: &str)
     Some(live.columns.user_id.clone().filter(|user_id| !user_id.is_empty()))
 }
 
-/// Guarantee mode flushes the bound session. Eventual mode returns without writing.
+/// Guarantee mode flushes the bound session. Eventual mode returns without writing, except a session whose row is not
+/// written yet (new in this request, or a new id after sign-in) on a member of a pool behind an edge node ([`pooled`]).
 pub fn end_request() -> Result<(), Error> {
     flush_bound_if_guarantee()
 }
+
+/// Write the bound session now when it is new and this node is a member of a pool behind an edge node ([`pooled`]):
+/// for a response whose head goes before the request ends (a streamed one), so its cookie never reaches the client
+/// before its row. A failure is logged; the session stays dirty for the scheduled flush.
+pub fn write_new_first() {
+    let _ = flush_bound(pooled);
+}
+
+/// How long a [`pooled`] answer is kept before `edge_node_url` is read again.
+const POOLED_READ_EVERY_MS: i64 = 10_000;
+
+/// Whether this node may be one member of a pool behind an edge node (plans/Edge-Node2.md §4.4): it dials an edge node
+/// (`edge_node_url`, read at most every [`POOLED_READ_EVERY_MS`]) and its cluster has other live members (the
+/// heartbeat's list of peers, in memory). The edge node keeps a browser on the member its session cookie hashes to, and
+/// moves it when that member goes or is drained: so a new session is written before its response, as a new cookie can
+/// hash to another member than the one that made it ([`flush_bound`]), and a live copy that sat idle is read again when
+/// it comes back ([`adopt_presented`]). A lone local node keeps both as before.
+fn pooled(factory: &ExecutionContextFactory) -> bool {
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+    static READ_AT: AtomicI64 = AtomicI64::new(i64::MIN);
+    static DIALS: AtomicBool = AtomicBool::new(false);
+    let now = now_millis();
+    if now.saturating_sub(READ_AT.load(Ordering::Acquire)) > POOLED_READ_EVERY_MS {
+        let dials = !moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL).trim().is_empty();
+        DIALS.store(dials, Ordering::Release);
+        READ_AT.store(now, Ordering::Release);
+    }
+    DIALS.load(Ordering::Acquire) && crate::cluster::has_live_peers(factory)
+}
+
+/// How long a live session sits unused on a [`pooled`] node before it is read again from its row when a request brings
+/// it back: another member may have served it meanwhile.
+const REREAD_IDLE_MS: i64 = 5_000;
 
 /// Drop the clean snapshot for `id` and keep dirty fields. A missing id is left unset.
 pub fn invalidate(id: &str) {
@@ -1601,7 +1635,7 @@ fn presented_id(session_cookie: Option<&str>) -> Result<Option<String>, Error> {
 
 fn resolve_id(factory: &ExecutionContextFactory, presented: Option<&str>) -> Result<(String, bool), Error> {
     if let Some(id) = presented {
-        if adopt_presented(factory, id)? {
+        if adopt_presented(factory, id, pooled(factory))? {
             return Ok((id.to_string(), false));
         }
     }
@@ -1630,10 +1664,11 @@ fn resolve_id(factory: &ExecutionContextFactory, presented: Option<&str>) -> Res
     Ok((id, true))
 }
 
-fn adopt_presented(factory: &ExecutionContextFactory, id: &str) -> Result<bool, Error> {
+fn adopt_presented(factory: &ExecutionContextFactory, id: &str, pooled: bool) -> Result<bool, Error> {
     let timeout = session_timeout_millis(factory);
     let now = now_millis();
     let mut expired = false;
+    let mut stale = false;
     let retired = {
         let mut table = lock_sessions(factory);
         match table.sessions.get(id) {
@@ -1641,6 +1676,11 @@ fn adopt_presented(factory: &ExecutionContextFactory, id: &str) -> Result<bool, 
             Some(live) if is_idle(live.last_access, now, timeout) => {
                 expired = true;
                 table.sessions.remove(id);
+                false
+            }
+            // on a member of a pool, a copy that sat unused may be behind what another member wrote (pooled)
+            Some(live) if pooled && now.saturating_sub(live.last_access) > REREAD_IDLE_MS => {
+                stale = true;
                 false
             }
             Some(_) => return Ok(true),
@@ -1653,6 +1693,16 @@ fn adopt_presented(factory: &ExecutionContextFactory, id: &str) -> Result<bool, 
     let Some(facade) = factory.entity() else {
         return Ok(false);
     };
+    if stale {
+        // what this copy has not written yet goes first (merged by the row's revision), then the row is read again
+        if let Err(err) = flush_id(factory, id) {
+            tracing::warn!(
+                "A session that came back to this member could not be written before it is read again: {err}"
+            );
+        }
+        let _claim = FlushClaim::wait(factory, id);
+        lock_sessions(factory).sessions.remove(id);
+    }
     if expired {
         let _claim = FlushClaim::wait(factory, id);
         delete_session_row(&facade, id)?;
@@ -2327,16 +2377,37 @@ fn sync_bound(factory: &ExecutionContextFactory) {
 }
 
 fn flush_bound_if_guarantee() -> Result<(), Error> {
+    flush_bound(pooled)
+}
+
+/// Flush the bound session in guarantee mode, or in eventual mode when its row is not written yet and `new_first`
+/// says so for this node. A failure of the second is logged and not the request's: the session stays dirty, and the
+/// scheduled flush tries again.
+fn flush_bound(new_first: impl FnOnce(&ExecutionContextFactory) -> bool) -> Result<(), Error> {
     let (factory, id) = with_session(|session| (session.factory.clone(), session.bound_id.clone()));
     let (Some(factory), Some(id)) = (factory, id) else {
         return Ok(());
     };
-    let guarantee = lock_sessions(&factory).mode == FlushMode::Guarantee;
-    if !guarantee {
+    let (guarantee, unwritten) = {
+        let table = lock_sessions(&factory);
+        let unwritten = table
+            .sessions
+            .get(&id)
+            .is_none_or(|live| live.snapshot.is_none() && !live.retired);
+        (table.mode == FlushMode::Guarantee, unwritten)
+    };
+    if guarantee {
+        sync_bound(&factory);
+        return flush_id(&factory, &id);
+    }
+    if !(unwritten && new_first(&factory)) {
         return Ok(());
     }
     sync_bound(&factory);
-    flush_id(&factory, &id)
+    if let Err(err) = flush_id(&factory, &id) {
+        tracing::warn!("A new session could not be written before its response; the scheduled flush will: {err}");
+    }
+    Ok(())
 }
 
 /// Write one live session. The SQL runs without the table lock: the dirty state is copied under

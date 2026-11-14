@@ -133,7 +133,7 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
         "edge-domains-edge",
         "",
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port.to_string()),
             ("edge_xmpp_port", &tunnel_port.to_string()),
             ("edge_xmpp_tls_port", &tunnel_tls_port.to_string()),
@@ -325,7 +325,7 @@ fn two_local_nodes_comms_stay_apart() {
         "edge-domains-acc-edge",
         "",
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port.to_string()),
             ("edge_xmpp_port", &tunnel_port.to_string()),
             ("edge_xmpp_tls_port", &tunnel_tls_port.to_string()),

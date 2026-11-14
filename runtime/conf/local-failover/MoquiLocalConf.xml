@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A local node with a standby (conf/local-failover/README.md; plans/Edge-Node2.md §4.5): the first machine and the
+    standby both run this conf, with the same runtime and the same .env, and only one runs at a time. The first machine
+    is a local node paired with an edge node (conf/edge/MoquiLocalConf.xml). When it dies, a person, or automation the
+    operator adds, starts the standby, which links with the pairing's key; with none of the pairing's members linked the
+    edge node admits it, gives it every name of the pairing, and tells its administrators. Nothing starts the standby by
+    itself. Per-host settings go in .env. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+
+    <!-- The same .env on both machines: the pairing's (edge_node_url, edge_node_key, edge_node_pin, edge_node_id and
+        edge_node_pairing, which pairing wrote on the first machine), entity_ds_crypt_pass, session_cookie_key, and
+        the rest of the first machine's settings; copy it again after the wizard or a setting changes. Each machine's
+        own: its instance id (runtime/db/instance_id) and its member key (runtime/db/edge_member_key), made at its first
+        start and link. Never copy runtime/db to the standby: a copy of them would make it the first machine to the
+        edge node, and the two would trade the link. -->
+
+    <!-- The data, one of three (docs/Run-Deploy.md, A local node with a standby):
+        the same external database: both machines name it in .env (entity_ds_db_conf=postgres, entity_ds_host and the
+        rest) and the standby starts on it as it is. Two machines that both run on one database are a cluster: run
+        them as conf/local-cluster/MoquiPooledConf.xml instead, pooled by the edge node;
+        a replica promoted: the first machine's database streams to a replica beside the standby, which is promoted
+        before the standby starts, with entity_ds_host naming it there;
+        the last backup restored: the embedded database's nightly backup, mirrored off the first machine, restored on
+        the standby (moqui load-save) before it starts. What was delivered since the backup is not in it: on the edge
+        node, System › Edge Clients › Clients, Deliver again since the backup's time; the receipts make an item the
+        standby already has do nothing. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <!-- The edge node's part (plans/Edge-Node2.md §4.5): while no machine is linked it holds the queue for its retention
+        period, mail for the replicated recipients, the voicemail fallback and the offline page. The standby is admitted
+        as a takeover: noted on the pairing (Edge Clients › Clients, Takeovers) and a notification to the edge node's
+        administrators. Set New nodes to Held for approval there to have it wait for an administrator instead. The
+        first machine, started again while the standby is linked, is refused until the operator lets it link again on
+        Takeovers: by then it should be wiped and made the new standby, or a member of the same cluster. -->
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+</moqui-conf>

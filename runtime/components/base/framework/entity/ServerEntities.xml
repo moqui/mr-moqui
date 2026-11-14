@@ -102,6 +102,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="certFingerprint" type="text-medium"/>
         <field name="sshHostKeyFingerprint" type="text-medium"><description>The member's SSH host key (SHA256:...), which
             peers pin when cluster_transport is ssh and the clusterBaseUrl is ssh://host:port.</description></field>
+        <field name="binaryVersion" type="text-short"><description>The moqui binary's version the member runs, which a
+            linked member tells its edge node with its cluster's member list (plans/Edge-Node2.md §4.4).</description></field>
+        <field name="edgeLinkUrl" type="text-medium"><description>On a member of an edge cluster, where a local node dials
+            it (its edge_link_url): the edge node's Hello answer lists each live member with it (plans/Edge-Node2.md
+            §4.6).</description></field>
     </entity>
 
     <!-- A component loaded or deployed on a running server (plans/archive/Component-Deploy.md; docs/tools/Component-Deploy.md):

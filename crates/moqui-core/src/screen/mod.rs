@@ -1053,6 +1053,12 @@ fn head_hook(parts: HeadParts) -> web::stream::HeadHook {
         let choice = session_choice(parts.new_session, is_public(head))?;
         parts.decided.set(Some(choice));
         if !(choice.discard || choice.declined) {
+            // the cookie of a new session goes now, before the request ends: its row first, on a member of a pool
+            // behind an edge node, whose next request (a page's own files, fetched while it streams) can go to another
+            // member (plans/Edge-Node2.md §4.4)
+            if parts.presented.as_deref() != Some(parts.cookies.session_id().as_str()) {
+                user::session::write_new_first();
+            }
             attach_session(
                 head,
                 parts.cookies,

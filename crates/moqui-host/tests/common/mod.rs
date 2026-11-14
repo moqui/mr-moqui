@@ -800,6 +800,19 @@ pub fn start_second_with(label: &str, extra_conf: &str, properties: &[(&str, &st
 /// running. Its process properties are set first. Drop the server before the runtime directory.
 #[allow(dead_code)]
 pub fn start_member(label: &str, cluster_dir: &Path, properties: &[(&str, &str)]) -> (moqui_host::Server, DirGuard) {
+    start_member_with_files(label, cluster_dir, "", properties, &[])
+}
+
+/// [`start_member`] with more conf and files written into its runtime directory first (a certificate, a test
+/// component): another member of an edge cluster, say.
+#[allow(dead_code)]
+pub fn start_member_with_files(
+    label: &str,
+    cluster_dir: &Path,
+    extra_conf: &str,
+    properties: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> (moqui_host::Server, DirGuard) {
     assert_own_process();
     for (name, value) in properties {
         moqui_lib::env::set_property(name, (*value).to_string());
@@ -809,7 +822,12 @@ pub fn start_member(label: &str, cluster_dir: &Path, properties: &[(&str, &str)]
     let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
     let guard = DirGuard(runtime.clone());
     std::fs::create_dir_all(&runtime).unwrap();
-    prepare_runtime(&runtime, template(), "");
+    prepare_runtime(&runtime, template(), extra_conf);
+    for (path, text) in files {
+        let path = runtime.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
     let framework = repo_root().join("runtime/components/base/framework");
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, cluster_dir, bind).unwrap();

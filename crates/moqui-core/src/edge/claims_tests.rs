@@ -47,6 +47,7 @@ fn paired(facade: &EntityFacade, node: &str, setup: &str) {
 /// A paired node's full send of `set`, as the link applies it.
 fn replicate(facade: &EntityFacade, node: &str, set: &str, changes: Vec<Change>) {
     let batch = Batch {
+        sender_token: 0,
         set_name: set.to_string(),
         epoch: "e1".to_string(),
         base_seq: 0,
@@ -343,7 +344,7 @@ fn an_all_in_one_node_reserves_the_domains_of_its_own_receiving_accounts() {
 fn a_configure_loses_what_another_pairing_named_first() {
     let (ctx, facade) = open();
     let factory = ctx.factory();
-    crate::edge::conf::settings_as(factory, crate::edge::NodeRole::Edge);
+    crate::edge::conf::settings_as(factory, crate::edge::NodeRole::FrontEdge);
     paired(
         &facade,
         "local-a",

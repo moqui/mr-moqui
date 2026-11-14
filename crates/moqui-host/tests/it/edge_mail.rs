@@ -251,7 +251,7 @@ impl Lmtp {
 }
 
 /// Postfix's side of LMTP: one message to `recipients`, each RCPT's reply and then the replies after the data.
-fn lmtp(address: SocketAddr, recipients: &[&str], message: &str) -> (Vec<String>, Vec<String>) {
+pub(crate) fn lmtp(address: SocketAddr, recipients: &[&str], message: &str) -> (Vec<String>, Vec<String>) {
     let stream = TcpStream::connect(address).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
     let mut client = Lmtp {
@@ -332,7 +332,7 @@ fn down(edge: &Gate) -> bool {
     })
 }
 
-fn message(message_id: &str, body: &str) -> String {
+pub(crate) fn message(message_id: &str, body: &str) -> String {
     format!(
         "Message-ID: {message_id}\r\nFrom: Dan <dan@example.org>\r\nTo: sales@example.com\r\nSubject: Through the \
          edge\r\nDate: Mon, 19 Oct 2026 12:00:00 +0000\r\n\r\n{body}\r\n"
@@ -381,7 +381,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
         "edge-mail-edge",
         EDGE_CONF,
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("smtp_listen_port", "0"),
             ("smtp_allowed_addresses", "127.0.0.1"),
@@ -688,7 +688,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
         "edge-mta-edge",
         EDGE_MTA_CONF,
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("smtp_listen_port", "0"),
             ("smtp_hostname", "edge.example.com"),

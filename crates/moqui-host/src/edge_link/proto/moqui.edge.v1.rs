@@ -79,12 +79,51 @@ pub struct PairReply {
     #[prost(string, tag = "3")]
     pub link_fingerprint: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HelloRequest {
     #[prost(message, optional, tag = "1")]
     pub hello: ::core::option::Option<Hello>,
+    /// The local node's state and its cluster's members (plans/Edge-Node2.md §4.4): the edge node admits a member that
+    /// is not linked only when a linked member's list has it as a live member.
+    #[prost(message, optional, tag = "2")]
+    pub status: ::core::option::Option<MemberStatus>,
+    /// The member's own public key (Ed25519, 32 bytes), from a key each member keeps for itself and never shares
+    /// (plans/Edge-Node2.md §4.11): the edge node pins it for the member's instance id on its first link, so the pairing's
+    /// shared key alone cannot name a member.
+    #[prost(bytes = "vec", tag = "3")]
+    pub member_key: ::prost::alloc::vec::Vec<u8>,
+    /// The member key's signature over this TLS connection's exporter value (label EXPORTER-moqui-edge-member, 32 bytes),
+    /// so the proof holds for this connection only.
+    #[prost(bytes = "vec", tag = "4")]
+    pub member_proof: ::prost::alloc::vec::Vec<u8>,
 }
+/// One member of a local node's cluster (plans/Edge-Node2.md §4.4), from its moqui.server.ClusterMember row.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClusterMember {
+    #[prost(string, tag = "1")]
+    pub instance_id: ::prost::alloc::string::String,
+    /// How long ago its heartbeat was written, in milliseconds, by the cluster database's clock.
+    #[prost(uint64, tag = "2")]
+    pub heartbeat_age_ms: u64,
+    /// Its heartbeat is within its cluster's liveness window.
+    #[prost(bool, tag = "3")]
+    pub live: bool,
+    /// The moqui binary version it runs.
+    #[prost(string, tag = "4")]
+    pub version: ::prost::alloc::string::String,
+}
+/// A linked member's state and its cluster's members: with its Hello, with every Ping on its up connection, and when
+/// the edge node asks (LocalLink.Members). The edge node keeps the latest list of each pairing in memory only, and
+/// checks it as input (sizes, ids, a count cap), for that pairing alone.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MemberStatus {
+    /// starting, live, draining or stopping: only a live member gets new work.
+    #[prost(string, tag = "1")]
+    pub state: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub members: ::prost::alloc::vec::Vec<ClusterMember>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HelloReply {
     #[prost(message, optional, tag = "1")]
     pub hello: ::core::option::Option<Hello>,
@@ -96,17 +135,62 @@ pub struct HelloReply {
     /// in a Hello (which Probe tells anyone); the local node keeps it in memory and never logs or stores it.
     #[prost(string, tag = "3")]
     pub turn_secret: ::prost::alloc::string::String,
+    /// The pairing the key is for (plans/Edge-Node2.md §4.4): the id every member of the local node's cluster is known
+    /// by on the edge node, which may differ from the member's own instance id.
+    #[prost(string, tag = "4")]
+    pub pairing_id: ::prost::alloc::string::String,
+    /// A random token for this up connection's down connection, which names it after its generation in the down role
+    /// bytes (plans/Edge-Node2.md §4.11): a generation alone is guessable.
+    #[prost(bytes = "vec", tag = "5")]
+    pub down_token: ::prost::alloc::vec::Vec<u8>,
+    /// The live members of the edge node's cluster, itself among them, each with its own link address (plans/Edge-Node2.md
+    /// §4.6): the local node dials every one. Empty from an edge node before E18, or when its member rows could not be
+    /// read: the local node keeps the list it has.
+    #[prost(message, repeated, tag = "6")]
+    pub edge_members: ::prost::alloc::vec::Vec<EdgeMember>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+/// One member of an edge cluster (plans/Edge-Node2.md §4.6), from its moqui.server.ClusterMember row.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EdgeMember {
+    #[prost(string, tag = "1")]
+    pub instance_id: ::prost::alloc::string::String,
+    /// Where a local node dials it: its edge_link_url (<https://host:port>). Empty when it has none: it is reached only at
+    /// the URL the local node paired with.
+    #[prost(string, tag = "2")]
+    pub link_url: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PingRequest {
     /// The link generation the sender is on.
     #[prost(uint64, tag = "1")]
     pub generation: u64,
+    /// On an up connection, the local node's state and its cluster's members (plans/Edge-Node2.md §4.4); unset down.
+    #[prost(message, optional, tag = "2")]
+    pub status: ::core::option::Option<MemberStatus>,
 }
+/// The edge node asks a linked member for its cluster's members now (plans/Edge-Node2.md §4.4, admission).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MembersRequest {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+}
+/// The edge node's operator drains a member, or brings it back (plans/Edge-Node2.md §4.4, health): the member sets its
+/// own state and answers with it; nothing is kept on the edge node.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DrainRequest {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    #[prost(bool, tag = "2")]
+    pub drain: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PingReply {
     #[prost(uint64, tag = "1")]
     pub generation: u64,
+    /// On an up connection, the edge cluster's live members, as in HelloReply (plans/Edge-Node2.md §4.6), so a member that
+    /// joins or leaves is seen within a Ping; empty when not told.
+    #[prost(message, repeated, tag = "2")]
+    pub edge_members: ::prost::alloc::vec::Vec<EdgeMember>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UnpairRequest {}
@@ -321,6 +405,10 @@ pub struct ReplicateRequest {
     pub snapshot_end: bool,
     #[prost(message, repeated, tag = "7")]
     pub changes: ::prost::alloc::vec::Vec<ReplicaChange>,
+    /// When the sending member of a clustered local node took the sender lock (epoch milliseconds): the edge node refuses a
+    /// batch with an earlier one for a set a later sender wrote (plans/Edge-Node2.md §4.4).
+    #[prost(uint64, tag = "8")]
+    pub sender_token: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplicateReply {
@@ -1755,6 +1843,50 @@ pub mod local_link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Signal"));
             self.inner.client_streaming(req, path, codec).await
         }
+        /// The member's state and its cluster's members now (plans/Edge-Node2.md §4.4).
+        pub async fn members(
+            &mut self,
+            request: impl tonic::IntoRequest<super::MembersRequest>,
+        ) -> std::result::Result<tonic::Response<super::MemberStatus>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.LocalLink/Members",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Members"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Drain the member, or bring it back; the answer has its state after.
+        pub async fn drain(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DrainRequest>,
+        ) -> std::result::Result<tonic::Response<super::MemberStatus>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.LocalLink/Drain",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Drain"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1798,6 +1930,16 @@ pub mod local_link_server {
             &self,
             request: tonic::Request<tonic::Streaming<super::SignalMessage>>,
         ) -> std::result::Result<tonic::Response<super::SignalReply>, tonic::Status>;
+        /// The member's state and its cluster's members now (plans/Edge-Node2.md §4.4).
+        async fn members(
+            &self,
+            request: tonic::Request<super::MembersRequest>,
+        ) -> std::result::Result<tonic::Response<super::MemberStatus>, tonic::Status>;
+        /// Drain the member, or bring it back; the answer has its state after.
+        async fn drain(
+            &self,
+            request: tonic::Request<super::DrainRequest>,
+        ) -> std::result::Result<tonic::Response<super::MemberStatus>, tonic::Status>;
     }
     /// Served by the local node on its down connection; the edge node calls it.
     #[derive(Debug)]
@@ -2142,6 +2284,92 @@ pub mod local_link_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.LocalLink/Members" => {
+                    #[allow(non_camel_case_types)]
+                    struct MembersSvc<T: LocalLink>(pub Arc<T>);
+                    impl<T: LocalLink> tonic::server::UnaryService<super::MembersRequest>
+                    for MembersSvc<T> {
+                        type Response = super::MemberStatus;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::MembersRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as LocalLink>::members(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = MembersSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.LocalLink/Drain" => {
+                    #[allow(non_camel_case_types)]
+                    struct DrainSvc<T: LocalLink>(pub Arc<T>);
+                    impl<T: LocalLink> tonic::server::UnaryService<super::DrainRequest>
+                    for DrainSvc<T> {
+                        type Response = super::MemberStatus;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DrainRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as LocalLink>::drain(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DrainSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

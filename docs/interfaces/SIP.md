@@ -648,6 +648,19 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   the only one paired. A number's fallback is read from its owner's copy, and a message the engine recorded is queued
   to the pairing whose call it was, also after a restart (its spool sidecar names the pairing). Each offer lists only
   that pairing's trunks.
+- **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18). Every member runs an engine and loads every
+  trunk, so each places calls out and takes those a trunk sends it. Only one registers the trunks: the holder of the
+  lock row `EdgeSenderLock` `sipTrunks` (a 30-second lease by the database's clock, renewed every 10 seconds, taken over
+  by another member within a few seconds of lapsing, let go when its engine stops); the others ping them. A provider
+  sends its calls to the member that registered. Each member is a SIP node of its own: the local node keeps a `SipNode`
+  row for each from its link to it, and a phone's binding names the member it registered with, so a call to the phone
+  goes through that member. **For now, point desk phones at one edge member** (the one that usually registers the
+  trunks): a phone rings only for a call whose media is on the member it registered with, and an inbound trunk call
+  lands on the holder, so phones spread over the members by SRV would not ring for those calls. Per member, as on any cluster: the registrar's nonces
+  and their counts (a nonce from another member is challenged again; sharing the key would let an answer captured at
+  one member be replayed at another, whose counts never saw it) and the fallback's forward counts, so each limit
+  holds per member. A phone rings only for a call whose media is on the member it registered with: cascading between
+  edge members is later work.
 
 ## Status
 

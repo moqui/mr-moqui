@@ -24,7 +24,9 @@ names and the commands ([Run-Deploy, Choose a topology](../../docs/Run-Deploy.md
 | [`edge/`](edge/README.md) | A local node with an edge node |
 | [`all-in-one/`](all-in-one/README.md) | A local node with an all-in-one node |
 | [`multi-domain/`](multi-domain/README.md) | Several local nodes on one edge node |
-| [`local-cluster/`](local-cluster/README.md) | A local cluster behind your own load balancer |
+| [`local-cluster/`](local-cluster/README.md) | A local cluster, behind your own load balancer or an edge node |
+| [`local-failover/`](local-failover/README.md) | A local node with a standby |
+| [`edge-cluster/`](edge-cluster/README.md) | An edge cluster: several edge nodes on one database, each local node linked to every one |
 
 `crates/moqui-devkit/src/runtime_conf_tests.rs` checks that every conf here, in the directories too, parses, merges
 over the default conf and passes the schema.

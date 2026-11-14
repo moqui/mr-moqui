@@ -87,6 +87,18 @@ pub fn normalize(name: &str) -> Option<String> {
     valid.then_some(name)
 }
 
+/// The longest sticky cookie name a host takes.
+pub const MAX_COOKIE_NAME: usize = 64;
+
+/// Whether `name` is a cookie name (an RFC 6265 token: visible ASCII but separators), at most [`MAX_COOKIE_NAME`].
+pub fn valid_cookie_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_COOKIE_NAME
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+}
+
 /// The host name rows, of one pairing when `node` is given, by name.
 ///
 /// # Errors
@@ -105,6 +117,7 @@ pub fn list(facade: &EntityFacade, node: Option<&str>) -> Result<Vec<EdgeHostInf
                 host_name: text(row, "hostName"),
                 paired_node_id: text(row, "pairedNodeId"),
                 mode_enum_id: text(row, "modeEnumId"),
+                sticky_cookie: Some(text(row, "stickyCookie")),
             })
             .collect())
     })
@@ -126,6 +139,14 @@ pub fn add(facade: &EntityFacade, host: &EdgeHostInfo) -> Result<EdgeHostInfo, E
             "the mode must be {HOST_PASSTHROUGH} or {HOST_TERMINATE}"
         )));
     }
+    let cookie = match host.sticky_cookie.as_deref().map(str::trim) {
+        Some(cookie) if !cookie.is_empty() && !valid_cookie_name(cookie) => {
+            return Err(Error::new(format!(
+                "{cookie} is not a cookie name (letters, digits and !#$%&'*+-.^_`|~, at most {MAX_COOKIE_NAME})"
+            )))
+        }
+        cookie => cookie,
+    };
     let node = host.paired_node_id.trim();
     transaction(facade, true, || {
         let active = facade
@@ -144,11 +165,12 @@ pub fn add(facade: &EntityFacade, host: &EdgeHostInfo) -> Result<EdgeHostInfo, E
             .for_update(true)
             .one()?
             .map(|row| text(&row, "pairedNodeId"));
-        save(facade, &name, node, &host.mode_enum_id, existing)?;
+        save(facade, &name, node, &host.mode_enum_id, cookie, existing)?;
         Ok(EdgeHostInfo {
             host_name: name.clone(),
             paired_node_id: node.to_string(),
             mode_enum_id: host.mode_enum_id.clone(),
+            sticky_cookie: cookie.map(str::to_string),
         })
     })
 }
@@ -156,13 +178,30 @@ pub fn add(facade: &EntityFacade, host: &EdgeHostInfo) -> Result<EdgeHostInfo, E
 /// Write the row of `name` for `node`, given its holder as read (`existing`): a new name is inserted only if no row
 /// has come since the read (a lock on a missing row holds nothing), else the holder is read again, so of two
 /// concurrent claims of a new name the second is refused with [`super::claims::HELD_BY_ANOTHER`] rather than taking
-/// it; the holder's own name gets its new mode.
-fn save(facade: &EntityFacade, name: &str, node: &str, mode: &str, existing: Option<String>) -> Result<(), Error> {
+/// it; the holder's own name gets its new mode, and its sticky cookie when `cookie` is given (empty clears it).
+fn save(
+    facade: &EntityFacade,
+    name: &str,
+    node: &str,
+    mode: &str,
+    cookie: Option<&str>,
+    existing: Option<String>,
+) -> Result<(), Error> {
     let held = || Error::new(format!("{name}: {}", super::claims::HELD_BY_ANOTHER));
+    let cookie_value = |cookie: &str| {
+        if cookie.is_empty() {
+            Value::Null
+        } else {
+            Value::string(cookie)
+        }
+    };
     let mut row = facade.make_value(HOST)?;
     row.set("hostName", Value::string(name));
     row.set("pairedNodeId", Value::string(node));
     row.set("modeEnumId", Value::string(mode));
+    if let Some(cookie) = cookie {
+        row.set("stickyCookie", cookie_value(cookie));
+    }
     let holder = match existing {
         Some(holder) => holder,
         None => {
@@ -188,6 +227,9 @@ fn save(facade: &EntityFacade, name: &str, node: &str, mode: &str, existing: Opt
     let mut update = facade.make_value(HOST)?;
     update.set("hostName", Value::string(name));
     update.set("modeEnumId", Value::string(mode));
+    if let Some(cookie) = cookie {
+        update.set("stickyCookie", cookie_value(cookie));
+    }
     update.update(facade)?;
     Ok(())
 }
@@ -240,6 +282,13 @@ pub fn clients(facade: &EntityFacade) -> Result<Vec<EdgeClientInfo>, Error> {
                     .next()
                     .and_then(|number| number.parse::<i64>().ok())
                     .filter(|megabytes| *megabytes > 0),
+                members_linked: 0,
+                last_member_id: text(row, "lastMemberId"),
+                hold_new_member: text(row, "holdNewMember") == "Y",
+                approved_member_id: text(row, "approvedMemberId"),
+                takeover_date: row.get("takeoverDate").and_then(crate::user::value_millis),
+                takeover_from_id: text(row, "takeoverFromId"),
+                takeover_to_id: text(row, "takeoverToId"),
             })
             .collect())
     })

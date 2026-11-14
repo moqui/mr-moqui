@@ -214,6 +214,7 @@ fn host(name: &str, mode: &str) -> EdgeHostInfo {
         host_name: name.to_string(),
         paired_node_id: String::new(),
         mode_enum_id: mode.to_string(),
+        sticky_cookie: None,
     }
 }
 
@@ -313,7 +314,7 @@ impl LocalRole {
 
 impl Drop for LocalRole {
     fn drop(&mut self) {
-        moqui_lib::env::set_property("node_role", "edge".to_string());
+        moqui_lib::env::set_property("node_role", "front_edge".to_string());
         moqui_core::edge::clear_edge_link();
     }
 }
@@ -1048,7 +1049,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         "edge-setup-edge",
         EDGE_CONF,
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("smtp_listen_port", "0"),
             ("smtp_hostname", "edge.example.net"),

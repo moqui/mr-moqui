@@ -6,7 +6,7 @@
     session ends and call signaling over their cluster port. Sessions are rows in the shared database, so any member
     can serve any request; scheduled jobs take a lock row, so each runs on one member at a time.
     Use the Enterprise package (--enterprise): it has no embedded Postgres, so a member cannot start on a database of its
-    own by mistake. An edge node pooling and balancing the members is not built yet (plans/Edge-Node2.md, E17). -->
+    own by mistake. With an edge node in the load balancer's place, the members run MoquiPooledConf.xml. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
 

@@ -628,6 +628,30 @@ pub fn linked_sip_node(status: &super::LinkStatus) -> Result<&EdgeInfo, String> 
     Ok(&status.peer)
 }
 
+/// The lock row (`moqui.edge.EdgeSenderLock`) whose holder registers the trunks, on a node that takes links
+/// (plans/Edge-Node2.md §4.6): of the members of an edge cluster, each with a SIP engine that loads every trunk, only
+/// the holder registers them, so a provider's calls go to one contact.
+pub const TRUNK_LOCK: &str = "sipTrunks";
+
+/// Claim or renew the trunk registration lock for `member` for `lease`: true when it holds it now (it held it, or it
+/// was free or its lease lapsed by the database's clock), false while another member's lease lasts.
+///
+/// # Errors
+///
+/// When the lock row cannot be read or written.
+pub fn claim_trunk_lock(facade: &EntityFacade, member: &str, lease: std::time::Duration) -> Result<bool, Error> {
+    super::replica::sender::claim(facade, TRUNK_LOCK, member, lease).map(|claim| claim.holds())
+}
+
+/// Let the trunk registration lock go when `member` holds it, as its engine stops. True when it did.
+///
+/// # Errors
+///
+/// When the lock row cannot be written.
+pub fn release_trunk_lock(facade: &EntityFacade, member: &str) -> Result<bool, Error> {
+    super::replica::sender::release(facade, TRUNK_LOCK, member)
+}
+
 #[cfg(test)]
 #[path = "sip_tests.rs"]
 mod tests;

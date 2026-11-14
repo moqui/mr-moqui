@@ -53,13 +53,18 @@ mod etl_runs;
 mod devaide;
 #[cfg(all(feature = "rtc", feature = "sip"))]
 mod edge_allinone;
+mod edge_balance;
 mod edge_call;
 mod edge_chat;
+mod edge_cluster;
+mod edge_cluster_state;
 mod edge_domains;
 mod edge_domains_comms;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;
+mod edge_pool;
+mod edge_pool_work;
 #[cfg(feature = "sip")]
 mod edge_sip;
 mod edge_setup;

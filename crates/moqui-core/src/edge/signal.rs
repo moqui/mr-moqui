@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex};
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 
-use crate::notify::{TopicMessage, RTC_SIGNAL};
+use crate::notify::{TopicMessage, RTC_SIGNAL, WEB_BAN};
 
 /// The field an edge node stamps on each message a local node sent over its link, naming that node (E12): the media
 /// driver keys the call's room by it ([`super::media::room_key`]) and the engines run its work as that node's. A
@@ -50,8 +50,9 @@ pub fn link_node(body: &serde_json::Value) -> Option<&str> {
         .filter(|node| !node.is_empty())
 }
 
-/// The topics a message over the link may be on: what [`receive`] publishes. Anything else is refused there.
-pub const TOPICS: [&str; 1] = [RTC_SIGNAL];
+/// The topics a message over the link may be on: what [`receive`] publishes. Anything else is refused there. A web
+/// protection ban goes up only, from a local node to its edge node (plans/Edge-Node2.md §4.3).
+pub const TOPICS: [&str; 2] = [RTC_SIGNAL, WEB_BAN];
 
 /// Hands a message on a topic to the link, without waiting for it to be sent: Err when the link's queue is full
 /// (`overloaded`) or the link has ended.
@@ -118,6 +119,14 @@ pub fn route(instance_id: &str) -> Option<Sender> {
         return None;
     }
     lock(routes()).get(instance_id).map(|route| Arc::clone(&route.sender))
+}
+
+/// The nodes with a route now: the other end of each link up in this process.
+pub fn route_ids() -> Vec<String> {
+    if COUNT.load(Ordering::Acquire) == 0 {
+        return Vec::new();
+    }
+    lock(routes()).keys().cloned().collect()
 }
 
 /// Send `message` on `topic` to `instance_id` over its link, when a link to it is up; refused when it is a link's

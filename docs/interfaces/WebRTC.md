@@ -296,6 +296,11 @@ the edge node is not a member of the local node's cluster:
 - **Several local nodes** ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16): rooms are keyed by node and call, so
   each local node's calls keep apart on one media node, and each has its own TURN secret. A local node has at most
   `edge_call_legs_per_pairing` legs there at once (200; 0 for no cap): a leg past it is refused (`rtcError`).
+- **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18): each member is a media node of its own,
+  with its own `rtc_public_address` and TURN. The local node keeps a `CallMediaNode` row for each, written by the
+  replication sender of a clustered local node from its link to that member, and keeps each member's TURN secret (the
+  same for all, as they share `turn_auth_secret` and the pairing row). A call's legs are all on the member its call
+  chose, and its signaling goes over the link to that member. Cascading between edge members is later work.
 - **An all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) registers its own `CallMediaNode` for its
   own calls and is also the local node's media node. Rooms of the local node's calls are keyed by node and call, and
   the link stamps the sending node (`linkNode`) on each message, so the two sides' calls never meet. Recordings and
@@ -305,8 +310,9 @@ the edge node is not a member of the local node's cluster:
   only to a socket that bound that leg of that call with its media on the edge node; the edge node takes from the
   local node only frames whose replies go back to it, and media controls. Run as the link's delegate user, each
   delegated or queued service refuses a call whose media is not on the edge node.
-- **Pinned, alone, not cascaded.** Pairing pins the edge node's instance id (`edge_node_id`); a link naming another,
-  this node's own or a cluster member's is refused. A call on the edge node does not cascade (`rtc_cascade_enabled`
+- **Pinned, alone, not cascaded.** Pairing pins the edge node's link key, and its instance id (`edge_node_id`) is
+  learned on a link with that key: the members of an edge cluster each, all with the one key (plans/Edge-Node2.md
+  §4.6); a link naming this node's own id or a cluster member's is refused. A call on the edge node does not cascade (`rtc_cascade_enabled`
   leaves its legs there).
 - **A clustered local node.** Only the member that holds the link has the route to the edge node. A frame or control
   for the edge node on another member is refused ("the edge link to .. is down"; a browser's frame gets `unavailable`),

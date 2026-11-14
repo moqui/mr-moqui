@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The edge link (plans/archive/Edge-Node.md §5.2, §5.3, §5.7) for the System app: on a local node its Edge Node screen
-    (check, pair, status, unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired
+    (check, pair, status, unpair), and on an edge node (node_role=front_edge) its Edge Clients screen (pairing codes, paired
     local nodes, revoke, their public host names); the link's queue and replication on both. The bodies are Rust
     (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/, the edge
     feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into this
@@ -32,6 +32,8 @@ along with this software (see the LICENSE.md file). If not, see
             fingerprint.</description>
         <out-parameters>
             <parameter name="nodeRole"/>
+            <parameter name="takesLinks" type="Boolean"><description>This node takes links: node_role is set (front,
+                front_edge, edge or all-in-one, plans/Edge-Node2.md §4.3).</description></parameter>
             <parameter name="state"/>
             <parameter name="url"/>
             <parameter name="generation" type="Long"/>
@@ -54,6 +56,43 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="turnUrls" type="List"><description>The edge node's TURN URLs; empty without TURN.</description></parameter>
             <parameter name="compatible" type="Boolean"/>
             <parameter name="message"/>
+            <parameter name="edgeMemberList" type="List"><description>On a local node, its link to each member of its
+                edge cluster (plans/Edge-Node2.md §4.6), in instance id order; one for a single edge node. The fields
+                above are of the link that carries this node's work up (carriesWork), else of the first. instanceId is
+                empty until a link to the URL this node paired with came up; url is the member's edge_link_url, else that
+                URL; retired is a member gone from the edge cluster's list, not dialed again once its link
+                ends.</description>
+                <parameter name="member" type="Map">
+                    <parameter name="instanceId"/><parameter name="url"/><parameter name="state"/>
+                    <parameter name="generation" type="Long"/><parameter name="rttMs" type="Double"/>
+                    <parameter name="lastConnectDate" type="Timestamp"/><parameter name="lastError"/>
+                    <parameter name="reconnects" type="Long"/><parameter name="carriesWork" type="Boolean"/>
+                    <parameter name="retired" type="Boolean"/>
+                </parameter>
+            </parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgeCluster" type="rust" location="moqui_core::service::edge::get_edge_cluster"
+            allow-remote="false" transaction="ignore">
+        <description>On a node that takes links: the members of its cluster (plans/Edge-Node2.md §4.6) from their
+            moqui.server.ClusterMember rows, live or not, each with linkUrl (its edge_link_url, where local nodes dial
+            it; empty when it has none), heartbeatAgeMs (empty when no heartbeat was written) and version; thisMember is
+            the one answering. Its Hello answer lists the live ones, with their linkUrl, to every local node that links.
+            Where the link is not running (no HTTPS listener started it) the same from the rows and this node's
+            edge_link_url as it is now; on a node that takes no links, refused.</description>
+        <out-parameters>
+            <parameter name="memberList" type="List"><parameter name="member" type="Map">
+                <parameter name="instanceId"/><parameter name="linkUrl"/>
+                <parameter name="linkUrlUsable" type="Boolean"><description>linkUrl is an address the Hello answer
+                    sends (an https URL with a host); any other goes as none.</description></parameter>
+                <parameter name="live" type="Boolean"/>
+                <parameter name="heartbeatAgeMs" type="Long"/><parameter name="version"/>
+                <parameter name="thisMember" type="Boolean"/>
+                <parameter name="registersTrunks" type="Boolean"><description>It registers the SIP trunks: it holds the
+                    lock row sipTrunks (moqui.edge.EdgeSenderLock) while its lease lasts by the database's clock; of the
+                    members' SIP engines, only that one registers them.</description></parameter>
+            </parameter></parameter>
         </out-parameters>
     </service>
 
@@ -136,6 +175,18 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="setup" type="Map"><description>What the node's last Configure set besides its host
                     names: mailDomains, chatBridgeIds and passSites; empty before one.</description></parameter>
                 <parameter name="setupDate" type="Timestamp"/>
+                <parameter name="membersLinked" type="Long"><description>Its members linked now: every member of a
+                    local cluster links with the pairing's key (plans/Edge-Node2.md §4.4); generation is the newest of
+                    theirs. get#EdgeMembers has each.</description></parameter>
+                <parameter name="lastMemberId"/>
+                <parameter name="holdNewMember" type="Boolean"/>
+                <parameter name="approvedMemberId"/>
+                <parameter name="takeoverDate" type="Timestamp"><description>The last time a new node took the pairing
+                    over with none of its members linked (a standby, plans/Edge-Node2.md §4.5): from takeoverFromId to
+                    takeoverToId.</description></parameter>
+                <parameter name="takeoverFromId"><description>While set, that node is refused "taken over" until
+                    clear#EdgeTakeover.</description></parameter>
+                <parameter name="takeoverToId"/>
                 <parameter name="queueMaxMegabytes" type="Long"><description>The pairing's own queue cap; empty for the
                     conf's queue-max-megabytes.</description></parameter>
             </parameter></parameter>
@@ -184,10 +235,156 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="ping" noun="EdgeClient" type="rust" location="moqui_core::service::edge::ping_edge_client"
             allow-remote="false" transaction="ignore">
-        <description>On an edge node: a Ping down a linked local node's down connection; rttMs is its round
-            trip.</description>
-        <in-parameters><parameter name="pairedNodeId" required="true"/></in-parameters>
+        <description>On an edge node: a Ping down a linked local node's down connection, of its member instanceId
+            when given (whatever its state), else of a member that takes work; rttMs is its round trip.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="instanceId"/>
+        </in-parameters>
         <out-parameters><parameter name="rttMs" type="Double"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgeMembers" type="rust" location="moqui_core::service::edge::get_edge_members"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: the members of each pairing, of one with pairedNodeId (plans/Edge-Node2.md §4.4):
+            each member linked now with its state (starting, live, draining or stopping), each member of the cluster
+            list its linked members send that is not linked, and the nodes with the pairing's key refused or held lately.
+            condition is ok (live in its cluster and linked), notLinked (live in its cluster and not linked: a fault),
+            staleHeartbeat (linked, with a stale heartbeat in its cluster's list or not in it), otherVersion, stopped
+            (in the list with a stale heartbeat, not linked), held (a new node taking the pairing over, held for
+            approval) or refused (not in its linked members' cluster). The lists are in memory: after a restart they come
+            back with the first link. On a node that takes links where the link is not running, none; on any other node,
+            refused.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters>
+            <parameter name="memberList" type="List"><parameter name="member" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="instanceId"/>
+                <parameter name="linked" type="Boolean"/><parameter name="down" type="Boolean"/>
+                <parameter name="generation" type="Long"/><parameter name="remoteAddress"/><parameter name="state"/>
+                <parameter name="binaryVersion"/><parameter name="inCluster" type="Boolean"/>
+                <parameter name="liveInCluster" type="Boolean"/><parameter name="heartbeatAgeMs" type="Long"/>
+                <parameter name="version"/><parameter name="condition"/><parameter name="message"/>
+                <parameter name="lastSeenDate" type="Timestamp"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgeBalancing" type="rust" location="moqui_core::service::edge::get_edge_balancing"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: how each pool is balanced (plans/Edge-Node2.md §4.4, §4.10 Balancing), of one
+            pairing with pairedNodeId. The defaults from the edge conf: stickyCookie (the cookie a terminate host's
+            requests are sticky by where the host names none, EdgeHost.stickyCookie), setAsideFailures (the failures or
+            time-outs in a row that set a member aside) and setAsideSeconds (how long, before it is tried again). For each
+            member linked or sent work since the edge node started: whether it is linked, its state, whether it takes new
+            work (linked, live and not set aside), inFlight (requests, calls and tunnel opens not answered yet), requests
+            (sent to it in all), failuresInRow, setAsides (times set aside) and setAsideUntil while it is set aside. In
+            memory only. On a node that takes links where the link is not running, the defaults and no members; on any
+            other node, refused.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters>
+            <parameter name="stickyCookie"/>
+            <parameter name="setAsideFailures" type="Integer"/>
+            <parameter name="setAsideSeconds" type="Long"/>
+            <parameter name="memberList" type="List"><parameter name="member" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="instanceId"/>
+                <parameter name="linked" type="Boolean"/><parameter name="state"/>
+                <parameter name="takesWork" type="Boolean"/><parameter name="inFlight" type="Long"/>
+                <parameter name="requests" type="Long"/><parameter name="failuresInRow" type="Integer"/>
+                <parameter name="setAsides" type="Long"/><parameter name="setAside" type="Boolean"/>
+                <parameter name="setAsideUntil" type="Timestamp"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="drain" noun="EdgeMember" type="rust" location="moqui_core::service::edge::drain_edge_member"
+            allow-remote="false" transaction="ignore">
+        <description>Drain a member of a pool, or bring it back with drain false (plans/Edge-Node2.md §4.4): a drained
+            member finishes what it has and gets no new work, so a pool can be upgraded a member at a time. On an edge
+            node the member pairedNodeId and instanceId name is asked down its link; on a local node this node drains
+            itself (its moqui.monitor.InstanceDrain row, so /health answers 503 too) and tells its links at once. state
+            is the member's after. Nothing is kept on the edge node.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId"/>
+            <parameter name="instanceId"/>
+            <parameter name="drain" type="Boolean" default-value="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="state"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="LocalCluster" type="rust" location="moqui_core::service::edge::get_local_cluster"
+            allow-remote="false" transaction="ignore">
+        <description>On a local node: this member and its cluster as its links tell the edge node (plans/Edge-Node2.md
+            §4.4; System › Edge Node): its instanceId and state on its links (starting, live or draining; drain#EdgeMember
+            with no pairing drains it), pairingId (edge_node_pairing, the id the edge node keys every member by), and each
+            member of its cluster (moqui.server.ClusterMember) with its heartbeat's age (empty when none was written),
+            whether it is live and its version, own for this one. Read from this node's database, so it answers with the
+            link down too.</description>
+        <out-parameters>
+            <parameter name="instanceId"/>
+            <parameter name="state"/>
+            <parameter name="pairingId"/>
+            <parameter name="memberList" type="List"><parameter name="member" type="Map">
+                <parameter name="instanceId"/><parameter name="own" type="Boolean"/><parameter name="live" type="Boolean"/>
+                <parameter name="heartbeatAgeMs" type="Long"/><parameter name="version"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="hold" noun="NewMembers" type="rust" location="moqui_core::service::edge::hold_new_members"
+            allow-remote="false">
+        <description>On an edge node: with hold true, a new node that would take pairing pairedNodeId over while none of
+            its members is linked (a standby, plans/Edge-Node2.md §4.5) is refused, "held for approval", until
+            approve#EdgeMember; with hold false (the default) it is admitted, logged and told to the administrators.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="hold" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="hold" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="approve" noun="EdgeMember" type="rust" location="moqui_core::service::edge::approve_edge_member"
+            allow-remote="false">
+        <description>On an edge node: approve the new node instanceId held for taking pairing pairedNodeId over
+            (plans/Edge-Node2.md §4.5). Its next link is admitted, with the takeover's notice.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="instanceId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="approved" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="clear" noun="EdgeTakeover" type="rust" location="moqui_core::service::edge::clear_edge_takeover"
+            allow-remote="false">
+        <description>On an edge node: let the node the last takeover of pairing pairedNodeId displaced
+            (EdgeClient.takeoverFromId) link again (plans/Edge-Node2.md §4.5). Until then it is refused, "taken over", so
+            the link never goes back and forth between two copies of the data. The takeover's date and nodes stay.</description>
+        <in-parameters><parameter name="pairedNodeId" required="true"/></in-parameters>
+        <out-parameters><parameter name="cleared" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="forget" noun="EdgeMember" type="rust" location="moqui_core::service::edge::forget_edge_member"
+            allow-remote="false">
+        <description>On an edge node: forget the key pinned for member instanceId of pairing pairedNodeId
+            (plans/Edge-Node2.md §4.11), as for a member made again with a new key (runtime/db/edge_member_key lost). Its
+            next link is then a new node's: admitted by its linked members' list, or with none linked a takeover.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="instanceId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="forgotten" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="deliver" noun="ItemsAgain" type="rust" location="moqui_core::service::edge::deliver_items_again"
+            allow-remote="false">
+        <description>On an edge node: queue again the items delivered to pairing pairedNodeId since sinceDate
+            (plans/Edge-Node2.md §4.5, Deliver again since), as after its standby was restored from a backup that lacks
+            them. Delivered items are kept for the queue's retention period; the local node's receipts make an item it
+            has applied do nothing. itemCount is how many were queued again.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="sinceDate" type="Timestamp" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="itemCount" type="Long"/></out-parameters>
     </service>
 
     <service verb="get" noun="EdgeHosts" type="rust" location="moqui_core::service::edge::get_edge_hosts"
@@ -198,6 +395,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="hostList" type="List"><parameter name="host" type="Map">
                 <parameter name="hostName"/><parameter name="pairedNodeId"/><parameter name="modeEnumId"/>
+                <parameter name="stickyCookie"><description>The cookie its requests are sticky by; empty for the edge
+                    conf's sticky-cookie.</description></parameter>
             </parameter></parameter>
         </out-parameters>
     </service>
@@ -212,8 +411,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="hostName" required="true"/>
             <parameter name="pairedNodeId" required="true"/>
             <parameter name="modeEnumId" default-value="EdgeHostPassthrough"/>
+            <parameter name="stickyCookie"><description>For a terminate host whose pool has several members, the cookie
+                its requests are sticky by (plans/Edge-Node2.md §4.4): a cookie name, or empty for the edge conf's
+                sticky-cookie (moqui.session, the session cookie, by default). Left out, the name keeps its
+                own.</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="hostName"/><parameter name="modeEnumId"/></out-parameters>
+        <out-parameters><parameter name="hostName"/><parameter name="modeEnumId"/><parameter name="stickyCookie"/></out-parameters>
     </service>
 
     <service verb="remove" noun="EdgeHost" type="rust" location="moqui_core::service::edge::remove_edge_host"

@@ -186,36 +186,49 @@ pub fn sip_trunks_of(factory: &ExecutionContextFactory, node: &str) -> Vec<SipTr
         .collect()
 }
 
-/// The edge node's TURN secret on a local node, by the edge node's instance id, with the id this node paired as.
-struct PeerTurn {
-    instance_id: String,
-    secret: String,
-    pairing: String,
-}
-
+/// The TURN secret of each edge member on a local node, by the member's instance id: the secret, and the id this node
+/// paired as.
 #[derive(Default)]
-struct PeerTurns(Mutex<Option<PeerTurn>>);
+struct PeerTurns(Mutex<std::collections::HashMap<String, (String, String)>>);
 
-/// On a local node, from a new link's Hello answer: the TURN secret of the edge node `instance_id` (empty when its TURN
-/// is off, which forgets the one before), its pairing's own (E16), and `pairing`, the id this node paired as, which
-/// its credentials name ([`turn_username`]). Unpairing forgets it ([`clear_peer_turn`]); a link that is only lost
-/// keeps it, for the credentials of calls going on.
+/// The most edge members whose TURN secrets a local node keeps.
+const MAX_PEER_TURNS: usize = 64;
+
+/// On a local node, from a new link's Hello answer: the TURN secret of the edge node or edge cluster member
+/// `instance_id` (empty when its TURN is off, which forgets the one before), its pairing's own (E16), and `pairing`, the
+/// id this node paired as, which its credentials name ([`turn_username`]). Each member of an edge cluster is a media
+/// node of its own (plans/Edge-Node2.md §4.6), so each link keeps its member's; they share `turn_auth_secret` and the
+/// pairing row, so the secrets are the same. Unpairing forgets them ([`clear_peer_turn`]); a link that is only lost
+/// keeps its member's, for the credentials of calls going on.
 pub fn set_peer_turn(factory: &ExecutionContextFactory, instance_id: &str, secret: &str, pairing: &str) {
+    if instance_id.is_empty() {
+        return;
+    }
     let slot = factory.extension(|_| PeerTurns::default());
-    *lock(&slot.0) = (!instance_id.is_empty() && !secret.is_empty()).then(|| PeerTurn {
-        instance_id: instance_id.to_string(),
-        secret: secret.to_string(),
-        pairing: pairing.to_string(),
-    });
+    let mut peers = lock(&slot.0);
+    if secret.is_empty() {
+        peers.remove(instance_id);
+    } else if peers.len() < MAX_PEER_TURNS || peers.contains_key(instance_id) {
+        peers.insert(instance_id.to_string(), (secret.to_string(), pairing.to_string()));
+    } else {
+        tracing::error!(
+            "Edge link: the TURN secret of edge member {instance_id} is not kept, as {MAX_PEER_TURNS} are already"
+        );
+    }
 }
 
-/// On a local node that unpaired: forget its edge node's TURN secret.
+/// On a local node whose edge cluster's list changed: forget the TURN secrets of members gone from it.
+pub fn retain_peer_turns(factory: &ExecutionContextFactory, keep: &[String]) {
+    lock(&factory.extension(|_| PeerTurns::default()).0).retain(|id, _| keep.contains(id));
+}
+
+/// On a local node that unpaired: forget its edge members' TURN secrets.
 pub fn clear_peer_turn(factory: &ExecutionContextFactory) {
-    *lock(&factory.extension(|_| PeerTurns::default()).0) = None;
+    lock(&factory.extension(|_| PeerTurns::default()).0).clear();
 }
 
 /// The secret the TURN servers of the media node `instance_id` check credentials with: its edge node's, when it is
-/// this local node's edge node, else none (this node's own `turn_auth_secret` signs them).
+/// this local node's edge node or one of its edge cluster's members, else none (this node's own `turn_auth_secret` signs them).
 pub fn turn_secret(factory: &ExecutionContextFactory, instance_id: &str) -> Option<String> {
     turn_peer(factory, instance_id).map(|(secret, _)| secret)
 }
@@ -223,10 +236,8 @@ pub fn turn_secret(factory: &ExecutionContextFactory, instance_id: &str) -> Opti
 /// [`turn_secret`] with the pairing this node's credentials for that media node name.
 pub fn turn_peer(factory: &ExecutionContextFactory, instance_id: &str) -> Option<(String, String)> {
     let slot = factory.extension(|_| PeerTurns::default());
-    let peer = lock(&slot.0);
-    peer.as_ref()
-        .filter(|peer| !instance_id.is_empty() && peer.instance_id == instance_id)
-        .map(|peer| (peer.secret.clone(), peer.pairing.clone()))
+    let peers = lock(&slot.0);
+    peers.get(instance_id).cloned()
 }
 
 /// Between a leg and its pairing in a TURN username (`moqui_rtc::turn::PAIRING_SEPARATOR`).

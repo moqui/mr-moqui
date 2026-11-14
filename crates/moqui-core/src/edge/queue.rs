@@ -36,8 +36,10 @@
 //! the delivery is answered, applied or not: each attempt sends the content again. A copy whose delivery never came is
 //! removed by the retention pass. Content counts toward the size cap with the payload.
 //!
-//! On a clustered local node only the member that holds the link sends its outbox (the others' items wait for it, by
-//! lease); a lock row for that is later work (plans/archive/Edge-Node.md §2).
+//! A local node's rows are keyed by one id for its whole cluster ([`local_node_id`], its pairing), so every member that links sends
+//! the outbox and any member's receipt makes an item applied once (plans/Edge-Node2.md §4.4, "Work from the pool to the
+//! edge node"): each claims a head by its lease, so the items of one key still go one at a time and in order, and a
+//! member that starts delivering lets go only of its own earlier leases ([`release_leases`]).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -160,9 +162,31 @@ pub fn inbound(settings: &EdgeSettings) -> &'static str {
     }
 }
 
-/// A local node's own id in its queue rows: its instance id (the edge node keys its rows by the id it paired with).
+/// The pairing a local node's link said it is (`HelloReply.pairing_id`), kept per server.
+#[derive(Default)]
+struct LinkedPairing(Mutex<String>);
+
+/// Keep the pairing this server's edge link said it is (plans/Edge-Node2.md §4.4): what [`local_node_id`] answers from
+/// then on.
+pub fn set_pairing_id(factory: &ExecutionContextFactory, pairing: &str) {
+    let slot = factory.extension(|_| LinkedPairing::default());
+    *lock(&slot.0) = pairing.to_string();
+}
+
+/// A local node's own id in its queue rows and receipts: the pairing it is known by on the edge node, so every member
+/// of its cluster, and a standby that takes over, sends the same outbox and finds the same receipts (plans/Edge-Node2.md
+/// §4.4). As its link said it ([`set_pairing_id`]), else as pairing wrote it (`edge_node_pairing`, in the `.env` every
+/// member shares), else its instance id (a node paired before E17, which the edge node keys by the id it paired with).
 pub fn local_node_id(factory: &ExecutionContextFactory) -> String {
-    crate::cluster::instance_id(factory).unwrap_or_else(|| "local".to_string())
+    let linked = lock(&factory.extension(|_| LinkedPairing::default()).0).clone();
+    if !linked.is_empty() {
+        return linked;
+    }
+    let pairing = moqui_lib::env::get_prop_or_env(super::NODE_PAIRING);
+    match pairing.trim() {
+        "" => crate::cluster::instance_id(factory).unwrap_or_else(|| "local".to_string()),
+        pairing => pairing.to_string(),
+    }
 }
 
 fn text(row: &EntityValue, field: &str) -> String {
@@ -509,43 +533,36 @@ pub fn due_heads(facade: &EntityFacade, node: &str, direction: &str, now: i64) -
 
 /// Hold `item` for a delivery by `owner` when it is still pending, at the attempt count read, and not held by another;
 /// its attempt count goes up by one. The item with its payload, or `None` when another holds it.
+///
+/// The row is read `FOR UPDATE` and checked before it is written, in one transaction: a member that reads it at the same
+/// time waits for this one's commit and then finds it held (plans/Edge-Node2.md §4.4). An entity `update_all` with the
+/// same conditions is not enough: it reads the rows and then updates each by its key, so two members could both claim.
 pub fn claim(facade: &EntityFacade, item: &QueueItem, owner: &str, now: i64) -> Result<Option<QueueItem>, Error> {
-    let claimed = transaction(facade, TransactionAttribute::ForceNew, || {
-        facade
+    transaction(facade, TransactionAttribute::ForceNew, || {
+        let Some(mut row) = facade
             .find(QUEUE_ITEM)?
             .eq("queueItemId", Value::string(&item.queue_item_id))
-            .eq("statusEnumId", Value::string(PENDING))
-            .eq("attemptCount", Value::I64(i64::from(item.attempts)))
-            .condition(Condition::or(vec![
-                Condition::is_null("leaseExpiresDate"),
-                Condition::less_equal("leaseExpiresDate", stamp_value(now)),
-            ]))
+            .use_cache(false)
+            .for_update(true)
             .disable_authz()
-            .update_all([
-                ("attemptCount".to_string(), Value::I64(i64::from(item.attempts) + 1)),
-                ("leaseOwner".to_string(), Value::string(owner)),
-                ("leaseExpiresDate".to_string(), stamp_value(now + LEASE_MILLIS)),
-                ("lastAttemptDate".to_string(), stamp_value(now)),
-            ])
-    })?;
-    if claimed != 1 {
-        return Ok(None);
-    }
-    let body = transaction(facade, TransactionAttribute::UseOrBegin, || {
-        facade
-            .find(QUEUE_ITEM)?
-            .eq("queueItemId", Value::string(&item.queue_item_id))
-            .select_field("payload")
-            .select_field("contentLocation")
-            .disable_authz()
-            .one()
-    })?;
-    let mut claimed = item.clone();
-    if let Some(body) = body {
-        claimed.payload = text(&body, "payload");
-        claimed.content_location = text(&body, "contentLocation");
-    }
-    Ok(Some(claimed))
+            .one()?
+        else {
+            return Ok(None);
+        };
+        let free = millis(&row, "leaseExpiresDate").is_none_or(|until| until <= now);
+        if text(&row, "statusEnumId") != PENDING || number(&row, "attemptCount") != i64::from(item.attempts) || !free {
+            return Ok(None);
+        }
+        row.set("attemptCount", Value::I64(i64::from(item.attempts) + 1));
+        row.set("leaseOwner", Value::string(owner));
+        row.set("leaseExpiresDate", stamp_value(now + LEASE_MILLIS));
+        row.set("lastAttemptDate", stamp_value(now));
+        let mut claimed = item.clone();
+        claimed.payload = text(&row, "payload");
+        claimed.content_location = text(&row, "contentLocation");
+        row.update(facade)?;
+        Ok(Some(claimed))
+    })
 }
 
 /// The content of a claimed item, to send before its delivery: `None` when it has none. Only this node's own copy
@@ -650,23 +667,49 @@ fn remove_content(resources: &ResourceFacade, facade: &EntityFacade, location: &
     }
 }
 
-/// Let go of the leases on `node`'s items going `direction`: a delivery starting on a new link takes over from one an
-/// ended link cut off, whose items would otherwise wait for their leases to run out. One delivery runs per node and
-/// direction at a time.
-pub fn release_leases(facade: &EntityFacade, node: &str, direction: &str) -> Result<i64, Error> {
+/// Let go of the leases on `node`'s items going `direction` whose owner starts with `owner_prefix`: a delivery starting
+/// on a new link takes over from one an ended link of the same sender cut off, whose items would otherwise wait for
+/// their leases to run out. Another member's leases, which name it, are left: its delivery may be on its way
+/// (plans/Edge-Node2.md §4.4). One delivery runs per sender, node and direction at a time.
+pub fn release_leases(facade: &EntityFacade, node: &str, direction: &str, owner_prefix: &str) -> Result<i64, Error> {
     transaction(facade, TransactionAttribute::ForceNew, || {
-        facade
+        let held = facade
             .find(QUEUE_ITEM)?
             .eq("pairedNodeId", Value::string(node))
             .eq("directionEnumId", Value::string(direction))
             .eq("statusEnumId", Value::string(PENDING))
             .condition(Condition::is_not_null("leaseOwner"))
             .select_field("queueItemId")
+            .select_field("leaseOwner")
             .disable_authz()
-            .update_all([
-                ("leaseOwner".to_string(), Value::Null),
-                ("leaseExpiresDate".to_string(), Value::Null),
-            ])
+            .list()?;
+        // by its owner's text, not a LIKE pattern, which an id's `_` would widen
+        let ids: Vec<String> = held
+            .values()
+            .iter()
+            .filter(|row| text(row, "leaseOwner").starts_with(owner_prefix))
+            .map(|row| text(row, "queueItemId"))
+            .collect();
+        let mut released = 0;
+        for id in ids {
+            // read for update: one another member took over since is left
+            let row = facade
+                .find(QUEUE_ITEM)?
+                .eq("queueItemId", Value::string(&id))
+                .use_cache(false)
+                .for_update(true)
+                .disable_authz()
+                .one()?;
+            if let Some(mut row) = row
+                .filter(|row| text(row, "statusEnumId") == PENDING && text(row, "leaseOwner").starts_with(owner_prefix))
+            {
+                row.set("leaseOwner", Value::Null);
+                row.set("leaseExpiresDate", Value::Null);
+                row.update(facade)?;
+                released += 1;
+            }
+        }
+        Ok(released)
     })
 }
 
@@ -702,25 +745,85 @@ pub fn fail_pending(
         })?
     };
     let failed = transaction(facade, TransactionAttribute::ForceNew, || {
-        facade
+        let ids: Vec<String> = facade
             .find(QUEUE_ITEM)?
             .eq("directionEnumId", Value::string(direction))
             .eq("statusEnumId", Value::string(PENDING))
             .select_field("queueItemId")
             .disable_authz()
-            .update_all([
-                ("statusEnumId".to_string(), Value::string(FAILED)),
-                ("failedDate".to_string(), stamp_value(now)),
-                ("lastErrorText".to_string(), Value::string(reason)),
-                ("nextAttemptDate".to_string(), Value::Null),
-                ("leaseOwner".to_string(), Value::Null),
-                ("leaseExpiresDate".to_string(), Value::Null),
-            ])
+            .list()?
+            .values()
+            .iter()
+            .map(|row| text(row, "queueItemId"))
+            .collect();
+        let mut failed = 0;
+        for id in ids {
+            let set = set_if_pending(
+                facade,
+                &id,
+                &[
+                    ("statusEnumId", Value::string(FAILED)),
+                    ("failedDate", stamp_value(now)),
+                    ("lastErrorText", Value::string(reason)),
+                    ("nextAttemptDate", Value::Null),
+                    ("leaseOwner", Value::Null),
+                    ("leaseExpiresDate", Value::Null),
+                ],
+            )?;
+            failed += i64::from(set);
+        }
+        Ok(failed)
     })?;
     for id in told {
         notify_failed(facade, settings, &id, reason);
     }
     Ok(failed)
+}
+
+/// Deliver again the items for pairing `paired_node_id` that were delivered at or after `since` (epoch milliseconds),
+/// in this node's outbound direction (plans/Edge-Node2.md §4.5, "Deliver again since"): after a standby is restored
+/// from a backup, its database lacks what was delivered since. Each goes back to pending in its key's order, its
+/// attempts counted from none; the receiver's receipts make an item it still has applied do nothing. Delivered items
+/// are kept for the retention period, so what is older than that is gone. The number of items queued again.
+///
+/// # Errors
+///
+/// When the rows cannot be updated.
+pub fn deliver_again_since(
+    facade: &EntityFacade,
+    settings: &EdgeSettings,
+    paired_node_id: &str,
+    since: i64,
+) -> Result<i64, Error> {
+    let direction = outbound(settings);
+    let again = transaction(facade, TransactionAttribute::ForceNew, || {
+        facade
+            .find(QUEUE_ITEM)?
+            .eq("pairedNodeId", Value::string(paired_node_id))
+            .eq("directionEnumId", Value::string(direction))
+            .eq("statusEnumId", Value::string(DELIVERED))
+            .condition(Condition::greater_equal("deliveredDate", stamp_value(since)))
+            .select_field("queueItemId")
+            .disable_authz()
+            .update_all([
+                ("statusEnumId".to_string(), Value::string(PENDING)),
+                ("deliveredDate".to_string(), Value::Null),
+                ("attemptCount".to_string(), Value::I64(0)),
+                ("waitCount".to_string(), Value::I64(0)),
+                ("nextAttemptDate".to_string(), Value::Null),
+                ("leaseOwner".to_string(), Value::Null),
+                ("leaseExpiresDate".to_string(), Value::Null),
+                (
+                    "lastErrorText".to_string(),
+                    Value::string("delivered again (Deliver again since)"),
+                ),
+            ])
+    })?;
+    if again > 0 {
+        tracing::warn!("Edge queue: {again} items delivered to {paired_node_id} since {since} are queued again");
+        wake(facade);
+    }
+    Ok(again)
 }
 
 /// Tell the failed-service of item `id`'s kind (`queue-kind` `failed-service`), on this sender, that it failed for
@@ -881,15 +984,22 @@ pub fn finish(
     fields.push(("leaseOwner".to_string(), Value::Null));
     fields.push(("leaseExpiresDate".to_string(), Value::Null));
     transaction(facade, TransactionAttribute::ForceNew, || {
-        // only while the row is still this attempt's
-        facade
+        // only while the row is still this attempt's, read for update so another member's claim waits for it
+        let row = facade
             .find(QUEUE_ITEM)?
             .eq("queueItemId", Value::string(&item.queue_item_id))
-            .eq("statusEnumId", Value::string(PENDING))
-            .eq("attemptCount", Value::I64(i64::from(attempt)))
-            .select_field("queueItemId")
+            .use_cache(false)
+            .for_update(true)
             .disable_authz()
-            .update_all(fields)?;
+            .one()?;
+        if let Some(mut row) =
+            row.filter(|row| text(row, "statusEnumId") == PENDING && number(row, "attemptCount") == i64::from(attempt))
+        {
+            for (name, value) in fields {
+                row.set(name, value);
+            }
+            row.update(facade)?;
+        }
         Ok(())
     })?;
     if step == Step::Failed {
@@ -1192,23 +1302,42 @@ fn remove_all(
     }
 }
 
+/// Set `fields` on item `id` when it is still pending, read `FOR UPDATE` in the caller's transaction, so a delivery's
+/// answer written at the same time (a member's [`finish`]) is not overwritten: true when it was set.
+fn set_if_pending(facade: &EntityFacade, id: &str, fields: &[(&str, Value)]) -> Result<bool, Error> {
+    let row = facade
+        .find(QUEUE_ITEM)?
+        .eq("queueItemId", Value::string(id))
+        .use_cache(false)
+        .for_update(true)
+        .disable_authz()
+        .one()?;
+    let Some(mut row) = row.filter(|row| text(row, "statusEnumId") == PENDING) else {
+        return Ok(false);
+    };
+    for (name, value) in fields {
+        row.set(*name, value.clone());
+    }
+    row.update(facade)?;
+    Ok(true)
+}
+
 /// Fail a pending item with `reason`, logged with its name: true when it was still pending.
 fn expire(facade: &EntityFacade, row: &EntityValue, reason: &str, now: i64) -> bool {
     let id = text(row, "queueItemId");
     let failed = transaction(facade, TransactionAttribute::ForceNew, || {
-        facade
-            .find(QUEUE_ITEM)?
-            .eq("queueItemId", Value::string(&id))
-            .eq("statusEnumId", Value::string(PENDING))
-            .select_field("queueItemId")
-            .disable_authz()
-            .update_all([
-                ("statusEnumId".to_string(), Value::string(FAILED)),
-                ("failedDate".to_string(), stamp_value(now)),
-                ("lastErrorText".to_string(), Value::string(reason)),
-                ("leaseOwner".to_string(), Value::Null),
-                ("leaseExpiresDate".to_string(), Value::Null),
-            ])
+        set_if_pending(
+            facade,
+            &id,
+            &[
+                ("statusEnumId", Value::string(FAILED)),
+                ("failedDate", stamp_value(now)),
+                ("lastErrorText", Value::string(reason)),
+                ("leaseOwner", Value::Null),
+                ("leaseExpiresDate", Value::Null),
+            ],
+        )
+        .map(i64::from)
     });
     match failed {
         Ok(count) => {

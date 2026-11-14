@@ -33,6 +33,26 @@ impl EdgeLink for Fake {
             generation: 7,
             rtt_ms: Some(1.5),
             link_fingerprint: "cd".repeat(32),
+            // a link to each member of an edge cluster, the second carrying the work up
+            members: vec![
+                crate::edge::EdgeMemberLink {
+                    instance_id: "edge-a".to_string(),
+                    url: "https://edge-a.test".to_string(),
+                    state: LinkState::Retrying,
+                    last_error: "refused".to_string(),
+                    retired: true,
+                    ..crate::edge::EdgeMemberLink::default()
+                },
+                crate::edge::EdgeMemberLink {
+                    instance_id: "edge-b".to_string(),
+                    url: "https://edge-b.test".to_string(),
+                    state: LinkState::Linked,
+                    generation: 3,
+                    rtt_ms: Some(2.5),
+                    carries_work: true,
+                    ..crate::edge::EdgeMemberLink::default()
+                },
+            ],
             ..LinkStatus::default()
         }
     }
@@ -116,6 +136,22 @@ fn the_services_pass_their_parameters_through_and_shape_the_answers() {
     assert_eq!(to_plain_string(&status["state"]), "linked");
     assert_eq!(status["generation"], Value::I64(7));
     assert_eq!(to_plain_string(&status["linkFingerprint"]), "cd".repeat(32));
+    let Value::List(links) = &status["edgeMemberList"] else {
+        panic!("{status:?}")
+    };
+    let field = |at: usize, name: &str| match &links[at] {
+        Value::Map(row) => row[name].clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(links.len(), 2);
+    assert_eq!(to_plain_string(&field(0, "url")), "https://edge-a.test");
+    assert_eq!(to_plain_string(&field(0, "state")), "retrying");
+    assert_eq!(field(0, "retired"), Value::Bool(true));
+    assert_eq!(field(0, "carriesWork"), Value::Bool(false));
+    assert_eq!(to_plain_string(&field(1, "instanceId")), "edge-b");
+    assert_eq!(field(1, "carriesWork"), Value::Bool(true));
+    assert_eq!(field(1, "generation"), Value::I64(3));
+    assert_eq!(field(1, "rttMs"), Value::F64(2.5));
     let paired = pair_edge_node(
         &params(&[
             ("url", "https://edge.test"),
@@ -153,5 +189,53 @@ fn the_services_pass_their_parameters_through_and_shape_the_answers() {
         .unwrap_err()
         .message()
         .contains("only a node that takes links"));
+    crate::edge::clear_edge_link();
+}
+
+/// A link installed with its HTTPS listener off: it serves no links.
+struct Off;
+
+impl EdgeLink for Off {
+    fn serving(&self) -> bool {
+        false
+    }
+    fn status(&self) -> LinkStatus {
+        Fake.status()
+    }
+    fn check(&self, url: &str) -> Result<EdgeInfo, LibError> {
+        Fake.check(url)
+    }
+    fn pair(&self, url: &str, code: &str, expect: Option<&str>) -> Result<PairResult, LibError> {
+        Fake.pair(url, code, expect)
+    }
+    fn unpair(&self) -> Result<(), LibError> {
+        Ok(())
+    }
+    fn create_pairing_code(&self, valid_minutes: u32) -> Result<PairingCode, LibError> {
+        Fake.create_pairing_code(valid_minutes)
+    }
+    fn clients(&self) -> Result<Vec<EdgeClientInfo>, LibError> {
+        Err(LibError::new(
+            "this edge node takes no links: its HTTPS listener is off",
+        ))
+    }
+    fn revoke(&self, _paired_node_id: &str) -> Result<bool, LibError> {
+        Ok(false)
+    }
+    fn ping_client(&self, _paired_node_id: &str) -> Result<f64, LibError> {
+        Err(LibError::new("off"))
+    }
+}
+
+#[test]
+fn a_link_whose_listener_is_off_is_not_started_and_serves_nothing_in_memory() {
+    let _lock = slot_lock();
+    crate::edge::install_edge_link(Arc::new(Off));
+    let facade = crate::testing::open();
+    let status = get_link_status(&BTreeMap::new(), &facade).unwrap();
+    assert_eq!(to_plain_string(&status["state"]), "notStarted");
+    assert!(crate::edge::serving_link().is_none());
+    crate::edge::install_edge_link(Arc::new(Fake));
+    assert!(crate::edge::serving_link().is_some());
     crate::edge::clear_edge_link();
 }

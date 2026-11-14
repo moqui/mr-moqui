@@ -107,7 +107,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
         bind.filter(|bind| !all_in_one || super::tunnel::own_xmpp_clash(*bind).is_none())
     };
     let (xmpp_tunnel, xmpp_tls_tunnel) = (tunnel(config.xmpp_tunnel), tunnel(config.xmpp_tls_tunnel));
-    Offer {
+    let mut offer = Offer {
         web: Some(WebOffer {
             public_names: config.public_names.clone(),
             modes: vec![HOST_PASSTHROUGH.to_string(), HOST_TERMINATE.to_string()],
@@ -170,6 +170,33 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
         not_available: setup::NOT_AVAILABLE.iter().map(|area| (*area).to_string()).collect(),
         addresses,
         node_hosts: Vec::new(),
+    };
+    for_role(&mut offer, moqui_core::edge::settings(factory).role);
+    offer
+}
+
+/// What a node of `role` offers of its option sets (plans/Edge-Node2.md §4.3): a front node (`front`) web access and
+/// ports only, an edge node behind a front (`edge`) no web access or ports of its own, which the front forwards; the
+/// rest both. Each area it does not have is named not available.
+pub(crate) fn for_role(offer: &mut Offer, role: moqui_core::edge::NodeRole) {
+    let mut without = Vec::new();
+    if !role.has_front() {
+        offer.web = Some(WebOffer::default());
+        offer.xmpp = Some(ProtoXmpp::default());
+        without.extend(["web", "xmpp"]);
+    }
+    if !role.has_edge() {
+        offer.mail = Some(ProtoMail::default());
+        offer.chat = Some(ProtoChat::default());
+        offer.pass = Some(ProtoPass::default());
+        offer.calls = Some(ProtoCalls::default());
+        offer.sip = Some(ProtoSip::default());
+        without.extend(["mail", "chat", "pass", CALLS_AREA, SIP_AREA]);
+    }
+    for area in without {
+        if !offer.not_available.iter().any(|named| named == area) {
+            offer.not_available.push(area.to_string());
+        }
     }
 }
 
@@ -178,7 +205,10 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
 /// up after the link (`accept.rs` `hello`).
 pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let offer = base_offer(factory, config);
-    let mut areas = vec!["web".to_string()];
+    let mut areas = Vec::new();
+    if offer.web.as_ref().is_some_and(|web| !web.modes.is_empty()) {
+        areas.push("web".to_string());
+    }
     if offer.mail.as_ref().is_some_and(|mail| mail.available) {
         areas.push("mail".to_string());
     }
@@ -386,6 +416,64 @@ fn refuse_claimed_items(
         .collect())
 }
 
+/// What a Configure of local node `node` asks of a set this node's `role` has not (plans/Edge-Node2.md §4.3): host names
+/// and the XMPP domain on a node without the front set (an edge node behind a front node, whose web access the front
+/// forwards), mail domains, chat bridges, PASS sites and the SIP domain on a node without the edge set (a front node).
+/// Each is answered refused and taken out of `checked`.
+fn refuse_other_sets(
+    role: moqui_core::edge::NodeRole,
+    node: &str,
+    checked: &mut EdgeSetup,
+    sip_domain: &mut String,
+) -> Vec<HostSetting> {
+    let mut refused = Vec::new();
+    let mut refuse = |name: &str, field: &str, why: &str| {
+        refused.push(HostSetting {
+            host_name: name.to_string(),
+            mode: field.to_string(),
+            error: why.to_string(),
+        });
+    };
+    if !role.has_front() {
+        let why = "this edge node forwards no web access or ports (node_role edge): the front node takes this name";
+        if checked.set_hosts {
+            for host in &checked.hosts {
+                refuse(&host.host_name, &host.mode_enum_id, why);
+            }
+            checked.hosts.clear();
+            checked.set_hosts = false;
+        }
+        if !checked.xmpp_domain.is_empty() {
+            refuse(&checked.xmpp_domain, "xmppDomain", why);
+            checked.xmpp_domain.clear();
+        }
+    }
+    if !role.has_edge() {
+        let why = "this front node has no mail, chat, PASS or SIP (node_role front): its edge node takes this";
+        for (field, items) in [
+            ("mailDomains", &mut checked.mail_domains),
+            ("chatBridgeIds", &mut checked.chat_bridge_ids),
+            ("passSites", &mut checked.pass_sites),
+        ] {
+            for item in items.drain(..) {
+                refuse(&item, field, why);
+            }
+        }
+        if !sip_domain.is_empty() {
+            refuse(sip_domain, "sipDomain", why);
+            sip_domain.clear();
+        }
+    }
+    if !refused.is_empty() {
+        tracing::warn!(
+            "Edge node: local node {node}'s setup asked for {} items of a set this node's role ({}) has not; refused",
+            refused.len(),
+            role.as_str()
+        );
+    }
+    refused
+}
+
 /// Apply local node `node`'s Configure: with `set_hosts` its host names become the request's (a name of another
 /// node refused, one of its own not listed removed), each name on its own; the rest of the setup is kept on its
 /// client row. The caller loads the host table again after.
@@ -403,7 +491,7 @@ pub(crate) fn configure(
     let mut results = Vec::new();
     // E12, E16: the local node's SIP device domain, which the registrar takes its phones in (sip/owners.rs), so two
     // pairings' phones stay apart. A value that is not a domain is refused on its own, not the whole setup
-    let sip_domain = match request.sip_domain.trim() {
+    let mut sip_domain = match request.sip_domain.trim() {
         "" => String::new(),
         domain => match setup::check_host_name(domain) {
             Ok(domain) => domain,
@@ -420,7 +508,14 @@ pub(crate) fn configure(
             }
         },
     };
-    let checked = setup::check_setup(&setup_of(request))?;
+    let mut checked = setup::check_setup(&setup_of(request))?;
+    // only what this node's role offers (plans/Edge-Node2.md §4.3, for_role): each item of a set it has not is refused
+    results.extend(refuse_other_sets(
+        moqui_core::edge::settings(factory).role,
+        node,
+        &mut checked,
+        &mut sip_domain,
+    ));
     if checked.set_hosts {
         let all = hosts::list(factory, None)?;
         let reserved = reserved_names(factory, config);
@@ -456,6 +551,7 @@ pub(crate) fn configure(
                     host_name: name.clone(),
                     paired_node_id: node.to_string(),
                     mode_enum_id: host.mode_enum_id.clone(),
+                    sticky_cookie: None,
                 },
             );
             match saved {
@@ -553,6 +649,7 @@ fn setup_of(request: ConfigureRequest) -> EdgeSetup {
                 host_name: host.host_name,
                 paired_node_id: String::new(),
                 mode_enum_id: host.mode,
+                sticky_cookie: None,
             })
             .collect(),
         set_hosts: request.set_hosts,
@@ -664,6 +761,7 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
                 host_name: host.host_name,
                 paired_node_id: String::new(),
                 mode_enum_id: host.mode,
+                sticky_cookie: None,
             })
             .collect(),
     }

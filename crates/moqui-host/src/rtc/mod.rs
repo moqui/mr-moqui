@@ -24,7 +24,7 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 //!
-//! On an edge node (`node_role=edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
+//! On an edge node (`node_role=front_edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
 //! no row of its own, since it has no call state. Its media address and TURN URLs go in its link Hello
 //! (`moqui_core::edge::media::set_advert`), and the local node keeps its `CallMediaNode` row from the link. Its frames,
 //! replies and controls go over the link (`moqui_core::edge::signal`), its media events and captions' services are

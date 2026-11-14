@@ -59,6 +59,12 @@ pub(crate) enum WebFront {}
 #[derive(Clone)]
 pub(crate) enum Target {}
 
+impl Target {
+    pub(crate) fn node(&self) -> Option<&str> {
+        match *self {}
+    }
+}
+
 impl WebFront {
     pub(crate) fn target<B>(&self, _request: &http::Request<B>) -> Option<Target> {
         match *self {}
@@ -90,7 +96,7 @@ pub(crate) fn start(
 ) -> Started {
     if moqui_core::edge::takes_links() {
         tracing::error!(
-            "node_role is edge or all-in-one, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
+            "node_role is set (front, front_edge, edge or all-in-one), but this binary has no edge link (the edge feature: Maximal or Enterprise)"
         );
     }
     if !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)

@@ -27,6 +27,7 @@ fn host(name: &str, node: &str, mode: &str) -> EdgeHostInfo {
         host_name: name.to_string(),
         paired_node_id: node.to_string(),
         mode_enum_id: mode.to_string(),
+        sticky_cookie: None,
     }
 }
 
@@ -104,7 +105,7 @@ fn a_claim_that_read_no_row_does_not_take_a_name_another_inserted_since() {
     pairing(&facade, "local-b", ACTIVE);
     add(&facade, &host("erp.example.com", "local-a", HOST_PASSTHROUGH)).unwrap();
     let err = transaction(&facade, true, || {
-        save(&facade, "erp.example.com", "local-b", HOST_TERMINATE, None)
+        save(&facade, "erp.example.com", "local-b", HOST_TERMINATE, None, None)
     })
     .unwrap_err();
     assert_eq!(err.message(), "erp.example.com: another node has this name");
@@ -113,7 +114,7 @@ fn a_claim_that_read_no_row_does_not_take_a_name_another_inserted_since() {
     assert_eq!(held[0].mode_enum_id, HOST_PASSTHROUGH);
     // the holder's own racing claim changes only the mode
     transaction(&facade, true, || {
-        save(&facade, "erp.example.com", "local-a", HOST_TERMINATE, None)
+        save(&facade, "erp.example.com", "local-a", HOST_TERMINATE, None, None)
     })
     .unwrap();
     assert_eq!(list(&facade, None).unwrap()[0].mode_enum_id, HOST_TERMINATE);
@@ -133,4 +134,40 @@ fn a_pairing_s_queue_cap_is_set_and_unset() {
     assert_eq!(rows[0].queue_max_megabytes, None);
     assert_eq!(rows[0].status_id, ACTIVE);
     assert!(!rows[0].linked);
+}
+
+/// A host's sticky cookie (plans/Edge-Node2.md §4.4): set with the host, kept when a later save names none (a
+/// Configure's host names), cleared by an empty one, and a name that is not a cookie name refused.
+#[test]
+fn a_host_keeps_its_sticky_cookie_until_one_is_given() {
+    let facade = crate::testing::open();
+    pairing(&facade, "local-a", ACTIVE);
+    let cookie = |name: &str| {
+        list(&facade, None)
+            .unwrap()
+            .into_iter()
+            .find(|host| host.host_name == name)
+            .and_then(|host| host.sticky_cookie)
+    };
+    let mut shop = host("shop.example.com", "local-a", HOST_TERMINATE);
+    shop.sticky_cookie = Some("JSESSIONID".to_string());
+    add(&facade, &shop).unwrap();
+    assert_eq!(cookie("shop.example.com").as_deref(), Some("JSESSIONID"));
+    add(&facade, &host("shop.example.com", "local-a", HOST_TERMINATE)).unwrap();
+    assert_eq!(
+        cookie("shop.example.com").as_deref(),
+        Some("JSESSIONID"),
+        "a save naming no cookie keeps it"
+    );
+    shop.sticky_cookie = Some(String::new());
+    add(&facade, &shop).unwrap();
+    assert_eq!(cookie("shop.example.com").as_deref(), Some(""), "cleared: the conf's");
+    for bad in ["a b", "a;b", "a=b", "\u{e9}t\u{e9}", &"x".repeat(MAX_COOKIE_NAME + 1)] {
+        shop.sticky_cookie = Some(bad.to_string());
+        assert!(
+            add(&facade, &shop).unwrap_err().message().contains("not a cookie name"),
+            "{bad}"
+        );
+    }
+    assert!(valid_cookie_name("moqui.session") && valid_cookie_name("__Host-sid"));
 }

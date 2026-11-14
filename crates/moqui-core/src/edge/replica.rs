@@ -32,6 +32,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+#[path = "replica_sender.rs"]
+pub mod sender;
 use std::time::Duration;
 
 use moqui_lib::error::Error;
@@ -125,6 +128,9 @@ pub struct Replica {
     by_entity: HashMap<String, Vec<usize>>,
     state: Mutex<Vec<SetState>>,
     wake: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Whether this member keeps its notes: true until a claim of the sender lock says another member is the sender
+    /// ([`sender::set_sender`]), whose notes it then takes in place of this one's.
+    keeping: AtomicBool,
 }
 
 #[derive(Default)]
@@ -160,6 +166,7 @@ pub fn enable(facade: &EntityFacade, sets: &[ReplicaSet]) -> Option<Arc<Replica>
                 by_entity,
                 state: Mutex::new(state),
                 wake: Mutex::new(None),
+                keeping: AtomicBool::new(true),
             })
         }))
     });
@@ -194,21 +201,23 @@ pub(crate) fn note_write(facade: &EntityFacade, entity_name: &str, pk_fields: &[
         .ok()
         .filter(|tx| tx.in_transaction());
     let Some(tx) = tx else {
-        replica.note(&full_name, key);
+        replica.note(facade, &full_name, key);
         return;
     };
     let noting = Arc::clone(&replica);
     let name = full_name.clone();
-    if let Err(err) = tx.on_commit(move || noting.note(&name, key)) {
+    let on = facade.clone();
+    if let Err(err) = tx.on_commit(move || noting.note(&on, &name, key)) {
         // the key cannot wait for the commit: send the set whole, which reads it as it is then
         tracing::error!("edge replication: a write to {entity_name} was not noted ({err}); its set goes whole");
-        replica.note(&full_name, None);
+        replica.note(facade, &full_name, None);
     }
 }
 
 /// Stop replicating from `facade`'s writes (its server stops): the noted keys are forgotten, so the next
 /// [`enable`] starts with nothing noted and each set is sent whole, as after a restart.
 pub fn disable(facade: &EntityFacade) {
+    sender::let_go(facade);
     facade.with_slot(Slot::default, |slot| slot.0 = None);
 }
 
@@ -241,12 +250,26 @@ impl Replica {
         }
     }
 
-    /// Note a committed write of `entity`'s record `key` (`None`: a write whose key is not known, which sends the
-    /// set whole).
-    fn note(&self, entity: &str, key: Option<String>) {
-        let Some(indexes) = self.by_entity.get(entity) else {
+    /// Note a committed write of this member's to `entity`'s record `key` (`None`: a write whose key is not known,
+    /// which sends the set whole): kept here while this member keeps its notes, and sent to the other members of its
+    /// cluster, so the sender has it whichever member that is ([`sender::forward_note`]).
+    fn note(&self, facade: &EntityFacade, entity: &str, key: Option<String>) {
+        if !self.by_entity.contains_key(entity) {
             return;
+        }
+        sender::forward_note(facade, entity, key.clone());
+        self.note_local(entity, key);
+    }
+
+    /// Keep a note of `entity`'s record `key` (this member's, or another member's when this one is the sender), unless
+    /// this member keeps no notes now. True when it was kept.
+    fn note_local(&self, entity: &str, key: Option<String>) -> bool {
+        let Some(indexes) = self.by_entity.get(entity) else {
+            return false;
         };
+        if !self.keeping.load(Ordering::Acquire) {
+            return false;
+        }
         {
             let mut state = lock(&self.state);
             let now = now_millis();
@@ -267,6 +290,29 @@ impl Replica {
             }
         }
         self.wake();
+        true
+    }
+
+    /// Whether this member keeps notes, as the sender does ([`sender::set_sender`]). One that stops forgets what it
+    /// kept and what was on its way, and sends each set whole if it is the sender again.
+    pub fn set_keeping(&self, keeping: bool) {
+        if self.keeping.swap(keeping, Ordering::AcqRel) == keeping || keeping {
+            self.wake();
+            return;
+        }
+        for set in lock(&self.state).iter_mut() {
+            set.waiting.clear();
+            set.in_flight.clear();
+            set.waiting_since = None;
+            set.snapshot_needed = true;
+            set.resyncs += 1;
+        }
+        self.wake();
+    }
+
+    /// Whether this member keeps notes now.
+    pub fn keeps_notes(&self) -> bool {
+        self.keeping.load(Ordering::Acquire)
     }
 
     /// A new link: each set's cursor is checked again before its next batch, and a batch an ended link left
@@ -598,6 +644,10 @@ pub struct Batch {
     /// The last part of a full send: the records of older epochs go.
     pub snapshot_end: bool,
     pub changes: Vec<Change>,
+    /// When the sending member took the sender lock (`sender`, epoch milliseconds by the database's clock): the edge
+    /// node refuses a batch of a set whose cursor a later sender has written, so a member that lost the lock and has
+    /// not noticed yet cannot cross the new sender's batches. 0 from a sender that sends none.
+    pub sender_token: u64,
 }
 
 /// The edge node's answer to a batch.
@@ -620,16 +670,35 @@ fn number(row: &EntityValue, field: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// The batches each set had applied on this edge node, counted from its start.
+/// The batches each set had applied on this edge node, counted from its start, and how many times every set was
+/// counted as changed at once ([`note_all_applied`]).
 #[derive(Default)]
-struct AppliedCounts(Mutex<BTreeMap<String, u64>>);
+struct AppliedCounts(Mutex<(BTreeMap<String, u64>, u64)>);
 
-/// How many batches of set `set_name` this edge node has applied since it started (of any node): a reader that keeps
-/// something built from the set's copies (the mail listener's recipients) builds it again when the count moves.
+/// How many batches of set `set_name` this edge node has applied since it started (of any node), here or on another
+/// member of its edge cluster ([`note_applied`], plans/Edge-Node2.md §4.6): a reader that keeps something built from
+/// the set's copies (the mail listener's recipients, the SIP engine's trunks) builds it again when the count moves.
 pub fn applied_count(facade: &EntityFacade, set_name: &str) -> u64 {
     facade.with_slot_read(AppliedCounts::default, |counts| {
-        lock(&counts.0).get(set_name).copied().unwrap_or(0)
+        let counts = lock(&counts.0);
+        counts.0.get(set_name).copied().unwrap_or(0).wrapping_add(counts.1)
     })
+}
+
+/// Count a batch of `set_name` as applied here: one this member applied, or one another member of its edge cluster
+/// applied to the shared copies (`edge::cluster_state`), so what is built from the set here is built again.
+pub fn note_applied(facade: &EntityFacade, set_name: &str) {
+    facade.with_slot(AppliedCounts::default, |counts| {
+        *lock(&counts.0).0.entry(set_name.to_string()).or_insert(0) += 1;
+    });
+}
+
+/// Count every set as changed: this member may have missed another member's notices (`edge::cluster_state`).
+pub fn note_all_applied(facade: &EntityFacade) {
+    facade.with_slot(AppliedCounts::default, |counts| {
+        let mut counts = lock(&counts.0);
+        counts.1 = counts.1.wrapping_add(1);
+    });
 }
 
 /// Apply a batch from local node `node` on the edge node, with its cursor, in one transaction; once it commits, the
@@ -637,9 +706,9 @@ pub fn applied_count(facade: &EntityFacade, set_name: &str) -> u64 {
 pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
     let answer = apply_batch_rows(facade, node, batch)?;
     if answer == BatchAnswer::Applied {
-        facade.with_slot(AppliedCounts::default, |counts| {
-            *lock(&counts.0).entry(batch.set_name.clone()).or_insert(0) += 1;
-        });
+        note_applied(facade, &batch.set_name);
+        // the other members of an edge cluster build what they keep from this set again (plans/Edge-Node2.md §4.6)
+        super::cluster_state::tell(facade, false, &[batch.set_name.as_str()]);
     }
     Ok(answer)
 }
@@ -656,6 +725,14 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
             .for_update(true)
             .disable_authz()
             .one()?;
+        // a later sender has written this set's cursor: this batch is from a member that lost the lock
+        let fence = cursor.as_ref().map_or(0, |row| number(row, "senderToken"));
+        if batch.sender_token < fence {
+            return Err(Error::new(format!(
+                "set {}: a newer replication sender of this pairing has sent it; this member is no longer its sender",
+                batch.set_name
+            )));
+        }
         let at = cursor
             .as_ref()
             .map(|row| (text(row, "replicaEpoch"), number(row, "sequenceNum")));
@@ -724,6 +801,10 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
         row.set("setName", Value::string(&batch.set_name));
         row.set("replicaEpoch", Value::string(&batch.epoch));
         row.set("sequenceNum", Value::I64(i64::try_from(batch.seq).unwrap_or(i64::MAX)));
+        row.set(
+            "senderToken",
+            Value::I64(i64::try_from(batch.sender_token.max(fence)).unwrap_or(i64::MAX)),
+        );
         row.set("appliedDate", now.clone());
         if batch.snapshot_end {
             row.set("snapshotDate", now);

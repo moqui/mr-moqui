@@ -270,9 +270,9 @@ fn client_address(port_name: &str, host_name: &str) -> Option<Result<SocketAddr,
 }
 
 /// The client ports XMPP will bind, for the port check before the framework is built: none while `xmpp_domain` is
-/// empty or on a dedicated edge node (`node_role=edge`), whose client ports tunnel to its local node.
+/// empty or on a dedicated edge node (`front`, `front_edge` or `edge`), whose client ports tunnel to its local node.
 pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
-    if property("xmpp_domain").is_empty() || property("node_role") == "edge" {
+    if property("xmpp_domain").is_empty() || moqui_core::edge::node_role_kind().edge_node() {
         return Vec::new();
     }
     CLIENT_PORTS
@@ -298,8 +298,9 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     }
     if moqui_core::edge::settings(factory).edge_node() {
         tracing::warn!(
-            "XMPP: xmpp_domain is set on an edge node (node_role=edge), which starts no XMPP server: \
-             edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node"
+            "XMPP: xmpp_domain is set on a dedicated edge node (node_role {}), which starts no XMPP server: \
+             edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node",
+            moqui_core::edge::settings(factory).role.as_str()
         );
         listener(factory, LISTENER, State::off("an edge node starts no XMPP server"));
         return None;

@@ -71,6 +71,13 @@ pub struct EdgeSettings {
     pub max_attempts: u32,
     /// The wait after the first refusal, doubled after each up to [`MAX_RETRY`].
     pub retry_first: Duration,
+    /// Balancing a pool (plans/Edge-Node2.md §4.4): the cookie a terminate host's requests are sticky by, where the
+    /// host names none (`sticky-cookie`, the session cookie's name by default).
+    pub sticky_cookie: String,
+    /// The failures or time-outs in a row that set a member aside (`set-aside-failures`), at least 1.
+    pub set_aside_failures: u32,
+    /// How long a member is set aside before it is tried again (`set-aside-seconds`).
+    pub set_aside_for: Duration,
 }
 
 /// The longest wait between a receiver's refusals of an item.
@@ -88,12 +95,15 @@ impl Default for EdgeSettings {
             max_bytes: 1024 * 1024 * 1024,
             max_attempts: 10,
             retry_first: Duration::from_secs(5),
+            sticky_cookie: crate::user::SESSION_COOKIE_NAME.to_string(),
+            set_aside_failures: 3,
+            set_aside_for: Duration::from_secs(30),
         }
     }
 }
 
 impl EdgeSettings {
-    /// A dedicated edge node (`node_role=edge`): no business data of its own, so a path it switches as a whole goes
+    /// A dedicated edge node (`front`, `front_edge` or `edge`): no business data of its own, so a path it switches as a whole goes
     /// the edge way for every item.
     pub fn edge_node(&self) -> bool {
         self.role.edge_node()
@@ -145,6 +155,17 @@ impl EdgeSettings {
                 _ => tracing::error!("edge queue-retry-seconds=\"{retry}\" is not a positive number; 5 is used"),
             }
         }
+        let cookie = edge.attribute("sticky-cookie").unwrap_or_default();
+        match cookie.trim() {
+            "" => {}
+            name if super::hosts::valid_cookie_name(name) => settings.sticky_cookie = name.to_string(),
+            name => tracing::error!(
+                "edge sticky-cookie=\"{name}\" is not a cookie name; {} is used",
+                settings.sticky_cookie
+            ),
+        }
+        settings.set_aside_failures = u32::try_from(number("set-aside-failures", 3)).unwrap_or(3).max(1);
+        settings.set_aside_for = Duration::from_secs(number("set-aside-seconds", 30));
         for delegate in edge.named_iter("delegate") {
             let service = delegate.attribute("service").unwrap_or_default();
             let service = service.trim();

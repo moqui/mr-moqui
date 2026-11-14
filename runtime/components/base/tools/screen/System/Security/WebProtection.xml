@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Web Protection (plans/Edge-Node2.md §4.3): what this server's web protection (the webroot webapp's <web-protection>,
+    in memory per server) is limiting, denying and banning, from org.moqui.admin.OperationServices.get#WebProtection
+    (ADMIN_OPERATION_VIEW): the counts, each rule with its hosts and what it refused since the server started, and the
+    clients banned now with what banned them. Lift ends every ban of an address on this server and tells the other
+    members of its cluster and the edge node it is paired with (lift#WebBan, ADMIN_OPERATION_MANAGE). Each
+    server keeps its own counts; a ban is shared. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Web protection" default-menu-index="5" menu-image="sym_o_shield" menu-image-type="icon">
+
+    <transition name="liftBan">
+        <service-call name="org.moqui.admin.OperationServices.lift#WebBan" in-map="{address:address}" out-map="liftOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="liftOut?.lifted"><then><message type="success">The ban of ${address} is lifted</message></then>
+                <else><message type="warning">${address} is not banned on this server</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        let out = {}
+        protectionError = ''
+        ec.message.pushErrors()
+        try {
+            out = ec.service.sync().name('org.moqui.admin.OperationServices.get#WebProtection').call() || {}
+            if (ec.message.hasError()) protectionError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        started = !!out.started
+        enabled = !!out.enabled
+        const counts = out.countMap || {}
+        countList = [
+            {name: L('Connections refused'), value: counts.edge_connections_refused},
+            {name: L('Requests denied'), value: counts.edge_denied},
+            {name: L('Requests rate limited'), value: counts.edge_rate_limited},
+            {name: L('Clients banned now'), value: counts.edge_banned_clients},
+            {name: L('Clients tracked'), value: counts.edge_tracked_clients},
+            {name: L('Requests over capacity'), value: counts.request_queue_full},
+        ].map((row) => ({name: row.name, value: String(row.value || 0)}))
+        ruleList = Array.from(out.ruleList || []).map((rule) => ({kind: rule.kind, name: rule.name,
+            hostsText: rule.hosts || L('Every host'), detail: rule.detail || '', count: String(rule.count || 0)}))
+        banList = Array.from(out.banList || []).map((ban) => {
+            const seconds = Number(ban.seconds || 0)
+            const left = seconds >= 3600 ? Math.ceil(seconds / 3600) + ' h' : seconds >= 60 ? Math.ceil(seconds / 60) + ' min' : seconds + ' s'
+            return {address: ban.address, leftText: left, source: ban.source || '',
+                scopeText: ban.node ? L('Hosts of') + ' ' + ban.node : L('Every host')}
+        })
+        canLift = ec.user.hasPermission('ADMIN_OPERATION_MANAGE')
+    ]]></script></actions>
+    <widgets>
+        <container style="q-mb-sm">
+            <label text="Web protection" type="h5"/>
+            <label type="p" style="text-caption m-muted q-mb-none"
+                    text="What this server is limiting, denying and banning, by the web-protection rules of its conf. A rule with hosts applies to those sites only. A ban started on one server is told to the other members of its cluster and to the edge node it is paired with."/>
+        </container>
+        <section name="ProtectionError" condition="protectionError"><widgets>
+            <container-box type="warning"><box-header title="Web protection could not be read"/><box-body>
+                <label type="p" text="${protectionError}" style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotStarted" condition="!protectionError &amp;&amp; !started"><widgets>
+            <label type="p" style="m-muted" text="This server's web listeners have not started, so there is nothing to show."/>
+        </widgets></section>
+        <section name="Protection" condition="started"><widgets>
+            <section name="Off" condition="!enabled"><widgets>
+                <container-box type="info"><box-body>
+                    <label type="p" style="q-mb-none" text="The per-client parts are off: only the global limits apply. Turn them on with enabled=&quot;true&quot; on web-protection, or by naming the proxies in front with trusted-proxies."/>
+                </box-body></container-box>
+            </widgets></section>
+            <container-box><box-header title="Since this server started"/><box-body-nopad>
+                <form-list name="CountList" list="countList" skip-form="true" paginate="false">
+                    <field name="name"><default-field title=""><display/></default-field></field>
+                    <field name="value" align="right"><default-field title="Count"><display style="text-weight-medium"/></default-field></field>
+                </form-list>
+            </box-body-nopad></container-box>
+            <container-box><box-header title="Banned now"/><box-body-nopad>
+                <form-list name="BanList" list="banList" skip-form="true" paginate="true">
+                    <field name="address"><default-field title="Client"><display style="text-weight-medium"/></default-field></field>
+                    <field name="leftText"><default-field title="Left"><display/></default-field></field>
+                    <field name="source"><default-field title="Banned by"><display/></default-field></field>
+                    <field name="scopeText"><default-field title="For"><display/></default-field></field>
+                    <field name="tools" align="right"><default-field title="">
+                        <link url="liftBan" link-type="hidden-form-link" icon="sym_o_lock_open" text="Lift" style="m-btn-flat"
+                                condition="canLift" confirmation="Lift every ban of ${address}? The other members and the linked nodes are told too."
+                                parameter-map="{address:address}"/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="address"/><field-ref name="source"/></column>
+                        <column><field-ref name="leftText"/><field-ref name="tools"/></column>
+                    </columns>
+                </form-list>
+                <label type="p" style="q-pa-md m-muted q-mb-none" condition="!banList.length" text="No client is banned on this server."/>
+            </box-body-nopad></container-box>
+            <container-box><box-header title="Rules"/><box-body-nopad>
+                <form-list name="RuleList" list="ruleList" skip-form="true" paginate="false">
+                    <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                    <field name="name"><default-field title="Rule"><display style="text-weight-medium"/></default-field></field>
+                    <field name="hostsText"><default-field title="Hosts"><display/></default-field></field>
+                    <field name="detail"><default-field title="What"><display/></default-field></field>
+                    <field name="count" align="right"><default-field title="Refused" tooltip="Requests or connections refused; for a ban, the bans it started"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="name"/><field-ref name="hostsText"/></column>
+                        <column><field-ref name="count"/></column>
+                    </columns>
+                </form-list>
+                <label type="p" style="q-pa-md m-muted q-mb-none" condition="!ruleList.length" text="The conf has no rate limits, bans or rules."/>
+            </box-body-nopad></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

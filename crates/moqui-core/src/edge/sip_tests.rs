@@ -208,6 +208,7 @@ fn paired(facade: &EntityFacade, node: &str, status: &str, setup: &str) {
 /// A paired node's full send of `set` with one record of `entity` keyed by `number`.
 fn numbers(facade: &EntityFacade, node: &str, set: &str, entity: &str, numbers: &[&str]) {
     let batch = crate::edge::replica::Batch {
+        sender_token: 0,
         set_name: set.to_string(),
         epoch: "e1".to_string(),
         base_seq: 0,
@@ -297,4 +298,40 @@ fn a_pairings_phones_register_in_its_own_domain() {
     );
     assert_eq!(setup_domain(r#"{"sipDomain": " Sip.B.example. "}"#), "sip.b.example");
     assert_eq!(setup_domain("not json"), "");
+}
+
+/// Of two members of an edge cluster, one registers the trunks at a time (plans/Edge-Node2.md §4.6): the first to claim
+/// holds the lock and renews it, the other does not get it while the lease lasts, takes it over once it lapsed, and
+/// the first then no longer holds it; a member that stops lets it go to the next claim.
+#[test]
+fn one_edge_member_registers_the_trunks_and_another_takes_over_when_its_lease_lapses() {
+    let (_ctx, facade) = open();
+    let lease = std::time::Duration::from_millis(400);
+    assert!(claim_trunk_lock(&facade, "edge-1", lease).unwrap());
+    assert!(claim_trunk_lock(&facade, "edge-1", lease).unwrap(), "renewed");
+    assert!(
+        !claim_trunk_lock(&facade, "edge-2", lease).unwrap(),
+        "held by the first"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert!(
+        claim_trunk_lock(&facade, "edge-2", lease).unwrap(),
+        "taken over once the lease lapsed"
+    );
+    assert!(
+        !claim_trunk_lock(&facade, "edge-1", lease).unwrap(),
+        "the first no longer holds it"
+    );
+    assert!(
+        !release_trunk_lock(&facade, "edge-1").unwrap(),
+        "only its holder lets it go"
+    );
+    assert!(release_trunk_lock(&facade, "edge-2").unwrap());
+    assert!(claim_trunk_lock(&facade, "edge-1", lease).unwrap(), "free again");
+    // the replication sender's lock is another row
+    assert!(
+        crate::edge::replica::sender::claim(&facade, crate::edge::replica::sender::REPLICATE, "edge-2", lease)
+            .unwrap()
+            .holds()
+    );
 }

@@ -36,7 +36,7 @@
 //!
 //! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
-//! On an edge node (`node_role=edge`) the listener takes mail for its local node's accounts and queues it for the
+//! On an edge node (`node_role=front_edge`) the listener takes mail for its local node's accounts and queues it for the
 //! local node instead of storing it ([`queue`], plans/archive/Edge-Node.md §5.4).
 //!
 //! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/archive/Edge-Node.md §5.4 E5b) takes mail from

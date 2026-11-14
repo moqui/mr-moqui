@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Edge Clients › Edge cluster (plans/Edge-Node2.md §4.6, §4.10): the members of this node's own cluster, edge nodes on
+    one database that take links (org.moqui.edge.EdgeServices.get#EdgeCluster, from their moqui.server.ClusterMember
+    rows): each one live or stopped by its heartbeat, its link address (edge_link_url, where local nodes dial it), its
+    heartbeat's age and its version, this node marked, and the one that registers the SIP trunks (registersTrunks: the
+    holder of the lock row sipTrunks while its lease lasts; every member's SIP engine loads the trunks and only that one
+    registers them). Every member's answer to a local node's Hello and Ping lists the
+    live ones with their addresses, and the local node links to each. A live member with no usable address (none, or not
+    an https URL with a host) is reached only at the address the local nodes paired with, so with more than one live
+    member the page warns and names it; a single edge node needs none. Read only: edge_link_url is each member's own
+    property, set in its conf or .env. A front node before the cluster is E19's. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edge cluster" default-menu-index="5">
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        clusterList = []
+        clusterError = ''
+        noAddressText = ''
+        singleNoAddress = false
+        if (!isEdge) return
+        let out = {}
+        // a probe (Practices-App-Dev §4): a failure is shown on the page rather than failing it
+        ec.message.pushErrors()
+        try {
+            out = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeCluster').call() || {}
+            if (ec.message.hasError()) clusterError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (clusterError) return
+        const members = Array.from(out.memberList || [])
+        const age = (ms) => {
+            if (ms == null) return L('None written')
+            const seconds = Math.round(Number(ms) / 1000)
+            return seconds < 120 ? seconds + ' s' : seconds < 7200 ? Math.round(seconds / 60) + ' min' : Math.round(seconds / 3600) + ' h'
+        }
+        clusterList = members.map((member) => {
+            const url = String(member.linkUrl || '').trim()
+            return {
+                instanceId: member.instanceId + (member.thisMember ? ' (' + L('this node') + ')' : ''),
+                liveLabel: member.live ? L('Live') : L('Stopped'), liveColor: member.live ? 'positive' : 'grey',
+                // linkUrlUsable: what the Hello answer sends, an https URL with a host; any other address goes as none
+                linkUrlText: !url ? L('None') : member.linkUrlUsable ? url : url + ' (' + L('not used: not an https address') + ')',
+                heartbeatText: age(member.heartbeatAgeMs),
+                // of the members' SIP engines only one registers the trunks, so a provider's calls go to one contact
+                trunksText: member.registersTrunks ? L('Registers them') : '',
+                version: member.version || ''}
+        })
+        const live = members.filter((member) => member.live)
+        const noAddress = live.filter((member) => !member.linkUrlUsable).map((member) => member.instanceId)
+        // a single edge node is dialed at the address its local nodes paired with: it needs no edge_link_url
+        if (live.length > 1) noAddressText = noAddress.join(', ')
+        else singleNoAddress = noAddress.length > 0
+    ]]></script></actions>
+    <widgets>
+        <section name="ClusterError" condition="clusterError"><widgets>
+            <container-box type="warning"><box-header title="The edge cluster could not be read"/><box-body>
+                <label type="p" text="${clusterError}" style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="NoAddress" condition="noAddressText"><widgets>
+            <container-box type="warning"><box-header title="Members with no link address"/><box-body>
+                <label type="p" text="${noAddressText}"/>
+                <label type="p" style="q-mb-none" text="A local node links to each live member at its link address, and reaches a member with none only through the address it paired with, where any member may answer. Set edge_link_url on every member, each to its own public https address (a port when it is not 443)."/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Members"/><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="Edge nodes on one database with one .env, so one link key, that each take links. Every member's answer to a local node lists the live ones with their link addresses, and the local node links to each and takes work from each; Clients shows the links to this member. Without a front node, publish an address record, an MX record and the SRV records for each member."/>
+            <section name="SingleNoAddress" condition="singleNoAddress"><widgets>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="One member: local nodes dial it at the address they paired with, so it needs no link address. Set edge_link_url on each member before a second one starts."/>
+            </widgets></section>
+            <form-list name="ClusterList" list="clusterList" skip-form="true" paginate="false">
+                <field name="instanceId"><default-field title="Member"><display style="text-weight-medium"/></default-field></field>
+                <field name="live"><default-field title="In the cluster">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${liveColor}">${liveLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: liveLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="linkUrlText"><default-field title="Link address" tooltip="edge_link_url: where local nodes dial this member, its own public https address"><display/></default-field></field>
+                <field name="heartbeatText"><default-field title="Heartbeat" tooltip="How long ago its heartbeat was written to the shared database"><display/></default-field></field>
+                <field name="trunksText"><default-field title="SIP trunks" tooltip="One member registers the trunks, the holder of a lock row the members renew; it moves to another member when that one stops. Every member places and takes calls"><display/></default-field></field>
+                <field name="version"><default-field title="Version"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="instanceId"/><field-ref name="linkUrlText"/></column>
+                    <column><field-ref name="live"/><field-ref name="heartbeatText"/></column>
+                </columns>
+            </form-list>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

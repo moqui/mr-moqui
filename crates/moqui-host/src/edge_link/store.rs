@@ -184,16 +184,168 @@ pub(crate) fn pair_client(
         client.set("linkVersion", Value::I64(i64::from(local.link_version)));
         client.set("features", Value::string(local.features.join(",")));
         client.set("nodeName", Value::string(&local.node_name));
+        // the node that paired is the pairing's first member (plans/Edge-Node2.md §4.4)
+        client.set("lastMemberId", Value::string(node));
+        client.set("approvedMemberId", Value::Null);
+        // a pairing starts with no member keys, takeover or hold of before
+        client.set("memberKeys", Value::Null);
+        client.set("takeoverFromId", Value::Null);
         client.create_or_update(&facade)?;
         Ok(Paired::Pinned { key_changed })
     })
 }
 
-pub(crate) fn save_hello(factory: &ExecutionContextFactory, node: &str, local: &Hello) -> Result<(), Error> {
+/// What admission reads of a pairing's row (plans/Edge-Node2.md §4.4, §4.5).
+#[derive(Debug, Default)]
+pub(crate) struct MemberSettings {
+    /// The member last linked, else the node that paired.
+    pub last_member: String,
+    pub hold: bool,
+    pub approved: String,
+    /// The member keys pinned, by instance id (plans/Edge-Node2.md §4.11).
+    pub pins: Vec<(String, String)>,
+    /// The node the last takeover displaced, until the operator clears it.
+    pub displaced: String,
+}
+
+pub(crate) fn member_settings(factory: &ExecutionContextFactory, node: &str) -> Result<MemberSettings, Error> {
+    let facade = facade(factory)?;
+    transaction(&facade, CLIENT, || {
+        let Some(row) = facade.find(CLIENT)?.eq("pairedNodeId", Value::string(node)).one()? else {
+            return Ok(MemberSettings::default());
+        };
+        let last = text(row.get("lastMemberId"));
+        Ok(MemberSettings {
+            last_member: if last.is_empty() { node.to_string() } else { last },
+            hold: text(row.get("holdNewMember")) == "Y",
+            approved: text(row.get("approvedMemberId")),
+            pins: moqui_core::edge::pool::pinned_keys(&text(row.get("memberKeys"))),
+            displaced: text(row.get("takeoverFromId")),
+        })
+    })
+}
+
+/// Note on pairing `node`'s row that new node `to` took it over from `from` (plans/Edge-Node2.md §4.5); an approval
+/// for it is used up.
+pub(crate) fn note_takeover(factory: &ExecutionContextFactory, node: &str, from: &str, to: &str) -> Result<(), Error> {
+    let facade = facade(factory)?;
+    transaction(&facade, CLIENT, || {
+        let approved = facade
+            .find(CLIENT)?
+            .eq("pairedNodeId", Value::string(node))
+            .one()?
+            .map(|row| text(row.get("approvedMemberId")))
+            .unwrap_or_default();
+        let mut client = facade.make_value(CLIENT)?;
+        client.set("pairedNodeId", Value::string(node));
+        client.set("takeoverDate", moqui_core::user::now_value());
+        // the member last linked with a new key displaces no one: it is not refused as "taken over" after
+        if from != to {
+            client.set("takeoverFromId", Value::string(from));
+        }
+        client.set("takeoverToId", Value::string(to));
+        if approved == to {
+            client.set("approvedMemberId", Value::Null);
+        }
+        client.update(&facade)?;
+        Ok(())
+    })
+}
+
+/// Claim member `member`'s own key `member_key` (a fingerprint) for its id, before its link is registered
+/// (plans/Edge-Node2.md §4.11): read and written in one transaction of its own, committed before the answer, so two
+/// first links of one id cannot both pin (`moqui_core::edge::pool::claim_key`). False when another key is pinned and
+/// no takeover was decided. `keep` are the ids never evicted past the cap.
+/// What [`claim_key`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Claimed {
+    /// The key is pinned (or was): `takeover` when the link still takes the pairing over.
+    Pinned { takeover: bool },
+    /// Another key is pinned for the id.
+    Refused,
+    /// Another member linked on another edge member since the admission was decided: dial again.
+    Changed,
+}
+
+/// Claim member `member`'s key for its id on pairing `node`'s row, read for update, in one transaction committed
+/// before the link registers (plans/Edge-Node2.md §4.11). In the same transaction, so two edge members of a cluster
+/// admitting at once see each other (§4.6): `recheck` reads the other edge members' links again (`None`: another member
+/// linked since, `Some(true)`: this member is linked on another one now, so this is not a takeover), and `write_own`
+/// writes this edge member's row with the link.
+pub(crate) fn claim_key(
+    factory: &ExecutionContextFactory,
+    node: &str,
+    member: &str,
+    member_key: &str,
+    takeover: bool,
+    keep: &[String],
+    recheck: impl FnOnce() -> Result<Option<bool>, Error>,
+    write_own: impl FnOnce() -> Result<(), Error>,
+) -> Result<Claimed, Error> {
+    let facade = facade(factory)?;
+    committed(&facade, CLIENT, || {
+        let Some(row) = facade
+            .find(CLIENT)?
+            .eq("pairedNodeId", Value::string(node))
+            .for_update(true)
+            .one()?
+        else {
+            return Ok(Claimed::Refused);
+        };
+        let takeover = match recheck()? {
+            None => return Ok(Claimed::Changed),
+            Some(true) => false,
+            Some(false) => takeover,
+        };
+        let pins = moqui_core::edge::pool::pinned_keys(&text(row.get("memberKeys")));
+        match moqui_core::edge::pool::claim_key(&pins, member, member_key, takeover, keep) {
+            moqui_core::edge::pool::KeyClaim::Refuse => Ok(Claimed::Refused),
+            moqui_core::edge::pool::KeyClaim::Pin(json) => {
+                let mut client = facade.make_value(CLIENT)?;
+                client.set("pairedNodeId", Value::string(node));
+                client.set("memberKeys", Value::string(json));
+                client.update(&facade)?;
+                write_own()?;
+                Ok(Claimed::Pinned { takeover })
+            }
+        }
+    })
+}
+
+/// Whether pairing `node` is active, and its pinned member keys: `None` when it has no row.
+pub(crate) fn pairing_state(
+    factory: &ExecutionContextFactory,
+    node: &str,
+) -> Result<Option<(bool, Vec<(String, String)>)>, Error> {
+    let facade = facade(factory)?;
+    transaction(&facade, CLIENT, || {
+        let row = facade
+            .find(CLIENT)?
+            .eq("pairedNodeId", Value::string(node))
+            .use_cache(false)
+            .one()?;
+        Ok(row.map(|row| {
+            (
+                text(row.get("statusId")) == ACTIVE,
+                moqui_core::edge::pool::pinned_keys(&text(row.get("memberKeys"))),
+            )
+        }))
+    })
+}
+
+/// Keep what member `member`'s Hello said on its pairing's row, and that it linked last (its key was claimed before,
+/// [`claim_key`]).
+pub(crate) fn save_hello(
+    factory: &ExecutionContextFactory,
+    node: &str,
+    member: &str,
+    local: &Hello,
+) -> Result<(), Error> {
     let facade = facade(factory)?;
     transaction(&facade, CLIENT, || {
         let mut client = facade.make_value(CLIENT)?;
         client.set("pairedNodeId", Value::string(node));
+        client.set("lastMemberId", Value::string(member));
         client.set("binaryVersion", Value::string(&local.binary_version));
         client.set("linkVersion", Value::I64(i64::from(local.link_version)));
         client.set("features", Value::string(local.features.join(",")));

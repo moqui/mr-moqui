@@ -62,3 +62,40 @@ fn a_paired_nodes_audio_is_kept_apart_from_the_servers() {
     );
     assert!(paired_audio_location("../x", own).starts_with("dbresource://moqui/edge-node/___x/"));
 }
+
+/// A local node keeps the TURN secret of each edge cluster member its links reached (plans/Edge-Node2.md §4.6): each
+/// member's calls sign their credentials with it; a member whose TURN is off is forgotten, and unpairing forgets all.
+#[test]
+fn each_edge_members_turn_secret_is_kept_apart() {
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let factory = ctx.factory();
+    super::set_peer_turn(factory, "edge-1", "secret-a", "local-a");
+    super::set_peer_turn(factory, "edge-2", "secret-a", "local-a");
+    assert_eq!(
+        super::turn_peer(factory, "edge-1"),
+        Some(("secret-a".to_string(), "local-a".to_string()))
+    );
+    assert_eq!(super::turn_secret(factory, "edge-2").as_deref(), Some("secret-a"));
+    assert_eq!(super::turn_secret(factory, "other"), None, "not a member");
+    assert_eq!(super::turn_secret(factory, ""), None);
+    super::set_peer_turn(factory, "edge-1", "", "local-a");
+    assert_eq!(super::turn_secret(factory, "edge-1"), None, "its TURN is off");
+    assert!(
+        super::turn_secret(factory, "edge-2").is_some(),
+        "the other member's stays"
+    );
+    super::clear_peer_turn(factory);
+    assert_eq!(super::turn_secret(factory, "edge-2"), None);
+}
+
+/// A member gone from the edge cluster's list has its TURN secret forgotten; the others stay.
+#[test]
+fn a_member_gone_from_the_list_has_its_turn_secret_forgotten() {
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let factory = ctx.factory();
+    super::set_peer_turn(factory, "edge-1", "secret-a", "local-a");
+    super::set_peer_turn(factory, "edge-2", "secret-a", "local-a");
+    super::retain_peer_turns(factory, &["edge-2".to_string()]);
+    assert_eq!(super::turn_secret(factory, "edge-1"), None);
+    assert!(super::turn_secret(factory, "edge-2").is_some());
+}

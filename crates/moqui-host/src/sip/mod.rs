@@ -52,6 +52,10 @@
 //! - **Several pairings** (plans/Edge-Node2.md §4.1, E16): every pairing's trunks load, each keyed by its node; an
 //!   inbound call goes by the number called to the pairing whose copies have it, and a phone by its pairing's domain;
 //!   a number or a domain two pairings claim is refused. A message recorded is queued to its call's pairing.
+//! - **An edge cluster** (plans/Edge-Node2.md §4.6, E18): every member runs an engine and loads every trunk, but only
+//!   the holder of a lock row registers them (`trunk_lock.rs`). A phone's binding names the member it registered with
+//!   (its `SipRegistration.instanceId`, this engine's own id), so a call to the phone goes to that member. The
+//!   registrar's nonces and their counts, and the fallback's forward counts, are each member's own.
 
 mod audio;
 mod edge;
@@ -61,6 +65,7 @@ mod leg;
 mod owners;
 mod phones;
 mod prompt;
+mod trunk_lock;
 mod voicemail;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -337,12 +342,17 @@ pub(crate) struct SipNode {
     /// On a node that takes links (an edge node, E8, or an all-in-one node, E12), the factory whose Hello tells its
     /// addresses, cleared when the engine stops.
     advertised: Option<std::sync::Weak<ExecutionContextFactory>>,
+    /// On a node that takes links, the id this member claims the trunk registration lock as, let go when it stops.
+    trunk_member: Option<String>,
 }
 
 impl Drop for SipNode {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(factory) = self.advertised.take().and_then(|factory| factory.upgrade()) {
+            if let Some(member) = self.trunk_member.take() {
+                trunk_lock::release(&factory, &member);
+            }
             moqui_core::edge::media::set_sip_advert(&factory, None);
             moqui_core::edge::media::set_sip_trunks(&factory, Vec::new());
             moqui_core::edge::media::set_sip_realms(&factory, None);
@@ -621,6 +631,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         forwards: HashMap::new(),
         abandoned: HashMap::new(),
         forward_counts: HashMap::new(),
+        trunk_lock: Arc::new(AtomicBool::new(false)),
     };
     runtime.spawn(engine.run(events, commands));
     // a dedicated edge node registers no SipNode (E8); an all-in-one node registers its own (E12)
@@ -654,6 +665,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         register,
         _signal: signal,
         advertised: links.then(|| Arc::downgrade(factory)),
+        trunk_member: links.then(|| trunk_lock::member_id(factory)),
     })
 }
 
@@ -868,6 +880,9 @@ struct Engine {
     /// when: a dial into one is refused, and what was dialed into it is hung up, so no number is rung for a caller who
     /// is gone.
     abandoned: HashMap<String, Instant>,
+    /// On a node that takes links: this member holds the trunk registration lock, so its trunks register
+    /// (`trunk_lock.rs`, E18).
+    trunk_lock: Arc<AtomicBool>,
     /// E8: the forwards the fallback made, by number: those going on, and when each of the last day began.
     forward_counts: HashMap<String, fallback::ForwardCount>,
 }
@@ -986,6 +1001,16 @@ impl Engine {
         if self.links {
             let paired = owners::pairing_domains(&self.factory).await.unwrap_or_default();
             self.paired_changed(paired);
+            // the trunks register only on the member that holds the lock (E18): asked before the first load
+            let member = trunk_lock::member_id(&self.factory);
+            let holds = trunk_lock::claim(&self.factory, &member).await.unwrap_or(false);
+            self.trunk_lock.store(holds, Ordering::Release);
+            tokio::spawn(trunk_lock::keep(
+                Arc::downgrade(&self.factory),
+                member,
+                Arc::clone(&self.trunk_lock),
+                self.commands.clone(),
+            ));
         }
         if !self.reload().await {
             self.retry_reload(1);
@@ -1216,7 +1241,11 @@ impl Engine {
                             .collect(),
                     },
                     domain: Some(text(trunk, "fromDomain")).filter(|d| !d.is_empty()),
-                    register: flag(trunk, "register"),
+                    register: trunk_lock::registers(
+                        flag(trunk, "register"),
+                        self.links,
+                        self.trunk_lock.load(Ordering::Acquire),
+                    ),
                     inbound: texts(trunk, "inboundAddresses"),
                     inbound_digest: flag(trunk, "inboundDigest"),
                     srtp,
