@@ -101,10 +101,29 @@ first branch pushed) its default branch.
   `SSH_GIT` permission (granted to ADMIN; grant it to the groups of developers). A user whose only SSH permission is
   `SSH_GIT` logs in by key unless `ssh-server` `git-password-auth="true"`. `git -c protocol.version=2` sends `GIT_PROTOCOL`,
   which the server reads from the channel's `env`.
+- **SSH for any account**: with `ssh-server` `git-any-account="true"` (off by default) an account that logs in by key
+  uses git over SSH without `SSH_GIT`: a public site's accounts, which are in no group and so can hold no
+  permission. Nothing else changes: each repository's own check ([Access](#access)) decides what the account
+  clones and pushes, so one it may not view is "not found"; a password login still needs `SSH_GIT` and
+  `git-password-auth`; the shell still needs `SSH_SHELL` and the SFTP root `SSH_SFTP`. (SFTP to the drives an
+  account may open is `dav-server` `sftp-drives`, on by default and apart from this.) An account adds its key with
+  `create#UserSshKey`, so "who may add a key" is who may sign in.
+- **SSH sessions.** At most `ssh-server` `max-sessions` (8) connections are logged in at once; of those one user
+  logged in by key or password holds at most `max-sessions-per-user` (4) and one address (an IPv6 /64)
+  `max-sessions-per-source` (8), so one account, or one host, cannot hold them all; 0 is no share. A git command
+  holds its connection only while it runs. A server that takes git over SSH from the public raises `max-sessions`
+  to what it should serve at once (hundreds), keeps `max-sessions-per-user` small, and raises
+  `max-sessions-per-source` where many users come from one address (an office, a CI provider); the git pool
+  (`git-server` `max-concurrent`) still bounds the work done at once.
 
-My Account, Git Access (`MyAccount/User/GitAccess.xml` of mr-marble) adds and removes SSH keys and creates and
-revokes access tokens, through `org.moqui.impl.UserServices` `create#UserSshKey`, `delete#UserSshKey`,
-`create#UserAccessToken` (a `UserLoginKey` with a description; the token is shown once) and `revoke#UserAccessToken`.
+An account page adds and removes SSH keys and creates and revokes access tokens through
+`org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
+`delete#UserSshKey`, `create#UserAccessToken` (a `UserLoginKey` with a description; the token is shown once) and
+`revoke#UserAccessToken`, and lists them with `find#UserSshKeys` (each `sshKeyId`, `description`, `keyType`,
+`fingerprint`, `fromDate`, `thruDate`; when a key was last used is not kept) and `find#UserAccessTokens` (each
+`tokenId`, `description`, `fromDate`, `thruDate`). Both list the current user's rows only, the ones in date unless
+`includeEnded`, and never a public key, a token or a token's stored hash: `tokenId` is a digest of that hash, which
+`revoke#UserAccessToken` takes.
 
 ## Access
 
@@ -245,6 +264,21 @@ a commit event `commit` (`commitId`, `shortId`, `summary`, `body`, `message`, `t
 committer and their dates, `parentIds`, `moquiUserId`); a tag event `tag` (`tagName`, `targetId`, `commitId`,
 `annotated`, and an annotated tag's `message` and tagger). `org.moqui.GitServices.process#GitEca` is the interface.
 
+**A quota by pre-receive.** The pre events of a push also have `packBytes`: the bytes of the pack the push sent, as
+it is kept in quarantine (a thin pack completed from the repository), so what the push would add to a `local`
+repository and close to what it adds to a `db` one. It is 0 for a push that only deletes and for a write through
+Moqui. With `userId`, `refUpdates` and [`get#GitRepositoryUsage`](#usage-and-delete) a rule refuses a push that
+would pass a limit, and its message is what the client sees:
+
+```xml
+<giteca rule-name="PushQuota" event="pre-receive">
+    <actions><service-call name="mantle.smithy.SmithyGitServices.check#Push" in-map="context"/></actions>
+</giteca>
+```
+
+A push is bounded before any rule runs by `git-server` `max-push-size`. LFS uploads do not pass pre-receive: see
+[Large files](#large-files-git-lfs).
+
 The pre events run in the push, against its quarantined objects: their messages, and the reasons of a refusal, show
 on the client as `remote:` lines. The post events run after the change, on a job of the git pool, from its
 `moqui.resource.GitUpdate` row (with a `GitUpdateRef` per ref), each rule in a transaction of its own; one that fails
@@ -276,6 +310,61 @@ Mantle-free: Mantle links merge requests to work items and comments to lines.
 | `find#GitUpdates` | a repository's push log, newest first: every push (refused ones too), mirror fetch, import and write, its refs and the state of its gitECA rules |
 | `get#GitTree` | a directory at a revision, directories first, each entry with its size (a file in LFS: its content's) and last commit, from the path index of the branch the revision names (or of the commit) |
 | `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)) |
+| `get#GitBlame` | for each line of a file at a revision, the commit that last changed it ([below](#blame-and-archive)) |
+| `get#GitArchive` | a tree at a revision as a zip or tar.gz file to serve ([below](#blame-and-archive)) |
+
+### Blame and archive
+
+`get#GitBlame(repositoryId, revision, path, withLines)` answers `commitId` (the commit the revision names),
+`lineCount` and `hunkList`: runs of lines that one commit last changed, in line order, each `startLine` (from 1),
+`lineCount`, `commitId`, `shortId`, `summary`, `authorName`, `authorEmail`, `authorDate`, and with `withLines` its
+`lines`. A commit passes the lines it did not change to the parent that has them (the first parent whose file is the
+same takes them all; a merge passes each parent its lines) and keeps the rest. Renames are not followed: a file is
+blamed as far back as it has its path. Nothing is answered for a revision that names nothing or a path that is not a
+file there. A binary file and a file kept in Git LFS are refused.
+
+A blame is refused past any of its `git-server` limits, which bound what one costs:
+
+| Attribute | Default | Bounds |
+|---|---|---|
+| `blame-max-bytes` | 1 MiB | the file, and each older version compared with it |
+| `blame-max-lines` | 50,000 | the same, in lines |
+| `blame-max-commits` | 10,000 | the commits read; one reached again is counted again |
+| `blame-max-diffs` | 2,000 | the comparisons of two versions; each parent of a merge is one |
+| `blame-max-seconds` | 10 | the whole blame; each comparison is cut off at it, and the blame refused, not answered worse |
+
+Within them a blame of a large file with a long history is still seconds of one service thread. An older version
+past the byte or line limit shares no lines: the commit after it keeps them.
+
+`get#GitArchive(repositoryId, revision, format, path)` gives the tree at a revision (or one directory of it) as
+`zip` (the default) or `tar.gz`, every entry under one directory named for the repository and the commit
+(`mr-moqui-0123456789/`), and answers `archiveLocation`, `fileName`, `contentType`, `archiveSize`, `contentBytes`,
+`fileCount`, `commitId` and `skippedList`. Entries carry the commit's time; executable files stay executable; a
+submodule is its empty directory; files kept in LFS are archived with their content.
+
+- **`archiveLocation`** is the absolute path of a file under `runtime/tmp/git-archive` on the node that answered.
+  There is one file for each (repository, commit, path, format), named by a digest of those, written beside its
+  name and renamed into place: every caller that asks for that archive is given the same file, whole. Serve it
+  (`ec.web.sendResourceResponse(archiveLocation, false, fileName)`); never delete, move or write it. It is kept six
+  hours from its last use (a call that reuses it marks it used) and removed by a later call or at start, as is what
+  a writer that died left.
+- **Names are not trusted.** A tree is what someone pushed. An entry whose name is empty, `.`, `..`, `.git` in any
+  case, has `/`, `\` or NUL, or is not UTF-8, and a name twice in one directory, refuses the archive: unpacked, such
+  a name could write outside the archive's directory or over another entry. git's own clients make none of them.
+- **Links.** A link is a link entry with its target as it is stored; the server never follows it. It is kept only
+  when the target is relative and, by its `..` segments, stays inside the archive. One with an absolute target, a
+  `\`, or a target that climbs out is left out and its path listed in `skippedList`: no archive from here holds a
+  link that points outside what was unpacked.
+- **Bounds**, refused before anything is written: `git-server` `archive-max-bytes` (256 MiB) of content;
+  `archive-max-files` (50,000) entries, counting files, links, submodules and every tree read, so a tree that names
+  one subtree many times is not read without end; 64 directories deep (the walk uses no stack, whatever the
+  depth); `archive-max-concurrent` (2) archives measured and written at once on a node, one more being refused; and
+  `archive-max-disk-bytes` (2 GiB) of archive files kept, a new archive that would pass it being refused until
+  older ones are removed. An LFS file and a large object of a `db` repository are read a window at a time; a large
+  file of a `local` repository is held whole while it is written, within `archive-max-bytes`.
+
+Both services need view, and are the application's to offer or not to a visitor with no account: a page that does
+puts its route under a rate limit of its own, as the `git-anonymous` limit counts git requests only.
 
 ### Refs, compare and merge
 
@@ -321,6 +410,60 @@ together, and whether the user may push to it directly).
 ref writes, merges and `git://` writes with an error), its open merge requests are closed, and `find#GitRepositories`
 leaves it out unless asked. `unarchive#GitRepository` makes it writable again. `update#GitRepository` changes the
 description, the default branch and the default merge method (`defaultMergeMethodEnumId`, `GmmMerge` or `GmmSquash`).
+
+### Usage and delete
+
+`get#GitRepositoryUsage(repositoryId, repositoryIdList)` answers what repositories store now, for an application's
+quotas, so it reads no content-group rows itself: `usageList`, in the order asked, each `repositoryId`,
+`repositoryKind`, `storedBytes`, `objectCount`, `lfsBytes` and `lfsObjectCount`, with `totalStoredBytes` and
+`totalLfsBytes`. A repository the user may not view, or that is not there, is left out; at most 1000 ids. A caller
+with authorization off (a gitECA rule's actions, the LFS upload check) is answered for every repository that is
+there, so a quota can count a namespace's repositories whoever pushes. It is for an application's own quota code,
+not a visitor's route: each `db` repository asked costs a grouped read of its object rows, each `local` or `remote`
+one a walk of its directory.
+
+- `db`: `storedBytes` is the object rows as they are stored (compressed, deltas as deltas) plus the content blobs of
+  its large objects, and `objectCount` its rows, from one grouped query. It is current right after a push. It falls
+  when `gc#GitRepositories` deletes and repacks, so a quota should allow for what a collection has not yet let go.
+- `local` and `remote`: `storedBytes` is the files of the repository's directory (packs and loose objects, with the
+  few files beside them), read when asked, so it is current after a push too; `objectCount` is empty.
+- `lfsBytes` is the sizes of the LFS objects uploaded to the repository. The same content in two repositories is
+  stored once and counted in each.
+- `GitRepository.storedBytes` and `objectCount` are not these: they are what `gc#GitRepositories` recorded at its last
+  run of a `db` repository.
+
+`delete#GitRepository(repositoryId)` (delete right) removes a repository and everything the framework keeps of it:
+its refs and objects (the rows of a `db` kind, the directory of a `local` or `remote` kind), its LFS objects and
+locks, its push log, commit statuses, webhooks, branch rules, merge requests and their reviewers, the redirects of
+paths it had, and its row. It cannot be undone.
+
+- **Who.** The delete right is also what forces a push and changes a repository's settings, so an application
+  that lets fewer users delete (an Owner, a typed path to confirm) checks its own rule and offers its own service,
+  not this one. Called with authorization off it deletes for any caller.
+- **In order.** The repository is first marked as going: its `archivedDate` is set in a transaction that commits
+  at once. Every push and write reads the row again, under the repository's lock, before it stores anything (on
+  every node, whatever it has open), so from then nothing is written to it. The rows are then deleted in the
+  service's transaction. Once that commits the directory is removed and the rows of the id are deleted a second
+  time, for what a push that was already storing when the mark was set left behind. A rollback keeps the rows and
+  the directory and sets the mark back. When the caller's own transaction already holds the repository's row (it
+  wrote it before calling), the mark cannot be committed and is skipped; the second pass still runs.
+- **The directory** is removed only when all of this holds, read from the disk with links and `..` followed, not
+  from how the path is written: it is under the runtime directory and is not that directory; it looks like a bare
+  repository (a `HEAD` file and an `objects` directory); and no other repository's row names it, a directory in
+  it, or a directory it is in. Otherwise it stays and is named in `directoryKept`: a `localPath` can name anything,
+  a developer's own clone too.
+- **Left**: the content blobs of its large and LFS objects (`gc#ContentBlobs` collects them when nothing else has
+  them), and webhook deliveries already queued.
+- **Refused**: a repository that holds a drive (delete the drive), and one another component's row still refers to
+  by a foreign key. The application removes its own rows first (Mantle's project links, a Smithy repository) and
+  decides whether a repository with open merge requests, forks or release assets may go: the framework asks nothing
+  of that.
+- After it the id and its paths name nothing, for git and for the services; a path it had is free at once.
+- The node that deleted it forgets it at once (the open repository, its cached objects and path indexes), so an id
+  used again starts empty there. In a cluster a git request reads the repository's row each time, so every node
+  answers "not found" at once; another node that had the repository open may still answer a `get#Git*` service as
+  for an empty repository, and keeps its cached objects, until it restarts. Use a new id for a new repository, never
+  a deleted one's.
 
 ### Commit statuses
 
@@ -519,6 +662,29 @@ and force unlocking another user's lock `delete`. The batch's actions carry a to
 (generated into `runtime/.env`; `git_lfs_token_key_previous` still reads while it is changed) that says who the user
 is, for 15 minutes, and each request is authorized again. Objects are at most `git-server` `lfs-max-object-size` (5 GiB).
 
+**A quota for uploads.** An LFS upload is not a push, so no pre-receive rule sees it. `git-server`
+`lfs-upload-check-service` names a service (none by default; the interface is
+`org.moqui.git.GitServices.check#GitLfsUpload`) that is asked before objects new to a repository are accepted, with
+`repositoryId`, `userId`, `uploadBytes`, `objectCount`, `objectList` (each `oid` and `size`) and `stored`:
+
+- by the batch API, once for a batch, with every object the batch would add (one already in the repository, and one
+  over `lfs-max-object-size`, is not counted);
+- by each upload, with that object, so a client that skips the batch is checked too;
+- by a write of an LFS-tracked file through Moqui (a `git://` location, `commit#GitFiles`), with that file.
+
+It runs as the user with authorization off, whatever errors the caller had before. An error it adds refuses the
+request with 403 and the error's text (`upload declined: ...`), which git-lfs shows; for a batch the whole batch is
+refused; a write through Moqui fails with it. A service that fails refuses as well. With a service named, an upload
+needs a `Content-Length` (411 without), as git-lfs sends.
+
+Uploads that run at once are each within a limit when they ask and can be past it together, so the service is asked a
+second time once an object is the repository's, with `stored` true and `uploadBytes` 0 (the object is in what
+`get#GitRepositoryUsage` counts by then); a refusal then takes the object back and answers 403. What a repository
+keeps therefore never passes what the service allows, however many uploads run at once, and a service that adds
+`uploadBytes` to the usage needs no change for it. The bound while uploads are in flight: each may hold up to
+`lfs-max-object-size` of content not yet counted, and a refused upload's content stays, as no repository's, until
+`gc#ContentBlobs`.
+
 Moqui itself writes LFS files through `git://` locations: a file the `.gitattributes` of the branch head keep in LFS
 (`filter=lfs`) is stored as a content blob, linked to the repository, and committed as its pointer; a read gives the
 content, streamed for a response, and its size is the content's. `setup#GitLfs(repositoryId, patterns)` adds the
@@ -529,6 +695,19 @@ one commit) can so live in a `db` repository, with their history, in the databas
 
 ## Limits
 
+- `git-any-account` is one switch for the server: it cannot be on for one host or one repository. An account that
+  may view nothing still logs in over SSH (to the terminal client, as every account does). The session shares are
+  per node.
+- Blame follows no renames and reads no `.gitattributes`; it holds a service thread for up to `blame-max-seconds`.
+  An archive is built whole before it is served and is a file on one node; names that differ only in case are not
+  refused, and unpack over each other on a file system that ignores case. Neither is capped by client: the page
+  that offers them rate limits its route.
+- A push or write that had read the repository's row and was storing when `delete#GitRepository` marked it can
+  leave rows after the delete's second pass, on another node; they are of an id that names nothing, and go when
+  the delete is run on a repository made with that id, which is one more reason not to reuse ids.
+- `packBytes` is the pack's size, not what a `db` repository's rows will take (close: the rows keep the pack's
+  compressed entries). `delete#GitRepository` on MySQL deletes a `db` repository's objects a delta depth at a time.
+- Usage of a `local` repository walks its directory on each call; ask for many of them rarely.
 - Anonymous read is over HTTP only, and is fetch and LFS download only; the `get#Git*` services and an application's
   pages decide for themselves what a visitor with no account sees (they ask the same check).
 - A repository's id must itself be a path of one segment to be reached by a git URL

@@ -76,10 +76,10 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     Ok(())
 }
 
-type Parameters = BTreeMap<String, Value>;
-type Out = Result<BTreeMap<String, Value>, LibError>;
+pub(super) type Parameters = BTreeMap<String, Value>;
+pub(super) type Out = Result<BTreeMap<String, Value>, LibError>;
 
-fn none() -> Out {
+pub(super) fn none() -> Out {
     Ok(BTreeMap::new())
 }
 
@@ -103,7 +103,7 @@ fn id_value(id: Option<ObjectId>) -> Value {
 }
 
 /// A list parameter: a List, or a comma separated text.
-fn list_param(parameters: &Parameters, key: &str) -> Vec<String> {
+pub(super) fn list_param(parameters: &Parameters, key: &str) -> Vec<String> {
     match parameters.get(key) {
         Some(Value::List(items)) => items
             .iter()
@@ -128,12 +128,12 @@ fn tri(parameters: &Parameters, key: &str) -> Option<bool> {
 
 /// Whether the current user may do `action` (view, create, update, delete) on the repository, by its authorization
 /// or as a member of the drive it holds.
-fn may(repository_id: &str, action: &str) -> bool {
+pub(super) fn may(repository_id: &str, action: &str) -> bool {
     crate::server::permitted(repository_id, action)
 }
 
 /// The provider and repository id when the user may do `action`; otherwise the error recorded.
-fn allowed(parameters: &Parameters, action: &str) -> Option<(GitProvider, String)> {
+pub(super) fn allowed(parameters: &Parameters, action: &str) -> Option<(GitProvider, String)> {
     let (provider, id) = provider_and_id(parameters, true)?;
     if action == "view" {
         return viewable(parameters);

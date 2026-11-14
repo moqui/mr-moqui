@@ -25,7 +25,7 @@ use gix::objs::Kind;
 use gix::ObjectId;
 use moqui_lib::object::Value;
 
-use super::server::lfs::{pointer, pointer_text, GIT_LFS_OBJECT, MAX_POINTER};
+use super::server::lfs::{pointer, pointer_text, Asked, GIT_LFS_OBJECT, MAX_POINTER};
 use super::{attributes, ops, GitProvider, Repo};
 use moqui_core::context::Error;
 use moqui_core::entity::EntityValue;
@@ -87,6 +87,9 @@ impl GitProvider {
         if linked {
             return Ok(());
         }
+        // new to the repository: the application's check is asked as for an upload by git-lfs, before and after
+        let object = [(info.id.clone(), info.size)];
+        crate::server::lfs::check_upload(repository_id, &object, Asked::Before).map_err(Error::new)?;
         let mut row = EntityValue::make(&entity, GIT_LFS_OBJECT)?;
         row.set("repositoryId", Value::string(repository_id));
         row.set("oid", Value::string(&info.id));
@@ -95,7 +98,12 @@ impl GitProvider {
             row.set("uploadedByUserId", Value::string(user));
         }
         row.set("uploadedDate", moqui_core::user::now_effective_value());
-        Ok(row.create(&entity)?)
+        row.create(&entity)?;
+        if let Err(refusal) = crate::server::lfs::check_upload(repository_id, &object, Asked::After) {
+            row.delete(&entity)?;
+            return Err(Error::new(refusal));
+        }
+        Ok(())
     }
 
     /// The LFS content the git object `blob` names, when it is a pointer whose content the repository has.

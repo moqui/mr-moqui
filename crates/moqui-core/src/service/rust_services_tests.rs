@@ -136,6 +136,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::user_keys::create_app_password",
         "moqui_core::service::user_keys::create_ssh_key",
         "moqui_core::service::user_keys::delete_ssh_key",
+        "moqui_core::service::user_keys::find_access_tokens",
+        "moqui_core::service::user_keys::find_ssh_keys",
         "moqui_core::service::user_keys::get_app_passwords",
         "moqui_core::service::user_keys::get_device_keys",
         "moqui_core::service::user_keys::get_scram_credentials",

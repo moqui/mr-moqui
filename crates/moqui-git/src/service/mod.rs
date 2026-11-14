@@ -36,6 +36,7 @@ mod files_tests;
 pub mod hosting;
 #[cfg(test)]
 mod images_tests;
+mod repository;
 #[cfg(test)]
 mod script_ports_tests;
 #[cfg(test)]
@@ -61,7 +62,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, setup_lfs)?;
     rust_service!(map, gc_repositories)?;
     rust_service!(map, fsck_repository)?;
-    hosting::register(map)
+    hosting::register(map)?;
+    repository::register(map)
 }
 
 pub(super) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {

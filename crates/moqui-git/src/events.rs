@@ -91,6 +91,9 @@ pub(crate) struct UpdateOrigin {
     pub user_id: Option<String>,
     pub remote_address: Option<String>,
     pub push_options: Vec<String>,
+    /// The bytes of the pack a push sent, as it is kept in quarantine (a thin pack completed); 0 with no pack (only
+    /// deletes) and for a change that is not a push. A pre-receive rule's `packBytes`, for a quota.
+    pub pack_bytes: u64,
 }
 
 fn id_text(id: Option<ObjectId>) -> Value {
@@ -895,6 +898,10 @@ pub(crate) fn pre_receive(
     base.insert(
         "pushOptions".to_string(),
         Value::List(origin.push_options.iter().map(Value::string).collect()),
+    );
+    base.insert(
+        "packBytes".to_string(),
+        Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
     );
     base.insert(
         "refUpdates".to_string(),

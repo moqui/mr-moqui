@@ -134,6 +134,35 @@ pub fn unified(old: &str, new: &str, from_name: &str, to_name: &str) -> String {
     build(old, new, from_name, to_name, false).unified()
 }
 
+/// For each line of `new` (from 0), the line of `old` it is unchanged from, or `None` for a line `new` added or
+/// changed: what a blame passes back to the older text. Past `deadline` the comparison stops looking for the
+/// smallest difference and calls what is left changed: still a true answer (a line it names is unchanged), with
+/// fewer lines named, so a caller that needs the best one checks the time itself.
+pub fn line_origins(old: &str, new: &str, deadline: Option<std::time::Instant>) -> Vec<Option<usize>> {
+    let old_lines = split_lines(old);
+    let new_lines = split_lines(new);
+    let mut config = TextDiffConfig::default();
+    config.algorithm(Algorithm::Patience);
+    if let Some(deadline) = deadline {
+        config.deadline(deadline);
+    }
+    let text_diff = config.diff_slices(&old_lines, &new_lines);
+    let mut origins = vec![None; new_lines.len()];
+    for op in text_diff.ops() {
+        if let DiffOp::Equal {
+            old_index,
+            new_index,
+            len,
+        } = *op
+        {
+            for (offset, origin) in origins.iter_mut().skip(new_index).take(len).enumerate() {
+                *origin = Some(old_index + offset);
+            }
+        }
+    }
+    origins
+}
+
 fn build(old: &str, new: &str, from_name: &str, to_name: &str, inline: bool) -> TextDiff {
     let old_lines = split_lines(old);
     let new_lines = split_lines(new);
@@ -687,6 +716,22 @@ mod tests {
         assert!(super::diff("x\n", "x\n", "a", "b")
             .render_html()
             .contains("No differences"));
+    }
+
+    #[test]
+    fn line_origins_name_the_unchanged_lines() {
+        let origins = line_origins("a\nb\nc\n", "new\na\nB\nc\nlast\n", None);
+        assert_eq!(origins, [None, Some(0), None, Some(2), None]);
+        assert!(line_origins("a\n", "", None).is_empty());
+        assert_eq!(line_origins("", "a\n", None), [None]);
+        // out of time before it starts: every line it still names is unchanged
+        let past = std::time::Instant::now();
+        let hurried = line_origins("a\nb\nc\n", "new\na\nB\nc\nlast\n", Some(past));
+        assert_eq!(hurried.len(), 5);
+        let (old, new) = (["a\n", "b\n", "c\n"], ["new\n", "a\n", "B\n", "c\n", "last\n"]);
+        for (at, origin) in hurried.iter().enumerate() {
+            assert!(origin.is_none_or(|from| old[from] == new[at]), "{hurried:?}");
+        }
     }
 
     #[test]

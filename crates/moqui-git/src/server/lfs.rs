@@ -39,7 +39,7 @@ use super::{
     AnonymousSlot, GitService, HttpResponder, Refusal,
 };
 use crate::{Repo, RepositoryKind};
-use moqui_core::context::Error;
+use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::EntityValue;
 use moqui_core::resource::blob::{is_blob_id, BlobStore, Expected};
 use moqui_core::resource::source::READ_WINDOW;
@@ -71,6 +71,78 @@ pub struct LfsHttpRequest {
     /// Credentials may be taken: as for [`super::GitHttpRequest::secure`].
     pub secure: bool,
     pub client_ip: String,
+}
+
+/// The conf's `git-server` `lfs-upload-check-service`: the service asked before an upload is accepted, none when
+/// empty.
+fn upload_check_service() -> String {
+    crate::setting("lfs-upload-check-service")
+}
+
+/// When the upload check is asked of objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Asked {
+    /// Before they are taken: `uploadBytes` is what they would add.
+    Before,
+    /// Again once they are the repository's (`stored` true, `uploadBytes` 0: a count of the repository's objects
+    /// holds them already). Uploads that were each within a limit when they asked can be past it together; the one
+    /// that finds it so is refused and its object taken back, so what a repository keeps never passes what the
+    /// service allows, however many uploads run at once.
+    After,
+}
+
+/// Ask the service the conf names (`git-server` `lfs-upload-check-service`) whether these objects, new to the
+/// repository, may be its Git LFS objects: an application's quota (plans/Dogfood.md, N-LFS-HOOK), which a push's
+/// pre-receive rules never see. Asked by the batch API, by an upload, and by a write of an LFS-tracked file through
+/// Moqui (`link_lfs`). `Err` is the refusal for whoever asked: the service's errors, which are taken out of the
+/// message facade again (the errors that were there stay). A service that cannot be called refuses too: the check
+/// guards storage.
+pub(crate) fn check_upload(repository_id: &str, objects: &[(String, u64)], when: Asked) -> Result<(), String> {
+    let service = upload_check_service();
+    if service.is_empty() || objects.is_empty() {
+        return Ok(());
+    }
+    let total: u64 = match when {
+        Asked::Before => objects.iter().map(|(_, size)| *size).sum(),
+        Asked::After => 0,
+    };
+    let long = |value: u64| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
+    let mut parameters = std::collections::BTreeMap::new();
+    parameters.insert("repositoryId".to_string(), Value::string(repository_id));
+    parameters.insert("userId".to_string(), current_user().map_or(Value::Null, Value::string));
+    parameters.insert("uploadBytes".to_string(), long(total));
+    parameters.insert("objectCount".to_string(), long(objects.len() as u64));
+    parameters.insert("stored".to_string(), Value::Bool(when == Asked::After));
+    let object_list = objects
+        .iter()
+        .map(|(oid, size)| crate::values::map([("oid", Value::string(oid)), ("size", long(*size))]))
+        .collect();
+    parameters.insert("objectList".to_string(), Value::List(object_list));
+    // the application's own code, as a gitECA rule is: authorization off
+    let _authz = crate::rows_guard();
+    // errors a caller left before (a service that writes a file after an error of its own) are set aside while the
+    // check runs: with them there it would be passed over, which would let the upload in. They come back after it,
+    // and the check's own errors are taken out: they are the refusal, told once.
+    ExecutionContext::with_current(|ctx| ctx.message().push_errors());
+    let called = moqui_core::service::sync(&service, &parameters);
+    let mut errors = ExecutionContext::with_current(|ctx| {
+        let mut message = ctx.message();
+        // every error there now is the check's: the mark of an empty list
+        let errors = message.take_errors_since(Default::default());
+        message.pop_errors();
+        errors
+    })
+    .unwrap_or_default();
+    if let Err(err) = called {
+        tracing::error!(repository = %repository_id, service = %service, "the LFS upload check failed: {}", err.message());
+        if errors.is_empty() {
+            errors.push("the upload could not be checked".to_string());
+        }
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    Err(format!("upload declined: {}", errors.join("; ")))
 }
 
 /// The conf's `git-server` `lfs-max-object-size`: the largest object, 5 GiB.
@@ -457,6 +529,11 @@ impl Lfs {
         ))
     }
 
+    /// [`check_upload`] for this request's repository: a refusal is 403 with the service's words.
+    fn check_upload(&self, objects: &[(String, u64)], when: Asked) -> Result<(), (u16, Json)> {
+        check_upload(&self.repository, objects, when).map_err(|refusal| message(403, &refusal))
+    }
+
     fn batch(&self, body: &mut dyn Read) -> Reply {
         let request = read_json(body)?;
         let operation = match request["operation"].as_str() {
@@ -485,11 +562,32 @@ impl Lfs {
         };
         let base = self.base();
         let max = max_object_size();
-        let mut answered = Vec::with_capacity(objects.len());
-        for object in objects {
+        // each object with what the repository has of it, read once
+        let mut known = Vec::with_capacity(objects.len());
+        for object in &objects {
             let oid = object["oid"].as_str().unwrap_or_default().to_string();
-            let size = object["size"].as_u64();
-            let (Some(size), true) = (size, is_blob_id(&oid)) else {
+            let size = object["size"].as_u64().filter(|_| is_blob_id(&oid));
+            let stored = match size {
+                Some(_) => self.stored(&oid)?,
+                None => None,
+            };
+            known.push((oid, size, stored));
+        }
+        if operation == Operation::Upload {
+            // what the batch would add: the objects the repository lacks, each once
+            let mut seen = std::collections::HashSet::new();
+            let adding: Vec<(String, u64)> = known
+                .iter()
+                .filter_map(|(oid, size, stored)| match (size, stored) {
+                    (Some(size), None) if *size <= max && seen.insert(oid.as_str()) => Some((oid.clone(), *size)),
+                    _ => None,
+                })
+                .collect();
+            self.check_upload(&adding, Asked::Before)?;
+        }
+        let mut answered = Vec::with_capacity(objects.len());
+        for (object, (oid, size, stored)) in objects.iter().zip(known) {
+            let Some(size) = size else {
                 answered.push(json!({ "oid": oid, "size": object["size"],
                     "error": { "code": 422, "message": "an object needs a SHA-256 oid and a size" } }));
                 continue;
@@ -500,7 +598,6 @@ impl Lfs {
                 }
                 None => json!({ "href": href }),
             };
-            let stored = self.stored(&oid)?;
             answered.push(match (operation, stored) {
                 (Operation::Download, Some(_)) => json!({ "oid": oid, "size": size, "authenticated": true,
                     "actions": { "download": action(format!("{base}/objects/{oid}")) } }),
@@ -605,6 +702,14 @@ impl Lfs {
         if request.content_length.is_some_and(|length| length > max) {
             return Err(message(413, &format!("the object is over {max} bytes")));
         }
+        // a client may send an object without asking the batch first: the application's check is asked here too, for
+        // an object the repository lacks, and needs the size before the content is taken
+        if !upload_check_service().is_empty() && self.stored(oid)?.is_none() {
+            let Some(length) = request.content_length else {
+                return Err(message(411, "an LFS upload needs a Content-Length"));
+            };
+            self.check_upload(&[(oid.to_string(), length)], Asked::Before)?;
+        }
         let entity = self.entity()?;
         let blobs = BlobStore::new(entity.clone());
         let mut writer = blobs.begin().map_err(|err| message(500, err.message()))?.limit(max);
@@ -638,6 +743,13 @@ impl Lfs {
                 if self.stored(oid)?.is_none() {
                     return Err(message(500, err.message()));
                 }
+            } else if let Err(refusal) = self.check_upload(&[(oid.to_string(), info.size)], Asked::After) {
+                // within the limit when it asked, past it now with the uploads that ran beside it: taken back (its
+                // content is no repository's, and gc#ContentBlobs lets it go)
+                if let Err(err) = row.delete(&entity) {
+                    tracing::error!(repository = %self.repository, "the refused LFS object {oid} was not taken back: {}", err.message());
+                }
+                return Err(refusal);
             }
         }
         Ok((200, json!({})))

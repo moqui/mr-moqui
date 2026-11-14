@@ -39,7 +39,8 @@ along with this software (see the LICENSE.md file). If not, see
                 trailers, authorName, authorEmail, authorDate, committerName, committerEmail, committerDate,
                 parentIds, moquiUserId) with refName and isDefaultBranch for a commit event; tag (tagName, targetId,
                 commitId, annotated, message, taggerName, taggerEmail, taggerDate) for a tag event; pushOptions for a
-                push; and for pre-receive the commits a push adds, as newCommits.
+                push; for pre-receive the commits a push adds, as newCommits; and for the pre events of a push the
+                bytes of the pack it sent, as packBytes (0 with no pack), for a rule that keeps a quota.
             </xs:documentation>
         </xs:annotation>
         <xs:complexType>

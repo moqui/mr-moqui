@@ -36,6 +36,8 @@
 //!   enabled, never an account in a privileged group or in a group granting a sealed permission
 //!   ([`unscoped_link_allowed`]).
 //! - a closed account (disabled for good, or ended) is refused before anything is written.
+//! - under the same `AflVerifiedEmail` rule, a sign-in whose verified email is the account's address records it
+//!   (`moqui.security.public.VerifiedAddress`, [`note_verified_address`]), as the registration's mail link does.
 //! - a role map or a default group never gives a membership in a privileged group or in a group that grants a sealed
 //!   permission ([`sso_may_give`]); such a row is logged and passed over.
 //! - the sync ends only memberships in the groups the flow's role maps name, and never one a sign-in may not give, so
@@ -572,9 +574,23 @@ fn sync_account(
     username: &str,
 ) -> Result<String, LibError> {
     let tx = facade.transactions_for(ACCOUNT)?;
-    tx.run(TransactionAttribute::ForceNew, None, || {
+    let username = tx.run(TransactionAttribute::ForceNew, None, || {
         sync_account_rows(facade, flow, profile, username)
-    })
+    })?;
+    // Once the account is committed, in a transaction of its own: recording the verified address never fails or
+    // undoes a sign-in. A row another sign-in of the account made at the same moment is as good, so a failure here
+    // (that one, or any other) is logged and the sign-in goes on; the next sign-in records it.
+    let noted = tx.run(TransactionAttribute::ForceNew, None, || {
+        note_verified_address(facade, flow, profile, &username)
+    });
+    if let Err(err) = noted {
+        tracing::warn!(
+            "AuthFlow {}: the verified address of {username} was not recorded: {}",
+            field(flow, "authFlowId"),
+            err.message()
+        );
+    }
+    Ok(username)
 }
 
 fn sync_account_rows(
@@ -860,6 +876,65 @@ fn link_allowed(
             )));
         }
     }
+    Ok(())
+}
+
+const VERIFIED_ADDRESS: &str = "moqui.security.public.VerifiedAddress";
+
+/// Record that the provider verified the account's address (mr-pass plan/design-smithy.md §5.5, N-SSO-VERIFIED): a
+/// `VerifiedAddress` row for the account and its current `emailAddress`, when there is none. Only under a flow whose
+/// rule trusts the provider's verified address (`AflVerifiedEmail`, the trust that links an existing account by it),
+/// with an `email_verified` claim that is true and an `email` equal to the account's address after this sign-in's
+/// field maps were applied (ignoring case). So "an address the site trusts" is a stored fact, which a push by key or
+/// token is judged by as a page is, and an account that registered through a provider needs no mail link. Any other
+/// sign-in writes nothing, and a row that is there is left as it is. The caller runs this after the account's
+/// transaction, in one of its own, and only logs its failure.
+fn note_verified_address(
+    facade: &EntityFacade,
+    flow: &EntityValue,
+    profile: &SsoProfile,
+    username: &str,
+) -> Result<(), LibError> {
+    if field(flow, "accountLinkEnumId") != LINK_VERIFIED_EMAIL {
+        return Ok(());
+    }
+    let claim = |name: &str| profile.attributes.get(name).map(to_plain_string).unwrap_or_default();
+    let email = claim("email");
+    if claim("email_verified") != "true" || email.trim().is_empty() {
+        return Ok(());
+    }
+    let Some(account) = facade
+        .find(ACCOUNT)?
+        .disable_authz()
+        .eq("username", Value::string(username))
+        .use_cache(false)
+        .one()?
+    else {
+        return Ok(());
+    };
+    let user_id = field(&account, "userId");
+    // the address the account has now, as it is stored: the readers look the row up by it
+    let address = field(&account, "emailAddress");
+    if address.trim().is_empty() || !email.trim().eq_ignore_ascii_case(address.trim()) {
+        return Ok(());
+    }
+    let there = facade
+        .find(VERIFIED_ADDRESS)?
+        .disable_authz()
+        .eq("userId", Value::string(&user_id))
+        .eq("emailAddress", Value::string(&address))
+        .use_cache(false)
+        .one()?
+        .is_some();
+    if there {
+        return Ok(());
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut row = EntityValue::make(facade, VERIFIED_ADDRESS)?;
+    row.set("userId", Value::string(user_id));
+    row.set("emailAddress", Value::string(address));
+    row.set("verifiedAt", now_value());
+    row.create(facade)?;
     Ok(())
 }
 

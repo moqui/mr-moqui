@@ -272,7 +272,7 @@ scenario("agents", {
 ```
 
 A user's connections and shells close when the user ends. The server limits SSH connections (`ssh-server`
-`max-sessions`, 8) and terminal sessions (`terminal` `max-sessions` 16 and `max-sessions-per-user` 4, an `agent-apps`
+`max-sessions`, 8, with `max-sessions-per-user` 4 and `max-sessions-per-source` 8) and terminal sessions (`terminal` `max-sessions` 16 and `max-sessions-per-user` 4, an `agent-apps`
 session and a pty's apps alike), so users sharing one account stop at 4 sessions. `conf/MoquiLoadTestConf.xml` raises
 them and turns SSH on at port 2222.
 

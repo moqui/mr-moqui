@@ -171,6 +171,15 @@ impl Quarantine<'_> {
             .unwrap_or_default()
     }
 
+    /// The size of the pack file in quarantine, in bytes: what the push adds to a `local` repository, and close to
+    /// what it adds to a `db` one. 0 for a pack of no objects.
+    pub(crate) fn pack_bytes(&self) -> u64 {
+        self.files
+            .as_ref()
+            .and_then(|(data, _)| std::fs::metadata(data).ok())
+            .map_or(0, |meta| meta.len())
+    }
+
     fn find_in_pack(&self, id: &ObjectId) -> Result<Option<(Kind, Vec<u8>)>, Error> {
         let Some(bundle) = &self.bundle else {
             return Ok(None);

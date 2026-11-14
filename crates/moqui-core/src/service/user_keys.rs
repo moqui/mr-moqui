@@ -54,6 +54,8 @@ pub(in crate::service) fn register(
     rust_service!(map, delete_ssh_key)?;
     rust_service!(map, create_access_token)?;
     rust_service!(map, revoke_access_token)?;
+    rust_service!(map, find_ssh_keys)?;
+    rust_service!(map, find_access_tokens)?;
     rust_service!(map, create_app_password)?;
     rust_service!(map, revoke_app_password)?;
     rust_service!(map, get_app_passwords)?;
@@ -238,12 +240,112 @@ fn create_access_token(
         .update_all([("description".to_string(), Value::string(description))])?;
     Ok(out([
         ("accessToken", Value::string(token)),
+        ("tokenId", Value::string(access_token_id(&hashed))),
         ("loginKey", Value::string(hashed)),
         ("thruDate", thru),
     ]))
 }
 
-/// `revoke#UserAccessToken`: end one of the current user's access tokens, by its `loginKey` (the stored hash).
+/// Whether a row with `thru_date` is still in date at `now` (milliseconds).
+fn in_date(row: &EntityValue, now: i64) -> bool {
+    row.get("thruDate")
+        .and_then(crate::user::value_millis)
+        .is_none_or(|thru| thru > now)
+}
+
+/// A row's fields as a Map, `Null` for the ones it lacks.
+fn row_map<S: std::hash::BuildHasher + Default>(
+    row: &EntityValue,
+    fields: &[&str],
+) -> indexmap::IndexMap<String, Value, S> {
+    fields
+        .iter()
+        .map(|field| ((*field).to_string(), row.get(field).cloned().unwrap_or(Value::Null)))
+        .collect()
+}
+
+/// `find#UserSshKeys`: the current user's SSH keys, newest first, each `sshKeyId`, `description`, `keyType`,
+/// `fingerprint`, `fromDate` and `thruDate`; ended ones only with `includeEnded`. When a key was last used is not
+/// kept.
+fn find_ssh_keys(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(out([("sshKeyList", Value::List(Vec::new()))]));
+    };
+    let include_ended = text(parameters, "includeEnded").is_some_and(|value| value == "true");
+    let now = crate::user::now_millis();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let rows = facade
+        .find(USER_SSH_KEY)?
+        .eq("userId", Value::string(&user_id))
+        .order_by("fromDate", true)
+        .list()?;
+    let list = rows
+        .iter()
+        .filter(|row| include_ended || in_date(row, now))
+        .map(|row| {
+            let mut map = row_map(row, &["sshKeyId", "description", "fingerprint", "fromDate", "thruDate"]);
+            let key_type = row
+                .get("publicKey")
+                .map(to_plain_string)
+                .and_then(|line| line.split_whitespace().next().map(str::to_string));
+            map.insert("keyType".to_string(), key_type.map_or(Value::Null, Value::string));
+            Value::Map(map)
+        })
+        .collect();
+    Ok(out([("sshKeyList", Value::List(list))]))
+}
+
+/// What names an access token to its user in lists and for revoke: a digest of the stored hash, so a list never holds
+/// a value a login is looked up by.
+fn access_token_id(login_key: &str) -> String {
+    let digest = sha2::Sha256::digest(format!("moqui-access-token-id:{login_key}").as_bytes());
+    digest.iter().take(16).map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The user's access tokens: the `UserLoginKey` rows with a description and no device (a device's key is
+/// `get#UserDeviceKeys`', a session's has no description).
+fn token_rows(facade: &EntityFacade, user_id: &str) -> Result<Vec<EntityValue>, LibError> {
+    let rows = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("userId", Value::string(user_id))
+        .condition(moqui_db::sql::Condition::is_not_null("description"))
+        .condition(moqui_db::sql::Condition::is_null("deviceName"))
+        .order_by("fromDate", true)
+        .list()?;
+    Ok(rows.iter().cloned().collect())
+}
+
+/// `find#UserAccessTokens`: the current user's access tokens, newest first, each `tokenId` (for
+/// `revoke#UserAccessToken`), `description`, `fromDate` and `thruDate`; ended ones only with `includeEnded`. Never
+/// the token, which is shown once when it is made, or its stored hash.
+fn find_access_tokens(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(out([("accessTokenList", Value::List(Vec::new()))]));
+    };
+    let include_ended = text(parameters, "includeEnded").is_some_and(|value| value == "true");
+    let now = crate::user::now_millis();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let list = token_rows(facade, &user_id)?
+        .iter()
+        .filter(|row| include_ended || in_date(row, now))
+        .map(|row| {
+            let mut map = row_map(row, &["description", "fromDate", "thruDate"]);
+            let key = row.get("loginKey").map(to_plain_string).unwrap_or_default();
+            map.insert("tokenId".to_string(), Value::string(access_token_id(&key)));
+            Value::Map(map)
+        })
+        .collect();
+    Ok(out([("accessTokenList", Value::List(list))]))
+}
+
+/// `revoke#UserAccessToken`: end one of the current user's access tokens, by its `tokenId` (as `find#UserAccessTokens`
+/// gives it) or its `loginKey` (the stored hash, as `create#UserAccessToken` gives it).
 fn revoke_access_token(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -251,11 +353,17 @@ fn revoke_access_token(
     let Some(user_id) = current_user() else {
         return Ok(BTreeMap::new());
     };
-    let Some(key) = text(parameters, "loginKey") else {
-        add_error("loginKey is required");
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let Some(given) = text(parameters, "tokenId").or_else(|| text(parameters, "loginKey")) else {
+        add_error("tokenId or loginKey is required");
         return Ok(BTreeMap::new());
     };
-    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    // the id find#UserAccessTokens gives is looked for among the user's own tokens; any other value is a stored hash
+    let key = token_rows(facade, &user_id)?
+        .iter()
+        .filter_map(|row| row.get("loginKey").map(to_plain_string))
+        .find(|key| access_token_id(key) == given)
+        .unwrap_or(given);
     let updated = facade
         .find(USER_LOGIN_KEY)?
         .eq("loginKey", Value::string(&key))
@@ -602,38 +710,5 @@ fn renew_device_key(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::ssh_key_fingerprint;
-
-    #[test]
-    fn a_key_line_gives_the_fingerprint_ssh_keygen_prints() {
-        assert!(ssh_key_fingerprint("ssh-dss AAAA").is_err());
-        assert!(ssh_key_fingerprint("not a key").is_err());
-        // the blob of an RSA key under the ed25519 type
-        assert!(ssh_key_fingerprint("ssh-ed25519 AAAAB3NzaC1yc2EAAAADAQAB").is_err());
-        let dir = std::env::temp_dir().join(format!("moqui-ssh-key-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let key = dir.join("id");
-        let made = std::process::Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C", "test@example", "-f"])
-            .arg(&key)
-            .status();
-        if !made.is_ok_and(|status| status.success()) {
-            eprintln!("skipped the comparison: ssh-keygen is not on the PATH");
-            return;
-        }
-        let line = std::fs::read_to_string(dir.join("id.pub")).unwrap();
-        let listed = std::process::Command::new("ssh-keygen")
-            .arg("-lf")
-            .arg(dir.join("id.pub"))
-            .output()
-            .unwrap();
-        let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
-        let (kind, fingerprint, bare) = ssh_key_fingerprint(&line).unwrap();
-        assert_eq!(kind, "ssh-ed25519");
-        assert_eq!(listed.split_whitespace().nth(1), Some(fingerprint.as_str()), "{listed}");
-        assert!(line.starts_with(&bare) && !bare.contains("test@example"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+#[path = "user_keys_tests.rs"]
+mod tests;

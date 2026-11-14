@@ -38,6 +38,8 @@ pub(crate) mod push;
 mod push_tests;
 pub(crate) mod receive;
 #[cfg(test)]
+mod repository_tests;
+#[cfg(test)]
 mod tests;
 pub(crate) mod upload;
 
@@ -1044,6 +1046,7 @@ impl Session<'_> {
             user_id: current_user(),
             remote_address: Some(self.client.clone()).filter(|client| !client.is_empty()),
             push_options: request.options.clone(),
+            pack_bytes: quarantine.as_ref().map_or(0, pack_in::Quarantine::pack_bytes),
         };
         let refs: Vec<events::RefUpdate> = {
             let view: &dyn GitStore = match &quarantine {
@@ -1119,10 +1122,15 @@ impl Session<'_> {
         if !accepted.is_empty() {
             let lock = self.provider.lock_of(&definition.id);
             let _turn = moqui_lib::sync::lock(&lock);
-            let stored = match quarantine.as_mut() {
-                Some(received) => received.accept().map(|_| ()),
-                None => Ok(()),
-            };
+            // the row as it is now, under the lock: a repository archived or deleted while the pack came in takes
+            // nothing (delete#GitRepository marks it first, so no object is stored under an id that is going)
+            let stored = self
+                .provider
+                .still_writable(&definition.id)
+                .and_then(|()| match quarantine.as_mut() {
+                    Some(received) => received.accept().map(|_| ()),
+                    None => Ok(()),
+                });
             match stored {
                 Err(err) => {
                     tracing::error!(repository = %definition.id, "pushed objects not stored: {err}");

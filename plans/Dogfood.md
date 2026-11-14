@@ -735,6 +735,21 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   share of the pool (`anonymous-max-concurrent`); an old path answers with the repository, not an HTTP redirect.
   Not built: blame and archive download (no framework service yet), syntax highlighting, the client walk. Not
   shown: mirrors of GitHub on a staging host; the checks are a real `git` client against the test servers.
+- **DG2**, Nov 13, 2026: F3 (`ssh-server git-any-account`, with shares of the SSH sessions by user and by
+  source), and the framework services Smithy needs: `delete#GitRepository`, `get#GitRepositoryUsage`, the pack's
+  size in the pre-receive context, the LFS upload check (`lfs-upload-check-service`), the lists of an account's
+  keys and tokens, a verified address recorded at a trusted provider's sign-in, `get#GitBlame` and `get#GitArchive`
+  with their limits. In Mantle the 37 operations of accounts and push (the create policy and group requests,
+  personal namespaces, members and roles, visibility, rename and transfer with held paths, archive, delete, refs,
+  branch rules, webhooks, quotas, keys and tokens) and the push gate; in PASS their pages, Git access in the
+  Account app, Blame and the archive download. Differences: Smithy's operations answer only on a site that mounts
+  it; an archive is for a signed-in account; a webhook's address is checked at delivery, not when stored; a group
+  holds at most 1,000 repositories (a constant); an account with no password needs a sign-in in the last 15
+  minutes to add a key or a token (not checked against a provider's sign-in). Fixed on the way: a repository opened
+  inside a transaction cache frame is no longer kept open for other threads. Not built: group avatars on pages,
+  pinning, the per-operation access walk and the phone-width spec (acceptance). Not shown: a real push through
+  Smithy's gate and a real LFS upload through its check (the rules are tested with the framework's context, and
+  the framework's own test refuses a real push by the pack's size).
 
 ---
 

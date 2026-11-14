@@ -412,6 +412,115 @@ fn an_existing_account_is_linked_only_by_a_verified_email_and_never_a_privileged
 }
 
 #[test]
+fn a_trusted_provider_s_verified_address_is_recorded_at_sign_in() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    crate::service::load_definitions().unwrap();
+    let flow = flow(&facade);
+    let plain = seed(
+        &facade,
+        "moqui.security.sso.AuthFlow",
+        &[("authFlowId", Value::string("PLAIN_FLOW"))],
+    );
+    // accounts their provider already signs in, each with an address
+    let linked = |user_id: &str, username: &str, email: &str, flow_id: &str| {
+        seed(
+            &facade,
+            ACCOUNT,
+            &[
+                ("userId", Value::string(user_id)),
+                ("username", Value::string(username)),
+                ("emailAddress", Value::string(email)),
+                ("externalUserId", Value::string(format!("sub-{username}"))),
+                ("externalAuthFlowId", Value::string(flow_id)),
+            ],
+        );
+    };
+    let verified = |user_id: &str| -> Vec<(String, bool)> {
+        let rows = facade
+            .find("moqui.security.public.VerifiedAddress")
+            .unwrap()
+            .disable_authz()
+            .eq("userId", Value::string(user_id))
+            .use_cache(false)
+            .list()
+            .unwrap();
+        rows.iter()
+            .map(|row| (field(row, "emailAddress"), !field(row, "verifiedAt").is_empty()))
+            .collect()
+    };
+    let sign_in = |flow: &EntityValue, username: &str, change: &dyn Fn(&mut SsoProfile)| {
+        let mut given = profile(&format!("sub-{username}"), username, &[]);
+        change(&mut given);
+        sync_account(&facade, flow, &given, username).unwrap();
+    };
+
+    // the provider's verified address is the account's (whatever its case): recorded as the account has it, once
+    linked("VA_ANN", "va.ann", "Va.Ann@Example.com", "TEST_FLOW");
+    sign_in(&flow, "va.ann", &|_| {});
+    assert_eq!(verified("VA_ANN"), [("Va.Ann@Example.com".to_string(), true)]);
+    sign_in(&flow, "va.ann", &|_| {});
+    assert_eq!(verified("VA_ANN").len(), 1);
+    // an account the rule links by that address has it recorded by the same sign-in
+    seed(
+        &facade,
+        ACCOUNT,
+        &[
+            ("userId", Value::string("VA_NEW")),
+            ("username", Value::string("va.new")),
+            ("emailAddress", Value::string("va.new@example.com")),
+        ],
+    );
+    sign_in(&flow, "va.new", &|_| {});
+    assert_eq!(verified("VA_NEW"), [("va.new@example.com".to_string(), true)]);
+
+    // nothing is recorded for an address the provider did not verify, or another address than the account's
+    linked("VA_BOB", "va.bob", "va.bob@example.com", "TEST_FLOW");
+    sign_in(&flow, "va.bob", &|given| {
+        given
+            .attributes
+            .insert("email_verified".to_string(), Value::Bool(false));
+    });
+    sign_in(&flow, "va.bob", &|given| {
+        given
+            .attributes
+            .insert("email".to_string(), Value::string("someone.else@example.com"));
+    });
+    sign_in(&flow, "va.bob", &|given| {
+        given.attributes.remove("email");
+    });
+    assert!(verified("VA_BOB").is_empty(), "{:?}", verified("VA_BOB"));
+    // a row that is there is left as it is (here one with no time), and an account that is not is nothing to record
+    linked("VA_DEE", "va.dee", "va.dee@example.com", "TEST_FLOW");
+    seed(
+        &facade,
+        "moqui.security.public.VerifiedAddress",
+        &[
+            ("userId", Value::string("VA_DEE")),
+            ("emailAddress", Value::string("va.dee@example.com")),
+        ],
+    );
+    sign_in(&flow, "va.dee", &|_| {});
+    assert_eq!(
+        verified("VA_DEE"),
+        [("va.dee@example.com".to_string(), false)],
+        "a row there is left as it is"
+    );
+    assert!(super::note_verified_address(
+        &facade,
+        &flow,
+        &profile("sub-none", "no.such.account", &[]),
+        "no.such.account"
+    )
+    .is_ok());
+    // nor under a flow whose rule does not trust the provider's address
+    linked("VA_CAL", "va.cal", "va.cal@example.com", "PLAIN_FLOW");
+    sign_in(&plain, "va.cal", &|_| {});
+    assert!(verified("VA_CAL").is_empty(), "{:?}", verified("VA_CAL"));
+}
+
+#[test]
 fn a_sign_in_gives_and_ends_only_the_groups_its_role_maps_may() {
     let (facade, context) = entered();
     let _entered = context.enter();

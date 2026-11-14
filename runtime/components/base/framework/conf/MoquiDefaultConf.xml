@@ -1205,14 +1205,20 @@
         it off whatever the port (the demo component sets it). port, host, host-key, public-host and public-port: see the
         ssh_ properties. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
-        most connections at once. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
-        password; by key only when false. login-dialog: a client with no key is let in with no user and gets the
+        most connections at once, max-sessions-per-user of them for one user logged in by key or password and
+        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. A server that takes git from
+        the public (git-any-account) raises max-sessions, and max-sessions-per-source where many users share an
+        address. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
+        password; by key only when false. git-any-account: git over SSH for any account that logs in by key, without
+        SSH_GIT (a public site's accounts); each repository's own check still decides, and SFTP and the shell keep
+        their permissions. login-dialog: a client with no key is let in with no user and gets the
         terminal client's login dialog (keyboard-interactive with no questions); when false, such a client logs in by
         password at the SSH level or not at all.
     -->
     <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
             public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
-            git-password-auth="false" login-dialog="true"/>
+            max-sessions-per-user="4" max-sessions-per-source="8"
+            git-password-auth="false" git-any-account="false" login-dialog="true"/>
     <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
@@ -1241,7 +1247,13 @@
         packs. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
         object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
-        webhook-private-network="true".
+        webhook-private-network="true". lfs-upload-check-service: a service asked before Git LFS objects new to a
+        repository are accepted (the interface org.moqui.git.GitServices.check#GitLfsUpload), for an application's
+        quota; its errors refuse the upload. None when empty. get#GitBlame reads a file of at most blame-max-bytes
+        and blame-max-lines lines, at most blame-max-commits commits of history and blame-max-diffs comparisons of two
+        versions, for at most blame-max-seconds; get#GitArchive writes a tree of at most archive-max-bytes of content
+        and archive-max-files entries (files, links, directories), at most archive-max-concurrent archives at once, and
+        keeps at most archive-max-disk-bytes of archive files (runtime/tmp/git-archive). More is refused.
         The storage of db kind repositories (docs/interfaces/Git-Hosting.md, Storage): objects are rows of zlib streams, or of
         deltas against another object, as a pack has them: db-delta-depth deltas at most from an object to a whole
         one, and objects up to db-delta-max-size bytes as deltas; an object over db-large-object bytes is a content
@@ -1255,7 +1267,11 @@
             lfs-token-key-previous="${git_lfs_token_key_previous}"
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
-            lfs-max-object-size="5368709120" eca-max-commits="10000" webhook-private-network="false"
+            lfs-max-object-size="5368709120" lfs-upload-check-service="" eca-max-commits="10000"
+            webhook-private-network="false" blame-max-bytes="1048576" blame-max-lines="50000"
+            blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
+            archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"
+            archive-max-concurrent="2"
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
             db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"/>
 

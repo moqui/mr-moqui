@@ -175,6 +175,17 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_OBJ_BASE"><index-field name="repositoryId"/><index-field name="deltaBaseId"/></index>
         <index name="GIT_OBJ_BLOB"><index-field name="blobId"/></index>
     </entity>
+    <view-entity entity-name="GitObjectUsage" package="moqui.resource">
+        <description>What the git objects of db kind repositories take, by repository and storage, for
+            get#GitRepositoryUsage: for storage blob the content is in content blobs (objectBytes), else in the rows
+            (storedBytes).</description>
+        <member-entity entity-alias="GO" entity-name="moqui.resource.GitObject"/>
+        <alias entity-alias="GO" name="repositoryId"/>
+        <alias entity-alias="GO" name="storage"/>
+        <alias entity-alias="GO" name="objectCount" field="objectId" function="count"/>
+        <alias entity-alias="GO" name="storedBytes" function="sum"/>
+        <alias entity-alias="GO" name="objectBytes" field="objectSize" function="sum"/>
+    </view-entity>
     <entity entity-name="GitRef" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <field name="repositoryId" type="id" is-pk="true"/>
         <field name="refName" type="text-medium" is-pk="true"><description>refs/heads/branch</description></field>
@@ -398,6 +409,13 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="expiresDate" type="date-time"/>
     </entity>
 
+    <view-entity entity-name="GitLfsObjectUsage" package="moqui.resource">
+        <description>The Git LFS objects of each repository and their bytes, for get#GitRepositoryUsage.</description>
+        <member-entity entity-alias="GLO" entity-name="moqui.resource.GitLfsObject"/>
+        <alias entity-alias="GLO" name="repositoryId"/>
+        <alias entity-alias="GLO" name="objectCount" field="oid" function="count"/>
+        <alias entity-alias="GLO" name="lfsBytes" field="objectSize" function="sum"/>
+    </view-entity>
     <entity entity-name="GitLfsLock" package="moqui.resource" use="nontransactional" cache="never">
         <description>A file of a repository locked with git lfs lock, so others do not change it meanwhile.</description>
         <field name="lockId" type="id" is-pk="true"/>

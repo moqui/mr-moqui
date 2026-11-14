@@ -28,7 +28,9 @@
 //! conf's `resource-reference scheme="git"` installs on each factory. The git server ([`server`]) is called by the
 //! host's HTTP and SSH listeners.
 
+pub(crate) mod archive;
 pub mod attributes;
+pub(crate) mod blame;
 pub(crate) mod browse;
 pub mod checkout;
 pub(crate) mod db;
@@ -46,6 +48,7 @@ pub(crate) mod revwalk;
 pub(crate) mod rules;
 pub mod server;
 pub mod service;
+pub(crate) mod storage;
 pub(crate) mod store;
 #[cfg(test)]
 mod tests;
@@ -73,6 +76,8 @@ struct Slot(std::sync::OnceLock<GitProvider>);
 fn construct(factory: &Arc<ExecutionContextFactory>) -> Result<Arc<dyn moqui_core::native::ResourceProvider>, Error> {
     let resources = factory.resource();
     let provider = GitProvider::new(resources.entity_slot(), resources.runtime_dir().to_path_buf());
+    // archives nobody used for a while, and what a writer that died left (get#GitArchive)
+    archive::sweep_at_start(resources.runtime_dir());
     factory
         .extension(|_| Slot::default())
         .0
@@ -220,6 +225,8 @@ struct Inner {
     updated: Mutex<HashMap<String, i64>>,
     /// Decoded objects of the `db` repositories, made on first use by the conf of the context then current.
     objects: std::sync::OnceLock<Arc<db::ObjectCache>>,
+    /// The archives being measured and written now (`get#GitArchive`), against `git-server` `archive-max-concurrent`.
+    archives_building: std::sync::atomic::AtomicUsize,
     /// Parsed `.gitattributes` files, by blob.
     attributes: attributes::RulesCache,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
@@ -296,6 +303,7 @@ impl GitProvider {
                 push_locks: Mutex::new(HashMap::new()),
                 updated: Mutex::new(HashMap::new()),
                 objects: std::sync::OnceLock::new(),
+                archives_building: std::sync::atomic::AtomicUsize::new(0),
                 attributes: attributes::rules_cache(),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
@@ -311,6 +319,16 @@ impl GitProvider {
         moqui_lib::sync::read(&self.inner.entity)
             .clone()
             .ok_or_else(|| Error::new("git resources need the entity facade, which is not installed"))
+    }
+
+    /// Where a repository's directory is: its `localPath`, under the runtime directory unless absolute, else
+    /// `runtime/git/<repositoryId>`.
+    pub(crate) fn path_of(&self, repository_id: &str, local_path: Option<String>) -> PathBuf {
+        match local_path {
+            Some(path) if Path::new(&path).is_absolute() => PathBuf::from(path),
+            Some(path) => self.inner.runtime_dir.join(path),
+            None => self.inner.runtime_dir.join("git").join(repository_id),
+        }
     }
 
     /// The `GitRepository` row of `repository_id`.
@@ -330,11 +348,7 @@ impl GitProvider {
         if let Some(updated) = millis(row.get("lastUpdateDate")) {
             self.note_update(repository_id, updated);
         }
-        let path = match text(row.get("localPath")) {
-            Some(path) if Path::new(&path).is_absolute() => PathBuf::from(path),
-            Some(path) => self.inner.runtime_dir.join(path),
-            None => self.inner.runtime_dir.join("git").join(repository_id),
-        };
+        let path = self.path_of(repository_id, text(row.get("localPath")));
         Ok(Definition {
             id: repository_id.to_string(),
             kind,
@@ -382,10 +396,14 @@ impl GitProvider {
         }
         let forgets = moqui_lib::sync::lock(&self.inner.changing).forgets;
         let repo = Arc::new(self.open(self.definition(repository_id)?)?);
+        // a transaction cache frame answers a find by key with the row it read before (most service transactions are
+        // one, `service_tx_cache`), which another thread can have changed and committed since: that row is this
+        // transaction's alone
+        let own_row = self.entity()?.transactions_for(GIT_REPOSITORY)?.cache_frame().is_some();
         // kept only when no row changed since the row was read and none is changing now; the changing lock is held
         // while it is kept, so a forget cannot come between the check and the insert
         let changing = moqui_lib::sync::lock(&self.inner.changing);
-        if changing.forgets == forgets && !changing.rows.contains_key(repository_id) {
+        if !own_row && changing.forgets == forgets && !changing.rows.contains_key(repository_id) {
             moqui_lib::sync::write(&self.inner.repos).insert(repository_id.to_string(), Arc::clone(&repo));
         }
         Ok(repo)
@@ -527,6 +545,8 @@ impl GitProvider {
     ) -> Result<Option<ObjectId>, Error> {
         let lock = self.lock_of(&repo.definition.id);
         let _turn = moqui_lib::sync::lock(&lock);
+        // the row as it is now: archived or deleted since the repository was opened, nothing is written
+        self.still_writable(&repo.definition.id)?;
         // the refs before, only when a gitECA rule listens for writes
         let prior = if moqui_core::service::git_eca::listening_after("write") {
             repo.store.list_refs("refs/").ok()
@@ -1254,6 +1274,7 @@ impl GitProvider {
         let repo = self.repo(repository_id)?;
         let lock = self.lock_of(repository_id);
         let _turn = moqui_lib::sync::lock(&lock);
+        self.still_writable(repository_id)?;
         let haves: Vec<ObjectId> = repo.store.list_refs("refs/")?.into_iter().map(|(_, id)| id).collect();
         let count = server::copy_objects(
             from,

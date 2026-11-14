@@ -1063,6 +1063,29 @@ along with this software (see the LICENSE.md file). If not, see
         <description>End one of the current user's SSH keys (its thruDate is now).</description>
         <in-parameters><parameter name="sshKeyId" required="true"/></in-parameters>
     </service>
+    <service verb="find" noun="UserSshKeys" type="rust" location="moqui_core::service::user_keys::find_ssh_keys">
+        <description>The current user's SSH keys, newest first, for an account page: never another user's, whatever is
+            passed. Ended keys (delete#UserSshKey) only with includeEnded. The public key itself is not given, only its
+            type and fingerprint; when a key was last used is not kept. An error with no user logged in.</description>
+        <in-parameters><parameter name="includeEnded" type="Boolean" default="false"/></in-parameters>
+        <out-parameters>
+            <parameter name="sshKeyList" type="List"><description>Maps: sshKeyId (for delete#UserSshKey), description,
+                keyType (ssh-ed25519), fingerprint (SHA256:..., as ssh-keygen -l prints), fromDate (when it was added),
+                thruDate</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="UserAccessTokens" type="rust" location="moqui_core::service::user_keys::find_access_tokens">
+        <description>The current user's access tokens (create#UserAccessToken), newest first, for an account page:
+            never another user's, and never a token or its stored hash. Expired and revoked ones only with
+            includeEnded. Device keys (get#UserDeviceKeys) and session keys are not listed. An error with no user
+            logged in.</description>
+        <in-parameters><parameter name="includeEnded" type="Boolean" default="false"/></in-parameters>
+        <out-parameters>
+            <parameter name="accessTokenList" type="List"><description>Maps: tokenId (for revoke#UserAccessToken; a
+                digest of the stored hash, which no login is looked up by), description, fromDate (when it was made),
+                thruDate (when it expires, or was revoked)</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="create" noun="UserAccessToken" type="rust" location="moqui_core::service::user_keys::create_access_token">
         <description>A new access token for the current user: the password for git over HTTPS (or an api_key
             header). It is shown only in the out parameters; only its hash is stored, as a UserLoginKey.</description>
@@ -1072,13 +1095,19 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="accessToken"/>
-            <parameter name="loginKey"><description>The stored hash, which names the token for revoke</description></parameter>
+            <parameter name="tokenId"><description>Names the token for revoke, as find#UserAccessTokens does</description></parameter>
+            <parameter name="loginKey"><description>The stored hash, which names the token for revoke too</description></parameter>
             <parameter name="thruDate" type="Timestamp"/>
         </out-parameters>
     </service>
     <service verb="revoke" noun="UserAccessToken" type="rust" location="moqui_core::service::user_keys::revoke_access_token">
-        <description>End one of the current user's access tokens, by its loginKey (the stored hash).</description>
-        <in-parameters><parameter name="loginKey" required="true"/></in-parameters>
+        <description>End one of the current user's access tokens, by its tokenId (as find#UserAccessTokens and
+            create#UserAccessToken give it) or its loginKey (the stored hash); either parameter takes either value.
+            Another user's token, and one that is not there, is "no such access token".</description>
+        <in-parameters>
+            <parameter name="tokenId"/>
+            <parameter name="loginKey"/>
+        </in-parameters>
     </service>
     <service verb="create" noun="UserAppPassword" type="rust" location="moqui_core::service::user_keys::create_app_password">
         <description>A new app password for the current user, for one device or app: the CalDAV, CardDAV and WebDAV

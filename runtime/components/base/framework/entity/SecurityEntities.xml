@@ -873,7 +873,9 @@ along with this software (see the LICENSE.md file). If not, see
             that no provider id (UserAccount.externalUserId) is linked to: AflVerifiedEmail by the provider's verified email
             address equal to the account's; AflNever, or empty, never (the sign-in is refused and an administrator links the
             account). A provider's username alone links nothing, and an account in a privileged group or in a group that
-            grants a sealed permission is never linked by a sign-in (crates/moqui-core/src/service/sso.rs).</description></field>
+            grants a sealed permission is never linked by a sign-in (crates/moqui-core/src/service/sso.rs). Under
+            AflVerifiedEmail a sign-in with the provider's verified email address equal to the account's also records it
+            (moqui.security.public.VerifiedAddress), as the registration's mail link does.</description></field>
         <field name="testedConfigHash" type="text-medium"><description>The fingerprint of the configuration (type, client,
             endpoints, whether a secret is set) the last passing test ran against
             (org.moqui.admin.ConfigurationServices.test#IdentityProvider): a provider is enabled there only while it equals

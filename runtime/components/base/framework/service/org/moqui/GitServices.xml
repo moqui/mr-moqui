@@ -23,6 +23,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="transport"><description>http, ssh or internal</description></parameter>
             <parameter name="userId"><description>Who pushed or wrote; empty for a fetch by a job</description></parameter>
             <parameter name="updateId"><description>The moqui.resource.GitUpdate of a post event</description></parameter>
+            <parameter name="packBytes" type="Long"><description>The pre events of a push: the bytes of the pack it
+                sent, as kept in quarantine (a thin pack completed); 0 for a push of deletes only and for a write
+                through Moqui. What the push would add to the repository, for a quota rule to refuse.</description></parameter>
             <parameter name="pushOptions" type="List"><description>git push -o options</description></parameter>
             <parameter name="refUpdates" type="List"><description>Every ref of the change</description>
                 <parameter name="refUpdate" type="Map">

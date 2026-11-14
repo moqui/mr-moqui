@@ -361,6 +361,65 @@ along with this software (see the LICENSE.md file). If not, see
                 shortId, summary, authorName, authorEmail, authorDate, committerDate, moquiUserId)</description></parameter>
         </out-parameters>
     </service>
+    <service verb="get" noun="GitBlame" type="rust" location="moqui_git::service::repository::get_blame">
+        <description>For each line of the file at a path in a revision, the commit that last changed it, as runs of
+            lines of one commit. Each commit passes the lines it did not change to the parent that has them; renames
+            are not followed, so a file is blamed as far back as it has its path. Needs view. Nothing out when the
+            revision names nothing or the path is not a file there. Refused: a binary file, a file kept in Git LFS, and
+            past any of the git-server limits: a file over blame-max-bytes (1 MiB) or blame-max-lines (50,000), a
+            history that needs more than blame-max-commits (10,000) commits read or blame-max-diffs (2,000) versions
+            compared, and a blame that runs longer than blame-max-seconds (10). Within them it is still seconds of a
+            service thread for a large file with a long history: a page that offers it to visitors rate limits its
+            route.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="revision"><description>A branch, tag or commit; the default branch when empty</description></parameter>
+            <parameter name="path" required="true"/>
+            <parameter name="withLines" type="Boolean" default-value="false"><description>Each hunk with its lines,
+                without their line endings</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"><description>The commit the revision names</description></parameter>
+            <parameter name="lineCount" type="Integer"/>
+            <parameter name="hunkList" type="List"><description>In line order, Maps: startLine (from 1), lineCount,
+                commitId, shortId, summary, authorName, authorEmail, authorDate, and with withLines lines (a List of
+                text)</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitArchive" type="rust" location="moqui_git::service::repository::get_archive"
+            transaction="ignore">
+        <description>The tree at a revision, or a directory of it, as a zip or tar.gz file whose entries are under one
+            directory named for the repository and the commit (mr-moqui-0123456789/). Files kept in Git LFS are
+            archived with their content, a submodule as its empty directory. A link is a link entry, never followed
+            here, when its target is relative and stays inside the archive; one with an absolute target or one that
+            leaves the archive is left out and named in skippedList. Needs view. Nothing out when the revision names
+            nothing or the path is not a directory there.
+            archiveLocation is the absolute path of a file under runtime/tmp/git-archive on the node that answered:
+            one file for each (repository, commit, path, format), which every caller asking for that archive is given,
+            so serve it (ec.web.sendResourceResponse(archiveLocation, false, fileName)) and never delete, move or
+            write it. It is removed six hours after its last use.
+            Refused, before anything is written: a tree with an entry name an archive cannot hold safely (empty, '.',
+            '..', '.git' in any case, with '/', a backslash or NUL, not UTF-8) or a name twice in one directory; a tree
+            of more than git-server archive-max-bytes (256 MiB) of content, archive-max-files (50,000) entries (each
+            tree read counts) or 64 directories deep; when archive-max-concurrent (2) archives are being made; when
+            the files kept would pass archive-max-disk-bytes (2 GiB); and a format other than zip and tar.gz.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="revision"><description>A branch, tag or commit; the default branch when empty</description></parameter>
+            <parameter name="format" default-value="zip"><description>zip or tar.gz (tgz)</description></parameter>
+            <parameter name="path"><description>A directory to archive; the whole tree when empty</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archiveLocation"><description>The file's absolute path</description></parameter>
+            <parameter name="fileName"><description>The name to offer: the top directory and the format's extension</description></parameter>
+            <parameter name="contentType"/>
+            <parameter name="archiveSize" type="Long"/>
+            <parameter name="contentBytes" type="Long"><description>The bytes of the files, before compression</description></parameter>
+            <parameter name="fileCount" type="Integer"/>
+            <parameter name="commitId"/>
+            <parameter name="skippedList" type="List"><description>The paths of the links left out</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="create" noun="GitRef" type="rust" location="moqui_git::service::hosting::create_ref"
             transaction="ignore">
         <description>A branch, or a tag (annotated, by the current user, when a message is given), at a revision. Needs
@@ -465,6 +524,78 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="description"/>
             <parameter name="branch"/>
             <parameter name="defaultMergeMethodEnumId"/>
+        </in-parameters>
+    </service>
+    <service verb="delete" noun="GitRepository" type="rust" location="moqui_git::service::repository::delete_repository"
+            transaction-timeout="1800">
+        <description>Delete a repository and everything the framework keeps of it: its refs and objects (the rows of a
+            db kind, the directory of a local or remote kind), its Git LFS objects and locks, its push log
+            (GitUpdate), commit statuses, webhooks, branch rules, merge requests and their reviewers, the redirects of
+            paths it had, and its row. It cannot be undone.
+            Needs delete, which is also the right to force a push and to change the repository's settings: an
+            application that lets fewer users delete (an Owner, a typed confirmation) checks its own rule first and
+            exposes its own service, not this one. Called with authorization off it deletes for any caller.
+            It first marks the repository as going (archivedDate, committed at once), and every push and write reads
+            the row again before it stores, so nothing is written to it from then; the rows go in this service's
+            transaction; once that commits the directory is removed and the rows of the id are deleted once more, for
+            what a push that was already storing left. A rollback keeps everything and sets the mark back.
+            The directory is removed only when, read from the disk with its links followed, it is under the runtime
+            directory (and is not it), looks like a bare repository (HEAD and objects/), and no other repository's
+            row names it, a directory in it or one it is in; else it is left and named in directoryKept. Left too: the
+            content blobs of its large and LFS objects, which gc#ContentBlobs collects when no other repository has
+            them, and webhook deliveries already queued. Refused: a repository that holds a drive (delete the drive),
+            and one a row of another component still refers to through a foreign key (the application removes its own
+            rows first: Mantle's project links, a Smithy repository). Whether a repository with open merge requests,
+            forks or release assets may go is the application's rule.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="directoryRemoved" type="Boolean"/>
+            <parameter name="directoryKept"><description>Its directory, left where it is</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitRepositoryUsage" type="rust" location="moqui_git::service::repository::get_repository_usage">
+        <description>What repositories store now, for an application's own quota code (it need not read GitObject or
+            GitLfsObject): one repositoryId, a repositoryIdList (at most 1000), or both. Not for a visitor's route: a
+            db repository costs a grouped read of its object rows and a local or remote one a walk of its directory,
+            each time. Read from the rows and the directory as they are, so it is current right after a push;
+            GitRepository.storedBytes and objectCount are only gc#GitRepositories' record of its last run. Needs view:
+            a repository the user may not view, or that is not there, is left out of usageList. Called with
+            authorization off (a gitECA rule's actions, the LFS upload check) it answers every repository asked that
+            is there.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="repositoryIdList" type="List"><description>Ids, or a comma separated text</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="usageList" type="List"><description>In the order asked, Maps: repositoryId, repositoryKind
+                (db, local, remote), storedBytes (db: the object rows as stored, compressed and as deltas, with the
+                content blobs of large objects, each counted in full though the same content is stored once; local and
+                remote: the files of the directory), objectCount (db only), lfsBytes and lfsObjectCount (the Git LFS
+                objects uploaded to it)</description></parameter>
+            <parameter name="totalStoredBytes" type="Long"/>
+            <parameter name="totalLfsBytes" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="GitLfsUpload" type="interface">
+        <description>The service git-server lfs-upload-check-service names: asked before Git LFS objects new to a
+            repository are accepted, by the batch API (once for a batch, with every object it would add), by an upload
+            itself (one object), and by a write of an LFS-tracked file through Moqui (a git:// location,
+            commit#GitFiles). It runs as the user, with authorization off. An error it adds refuses the upload, and
+            its text is what the git-lfs client shows; a service that fails refuses too.
+            It is asked a second time once an object is the repository's, with stored true and uploadBytes 0: uploads
+            that were each within a limit when they asked can pass it together, and the one refused then is taken back.
+            So a service that adds uploadBytes to what get#GitRepositoryUsage counts needs no change to be exact at
+            the end of concurrent uploads. Until then each upload in flight may hold up to lfs-max-object-size of
+            content not yet counted, and a refused upload's content stays until gc#ContentBlobs.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="userId"/>
+            <parameter name="uploadBytes" type="Long"><description>The bytes of the objects that would be added; 0
+                when stored</description></parameter>
+            <parameter name="stored" type="Boolean"><description>The second ask: the objects are the repository's
+                already, and counted in its usage</description></parameter>
+            <parameter name="objectCount" type="Integer"/>
+            <parameter name="objectList" type="List"><description>Maps: oid, size</description></parameter>
         </in-parameters>
     </service>
     <service verb="set" noun="GitRepositoryPath" type="rust" location="moqui_git::service::hosting::set_repository_path">

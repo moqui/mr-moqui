@@ -958,6 +958,49 @@ fn cached(provider: &super::GitProvider, id: &str) -> bool {
     moqui_lib::sync::read(&provider.inner.repos).contains_key(id)
 }
 
+/// A transaction cache frame answers a find by key with the row it read before, so a repository opened in one can
+/// be of a row another thread has changed and committed since (a gitECA rule's service, after the default branch
+/// was switched for a commit and switched back): it is that transaction's alone, and the next open reads the row.
+#[test]
+fn a_repository_opened_in_a_transaction_cache_frame_is_not_kept_open() {
+    use moqui_core::transaction::TransactionAttribute;
+    let fixture = fixture("txcache");
+    let _entered = fixture.context.enter();
+    define(&fixture.entity, "kept", "db", None, None);
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    let tx = fixture.entity.transactions_for(super::GIT_REPOSITORY).unwrap();
+    let result: Result<(), moqui_lib::error::Error> = tx.run(TransactionAttribute::Cache, None, || {
+        assert!(tx.cache_frame().is_some(), "a transaction cache frame");
+        // the frame reads the row, and keeps it
+        assert_eq!(provider.definition("kept").unwrap().branch, super::DEFAULT_BRANCH);
+        // another thread names another default branch, committed at once
+        let (other, entity) = (provider.clone(), fixture.entity.clone());
+        std::thread::spawn(move || {
+            let mut row = EntityValue::make(&entity, super::GIT_REPOSITORY).unwrap();
+            row.set("repositoryId", Value::string("kept"));
+            row.set("branch", Value::string("work"));
+            row.update(&entity).unwrap();
+            other.refresh("kept");
+        })
+        .join()
+        .unwrap();
+        let opened = provider.repo("kept").unwrap();
+        assert_eq!(
+            opened.definition.branch,
+            super::DEFAULT_BRANCH,
+            "the frame still reads the row it kept"
+        );
+        assert!(
+            !cached(&provider, "kept"),
+            "what the frame opened is not kept for other threads"
+        );
+        Ok(())
+    });
+    result.unwrap();
+    assert_eq!(provider.repo("kept").unwrap().definition.branch, "work");
+    assert!(cached(&provider, "kept"), "kept open once read outside the frame");
+}
+
 #[test]
 fn a_repository_whose_row_changes_in_a_transaction_is_not_kept_open_until_it_ends() {
     use moqui_core::transaction::TransactionAttribute;

@@ -34,7 +34,7 @@ use moqui_core::entity::EntityValue;
 
 /// Every entity for both test users, as a screen's inherited authorization gives them; the repository rights stay
 /// AT_GIT_REPOSITORY's.
-fn grant_entities(fixture: &Fixture) {
+pub(super) fn grant_entities(fixture: &Fixture) {
     let _entered = fixture.context.enter();
     let _authz = fixture.context.disable_authz();
     create(
@@ -86,7 +86,12 @@ fn framework_rules(fixture: &Fixture) {
 }
 
 /// Call a service as `user`: its result and the errors it left.
-fn call(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, String) {
+pub(super) fn call(
+    fixture: &Fixture,
+    user: &str,
+    name: &str,
+    parameters: &[(&str, Value)],
+) -> (BTreeMap<String, Value>, String) {
     let _entered = fixture.context.enter();
     moqui_core::user::internal_login_user(user).unwrap();
     let parameters: BTreeMap<String, Value> = parameters
@@ -107,7 +112,7 @@ fn call(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)])
     }
 }
 
-fn ok(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
+pub(super) fn ok(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     let (out, errors) = call(fixture, user, name, parameters);
     assert!(errors.trim().is_empty(), "{name}: {errors}");
     out
@@ -146,29 +151,29 @@ fn set_review(fixture: &Fixture, mr_id: &str, user: &str, status: &str) {
     row.update(&fixture.entity).unwrap();
 }
 
-fn s(text: &str) -> Value {
+pub(super) fn s(text: &str) -> Value {
     Value::string(text)
 }
 
-fn get<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a str {
+pub(super) fn get<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a str {
     out.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
-fn list<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a [Value] {
+pub(super) fn list<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a [Value] {
     match out.get(key) {
         Some(Value::List(items)) => items,
         _ => &[],
     }
 }
 
-fn entry<'a>(value: &'a Value, key: &str) -> &'a Value {
+pub(super) fn entry<'a>(value: &'a Value, key: &str) -> &'a Value {
     match value {
         Value::Map(entries) => entries.get(key).unwrap_or(&Value::Null),
         _ => &Value::Null,
     }
 }
 
-fn text_of(value: &Value) -> String {
+pub(super) fn text_of(value: &Value) -> String {
     to_plain_string(value)
 }
 
@@ -190,13 +195,13 @@ fn field(row: &EntityValue, name: &str) -> String {
 }
 
 /// A clone of a repository with one commit on main, pushed.
-struct Work {
-    dir: std::path::PathBuf,
-    home: std::path::PathBuf,
+pub(super) struct Work {
+    pub(super) dir: std::path::PathBuf,
+    pub(super) home: std::path::PathBuf,
 }
 
 impl Work {
-    fn clone(fixture: &Fixture, base: &str, id: &str, user: &str) -> Self {
+    pub(super) fn clone(fixture: &Fixture, base: &str, id: &str, user: &str) -> Self {
         let home = fixture.dir.join(format!("home-{id}-{user}"));
         std::fs::create_dir_all(&home).unwrap();
         let dir = fixture.dir.join(format!("work-{id}-{user}"));
@@ -208,7 +213,7 @@ impl Work {
         Self { dir, home }
     }
 
-    fn commit(&self, files: &[(&str, &str)], message: &str) -> String {
+    pub(super) fn commit(&self, files: &[(&str, &str)], message: &str) -> String {
         for (name, text) in files {
             write_file(&self.dir, name, text);
         }
@@ -217,15 +222,15 @@ impl Work {
         self.head()
     }
 
-    fn head(&self) -> String {
+    pub(super) fn head(&self) -> String {
         git_ok(&self.dir, &self.home, &["rev-parse", "HEAD"]).trim().to_string()
     }
 
-    fn run(&self, args: &[&str]) -> (bool, String) {
+    pub(super) fn run(&self, args: &[&str]) -> (bool, String) {
         git_in(&self.dir, &self.home, args)
     }
 
-    fn ok(&self, args: &[&str]) -> String {
+    pub(super) fn ok(&self, args: &[&str]) -> String {
         git_ok(&self.dir, &self.home, args)
     }
 }

@@ -4874,6 +4874,7 @@ dependencies = [
  "rust_xlsxwriter",
  "serde_json",
  "sha2 0.11.1",
+ "tar",
  "tracing",
  "zip",
 ]

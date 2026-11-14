@@ -26,11 +26,13 @@
 //! `apps`, the terminal client (`crate::term`), needs a pty. It is the whole session of a user without `SSH_SHELL`
 //! and of one who logged in through the dialog, the `exec` command `apps` (`ssh -t host apps`), and a command at the
 //! shell's prompt. A user who logged in by key or password with `SSH_SHELL` gets the admin shell ([`super::shell`]),
-//! for `shell` and `exec`. The `sftp` subsystem needs `SSH_SFTP` and serves `ssh-server` `sftp-root`. Git needs `SSH_GIT`, and
+//! for `shell` and `exec`. The `sftp` subsystem needs `SSH_SFTP` and serves `ssh-server` `sftp-root`. Git needs `SSH_GIT` (or, with `ssh-server` `git-any-account`, any account logged in by key), and
 //! a key unless `ssh-server` `git-password-auth` is true. `agent-apps` (`super::agent`) is the terminal client for a program,
 //! on an `exec` channel with no pty, one command line at a time, for a user logged in by key or password.
 //!
-//! At most `ssh-server` `max-sessions` logged-in sessions are open at once; one with no user counts too. A connection that has
+//! At most `ssh-server` `max-sessions` logged-in sessions are open at once; one with no user counts too. Of those, one
+//! user logged in by key or password holds at most `max-sessions-per-user` and one address `max-sessions-per-source`
+//! (a cluster peer is counted by neither), so one account or one host does not hold them all. A connection that has
 //! not logged in has [`PREAUTH_TIMEOUT`] to do so, and at most [`MAX_PREAUTH`] such connections wait at once, at most
 //! [`PREAUTH_PER_SOURCE`] of them from one source (an IPv6 /64 is one; an edge tunnel's connection counts as the client
 //! the edge node names), so one host cannot keep SFTP, Git, edge tunnels and the SSH cluster transport out. One let in
@@ -59,6 +61,11 @@ use crate::command::{interactive, run_apps, shell, with_newlines, AppsAccess};
 use crate::worker::on_pool;
 
 const DEFAULT_MAX_SESSIONS: usize = 8;
+/// `ssh-server` `max-sessions-per-user`: the sessions one user logged in by key or password holds at once, so one
+/// account (any account, with `git-any-account`) does not hold every session.
+const DEFAULT_MAX_PER_USER: usize = 4;
+/// `ssh-server` `max-sessions-per-source`: the sessions one address (an IPv6 /64) holds at once.
+const DEFAULT_MAX_PER_SOURCE: usize = 8;
 const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;
 /// The connection's inactivity timeout; `apps` ends after as long without input (`crate::term::IDLE`).
 pub(super) const IDLE: Duration = Duration::from_secs(600);
@@ -112,6 +119,10 @@ struct Shared {
     /// Git over SSH on a connection that logged in by password (`ssh-server` `git-password-auth`).
     #[cfg_attr(not(feature = "git"), allow(dead_code))]
     git_password_auth: bool,
+    /// Git over SSH for any account that logged in by key, with no `SSH_GIT` (`ssh-server` `git-any-account`): each
+    /// repository's own check decides what it reads and writes.
+    #[cfg_attr(not(feature = "git"), allow(dead_code))]
+    git_any_account: bool,
 }
 
 /// The host key from `ssh_host_key`: an OpenSSH private key, or the base64 of a 32-byte Ed25519 seed.
@@ -226,6 +237,9 @@ pub fn start(
         factory.conf_number("ssh-server", "max-sessions", DEFAULT_MAX_SESSIONS),
         DEFAULT_MAX_SESSIONS,
     );
+    // 0 is no share: the total alone bounds a user or a source
+    let max_per_user = factory.conf_number("ssh-server", "max-sessions-per-user", DEFAULT_MAX_PER_USER);
+    let max_per_source = factory.conf_number("ssh-server", "max-sessions-per-source", DEFAULT_MAX_PER_SOURCE);
     let max_file = positive(
         factory.conf_number("ssh-server", "sftp-max-file", DEFAULT_MAX_FILE),
         DEFAULT_MAX_FILE,
@@ -235,6 +249,7 @@ pub fn start(
     // login dialog, and only with the terminal client.
     let dialog = cfg!(feature = "tui") && factory.conf_flag("ssh-server", "login-dialog", true);
     let git_password_auth = factory.conf_flag("ssh-server", "git-password-auth", false);
+    let git_any_account = factory.conf_flag("ssh-server", "git-any-account", false);
     let methods: &[MethodKind] = if dialog {
         &[
             MethodKind::PublicKey,
@@ -273,15 +288,12 @@ pub fn start(
         cluster_posts,
         dialog,
         git_password_auth,
+        git_any_account,
     });
     let intake = Arc::new(Intake {
         config,
         shared,
-        counts: Arc::new(Counts {
-            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
-            sessions: AtomicUsize::new(0),
-            max_sessions,
-        }),
+        counts: Arc::new(Counts::new(max_sessions, max_per_user, max_per_source)),
         shutdown: watch,
     });
     *moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0) = Some(Arc::clone(&intake));
@@ -307,6 +319,58 @@ struct Counts {
     preauth: SourceSlots,
     sessions: AtomicUsize,
     max_sessions: usize,
+    /// The sessions of each source, against `ssh-server` `max-sessions-per-source`.
+    by_source: SourceSlots,
+    /// The sessions of each user logged in by key or password, against `ssh-server` `max-sessions-per-user`.
+    by_user: std::sync::Mutex<HashMap<String, usize>>,
+    max_per_user: usize,
+}
+
+impl Counts {
+    fn new(max_sessions: usize, max_per_user: usize, max_per_source: usize) -> Self {
+        Self {
+            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
+            sessions: AtomicUsize::new(0),
+            max_sessions,
+            // the total is `max_sessions`' to keep: this table only keeps each source's share
+            by_source: SourceSlots::new(usize::MAX, max_per_source),
+            by_user: std::sync::Mutex::default(),
+            max_per_user,
+        }
+    }
+}
+
+/// Who a session is for, which says what it is counted against.
+#[derive(Clone, Copy, Debug)]
+enum Who<'a> {
+    /// A user logged in by key or password: the user's share and the source's.
+    User(&'a str),
+    /// Let in with no user, for the login dialog: the source's share.
+    Dialog,
+    /// A cluster peer with the cluster key: `max-sessions` only, as the members of a cluster share addresses.
+    Cluster,
+}
+
+/// Why a login got no session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionRefused {
+    /// `ssh-server` `max-sessions` are open.
+    Total,
+    /// The user has `max-sessions-per-user` open.
+    User,
+    /// The source has `max-sessions-per-source` open.
+    Source,
+}
+
+impl SessionRefused {
+    /// The conf attribute that refused, for the log.
+    fn limit(self) -> &'static str {
+        match self {
+            Self::Total => "max-sessions",
+            Self::User => "max-sessions-per-user",
+            Self::Source => "max-sessions-per-source",
+        }
+    }
 }
 
 /// One connection's place in [`Counts`]: a pre-auth slot from accept, traded for a session at login. Drop gives back
@@ -316,6 +380,9 @@ struct Slot {
     /// The pre-auth slot, until the login trades it for a session.
     preauth: std::sync::Mutex<Option<SourceSlot>>,
     session: AtomicBool,
+    source: IpAddr,
+    /// What the session holds beside its place in `max-sessions`: its source's share, and its user's.
+    shares: std::sync::Mutex<(Option<SourceSlot>, Option<String>)>,
     /// Let in with no user: the login dialog must log in within `crate::term::LOGIN_WAIT`.
     dialog: AtomicBool,
     /// The dialog logged in, set by the session's login gate.
@@ -331,23 +398,65 @@ impl Slot {
             counts: Arc::clone(counts),
             preauth: std::sync::Mutex::new(Some(preauth)),
             session: AtomicBool::new(false),
+            source,
+            shares: std::sync::Mutex::default(),
             dialog: AtomicBool::new(false),
             dialog_done: Arc::new(AtomicBool::new(false)),
         })
     }
 
-    /// Trade the pre-auth slot for a session. False when `ssh-server` `max-sessions` are open.
-    fn log_in(&self) -> bool {
+    /// Trade the pre-auth slot for a session.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionRefused`] when `ssh-server` `max-sessions` are open, or the user or the source has its share.
+    fn log_in(&self, who: Who<'_>) -> Result<(), SessionRefused> {
         if self.session.load(Ordering::Acquire) {
-            return true;
+            return Ok(());
         }
-        if self.counts.sessions.fetch_add(1, Ordering::AcqRel) >= self.counts.max_sessions {
-            self.counts.sessions.fetch_sub(1, Ordering::AcqRel);
-            return false;
+        let counts = &self.counts;
+        let source = match who {
+            Who::Cluster => None,
+            Who::User(_) | Who::Dialog => Some(counts.by_source.take(self.source).map_err(|_| SessionRefused::Source)?),
+        };
+        let user = match who {
+            Who::User(name) => {
+                let mut by_user = moqui_lib::sync::lock(&counts.by_user);
+                let held = by_user.entry(name.to_string()).or_insert(0);
+                if counts.max_per_user > 0 && *held >= counts.max_per_user {
+                    if *held == 0 {
+                        by_user.remove(name);
+                    }
+                    return Err(SessionRefused::User);
+                }
+                *held += 1;
+                Some(name.to_string())
+            }
+            Who::Dialog | Who::Cluster => None,
+        };
+        if counts.sessions.fetch_add(1, Ordering::AcqRel) >= counts.max_sessions {
+            counts.sessions.fetch_sub(1, Ordering::AcqRel);
+            self.release_user(user.as_deref());
+            return Err(SessionRefused::Total);
         }
+        *moqui_lib::sync::lock(&self.shares) = (source, user);
         self.session.store(true, Ordering::Release);
         moqui_lib::sync::lock(&self.preauth).take();
-        true
+        Ok(())
+    }
+
+    /// Give a user's share back.
+    fn release_user(&self, user: Option<&str>) {
+        let Some(user) = user else {
+            return;
+        };
+        let mut by_user = moqui_lib::sync::lock(&self.counts.by_user);
+        if let Some(held) = by_user.get_mut(user) {
+            *held = held.saturating_sub(1);
+            if *held == 0 {
+                by_user.remove(user);
+            }
+        }
     }
 
     fn logged_in(&self) -> bool {
@@ -359,6 +468,9 @@ impl Drop for Slot {
     fn drop(&mut self) {
         if self.session.swap(false, Ordering::AcqRel) {
             self.counts.sessions.fetch_sub(1, Ordering::AcqRel);
+            // the source's share goes back as its slot drops
+            let (_source, user) = std::mem::take(&mut *moqui_lib::sync::lock(&self.shares));
+            self.release_user(user.as_deref());
         }
     }
 }
@@ -579,6 +691,43 @@ fn ssh_permissions() -> Result<Permissions, CoreError> {
     })
 }
 
+/// How a connection logged in, and what the conf says of git over SSH.
+#[cfg_attr(not(feature = "git"), allow(dead_code))]
+#[derive(Clone, Copy, Debug)]
+struct GitLogin {
+    /// The user has `SSH_GIT`.
+    has_permission: bool,
+    by_password: bool,
+    /// `ssh-server` `git-any-account`.
+    any_account: bool,
+    /// `ssh-server` `git-password-auth`.
+    password_auth: bool,
+}
+
+/// Whether a connection is served git.
+#[cfg_attr(not(feature = "git"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GitAccess {
+    Served,
+    /// The user may, by key only: this login was by password.
+    NeedsKey,
+    Refused,
+}
+
+/// `SSH_GIT`, or with `git-any-account` any account that proved a key. A password login gains nothing from
+/// `git-any-account`: it needs `SSH_GIT` and `git-password-auth` as before. Sftp and the shell are not asked here.
+#[cfg_attr(not(feature = "git"), allow(dead_code))]
+fn git_allowed(login: GitLogin) -> GitAccess {
+    let permitted = login.has_permission || (login.any_account && !login.by_password);
+    if !permitted {
+        GitAccess::Refused
+    } else if login.by_password && !login.password_auth {
+        GitAccess::NeedsKey
+    } else {
+        GitAccess::Served
+    }
+}
+
 /// What a connection let in for the login dialog is told when it asks for anything but `apps` on a pty.
 const DIALOG_ONLY: &str = "log in with a key or a password for commands; ssh -t opens the login screen";
 
@@ -596,11 +745,11 @@ impl Connection {
     /// Let the user in, with what the permissions allow; every user gets `apps`.
     fn accept(&mut self, username: &str, permissions: Permissions, by_password: bool) -> Auth {
         let Permissions { sftp, shell, git } = permissions;
-        if !self.slot.log_in() {
+        if let Err(refused) = self.slot.log_in(Who::User(username)) {
             tracing::warn!(
-                "SSH login of {username} from {} refused: ssh-server max-sessions {} are open",
+                "SSH login of {username} from {} refused: ssh-server {} sessions are open",
                 self.peer,
-                self.slot.counts.max_sessions
+                refused.limit()
             );
             return Auth::reject();
         }
@@ -789,11 +938,11 @@ impl russh::server::Handler for Connection {
         let public_key = offer.public_key;
         if user == super::cluster::CLUSTER_USER {
             if super::cluster::is_cluster_key(public_key) {
-                if !self.slot.log_in() {
+                if let Err(refused) = self.slot.log_in(Who::Cluster) {
                     tracing::warn!(
-                        "cluster peer from {} refused: ssh-server max-sessions {} are open",
+                        "cluster peer from {} refused: ssh-server {} sessions are open",
                         self.peer,
-                        self.slot.counts.max_sessions
+                        refused.limit()
                     );
                     return Ok(Auth::reject());
                 }
@@ -840,11 +989,11 @@ impl russh::server::Handler for Connection {
         if !self.shared.dialog || user == super::cluster::CLUSTER_USER {
             return Ok(Auth::reject());
         }
-        if !self.slot.log_in() {
+        if let Err(refused) = self.slot.log_in(Who::Dialog) {
             tracing::warn!(
-                "SSH login dialog for {user} from {} refused: ssh-server max-sessions {} are open",
+                "SSH login dialog for {user} from {} refused: ssh-server {} sessions are open",
                 self.peer,
-                self.slot.counts.max_sessions
+                refused.limit()
             );
             return Ok(Auth::reject());
         }
@@ -967,11 +1116,17 @@ impl russh::server::Handler for Connection {
         if moqui_git::server::parse_ssh_command(&line).is_some()
             || moqui_git::server::lfs::parse_ssh_command(&line).is_some()
         {
-            let (Some(username), true) = (self.username.clone(), self.can_git) else {
+            let may_git = git_allowed(GitLogin {
+                has_permission: self.can_git,
+                by_password: self.by_password,
+                any_account: self.shared.git_any_account,
+                password_auth: self.shared.git_password_auth,
+            });
+            let (Some(username), true) = (self.username.clone(), may_git != GitAccess::Refused) else {
                 return session.channel_failure(channel);
             };
             // Git hosting opens the server to every developer, and keys are not guessed.
-            if self.by_password && !self.shared.git_password_auth {
+            if may_git == GitAccess::NeedsKey {
                 tracing::warn!(
                     "SSH git of {username} from {} refused: git over SSH takes a key (ssh-server git-password-auth)",
                     self.peer
@@ -1175,11 +1330,12 @@ fn millis(value: &Value) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
     use super::{
-        conf_listen_target, listen_target, Counts, Slot, SlotRefused, SourceSlots, MAX_PREAUTH, PREAUTH_PER_SOURCE,
+        conf_listen_target, git_allowed, listen_target, Counts, GitAccess, GitLogin, SessionRefused, Slot, SlotRefused,
+        Who, MAX_PREAUTH, PREAUTH_PER_SOURCE,
     };
 
     #[test]
@@ -1208,11 +1364,7 @@ mod tests {
 
     #[test]
     fn a_login_trades_the_preauth_slot_for_a_session() {
-        let counts = Arc::new(Counts {
-            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
-            sessions: AtomicUsize::new(0),
-            max_sessions: 1,
-        });
+        let counts = Arc::new(Counts::new(1, 0, 0));
         let source = |n: usize| std::net::IpAddr::from([198, 51, 100, u8::try_from(n / PREAUTH_PER_SOURCE).unwrap()]);
         let waiting: Vec<Slot> = (0..MAX_PREAUTH)
             .map(|n| Slot::preauth(&counts, source(n)).unwrap())
@@ -1222,12 +1374,16 @@ mod tests {
             Some(SlotRefused::Full),
             "past MAX_PREAUTH"
         );
-        assert!(waiting[0].log_in());
+        assert!(waiting[0].log_in(Who::Dialog).is_ok());
         // The login gave its pre-auth slot back, and took the one session.
         let next = Slot::preauth(&counts, source(0)).unwrap();
-        assert!(!next.log_in(), "past ssh-server max-sessions");
+        assert_eq!(
+            next.log_in(Who::Dialog),
+            Err(SessionRefused::Total),
+            "past ssh-server max-sessions"
+        );
         drop(waiting);
-        assert!(next.log_in());
+        assert!(next.log_in(Who::Dialog).is_ok());
         drop(next);
         assert_eq!(counts.preauth.held(), 0);
         assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
@@ -1236,11 +1392,7 @@ mod tests {
     /// One source holds at most its share of the pre-auth slots; another source still gets one (HL-032).
     #[test]
     fn one_source_holds_only_its_share_of_the_preauth_slots() {
-        let counts = Arc::new(Counts {
-            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
-            sessions: AtomicUsize::new(0),
-            max_sessions: 8,
-        });
+        let counts = Arc::new(Counts::new(8, 0, 0));
         let busy: std::net::IpAddr = "2001:db8:9:9::1".parse().unwrap();
         let held: Vec<Slot> = (0..PREAUTH_PER_SOURCE)
             .map(|_| Slot::preauth(&counts, busy).unwrap())
@@ -1248,7 +1400,82 @@ mod tests {
         let same_64: std::net::IpAddr = "2001:db8:9:9::2".parse().unwrap();
         assert_eq!(Slot::preauth(&counts, same_64).err(), Some(SlotRefused::Source));
         let other: std::net::IpAddr = "203.0.113.20".parse().unwrap();
-        assert!(Slot::preauth(&counts, other).unwrap().log_in());
+        assert!(Slot::preauth(&counts, other).unwrap().log_in(Who::Dialog).is_ok());
         drop(held);
+    }
+
+    /// One user, and one source, holds at most its share of the sessions; ending one gives it back.
+    #[test]
+    fn a_user_and_a_source_hold_only_their_share_of_the_sessions() {
+        let counts = Arc::new(Counts::new(8, 2, 3));
+        let at = |last: u8| std::net::IpAddr::from([198, 51, 100, last]);
+        let slot = |last: u8| Slot::preauth(&counts, at(last)).unwrap();
+        // two sessions of ann, from two addresses; a third is refused wherever it comes from
+        let (first, second) = (slot(1), slot(2));
+        assert!(first.log_in(Who::User("ann")).is_ok() && second.log_in(Who::User("ann")).is_ok());
+        assert!(first.log_in(Who::User("ann")).is_ok(), "a session logged in stays one");
+        let third = slot(3);
+        assert_eq!(third.log_in(Who::User("ann")), Err(SessionRefused::User));
+        assert_eq!(SessionRefused::User.limit(), "max-sessions-per-user");
+        // another user is not held back by her, and the refused login took nothing
+        assert!(third.log_in(Who::User("bob")).is_ok());
+        assert_eq!(counts.sessions.load(Ordering::Acquire), 3);
+        drop(second);
+        let again = slot(2);
+        assert!(again.log_in(Who::User("ann")).is_ok(), "her share came back");
+
+        // three sessions from one address, of users or of the login dialog; a cluster peer is not counted by it
+        let busy: Vec<Slot> = (0..2).map(|_| slot(9)).collect();
+        assert!(busy[0].log_in(Who::User("cy")).is_ok() && busy[1].log_in(Who::Dialog).is_ok());
+        let one_more = slot(9);
+        assert!(one_more.log_in(Who::User("dee")).is_ok());
+        let past = slot(9);
+        assert_eq!(past.log_in(Who::User("eve")), Err(SessionRefused::Source));
+        assert_eq!(past.log_in(Who::Dialog), Err(SessionRefused::Source));
+        assert!(past.log_in(Who::Cluster).is_ok());
+        assert_eq!(counts.sessions.load(Ordering::Acquire), 7);
+        // the total still bounds everyone
+        let last = slot(20);
+        assert!(last.log_in(Who::User("fay")).is_ok());
+        assert_eq!(slot(21).log_in(Who::User("gus")), Err(SessionRefused::Total));
+        assert!(
+            !moqui_lib::sync::lock(&counts.by_user).contains_key("gus"),
+            "a refused login holds no share"
+        );
+        drop((first, third, again, busy, one_more, past, last));
+        assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
+        assert!(moqui_lib::sync::lock(&counts.by_user).is_empty());
+        // 0 is no share
+        let open = Arc::new(Counts::new(8, 0, 0));
+        let mut many = Vec::new();
+        for _ in 0..8 {
+            let slot = Slot::preauth(&open, at(1)).unwrap();
+            assert!(slot.log_in(Who::User("ann")).is_ok());
+            many.push(slot);
+        }
+    }
+
+    /// `git-any-account` serves git to an account that proved a key, and gives a password login nothing.
+    #[test]
+    fn git_any_account_is_for_a_key_login_only() {
+        let login = |has_permission, by_password, any_account, password_auth| {
+            git_allowed(GitLogin {
+                has_permission,
+                by_password,
+                any_account,
+                password_auth,
+            })
+        };
+        // no SSH_GIT: by key only with the attribute; by password never, whatever git-password-auth says
+        assert_eq!(login(false, false, false, false), GitAccess::Refused);
+        assert_eq!(login(false, false, true, false), GitAccess::Served);
+        assert_eq!(login(false, true, true, false), GitAccess::Refused);
+        assert_eq!(login(false, true, true, true), GitAccess::Refused);
+        // SSH_GIT: as before the attribute, with it and without
+        for any_account in [false, true] {
+            assert_eq!(login(true, false, any_account, false), GitAccess::Served);
+            assert_eq!(login(true, true, any_account, false), GitAccess::NeedsKey);
+            assert_eq!(login(true, true, any_account, true), GitAccess::Served);
+        }
     }
 }

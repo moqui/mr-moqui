@@ -143,9 +143,11 @@ Accounts, passwords, second factors and the current user's keys.
 | `create#UserAuthcFactorTotp`, `setup#UserAuthcFactorTotp` | `userId*` → `factorId`, `factorOption`; the QR values `qrUri`, `dataUri` |
 | `validate#UserAuthcFactorCode` | `userId*`, `code*` → `verified`, `factorId` |
 | `create#SingleUseAuthcCodes` | `userId*`, `numberOfCodes` → `singleUseCodes` |
-| `create#UserAccessToken`, `revoke#UserAccessToken` | `description`, `expireDays` → `accessToken`, `loginKey`, `thruDate`. The token is shown once |
+| `create#UserAccessToken`, `revoke#UserAccessToken` | `description`, `expireDays` → `accessToken`, `tokenId`, `loginKey`, `thruDate`. The token is shown once; revoke takes `tokenId` (or `loginKey`, the stored hash) |
+| `find#UserAccessTokens` | `includeEnded` → `accessTokenList` of the current user: `tokenId`, `description`, `fromDate`, `thruDate`; never a token or its hash |
 | `create#UserAppPassword`, `revoke#UserAppPassword`, `get#UserAppPasswords` | `name*` → `appPasswordId`, `password`: for a device on DAV or SFTP |
 | `create#UserSshKey`, `delete#UserSshKey` | `publicKey*`, `description` → `sshKeyId`, `fingerprint` |
+| `find#UserSshKeys` | `includeEnded` → `sshKeyList` of the current user: `sshKeyId`, `description`, `keyType`, `fingerprint`, `fromDate`, `thruDate` |
 | `get#UserDeviceKeys`, `revoke#UserDeviceKey`, `renew#UserDeviceKey` | The devices signed in by key (the desktop and mobile clients) |
 
 The rest are the login steps (`login#UserAccount`, `validate#ExternalUserAuthcCode`, `send#ExternalAuthcCode`, `send#AuthcCodeEmail`, `send#AuthcCodeSms`) and `create#InitialAdminAccount`.
@@ -514,6 +516,11 @@ Repositories kept by the server (in the database, on disk, or a mirror of a remo
 | `GitServices.get#GitCommit` | `repositoryId*`, `commitId*`, `stats` → `commit`, `fileList`, `insertions`, `deletions` |
 | `GitServices.get#GitTree` | `repositoryId*`, `revision`, `path` → `commitId`, `isFile`, `entryList` |
 | `GitServices.get#GitBlob` | `repositoryId*`, `path*`, `revision` → `size`, `binary`, `text`, `bytes` |
+| `GitServices.get#GitBlame` | `repositoryId*`, `path*`, `revision`, `withLines` → `commitId`, `lineCount`, `hunkList` (`startLine`, `lineCount`, `commitId`, `shortId`, `summary`, `authorName`, `authorEmail`, `authorDate`, `lines`). Refused past the conf's size, line, history, comparison and time limits |
+| `GitServices.get#GitArchive` | `repositoryId*`, `revision`, `format` (`zip`, `tar.gz`), `path` → `archiveLocation`, `fileName`, `contentType`, `archiveSize`, `contentBytes`, `fileCount`, `commitId`, `skippedList`: a file shared by the callers of that archive, to serve with `ec.web.sendResourceResponse(archiveLocation, false, fileName)` and never to delete. Refused past the conf's limits and for a tree with unsafe names |
+| `GitServices.get#GitRepositoryUsage` | `repositoryId`, `repositoryIdList` → `usageList` (`repositoryId`, `repositoryKind`, `storedBytes`, `objectCount`, `lfsBytes`, `lfsObjectCount`), `totalStoredBytes`, `totalLfsBytes`: current after a push; for an application's quota code, not a visitor's route |
+| `GitServices.delete#GitRepository` | `repositoryId*` → `directoryRemoved`, `directoryKept`: the repository and all the framework keeps of it. Needs delete (the right that forces a push): wrap it in the application's own rule; cannot be undone |
+| `GitServices.check#GitLfsUpload` | An interface: the service `git-server` `lfs-upload-check-service` names, asked before an LFS upload with `repositoryId`, `userId`, `uploadBytes`, `objectCount`, `objectList`, and again once stored (`stored`, `uploadBytes` 0); its errors refuse |
 | `GitServices.commit#GitFiles` | `repositoryId*`, `message*`, `fileMap`, `removePaths` → `commitId`: one commit on the default branch, as the current user |
 | `GitServices.create#GitRef`, `delete#GitRef` | `repositoryId*`, `refName*`, `refType`, `revision`, `message` → `objectId`, `commitId` |
 | `GitServices.get#GitCompare` | `repositoryId*`, `head*`, `base`, `withDiffs`, `checkMergeable` → `aheadBy`, `behindBy`, `commitList`, `fileList`, `mergeable` |

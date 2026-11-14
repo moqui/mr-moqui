@@ -39,10 +39,15 @@ use russh::keys::{HashAlg, PrivateKey};
 
 const HOST_SEED: [u8; 32] = [5; 32];
 const USER_SEED: [u8; 32] = [6; 32];
+/// The key of pub.user, an account in no group (only the automatic `ALL_USERS`), so without `SSH_GIT`.
+const PUBLIC_SEED: [u8; 32] = [7; 32];
 
 fn data(user_key: &PrivateKey) -> String {
     let public = user_key.public_key().to_openssh().unwrap();
     let fingerprint = user_key.public_key().fingerprint(HashAlg::Sha256).to_string();
+    let public_key = PrivateKey::from(Ed25519Keypair::from_seed(&PUBLIC_SEED));
+    let pub_public = public_key.public_key().to_openssh().unwrap();
+    let pub_fingerprint = public_key.public_key().fingerprint(HashAlg::Sha256).to_string();
     format!(
         r#"<entity-facade-xml type="seed">
     <moqui.resource.GitRepository repositoryId="hosted" repositoryKind="local" description="Hosted on disk"
@@ -51,6 +56,16 @@ fn data(user_key: &PrivateKey) -> String {
     <moqui.resource.GitRepository repositoryId="mirror-db" repositoryKind="db" description="A push mirror's target"/>
     <moqui.security.UserSshKey sshKeyId="JOHN_GIT_KEY" userId="EX_JOHN_DOE" publicKey="{public}"
         fingerprint="{fingerprint}" fromDate="1265184000000"/>
+    <!-- pub.user is in no group; every account may view pub-db, and nothing else -->
+    <moqui.resource.GitRepository repositoryId="pub-db" repositoryKind="db" description="Anyone may view"/>
+    <moqui.security.UserAccount userId="PUB_USER" username="pub.user" userFullName="Public User"/>
+    <moqui.security.UserSshKey sshKeyId="PUB_GIT_KEY" userId="PUB_USER" publicKey="{pub_public}"
+        fingerprint="{pub_fingerprint}" fromDate="1265184000000"/>
+    <moqui.security.ArtifactGroup artifactGroupId="GIT_PUB_DB" description="pub-db"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="GIT_PUB_DB" artifactName="pub-db"
+        artifactTypeEnumId="AT_GIT_REPOSITORY"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="GIT_PUB_DB_VIEW" userGroupId="ALL_USERS" artifactGroupId="GIT_PUB_DB"
+        authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
 </entity-facade-xml>"#
     )
 }
@@ -111,14 +126,103 @@ fn sync(name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, S
         .iter()
         .map(|(name, value)| ((*name).to_string(), value.clone()))
         .collect();
-    let result = moqui_core::service::sync(name, &parameters).unwrap_or_default();
-    let errors = moqui_core::context::ExecutionContext::with_current(|ctx| {
+    let called = moqui_core::service::sync(name, &parameters);
+    let mut errors = moqui_core::context::ExecutionContext::with_current(|ctx| {
         let text = ctx.message().errors().join("\n");
         ctx.message().clear();
         text
     })
     .unwrap_or_default();
+    // a call that fails outright is an error too, not an empty result
+    let result = called.unwrap_or_else(|err| {
+        errors.push_str(err.message());
+        BTreeMap::new()
+    });
     (result, errors)
+}
+
+/// The ssh command line of pub.user, its key written under `work`.
+fn public_ssh(work: &Path) -> String {
+    let key_file = work.join("id_public");
+    let key = PrivateKey::from(Ed25519Keypair::from_seed(&PUBLIC_SEED));
+    std::fs::write(&key_file, key.to_openssh(LineEnding::LF).unwrap().as_bytes()).unwrap();
+    std::fs::set_permissions(
+        &key_file,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+    )
+    .unwrap();
+    format!(
+        "ssh -i {} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+         -o LogLevel=ERROR -F /dev/null",
+        key_file.display()
+    )
+}
+
+/// `ssh-server` `git-any-account` (plans/Dogfood.md F3): an account in no group, so without `SSH_GIT`, uses git over
+/// SSH by its key. The repository's own check decides what it reaches, and SFTP and the shell stay closed. That it is
+/// refused with the attribute off is in the test below, on its server.
+#[test]
+fn any_account_uses_git_over_ssh_by_key_when_the_conf_says_so() {
+    if !crate::common::own_process() {
+        return;
+    }
+    if !git_available("git") || !git_available("ssh") {
+        eprintln!("skipped: git or ssh is not on the PATH");
+        return;
+    }
+    let user_key = PrivateKey::from(Ed25519Keypair::from_seed(&USER_SEED));
+    let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
+    let gate = crate::common::start_with_conf_properties(
+        "git-any-account",
+        Some(&data(&user_key)),
+        // sftp-drives off: with it (the default) every account's SFTP is the drives it may open, whatever this says
+        r#"<ssh-server git-any-account="true"/><dav-server sftp-drives="false"/>"#,
+        &[("ssh_port", "0"), ("ssh_host_key", &seed)],
+    );
+    let work = gate.runtime.join("tmp/git-any-account");
+    let home = work.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ssh_port = gate.server.ssh_address().expect("the SSH server listens").port();
+    let ssh = public_ssh(&work);
+    let at = |repository: &str| format!("ssh://pub.user@127.0.0.1:{ssh_port}/{repository}.git");
+
+    // a repository every account may view is cloned (it is empty); one it may not view is as one that is not there
+    let clone = work.join("pub");
+    git_ok(
+        &work,
+        &home,
+        Some(&ssh),
+        &["clone", &at("pub-db"), &clone.to_string_lossy()],
+    );
+    assert!(clone.join(".git").is_dir());
+    let (ok, out) = git(&work, &home, Some(&ssh), &["clone", &at("hosted-db"), "private"]);
+    assert!(!ok && out.contains("not found"), "{out}");
+    // view is not push
+    commit(&clone, &home, "README.md", "# Mine\n");
+    let (ok, out) = git(&clone, &home, Some(&ssh), &["push", "origin", "HEAD:refs/heads/main"]);
+    assert!(!ok, "a viewer pushed: {out}");
+
+    // git only: no SFTP subsystem and no shell command
+    let ssh_args: Vec<String> = ssh.split_whitespace().skip(1).map(str::to_string).collect();
+    let run = |extra: &[&str]| {
+        Command::new("ssh")
+            .args(&ssh_args)
+            .args(["-p", &ssh_port.to_string(), "pub.user@127.0.0.1"])
+            .args(extra)
+            .env("HOME", &home)
+            .env_remove("SSH_AUTH_SOCK")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let sftp = run(&["-s", "sftp"]);
+    assert!(!sftp.status.success(), "SFTP opened for an account without SSH_SFTP");
+    let shell = run(&["status"]);
+    let said = String::from_utf8_lossy(&shell.stdout);
+    assert!(
+        !shell.status.success() && !said.contains("moqui"),
+        "a shell command ran: {said}"
+    );
 }
 
 #[test]
@@ -459,6 +563,11 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         ],
     );
     assert!(!ok && out.contains("not found"), "{out}");
+    // an account without SSH_GIT is not served git, by key either, on a repository it may view (git-any-account off)
+    let pub_ssh = public_ssh(&work);
+    let pub_url = format!("ssh://pub.user@127.0.0.1:{ssh_port}/pub-db.git");
+    let (ok, out) = git(&work, &home, Some(&pub_ssh), &["clone", &pub_url, "pub-refused"]);
+    assert!(!ok, "{out}");
 
     // a push mirror of hosted to mirror-db over this SSH server, as john.doe with his key and the host key pinned;
     // then one to a repository that is not there, whose failure is kept on the row
@@ -589,4 +698,60 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    // usage and delete on Postgres: the grouped read and the one-statement deletes (their rules are moqui-git's tests)
+    let context = factory.new_context();
+    let _entered = context.enter();
+    // as an application's own code calls them: no screen is below to authorize the services
+    let _authz = context.disable_authz();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let (usage, errors) = sync(
+        "org.moqui.git.GitServices.get#GitRepositoryUsage",
+        &[("repositoryIdList", Value::string("hosted-db,hosted"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let Some(Value::List(usages)) = usage.get("usageList") else {
+        panic!("no usageList: {usage:?}");
+    };
+    let number = |usage: &Value, name: &str| match usage {
+        Value::Map(map) => map
+            .get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .and_then(|text| text.parse::<i64>().ok())
+            .unwrap_or(0),
+        _ => 0,
+    };
+    assert_eq!(usages.len(), 2, "{usages:?}");
+    // each holds the 40,000 line file, compressed
+    assert!(
+        number(&usages[0], "storedBytes") > 50_000 && number(&usages[0], "objectCount") >= 6,
+        "{usages:?}"
+    );
+    assert!(number(&usages[1], "storedBytes") > 50_000, "{usages:?}");
+    let (_, errors) = sync(
+        "org.moqui.git.GitServices.delete#GitRepository",
+        &[("repositoryId", Value::string("hosted-db"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let left = {
+        let entity = factory.entity().unwrap();
+        let count = |name: &str| {
+            entity
+                .find(name)
+                .unwrap()
+                .eq("repositoryId", Value::string("hosted-db"))
+                .count()
+                .unwrap()
+        };
+        [
+            count("moqui.resource.GitObject"),
+            count("moqui.resource.GitRef"),
+            count("moqui.resource.GitUpdate"),
+            count("moqui.resource.GitRepository"),
+        ]
+    };
+    assert_eq!(left, [0, 0, 0, 0]);
+    let gone = format!("http://john.doe:moqui@127.0.0.1:{}/git/hosted-db.git", http.port());
+    let (ok, out) = git(&work, &home, None, &["ls-remote", &gone]);
+    assert!(!ok, "a deleted repository answers: {out}");
 }
