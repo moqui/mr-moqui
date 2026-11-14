@@ -287,7 +287,7 @@ ironcalc = { git = "https://github.com/moqui/IronCalc", rev = "dbecebb36238f2111
 rust_xlsxwriter = { version = "0.102", default-features = false }
 # read#Spreadsheet: xlsx, xlsm, xlsb, xls, and ods. Defaults are empty; chrono (dates) stays off, dates are read as
 # Excel serial numbers. Shares zip with ironcalc.
-calamine = { version = "0.37", default-features = false }
+calamine = { version = "0.38", default-features = false }
 # Zip data files for the entity data loader and writer. The zip and deflate (flate2 on zlib-rs) that calamine and
 # rust_xlsxwriter already build; zip64 is part of the crate.
 zip = { version = "9.1", default-features = false, features = ["deflate"] }
