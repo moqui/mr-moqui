@@ -2123,6 +2123,8 @@ pub fn build_features() -> Vec<&'static str> {
         ("sip", cfg!(feature = "sip")),
         ("xmpp", cfg!(feature = "xmpp")),
         ("edge", cfg!(feature = "edge")),
+        ("embed-production", cfg!(feature = "embed-production")),
+        ("embed-all", cfg!(feature = "embed-all")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))

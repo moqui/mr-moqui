@@ -25,6 +25,13 @@ enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx"
 # Maximal package (`./moq build`, the default, and the debug build), with devtools: everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
+# How much of the runtime is built into the binary (crates/moqui-embedded, `./moq build --embed <level>`): with
+# neither, the framework level (framework, tools, a webroot stub and the confs); embed-production adds the whole webroot
+# and every other base and add-on component less its tests and plans (the file set of `./moq archive`); embed-all adds
+# the tests, plans and the dev and test sets. In no package; a build option.
+embed-production = ["moqui-embedded/production"]
+embed-all = ["moqui-embedded/all"]
+
 # The database drivers (crates/moqui-drivers).
 embedded-postgres = ["postgres", "moqui-drivers/embedded-postgres"]
 postgres = ["moqui-drivers/postgres"]
@@ -156,7 +163,7 @@ moqui-channels = { workspace = true, optional = true }
 moqui-xmpp = { workspace = true, optional = true }
 # The DAV server, the VCard and ICalendar tools and elFinder (crates/moqui-dav), in every build; /dav/ and SFTP serve it.
 moqui-dav = { workspace = true }
-# The framework, tools and webroot stub files built into the binary (crates/moqui-embedded), in every build.
+# The runtime files built into the binary (crates/moqui-embedded), in every build; the embed-* features add to them.
 moqui-embedded = { workspace = true }
 # The development kit (crates/moqui-devkit), in every build: moqui test, lint, check and types; its file watcher is the
 # devtools feature's.
