@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
         <!-- Calc's own buttons, after the grid's: a walk finds the grid's Save first -->
         <div v-show="mode === 'calc'" class="col-auto row items-center q-gutter-xs">
-            <div v-if="calc.room" class="text-caption" :class="mutedClass">{{calc.room.title}}<span v-if="calc.room.evaluateMs > 250"> · calculated in {{Math.round(calc.room.evaluateMs)}} ms</span></div>
+            <div v-if="calc.room" class="text-caption" :class="mutedClass">{{calc.room.title}}<span v-if="calc.room.evaluateMs > 250"> · calculated in {{Math.round(calc.room.evaluateMs)}} ms</span><span v-if="calc.room.memoryBytes >= 1048576"> · {{(calc.room.memoryBytes / 1048576).toFixed(1)}} MB in memory</span></div>
             <q-btn flat dense no-caps icon="refresh" label="Refresh" :disable="!calc.room || calc.busy" :loading="calc.busy" @click="calcRefresh"><q-tooltip>Read the data sheets again</q-tooltip></q-btn>
             <q-btn flat dense no-caps icon="download" label="XLSX" :disable="!calc.room" @click="calcExport"></q-btn>
             <q-btn-dropdown flat dense no-caps icon="folder_open" label="Documents" @show="calcLoadDocuments">

@@ -259,7 +259,7 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
     let user_id = body["userId"].as_str().unwrap_or_default().to_string();
     let job_user = user_id.clone();
     let caught = super::on_pool(&factory, move || {
-        let (_, dropped) = together::catch_up_document(&job_factory, &job_doc);
+        let (followed, dropped) = together::catch_up_document(&job_factory, &job_doc);
         let name = if has_views {
             job_factory
                 .entity()
@@ -267,10 +267,10 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
         } else {
             String::new()
         };
-        Ok((dropped, name))
+        Ok((followed, dropped, name))
     })
     .await;
-    let (dropped, name) = match caught {
+    let (followed, dropped, name) = match caught {
         Ok(caught) => caught,
         Err(err) => {
             tracing::warn!(document = %doc, "CalcGrid: the rooms did not follow an edit: {}", err.message());
@@ -283,7 +283,24 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
         .filter(|member| member.doc == doc && !dropped.contains(&member.room))
         .map(|member| member.room.clone())
         .collect();
-    broadcast(&doc, None, Some(&kept), &frame);
+    // A room that changed values only tells its views which areas, from which edit: a view one edit behind reads
+    // those cells again and keeps the rest. Rooms of other scopes changed other cells, so each is told its own.
+    let mut told: Vec<String> = Vec::new();
+    for room in &followed {
+        let Some(changed) = &room.changed else {
+            continue;
+        };
+        if !kept.contains(&room.room) {
+            continue;
+        }
+        let mut own = frame.clone();
+        own["from"] = json!(room.from);
+        own["changed"] = together::areas_json(changed);
+        broadcast(&doc, None, Some(std::slice::from_ref(&room.room)), &own);
+        told.push(room.room.clone());
+    }
+    let rest: Vec<String> = kept.into_iter().filter(|room| !told.contains(room)).collect();
+    broadcast(&doc, None, Some(&rest), &frame);
     if !dropped.is_empty() {
         let mut reopen = frame.clone();
         reopen["reopen"] = Json::Bool(true);

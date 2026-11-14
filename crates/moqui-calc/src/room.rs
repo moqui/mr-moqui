@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use moqui_core::context::{Error, ExecutionContextFactory};
+use moqui_core::workbook::ironcalc::base::expressions::types::Area;
 use moqui_core::workbook::ironcalc::base::{Model, UserModel};
 use moqui_core::workbook::parse_area;
 use moqui_lib::sync::lock;
@@ -54,6 +55,19 @@ const MAX_PASTE_ROWS: usize = 5_000;
 pub const MAX_EDIT_CELLS: i64 = 100_000;
 /// The newest edits a scratch room keeps for undo.
 const MAX_OWN_LOG: usize = 500;
+/// The most changed areas an evaluation tells the views of; past it they read everything again.
+const MAX_CHANGED_AREAS: usize = 200;
+/// The edits that change values only: after them the views read again the cells that changed.
+const VALUE_EDITS: [&str; 4] = ["input", "paste", "clear", "fill"];
+
+/// The engine's model for a room. The room keeps its own history and log ([`Room::apply_ops`], [`crate::log`]), so the
+/// engine keeps neither: they would grow for as long as the room is open.
+fn user_model(model: Model<'static>) -> UserModel<'static> {
+    let mut model = UserModel::from_model(model);
+    model.set_keeps_history(false);
+    model.set_keeps_send_queue(false);
+    model
+}
 
 fn engine(message: String) -> Error {
     Error::new(format!("Spreadsheet engine: {message}"))
@@ -101,6 +115,10 @@ pub struct Room {
     last_used: Instant,
     /// When the data sheets were last read.
     filled_at: Instant,
+    /// What the last evaluation changed, when the edits before it changed values only; None when anything may have.
+    changed: Option<Vec<Area>>,
+    /// Whether every edit since the last evaluation changed values only ([`VALUE_EDITS`]).
+    values_only: bool,
 }
 
 /// What a room is opened with.
@@ -156,9 +174,11 @@ impl Room {
             seq: opening.shared.map_or(0, |(_, seq)| seq),
             inverses: BTreeMap::new(),
             own_log: Vec::new(),
-            model: UserModel::from_model(model),
+            model: user_model(model),
             last_used: Instant::now(),
             filled_at: Instant::now(),
+            changed: None,
+            values_only: true,
         })
     }
 
@@ -191,12 +211,55 @@ impl Room {
         fill::stored_form(&self.model.to_bytes(), &self.data_rows)
     }
 
-    /// Fill the data sheets again with `rows`, keeping the overlay as it is now, and evaluate.
+    /// What the open workbook takes in memory, in bytes: the engine's estimate of its cells, texts and dependencies.
+    #[must_use]
+    pub fn memory_bytes(&self) -> usize {
+        self.model().memory_usage().total()
+    }
+
+    /// What the last evaluation changed, when the edits before it changed values only: the areas a view reads again.
+    /// None when anything may have changed.
+    #[must_use]
+    pub fn changed(&self) -> Option<&[Area]> {
+        self.changed.as_deref()
+    }
+
+    /// Fill the data sheets again with `rows`, keeping the overlay as it is now, and evaluate. When each data sheet
+    /// keeps its columns and its number of rows, the rows are replaced in the open workbook and only what reads them is
+    /// evaluated; otherwise the workbook is made again from its stored form.
     ///
     /// # Errors
     ///
     /// Returns the engine's error; the room is then as it was.
     pub fn refresh(&mut self, rows: Vec<SheetRows>) -> Result<(), Error> {
+        let same_shape = rows.len() == self.data_rows.len()
+            && rows
+                .iter()
+                .zip(&self.data_rows)
+                .all(|(sheet, (name, count))| sheet.name.eq_ignore_ascii_case(name) && sheet.rows.len() == *count);
+        if same_shape {
+            self.model.pause_evaluation();
+            let replaced = fill::refill(&mut self.model, &rows);
+            match replaced {
+                Ok(true) => {
+                    self.model.compact_shared_strings();
+                    self.values_only = true;
+                    self.evaluate();
+                    self.truncated = rows
+                        .iter()
+                        .filter(|sheet| sheet.truncated)
+                        .map(|sheet| sheet.name.clone())
+                        .collect();
+                    self.filled_at = Instant::now();
+                    return Ok(());
+                }
+                Ok(false) => self.model.resume_evaluation(),
+                Err(err) => {
+                    self.model.resume_evaluation();
+                    return Err(err);
+                }
+            }
+        }
         let base = fill::open_stored(&self.stored_form()?)?;
         let data_rows: Vec<(String, usize)> = rows
             .iter()
@@ -211,7 +274,9 @@ impl Room {
         let started = Instant::now();
         model.evaluate();
         self.evaluate_ms = started.elapsed().as_secs_f64() * 1000.0;
-        self.model = UserModel::from_model(model);
+        self.model = user_model(model);
+        self.changed = None;
+        self.values_only = true;
         self.data_rows = data_rows;
         self.truncated = truncated;
         self.filled_at = Instant::now();
@@ -346,6 +411,10 @@ impl Room {
         let started = Instant::now();
         self.model.evaluate();
         self.evaluate_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let changes = self.model.last_changes();
+        self.changed = (self.values_only && !changes.full && changes.areas.len() <= MAX_CHANGED_AREAS)
+            .then(|| changes.areas.clone());
+        self.values_only = true;
     }
 
     /// Apply `ops` in order, each after taking what it changes: the ops applied, the edits that take them all back (the
@@ -703,6 +772,9 @@ impl Room {
             height: small("height", 1).max(1),
         };
         let kind = op["op"].as_str().unwrap_or_default();
+        if !VALUE_EDITS.contains(&kind) {
+            self.values_only = false;
+        }
         // what changes a sheet's cells, rows, columns, place or name is not done to a data sheet
         let protects = matches!(
             kind,

@@ -104,6 +104,17 @@ test("the socket's frames are the others in the room and when to read it again",
     const dropped = calc.receive(peers, 5, { type: "changed", seq: 6, kind: "revert", reopen: true });
     assert.deepEqual([dropped.reopen, dropped.reread], [true, false]);
 });
+test("an edit that changed values drops only the rows it changed from the cache", () => {
+    const cache = new Map([[0, new Map([[1, ["a"]], [2, ["b"]], [3, ["c"]], [9, ["z"]]])], [1, new Map([[2, ["x"]]])]]);
+    assert.equal(calc.forgetRows(cache, [{ sheet: 0, row: 2, column: 1, width: 3, height: 2 }, { sheet: 4, row: 1, column: 1, width: 1, height: 1 }]), true);
+    assert.deepEqual([...cache.get(0).keys()], [1, 9]);
+    assert.deepEqual([...cache.get(1).keys()], [2]);
+    // anything may have changed, or too many rows: the caller empties the cache
+    assert.equal(calc.forgetRows(cache, null), false);
+    assert.equal(calc.forgetRows(cache, undefined), false);
+    assert.equal(calc.forgetRows(cache, [{ sheet: 0, row: 1, column: 1, width: 1, height: calc.MAX_FORGET_ROWS + 1 }]), false);
+    assert.deepEqual([...cache.get(0).keys()], [1, 9]);
+});
 test("the others' places are the cells of the sheet shown, in each one's colour, a large one at its first cell", () => {
     const cells = calc.peerCells([
         { client: "c1", sheet: 1, area: { row: 2, column: 2, width: 2, height: 1 } },

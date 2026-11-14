@@ -3933,7 +3933,7 @@ dependencies = [
 [[package]]
 name = "ironcalc"
 version = "0.9.1"
-source = "git+https://github.com/moqui/IronCalc?rev=aac9d61e84d148d878e461702de41afbf2daf015#aac9d61e84d148d878e461702de41afbf2daf015"
+source = "git+https://github.com/moqui/IronCalc?rev=dbecebb36238f2111e3be91c24db4ec7e14253f6#dbecebb36238f2111e3be91c24db4ec7e14253f6"
 dependencies = [
  "bitcode",
  "chrono",
@@ -3949,7 +3949,7 @@ dependencies = [
 [[package]]
 name = "ironcalc_base"
 version = "0.9.1"
-source = "git+https://github.com/moqui/IronCalc?rev=aac9d61e84d148d878e461702de41afbf2daf015#aac9d61e84d148d878e461702de41afbf2daf015"
+source = "git+https://github.com/moqui/IronCalc?rev=dbecebb36238f2111e3be91c24db4ec7e14253f6#dbecebb36238f2111e3be91c24db4ec7e14253f6"
 dependencies = [
  "bitcode",
  "chrono",

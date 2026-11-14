@@ -395,6 +395,8 @@ Not built of these sets:
 
 ### Phase 4: charts and images in XLSX
 
+**Built 2026-11-13, in the fork** (see [Batch 2](#batch-2-incremental-evaluation-in-place-reload-images-and-charts)): the model (`base::drawings`: images, and column, bar, line, area, pie, doughnut and scatter charts), a versioned stored form so that it could be added, the xlsx export and import, and CalcGrid's charts in its exports (`moqui_calc::charts`, on a sheet named Charts). As proposed, the rest of this section:
+
 The first place the engine itself needs to grow.
 
 - **Images:** an image list on the worksheet, `xl/media` files, a drawing part for each sheet with cell anchors and its relationships, content types, the `<drawing>` element. A few hundred lines.
@@ -562,19 +564,50 @@ What `moqui-calc` works around, with what the engine could offer instead. In ord
 
 | Now | What it costs | Offer |
 |---|---|---|
-| A refresh builds a new `UserModel` from the overlay and the rows: data can be loaded only on a `Model`, below `UserModel`, which gives only a shared reference to its model | The undo history ends at every refresh, and the whole model is rebuilt from bytes | A bulk load on `UserModel` that replaces the rows of a sheet (`set_row` underneath) and is one step of its history, or a mutable accessor to the model |
-| Every edit sends the visible rows again, because nothing says which cells changed | A viewport of 60 × 30 for each member of a room, for each edit | The changed cells of the last evaluation (falls out of evaluating only what changed) |
+| A refresh builds a new `UserModel` from the overlay and the rows: data can be loaded only on a `Model`, below `UserModel`, which gives only a shared reference to its model | The undo history ends at every refresh, and the whole model is rebuilt from bytes | A bulk load on `UserModel` that replaces the rows of a sheet (`set_row` underneath) and is one step of its history, or a mutable accessor to the model **Built** (batch 2: `replace_rows`, used when the row count is unchanged) |
+| Every edit sends the visible rows again, because nothing says which cells changed | A viewport of 60 × 30 for each member of a room, for each edit | The changed cells of the last evaluation (falls out of evaluating only what changed) **Built** (batch 2: `last_changes`, the `changed` areas) |
 | ~~No measure of memory~~ | | `Model::memory_usage` (commit 10); the room can show it, and the server can count what its rooms hold |
 | Tables cannot be added or resized after load; structured references become fixed ranges. Data sheets keep two stub rows and insert rows between them so that the ranges stretch | `insert_rows` and `delete_rows` over the whole sheet on every open and save | An API to add a table and set its range, moving the formulas that refer to it |
-| The shared strings keep every text of every sheet; the stored form empties the data sheets and rebuilds the list itself | A pass over every cell of every sheet on save | Dropping unused shared strings in the engine (`Workbook::compact_shared_strings`) |
+| The shared strings keep every text of every sheet; the stored form empties the data sheets and rebuilds the list itself | A pass over every cell of every sheet on save | Dropping unused shared strings in the engine (`Workbook::compact_shared_strings`) **Built** (batch 2: `compact_shared_strings`) |
 | Errors are strings | Messages matched by text | Error types |
 
 ### Proposed next, in order
 
-1. Offer the commits upstream, one at a time and the example first, once we have used them for a while. Add our use to issue 849 (the user's call).
-2. The bulk load on `UserModel`, so that a refresh is an edit. Small, and in `user_model` only.
-3. Evaluate only what changed, with the list of changed cells: upstream's if it comes soon, else ours in the fork on the same design.
+1. Offer the commits upstream, one at a time and the example first, once we have used them for a while. Add our use to issue 849 (the user's call); our incremental evaluation is a working reference for it.
+2. ~~The bulk load on `UserModel`~~ and ~~evaluating only what changed~~: built in batch 2.
+3. The dependency index smaller for sheets of many one-cell formulas (155 bytes a formula now).
 4. The remaining speed in the profiles: `COUNTA` on text still copies each text (100,000 allocations), `MEDIAN` sorts a copy, `VLOOKUP` and `MATCH` hold 4 to 5 MB while they run (an array of the lookup column).
+
+### Batch 2: incremental evaluation, in-place reload, images and charts
+
+Built 2026-11-13 on the fork's `main` (`97efe7e2` to `dbecebb3`), on the user's direction to build these now rather than wait for upstream, following upstream's plan where it has one (issue 849); mr-moqui builds `dbecebb3`.
+
+| Commit | What it does |
+|---|---|
+| A sheet records what was written to it | `SheetData::take_changes`: the areas written, merged, or that anything may have changed (rows or columns moved, a row hidden) |
+| `Model::evaluate_changes` | What each formula read is recorded as its references are resolved (a range is one rectangle; INDIRECT, OFFSET, names and `#` as what they came to; a dynamic array also reads its spill area). An index (single cells in a map, ranges up to 64 columns under each column, wider ones in a list) finds what reads an area. An edit runs what it wrote, what reads that and so on, and the volatile formulas (`Function::is_volatile`), and returns the changed areas. A full evaluation instead before a first one, after cells moved, near arrays, at a cycle, and when more than half of more than 1,024 formulas would run. `UserModel` evaluates this way after every edit (`last_changes`) |
+| The early cutoff | The dirty formulas run precedents first; one whose inputs kept their values keeps its own and does not make its readers run (issue 849's second step). The random test, run once with 2,000 sequences of 40 edits, matched a full evaluation at every step |
+| `UserModel` history and queue can be off | `set_keeps_history`, `set_keeps_send_queue`: rooms keep their own, and the engine's grew for as long as a room was open |
+| `replace_rows` | A stretch of rows loaded again in place, the ranges over it stretching as for rows inserted by hand; `intern_shared_string` |
+| Shared strings held once, and dropped | `SharedStringIndex` (a hash, the text read from the list); `compact_shared_strings` |
+| A versioned stored form | `base::stored`: a mark and a version; versions 0 and 1 are read through the types they had |
+| Images and charts in the model, the xlsx export and the import | See Phase 4; the import says what it left out (`load_from_xlsx_bytes_with_notes`) |
+
+Measured (`data_sheet`, 100,000 rows; the full evaluation of the 300-formula mix is 0.33 s):
+
+| Edit | Time | Formulas run |
+|---|---|---|
+| A cell nothing reads | 0.001 ms | 0 |
+| A cell one formula reads | 0.4 to 0.6 ms | 1 |
+| A data cell under every sum | 69 ms | 51 |
+| A formula of the overlay | 0.004 ms | 1 |
+| The head of a chain of 100,000 formulas | 41 ms (a full evaluation: more than half would run) | all |
+
+The dependency index is 0.05 MB for the mix and 15.5 MB for the chain of 100,000 formulas (155 bytes a formula). 100,000 distinct texts and their cells: 17.6 MB to 13.5 MB.
+
+In mr-moqui: rooms keep no engine history or queue; they evaluate changes only; an edit of values (input, paste, clear, fill) answers the areas it changed, and the document's other rooms tell their views theirs, so a view one edit behind reads only those rows again (`calc.forgetRows` in `WebrootCalc.js`; the terminal keeps its block when none is on it); a refresh with the same number of rows replaces them in place; `memoryBytes` is in every room's state and shown beside the calculation time; exports carry the charts.
+
+Not done in this batch: drawings in `UserModel`'s undo, and charts read from rust_xlsxwriter's files in the tests (the three workbooks of upstream's tests, from Excel and LibreOffice, are read instead).
 
 ### Upstream's practices
 

@@ -263,14 +263,26 @@ feature("the workbook is edited beside its data sheet: a formula over the data, 
         const undone = edit([{op: "undo"}])
         const afterUndo = call("calcCells", {roomId, sheet: 1, row: 1, column: 1, width: 2, height: 2})
         const bold = Array.from(afterUndo.json.styles || []).some(style => style.style && style.style.font && style.style.font.b === true)
+        // values typed on a sheet of their own: the answer names the cells it changed, the formula over them included
+        const added = edit([{op: "addSheet"}])
+        const sheet = (added.json.sheets || []).length - 1
+        const typed = edit([{op: "input", sheet, row: 3, column: 1, value: "7"}, {op: "input", sheet, row: 4, column: 1, value: "=A3*2"}])
+        const retyped = edit([{op: "input", sheet, row: 3, column: 1, value: "8"}])
         const notJson = call("calcEdit", {roomId, opsJson: "{"}, "post")
         const byGet = tools().render("Data/Grid/calcEdit", {roomId, opsJson: "[]"}, "get")
         call("calcClose", {roomId}, "post")
-        return {opened, edited, names, texts, content, dataEdit, undone, bold, notJson, byGet, dataRows: opened.json.sheets[0].dataRows}
+        const changed = Array.from(retyped.json.changed || []).map(area => (area.sheet - sheet) + ":" + area.row + ":" + area.column)
+        return {opened, edited, names, texts, content, added, typed, changed, dataEdit, undone, bold, notJson, byGet, dataRows: opened.json.sheets[0].dataRows}
     },
-    then({opened, edited, names, texts, content, dataEdit, undone, bold, notJson, byGet, dataRows}) {
+    then({opened, edited, names, texts, content, added, typed, changed, dataEdit, undone, bold, notJson, byGet, dataRows}) {
         !opened.json.errors
         !edited.json.errors
+        // a sheet added and a style: anything may have changed; values typed: what changed, and the workbook's memory
+        edited.json.changed == null
+        added.json.changed == null
+        Array.isArray(typed.json.changed)
+        changed.join(",") == "0:3:1,0:4:1"
+        opened.json.memoryBytes > 0
         names.join(",") == "Enumeration,Summary"
         edited.json.canUndo === true
         texts.includes("1:1=" + dataRows)

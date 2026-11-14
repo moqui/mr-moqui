@@ -376,3 +376,96 @@ fn every_edit_is_taken_back_by_what_the_room_took_before_it() {
         assert_eq!(state(&room), before, "{op} was not taken back");
     }
 }
+
+fn cell_area(sheet: u32, row: i32, column: i32) -> Area {
+    Area {
+        sheet,
+        row,
+        column,
+        width: 1,
+        height: 1,
+    }
+}
+
+#[test]
+fn an_edit_of_values_says_what_it_changed_and_any_other_edit_says_everything() {
+    let rooms = Rooms::default();
+    let room = rooms.open(opening("alice", 5)).unwrap();
+    let mut room = lock(&room);
+    assert!(room.changed().is_none(), "a room just opened");
+    assert!(room.memory_bytes() > 0);
+    room.edit("alice", &[
+        json!({"op": "addSheet"}),
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders!B2:B6)"}),
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 2, "value": "=A1*2"}),
+    ])
+    .unwrap();
+    assert!(room.changed().is_none(), "a sheet was added");
+
+    // a cell nothing reads
+    room.edit("alice", &[json!({"op": "input", "sheet": 1, "row": 3, "column": 1, "value": "5"})])
+        .unwrap();
+    assert_eq!(room.changed().unwrap(), [cell_area(1, 3, 1)]);
+    // a formula, and what reads it
+    room.edit("alice", &[json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders!B2:B5)"})])
+        .unwrap();
+    assert_eq!(room.changed().unwrap(), [cell_area(1, 1, 1), cell_area(1, 1, 2)]);
+    assert_eq!(room.model().get_formatted_cell_value(1, 1, 2).unwrap(), "200");
+    // a style may change how the cells around it are drawn
+    room.edit("alice", &[json!({"op": "style", "sheet": 1, "row": 3, "column": 1, "width": 1, "height": 1, "path": "font.b", "value": "true"})])
+        .unwrap();
+    assert!(room.changed().is_none());
+}
+
+fn other_rows(count: usize) -> SheetRows {
+    let mut sheet = rows(count);
+    for (index, row) in sheet.rows.iter_mut().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        let amount = (index + 1) as f64;
+        *row = vec![CellData::Text(format!("Area {index}")), CellData::Number(amount)];
+    }
+    sheet.truncated = false;
+    sheet
+}
+
+#[test]
+fn a_refresh_with_rows_of_the_same_shape_replaces_them_in_place() {
+    let rooms = Rooms::default();
+    let room = rooms.open(opening("alice", 5)).unwrap();
+    let mut room = lock(&room);
+    room.edit("alice", &[
+        json!({"op": "addSheet"}),
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders[amount])"}),
+        json!({"op": "input", "sheet": 1, "row": 2, "column": 1, "value": "=COUNTIF(Orders[region],\"Area 1\")"}),
+    ])
+    .unwrap();
+    assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "150");
+
+    room.refresh(vec![other_rows(5)]).unwrap();
+    assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "15");
+    assert_eq!(room.model().get_formatted_cell_value(1, 2, 1).unwrap(), "1");
+    assert_eq!(room.model().get_formatted_cell_value(0, 3, 1).unwrap(), "Area 1");
+    // in place: what the data and the formulas changed, the person's undo kept, the old texts gone
+    let changed = room.changed().expect("in place");
+    assert!(changed.contains(&cell_area(1, 1, 1)), "{changed:?}");
+    assert!(changed.iter().any(|area| area.sheet == 0 && area.row == 2 && area.height == 5), "{changed:?}");
+    assert_eq!(room.undo_state("alice"), (true, false));
+    assert!(room
+        .model()
+        .workbook
+        .shared_strings
+        .iter()
+        .all(|text| !text.starts_with("Region")));
+    assert_eq!(room.layout()[0]["rows"], 6);
+
+    // another number of rows: the workbook is made again
+    room.refresh(vec![other_rows(7)]).unwrap();
+    assert!(room.changed().is_none());
+    assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "28");
+    assert_eq!(room.data_rows, [("Orders".to_string(), 7)]);
+    // and one row, below the stub's two
+    room.refresh(vec![other_rows(1)]).unwrap();
+    room.refresh(vec![other_rows(1)]).unwrap();
+    assert!(room.changed().is_some());
+    assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "1");
+}

@@ -211,6 +211,21 @@
         }
         return out;
     };
+    /** The rows that hold changed cells, dropped from the cache of loaded rows (sheet to row to cells), so that the next
+     * load asks for them again and keeps the rest. `changed` is the areas an edit and its evaluation changed (sheet,
+     * row, column, width, height); false when there is none, or too many rows to go one by one: the cache is then
+     * emptied instead. */
+    calc.forgetRows = (cache, changed) => {
+        if (!Array.isArray(changed)) return false;
+        if (changed.reduce((rows, area) => rows + Number(area.height || 0), 0) > calc.MAX_FORGET_ROWS) return false;
+        for (const area of changed) {
+            const rows = cache.get(Number(area.sheet));
+            if (!rows) continue;
+            for (let row = Number(area.row); row < Number(area.row) + Number(area.height); row++) rows.delete(row);
+        }
+        return true;
+    };
+    calc.MAX_FORGET_ROWS = 5000;
     /** The cells of `sheet` the others are on: "row:column" to the colour of whoever is there. */
     calc.peerCells = (peers, sheet) => {
         const cells = new Map();
@@ -385,18 +400,19 @@
                 if (taken.reopen) { this.$emit("gone"); return; }
                 if (taken.reread) {
                     if (frame.name && frame.userId) this.tell(frame.kind === "save" ? frame.name + " saved the document" : frame.kind === "refresh" ? frame.name + " read the data again" : frame.name + " edited");
-                    this.reread();
+                    // the cells it changed, when this view held the room's state just before it
+                    this.reread(frame.changed && Number(frame.from) === this.seq ? frame.changed : null);
                 }
             },
             tell(text) { clearTimeout(this.noticeTimer); this.notice = text; this.noticeTimer = setTimeout(() => { this.notice = ""; }, 4000); },
             // the room's state and cells again, after another's edit; waits for a cell being typed in
-            reread() {
+            reread(changed) {
                 if (this.editingCell) { this.rereadWaiting = true; return Promise.resolve(); }
-                if (!this.stateUrl) { this.cache = new Map(); return this.load(); }
+                if (!this.stateUrl) { if (!calc.forgetRows(this.cache, changed)) this.cache = new Map(); return this.load(); }
                 return moqui.request(this.stateUrl, { params: Object.assign({}, this.params, { roomId: this.room.roomId }) }).then((result) => {
                     const json = result.json || {};
                     if (json.errors) { if (String(json.errors).includes("ROOM_GONE")) this.$emit("gone"); return; }
-                    if (json.roomId) this.applied(json);
+                    if (json.roomId) this.applied(json, changed);
                 }, () => null);
             },
             markPeers() {
@@ -597,23 +613,26 @@
             // send edits; the room's new state comes back, with an edit's refusal as an error beside it
             edit(ops) {
                 if (!this.editUrl) return Promise.resolve(null);
+                const before = this.seq;
                 return moqui.request(this.editUrl, { method: "POST", params: Object.assign({}, this.params, { roomId: this.room.roomId, opsJson: JSON.stringify(ops) }) }).then((result) => {
                     const json = result.json || {};
                     if (json.errors) {
                         if (String(json.errors).includes("ROOM_GONE")) { this.$emit("gone"); return null; }
                         moqui.notifyMessages(null, json.errors);
                     }
-                    if (json.roomId) this.applied(json);
+                    // what changed is this edit's alone when the room did not follow another's edit first
+                    if (json.roomId) this.applied(json, !json.shared || Number(json.seq) === before + 1 ? json.changed : null);
                     return json;
                 }, (err) => { moqui.handleAjaxError(err); return null; });
             },
-            // after an edit: the holder of the room takes its new state, every sheet's cells are asked again (a formula
-            // anywhere may have changed), and the table is made again only when its shape changed
-            applied(state) {
+            // after an edit: the holder of the room takes its new state, the cells are asked again (the rows `changed`
+            // names when the edit changed values only, else every sheet's, since a formula anywhere may have changed), and
+            // the table is made again only when its shape changed
+            applied(state, changed) {
                 const top = (this.visible() || [1])[0];
                 if (state.seq != null) this.seq = Math.max(this.seq, Number(state.seq));
                 this.$emit("changed", state);
-                this.cache = new Map();
+                if (!calc.forgetRows(this.cache, changed)) this.cache = new Map();
                 this.$nextTick(() => {
                     const sheet = this.sheet();
                     if (!sheet) { this.sheetIndex = this.firstSheet(); this.build(); return; }

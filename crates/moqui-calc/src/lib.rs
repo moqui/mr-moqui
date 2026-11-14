@@ -28,6 +28,7 @@
 //! for the grid's reader. moqui-host links it under its `xlsx` feature; a build without it reports that `xlsx` is not
 //! built in.
 
+pub mod charts;
 pub mod fill;
 pub mod log;
 pub mod profile;

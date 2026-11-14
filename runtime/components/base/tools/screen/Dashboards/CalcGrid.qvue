@@ -17,6 +17,7 @@
         <q-space></q-space>
         <div class="col-auto row items-center q-gutter-xs">
             <div v-if="room && room.evaluateMs > 250" class="text-caption" :class="mutedClass">calculated in {{Math.round(room.evaluateMs)}} ms</div>
+            <div v-if="room && room.memoryBytes >= 1048576" class="text-caption" :class="mutedClass">{{(room.memoryBytes / 1048576).toFixed(1)}} MB in memory</div>
             <q-btn v-if="access.canAuthor" flat dense no-caps icon="add" label="New" @click="newOpen = true"></q-btn>
             <q-btn flat dense no-caps icon="refresh" label="Refresh" :disable="!room || busy" :loading="busy" @click="refresh"><q-tooltip>Read the data sheets again</q-tooltip></q-btn>
             <q-btn flat dense no-caps icon="download" label="XLSX" :disable="!room" @click="exportXlsx"></q-btn>

@@ -598,6 +598,10 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
         Value::F64((room.evaluate_ms * 10.0).round() / 10.0),
     );
     out.insert(
+        "memoryBytes".to_string(),
+        Value::I64(i64::try_from(room.memory_bytes()).unwrap_or(i64::MAX)),
+    );
+    out.insert(
         "truncated".to_string(),
         Value::List(room.truncated.iter().map(Value::string).collect()),
     );
@@ -1073,7 +1077,13 @@ fn export_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFac
         return Ok(BTreeMap::new());
     };
     let room = moqui_lib::sync::lock(&room);
-    match workbook::model_xlsx(room.model()) {
+    let written = if room.charts.is_empty() {
+        workbook::model_xlsx(room.model())
+    } else {
+        // the document's charts go into a copy of the workbook, on a sheet of their own
+        with_charts(room.model(), &room.charts).and_then(|model| workbook::model_xlsx(&model))
+    };
+    match written {
         Ok(bytes) => {
             let mut out = BTreeMap::new();
             out.insert("contentBytes".to_string(), Value::Bytes(bytes));
@@ -1082,6 +1092,24 @@ fn export_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFac
         }
         Err(err) => refused(err.message()),
     }
+}
+
+/// A copy of `model` with the document's `charts` on a sheet of their own ([`crate::charts`]).
+fn with_charts(
+    model: &moqui_core::workbook::ironcalc::base::Model<'_>,
+    charts: &[Json],
+) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
+    let mut copy = fill::open_stored(&model.to_bytes())?;
+    add_charts(&mut copy, charts)?;
+    Ok(copy)
+}
+
+/// Puts the document's `charts` in `model`; a chart whose ranges are not in the workbook is left out, and logged.
+fn add_charts(model: &mut moqui_core::workbook::ironcalc::base::Model<'static>, charts: &[Json]) -> Result<(), Error> {
+    for left_out in crate::charts::add_to_model(model, charts)? {
+        tracing::info!("CalcGrid export: {left_out}");
+    }
+    Ok(())
 }
 
 /// `close#CalcDocument`: drop the caller's room.
@@ -1183,7 +1211,11 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     } else if let Err(err) = held.edit(&user, &ops) {
         add_error(err.message());
     }
-    Ok(room_out(facade, &held, &user))
+    let mut out = room_out(facade, &held, &user);
+    if let Some(changed) = held.changed() {
+        out.insert("changed".to_string(), from_json(&together::areas_json(changed)));
+    }
+    Ok(out)
 }
 
 /// `get#CalcCellContent`: what was typed into a cell (a formula with its `=`), for the formula bar and a cell's editor.
@@ -1366,6 +1398,10 @@ fn render_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFac
         Err(err) => return refused(err.message()),
     };
     model.evaluate();
+    let charts = body["charts"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if let Err(err) = add_charts(&mut model, charts) {
+        return refused(err.message());
+    }
     match workbook::model_xlsx(&model) {
         Ok(bytes) => {
             let title = definition["title"].as_str().unwrap_or("CalcGrid").to_string();
