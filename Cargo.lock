@@ -1487,6 +1487,7 @@ dependencies = [
 name = "dev-aide"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "moqui-core",
  "moqui-devkit",
  "moqui-lib",

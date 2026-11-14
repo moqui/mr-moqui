@@ -74,6 +74,19 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="publish"><service-call name="org.moqui.devaide.VcsServices.publish#Site" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- the hosted repository on a group server and its merge requests (21.3, 21.4) -->
+    <transition name="hosting"><service-call name="org.moqui.devaide.HostingServices.resolve#RootHosting" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="mergeRequests" read-only="true"><service-call name="org.moqui.devaide.HostingServices.get#MergeRequests" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="openMergeRequest"><service-call name="org.moqui.devaide.HostingServices.open#MergeRequest" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="propose"><service-call name="org.moqui.devaide.HostingServices.propose#Changes" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="checkoutMergeRequest"><service-call name="org.moqui.devaide.HostingServices.checkout#MergeRequest" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="fork"><service-call name="org.moqui.devaide.HostingServices.fork#Repository" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- the task panel (14) -->
     <transition name="tasks" read-only="true"><service-call name="org.moqui.devaide.TaskServices.get#Tasks" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

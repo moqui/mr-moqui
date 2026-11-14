@@ -133,9 +133,20 @@ pub(crate) fn network_allowed(context: &Context) -> Result<(), LibError> {
     Ok(())
 }
 
-/// The environment variables a stored token reaches git's credential helper by, never its argv.
-const TOKEN_USER_ENV: &str = "MOQUI_DEV_AIDE_GIT_USERNAME";
-const TOKEN_ENV: &str = "MOQUI_DEV_AIDE_GIT_TOKEN";
+/// The environment variables stored tokens reach git's credential helpers by, never their argv: the root's token, then
+/// the group servers' the user let git have (plans/design-dev-aide.md 21.2), each for its own host.
+const TOKEN_USER_ENVS: [&str; 4] = [
+    "MOQUI_DEV_AIDE_GIT_USERNAME",
+    "MOQUI_DEV_AIDE_GIT_USERNAME_2",
+    "MOQUI_DEV_AIDE_GIT_USERNAME_3",
+    "MOQUI_DEV_AIDE_GIT_USERNAME_4",
+];
+const TOKEN_ENVS: [&str; 4] = [
+    "MOQUI_DEV_AIDE_GIT_TOKEN",
+    "MOQUI_DEV_AIDE_GIT_TOKEN_2",
+    "MOQUI_DEV_AIDE_GIT_TOKEN_3",
+    "MOQUI_DEV_AIDE_GIT_TOKEN_4",
+];
 
 /// A stored HTTPS token and the remote it is for.
 struct StoredToken {
@@ -178,22 +189,68 @@ fn stored_token(context: &Context, root: &Root) -> Option<StoredToken> {
         .or_else(|| find(None))
 }
 
-/// The arguments before a network command and its environment: with a stored token, git's credential helpers are
-/// replaced by one that answers the token from the environment (`!` helpers run in git's own shell, on Windows too).
-fn credential_args(context: &Context, root: &Root) -> (Vec<String>, Vec<(&'static str, String)>) {
-    match stored_token(context, root) {
-        Some(stored) if !stored.url_prefix.is_empty() => {
-            token_helper(&stored.url_prefix, stored.username, stored.token)
-        }
-        Some(_) => {
-            tracing::warn!(
-                "Dev AIDE git token for {} has no remote it is for: store it again to use it",
-                root.id
-            );
-            (Vec::new(), Vec::new())
-        }
-        None => (Vec::new(), Vec::new()),
+/// The group server tokens of the current user that Connect let git have (`useForGit`), each with its host.
+fn server_tokens(context: &Context) -> Vec<StoredToken> {
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    if user.is_empty() {
+        return Vec::new();
     }
+    let rows = context
+        .facade
+        .find("moqui.dev.DevAideCredential")
+        .and_then(|find| {
+            find.eq("userId", Value::string(&user))
+                .eq("useForGit", Value::string("Y"))
+                .list()
+        })
+        .map(|rows| rows.into_values())
+        .unwrap_or_default();
+    rows.iter()
+        .filter(|row| !moqui_lib::object::to_plain_string(row.get("serverId").unwrap_or(&Value::Null)).is_empty())
+        .map(|row| {
+            let field = |name: &str| {
+                row.get(name)
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            };
+            StoredToken {
+                username: Some(field("username"))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| moqui_core::user::current_username().ok().flatten().unwrap_or_default()),
+                token: field("token"),
+                url_prefix: field("urlPrefix"),
+            }
+        })
+        .filter(|stored| !stored.token.is_empty() && !stored.url_prefix.is_empty())
+        .collect()
+}
+
+/// The arguments before a network command and its environment: with stored tokens, git's credential helpers are
+/// replaced by one per token that answers it from the environment for its host only (`!` helpers run in git's own
+/// shell, on Windows too): the root's token, then the group servers'.
+fn credential_args(context: &Context, root: &Root) -> (Vec<String>, Vec<(&'static str, String)>) {
+    let mut tokens = Vec::new();
+    match stored_token(context, root) {
+        Some(stored) if !stored.url_prefix.is_empty() => tokens.push(stored),
+        Some(_) => tracing::warn!(
+            "Dev AIDE git token for {} has no remote it is for: store it again to use it",
+            root.id
+        ),
+        None => {}
+    }
+    tokens.extend(server_tokens(context));
+    let (mut argv, mut env) = (Vec::new(), Vec::new());
+    for (index, stored) in tokens.into_iter().take(TOKEN_ENVS.len()).enumerate() {
+        let (args, vars) = token_helper(&stored.url_prefix, stored.username, stored.token, index);
+        if argv.is_empty() {
+            argv.extend(args);
+        } else {
+            // the reset of the helpers is once, before the first
+            argv.extend(args.into_iter().skip(2));
+        }
+        env.extend(vars);
+    }
+    (argv, env)
 }
 
 /// The scheme, host and port of an HTTPS remote URL (`https://user@git.example.com:8443/a/b.git` is
@@ -217,16 +274,22 @@ pub(crate) fn url_prefix(url: &str) -> Option<String> {
 
 /// The arguments and environment that answer git's credential request with `username` and `token`, for the remotes at
 /// `prefix` only: a remote moved to another host, or a redirect there, gets nothing.
-fn token_helper(prefix: &str, username: String, token: String) -> (Vec<String>, Vec<(&'static str, String)>) {
+fn token_helper(
+    prefix: &str,
+    username: String,
+    token: String,
+    index: usize,
+) -> (Vec<String>, Vec<(&'static str, String)>) {
+    let (user_env, token_env) = (TOKEN_USER_ENVS[index], TOKEN_ENVS[index]);
     let helper = format!(
-        "credential.{prefix}.helper=!f() {{ test \"$1\" = get && echo \"username=${TOKEN_USER_ENV}\" && echo \"password=${TOKEN_ENV}\"; }}; f"
+        "credential.{prefix}.helper=!f() {{ test \"$1\" = get && echo \"username=${user_env}\" && echo \"password=${token_env}\"; }}; f"
     );
     let username = Some(username)
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "x-access-token".into());
     (
         vec!["-c".into(), "credential.helper=".into(), "-c".into(), helper],
-        vec![(TOKEN_USER_ENV, username), (TOKEN_ENV, token)],
+        vec![(user_env, username), (token_env, token)],
     )
 }
 
@@ -706,12 +769,19 @@ pub(crate) fn fetch_remote(
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
-    network(
+    let out = network(
         ec,
         parameters,
         &|_, _| Ok(vec!["fetch".into(), "--prune".into()]),
         "fetch",
-    )
+    )?;
+    // the hosted repository asked again (plans/design-dev-aide.md 21.3), as the rights or the rules may have changed
+    let context = Context::of(ec, Tier::Extend)?;
+    let _authz = ec.disable_authz();
+    if let Ok(root) = git_root(&context, parameters) {
+        crate::hosting::review::refresh_after_fetch(&context, root);
+    }
+    Ok(out)
 }
 
 /// `pull#Remote`: fast-forward only.
@@ -821,7 +891,7 @@ fn push_remote(
     if force && Context::of(ec, Tier::Full).is_err() {
         return Err(LibError::new("A force push needs the full tier of Dev AIDE"));
     }
-    network(
+    let mut out = network(
         ec,
         parameters,
         &move |context, root| {
@@ -845,7 +915,35 @@ fn push_remote(
             Ok(vec!["push".into(), "-u".into(), remote, branch])
         },
         "push",
-    )
+    )?;
+    // Push and open a merge request of the branch on its hosted repository (plans/design-dev-aide.md 21.4)
+    if flag(parameters, "openMergeRequest") {
+        let context = Context::of(ec, Tier::Extend)?;
+        let _authz = ec.disable_authz();
+        let root = git_write_root(&context, parameters, "opens merge requests")?;
+        let opening = crate::hosting::review::Opening {
+            source: current_branch(&context, root)?,
+            target: text(parameters, "targetBranch"),
+            title: text(parameters, "title"),
+            description: text(parameters, "description"),
+            ..crate::hosting::review::Opening::default()
+        };
+        let opening = crate::hosting::review::Opening {
+            title: if opening.title.trim().is_empty() {
+                context
+                    .git()
+                    .read(&root.path, &["log", "-1", "--format=%s"])
+                    .map(|summary| summary.trim().to_string())
+                    .unwrap_or_default()
+            } else {
+                opening.title.clone()
+            },
+            ..opening
+        };
+        let made = crate::hosting::review::open(&context, root, &opening)?;
+        out.insert("mergeRequest".into(), json_value(&made));
+    }
+    Ok(out)
 }
 
 /// `switch#Branch`: refused with git's message when local changes conflict.
@@ -1089,13 +1187,36 @@ fn publish_site(
         "pushedBranch".into(),
         Value::string(target.clone().unwrap_or_else(|| branch.clone())),
     );
-    out.insert(
-        "message".into(),
-        Value::string(match &target {
-            Some(target) => format!("Published to {remote} {target}; merge {target} into {branch} to share it"),
-            None => format!("Published to {remote} {branch}"),
-        }),
-    );
+    // to a publish branch on a hosted repository: the merge request into the current branch is opened too (21.4); a
+    // failure to open it leaves the push, and says why
+    let opened = match &target {
+        Some(target) if crate::hosting::review::hosted(&context, root).is_some() => Some(crate::hosting::review::open(
+            &context,
+            root,
+            &crate::hosting::review::Opening {
+                source: target.clone(),
+                target: branch.clone(),
+                title: text(&parameters, "summary"),
+                ..crate::hosting::review::Opening::default()
+            },
+        )),
+        _ => None,
+    };
+    let message = match (&target, &opened) {
+        (Some(target), Some(Ok(made))) => {
+            out.insert("mergeRequest".into(), json_value(made));
+            format!(
+                "Published to {remote} {target}, and opened merge request !{} into {branch}",
+                made["mergeRequestNum"]
+            )
+        }
+        (Some(target), Some(Err(err))) => {
+            format!("Published to {remote} {target}; the merge request into {branch} was not opened: {err}")
+        }
+        (Some(target), None) => format!("Published to {remote} {target}; merge {target} into {branch} to share it"),
+        (None, _) => format!("Published to {remote} {branch}"),
+    };
+    out.insert("message".into(), Value::string(message));
     out.insert("files".into(), json_value(&changed));
     Ok(out)
 }
@@ -1106,7 +1227,7 @@ mod tests {
 
     /// git's own `credential fill` with the helper for `prefix`, asked for `host`: what it answers.
     fn fill(prefix: &str, host: &str) -> Option<String> {
-        let (args, env) = token_helper(prefix, String::new(), "s3cret-token".into());
+        let (args, env) = token_helper(prefix, String::new(), "s3cret-token".into(), 0);
         assert!(args.iter().all(|arg| !arg.contains("s3cret")), "{args:?}");
         let mut command = std::process::Command::new("git");
         command

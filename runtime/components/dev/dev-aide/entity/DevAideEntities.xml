@@ -43,6 +43,13 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="publishBranch" type="text-medium"><description>Publish pushes here: a name or a pattern with {user}
             (question 15).</description></field>
         <field name="publishBranchRequired" type="text-indicator"><description>Y hides the plain Push.</description></field>
+        <field name="hostedServerId" type="id"><description>The group server (DevAideServer) that hosts the repository of
+            this working tree's remote (plans/design-dev-aide.md 21.3), asked when it is resolved and on a fetch</description></field>
+        <field name="hostedRemote" type="text-short"><description>The remote whose URL it is behind</description></field>
+        <field name="hostedRepositoryId" type="text-medium"/>
+        <field name="hostedJson" type="text-very-long"><description>What the server answered of the repository: its path,
+            default branch, the user's rights, its merge request settings, who keeps it, the agreement</description></field>
+        <field name="hostedDate" type="date-time"/>
         <index name="DEV_AIDE_ROOT_LOC" unique="true"><index-field name="location"/></index>
     </entity>
     <entity entity-name="DevAideSetting" package="moqui.dev" use="configuration">
@@ -51,10 +58,41 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="settingName" type="id" is-pk="true"/>
         <field name="settingValue" type="text-long"/>
     </entity>
+    <entity entity-name="DevAideServer" package="moqui.dev" use="configuration">
+        <description>A connection to a group server (plans/design-dev-aide.md 21.2, D20): its address, what it offers (asked
+            of it: /rest/s1/moqui/hosting/offer), the user's account there, and what Connect set from it, so Remove takes
+            it back. The token is the DevAideCredential of the same serverId. A user's own; with no userId an admin's for
+            the instance (a shared server's deploy connection).</description>
+        <field name="serverId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="label" type="text-medium"/>
+        <field name="baseUrl" type="text-medium"/>
+        <field name="username" type="text-medium"><description>The account on the server, as it answered</description></field>
+        <field name="offerJson" type="text-very-long"/>
+        <field name="offerDate" type="date-time"/>
+        <field name="statusText" type="text-medium"><description>reachable, unreachable, connected (the token is good),
+            signed-out (the token is not)</description></field>
+        <field name="lastError" type="text-long"/>
+        <field name="connectedDate" type="date-time"/>
+        <field name="setupJson" type="text-very-long"><description>What Connect set: the myaddons.xml repository, the task
+            source and app, the .env lines, the git credential</description></field>
+        <field name="pendingState" type="text-medium"><description>An installed-app sign-in under way (F17): its state,
+            PKCE verifier and redirect URI, good for 15 minutes</description></field>
+        <field name="pendingVerifier" type="text-medium" encrypt="true"/>
+        <field name="pendingRedirect" type="text-medium"/>
+        <field name="pendingDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount"/>
+        <index name="DEV_AIDE_SERVER_STATE"><index-field name="pendingState"/></index>
+    </entity>
     <entity entity-name="DevAideCredential" package="moqui.dev" use="configuration">
-        <description>Shared mode (D19): a deploy token for a root's remote, or a user's HTTPS token, set by an admin.</description>
+        <description>Shared mode (D19): a deploy token for a root's remote, or a user's HTTPS token, set by an admin; and
+            a group server's login key (serverId), sent only to that server's address (urlPrefix).</description>
         <field name="credentialId" type="id" is-pk="true"/>
         <field name="rootId" type="text-short"/>
+        <field name="serverId" type="id"><description>A group server's token: its REST and, with useForGit, git over
+            HTTPS to its host</description></field>
+        <field name="useForGit" type="text-indicator"><description>Y: git gets this server token for the server's host in
+            place of git's own credential helpers (Connect's choice)</description></field>
         <field name="userId" type="id"><description>Empty for the root's deploy token</description></field>
         <field name="username" type="text-medium"/>
         <field name="token" type="text-medium" encrypt="true"/>
@@ -73,6 +111,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="username" type="text-medium"/>
         <field name="token" type="text-medium" encrypt="true"/>
         <field name="projectFilter" type="text-medium"><description>Project ids, comma separated; empty for every project</description></field>
+        <field name="serverId" type="id"><description>Made by Connect for a group server: its token is the server's
+            credential, and token here is empty</description></field>
+        <field name="tasksPath" type="text-medium"><description>The REST path of the user's tasks, as the server offers it;
+            Mantle's /rest/s1/mantle/my/tasks when empty</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount"/>
     </entity>
     <entity entity-name="DevAideTaskApp" package="moqui.dev" use="configuration">

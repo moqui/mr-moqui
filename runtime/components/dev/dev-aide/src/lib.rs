@@ -28,6 +28,7 @@ pub mod confine;
 mod docs;
 mod entities;
 pub mod git;
+mod hosting;
 mod notify;
 mod patch;
 mod repo;
@@ -61,5 +62,6 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     vcs::register(registry)?;
     repo::register(registry)?;
     repos::register(registry)?;
+    hosting::register(registry)?;
     tasks::register(registry)
 }

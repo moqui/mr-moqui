@@ -65,10 +65,16 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- Full permissions for the ADMIN user group -->
         <authz artifactAuthzId="MOQUI_API_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
-    <!-- Commit statuses posted by outside CI: any signed-in user reaches the path, and the services check the push right
-        on the repository (AT_GIT_REPOSITORY) -->
-    <artifactGroups artifactGroupId="MOQUI_API_GIT" description="Moqui Tools REST API: git commit statuses">
+    <!-- Hosting (repositories, merge requests, pipeline runs, commit statuses from outside CI): any signed-in user reaches
+        the path, and the services check the repository's rights (AT_GIT_REPOSITORY) -->
+    <artifactGroups artifactGroupId="MOQUI_API_GIT" description="Moqui Tools REST API: git hosting">
         <artifacts artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y" artifactName="/moqui/git"/>
         <authz artifactAuthzId="MOQUI_API_GIT_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+    <!-- What the server offers and the repository behind a URL: any signed-in user (the offer also with no credentials,
+        by its own anonymous-view), and the services check the repository's rights -->
+    <artifactGroups artifactGroupId="MOQUI_API_HOSTING" description="Moqui Tools REST API: what the server offers">
+        <artifacts artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y" artifactName="/moqui/hosting"/>
+        <authz artifactAuthzId="MOQUI_API_HOSTING_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 </entity-facade-xml>

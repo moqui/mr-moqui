@@ -118,6 +118,15 @@ first branch pushed) its default branch.
   `max-sessions-per-source` where many users come from one address (an office, a CI provider); the git pool
   (`git-server` `max-concurrent`) still bounds the work done at once.
 
+- **An installed app** (a dev instance's Dev AIDE connecting to its group server, plans/design-dev-aide.md 21.2; the
+  desktop and mobile apps) gets a login key without a pasted token: it opens `/sso/appLogin` in the browser with a PKCE
+  challenge, a state and its redirect URI; the browser signs in (at an identity provider, or with no `authFlowId` at
+  this server's own login, signed out first when it was signed in); the user confirms; the code goes to the redirect
+  URI and the app takes it at `/sso/appToken` with its verifier for the key (`service/sso_app.rs`). A redirect URI is
+  one of `webapp_app_redirect_uris` exactly, or any loopback one (RFC 8252: `http://127.0.0.1:<port>/...`, `[::1]` or
+  `localhost`, any port) unless `webapp_app_loopback_redirect` is false; a shared dev server that is not on loopback
+  is listed in `webapp_app_redirect_uris`, or its users paste a token.
+
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
 `delete#UserSshKey`, `create#UserAccessToken` (a `UserLoginKey` with a description; the token is shown once) and
@@ -628,6 +637,7 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
 | `GitNeedsSharedStorage` | a write, `init#GitRepository`, `fetch#GitRepository`, `fork#GitRepository` | a new `local` or `remote` repository on a cluster member without `git-server` `shared-storage` ([shared storage](#shared-storage-in-a-cluster)) |
 | `GitLeaseBusy` | a push, a write, `fork#GitRepository`, `delete#GitRepository` | another cluster member writes the repository past `shared-lock-wait-seconds` |
+| `GitKeptByApplication` | the writes of the [REST](#rest) | the application that keeps the repository takes this change through its own REST |
 | `KeyInUse` | `UserServices.create#UserSshKey` | the key is an account's already |
 
 Over git the same texts are a ref's reason (`! [remote rejected] main -> main (GitProtectedBranch: protected branch:
@@ -951,6 +961,72 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
   its commits are never read before the application has looked, and the application shows it
   (`set#MergeRequestHidden` with `hidden` false) from its handler of the `opened` event, at once or when a
   moderator lets it through. Without the setting the application may hide one from that handler instead.
+
+### REST
+
+The framework's REST for hosting is in the `moqui` root resource (`tools/service/moqui.rest.xml`), in OpenAPI at
+`/rest/service.swagger/moqui.json` (plans/Dogfood.md F9, plans/design-dev-aide.md F18). Every path is open to a
+signed-in user (`MOQUI_API_GIT`, `MOQUI_API_HOSTING` in `ToolsSecurityData.xml`) and the services under it check the
+repository's rights as they do without REST, so an access token (a login key) reaches what its account may; a
+repository the caller may not view answers as one that is not there. Merge requests and pipeline runs are named by
+their numbers in the repository (`!3`, run 12); the services behind them are `org.moqui.git.GitRestServices`, which
+call `GitServices`, `GitReviewServices` and `GitCiServices`.
+
+| Path under `/rest/s1/moqui` | Methods | Service |
+|---|---|---|
+| `git/{repositoryId}` | GET | `get#Repository`: path, default branch, archived, fork of, the caller's rights (`access`), clone URLs, the default branch's rules and push to review (`mergeRequests`), who keeps it (`keptBy`), the agreement for the caller |
+| `git/{repositoryId}/cloneUrls`, `/branchRules`, `/tree`, `/compare` | GET | `get#GitCloneUrls`, `get#GitBranchRules`, `get#GitTree`, `get#GitCompare` |
+| `git/{repositoryId}/blob` | GET | `get#Blob`: `get#GitBlob`, a file that is not text as `base64` |
+| `git/{repositoryId}/refs` | GET, POST, DELETE | `get#GitRefs`; `create#Ref`, `delete#Ref` |
+| `git/{repositoryId}/commits`, `/commits/{commitId}`, `/commits/{commitId}/diff`, `/commits/{commitId}/refs` | GET | `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitCommitRefs` |
+| `git/{repositoryId}/commits/{commitId}/statuses` | GET, POST | `get#GitCommitStatuses`; `create#CommitStatus` ([commit statuses](#commit-statuses)) |
+| `git/{repositoryId}/agreement` | GET | `get#AuthorSigned` |
+| `git/{repositoryId}/writeCheck` | GET | `verify#Write`: what the application that keeps the repository says of an `operation`, before a client offers the control |
+| `git/{repositoryId}/mergeRequests` | GET, POST | `find#MergeRequests` (`filter`: `mine`, `review`, `open`, `all`); `create#MergeRequest` |
+| `git/{repositoryId}/mergeRequests/{mergeRequestNum}` | GET, PATCH | `get#MergeRequest`, `update#MergeRequest` |
+| `.../mergeRequests/{n}/close`, `/reopen`, `/reviews`, `/merge` | POST | `close#MergeRequest`, `reopen#MergeRequest`, `submit#MergeRequestReview`, `merge#MergeRequest` |
+| `.../mergeRequests/{n}/reviewers` | PUT | `set#MergeRequestReviewers` |
+| `.../mergeRequests/{n}/diff`, `/approvals` | GET | `get#MergeRequestDiff`, `get#MergeRequestApprovals` |
+| `git/{repositoryId}/pipelines/...`, `/jobs/...`, `/artifacts/...` | | [Pipelines](Pipelines.md#rest) |
+| `hosting/offer` | GET, with no credentials too | `get#HostingOffer`: what the server offers a client |
+| `hosting/repository` | GET `url` | `resolve#RepositoryUrl`: the repository a clone, SSH or page URL names, as `get#Repository` |
+| `hosting/mergeRequests` | GET | `find#MergeRequests` across the repositories the caller may view |
+| `hosting/agreement` | GET | `get#AuthorSigned` |
+
+**Threads.** Line comments and review threads are an application's (Mantle's `get#ReviewThreads`,
+`create#ReviewComment`, `resolve#ReviewThread`, and Smithy's posts with anchors): the framework keeps the merge request,
+its reviewers, their reviews and its merge, and its REST has those. A client reads threads through the application's
+REST, which the offer names.
+
+**What the server offers** (`get#HostingOffer`), to a caller with or without credentials: `baseUrl`; `user` (`signedIn`,
+`username`: whether the caller's credentials were good); `git` (`httpsBase`, `httpsUrlTemplate` and `sshUrlTemplate`
+with `${name}`, as a `myaddons.xml` location takes them, `sshHost`, `sshPort`, `pushToReview`, `mergeRequestRefs`);
+`rest` (the paths above and the OpenAPI document); `signIn` (an installed app's sign-in: `appLogin`, `appToken`,
+`appProviders`, `loopbackRedirect`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM gateway,
+docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`. `git-server` `offer-service` (interface
+`add#GitHostingOffer`, with the offer and the user, authorization off) returns the offer as the application has it:
+its REST (`application`: `name`, `restBase`), its task source (`tasks`: `kind`, `path`, and a task app's paths),
+whether it makes forks, and so on. It is asked for callers with no credentials too, so it gives no one's data.
+
+**An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed
+addresses, gate and conversation) names `git-server` `rest-write-check-service` (interface `check#GitRestWrite`; none by
+default). It is asked, with authorization off, before each write on a repository through this REST, with
+`repositoryId`, `operation` (`ref.create`, `ref.delete`, `commitStatus.create`, `mergeRequest.create`,
+`mergeRequest.update`, `mergeRequest.close`, `mergeRequest.reopen`, `mergeRequest.reviewers`, `mergeRequest.review`,
+`mergeRequest.merge`, `pipeline.run`, `pipeline.rerun`, `pipeline.cancel`, `pipeline.approve`, `job.retry`), `userId` and
+`mergeRequestId`, and answers `allowed`, `message`, `application` and `restUrl` (its own REST for the repository). `allowed`
+false (or `N`) refuses the write with `GitKeptByApplication: <message> (use <restUrl>)`; a service that fails refuses
+too. It is also asked with `operation` `read` by `get#Repository` and `resolve#RepositoryUrl`, whose `keptBy` then
+names the application and its REST, so a client goes there for that repository (the Dev AIDE does,
+plans/design-dev-aide.md 21.4). An application answers allowed for the writes it lets through this REST (it may run
+its own checks first), and false for the rest. Reads are not asked: the repository's authorization service already
+decides who reads.
+
+**The contributor agreement.** `get#AuthorSigned` answers whether an author (`authorUserId` or `authorEmail`, the
+caller when both are empty) has signed a repository's agreement (docs/dev/Contributions.md), from `git-server`
+`agreement-check-service` (interface `check#GitAuthorSigned`: `known`, `required`, `signed`, `message`, `signUrl`).
+With none, or one that does not decide the repository, `known` is false, with the application that keeps it and its
+REST, where a client asks next.
 
 ## Projects and tasks
 

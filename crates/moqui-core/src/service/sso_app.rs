@@ -27,7 +27,14 @@
 //! client, not an authorization server.
 //!
 //! The redirect URIs an app may give are the property `webapp_app_redirect_uris` (spaces or commas between them),
-//! by default the desktop app's `org.moqui.desktop:/sso` and the mobile app's `org.moqui.mobile:/sso`.
+//! by default the desktop app's `org.moqui.desktop:/sso` and the mobile app's `org.moqui.mobile:/sso`, and any
+//! loopback one (RFC 8252 §7.3: `http://127.0.0.1:<port>/...`, `http://[::1]:<port>/...` or `http://localhost:<port>/...`,
+//! any port), unless `webapp_app_loopback_redirect` is false: a dev instance signs in to its group server so, with its
+//! own address as the redirect (plans/design-dev-aide.md 21.2, F17).
+//!
+//! With no `authFlowId` the browser signs in at this server's own login instead of an identity provider (a server
+//! with none): a session signed in already is signed out first, and the confirmation needs a sign-in after the start
+//! (the session's last proven sign-in, `last_auth_millis`), as the provider round trip is needed otherwise.
 
 use std::collections::BTreeMap;
 
@@ -106,20 +113,27 @@ fn start_app_login(
     let method = param_text(parameters, "codeChallengeMethod");
     // what was left of an earlier one is not this one
     set_session_attribute(PENDING_APP, None);
-    if let Err(reason) = check_start(&challenge, &method, &state, &redirect, &allowed_redirects()) {
+    if let Err(reason) = check_start(&challenge, &method, &state, &redirect, &Redirects::configured()) {
         tracing::warn!("App SSO sign-in refused: {reason}");
         crate::web::send_json_error(400, &reason);
         return Ok(BTreeMap::new());
     }
     let device: String = param_text(parameters, "deviceName").chars().take(255).collect();
+    let flow = param_text(parameters, "authFlowId");
+    let local = flow.is_empty();
+    if local && crate::user::current_user_id()?.is_some() {
+        // the server's own login, done after this start: a browser signed in already signs in again
+        crate::user::logout()?;
+    }
     let pending = serde_json::json!({ "challenge": challenge, "state": state, "redirectUri": redirect, "device": device,
-        "startedAt": crate::user::now_millis() });
+        "startedAt": crate::user::now_millis(), "local": local });
     set_session_attribute(PENDING_APP, Some(&pending.to_string()));
+    if local {
+        crate::web::send_redirect(&format!("/Login?returnTo={}", percent(APP_CODE_PATH)));
+        return Ok(BTreeMap::new());
+    }
     let mut login = BTreeMap::new();
-    login.insert(
-        "authFlowId".to_string(),
-        Value::string(param_text(parameters, "authFlowId")),
-    );
+    login.insert("authFlowId".to_string(), Value::string(flow));
     login.insert("returnTo".to_string(), Value::string(APP_CODE_PATH));
     super::sso::login_user_for_app(&login, facade)
 }
@@ -138,7 +152,7 @@ pub(super) fn failed_to_app(error: &str) -> bool {
     let Some(pending) = pending() else { return false };
     set_session_attribute(PENDING_APP, None);
     let redirect = pending["redirectUri"].as_str().unwrap_or("");
-    if !allowed_redirects().iter().any(|uri| uri == redirect) {
+    if !Redirects::configured().allows(redirect) {
         return false;
     }
     send_app_redirect(
@@ -161,16 +175,25 @@ fn pending() -> Option<serde_json::Value> {
 }
 
 /// The app sign-in the current user did in this browser, ready for the confirmation: its callback done by the user
-/// signed in now, its redirect still one an app may give.
+/// signed in now (or, at this server's own login, a sign-in of the user after the start), its redirect still one an
+/// app may give.
 fn completed_pending() -> Option<serde_json::Value> {
-    let pending = pending()?;
+    let mut pending = pending()?;
     let user_id = crate::user::current_user_id()
         .ok()
         .flatten()
         .filter(|id| !id.is_empty())?;
-    let redirect = pending["redirectUri"].as_str().unwrap_or("");
+    let redirect_allowed = Redirects::configured().allows(pending["redirectUri"].as_str().unwrap_or(""));
+    let signed_in_since = pending["local"].as_bool() == Some(true)
+        && pending["startedAt"]
+            .as_i64()
+            .zip(crate::user::last_auth_millis())
+            .is_some_and(|(started, signed_in)| signed_in >= started);
+    if signed_in_since {
+        pending["completedBy"] = serde_json::Value::String(user_id.clone());
+    }
     let done_by_this_user = pending["completedBy"].as_str() == Some(user_id.as_str());
-    (done_by_this_user && allowed_redirects().iter().any(|uri| uri == redirect)).then_some(pending)
+    (done_by_this_user && redirect_allowed).then_some(pending)
 }
 
 /// `confirm#AppLogin`: after the provider signed the browser in for an app, a page that asks the user to let that app
@@ -325,28 +348,67 @@ fn exchange_app_code(
     }
 }
 
-/// The redirect URIs an app may give.
-fn allowed_redirects() -> Vec<String> {
-    let configured = moqui_lib::env::get_prop_or_env("webapp_app_redirect_uris");
-    let text = if configured.trim().is_empty() {
-        DEFAULT_REDIRECTS.to_string()
-    } else {
-        configured
+/// The redirect URIs an app may give: those listed, exactly, and with `loopback` any loopback one.
+#[derive(Debug, Clone)]
+pub(crate) struct Redirects {
+    pub(crate) listed: Vec<String>,
+    pub(crate) loopback: bool,
+}
+
+impl Redirects {
+    /// `webapp_app_redirect_uris` (the desktop and mobile apps' when empty) and `webapp_app_loopback_redirect`.
+    fn configured() -> Self {
+        let configured = moqui_lib::env::get_prop_or_env("webapp_app_redirect_uris");
+        let text = if configured.trim().is_empty() {
+            DEFAULT_REDIRECTS.to_string()
+        } else {
+            configured
+        };
+        Self {
+            listed: text
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|uri| !uri.is_empty())
+                .map(str::to_string)
+                .collect(),
+            loopback: moqui_lib::env::get_prop_or_env("webapp_app_loopback_redirect").trim() != "false",
+        }
+    }
+
+    pub(crate) fn allows(&self, redirect: &str) -> bool {
+        self.listed.iter().any(|uri| uri == redirect) || (self.loopback && is_loopback_redirect(redirect))
+    }
+}
+
+/// Whether `redirect` is a loopback redirect URI (RFC 8252 §7.3): http or https to `127.0.0.1`, `[::1]` or `localhost`,
+/// on any port, with no user part and no fragment. The code it carries is good only with the app's PKCE verifier.
+pub(crate) fn is_loopback_redirect(redirect: &str) -> bool {
+    let Some(rest) = redirect
+        .strip_prefix("http://")
+        .or_else(|| redirect.strip_prefix("https://"))
+    else {
+        return false;
     };
-    text.split(|c: char| c == ',' || c.is_whitespace())
-        .filter(|uri| !uri.is_empty())
-        .map(str::to_string)
-        .collect()
+    if rest.contains('#') || rest.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let authority = rest.split(['/', '?']).next().unwrap_or("");
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !host.ends_with(':') && !port.contains(']') => (host, Some(port)),
+        _ => (authority, None),
+    };
+    let port_ok =
+        port.is_none_or(|port| !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()));
+    port_ok && matches!(host, "127.0.0.1" | "[::1]" | "localhost")
 }
 
 /// Why a start is refused, if it is: an S256 challenge (43 base64url characters), a state of plain characters, and a
-/// redirect URI that is one of `allowed` exactly.
+/// redirect URI that `allowed` allows.
 pub(crate) fn check_start(
     challenge: &str,
     method: &str,
     state: &str,
     redirect: &str,
-    allowed: &[String],
+    allowed: &Redirects,
 ) -> Result<(), String> {
     if method != "S256" {
         return Err(format!("code_challenge_method {method:?} is not S256"));
@@ -358,7 +420,7 @@ pub(crate) fn check_start(
     if state.is_empty() || state.len() > 200 || !state.chars().all(|c| c.is_ascii_graphic()) {
         return Err("the state is missing or not plain text".to_string());
     }
-    if !allowed.iter().any(|uri| uri == redirect) {
+    if !allowed.allows(redirect) {
         return Err(format!("{redirect} is not a redirect URI an app may give"));
     }
     Ok(())

@@ -14,7 +14,9 @@
 
 /*
  * Git depth in the Workspace (plans/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
- * Advanced toggle, the Settings tab (remotes, the root's components, its publish branch, Open on the hosting site), a
+ * Advanced toggle, the Merge requests tab of a root a group server hosts (21.4: mine, waiting for my review, open; Check
+ * out, New), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
+ * its publish branch, Open on the hosting site), a
  * compare of two refs, and the conflict view: ours, the result and theirs side by side, Accept ours, theirs or both on
  * each conflict, Mark resolved and Abort. Each component takes the Workspace (ws) for its transitions, its notes and its
  * refresh. Loaded on first use, as the visual views are; its pure parts are moqui.devAide.pure.
@@ -250,10 +252,29 @@
         data() { return { form: { name: "", url: "" } }; },
         computed: {
             remotes() { return (this.ws.status && this.ws.status.remotes) || []; },
-            rootInfo() { return this.ws.root || {}; }
+            rootInfo() { return this.ws.root || {}; },
+            hostedServer() {
+                const url = (this.ws.hosted && this.ws.hosted.cloneUrls && this.ws.hosted.cloneUrls.httpsUrl) || "";
+                return (url.split("://")[1] || url).split("/")[0];
+            },
+            rights() {
+                const access = (this.ws.hosted && this.ws.hosted.access) || {};
+                return access.canUpdate ? "push" : access.canCreate ? "push new branches" : "view and propose for review";
+            }
         },
         methods: {
             hostPage: (url) => pure.hostPage(url),
+            findHosted() {
+                this.ws.post("hosting", { rootId: this.ws.rootId }).then((answer) => {
+                    this.ws.note(answer.hosted ? "Hosted at " + answer.hosted.repository.repositoryPath : "No connected server hosts it", answer.hosted ? "positive" : "warning");
+                    this.ws.loadRoots();
+                }, this.ws.fail);
+            },
+            fork() {
+                this.ws.post("fork", { rootId: this.ws.rootId }).then((answer) => {
+                    this.ws.note("Forked as " + (answer.repositoryPath || answer.url) + ": the remote fork"); this.ws.refreshStatus();
+                }, this.ws.fail);
+            },
             add() {
                 this.ws.post("addRemote", { rootId: this.ws.rootId, name: this.form.name, url: this.form.url })
                     .then(() => { this.form = { name: "", url: "" }; this.ws.refreshStatus(); }, this.ws.fail);
@@ -284,6 +305,15 @@
     <q-input dense outlined v-model="form.name" label="Name" style="width: 9rem"></q-input>
     <q-input dense outlined v-model="form.url" label="URL" class="col"></q-input>
     <q-btn dense flat no-caps label="Add remote" :disable="!form.name || !form.url" @click="add"></q-btn>
+  </div>
+  <div class="text-subtitle2 q-mt-md">On a group server</div>
+  <div v-if="ws.hosted" class="text-caption" id="DevHosted">{{ws.hosted.repositoryPath}} on {{hostedServer}} by {{ws.root.hosted.remote}}:
+    default branch {{ws.hosted.defaultBranch}}; you may {{rights}}{{ws.hosted.keptBy ? '; kept by ' + ws.hosted.keptBy.application : ''}}</div>
+  <div v-else class="text-caption m-muted">No connected group server hosts this repository's remotes (Dev AIDE Settings: Group servers).</div>
+  <div class="row q-gutter-sm">
+    <q-btn dense flat no-caps label="Find on the server" @click="findHosted" id="DevFindHosted"></q-btn>
+    <q-btn v-if="ws.hosted" dense flat no-caps label="Fork" :disable="!ws.canWrite" @click="fork" id="DevFork">
+      <q-tooltip>Your own copy on the server, added as the remote fork, where the server makes forks</q-tooltip></q-btn>
   </div>
   <div class="text-subtitle2 q-mt-md">Components</div>
   <div class="text-caption" v-for="component in rootInfo.components || []" :key="component.name">{{component.name}}{{component.site ? ' (site)' : ''}} · {{component.path || ''}}</div>
@@ -359,9 +389,56 @@
 </div>`
     };
 
+    // The merge requests of the hosted repository (21.4): mine, waiting for my review, all open; Check out fetches one into
+    // a local branch; New opens one of the current branch. Merging is on the server's page (question 17).
+    const mergeRequests = {
+        name: "mDevGitMergeRequests",
+        props: { ws: { type: Object, required: true } },
+        data() { return { filter: "open", items: [], loading: false, error: "" }; },
+        mounted() { this.load(); },
+        watch: { filter() { this.load(); } },
+        methods: {
+            date,
+            load() {
+                this.loading = true; this.error = "";
+                return this.ws.get("mergeRequests", { rootId: this.ws.rootId, filter: this.filter }).then((answer) => {
+                    this.loading = false; this.items = answer.mergeRequests || [];
+                }, (error) => { this.loading = false; this.items = []; this.error = pure.errorText ? pure.errorText(error) : String(error); });
+            },
+            checkout(item) {
+                this.ws.post("checkoutMergeRequest", { rootId: this.ws.rootId, mergeRequestNum: item.mergeRequestNum }).then((answer) => {
+                    this.ws.note("On " + answer.branch); this.ws.refreshStatus(); this.ws.reloadTabs();
+                }, this.ws.fail);
+            },
+            create() {
+                const branch = this.ws.status && this.ws.status.branch;
+                if (branch) this.ws.openMergeRequest(branch).then((made) => { if (made) this.load(); });
+            }
+        },
+        template: `
+<div class="col column no-wrap scroll q-pa-sm m-dev-body" id="DevMergeRequests">
+  <div class="row items-center q-gutter-sm">
+    <q-btn-toggle dense flat no-caps v-model="filter" :options="[{ label: 'Open', value: 'open' }, { label: 'Mine', value: 'mine' }, { label: 'For my review', value: 'review' }, { label: 'All', value: 'all' }]"></q-btn-toggle>
+    <q-space></q-space>
+    <q-btn dense flat no-caps label="Refresh" :loading="loading" @click="load"></q-btn>
+    <q-btn dense unelevated no-caps color="primary" label="New merge request" :disable="!ws.canWrite || !ws.mayPush" @click="create" id="DevNewMergeRequest">
+      <q-tooltip>Of the current branch, once pushed, into {{ws.hosted && ws.hosted.defaultBranch}}</q-tooltip></q-btn>
+  </div>
+  <div v-if="error" class="text-negative q-pa-sm">{{error}}</div>
+  <q-list dense separator class="q-mt-sm"><q-item v-for="item in items" :key="item.mergeRequestNum" :data-merge-request="item.mergeRequestNum">
+    <q-item-section><q-item-label>!{{item.mergeRequestNum}} {{item.title}}</q-item-label>
+      <q-item-label caption>{{item.sourceRef}} → {{item.targetRef}} · {{item.author}} · {{item.state}}{{item.checkState ? ' · checks ' + item.checkState : ''}}</q-item-label></q-item-section>
+    <q-item-section side><div class="row no-wrap">
+      <q-btn v-if="item.url" dense flat no-caps size="sm" label="Open on server" :href="item.url" target="_blank" type="a"></q-btn>
+      <q-btn dense flat no-caps size="sm" label="Check out" :disable="!ws.canWrite" @click="checkout(item)"></q-btn></div></q-item-section>
+  </q-item></q-list>
+  <div v-if="!items.length && !loading && !error" class="m-muted q-pa-md">No merge requests here.</div>
+</div>`
+    };
+
     devAide.gitComponents = {
         "m-dev-git-branches": branches, "m-dev-git-tags": tags, "m-dev-git-stashes": stashes,
-        "m-dev-git-settings": settings, "m-dev-git-conflict": conflict
+        "m-dev-git-settings": settings, "m-dev-git-conflict": conflict, "m-dev-git-merge-requests": mergeRequests
     };
     const qvt = moqui.qvt;
     if (qvt && qvt.registerLate) Object.keys(devAide.gitComponents).forEach((name) => qvt.registerLate(name, devAide.gitComponents[name]));

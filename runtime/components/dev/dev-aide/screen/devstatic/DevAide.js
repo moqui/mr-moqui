@@ -310,6 +310,9 @@
         },
         computed: {
             root() { return this.roots.find((item) => item.id === this.rootId) || null; },
+            // the repository a connected group server hosts for this root's remote (21.3), and whether the user may push there
+            hosted() { return (this.root && this.root.hosted && this.root.hosted.repository) || null; },
+            mayPush() { const access = this.hosted && this.hosted.access; return !access || !!(access.canCreate || access.canUpdate); },
             isGit() { return !!(this.root && this.root.kind === "git" && this.gitAvailable); },
             current() { return this.tabs.find((tab) => tab.path === this.active) || null; },
             groups() { return pure.groupChanges(this.status && this.status.entries); },
@@ -392,7 +395,7 @@
         },
         watch: {
 
-            tab(name) { if (["branches", "tags", "stashes", "settings"].indexOf(name) >= 0) this.loadGit(); },
+            tab(name) { if (["branches", "tags", "stashes", "settings", "mergeRequests"].indexOf(name) >= 0) this.loadGit(); },
             advanced(on) { store.set("advanced", on); if (!on && ["branches", "tags", "stashes"].indexOf(this.tab) >= 0) this.tab = "code"; },
             active() { this.remember(); },
             // a visual view reads the outline of the text as it changes, in Text or by its own operations
@@ -1131,6 +1134,42 @@
                     target + " to confirm.", prompt: { model: "", type: "text" }, cancel: true, ok: { label: "Force push", color: "negative" } })
                     .onOk((typed) => this.network("push", { forceWithLease: true, confirmRef: typed }).catch(() => {}));
             },
+            // Push; on a hosted repository a branch other than its default one may open a merge request after (21.4)
+            push() {
+                return this.network("push").then((answer) => {
+                    const branch = this.status && this.status.branch;
+                    if (!answer || !this.hosted || !branch || branch === this.hosted.defaultBranch) return answer;
+                    this.$q.notify({ type: "info", timeout: 10000, closeBtn: "Close", message: "Pushed " + branch + ". Open a merge request into " +
+                        this.hosted.defaultBranch + "?", actions: [{ label: "Open", color: "white", handler: () => this.openMergeRequest(branch) }] });
+                    return answer;
+                }, () => null);
+            },
+            openMergeRequest(branch) {
+                return this.ask("Title of the merge request of " + branch, "").then((title) => {
+                    if (title === null || title === undefined) return null;
+                    return this.post("openMergeRequest", { rootId: this.rootId, sourceBranch: branch, title }).then((answer) => {
+                        const made = answer.mergeRequest || {};
+                        this.note("Opened merge request !" + made.mergeRequestNum + " into " + made.target);
+                        return made;
+                    }, this.fail);
+                });
+            },
+            // push to review (Dogfood F5): for a user who may view the hosted repository and not push to it
+            propose() {
+                const target = (this.hosted && this.hosted.defaultBranch) || "main";
+                this.$q.dialog({ title: "Propose your commits for " + target, message: "They go to " + (this.hosted ? this.hosted.repositoryPath : "the server") +
+                    " for review as a merge request (refs/for/" + target + "). A title (or leave it for the last commit's):",
+                    prompt: { model: "", type: "text" }, cancel: true, ok: { label: "Propose" } }).onOk((title) => {
+                    this.busy = "propose";
+                    const id = "git-" + Date.now().toString(36);
+                    this.progress = { id, what: "propose", line: "" };
+                    this.post("propose", { rootId: this.rootId, targetBranch: target, title: title || "", topic: (this.status && this.status.branch) || "",
+                        operationId: id }).then((answer) => {
+                        this.busy = ""; this.progress = null;
+                        this.note("Proposed for " + answer.target + (answer.output ? ": " + answer.output.trim().split("\n").pop() : ""));
+                    }, (error) => { this.busy = ""; this.progress = null; this.fail(error); });
+                });
+            },
             publish() {
                 this.$q.dialog({ title: "Publish the site's changes", message: "Commit the site component's " + this.siteChanges +
                     " changed files and push them. A summary (or leave it for one that names the files):",
@@ -1284,7 +1323,9 @@
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
-    <q-btn dense flat no-caps :label="'Push' + (status && status.ahead ? ' ' + status.ahead : '')" :disable="!isGit || !canWrite || (root && root.publishBranchRequired)" :loading="busy === 'push'" @click="network('push')"></q-btn>
+    <q-btn v-if="mayPush" dense flat no-caps :label="'Push' + (status && status.ahead ? ' ' + status.ahead : '')" :disable="!isGit || !canWrite || (root && root.publishBranchRequired)" :loading="busy === 'push'" @click="push()"></q-btn>
+    <q-btn v-else dense flat no-caps label="Propose" :disable="!isGit || !canWrite" :loading="busy === 'propose'" @click="propose()" id="DevPropose">
+      <q-tooltip>You may not push to {{hosted.repositoryPath}}: your commits go to the server for review as a merge request</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Commit…" :disable="!isGit || !canWrite" @click="tab = 'changes'"></q-btn>
     <q-btn dense unelevated no-caps color="primary" :label="'Publish' + (siteChanges ? ' ' + siteChanges : '')" :disable="!isGit || !canWrite || !siteChanges" :loading="busy === 'publish'" @click="publish" id="DevPublish"></q-btn>
   </div>
@@ -1298,6 +1339,7 @@
     <q-tab v-if="advanced" name="branches" label="Branches" :disable="!isGit" id="DevBranchesTab"></q-tab>
     <q-tab v-if="advanced" name="tags" label="Tags" :disable="!isGit"></q-tab>
     <q-tab v-if="advanced" name="stashes" label="Stashes" :disable="!isGit"></q-tab>
+    <q-tab v-if="hosted" name="mergeRequests" label="Merge requests" :disable="!isGit" id="DevMergeRequestsTab"></q-tab>
     <q-tab name="settings" label="Settings" :disable="!isGit"></q-tab>
     <q-tab v-if="review" name="review" :label="'Review ' + review.files.length" id="DevReviewTab"></q-tab>
     <q-space></q-space>
@@ -1316,6 +1358,7 @@
     <m-dev-git-tags v-if="tab === 'tags'" :ws="this" :key="'t' + rootId"></m-dev-git-tags>
     <m-dev-git-stashes v-if="tab === 'stashes'" :ws="this" :key="'s' + rootId"></m-dev-git-stashes>
     <m-dev-git-settings v-if="tab === 'settings'" :ws="this" :key="'g' + rootId"></m-dev-git-settings>
+    <m-dev-git-merge-requests v-if="tab === 'mergeRequests' && hosted" :ws="this" :key="'m' + rootId"></m-dev-git-merge-requests>
   </template>
   <q-separator></q-separator>
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">

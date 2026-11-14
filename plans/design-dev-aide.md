@@ -2236,3 +2236,20 @@ For a repository whose agreement is on (docs/dev/Contributions.md; Dogfood §10)
 - A browser smoke for a review thread in the merge view, as P8's smokes are.
 - Signing in through the browser handoff has its test with F17.
 
+
+
+**P11, built** (Nov 14, 2026): F17 (`/sso/appLogin` takes any loopback redirect, `webapp_app_loopback_redirect`, and
+with no `authFlowId` the server's own login after a sign-out), F18 (`/rest/s1/moqui/hosting/offer|repository|agreement`;
+`git-server offer-service` and `agreement-check-service`), Dogfood F9 (the hosting REST in `moqui.rest.xml`,
+`org.moqui.git.GitRestServices`, merge requests and runs by number, `git-server rest-write-check-service` with
+`GitKeptByApplication`). Dev AIDE: `DevAideServer`, `DevAideCredential.serverId`/`useForGit`, Settings › Group servers
+(Connect by the app sign-in or a pasted token; the myaddons.xml repository, task source, gateway `.env` lines and git
+credential it sets, which Remove takes back), the hosted repository on `DevAideRoot` with each user's rights in a
+preference, the Merge requests tab with Check out, Propose (`refs/for/<branch>` with push options), Fork through the
+application's REST, Push and Publish that open a merge request. A repository an application keeps (`keptBy`) goes
+through that application's REST, the rest through the framework's. Differences: the framework REST has no fork (the
+application's rule) and no threads (Mantle's); the rights are per user, not on the root; `myaddons.xml` and `.env` are
+the full tier's and not on a shared server. Checked: `devaide_group` (the instance as its own group server), moqui-git
+`service::rest`, `sso_app`, `dev-aide`, `GroupServers.spec.js`. Not built: the provider choice in Connect, a merge
+request from a fork in the UI, the offer's task app, issues in the panel, a browser smoke; Smithy's side is checked
+by its REST contract only.

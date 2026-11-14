@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Dev AIDE with a group server (plans/design-dev-aide.md 21, P11), implemented in the dev-aide crate
+    (src/hosting/): the connections (what each server offers, the user's token there, what Connect sets from it), the
+    hosted repository of a working tree, and its merge requests: listed, opened, proposed by a push to refs/for and
+    checked out; Fork where the server offers forks. Every call goes to the server's REST as the connected user, and the
+    server decides; a header login reads and never connects or writes. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== connections (21.2) ========== -->
+
+    <service verb="get" noun="Servers" type="rust" location="dev_aide::hosting::connect::get_servers" allow-remote="false" read-only="true">
+        <description>The user's group servers and the instance's: label, base URL, state (connected, signed-out,
+            reachable, unreachable), what each offers, what Connect would set (plan) and what it set (setup); never a
+            token. ownOrigin is this instance's address, the redirect of a sign-in.</description>
+        <out-parameters>
+            <parameter name="servers" type="List"/>
+            <parameter name="ownOrigin"/>
+        </out-parameters>
+    </service>
+    <service verb="start" noun="Connect" type="rust" location="dev_aide::hosting::connect::start_connect" allow-remote="false">
+        <description>Ask the server at baseUrl what it offers, keep the connection, and start the sign-in there as an
+            installed app does: the URL to open (its /sso/appLogin with a PKCE challenge, a state and this instance's
+            /qapps/dev/Settings/serverSignedIn as the loopback redirect), good for 15 minutes. With no authFlowId the
+            server's own login.</description>
+        <in-parameters>
+            <parameter name="baseUrl" required="true"/>
+            <parameter name="label"/>
+            <parameter name="authFlowId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serverId"/>
+            <parameter name="authorizeUrl"/>
+            <parameter name="redirectUri"/>
+            <parameter name="loopback" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="finish" noun="Connect" type="rust" location="dev_aide::hosting::connect::finish_connect" allow-remote="false">
+        <description>The server's sign-in came back (code and state, or error): the code is taken at its /sso/appToken
+            with the PKCE verifier for a login key, kept as the user's token for that server (encrypted, sent only to
+            its address), and the server asked again as the user.</description>
+        <in-parameters>
+            <parameter name="state" required="true"/>
+            <parameter name="code"/>
+            <parameter name="error"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serverId"/>
+            <parameter name="statusText"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="ServerToken" type="rust" location="dev_aide::hosting::connect::store_server_token" allow-remote="false">
+        <description>An access token made on the server's Git access page, for a kept server (serverId) or a new one
+            (baseUrl, label); the server is asked again as the user.</description>
+        <in-parameters>
+            <parameter name="serverId"/>
+            <parameter name="baseUrl"/>
+            <parameter name="label"/>
+            <parameter name="username"/>
+            <parameter name="token" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serverId"/>
+            <parameter name="statusText"/>
+        </out-parameters>
+    </service>
+    <service verb="refresh" noun="Server" type="rust" location="dev_aide::hosting::connect::refresh_server" allow-remote="false">
+        <description>Ask a server again what it offers and whether the user's token is good.</description>
+        <in-parameters><parameter name="serverId" required="true"/></in-parameters>
+        <out-parameters><parameter name="server" type="Map"/></out-parameters>
+    </service>
+    <service verb="apply" noun="ServerSetup" type="rust" location="dev_aide::hosting::connect::apply_server_setup" allow-remote="false">
+        <description>What the user confirmed of a server's plan: the myaddons.xml repository of its git URL (and as the
+            default repository), the moqui-rest task source (made the current one), the LLM gateway's .env lines, and
+            git's credential for its host (helper: git's own helpers; stored: the user's token). myaddons.xml and .env
+            are the instance's: the full tier, not on a shared server. Kept on the connection for Remove.</description>
+        <in-parameters>
+            <parameter name="serverId" required="true"/>
+            <parameter name="addons" type="Boolean"/>
+            <parameter name="repositoryName"/>
+            <parameter name="defaultRepository" type="Boolean"/>
+            <parameter name="taskSource" type="Boolean"/>
+            <parameter name="gateway" type="Boolean"/>
+            <parameter name="gatewayAlias"/>
+            <parameter name="gitCredential"><description>helper or stored</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="done" type="List"/></out-parameters>
+    </service>
+    <service verb="remove" noun="Server" type="rust" location="dev_aide::hosting::connect::remove_server" allow-remote="false">
+        <description>A connection of the user's, its token and what Connect set: the task source, the myaddons.xml
+            repository, the .env lines still as it wrote them, the roots' hosted repositories.</description>
+        <in-parameters><parameter name="serverId" required="true"/></in-parameters>
+        <out-parameters><parameter name="removed" type="List"/></out-parameters>
+    </service>
+
+    <!-- ========== the hosted repository and its merge requests (21.3, 21.4) ========== -->
+
+    <service verb="resolve" noun="RootHosting" type="rust" location="dev_aide::hosting::review::resolve_root_hosting" allow-remote="false">
+        <description>The repository a connected server hosts for a root's remote (origin first), asked now and kept on
+            the root: its id and path, default branch, the user's rights, merge request settings, who keeps it and the
+            agreement. None when no connected server knows it.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+        <out-parameters><parameter name="hosted" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="MergeRequests" type="rust" location="dev_aide::hosting::review::get_merge_requests" allow-remote="false" read-only="true">
+        <description>The hosted repository's merge requests: mine, review (waiting for my review), open or all.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="filter" default-value="open"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequests" type="List"/>
+            <parameter name="repository" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="open" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::open_merge_request" allow-remote="false">
+        <description>Open a merge request of a pushed branch (the current one by default) into the target (the
+            repository's default branch by default), titled by the head commit unless given, on the server as the user.
+            The extend tier, for site components.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="sourceBranch"/>
+            <parameter name="targetBranch"/>
+            <parameter name="title"/>
+            <parameter name="description"/>
+            <parameter name="sourceRepositoryId"><description>A fork of the repository that has the source branch</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="mergeRequest" type="Map"/></out-parameters>
+    </service>
+    <service verb="propose" noun="Changes" type="rust" location="dev_aide::hosting::review::propose_changes" allow-remote="false">
+        <description>Push to review, for a user who may view the hosted repository and not push to it: HEAD to
+            refs/for/[target] with the topic and title as push options; the server opens a merge request, or updates the
+            user's of the same topic.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="targetBranch"/>
+            <parameter name="topic"/>
+            <parameter name="title"/>
+            <parameter name="operationId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="target"/>
+        </out-parameters>
+    </service>
+    <service verb="checkout" noun="MergeRequest" type="rust" location="dev_aide::hosting::review::checkout_merge_request" allow-remote="false">
+        <description>Check out a merge request: refs/merge-requests/[n]/head fetched into a local branch (mr/[n] by
+            default) and switched to.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="mergeRequestNum" required="true"/>
+            <parameter name="branch"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="branch"/>
+            <parameter name="output"/>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="fork" noun="Repository" type="rust" location="dev_aide::hosting::review::fork_repository" allow-remote="false">
+        <description>The user's fork of the hosted repository, made by the server where it offers forks (an application
+            such as Smithy), added as the remote fork.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="remote"/>
+            <parameter name="url"/>
+            <parameter name="repositoryPath"/>
+            <parameter name="repositoryId"/>
+        </out-parameters>
+    </service>
+</services>

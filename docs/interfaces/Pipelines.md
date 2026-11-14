@@ -410,6 +410,26 @@ they carried their run's owner are given it before an owner's cap is counted. A 
 422. A refusal is its status with `{"error": ...}`. A token that is not valid (401) counts as an authentication failure
 for web protection; an ended job's (410) does not.
 
+## REST
+
+A run's resources for people and their tools are in the framework's [hosting REST](Git-Hosting.md#rest), under
+`/rest/s1/moqui/git/{repositoryId}`, a run by its number in the repository. Each service checks the repository's rights
+as without REST, and the writes ask the application that keeps the repository first (`git-server`
+`rest-write-check-service`, `GitKeptByApplication`).
+
+| Path under `/rest/s1/moqui/git/{repositoryId}` | Methods | Service |
+|---|---|---|
+| `pipelines` | GET, POST | `find#PipelineRuns`; `GitRestServices.run#Pipeline` (a pipeline with the manual event: `pipelineName`, `refName`) |
+| `pipelines/definitions` | GET | `get#PipelineDefinitions` (`revision`) |
+| `pipelines/{runNum}` | GET | `get#PipelineRun`: the run and its jobs |
+| `pipelines/{runNum}/rerun`, `/cancel`, `/approve` | POST | `GitRestServices.rerun#PipelineRun`, `cancel#PipelineRun`, `approve#PipelineRun` |
+| `jobs/{jobRunId}` | GET | `get#JobRun`: the steps, the failed tests with their files and lines, the artifacts |
+| `jobs/{jobRunId}/log` | GET | `get#JobLog`: `afterChunkSeq` while it runs, `offset` once ended, as a page tails it |
+| `jobs/{jobRunId}/retry` | POST | `GitRestServices.retry#JobRun`, of a job of this repository's runs |
+| `artifacts/{artifactId}` | GET | `GitRestServices.get#RunArtifact`: a piece (`offset`, `maxBytes`) as `base64` |
+
+This is not [the runner REST](#the-runner-rest), which a runner calls with its own token.
+
 ## moqui ci-run
 
 `moqui ci-run` is the runner: a subcommand of the binary that opens no runtime, conf or database

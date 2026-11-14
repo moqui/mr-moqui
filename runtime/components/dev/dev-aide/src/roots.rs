@@ -63,6 +63,10 @@ pub struct Root {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_branch: Option<String>,
     pub publish_branch_required: bool,
+    /// The repository a connected group server hosts for this working tree's remote (plans/design-dev-aide.md 21.3):
+    /// `serverId`, `remote` and `repository` as the server answered, when it was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosted: Option<serde_json::Value>,
 }
 
 fn path_string<S: serde::Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
@@ -145,6 +149,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
     let mut labels: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut read_only: BTreeMap<PathBuf, bool> = BTreeMap::new();
     let mut publish: BTreeMap<PathBuf, (Option<String>, bool)> = BTreeMap::new();
+    let mut hosted: BTreeMap<PathBuf, serde_json::Value> = BTreeMap::new();
     for (location, label) in &settings.roots {
         let path = canonical(location);
         if path.is_dir() {
@@ -183,6 +188,15 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 }
                 read_only.insert(path.clone(), text("readOnly") == "Y");
                 let branch = Some(text("publishBranch")).filter(|branch| !branch.is_empty());
+                if !text("hostedServerId").is_empty() {
+                    let repository: serde_json::Value =
+                        serde_json::from_str(&text("hostedJson")).unwrap_or(serde_json::Value::Null);
+                    hosted.insert(
+                        path.clone(),
+                        serde_json::json!({ "serverId": text("hostedServerId"), "remote": text("hostedRemote"),
+                            "repository": repository, "date": text("hostedDate") }),
+                    );
+                }
                 publish.insert(path, (branch, text("publishBranchRequired") == "Y"));
             }
         }
@@ -213,6 +227,21 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 })
                 .collect();
             let (publish_branch, publish_branch_required) = publish.remove(&path).unwrap_or((None, false));
+            let hosted = hosted.remove(&path).map(|mut hosted| {
+                // the rights are each user's own, as they resolved it (hosting::review::HOSTED_ACCESS)
+                let own: serde_json::Value = moqui_core::user::get_preference(&format!("DEV_AIDE_HOSTED_ACCESS.{id}"))
+                    .ok()
+                    .flatten()
+                    .and_then(|text| serde_json::from_str(&text).ok())
+                    .unwrap_or_default();
+                let mine = own["base"] == hosted["repository"]["serverBase"];
+                hosted["repository"]["access"] = if mine {
+                    own["access"].clone()
+                } else {
+                    serde_json::Value::Null
+                };
+                hosted
+            });
             Root {
                 label: labels.remove(&path).unwrap_or_else(|| base.clone()),
                 id,
@@ -221,6 +250,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 read_only: read_only.remove(&path).unwrap_or(false),
                 publish_branch,
                 publish_branch_required,
+                hosted,
                 kind,
                 path,
             }

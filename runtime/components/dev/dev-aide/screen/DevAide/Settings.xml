@@ -14,10 +14,38 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Dev AIDE Settings (plans/design-dev-aide.md 16): the site components (whose files the extend tier writes; the rest is
     upstream), "Allow editing upstream components" for a full-tier user (D17), the roots with their labels, read only
-    flags and publish branches (question 15), roots of other directories, git init of a plain root, and network git on a
-    shared dev server (an admin's). The services check the tier; the page shows what the user may change. -->
+    flags and publish branches (question 15), roots of other directories, git init of a plain root, network git on a
+    shared dev server (an admin's), and the group servers (21.2): Connect signs in at the server as an installed app
+    (its page comes back to serverSignedIn here) or takes a pasted token, then sets what the user confirms. The services
+    check the tier; the page shows what the user may change. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Settings" default-menu-index="11">
+
+    <parameter name="serverId"/>
+
+    <!-- group servers (21.2) -->
+    <transition name="startConnect"><service-call name="org.moqui.devaide.HostingServices.start#Connect" out-map="started"/>
+        <default-response url="${started.authorizeUrl}" url-type="plain"/>
+        <error-response url="."/></transition>
+    <transition name="serverSignedIn" require-session-token="false">
+        <parameter name="code"/><parameter name="state"/><parameter name="error"/>
+        <service-call name="org.moqui.devaide.HostingServices.finish#Connect" in-map="{code: code, state: state, error: error}" out-map="finished"/>
+        <actions><message type="success">Connected: confirm what to set from the server</message></actions>
+        <default-response url="." parameter-map="{serverId: finished.serverId}"/>
+        <error-response url="."/></transition>
+    <transition name="storeServerToken"><service-call name="org.moqui.devaide.HostingServices.store#ServerToken" out-map="stored"/>
+        <actions><message type="success">Token saved</message></actions>
+        <default-response url="." parameter-map="{serverId: stored.serverId}"/>
+        <error-response url="."/></transition>
+    <transition name="refreshServer"><service-call name="org.moqui.devaide.HostingServices.refresh#Server"/>
+        <default-response url="."/></transition>
+    <transition name="applyServerSetup"><service-call name="org.moqui.devaide.HostingServices.apply#ServerSetup" out-map="applied"/>
+        <actions><message type="success">Set: ${(applied.done || []).join('; ') || 'nothing'}</message></actions>
+        <default-response url="."/>
+        <error-response url="."/></transition>
+    <transition name="removeServer"><service-call name="org.moqui.devaide.HostingServices.remove#Server" out-map="removed"/>
+        <actions><message type="success">Removed the connection${removed.removed &amp;&amp; removed.removed.length ? ' and ' + removed.removed.join(', ') : ''}</message></actions>
+        <default-response url="."/></transition>
 
     <transition name="setSiteComponents"><service-call name="org.moqui.devaide.WorkspaceServices.set#Setting"
             in-map="{settingName: 'siteComponents', settingValue: siteComponents}"/>
@@ -50,6 +78,12 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="siteComponents" from="(info.siteComponents || []).join(', ')"/>
         <set field="upstreamEdits" from="info.upstreamEdits ? 'true' : 'false'"/>
         <set field="admin" from="ec.user.isInGroup('ADMIN')" type="Boolean"/>
+        <service-call name="org.moqui.devaide.HostingServices.get#Servers" out-map="hosting"/>
+        <set field="servers" from="(hosting.servers || []).map((server) => Object.assign({}, server, {
+            offered: [server.offer &amp;&amp; server.offer.git ? 'git' : null, server.offer &amp;&amp; server.offer.gateway &amp;&amp; server.offer.gateway.enabled ? 'LLM gateway' : null,
+                server.offer &amp;&amp; server.offer.application ? server.offer.application.name : null].filter((part) => part).join(', ')}))"/>
+        <set field="planServer" from="serverId ? servers.find((server) => server.serverId == serverId &amp;&amp; server.mine) : null"/>
+        <set field="plan" from="planServer ? planServer.plan : null"/>
         <if condition="info.shared &amp;&amp; admin &amp;&amp; full">
             <service-call name="org.moqui.devaide.WorkspaceServices.get#Credentials" out-map="stored"/>
             <set field="credentials" from="stored.credentials || []"/>
@@ -57,6 +91,57 @@ along with this software (see the LICENSE.md file). If not, see
         </if>
     </actions>
     <widgets>
+        <container-box id="DevAideServersBox"><box-header title="Group servers"/><box-body>
+            <label type="p" text="A group server hosts the team's repositories, work items and LLM gateway. Connect signs you in there in the browser, as the desktop app does, and this instance keeps the key it gets, sent only to that server. Then confirm what to set from it: the addons repository, the task source, the gateway and git's credential."/>
+            <form-list name="ServerList" list="servers" skip-form="true">
+                <field name="label"><default-field title="Server"><display text="${label} (${baseUrl})"/></default-field></field>
+                <field name="statusText"><default-field title="State"><display text="${statusText || ''}${username ? ' as ' + username : ''}${lastError ? ': ' + lastError : ''}"/></default-field></field>
+                <field name="offered"><default-field title="Offers"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="." text="Set up" parameter-map="{serverId: serverId}" condition="mine"/>
+                    <link url="startConnect" text="Sign in again" parameter-map="{baseUrl: baseUrl, label: label}" link-type="hidden-form" condition="mine"/>
+                    <link url="refreshServer" text="Check" parameter-map="{serverId: serverId}" link-type="hidden-form" condition="mine"/>
+                    <link url="removeServer" text="Remove" parameter-map="{serverId: serverId}" link-type="hidden-form" condition="mine"
+                            btn-type="danger" confirmation="Remove the connection to ${label}, and what Connect set from it?"/>
+                </default-field></field>
+            </form-list>
+            <form-single name="ConnectForm" transition="startConnect">
+                <field name="baseUrl"><default-field title="Server address (https://team.example.com)"><text-line size="40"/></default-field></field>
+                <field name="label"><default-field title="Label"><text-line size="20"/></default-field></field>
+                <field name="submitButton"><default-field title="Connect"><submit/></default-field></field>
+            </form-single>
+            <container-dialog id="ServerTokenDialog" button-text="Paste an access token">
+                <label type="p" text="An access token made on the server's Git access page works too, as a team's server without the app sign-in needs."/>
+                <form-single name="ServerTokenForm" transition="storeServerToken">
+                    <field name="baseUrl"><default-field title="Server address"><text-line size="40"/></default-field></field>
+                    <field name="label"><default-field title="Label"><text-line size="20"/></default-field></field>
+                    <field name="token"><default-field title="Access token"><password size="40"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save token"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-body></container-box>
+
+        <section name="ServerPlanSection" condition="plan"><widgets>
+            <container-box id="DevAideServerPlanBox"><box-header title="Set up from ${planServer.label}"/><box-body>
+                <label type="p" text="Each is set only when checked."/>
+                <form-single name="ServerSetupForm" transition="applyServerSetup">
+                    <field name="serverId"><default-field><hidden default-value="${planServer.serverId}"/></default-field></field>
+                    <field name="addons"><default-field title="Addons repository" tooltip="A repository entry in ${plan.addons.file} for ${plan.addons.url}, so ./moq component-get takes components from the server">
+                        <check><option key="true" text="${plan.addons.present ? 'Replace' : 'Add'} the repository ${plan.addons.repositoryName}${plan.addons.writable ? '' : ' (the full tier, not on a shared server)'}"/></check></default-field></field>
+                    <field name="repositoryName"><default-field title="Repository name"><text-line size="16" default-value="${plan.addons.repositoryName}"/></default-field></field>
+                    <field name="defaultRepository"><default-field title="Default repository"><check><option key="true" text="Every component from this server"/></check></default-field></field>
+                    <field name="taskSource"><default-field title="Task source" tooltip="Your work items from ${plan.taskSource.path}">
+                        <check><option key="true" text="${plan.taskSource.present ? 'Keep' : 'Add'} the server's tasks as your task source"/></check></default-field></field>
+                    <field name="gateway"><default-field title="LLM gateway" tooltip="${(plan.gateway.lines || []).join('  ')}">
+                        <check><option key="true" text="${plan.gateway.available ? 'Write the gateway lines to runtime/.env (a restart applies them)' : 'The server offers no gateway'}"/></check></default-field></field>
+                    <field name="gatewayAlias"><default-field title="Model alias"><text-line size="16" default-value="default"/></default-field></field>
+                    <field name="gitCredential"><default-field title="Git's credential for ${plan.gitCredential.prefix}">
+                        <radio no-current-selected-key="${plan.gitCredential.mode}"><option key="helper" text="Git's own helpers (D5)"/><option key="stored" text="My token from this connection"/></radio></default-field></field>
+                    <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+
         <container-box id="DevAideSiteBox"><box-header title="Site components"/><box-body>
             <label type="p" text="The components this site owns, comma separated, the first the default target of an extension. Every other component is upstream: read only, and extended from the site component instead of edited."/>
             <form-single name="SiteComponentsForm" transition="setSiteComponents">

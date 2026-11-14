@@ -746,6 +746,60 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="message"/>
         </out-parameters>
     </service>
+    <service verb="check" noun="GitRestWrite" type="interface">
+        <description>The service git-server rest-write-check-service names: asked, with authorization off, before each
+            write on a repository through the framework's REST (org.moqui.git.GitRestServices, /rest/s1/moqui/git), and
+            with operation read by resolve#RepositoryUrl and get#Repository to learn who keeps the repository. An
+            application that keeps a repository (its own roles, gate and conversation, as Smithy does) answers allowed
+            false for the writes it does not take this way, with a message and restUrl, the base of its own REST for
+            the repository, which the refusal names; application names it in either case. A service that fails refuses
+            the write. The repository's own rights are checked by the services, as without it.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="operation" required="true"><description>read, ref.create, ref.delete, commitStatus.create,
+                mergeRequest.create, mergeRequest.update, mergeRequest.close, mergeRequest.reopen, mergeRequest.reviewers,
+                mergeRequest.review, mergeRequest.merge, pipeline.run, pipeline.rerun, pipeline.cancel, pipeline.approve,
+                job.retry</description></parameter>
+            <parameter name="userId"/>
+            <parameter name="mergeRequestId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="application"><description>The application that keeps the repository (smithy); empty for
+                none</description></parameter>
+            <parameter name="restUrl"><description>Its REST for the repository, a full URL or a path on this server</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="add" noun="GitHostingOffer" type="interface">
+        <description>The service git-server offer-service names: given what the framework offers (get#HostingOffer's
+            offer) and the current user, the offer as the application has it, which replaces it: its REST
+            (application: name, restBase), its task source (tasks: kind, path), whether forks are made and where
+            (forks), its agreement check (agreement: path), and anything else a client may read. Called with
+            authorization off, also for a caller with no credentials, so it gives no one's data.</description>
+        <in-parameters>
+            <parameter name="offer" type="Map" required="true"/>
+            <parameter name="userId"/>
+        </in-parameters>
+        <out-parameters><parameter name="offer" type="Map"/></out-parameters>
+    </service>
+    <service verb="check" noun="GitAuthorSigned" type="interface">
+        <description>The service git-server agreement-check-service names: whether an author (a user of this server,
+            or an email address) has signed the contributor agreement of a repository (docs/dev/Contributions.md).
+            known false when the repository has no agreement this service decides.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="authorUserId"/>
+            <parameter name="authorEmail"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="known" type="Boolean"/>
+            <parameter name="required" type="Boolean"><description>The repository's agreement is on</description></parameter>
+            <parameter name="signed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="signUrl"><description>Where the author signs</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="set" noun="GitRepositoryPath" type="rust" location="moqui_git::service::hosting::set_repository_path">
         <description>Set the path git URLs carry for a repository (moqui/mr-moqui: /git/moqui/mr-moqui.git, SSH
             moqui/mr-moqui.git, and the page URL on a public-site host), or clear it with an empty repositoryPath (the

@@ -29,7 +29,10 @@ fn the_challenge_is_rfc_7636s_s256() {
 
 #[test]
 fn only_an_s256_challenge_a_plain_state_and_a_registered_redirect_start() {
-    let allowed = vec!["org.moqui.desktop:/sso".to_string()];
+    let allowed = Redirects {
+        listed: vec!["org.moqui.desktop:/sso".to_string()],
+        loopback: false,
+    };
     let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
     assert!(check_start(challenge, "S256", "s1", "org.moqui.desktop:/sso", &allowed).is_ok());
     // an absent method is plain in RFC 7636: not taken
@@ -43,6 +46,7 @@ fn only_an_s256_challenge_a_plain_state_and_a_registered_redirect_start() {
         "https://evil.example.com/sso",
         "org.moqui.desktop:/sso/x",
         "org.moqui.desktop:/SSO",
+        "http://127.0.0.1:8080/x",
         "",
     ] {
         assert!(
@@ -50,6 +54,49 @@ fn only_an_s256_challenge_a_plain_state_and_a_registered_redirect_start() {
             "{redirect}"
         );
     }
+}
+
+/// A dev instance's own address, on any port, signs in to its group server (RFC 8252 §7.3); nothing that only looks
+/// like one, and none when loopback redirects are off.
+#[test]
+fn a_loopback_redirect_on_any_port_starts() {
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    let loopback = Redirects {
+        listed: Vec::new(),
+        loopback: true,
+    };
+    for redirect in [
+        "http://127.0.0.1:8080/qapps/dev/Settings/serverSignedIn",
+        "http://localhost:51234/cb",
+        "http://[::1]:9000/",
+        "http://localhost/x?y=1",
+        "https://127.0.0.1:8443/cb",
+    ] {
+        assert!(
+            check_start(challenge, "S256", "s1", redirect, &loopback).is_ok(),
+            "{redirect}"
+        );
+    }
+    for redirect in [
+        "http://127.0.0.1.evil.example.com/cb",
+        "http://localhost.evil.example.com:80/cb",
+        "http://evil@127.0.0.1:8080/cb",
+        "http://127.0.0.1:8080/cb#frag",
+        "http://127.0.0.1:80a/cb",
+        "http://10.0.0.1:8080/cb",
+        "ftp://127.0.0.1/cb",
+        "org.moqui.desktop:/sso",
+    ] {
+        assert!(
+            check_start(challenge, "S256", "s1", redirect, &loopback).is_err(),
+            "{redirect}"
+        );
+    }
+    let off = Redirects {
+        listed: Vec::new(),
+        loopback: false,
+    };
+    assert!(check_start(challenge, "S256", "s1", "http://127.0.0.1:8080/cb", &off).is_err());
 }
 
 #[test]

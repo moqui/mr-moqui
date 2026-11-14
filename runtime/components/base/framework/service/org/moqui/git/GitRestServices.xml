@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The framework's REST for hosting (tools/service/moqui.rest.xml, /rest/s1/moqui/git and /rest/s1/moqui/hosting;
+    plans/Dogfood.md F9, plans/design-dev-aide.md F18), implemented in moqui-git (src/service/rest.rs): what the server
+    offers its clients, the repository behind a URL, the contributor agreement, and the merge request and pipeline
+    resources over GitServices, GitReviewServices and GitCiServices by a repository's own numbers. The services they
+    call check the repository's rights as they do without REST. Before each write on a repository the conf's git-server
+    rest-write-check-service (check#GitRestWrite) is asked, so a repository an application keeps is changed only
+    through the application's REST (GitKeptByApplication). Guide: docs/interfaces/Git-Hosting.md, REST. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== what a client asks first ========== -->
+
+    <service verb="get" noun="HostingOffer" type="rust" location="moqui_git::service::rest::get_hosting_offer"
+            authenticate="anonymous-view" read-only="true">
+        <description>What this server offers a client that connects to it, with or without credentials: baseUrl; user
+            (signedIn, username: whether the credentials were good); git (httpsBase, httpsUrlTemplate and sshUrlTemplate
+            with ${name}, sshHost, sshPort, pushToReview, mergeRequestRefs); rest (base, repositories, hosting, openapi);
+            signIn (appLogin, appToken, appProviders, loopbackRedirect: an installed app's sign-in); gateway (enabled,
+            url: the LLM gateway); agreement (path, decided); forks; and what git-server offer-service adds
+            (add#GitHostingOffer): an application's REST (application: name, restBase), its task source (tasks: kind,
+            path), its forks.</description>
+        <out-parameters><parameter name="offer" type="Map"/></out-parameters>
+    </service>
+    <service verb="resolve" noun="RepositoryUrl" type="rust" location="moqui_git::service::rest::resolve_repository_url"
+            read-only="true">
+        <description>The repository a URL of this server names: an HTTPS clone URL (/git/[path].git), an SSH one
+            (ssh://user@host:port/[path].git, user@host:[path].git) or a page URL (/[path], /[path]/-/tree/main, under
+            a mount too), as get#Repository gives it, for a caller who may view it; found false otherwise.</description>
+        <in-parameters><parameter name="url" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="repository" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Repository" type="rust" location="moqui_git::service::rest::get_repository" read-only="true">
+        <description>A repository for its viewers: repositoryId, repositoryPath, description, repositoryKind,
+            defaultBranch, headCommitId, archived, forkOf (repositoryId, repositoryPath; when the caller may view it),
+            access (canView, canCreate, canUpdate, canDelete), cloneUrls (httpsUrl, sshUrl), mergeRequests (the default
+            branch's rules: protected, requireMergeRequest, requiredApprovals, requiredStatusContexts,
+            allowedMergeMethods, mayPushDirectly; defaultMergeMethodEnumId, pushToReview), keptBy (application,
+            restUrl: who keeps it, from git-server rest-write-check-service) and agreement (as get#AuthorSigned for the
+            caller).</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="repository" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="AuthorSigned" type="rust" location="moqui_git::service::rest::get_author_signed"
+            read-only="true">
+        <description>Whether an author (authorUserId or authorEmail; the caller when both are empty) has signed the
+            contributor agreement of a repository the caller may view, as git-server agreement-check-service answers
+            (check#GitAuthorSigned). With no service, or one that does not decide it, known is false, with the
+            application that keeps the repository and its REST, which a client asks next.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="authorUserId"/>
+            <parameter name="authorEmail"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="known" type="Boolean"/>
+            <parameter name="required" type="Boolean"/>
+            <parameter name="signed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="signUrl"/>
+            <parameter name="application"/>
+            <parameter name="applicationRestUrl"/>
+        </out-parameters>
+    </service>
+    <service verb="verify" noun="Write" type="rust" location="moqui_git::service::rest::verify_write" read-only="true">
+        <description>What the application that keeps a repository says of a write (an operation of check#GitRestWrite),
+            for a viewer, before a client offers the control; with refuse a refusal is also this call's error
+            (GitKeptByApplication).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="operation" required="true"/>
+            <parameter name="refuse" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="message"/>
+            <parameter name="application"/>
+            <parameter name="restUrl"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== repositories ========== -->
+
+    <service verb="get" noun="Blob" type="rust" location="moqui_git::service::rest::get_blob" read-only="true">
+        <description>get#GitBlob, with a file that is not UTF-8 text as base64 (JSON has no bytes).</description>
+        <implements service="org.moqui.git.GitServices.get#GitBlob"/>
+        <out-parameters><parameter name="base64"/></out-parameters>
+    </service>
+    <service verb="create" noun="Ref" type="rust" location="moqui_git::service::rest::create_ref">
+        <description>create#GitRef, once the application that keeps the repository allows it (ref.create).</description>
+        <implements service="org.moqui.git.GitServices.create#GitRef"/>
+    </service>
+    <service verb="delete" noun="Ref" type="rust" location="moqui_git::service::rest::delete_ref">
+        <description>delete#GitRef, once the application that keeps the repository allows it (ref.delete).</description>
+        <implements service="org.moqui.git.GitServices.delete#GitRef"/>
+    </service>
+    <service verb="create" noun="CommitStatus" type="rust" location="moqui_git::service::rest::create_commit_status">
+        <description>create#GitCommitStatus (GitHub's status shape, for outside CI), once the application that keeps
+            the repository allows it (commitStatus.create).</description>
+        <implements service="org.moqui.git.GitServices.create#GitCommitStatus"/>
+    </service>
+
+    <!-- ========== merge requests, by their numbers in a repository ========== -->
+
+    <service verb="find" noun="MergeRequests" type="rust" location="moqui_git::service::rest::find_merge_requests"
+            read-only="true">
+        <description>find#MergeRequests, of one repository or of every one the caller may view, by filter: mine (the
+            caller's), review (waiting for the caller's review), open (open and draft, the default) or all.</description>
+        <implements service="org.moqui.git.GitReviewServices.find#MergeRequests"/>
+        <in-parameters>
+            <parameter name="filter" default-value="open"><description>mine, review, open or all</description></parameter>
+        </in-parameters>
+    </service>
+    <service verb="create" noun="MergeRequest" type="rust" location="moqui_git::service::rest::create_merge_request">
+        <description>create#MergeRequest, once the application that keeps the repository allows it
+            (mergeRequest.create).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="sourceRef" required="true"/>
+            <parameter name="sourceRepositoryId"><description>A fork of repositoryId that has the source branch</description></parameter>
+            <parameter name="targetRef"><description>The default branch when empty</description></parameter>
+            <parameter name="title" required="true"/>
+            <parameter name="description" allow-html="any"/>
+            <parameter name="draft" type="Boolean" default="false"/>
+            <parameter name="reviewerUserIdList" type="List"><parameter name="userId"/></parameter>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="deleteSourceBranch" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequestId"/>
+            <parameter name="mergeRequestNum" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="MergeRequest" type="rust" location="moqui_git::service::rest::get_merge_request" read-only="true">
+        <description>get#MergeRequest of the merge request mergeRequestNum of repositoryId.</description>
+        <implements service="org.moqui.git.GitReviewServices.get#MergeRequest"/>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeRequestId" required="false"/>
+        </in-parameters>
+    </service>
+    <service verb="update" noun="MergeRequest" type="rust" location="moqui_git::service::rest::update_merge_request">
+        <description>update#MergeRequest (title, description, target, draft, merge method), once the application that
+            keeps the repository allows it (mergeRequest.update).</description>
+        <implements service="org.moqui.git.GitReviewServices.update#MergeRequest"/>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeRequestId" required="false"/>
+        </in-parameters>
+    </service>
+    <service verb="close" noun="MergeRequest" type="rust" location="moqui_git::service::rest::close_merge_request">
+        <description>close#MergeRequest, once the application that keeps the repository allows it
+            (mergeRequest.close).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="reopen" noun="MergeRequest" type="rust" location="moqui_git::service::rest::reopen_merge_request">
+        <description>reopen#MergeRequest, once the application that keeps the repository allows it
+            (mergeRequest.reopen).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="set" noun="MergeRequestReviewers" type="rust" location="moqui_git::service::rest::set_merge_request_reviewers">
+        <description>set#MergeRequestReviewers, once the application that keeps the repository allows it
+            (mergeRequest.reviewers).</description>
+        <implements service="org.moqui.git.GitReviewServices.set#MergeRequestReviewers"/>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeRequestId" required="false"/>
+        </in-parameters>
+    </service>
+    <service verb="submit" noun="MergeRequestReview" type="rust" location="moqui_git::service::rest::submit_merge_request_review">
+        <description>submit#MergeRequestReview (approve, request_changes or comment, with a note), once the application
+            that keeps the repository allows it (mergeRequest.review). Line comments and threads are the application's
+            (Mantle's review threads), not the framework's.</description>
+        <implements service="org.moqui.git.GitReviewServices.submit#MergeRequestReview"/>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeRequestId" required="false"/>
+        </in-parameters>
+    </service>
+    <service verb="get" noun="MergeRequestDiff" type="rust" location="moqui_git::service::rest::get_merge_request_diff" read-only="true">
+        <description>get#MergeRequestDiff: the commits and each file's diff.</description>
+        <implements service="org.moqui.git.GitReviewServices.get#MergeRequestDiff"/>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeRequestId" required="false"/>
+        </in-parameters>
+    </service>
+    <service verb="get" noun="MergeRequestApprovals" type="rust" location="moqui_git::service::rest::get_merge_request_approvals" read-only="true">
+        <description>get#MergeRequestApprovals: the approvals that count toward the target's rules.</description>
+        <implements service="org.moqui.git.GitReviewServices.get#MergeRequestApprovals"/>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeRequestId" required="false"/>
+        </in-parameters>
+    </service>
+    <service verb="merge" noun="MergeRequest" type="rust" location="moqui_git::service::rest::merge_merge_request">
+        <description>merge#MergeRequest, once the application that keeps the repository allows it
+            (mergeRequest.merge).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="mergeRequestNum" type="Integer" required="true"/>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="message" allow-html="any"/>
+            <parameter name="expectedHeadCommitId"/>
+            <parameter name="deleteSourceBranch" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"/>
+            <parameter name="madeCommitIds" type="List"/>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="conflictPaths" type="List"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== pipeline runs, by their numbers in a repository ========== -->
+
+    <service verb="run" noun="Pipeline" type="rust" location="moqui_git::service::rest::run_pipeline">
+        <description>run#Pipeline, once the application that keeps the repository allows it (pipeline.run).</description>
+        <implements service="org.moqui.git.GitCiServices.run#Pipeline"/>
+    </service>
+    <service verb="rerun" noun="PipelineRun" type="rust" location="moqui_git::service::rest::rerun_pipeline_run">
+        <description>rerun#PipelineRun of run runNum of repositoryId, once the application that keeps the repository
+            allows it (pipeline.rerun).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="runNum" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="cancel" noun="PipelineRun" type="rust" location="moqui_git::service::rest::cancel_pipeline_run">
+        <description>cancel#PipelineRun, once the application that keeps the repository allows it (pipeline.cancel).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="runNum" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <service verb="approve" noun="PipelineRun" type="rust" location="moqui_git::service::rest::approve_pipeline_run">
+        <description>approve#PipelineRun, once the application that keeps the repository allows it
+            (pipeline.approve).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="runNum" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="approvalState"/>
+        </out-parameters>
+    </service>
+    <service verb="retry" noun="JobRun" type="rust" location="moqui_git::service::rest::retry_job_run">
+        <description>retry#JobRun of a job of a run of repositoryId, once the application that keeps the repository
+            allows it (job.retry).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="jobRunId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="jobRunId"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="RunArtifact" type="rust" location="moqui_git::service::rest::get_run_artifact" read-only="true">
+        <description>get#RunArtifact of the engine: an artifact or report of a run and a piece of its content, as
+            base64, maxBytes from offset.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="offset" type="Integer" default-value="0"/>
+            <parameter name="maxBytes" type="Integer" default-value="1048576"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifact" type="Map"/>
+            <parameter name="base64"/>
+            <parameter name="nextOffset" type="Integer"/>
+            <parameter name="done" type="Boolean"/>
+        </out-parameters>
+    </service>
+</services>

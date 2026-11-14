@@ -1454,42 +1454,35 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
 
 ### Each dev instance
 
-1. **Credential.** On the group server, make an access token: Projects › Code › Git access, or Commons › Settings ›
-   Account. It is shown once. It is a login key, and it serves as:
-   - the password for git over HTTPS;
-   - the dev-aide task source's token;
-   - the gateway key, once it has an `LlmApiClient` row.
+1. **Connect.** In Dev AIDE (`/qapps/dev`) › Settings › Group servers, give the group server's address
+   (`https://team.example.com`) and Connect. The browser opens the group server's sign-in, as the desktop app's does:
+   sign in there (with its identity provider, or its own login) and confirm. The dev instance gets a login key of
+   your account, kept encrypted and sent only to that server ([Logging in](interfaces/Git-Hosting.md#logging-in); the
+   redirect is the dev instance's own loopback address). A server without the sign-in takes an access token pasted
+   from its Git access page (Projects › Code › Git access, or Commons › Settings › Account) instead.
+2. **Confirm what Connect sets**, each a checkbox, from what the server offers
+   (`/rest/s1/moqui/hosting/offer`):
+   - the repository entry in `myaddons.xml` (not in git) for the server's git URL, and optionally as the
+     `default-repository`; then `./moq component-get acme-site`. The repository ids (or paths) on the group server are
+     the component names;
+   - the task source (`moqui-rest`) with your token: Tasks lists your work items, and commits carry the current
+     task's trailer;
+   - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the token as `llm_openai_api_key`, the alias as
+     `llm_openai_model`), applied at the next start. The gateway needs `LlmGatewayUse` and an `LlmApiClient` row for
+     your key on the group server;
+   - git's credential for the server's host: git's own helper (the default), or the token of the connection.
 
-   For git over SSH, add your public key on the same Git access screen instead.
-2. **Repositories.** Put the team's repository and components in your `myaddons.xml`, which is not in git:
-
-   ```xml
-   <addons>
-       <repository name="team">
-           <location type="git" url="https://team.example.com/git/${name}.git"/>
-       </repository>
-       <component name="acme-site" repository="team"/>
-   </addons>
-   ```
-
-   Then run `./moq component-get acme-site`. The repository ids on the group server must be the component names. Keep
-   the token in a git credential helper (`git config --global credential.helper store`, or the OS keychain). With
-   `default-repository="team"` on `<addons>`, every component comes from the group server.
-3. **Models.** Point the default model endpoint at the gateway, in `runtime/.env` or with `-D`. The URL has no `/v1`,
-   since the endpoint adds `/v1/chat/completions`.
-
-   ```sh
-   llm_openai_url=https://team.example.com/llm
-   llm_openai_api_key=<access token>
-   llm_openai_model=<alias>
-   ```
-
-4. **Tasks.** In Dev AIDE (`/qapps/dev`) › Tasks, add a source of kind `moqui-rest` with the base URL
-   `https://team.example.com` and the token. It lists your work items from `/rest/s1/mantle/my/tasks`. A task app with
-   the group server's base URL (Dev AIDE › Settings) opens them there. Commits from the Workspace carry the current
-   task's trailer.
-5. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
+   For git over SSH, add your public key on the server's Git access screen instead. Settings › Group servers shows each
+   connection's state, Check, Sign in again and Remove, which takes back what Connect set.
+3. **The Workspace** then knows the hosted repository of each working tree whose remote is the server's (a Merge
+   requests tab, Propose in place of Push for a repository you may only view, Fork where the server makes forks,
+   Publish to a publish branch opening a merge request). Merging stays on the server's page.
+4. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
    not be reachable from the network.
+
+The same by hand, as before Connect: a `myaddons.xml` repository (`<repository name="team"><location type="git"
+url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_openai_*` lines in `runtime/.env`, a
+`moqui-rest` task source with the token in Dev AIDE › Tasks, and the token in a git credential helper.
 
 ### The shared dev-aide server
 
@@ -1501,7 +1494,10 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
 3. Put its users in `DEV_AIDE_EXTENDERS`, who may write site components and publish them, or `DEV_AIDE_USERS`, who may
    do everything.
 4. Network git (fetch, pull, push, clone) is off on a shared server until an admin turns it on in Dev AIDE › Settings,
-   with a deploy token or per-user tokens from the group server.
+   with a deploy token or per-user tokens from the group server. Each user connects to the group server as
+   themselves (Settings › Group servers); a shared server's address is not loopback, so the group server lists its
+   `/qapps/dev/Settings/serverSignedIn` URL in `webapp_app_redirect_uris`, or its users paste a token. Connect's
+   `myaddons.xml` and `.env` items are not offered on a shared server.
 5. Commits carry the logged-in user as author. A save checks the file on disk by its hash, so a save over another
    user's change offers Compare instead of overwriting it.
 
@@ -1513,8 +1509,9 @@ everyone's schema, and any instance could run the team's jobs. Each dev instance
 hand a database to someone else, send a `./moq save-db` save and the matching `entity_ds_crypt_pass`.
 
 **Not built**:
-- Moqui is not an identity provider, so a dev instance cannot log in through the group server. Point both at one
-  external OIDC provider, or keep separate accounts.
+- Moqui is not an identity provider, so a dev instance's own users do not log in through the group server (Connect
+  only gets the dev instance a key of the user's account there). Point both at one external OIDC provider, or keep
+  separate accounts.
 - Pushing a hosted repository to another server; a `remote` repository is a read-only mirror.
 - OAuth or OIDC tokens for MCP and A2A; they take login keys and app passwords.
 
