@@ -791,6 +791,95 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   `ForumCore.dayKey`). Acceptance: `SmithyContribution` (its commits come by page saves and the proposal service;
   a real `git push` to a fork and to `refs/for/` is in the framework's git-client tests only). Not built: a
   GitHub login recorded at sign-in, REST for these (P11), the per-node sets and guards across a cluster.
+- **DG5**, Nov 14, 2026: pipelines. Framework (F7, F8, [Pipelines](../docs/interfaces/Pipelines.md)): `ci.xml` with
+  `git-ci-3.xsd` and the built-in pipeline of a component; the records, the queue and its ServiceJobs, a
+  `ci/<pipeline>/<job>` status for each job, job tokens that fetch their own commit alone, the runner REST and `moqui ci-run`
+  (registered runners too); the `docker` host type over the Docker Engine API, on Docker and on Podman, by socket,
+  HTTP or TLS with a client certificate, each job hardened; `moqui-build` (`podman/build.sh --build-image`); MR
+  Moqui's own pipelines in `ci.xml` at the root; in a cluster, claims by one conditional statement under the pool's
+  lease. Mantle: `check#Run` (the engine's run check: trust, owner, pool, runner minutes a month, the day's limit, a
+  personal repository only with minutes an operator gave), `get#RunUrl`, and 18 operations of runs, jobs, logs,
+  artifacts, secrets, environments and pipeline settings. PASS: Pipelines, a run with its jobs by stage, a job's log
+  by page and tailed by the JobLog island, failed tests linked to their lines, artifacts, a merge request's Checks, a
+  commit's runs, Settings › Pipelines. Differences: **an approval is for one head and its pusher**, until every
+  account whose code runs has had a merge request merged by another account (decided with the user; it replaces
+  "the approval covers later heads"), and an outside run is held to `outsideRunMaxJobs`; secrets and environments are
+  a Maintainer's, and an environment's secrets go only to runs of protected refs or its `allowedRefs`, never a merge
+  request's; untrusted runs read no protected cache and their pools never pull; artifacts stream from the engine
+  (`send#RunArtifact`), and a file that can run script is an attachment; a log page is at most 256 KB; a hidden
+  repository runs nothing and sends no webhook or mirror push (`check#Outbound`). Done when: a red run keeps the merge
+  box closed in the engine's tests (the fake host type, real `git` pushes, the runner in the test's process) and
+  Mantle's `SmithyPipelines` (a failed run's required context blocks the merge); one container on a real Docker or Podman socket is the opt-in
+  `ci_docker` test. Not built: deploys (DG10; their records only), a runner for an image without `moqui`, Windows
+  registered runners, the `SmithyPipeline` walk, the phone-width check of the pages. Not shown: `test-framework` in a
+  container on another machine, which waits for DG9's runner host.
+- **DG6**, Nov 14, 2026: the forum inside Smithy, the lists, and the moderation layer's part. Mantle: a group's or a
+  repository's forum is a category its scope binds (`setScopeForum`), read by who views the group or repository; a
+  list is a category in list mode with its own `List-Id`, `List-Post` and `List-Archive`; `importMbox` reads an
+  archive from `pass_import_dir` (threads by `Message-ID` and `References`, authors as profiles with no account and
+  no stored address, safe to run twice); `inviteListMembers`, with day limits by trust level; mail to a list from an
+  address that is no account's is held, answered once and posted when the address is verified; a repository and a
+  group are review targets (`reportSmithyTarget`, `hideSmithyTarget`); mail the gateway marked as spam is held; a
+  group's report address files a confidential issue for an account and holds the message for its Owners otherwise;
+  day limits for repositories, groups, forks and runs; `convertTopicToIssue`. Framework: `Authentication-Results`
+  counts only from an authserv-id in `smtp_authserv_id` ([Mail-Inbound](../docs/interfaces/Mail-Inbound.md)), and
+  one list of reserved paths (`ec.web.reservedPaths`). PASS: the forum's own screens inside a group's and a
+  repository's shell, by a scope and a link base in `Shared/View.js`; Settings › Forum with the list, the import and
+  the invitations; the scope's moderation, Report and Hide; the held report's and held mail's pages. Differences: a
+  report on a repository or a group is decided by site staff or a moderator of the scope above who is no Owner of it,
+  and reporters are named to staff only; a report sent to a report address is always a report; a topic becomes an
+  issue only from the repository's own category or those above it; a fork of a hidden repository is hidden and a
+  hidden one is not forked; only site owners link a category (never to a wider audience) and set a list's mode and
+  address; a held report's link writes nothing and its page's form claims, so a mail scanner files nothing; the
+  archive is named by file and checksum, not uploaded. Done when: Mantle's `MailingLists` (a small mbox imported
+  once and again with nothing added, a list's own headers, mail from no account's address held and posted once
+  verified, spam held), `SmithyModerationTargets` (a reported repository hidden, Not Found in git too),
+  `SmithyHeldReports`; acceptance: `SmithyWalk`'s second feature (a group's forum at 390 px).
+  Not built: the scope's moderation pages rendered in a spec, the phone width of the moderation and settings pages, a
+  scope's forum on a remote PASS frontend. Not shown: a real list archive and a real Discourse backup imported on
+  staging, and mail through a real gateway (rehearsals for DG9).
+- **DG7**, Nov 14, 2026: the site. Mantle (`mantle.smithy.SmithySiteServices`): a group's landing from a Markdown page
+  of a content repository; a repository's docs at a ref with contents, pages and search, bounded and cached; releases
+  on Mantle's release by tag, with notes through the gate, an announcement in the news category, and assets with
+  SHA-256; the component directory from `component.xml` at the default branch and at releases, and a group's
+  `addons.xml`; one search over topics, issues, merge requests, docs and repositories, each by its own access rule;
+  redirects by site owners (a CSV import too), resolved before Not Found. Framework: reserved sub-paths
+  (`ec.web.reservedSubPaths`), so `/.well-known/security.txt` is a page again. PASS: the Overview with its landing,
+  Explore's components, Search, Docs with a ref picker, Releases and a release, `addons.xml`, Site › Redirects.
+  Differences: a release takes only a trusted, successful run of the tag's commit and references its artifacts
+  rather than copying them; a non-public repository's release is not announced to a wider category; `addons.xml`
+  lists public components, and their archives (and a visitor's archive of a public repository, at a branch or tag)
+  open with no login; a redirect cannot shadow a live path or answer itself; Search's place is `?in=`, and docs
+  search is the Search page; a redirect is not edited on the page (deleted and added, or imported). Done when: old
+  paths through the resolver and the redirect rules (`SmithyRedirects`, PASS's `Smithy`), `SmithyComponents`,
+  `SmithyDocs`, `SmithyReleases`, `SmithySearch`. Not built: the site's acceptance walks, the phone-width check in a
+  browser, pinning on a page, a group's Releases page. Not shown: the inventory's old links of moqui.org and
+  forum.moqui.org (I4 is filled before DG9), and `component-get` from a staging host.
+- **DG8**, Nov 14, 2026: GitHub. Framework ([Git-Hosting](../docs/interfaces/Git-Hosting.md) "Push mirrors",
+  "Fetching refs", "Outbound check", "Imported merge requests"): F6, `GitRepositoryMirror` rows kept with the delete
+  right, pushed after each change over HTTPS (git's smart HTTP on the framework's client) or SSH with a pinned host
+  key, forced to match, with `deleteRefs`, one push at a time across a cluster (a lease), a back-off from a minute to
+  six hours, the outbound check and the webhooks' address rules; the credential encrypted, kept out of every error,
+  given again for a new destination, and its giver's right checked at each push (a mirror whose giver lost it
+  pauses); `fetch#GitRefs`, held to a push's rules with authorization on; `create#MergeRequest` imported (number,
+  state, dates, author, no event; the importer counts as an author); the `sso-linked-service` hook after a real SSO
+  sign-in. Mantle: the GitHub importer (`SmithyImportRun`, `SmithyImportMap`): labels, milestones, issues with their
+  numbers, comments and reactions, pull requests as imported merge requests in their final state with reviews and
+  line comments and their heads by `fetch#GitRefs`, in steps of a job that wait on the rate limit, resume from a
+  cursor and make nothing twice; people as placeholders by GitHub id and login (`gh-<login>` when not free); old
+  GitHub paths redirected for public repositories. A placeholder is claimed through `handle#SsoLinked`, by an
+  OctGitHub flow whose endpoints are exactly GitHub's own (or a GitHub Enterprise host's), recorded as
+  `SmithyGithubLink`, and again when a proven account's site membership becomes active. Mirrors in Smithy are a
+  Maintainer's, stored as the Maintainer, with a failure told to the repository's Maintainers and Owners. PASS: Group
+  Settings › Import, an import's page, the operator's list of imports, Repository Settings › Mirrors. Differences:
+  imported merge requests start hidden until Smithy's row is written, and stay headless when the head never arrives;
+  a private GitHub repository is refused into a wider target without `publishPrivate`; GitHub logins are matched by
+  id first, so a recycled login claims nothing; the token is in no receipt, report or error; caps on imports and
+  placeholders. Done when: on recorded API responses, `SmithyGithubImport` (numbers kept, a second run adds nothing,
+  a resume after the rate limit's wait, a placeholder claimed through the hook); a push mirror over HTTPS to a local
+  server, forced to match (moqui-git `mirror::`), and `SmithyMirrors`. Not built: a sync in both directions (§9).
+  Not shown: the importer against GitHub's live API (never run against GitHub), an SSH mirror end to end, a real SSO
+  sign-in round trip with GitHub, and a mirror on GitHub kept current; each is a rehearsal for DG9.
 
 ---
 
