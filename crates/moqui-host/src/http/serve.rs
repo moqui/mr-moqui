@@ -479,7 +479,12 @@ fn grpc_routes<B>(web: &WebApp, request: &http::Request<B>) -> Option<tonic::ser
         let host = request
             .uri()
             .host()
-            .or_else(|| request.headers().get(header::HOST).and_then(|value| value.to_str().ok()))
+            .or_else(|| {
+                request
+                    .headers()
+                    .get(header::HOST)
+                    .and_then(|value| value.to_str().ok())
+            })
             .unwrap_or("");
         if refusing(host) {
             return None;

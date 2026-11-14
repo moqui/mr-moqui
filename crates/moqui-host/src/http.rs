@@ -169,6 +169,7 @@ fn record_web_listeners(
     factory: &ExecutionContextFactory,
     http: Option<SocketAddr>,
     https: Option<SocketAddr>,
+    https_standby: bool,
     https_grpc: Option<String>,
     cluster: SocketAddr,
 ) {
@@ -189,6 +190,7 @@ fn record_web_listeners(
             )),
         ),
         None if http.is_none() => listener(factory, "HTTPS", State::off("no port, reached in process only")),
+        None if https_standby => listener(factory, "HTTPS", State::off(STANDBY)),
         None => listener(
             factory,
             "HTTPS",
@@ -201,6 +203,10 @@ fn record_web_listeners(
         listener(factory, "Cluster", State::On(format!("tcp {cluster} mTLS")));
     }
 }
+
+/// The startup report's HTTPS line while the listener of a node with no certificate stands by (`crate::acme`).
+const STANDBY: &str =
+    "standing by: no certificate in runtime/cert; it starts when a name is set up with ACME or a certificate is added";
 
 /// Addresses and handles the test uses after the plain HTTP listener binds.
 pub(crate) struct ListenReport {
@@ -269,14 +275,28 @@ pub(crate) async fn listen(
             .map_err(|err| fail(format!("bound listener has no address: {err}")))?,
         None => SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
     };
+    // a listener standing by (no certificate yet) is not one for gRPC
     #[cfg(feature = "grpc")]
-    let grpc = listener
-        .as_ref()
-        .and_then(|_| crate::grpc_listen::bind_address(&factory, address, https.is_some()))
-        .map(|bind| (bind, https.as_ref().map(|https| Arc::clone(&https.config))));
+    let grpc = {
+        let bound = https.as_ref().filter(|https| !https.standby);
+        listener
+            .as_ref()
+            .and_then(|_| crate::grpc_listen::bind_address(&factory, address, bound.is_some()))
+            .map(|bind| (bind, bound.map(|https| Arc::clone(&https.config))))
+    };
     let mut certs: Option<Arc<dyn rustls::server::ResolvesServerCert>> = None;
     let tls_config = https.as_ref().map(|https| Arc::clone(&https.config));
+    // with no certificate yet the HTTPS listener binds only once a name is set up with ACME (crate::acme); an edge node
+    // standing by takes no links (no certificate to pair with), so its listener answers only ACME challenges
+    let mut standby = None;
+    if https.is_some() {
+        crate::acme::Acme::of(&factory).set_https();
+    }
     let secure = match https {
+        Some(https) if https.standby => {
+            standby = Some((https.bind, tokio_rustls::TlsAcceptor::from(https.config)));
+            None
+        }
         Some(https) => {
             let listener = TcpListener::bind(https.bind)
                 .await
@@ -290,6 +310,9 @@ pub(crate) async fn listen(
         None => None,
     };
     let https_address = secure.as_ref().map(|(_, local, _)| *local);
+    if https_address.is_some() {
+        crate::acme::Acme::of(&factory).set_listening(https_address);
+    }
     let notws = endpoint_enabled(&factory, "/notws");
     let termws = cfg!(feature = "tui") && endpoint_enabled(&factory, "/termws");
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -315,6 +338,8 @@ pub(crate) async fn listen(
     reload_conf_on_hangup(&factory, shutdown_rx.clone());
     crate::monitor::register_guard_gauges(&factory, &guard);
     tokio::spawn(sweep(Arc::clone(&guard), shutdown_rx.clone()));
+    // the certificates of the names set up with ACME, written by each member, and the late bind's signal
+    crate::acme::start(&factory, shutdown_rx.clone());
     // Text responses are compressed when the client accepts gzip (`Compressible`).
     let app = Router::new()
         .route("/health", get(health))
@@ -453,6 +478,7 @@ pub(crate) async fn listen(
         &link_factory,
         listener.is_some().then_some(address),
         https_address,
+        standby.is_some(),
         https_grpc,
         cluster,
     );
@@ -507,21 +533,23 @@ pub(crate) async fn listen(
             }
         }
     };
-    match secure {
-        Some((listener, _, acceptor)) => {
-            tokio::join!(
-                plain,
-                serve(
-                    listener,
-                    Some(Tls { acceptor, edge }),
-                    web,
-                    permits,
-                    stopped(shutdown_rx)
-                )
-            );
+    let secure_serve = async {
+        let tls = |acceptor| Tls {
+            acceptor,
+            edge: edge.clone(),
+            factory: Arc::downgrade(&link_factory),
+        };
+        match (secure, standby) {
+            (Some((listener, _, acceptor)), _) => {
+                serve(listener, Some(tls(acceptor)), web, permits, stopped(shutdown_rx)).await;
+            }
+            (None, Some((bind, acceptor))) => {
+                standing_by(&link_factory, bind, tls(acceptor), web, permits, shutdown_rx).await;
+            }
+            (None, None) => {}
         }
-        None => plain.await,
-    }
+    };
+    tokio::join!(plain, secure_serve);
     // the app held for the edge link's down connections, and for the host in process, holds the factory
     crate::edge_link::stopped(&link_factory);
     in_process.stop();
@@ -543,19 +571,92 @@ async fn sweep(guard: Arc<Guard>, mut stopped: tokio::sync::watch::Receiver<bool
     }
 }
 
+/// The HTTPS listener of a node with no certificate yet (`crate::acme`): bound while it is wanted (a name set up with
+/// ACME on any member, a certificate added to `runtime/cert`, or a set-up check running) and closed when it no longer
+/// is, which only a check's end does. Until a certificate is there it answers only the challenges of names set up and
+/// refuses every other handshake.
+async fn standing_by(
+    factory: &Arc<ExecutionContextFactory>,
+    bind: SocketAddr,
+    tls: Tls,
+    web: WebApp,
+    permits: Arc<tokio::sync::Semaphore>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    use moqui_core::startup::{listener, State};
+    let acme = crate::acme::Acme::of(factory);
+    let mut wanted = acme.wanted();
+    loop {
+        let mut stop = shutdown.clone();
+        let go = tokio::select! {
+            _ = stop.wait_for(|stopped| *stopped) => false,
+            changed = wanted.wait_for(|wanted| *wanted) => changed.is_ok(),
+        };
+        if !go {
+            return;
+        }
+        let listener_bound = match TcpListener::bind(bind).await {
+            Ok(bound) => bound,
+            Err(err) => {
+                tracing::error!("The HTTPS listener could not bind {bind} for ACME: {err}");
+                listener(factory, "HTTPS", State::failed(format!("could not bind {bind}: {err}")));
+                return;
+            }
+        };
+        let local = listener_bound.local_addr().ok();
+        acme.set_listening(local);
+        let shown = local.map_or_else(|| bind.to_string(), |local| local.to_string());
+        listener(
+            factory,
+            "HTTPS",
+            State::On(format!("tcp {shown} TLS, started for ACME")),
+        );
+        tracing::info!(
+            "The HTTPS listener started on {shown} for ACME; with no certificate yet it answers only the challenges \
+             of names set up"
+        );
+        let mut unwanted = acme.wanted();
+        let mut stop = shutdown.clone();
+        let until = async move {
+            tokio::select! {
+                _ = stop.wait_for(|stopped| *stopped) => {}
+                _ = unwanted.wait_for(|wanted| !*wanted) => {}
+            }
+        };
+        serve(
+            listener_bound,
+            Some(tls.clone()),
+            web.clone(),
+            Arc::clone(&permits),
+            until,
+        )
+        .await;
+        acme.set_listening(None);
+        if *shutdown.borrow() {
+            return;
+        }
+        listener(factory, "HTTPS", State::off(STANDBY));
+        tracing::info!("The HTTPS listener started for a set-up check closed again: nothing is set up with ACME");
+    }
+}
+
 /// The HTTPS listener's handshake: its own settings, or on an edge node the link's for a client that offers
-/// `moqui-edge/1`, and a passthrough host's connection handed to its link before any handshake (`edge_link`).
+/// `moqui-edge/1`, and a passthrough host's connection handed to its link before any handshake (`edge_link`). A client
+/// that offers `acme-tls/1` gets an ACME challenge's answer, or is refused (`crate::acme`).
 #[derive(Clone)]
 struct Tls {
     acceptor: tokio_rustls::TlsAcceptor,
     edge: Option<Arc<crate::edge_link::Acceptor>>,
+    factory: std::sync::Weak<ExecutionContextFactory>,
 }
 
 impl Tls {
     async fn accept(&self, stream: tokio::net::TcpStream) -> std::io::Result<crate::edge_link::Secured> {
         match &self.edge {
             Some(edge) => edge.accept(stream, self.acceptor.config()).await,
-            None => self.acceptor.accept(stream).await.map(crate::edge_link::Secured::Http),
+            None => crate::acme::accept(stream, Arc::clone(self.acceptor.config()), &self.factory)
+                .await
+                .map(crate::edge_link::Secured::Http),
         }
     }
 }

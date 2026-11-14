@@ -71,10 +71,15 @@ pub(crate) struct HttpsListen {
     pub config: Arc<rustls::ServerConfig>,
     /// The certificates `config` serves, which an edge node's link settings share (`edge_link`).
     pub certs: Arc<CertStore>,
+    /// No certificate loads: the listener binds only once a name is set up with ACME, and then answers only its
+    /// challenges until a certificate is there (`crate::acme`). A local node's passthrough tunnel uses `config` the
+    /// same way.
+    pub standby: bool,
 }
 
-/// The HTTPS listener to start on `ip`, or `None` when it is off or, by default, when no certificate exists. A port
-/// set explicitly with no certificate is an error.
+/// The HTTPS listener to start on `ip`, or `None` when it is off. With no certificate it stands by
+/// ([`HttpsListen::standby`]): a name with no certificate gets no HTTPS, and with none at all nothing listens until a
+/// name is set up with ACME.
 pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, use_default_port: bool) -> Result<Option<HttpsListen>, Error> {
     let raw = moqui_lib::env::get_prop_or_env(LISTEN_PORT);
     let raw = raw.trim();
@@ -91,22 +96,20 @@ pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, use_default_port: bool) -> Re
         }
     }
     let store = CertStore::new(dir.clone());
-    if store.is_empty() {
-        let missing = format!(
-            "no usable certificate in {}; add <domain>.crt and <domain>.key there",
+    let standby = store.is_empty();
+    if standby {
+        tracing::warn!(
+            "The HTTPS listener is not started: no usable certificate in {}; add <domain>.crt and <domain>.key there, \
+             or set a name up with ACME on System › Certificates, which starts it",
             dir.display()
         );
-        if !raw.is_empty() {
-            return Err(Error::new(format!("{LISTEN_PORT} is {raw}, but there is {missing}")));
-        }
-        tracing::warn!("The HTTPS listener is not started: {missing}");
-        return Ok(None);
     }
     let certs = Arc::new(store);
     Ok(Some(HttpsListen {
         bind: SocketAddr::new(ip, port),
         config: Arc::new(server_config(Arc::clone(&certs))?),
         certs,
+        standby,
     }))
 }
 
@@ -585,6 +588,50 @@ pub(crate) fn certificate_expiries(dir: &Path) -> Vec<moqui_core::context::resou
     found
 }
 
+/// The pair in `dir` a handshake asking for `name` would be served, for System › Certificates: which pair (the name
+/// itself, its wildcard or `default`), its files and its leaf, or why it does not load.
+#[cfg(feature = "axum")]
+pub(crate) struct Served {
+    /// The pair's name: `name` itself, `_wildcard.<parent>` or `<parent>`, or `default`.
+    pub pair: String,
+    pub cert: PathBuf,
+    pub key: PathBuf,
+    /// The leaf certificate, when the pair loads.
+    pub leaf: Option<CertificateDer<'static>>,
+    /// Why the pair does not load, when it does not; the listener then refuses the name.
+    pub problem: Option<String>,
+}
+
+#[cfg(feature = "axum")]
+pub(crate) fn served_for(dir: &Path, name: &str) -> Option<Served> {
+    candidates(Some(name)).into_iter().find_map(|pair| {
+        let (cert, key) = find_files(dir, &pair)?;
+        let (leaf, problem) = match read_certified_key(&cert, &key) {
+            Ok(loaded) => (loaded.cert.first().cloned(), None),
+            Err(err) => (None, Some(err.to_string())),
+        };
+        Some(Served {
+            pair,
+            cert,
+            key,
+            leaf,
+            problem,
+        })
+    })
+}
+
+/// The names in `dir` with a pair in any layout.
+#[cfg(feature = "axum")]
+pub(crate) fn pairs_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = pair_names(dir)
+        .into_iter()
+        .filter(|name| find_files(dir, name).is_some())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Whether the directory holds a certificate and key pair in any layout.
 fn has_any_pair(dir: &Path) -> bool {
     pair_names(dir).iter().any(|name| find_files(dir, name).is_some())
@@ -635,7 +682,7 @@ pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn write_private(path: &Path, text: &str) -> Result<(), Error> {
+pub(crate) fn write_private(path: &Path, text: &str) -> Result<(), Error> {
     #[cfg(unix)]
     {
         use std::io::Write as _;
@@ -656,7 +703,7 @@ fn write_private(path: &Path, text: &str) -> Result<(), Error> {
     }
 }
 
-fn pem(label: &str, der: &[u8]) -> String {
+pub(crate) fn pem(label: &str, der: &[u8]) -> String {
     let body = STANDARD.encode(der);
     let mut out = format!("-----BEGIN {label}-----\n");
     for line in body.as_bytes().chunks(64) {

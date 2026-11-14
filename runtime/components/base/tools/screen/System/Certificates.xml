@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Certificates (plans/Edge-Node2.md §4.8): the names this node answers and the certificate the HTTPS listener serves
+    each, from the files in runtime/cert (org.moqui.admin.CertificateServices.get#Certificates); a name with none is
+    refused. Set up with ACME gets a name's certificate from an ACME authority (Let's Encrypt by default, its staging
+    directory for a first try, or any other's URL) after checking the name reaches this node; then Renew now, Stop
+    renewing (Renew again) and Remove. The renewal job renews only names set up here, and nothing is ever asked for a
+    name nobody set up. A failed order shows here and on the System home. The box at the top says what an ACME
+    certificate is and is not. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Certificates" default-menu-index="25" default-menu-group="Server" menu-image="sym_o_verified_user" menu-image-type="icon">
+
+    <transition name="setUp">
+        <service-call name="org.moqui.admin.CertificateServices.setup#AcmeName" out-map="setupOut"
+                in-map="{hostName: otherHostName || hostName, directoryUrl: directoryChoice === 'other' ? otherDirectoryUrl : directoryChoice,
+                    contactEmail: contactEmail, termsAgreed: termsAgreed === 'Y', skipCheck: skipCheck === 'Y'}"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="success">Ordering the certificate of ${setupOut.hostName}. ${setupOut.checkText ? setupOut.checkText + '. ' : ''}Its state shows here in a minute.</message>
+        </if></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="renew">
+        <service-call name="org.moqui.admin.CertificateServices.renew#AcmeName" in-map="{hostName: hostName}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Ordering the certificate of ${hostName} again</message></if></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="stopRenewing">
+        <service-call name="org.moqui.admin.CertificateServices.update#AcmeName" in-map="{hostName: hostName, renewing: false}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${hostName} is no longer renewed; its certificate stays until it runs out</message></if></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="renewAgain">
+        <service-call name="org.moqui.admin.CertificateServices.update#AcmeName" in-map="{hostName: hostName, renewing: true}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${hostName} is renewed again before it runs out</message></if></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="remove">
+        <service-call name="org.moqui.admin.CertificateServices.remove#AcmeName" in-map="{hostName: hostName}" out-map="removeOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="removeOut?.removed"><then><message type="success">Removed ${hostName} and its certificate</message></then>
+                <else><message type="warning">${hostName} was not set up with ACME</message></else></if>
+        </then></if></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const say = (template, values) => String(L(template)).replace(/\$\{(\w+)\}/g, (all, name) => String((values || {})[name] ?? ''))
+        const out = ec.service.sync().name('org.moqui.admin.CertificateServices.get#Certificates').call() || {}
+        const STATES = {AcmeOrdering: [L('Ordering'), 'info'], AcmeIssued: [L('Issued'), 'positive'], AcmeFailed: [L('Failed'), 'negative']}
+        const host = (url) => String(url || '').replace(/^https:\/\//, '').replace(/[/:].*$/, '')
+        const authority = (url) => url === out.stagingUrl ? L('Let\'s Encrypt staging')
+            : host(url) === 'acme-v02.api.letsencrypt.org' ? L('Let\'s Encrypt') : host(url)
+        listenText = out.listenPort != null ? say('The HTTPS listener is on port ${port}.', {port: out.listenPort})
+            : L('The HTTPS listener is not running: with no certificate in runtime/cert it starts when a name is set up with ACME, and then answers only that name\'s challenge until its certificate is there.')
+        challengePort = out.challengePort ?? 443
+        certificateList = Array.from(out.certificateList || []).map((entry) => {
+            const cert = entry.certificate
+            const acme = entry.acme
+            let certText, certLabel, certColor, fileText = ''
+            if (!cert) {
+                certText = L('HTTPS for this name is refused')
+                certLabel = L('None')
+                certColor = 'negative'
+            } else if (cert.problem) {
+                certText = L('It does not load, so HTTPS for this name is refused')
+                certLabel = L('Not usable')
+                certColor = 'negative'
+                fileText = cert.file + ': ' + cert.problem
+            } else {
+                const days = Number(cert.daysLeft)
+                const until = cert.notAfter != null ? ec.l10n.format(new Date(Number(cert.notAfter)), 'yyyy-MM-dd') : ''
+                certText = (cert.issuer || L('Unknown issuer')) + (until ? ' · ' + L('until') + ' ' + until : '') +
+                    (cert.daysLeft != null ? ' (' + (days < 0 ? L('expired') : say('${days} days', {days})) + ')' : '')
+                certColor = days < 0 ? 'negative' : days < 14 ? 'warning' : 'positive'
+                certLabel = days < 0 ? L('Expired') : days < 14 ? L('Expires soon') : L('Valid')
+                const by = cert.matchKind === 'default' ? L('the default certificate') : cert.matchKind === 'wildcard'
+                    ? say('the wildcard of ${name}', {name: String(cert.pair).replace(/^_wildcard\./, '')}) : ''
+                fileText = cert.file + ' (' + (cert.acmeWritten ? L('ACME, set up here') : cert.layout) + ')' + (by ? ' · ' + by : '')
+            }
+            const [stateLabel, stateColor] = acme ? (STATES[acme.statusId] || [L('Set up'), 'info']) : [L('Not set up'), 'grey']
+            let acmeText = ''
+            if (acme) {
+                const parts = [authority(acme.directoryUrl)]
+                parts.push(acme.renewing ? L('renewed before it runs out') : L('not renewed'))
+                if (acme.lastAttemptDate) parts.push(L('last tried') + ' ' + ec.l10n.format(new Date(Number(acme.lastAttemptDate)), ''))
+                if (acme.statusId === 'AcmeFailed' && acme.lastError) parts.push(acme.lastError)
+                if (acme.shadowed) parts.push(L('another certificate file for this name is served before it; remove that file to serve this one'))
+                acmeText = parts.join(' · ')
+            }
+            return {hostName: entry.hostName, reasonsText: Array.from(entry.reasons || []).join(', '), certText, certLabel, certColor, fileText,
+                stateLabel, stateColor, acmeText, setUp: !!acme, renewing: !!acme?.renewing, ordering: !!acme?.ordering}
+        })
+        hostOptions = certificateList.filter((row) => !row.setUp).map((row) => ({hostName: row.hostName}))
+        directoryOptions = [{key: out.directoryUrl, text: authority(out.directoryUrl)},
+            {key: out.stagingUrl, text: L('Let\'s Encrypt staging: test certificates, for a first try')},
+            {key: 'other', text: L('Another authority')}]
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Certificates" style="q-my-none"/>
+            <container style="col"/>
+            <container-dialog id="SetUpDialog" button-text="Set up with ACME" icon="sym_o_add_moderator" width="640" title="Set up a name with ACME" type="primary">
+                <label type="p" text="This node orders the name's certificate from the authority, which checks that the name's DNS points here by a TLS connection to it on port ${challengePort}. It first makes the same check itself. The certificate is renewed before it runs out, and only for the names set up here."/>
+                <form-single name="SetUp" transition="setUp">
+                    <field name="hostName"><default-field title="Name" tooltip="One of the names this node answers"><drop-down allow-empty="true">
+                        <list-options list="hostOptions" key="${hostName}" text="${hostName}"/>
+                    </drop-down></default-field></field>
+                    <field name="otherHostName"><default-field title="Or another name" tooltip="A DNS name whose address is this node, or this node's edge node, such as www.example.com"><text-line/></default-field></field>
+                    <field name="directoryChoice"><default-field title="Authority"><drop-down no-current-selected-key="${directoryOptions[0].key}">
+                        <list-options list="directoryOptions" key="${key}" text="${text}"/>
+                    </drop-down></default-field></field>
+                    <field name="otherDirectoryUrl"><default-field title="Another authority's directory URL" tooltip="Its ACME directory, https://..."><text-line/></default-field></field>
+                    <field name="contactEmail"><default-field title="Contact email" tooltip="Where the authority writes about this account's certificates, if it does"><text-line/></default-field></field>
+                    <field name="termsAgreed"><default-field title=""><check><option key="Y" text="I agree to the authority's terms of service (Let's Encrypt: its Subscriber Agreement)"/></check></default-field></field>
+                    <field name="skipCheck"><default-field title=""><check><option key="Y" text="Order without the check: for a router that cannot connect to its own public address"/></check></default-field></field>
+                    <field name="submitButton"><default-field title="Check and order"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </container>
+        <label type="p" style="m-muted" text="${listenText}"/>
+
+        <container-box><box-header title="What an ACME certificate is and is not"/><box-body>
+            <label type="p" text="An ACME certificate proves control of the domain name and nothing about who runs it. It is free, issued in seconds, short-lived, and depends on renewal working and on the authority being reachable and within its rate limits. It comes with no support and no warranty."/>
+            <label type="p" style="q-mb-none" text="Another certificate is the better choice where more assurance is wanted: an organization-validated or extended-validation certificate for ecommerce, where the authority has checked the business; a certificate under a support contract for a high-volume or high-reliability site; a wildcard; a company's own authority for inside names; a certificate a partner pins. Those are files in runtime/cert (name.crt and name.key, or certbot's name/fullchain.pem and privkey.pem), and they show here beside the others."/>
+        </box-body></container-box>
+
+        <container-box><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="The names this node answers, and the certificate the HTTPS listener serves each. A name with no certificate gets no HTTPS: its handshake is refused, and nothing asks an authority for one unless the name is set up here."/>
+            <form-list name="CertificateList" list="certificateList" skip-form="true" paginate="false">
+                <field name="hostName"><default-field title="Name"><display style="text-weight-medium"/></default-field></field>
+                <field name="reasonsText"><default-field title="Answered as"><display/></default-field></field>
+                <field name="certificate"><default-field title="Certificate">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${certColor}">${certLabel}</q-chip>]]></text><text type="html"><![CDATA[<span class="text-${certColor}">${certLabel}</span>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: certLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="certText"><default-field title=""><display/></default-field></field>
+                <field name="fileText"><default-field title="From"><display/></default-field></field>
+                <field name="acme"><default-field title="ACME">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="html"><![CDATA[<span class="text-${stateColor}">${stateLabel}</span>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="acmeText"><default-field title="Renewal"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="renew" link-type="hidden-form-link" icon="sym_o_autorenew" text="Renew now" style="m-btn-flat"
+                            condition="setUp &amp;&amp; !ordering" parameter-map="{hostName:hostName}"/>
+                    <link url="stopRenewing" link-type="hidden-form-link" icon="sym_o_pause" text="Stop renewing" style="m-btn-flat"
+                            condition="setUp &amp;&amp; renewing" parameter-map="{hostName:hostName}"/>
+                    <link url="renewAgain" link-type="hidden-form-link" icon="sym_o_play_arrow" text="Renew again" style="m-btn-flat"
+                            condition="setUp &amp;&amp; !renewing" parameter-map="{hostName:hostName}"/>
+                    <link url="remove" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger"
+                            condition="setUp" confirmation="Remove ${hostName}? Its certificate and files go, and its HTTPS is refused unless another certificate covers it."
+                            parameter-map="{hostName:hostName}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="hostName"/><field-ref name="certificate"/></column>
+                    <column><field-ref name="acme"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoNames" condition="!certificateList.length"><widgets>
+                <label type="p" text="This node answers no names yet: set webapp_http_host, put a certificate in runtime/cert, or set a name up with ACME." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

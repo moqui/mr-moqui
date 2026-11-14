@@ -42,6 +42,19 @@
     <!-- The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, "off" none.
         webapp_https_port above is the port clients see in generated URLs, which differs behind a reverse proxy. -->
     <default-property name="webapp_https_listen_port" value=""/>
+    <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
+        nobody set up there. acme_directory_url fills in the authority's directory on that screen, Let's Encrypt's; the
+        screen offers its staging directory for a first try and takes any other authority's. acme_account_key is the seed
+        of the ACME account's key (P-256), one account per authority; a new one is a new account, and the certificates
+        already issued stay valid. The members of a cluster share it (the shared .env), or each is an account of its own. acme_challenge_port is the port the set-up check connects to on the name, as the
+        authority does: 443, which the HTTPS listener must answer (a port forward to webapp_https_listen_port, or an edge
+        node's passthrough host); another port only for a test authority. acme_directory_ca, when set, is the root (a PEM
+        file, absolute or under the runtime) the authority's HTTPS is checked against in place of the system's, for a
+        company's own ACME authority. -->
+    <default-property name="acme_directory_url" value="https://acme-v02.api.letsencrypt.org/directory"/>
+    <default-property name="acme_directory_ca" value=""/>
+    <default-property name="acme_account_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="acme_challenge_port" value="443"/>
     <!-- HTTP/2 on the HTTPS listener, chosen by ALPN with HTTP/1.1 beside it: true, or false for HTTP/1.1 only. Over
         HTTP/2 WebSockets use extended CONNECT, and the OTLP receiver's and PASS authority's gRPC, when they are on, are
         served on this port too. The plain HTTP listener is HTTP/1.1. -->

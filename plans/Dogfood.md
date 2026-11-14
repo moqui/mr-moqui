@@ -181,7 +181,8 @@ on every member.
 - **Mail.** moqui.org has no mail server today. The server takes mail itself (`smtp_internet`) or through an edge
   node ([Edge-Node](archive/Edge-Node.md)), and signs what it sends. A list's mail at volume from a new domain needs its
   reputation built (question 11).
-- **Certificates.** certbot writes into `runtime/cert`, which the server re-reads, until F10.
+- **Certificates.** System › Certificates gets each name's certificate by ACME (F10, built with Edge-Node2's E15), or
+  certbot writes into `runtime/cert`, which the server re-reads.
 - **Runners.** On a machine other than the server's, always ([§8.4](#84-safety)).
 - **The machines** run Docker or Podman, and nothing else is asked of a provider's API (D19). The server is the
   image `podman/build.sh` makes from `podman/Containerfile` (the Maximal package on Debian 13), run by the quadlet
@@ -689,7 +690,7 @@ them.
 | F7 | The CI engine: `ci.xml` and `git-ci-3.xsd`, the records, the queue, job tokens, the runner's REST, logs and artifacts, `moqui ci-run`. | `git/`, `host/`, `fw/` |
 | F8 | Runner drivers: host type services for a run that ends (start with limits and an environment, remove, clean up); the Docker Engine API on Docker and on Podman, over a socket or TLS; the `moqui-build` image in `podman/`; registered runners. | `fw/service/org/moqui/dev/InstanceServices.xml`, `fw/entity/ServerEntities.xml` |
 | F9 | REST for repositories, merge requests, reviews, threads and pipeline runs, in OpenAPI, for the Dev AIDE and for anyone's tools. | `runtime/components/base/tools/service/moqui.rest.xml` |
-| F10 | An ACME client, for moqui.org and for a site's own host names; [Edge-Node2](Edge-Node2.md#22-not-built) plans it (E15: from a System screen, never on its own). | `host/tls.rs` |
+| F10 | Built (Nov 13, 2026, [Edge-Node2](Edge-Node2.md#48-certificates-and-acme) E15): an ACME client used only from System › Certificates, for moqui.org and for a site's own host names (TLS-ALPN-01; HTTP-01 and wildcards not built). | `host/acme/`, `host/tls.rs` |
 | F11 | A file system or S3-like store behind content blobs, for artifacts, caches and LFS. In [Remaining-Work](Remaining-Work.md#git-and-git-hosting) already. moqui.org keeps them in the database (D16), with retention, so this waits until their size asks for it. | `crates/moqui-entity/src/resource/blob.rs` |
 | F12 | Later: code search over default branches. | |
 

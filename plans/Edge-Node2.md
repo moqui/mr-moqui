@@ -1,6 +1,6 @@
 # Edge Node 2: domains, pools, edge clusters and the front
 
-Status 2026-11-13: plan; E13 (example confs) and E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) are built ([§5](#5-phases)), the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
+Status 2026-11-13: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
 with E0–E10 and E12 built: the link, web access, delegate, queue and replicate, mr-pass on gRPC, mail, chat webhooks,
 calls, SIP, the XMPP tunnel, the attach wizard and the all-in-one node. This plan carries what that one left open
 ([§2](#2-open-from-edge-node)) and adds what larger deployments need, from the user's notes and answers of Nov 12,
@@ -69,6 +69,7 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 | The whole wizard in one sitting, pairing through the EdgeUrl and Connect screens included | E10 |
 | A real local node paired with a served all-in-one server, with the server's own mail, chat, calls, SIP and XMPP beside the node's | E12 |
 | A shell through the edge node in both web access modes, across a dropped link; the desktop app's pairing checks | [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md) |
+| Real issuance from System › Certificates, Let's Encrypt staging then production, for an edge node's terminate host and for a local node's passthrough name through the tunnel, and their renewal by the job; the set-up check through a home router | E15 |
 
 ### 2.2 Not built
 
@@ -82,7 +83,7 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 | XMPP for two domains on one port | SNI for direct TLS, the stream's `to` for STARTTLS; today a pair of tunnel ports per node | E16 |
 | All-in-one gaps | A voicemail sidecar requeued after a restart goes to the only paired node; a paired number with no fallback row is found only by its trunk | E16 |
 | A TURN secret per pairing | Revoking a node does not end its TURN access: the edge node's one `turn_auth_secret` must be rotated | E16 |
-| An ACME client | Certificates for an edge node's terminate hosts, and through the tunnel for a local node's passthrough names. Also [Dogfood](Dogfood.md) F10 | E15: by a screen, never on its own ([§4.8](#48-certificates-and-acme)) |
+| ACME's other challenges | TLS-ALPN-01 from System › Certificates is built (E15, [§4.8](#48-certificates-and-acme); [Dogfood](Dogfood.md) F10). HTTP-01 where port 80 is open, and DNS-01 for wildcard names, are not | Later |
 | The System menu | It cannot leave a screen out by a condition, so Edge Node and Edge Clients show on every node | Framework, with E16's screens |
 | The edge node's backup job | Built (E13): the property `embedded_db_backup_scheduled=true`, which each boot applies, sets the paused seed job `backup_EmbeddedDatabase_daily` running; `conf/edge/MoquiEdgeConf.xml` and `conf/all-in-one/MoquiAllInOneConf.xml` set it | E13, built |
 | Filtering in moqui (E11) | Content and reputation scoring for mail, internal mail, public forms and outside chat, in place of the external Rspamd | E11, after the first release |
@@ -518,6 +519,46 @@ failure shows on the System home with the expiry. A name nobody set up is never 
 - The account key is a secret in `.env`, and a keyring's once [Sealed-Secrets](Sealed-Secrets.md) is built.
 - A library to check against the license gate in `deny.toml`: `instant-acme`.
 
+**As built (E15, Nov 13, 2026).** `crates/moqui-host/src/acme/`, `org.moqui.admin.CertificateServices`,
+`tools/screen/System/Certificates.xml`, the `moqui.server.Acme*` entities. What differs from the text above or adds to
+it:
+- **The first certificate comes from a challenge-only listener** (decided with the user, Nov 13). A node with no
+  certificate at all still does not bind its HTTPS listener; once a name is set up here it does, and until a
+  certificate is there it answers `acme-tls/1` only for a name with a challenge open and refuses every other
+  handshake. So TLS-ALPN-01 gets a first certificate with no port 80, and down an edge node's tunnel. An explicit
+  `webapp_https_listen_port` with no certificate is no longer an error at start: the listener stands by the same way.
+  It also binds for a name set up on another member, a certificate added to `runtime/cert`, and the length of a
+  set-up check (closing after it when nothing else wants it). An edge node that started so takes no links until it
+  restarts with a certificate.
+- **A cluster** sees a challenge another member wrote, changed or closed within a second: the rows are read again
+  when the last read is a second old, and an order (and the check) waits past that before the authority looks.
+  `acme_account_key` is shared in the members' `.env`.
+- **The edge node** checks a passthrough host before the challenge's ALPN, so a local node's challenge goes down its
+  tunnel untouched and the local node answers it; the edge node answers only for names it ends TLS for.
+- **The check before an order** opens a challenge of its own with a random digest and connects to the name on 443
+  (`acme_challenge_port`) offering `acme-tls/1`: its digest coming back shows the DNS and the port reach this node.
+  A router that cannot connect to its own public address fails it, so the screen offers "order without the check".
+  It runs on the request's thread, for at most about 20 seconds. Calls to the authority have time limits (1 and 3
+  minutes), under the order lock's 15-minute lease; an AcmeOrdering name with no live lock was cut off and counts
+  as failed.
+- **The account** is a P-256 key derived from `acme_account_key` (a generated secret); the same key is one account at
+  each authority, created at the first order. `acme_directory_ca` names a root for a company's own authority.
+- **Renewal** is the `renew_AcmeCertificates_daily` job, seeded paused and started by the first set-up (paused again
+  with the last Remove): a name renews with a third of its certificate's life left, or 30 days with no issue date, not
+  again within six hours of a failure. A failure shows on the screen and on the System home with the expiry.
+- **Files** carry a `.moqui-acme` marker; a `<name>/` directory another tool wrote is refused at set-up and never
+  written over. Each member writes its files from the rows within a minute.
+- **Tests.** Regression (`tests/it/acme.rs`, `src/acme/tests.rs`): no listener and no request with nothing set up;
+  the challenge-only listener; the passthrough challenge down the tunnel; an order against an authority of the test's
+  own (`tests/it/acme_authority.rs`, which checks the challenge as a real one does), served by the listener and renewed
+  by the job, then stopped and removed (rows, files, the job paused); two cluster members on one database answering a
+  challenge as it is now; the refusals (badName, termsNotAgreed, badDirectory, badContact, otherTool, checkFailed,
+  notSetUp); the job's choice of names; a file in `runtime/cert` on the screen; the failure on the System home. Not
+  tested here: httpsOff, and a passing check (the acceptance test runs it, on loopback DNS).
+  Acceptance: `acme::acceptance_certificates_for_an_edge_node_and_its_local_node`. Real issuance is a hand check
+  ([§2.1](#21-checks-on-a-deployed-edge-node)).
+- **Not built:** HTTP-01 and DNS-01.
+
 **The screen says what this is and is not.**
 - An ACME certificate proves control of the domain name and nothing about who runs it. It is free, issued in
   seconds, short-lived, and depends on renewal working and on the authority being reachable and within its rate
@@ -613,7 +654,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 |---|---|---|
 | **E13** | Example confs for the topologies built today, in their directories, with MoquiEdgeConf.xml and MoquiAllInOneConf.xml moved; the conf test; Run-Deploy's sections cut down to them. Each later phase adds its directory. **Built 2026-11-13**: `edge`, `all-in-one`, `pass`, `dev-group` and `local-cluster`, each node started from its conf; the edge node's backup job runs by `embedded_db_backup_scheduled`; the test is `moqui-devkit`'s `runtime_conf_tests` ([§4.9](#49-example-confs-for-each-topology), As built) | Each built topology starts from its directory's files by its README. Run-Deploy names a directory for every topology. The test loads every conf |
 | **E14** | Built 2026-11-13. Root screens by host name: the ten checks of [§4.2](#42-root-screens-by-host-name), what they find fixed, the example conf and the mr-pass per-app hosts (`Pass.xml` as each host's root) | A served instance answers two host names with two root screens: the shell, static files, sign-in, errors and links right on each, each host with its own session. mr-pass serves the Forum and the Shop each at the root of its own host |
-| **E15** | Certificates: the screen and the ACME client ([§4.8](#48-certificates-and-acme)) | A node with no certificate for a name serves no HTTPS for it and asks nobody. From the screen an edge node gets a certificate for a terminate host, and a local node one for a passthrough name through the tunnel. Both renew by the job. A file put in `runtime/cert` shows beside them |
+| **E15** | Built Nov 13, 2026. Certificates: the screen and the ACME client ([§4.8](#48-certificates-and-acme)); acceptance test `acme::acceptance_certificates_for_an_edge_node_and_its_local_node` | A node with no certificate for a name serves no HTTPS for it and asks nobody. From the screen an edge node gets a certificate for a terminate host, and a local node one for a passthrough name through the tunnel. Both renew by the job. A file put in `runtime/cert` shows beside them |
 | **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |
 | **E17** | The front option set and the `node_role` values (`front`, `front_edge`, `edge`); pools: the member list in memory and its report, admission, balancing by protocol with sticky sessions, health and drain, the outbox and replication from a pool; failover to a standby with its notice and Deliver again since; web protection's rules per domain, shared bans and view; the Balancing screen | Two members of a cluster link and share a host name's requests evenly; a browser session stays on one member, and moves when it stops, still signed in. Clients shows a cluster member that is live but not linked. A node on another database with the same key is refused while a member is linked. With the local node stopped, a standby started by hand takes over its names and gets the queued items once; the first machine, started again, is refused. A drained member finishes its requests and gets no new ones |
 | **E18** | The edge cluster: the list of edge members in Hello, a local node's link to each, the in-memory state made right, calls and SIP on several edge members; the Edge cluster screen | A local node links to both members of an edge cluster. A request to either reaches it. With one edge member stopped, web, mail in and the queue go on through the other, and nothing is delivered twice. A clustered all-in-one server takes links on every member |

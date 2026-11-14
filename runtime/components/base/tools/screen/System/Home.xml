@@ -224,7 +224,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const days = Math.floor(Number(certificate.daysLeft))
                 resource(L('Certificate') + ' ' + certificate.name, (days < 0 ? L('Expired') : days + ' ' + L('days left')) + ' · ' + L('until') + ' ' +
                     ec.l10n.format(new Date(Number(certificate.notAfter)), 'yyyy-MM-dd'), certificate.level, 'moqui.tls.certificate.days_left',
-                    L('When the certificate in runtime/cert stops being valid'))
+                    L('When the certificate in runtime/cert stops being valid; System › Certificates shows each name and renews those set up with ACME'))
             }
             // a meter beside each reading that is a share: how full, by its row's name
             const shares = {}
@@ -321,6 +321,7 @@ along with this software (see the LICENSE.md file). If not, see
 
                 entry(server, 'Cache'), entry(server, 'ThreadList'), entry(server, 'TerminalSessions', '', 'sym_o_terminal'),
                 entry(server, 'Print/Printer', '', 'sym_o_print'), entry(server, 'Print/PrintJob', '', 'sym_o_receipt_long'), entry(server, 'Instance'),
+                entry(server, 'Certificates', '', 'sym_o_verified_user'),
 
                 entry(administration, 'Security/UserAccount', '', 'sym_o_person'), entry(administration, 'Access/Groups', '', 'sym_o_group'),
                 entry(administration, 'Access/Capabilities', '', 'sym_o_rule'), entry(administration, 'Access/RowRules', '', 'sym_o_filter_alt'),

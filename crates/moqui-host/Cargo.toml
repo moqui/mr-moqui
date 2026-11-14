@@ -41,6 +41,7 @@ axum = [
     "hyper/http2",
     "hyper-util/http2",
     "axum/http2",
+    "dep:instant-acme",
 ]
 pdf = ["dep:tokio-tungstenite", "dep:futures-util"]
 # The script engine's inline-cache counters in js_speed's section reports (plans/Profiling3.md M6). A measuring build.
@@ -180,6 +181,8 @@ tokio = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 rcgen = { workspace = true }
+# The ACME client of System › Certificates (src/acme, plans/Edge-Node2.md §4.8), with the HTTPS listener (axum).
+instant-acme = { workspace = true, optional = true }
 sha2 = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 # The WebSocket accept key of a forwarded upgrade on an edge node (src/edge_link/web.rs). Already in the graph.

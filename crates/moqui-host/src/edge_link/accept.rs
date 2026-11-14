@@ -191,7 +191,7 @@ impl Acceptor {
         http: &Arc<rustls::ServerConfig>,
     ) -> std::io::Result<Secured> {
         let (accepted, hello) = read_hello(&mut stream).await?;
-        let (link, pairing, server_name) = {
+        let (link, pairing, acme, server_name) = {
             let client_hello = accepted.client_hello();
             let offered = |wanted: &[u8]| {
                 client_hello
@@ -201,6 +201,7 @@ impl Acceptor {
             (
                 offered(ALPN),
                 offered(ALPN_PAIR),
+                offered(crate::acme::ALPN),
                 client_hello.server_name().map(str::to_string),
             )
         };
@@ -229,6 +230,10 @@ impl Acceptor {
                 ));
             }
             return Ok(Secured::Link(Handoff::Passthrough { stream, hello, node }));
+        }
+        // an ACME challenge for a name this node ends TLS for itself; a passthrough name's went down its tunnel above
+        if acme {
+            return Err(crate::acme::answer(accepted, stream, &self.server.factory, server_name.as_deref()).await);
         }
         let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
         Ok(Secured::Http(start.into_stream(Arc::clone(http)).await?))

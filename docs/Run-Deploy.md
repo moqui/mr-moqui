@@ -628,7 +628,7 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 | Port | Listener | Default | Properties |
 |---|---|---|---|
 | 8080 | HTTP | On, every address | `webapp_http_port`, `webapp_http_bind` |
-| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) | `webapp_https_listen_port` (`off`), `webapp_http2` |
+| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp_https_listen_port` (`off`), `webapp_http2` |
 | 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
 | `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
@@ -686,7 +686,43 @@ After that, `default` serves any other name. A domain with no certificate gets a
 again within seconds of a change, so a renewal needs no restart.
 
 In dev (`instance_purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
-certificate, the HTTPS listener does not start, or the start fails when the port was set explicitly.
+certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
+`runtime/cert` (seen within a minute). A `webapp_https_listen_port` set explicitly with no certificate no longer fails
+the start: the listener waits the same way.
+
+**System › Certificates** lists the names this node answers (its own host, its sites' hosts, the SMTP host, the XMPP
+domain, an edge node's terminate hosts, the files in `runtime/cert`) and the certificate each is served: its issuer,
+its expiry and its file. A name with none gets no HTTPS.
+
+**From ACME.** Set up with ACME, on that screen, gets a name's certificate from an ACME authority: Let's Encrypt
+(`acme_directory_url`), its staging directory for a first try, or any other authority's directory URL. Nothing is ever
+asked for a name nobody set up there.
+
+- **The challenge** is TLS-ALPN-01 on the HTTPS listener: the authority connects to the name on port 443, so 443 must
+  reach the listener (a port forward to 8443, the systemd drop-in below, or an edge node). No port 80 is needed.
+  Set up first checks that the name's DNS has an address and that 443 there reaches this node; a router that cannot
+  connect to its own public address fails the check, and the screen offers to order without it. The check takes up
+  to about 20 seconds, and the screen waits for it.
+- **The first certificate.** A node with no certificate at all starts its HTTPS listener when a name is set up (on any
+  member of its cluster), and for the length of a check. Until a certificate is there it answers only the challenges
+  of names set up and refuses every other handshake. An edge node that started with no certificate takes no links
+  either: restart it once it has one.
+- **Behind an edge node.** For a passthrough host the challenge goes down the tunnel untouched, so the local node sets
+  the name up on its own Certificates screen and gets its own certificate. For a terminate host the edge node sets it
+  up on its own screen.
+- **Files.** The certificate is written as `runtime/cert/<name>/fullchain.pem` and `privkey.pem` (certbot's layout),
+  with a `.moqui-acme` marker; a `<name>/` directory another tool wrote is never written over. Another file pair for
+  the name (`<name>.crt`) is served before it.
+- **Renewal.** The `renew_AcmeCertificates_daily` job, paused until a name is set up, renews each name set up there
+  when a third of its certificate's life is left. A failure shows on the screen and on the System home with the
+  expiry. Stop renewing and Remove are on the screen.
+- **Cluster.** One member orders a name at a time (a lock row whose 15-minute lease is by each member's clock, so the
+  clocks must agree); the challenge and the certificate are rows, the key encrypted, so any member answers the
+  challenge and every member writes its own files within a minute.
+- **Account.** The account key is derived from `acme_account_key`, a secret generated into `runtime/.env`; the members
+  of a cluster share it in their shared `.env`, or each is a separate account. For a company's own authority,
+  `acme_directory_ca` names the root its HTTPS is checked against.
+- **Not built:** HTTP-01 (port 80), DNS-01 and so wildcard names.
 
 ### Listen ports and URL ports
 

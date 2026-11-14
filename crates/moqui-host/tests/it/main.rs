@@ -33,6 +33,8 @@ use example as _;
 use ::dev_aide as _;
 
 mod a2a;
+mod acme;
+mod acme_authority;
 mod agent_eval;
 mod agent_members;
 mod agent_remote;
