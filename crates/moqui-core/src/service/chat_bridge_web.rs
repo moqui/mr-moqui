@@ -275,7 +275,7 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     };
     // an all-in-one node (plans/archive/Edge-Node.md §10): the server's own bridge, else a paired node's copy, never both
     if settings.all_in_one() {
-        match super::edge::bridge_owner(&facade, bridge_id, row.is_some()) {
+        match super::edge::bridge_owner(&facade, bridge_id, row.is_some(), request) {
             Ok(super::edge::BridgeOwner::Paired(node, fields)) => {
                 return super::edge::paired_webhook(factory, &facade, bridge_id, request, &node, &fields)
             }
@@ -417,15 +417,27 @@ pub fn media_token_valid(bridge_id: &str, token: &str, now: i64) -> Option<Strin
 /// The file a token names, in the current context: only a file of a message with a delivery to that bridge, while the
 /// token works.
 pub fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
+    media_at(factory, None, bridge_id, token, now)
+}
+
+/// [`media`] for a request to host name `host` (its `Host`): on a node that takes links, a pairing's host name serves
+/// only that pairing's files (plans/Edge-Node2.md §4.1).
+pub fn media_at(
+    factory: &ExecutionContextFactory,
+    host: Option<&str>,
+    bridge_id: &str,
+    token: &str,
+    now: i64,
+) -> Option<MediaFile> {
     let settings = crate::edge::settings(factory);
     // an edge node serves the files its local node put there (chatMedia), by their own tokens
     if settings.edge_node() {
-        return super::edge::media(factory, bridge_id, token, now);
+        return super::edge::media(factory, host, bridge_id, token, now);
     }
     // an all-in-one node (plans/archive/Edge-Node.md §10): a token of the server's own first, else a paired node's file
     let own = own_media(factory, bridge_id, token, now);
     if own.is_none() && settings.all_in_one() {
-        return super::edge::media(factory, bridge_id, token, now);
+        return super::edge::media(factory, host, bridge_id, token, now);
     }
     own
 }

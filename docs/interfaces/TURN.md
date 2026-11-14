@@ -68,32 +68,40 @@ Open these ports on the firewall:
 
 ## On an edge node
 
-An edge node ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4) runs the embedded TURN of its local node's calls, beside its
-media socket (`turn_port` 3478 in `conf/edge/MoquiEdgeConf.xml`, relays to its own media port). The local node gives the legs
-their credentials, and the edge node's TURN checks them with its own `turn_auth_secret`, which the two do not share as
-configuration. So the edge node tells its secret to the local node in the answer to the link's Hello, on an up
-connection whose keys both ends pinned (never in a Hello, which a check before pairing also gets). The local node keeps
-it in memory, never logged, stored or shown, replaced by each new link and forgotten at unpairing, and `make#IceServers`
-signs the edge node's TURN URLs with it (`mediaNodeId`); `turn_external_urls` get a second entry signed with the local
-node's own. Changing the edge node's secret takes effect for the local node at the next link; credentials signed with
-the old one stop working on the edge node at once.
+An edge node ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4) runs the embedded TURN of its local nodes' calls, beside
+its media socket (`turn_port` 3478 in `conf/edge/MoquiEdgeConf.xml`, relays to its own media port). The local node gives
+the legs their credentials, and the edge node's TURN checks them. Each pairing has a secret of its own
+([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16): base64 of HMAC-SHA1 of the pairing's id, its key's
+fingerprint and when it paired, with the edge node's `turn_auth_secret`, which only the edge node holds; a node paired
+again under the same id gets a new secret, and the credentials from before are refused. A node id may not hold `@`. The edge node tells a local node its pairing's secret in the answer
+to the link's Hello, on an up connection whose keys both ends pinned (never in a Hello, which a check before pairing
+also gets). The local node keeps it in memory, never logged, stored or shown, replaced by each new link and forgotten
+at unpairing, and `make#IceServers` signs the edge node's TURN URLs with it (`mediaNodeId`), with a username that
+names the pairing: `<expiry>:<callLegId>@<pairing>` (the id the local node paired as; read so only on a node that
+takes links, so an `@` in a leg elsewhere, an XMPP user's, is no pairing). `turn_external_urls`
+get a second entry signed with the local node's own secret and the plain username. The edge node's TURN checks a
+username that names a pairing with that pairing's secret, and takes it only while the pairing is active (it reads the
+active pairings every second); a leg of a pairing is never an XMPP user's own, so it relays only to the media
+ports. Changing the edge node's secret takes effect for the local nodes at their next link; credentials signed with the
+old one stop working on the edge node at once.
 
 The Edge Node wizard checks this end to end (Apply and Test, plans/archive/Edge-Node.md §5.7): Apply says whether the link
 handed the secret over; Test has `make#IceServers` sign the edge node's URLs for a probe leg (`edgeSetupProbe.<random>`,
-no leg of a call), then allocates with that credential on the edge node's TURN over UDP, as a browser would, asks a
+no leg of a call), then allocates with that credential on the edge node's TURN over UDP, as a browser would (over
+TCP when its TURN has no UDP listener; one with TLS listeners only is not checked), asks a
 permission for the IP of its media address (a permission is for an IP alone; the port rule is checked on data), and deletes the allocation. A refused allocation means the secret the edge node checks
 is not the one it handed over (restart it after changing `turn_auth_secret`). With `turn_public_host` a name, Apply's
 DNS list checks its A and AAAA records against the edge node's addresses or its media address.
 
-**Revoking a local node does not revoke its TURN access.** The secret is the edge node's, one for every node paired
-with it, and a revoked local node (or anyone who read its memory) keeps it and can make credentials until it changes.
-After revoking a node on Edge Clients, set a new `turn_auth_secret` in the edge node's `.env` and restart it; the
-other local nodes get it at their next link. A secret per pair (derived from the edge node's secret and the node's id)
-would need the TURN server to know which node a credential's username is of, which the TURN REST form does not say;
-it is later work.
+**Revoking a local node ends its TURN access.** Within a second or two of the revoke the edge node's TURN refuses every
+username of that pairing and closes its relays, with no new `turn_auth_secret`; the other pairings go on. A pairing's
+secret makes credentials for its own pairing only: one signed for another pairing's name fails. A call's legs on an
+edge node are capped per pairing (`edge_call_legs_per_pairing`, 200 at once; 0 for no cap), so one local node's calls
+do not take every leg of the media node.
 
 The other choice, the local node's secret sent to the edge node, would put a secret the local node also uses for its own
-media nodes and any coturn on the cloud host; the edge node's secret only ever opens the edge node's TURN.
+media nodes and any coturn on the cloud host; a pairing's secret only ever opens the edge node's TURN, for that
+pairing.
 
 ## coturn instead
 

@@ -34,8 +34,8 @@
         offline page (503), the page at edge_offline_page when set. -->
 
     <!-- SSH (.env): edge_ssh_tunnel_port (and edge_ssh_tunnel_host, empty for every address) takes SSH connections for
-        the local node's SSH server (its ssh_port), each admitted by web protection first; edge_ssh_tunnel_node names the
-        node when more than one is linked. -->
+        the local node's SSH server (its ssh_port), each admitted by web protection first, while one local node is
+        linked. With several, each gets a port of its own: a moqui.edge.EdgePort row (System › Edge Clients › Ports). -->
 
     <!-- PASS (plans/archive/Edge-Node.md §5.5): mr-pass here calls its local node as the PASS authority over gRPC down
         the link, with no client secret (the link authenticates it). Set pass_backend_web_url in .env to the local node's
@@ -44,7 +44,8 @@
     <default-property name="pass_backend_url" value="edge:"/>
 
     <!-- XMPP (docs/interfaces/XMPP.md, Behind an edge node): no XMPP server runs here; XMPP clients' ports tunnel to the
-        local node, which ends their TLS with its certificates for the XMPP domain. Set in .env to take them:
+        local node whose XMPP domain each connection names (the TLS server name, or the stream's to), which ends their
+        TLS with its certificates for the domain. One pair of ports takes every paired node's domain. Set in .env:
                                      <default-property name="edge_xmpp_port" value="5222"/>
                                      <default-property name="edge_xmpp_tls_port" value="5223"/>
         (and edge_xmpp_host). _xmpp-client._tcp and _xmpps-client._tcp in public DNS name this node. -->
@@ -105,7 +106,8 @@
     <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
 
     <!-- How work crosses the link (plans/archive/Edge-Node.md §5.2): what waits for a local node that is away is kept 14
-        days (both nodes should keep the same period), and at most 1 GB of it; then the oldest fails, logged. A payload
+        days (both nodes should keep the same period), and at most 1 GB of it for each paired node (a pairing's own
+        EdgeClient.queueMaxMegabytes in place of it, plans/Edge-Node2.md §4.1); then its oldest fails, logged. A payload
         is at most 1 MiB, and a larger body (up to 64 MiB, a mail message) goes as its content. What the edge node
         delegates, the queue kinds and the sets a local node replicates are in MoquiDefaultConf.xml, read by both ends,
         with grants for _EDGE_ (the EDGE_DELEGATE artifact group); an entry may wait less than the link for its answer,

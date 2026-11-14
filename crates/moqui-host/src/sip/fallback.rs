@@ -109,7 +109,11 @@ impl Engine {
         from: String,
         srtp: bool,
     ) {
-        let Some(fallback) = edge::fallback_of(&self.factory, &to).await else {
+        let fallback = match owner.node() {
+            Some(node) => edge::fallback_of(&self.factory, node, &to).await,
+            None => None,
+        };
+        let Some(fallback) = fallback else {
             tracing::info!("SIP call to {to}: no fallback while the local node is away, refused 480");
             let _ = call.reply.send(Decision::Reject(480));
             return;
@@ -228,9 +232,10 @@ impl Engine {
         else {
             return;
         };
+        let node = super::owners::owner_of(leg).node().unwrap_or_default().to_string();
         let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
         tokio::spawn(async move {
-            let result = match edge::fallback_of(&factory, &to).await.filter(|f| f.voicemail) {
+            let result = match edge::fallback_of(&factory, &node, &to).await.filter(|f| f.voicemail) {
                 Some(fallback) => Ok(deposit_answer(&fallback, &caller)),
                 None => Err(format!(
                     "noRoute: the local node is away and {to} has no fallback message"

@@ -33,8 +33,10 @@ pub mod calls;
 pub mod claims;
 pub mod conf;
 pub mod delegate;
+pub mod hosts;
 pub mod media;
 pub mod owner;
+pub mod ports;
 pub mod queue;
 pub mod replica;
 pub mod setup;
@@ -264,6 +266,8 @@ pub struct EdgeClientInfo {
     pub setup_json: String,
     /// When its last Configure came.
     pub setup_date: Option<i64>,
+    /// Its own size cap on the items waiting for it, in megabytes (`queueMaxMegabytes`); `None` for the conf's.
+    pub queue_max_megabytes: Option<i64>,
 }
 
 /// A public host name an edge node answers for a paired local node (`moqui.edge.EdgeHost`, §5.3).
@@ -324,13 +328,9 @@ pub trait EdgeLink: Send + Sync {
     fn revoke(&self, paired_node_id: &str) -> Result<bool, Error>;
     /// On an edge node: a Ping down the local node's down connection, in milliseconds.
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error>;
-    /// On an edge node: the public host names of the paired nodes, of one node when `paired_node_id` is given.
-    fn hosts(&self, paired_node_id: Option<&str>) -> Result<Vec<EdgeHostInfo>, Error>;
-    /// On an edge node: add a host name for a paired node, or change the mode of one it has. A name another node has
-    /// is refused. The answer has the name as it was saved.
-    fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error>;
-    /// On an edge node: remove a host name. False when there was none.
-    fn remove_host(&self, host_name: &str) -> Result<bool, Error>;
+    /// On a node that takes links: the host name rows ([`hosts`]) changed, so load the table in memory again. Nothing
+    /// while this node takes no links; a table that does not load is logged.
+    fn hosts_changed(&self) {}
     /// On an edge node: run `call` on its local node ([`DelegateCall::node`], else the only one linked) and wait for its
     /// answer; [`OFFLINE`] at once while that node's link is down. The caller checks the allowlist, and the local node
     /// checks its own again.

@@ -151,13 +151,13 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Public demo server | The apps for anyone to try with the `john.doe` login | `conf/` (`MoquiDemoConf.xml`) | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
 | A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | [`conf/edge/`](../runtime/conf/edge/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
 | An all-in-one node | A public server, with its own users, apps and data, that is also the edge node of one local node (a desktop or office node), so no second cloud instance is needed | [`conf/all-in-one/`](../runtime/conf/all-in-one/README.md) | Server: Maximal. Local: Maximal or Enterprise | Each its own; the server also keeps the local node's queue and copies | [An all-in-one node](#an-all-in-one-node) |
+| Several local nodes on one edge node | Branch offices, or the separate organizations of one group, each with its own data and domains behind one edge node | [`conf/multi-domain/`](../runtime/conf/multi-domain/README.md) | Local: Maximal or Enterprise. Edge node: Maximal | Each local node its own; the edge node keeps each one's queue and copies | [Several local nodes on one edge node](#several-local-nodes-on-one-edge-node) |
 | The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | In the app; its edge or all-in-one node as above | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
 
 The conf is the runtime conf each node runs, under `runtime/`. A topology's directory has a conf for each kind of node,
 whose comments say what each setting does, and a README with its diagram, the `.env` names each node needs and the
 commands ([runtime/conf](../runtime/conf/README.md)). The sections below keep what each topology is, its steps and
-what is not built. The topologies still to come (several local nodes on one edge node, a standby, an edge cluster, a
-front node, the full stack) get their directories as they are built
+what is not built. The topologies still to come (a standby, an edge cluster, a front node, the full stack) get their directories as they are built
 ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 
 ## Production checklist
@@ -329,8 +329,9 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
 | `edge_sip_enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
-| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
-| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_xmpp_node` | empty | On an edge node, the ports whose connections go to a local node's XMPP server, STARTTLS (5222) and direct TLS (5223), the address they listen on (empty for every one) and the node (empty for the only one linked) |
+| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge_ssh_tunnel_host` |
+| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
+| `edge_call_legs_per_pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
 | `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
 | `edge_mail_mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
@@ -921,8 +922,9 @@ dropped link resumes each terminal by the count of what it drew ([Terminal](ui/T
 
 **Attach a local node in one sitting.**
 1. Set up the edge node from its README: its `.env`, a certificate, and a start with `conf/edge/MoquiEdgeConf.xml`. In
-   its System › Edge Clients, make a pairing code. Edge Clients also lists the paired nodes, pings and revokes them,
-   and shows the edge node's link key fingerprint.
+   its System › Edge Clients › Clients, make a pairing code. Clients also lists the paired nodes, pings and revokes
+   them, and shows the edge node's link key fingerprint; Domains has their host names and what each claims, and Ports
+   their tunnel ports.
 2. On the local node, in System › Edge Node, choose **Pair with an edge node**. Pairing writes `edge_node_url`,
    `edge_node_key`, `edge_node_pin` and `edge_node_id` to `runtime/.env` and brings the link up; unpairing removes them.
    The wizard's steps:
@@ -943,8 +945,8 @@ dropped link resumes each terminal by the count of what it drew ([Terminal](ui/T
       answering), the webhooks, PASS, XMPP, calls and phones (the last three as their guides say). Test again runs it again; Continue anyway goes on with a failure; Finish shows the status.
 3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.
 
-The status screen shows what is set up, with Set up again, which opens the wizard at Discover. Edge Clients shows what
-each node's setup sent. The offer is read fresh each time; a page waits at most 3 s for it, and says when the edge
+The status screen shows what is set up, with Set up again, which opens the wizard at Discover. Edge Clients › Domains
+shows what each node's setup sent. The offer is read fresh each time; a page waits at most 3 s for it, and says when the edge
 node is not answering. The area names in the edge node's Hello are
 read at its start, so restart it after changing its mail, chat, PASS or XMPP settings. A name the operator adds by
 hand on Edge Clients is not checked against the edge node's own names.
@@ -973,7 +975,7 @@ System › Edge Node shows the outbox and the replicated sets, with Pause and Re
 queue and sets. The edge node's database holds the queue, and its conf sets the backup job running
 (`embedded_db_backup_scheduled`).
 
-**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): several local nodes on one edge node (E16), a
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): a
 clustered local node with every member linked (E17; today only the member holding the link sends its outbox and
 replication, and a call's socket on another member is refused), a second edge node (E18), certificates by ACME (E15),
 a PASS read cache on the edge node, and monitoring over the link.
@@ -1003,7 +1005,7 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
   go over the link. A mail domain may be split by address.
 - **Claims both sides make.** The server's own items win. The wizard's Configure refuses the local node's bridges,
   XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `edge_mail_bounce_domain`). A
-  replicated record that claims a server's item is not applied: System › Edge Clients lists it under Replica conflicts,
+  replicated record that claims a server's item is not applied: System › Edge Clients › Domains lists it under Replica conflicts,
   with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
   sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
 - **XMPP.** The server's XMPP server keeps `xmpp_port` and `xmpp_tls_port`. Give the local node's domain tunnel ports
@@ -1016,6 +1018,52 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
 
 **Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): several paired nodes and PASS sites for them (E16),
 and a clustered all-in-one server, where every member takes links (E18).
+
+## Several local nodes on one edge node
+
+One edge node can serve several local nodes, each on its own database with its own domains: branch offices, or the
+separate organizations of one group ([plan](../plans/Edge-Node2.md#41-domains-on-one-edge-node) §4.1). Each local node
+pairs and runs the wizard as it would alone; each is a pairing on the edge node, and the edge node routes each name,
+address, number, bridge, domain and site to the pairing that owns it.
+
+```
+ visitors, mail servers, chat and phone providers
+    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, a tunnel port per local node for SSH
+ edge node      conf/multi-domain/MoquiEdgeConf.xml    the links' queues and copies, one pairing per local node
+    ^  each local node dials 443 and keeps its own link open
+ local node A   conf/multi-domain/MoquiLocalConf.xml   its apps and data, with its own domains
+ local node B   conf/multi-domain/MoquiLocalConf.xml   its apps and data, with its own domains
+```
+
+The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](../runtime/conf/multi-domain/README.md).
+
+1. Set up the edge node as for one local node, from `conf/multi-domain/MoquiEdgeConf.xml`.
+2. For each local node: make a pairing code on the edge node (System › Edge Clients › Clients), and pair and run the
+   wizard on the local node. Give each local node its own `xmpp_domain` and `sip_domain` first.
+3. Check Edge Clients › Domains: each local node's host names, mail domains, XMPP domain, SIP realm and numbers, chat
+   bridges and PASS sites, and any record refused because another node claimed its item.
+4. For SSH, give each local node a tunnel port of its own on Edge Clients › Ports.
+
+- **The first claim holds.** A host name, XMPP domain, SIP realm or PASS site another local node named first is refused
+  in the wizard's Apply ("another node has this name"), and on Edge Clients › Domains for a host name added by hand.
+  A replicated mail address or number another local node holds is kept as a replica conflict, shown on Domains with
+  Check again; an address two nodes both have gets 451 at `RCPT TO` until one lets it go. Chat bridge ids may be the
+  same on two nodes: a webhook goes by the request's host name first.
+- **Each area by its owner.** Web access by host name; mail in by the recipient's address, the most specific match
+  first; chat webhooks by the bridge within the host name; PASS by the site a local node's setup names; XMPP by the
+  domain a client names, on one pair of ports; SIP by the number dialled and the phone's realm; calls by the room's
+  node, with a TURN secret per pairing; delegated calls and the queue by the owner of the item. A call with no owner is
+  refused while more than one local node is paired.
+- **Limits per local node.** The queue's size cap holds for each local node alone, and a local node's own cap is set
+  on Edge Clients › Clients (Queue cap). Mail delivery gives each local node with mail due an even share of its
+  sessions. Call legs have a cap per local node (`edge_call_legs_per_pairing`).
+- **Isolation.** Reasonable, not multi-tenant: one operator runs the edge node, and the local nodes belong to one
+  organization or to related ones. Shared: the edge node's addresses and mail reputation, its DKIM key (published in
+  each domain), its media and TURN ports, web protection's counts, CPU and bandwidth. Revoking a local node ends its
+  link and its TURN access.
+
+**Not built** ([Edge-Node2](../plans/Edge-Node2.md#22-not-built)): an operator per local node with a view of its own,
+and a cluster of local nodes as one pairing (E17).
 
 ## Cluster
 

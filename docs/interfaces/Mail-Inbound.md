@@ -267,6 +267,17 @@ On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), a full
 `RCPT TO` from the server's own accounts first, then the local node's replicated ones, and a message with recipients
 on both sides is delivered once to each. An address both sides hold gets 451, logged.
 
+### Several local nodes on one edge node
+
+With several local nodes on one edge node ([Run-Deploy](../Run-Deploy.md#several-local-nodes-on-one-edge-node),
+[`conf/multi-domain/`](../../runtime/conf/multi-domain/README.md)) each has its own mail domains, and the MX of each
+is the edge node. `RCPT TO` goes to the local node whose replicated accounts have the address, the most specific match
+first (`joe+x@` over `joe@`); a domain may be split between local nodes by address. An address two local nodes both
+have gets 451, logged, until one lets it go, and a replicated account that claims an address another local node holds
+is kept as a replica conflict (System › Edge Clients › Domains). Mail out is DKIM-signed with the edge node's one key,
+published in each domain, and only for the sending node's own domains. Delivery gives each local node with mail due an
+even share of the sessions, and the queue's size cap holds for each local node alone.
+
 ## What it does not do
 
 No `AUTH` (the allow-list is the gateway's identity), no client certificates, no relaying: it takes mail only for its own

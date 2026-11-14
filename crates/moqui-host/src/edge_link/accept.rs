@@ -550,18 +550,29 @@ impl EdgeServer {
         moqui_core::edge::media::advert(&factory).filter(|advert| !advert.media_address.is_empty())
     }
 
-    /// The secret this node's embedded TURN checks credentials with, while it runs: for a local node's Hello answer
-    /// only, so it signs the credentials of this node's TURN URLs (E7). Empty without TURN.
-    fn turn_secret(&self) -> String {
+    /// The secret this node's embedded TURN checks the credentials of local node `node` with, while it runs: for that
+    /// node's Hello answer only, so it signs the credentials of this node's TURN URLs (E7). It is the pairing's own
+    /// (plans/Edge-Node2.md §4.1, E16), derived from `turn_auth_secret`, the pairing's id and `salt` (its key's
+    /// fingerprint and when it paired, `moqui_core::edge::media::pairing_turn_salt`), never the shared secret: the
+    /// TURN server takes it only while the pairing is active and has that salt, so revoking a pairing ends its TURN
+    /// access with no new `turn_auth_secret`, and pairing it again gives it a new secret. Empty without TURN.
+    fn turn_secret(&self, node: &str, salt: &str) -> String {
         if self.media().is_none_or(|advert| advert.turn_urls.is_empty()) {
             return String::new();
         }
         let secret = moqui_lib::env::get_prop_or_env("turn_auth_secret");
         let secret = secret.trim();
-        if secret.is_empty() || secret.ends_with("CHANGEME") {
+        if secret.is_empty() || secret.ends_with("CHANGEME") || node.is_empty() {
+            return String::new();
+        }
+        #[cfg(feature = "rtc")]
+        {
+            moqui_rtc::turn::pairing_secret(secret.as_bytes(), node, salt)
+        }
+        #[cfg(not(feature = "rtc"))]
+        {
+            let _ = salt;
             String::new()
-        } else {
-            secret.to_string()
         }
     }
 
@@ -956,29 +967,63 @@ impl EdgeServer {
         }
     }
 
-    /// The only local node whose link is up, with its down connection's sender and the link's generation: what a
-    /// delegated call or a PASS authority call goes down. [`OFFLINE`] at once while no link is up, and refused while
-    /// several are (plans/archive/Edge-Node.md decision 1).
+    /// The link of the only active pairing, with its down connection's sender and the link's generation: what a
+    /// delegated call with no owner goes down, and a PASS authority call for a site no pairing names. Counted by the
+    /// pairings, not the links up, so with one pairing away such a call is [`OFFLINE`] rather than sent to another
+    /// (plans/Edge-Node2.md §4.1). [`OFFLINE`] at once while no node is paired or that node's link is down, and refused
+    /// while several are paired: such a call needs its owner.
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
-    pub(crate) fn only_link(
+    pub(crate) fn only_pairing_link(
         &self,
     ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
-        let registry = lock(&self.registry);
-        let mut up = registry.links.iter().filter_map(|(node, link)| {
-            let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
-            Some((node.clone(), down.send.clone(), link.generation))
-        });
-        let first = up.next().ok_or_else(|| Error::new(moqui_core::edge::OFFLINE))?;
-        if up.next().is_some() {
-            return Err(Error::new(
-                "several local nodes are linked; a call down the link needs one (plans/archive/Edge-Node.md decision 1)",
-            ));
+        match self.hosts.active().as_slice() {
+            [only] => self.link_of(only),
+            [] => Err(Error::new(format!(
+                "{}: no local node is paired",
+                moqui_core::edge::OFFLINE
+            ))),
+            _ => Err(Error::new(
+                "several local nodes are paired; a call down the link needs its owner, the node of the item it is for \
+                 (plans/Edge-Node2.md §4.1)",
+            )),
         }
-        Ok(first)
     }
 
-    /// The link of `node` while its down connection is up, as [`EdgeServer::only_link`] gives it: what an all-in-one
+    /// The link a PASS authority call for site `site` goes down (plans/Edge-Node2.md §4.1): the pairing whose Configure
+    /// names the site (from the host table, which Configure, pairing and revoking load again); with none naming it,
+    /// the only pairing's, as before E16 (a pairing that names no sites). Refused when no pairing names the site and
+    /// several are paired, or when two name it.
+    ///
+    /// # Errors
+    ///
+    /// [`OFFLINE`] at once while that node's link is down; the refusal.
+    ///
+    /// [`OFFLINE`]: moqui_core::edge::OFFLINE
+    pub(crate) fn pass_link(
+        &self,
+        site: &str,
+    ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
+        let named = match site.trim() {
+            "" => None,
+            site => self.hosts.site_node(site)?,
+        };
+        match named {
+            Some(node) => self.link_of(&node),
+            None => self.only_pairing_link().map_err(|err| {
+                if err.message().starts_with(moqui_core::edge::OFFLINE) {
+                    err
+                } else {
+                    Error::new(format!(
+                        "no paired node names PASS site {site} in its setup, and several are paired, so its authority \
+                         cannot be told"
+                    ))
+                }
+            }),
+        }
+    }
+
+    /// The link of `node` while its down connection is up, as [`EdgeServer::only_pairing_link`] gives it: what an all-in-one
     /// node's delegated call of a paired node's item goes down (plans/archive/Edge-Node.md §10). [`OFFLINE`] at once while that
     /// node's link is down.
     ///
@@ -1021,14 +1066,14 @@ impl EdgeServer {
         }
     }
 
-    /// Run a delegated call on the local node (the only one whose link is up): its answer, or [`OFFLINE`] at once while
-    /// no link is up.
+    /// Run a delegated call on its node (the call's, else the only pairing's): its answer, or [`OFFLINE`] at once while
+    /// that node's link is down.
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
         let (node, send, generation) = match call.node.as_deref() {
             Some(node) => self.link_of(node)?,
-            None => self.only_link()?,
+            None => self.only_pairing_link()?,
         };
         let mut client = super::local_link_client(send);
         // a conf entry may wait less than the link does (E8: routing a call that rings); the local node is told, and
@@ -1126,8 +1171,13 @@ impl EdgeServer {
 
     /// Revoke `node`'s key and close its link.
     pub(crate) fn revoke(&self, node: &str) -> Result<bool, Error> {
-        let revoked = store::revoke_client(&*self.factory()?, node)?;
+        let factory = self.factory()?;
+        let revoked = store::revoke_client(&factory, node)?;
         self.revoked(node);
+        // its setup no longer names sites or bridges, and the only-pairing rule counts it out
+        if let Err(err) = self.hosts.load(&factory) {
+            tracing::error!("Edge node: the host table was not loaded again after revoking {node}: {err}");
+        }
         Ok(revoked)
     }
 
@@ -1268,7 +1318,17 @@ impl Link for LinkService {
         let pairing_node = node.clone();
         let paired = self
             .server
-            .on_pool(move |factory| store::pair_client(factory, &code, &pairing_node, &key, &local))
+            .on_pool({
+                let server = Arc::clone(&self.server);
+                move |factory| {
+                    let paired = store::pair_client(factory, &code, &pairing_node, &key, &local)?;
+                    // a new pairing counts for the only-pairing rule at once
+                    if let Err(err) = server.hosts.load(factory) {
+                        tracing::error!("Edge node: the host table was not loaded again after a pairing: {err}");
+                    }
+                    Ok(paired)
+                }
+            })
             .await
             .map_err(|err| {
                 tracing::error!("Edge pairing from {remote}: {err}");
@@ -1321,10 +1381,34 @@ impl Link for LinkService {
             tracing::warn!("Edge link of {node}: its Hello was not saved: {err}");
         }
         self.helloed.store(true, Ordering::Release);
+        let mut hello = self.server.hello();
+        // E16: the realm of this pairing's phones, from its last Configure, and what its TURN secret is derived from
+        let realm_node = node.to_string();
+        let read = self
+            .server
+            .on_pool(move |factory| {
+                let realm = moqui_core::edge::sip::pairing_realm(factory, &realm_node, false);
+                let salt = match factory.entity() {
+                    Some(facade) => moqui_core::edge::media::pairing_turn_salt(&facade, &realm_node)?,
+                    None => None,
+                };
+                Ok((realm, salt))
+            })
+            .await;
+        let (realm, salt) = read.unwrap_or_else(|err| {
+            tracing::error!("Edge link of {node}: its SIP realm and TURN secret were not read: {err}");
+            (None, None)
+        });
+        if let Some((domain, registrar)) = realm {
+            hello.sip_domain = domain;
+            hello.sip_registrar = registrar;
+        }
         Ok(Response::new(HelloReply {
-            hello: Some(self.server.hello()),
+            hello: Some(hello),
             generation,
-            turn_secret: self.server.turn_secret(),
+            turn_secret: salt
+                .map(|salt| self.server.turn_secret(node, &salt))
+                .unwrap_or_default(),
         }))
     }
 
@@ -1442,8 +1526,15 @@ impl Link for LinkService {
     async fn unpair(&self, _request: Request<UnpairRequest>) -> Result<Response<UnpairReply>, Status> {
         let (node, _) = self.up()?;
         let key = node.to_string();
+        let server = Arc::clone(&self.server);
         self.server
-            .on_pool(move |factory| store::revoke_client(factory, &key))
+            .on_pool(move |factory| {
+                let revoked = store::revoke_client(factory, &key)?;
+                if let Err(err) = server.hosts.load(factory) {
+                    tracing::error!("Edge node: the host table was not loaded again after {key} unpaired: {err}");
+                }
+                Ok(revoked)
+            })
             .await
             .map_err(|err| {
                 tracing::error!("Edge link of {node}: Unpair failed: {err}");

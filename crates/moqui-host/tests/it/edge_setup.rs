@@ -37,7 +37,7 @@
 //!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission for the IP of
 //!   the media address. Calls off keeps the row as draining, which Test does not check, and Status says so.
 //! - Phones: the edge node runs a SIP engine (the process's one: the local node has none) on loopback. The offer and
-//!   the Hello name it, with another local node active making its copies unread; once that node is revoked, a trunk
+//!   the Hello name it, another local node active beside it (E16: taking nothing of its); once that node is revoked, a trunk
 //!   set up on the local node replicates and the edge node's engine loads it. Discover shows the trunk with its
 //!   numbers and the fallback summary; Apply writes `edge_sip_enabled`, with lines for the sets, the link-kept row, the
 //!   realm and the fallbacks; Test finds the row live, the trunk loaded and the fallbacks there. Phones off sends both
@@ -272,15 +272,6 @@ impl EdgeLink for DialerLink {
     fn ping_client(&self, _node: &str) -> Result<f64, LibError> {
         Err(not_here())
     }
-    fn hosts(&self, _node: Option<&str>) -> Result<Vec<EdgeHostInfo>, LibError> {
-        Err(not_here())
-    }
-    fn add_host(&self, _host: &EdgeHostInfo) -> Result<EdgeHostInfo, LibError> {
-        Err(not_here())
-    }
-    fn remove_host(&self, _host_name: &str) -> Result<bool, LibError> {
-        Err(not_here())
-    }
     fn offer(&self) -> Result<EdgeOffer, LibError> {
         self.runtime.block_on(self.dialer.offer()).map_err(LibError::new)
     }
@@ -387,7 +378,6 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
             "What this node uses the edge node for",
             "sales@example.com",
             "Texts",
-            "so its SIP engine reads no node&#39;s trunks or fallbacks",
             "The system&#39;s mail has a server of its own now",
         ],
     );
@@ -1167,8 +1157,8 @@ fn a_local_node_is_attached_from_the_wizard() {
         offer.sip
     );
     assert!(
-        offer.sip.other_nodes && offer.sip.trunks.is_empty(),
-        "another local node active, so the engine reads no copies: {:?}",
+        !offer.sip.other_nodes && offer.sip.trunks.is_empty(),
+        "another local node active takes nothing of this one's (E16), and this one has no trunk yet: {:?}",
         offer.sip
     );
     let sip_port: u16 = sip_address.rsplit_once(':').unwrap().1.parse().unwrap();
@@ -1188,7 +1178,9 @@ fn a_local_node_is_attached_from_the_wizard() {
             && offer.xmpp.port == xmpp_port
             && offer.xmpp.tls_port == xmpp_tls_port
             && !offer.xmpp.other_node
-            && !offer.xmpp.needs_node,
+            // another pairing is active and this node named no XMPP domain yet: the ports cannot find it until Apply
+            // names it (E16)
+            && offer.xmpp.needs_node,
         "the tunnel ports: {:?}",
         offer.xmpp
     );
@@ -1221,7 +1213,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         .collect();
     assert_eq!(errors["erp.example.com"], "");
     assert_eq!(
-        errors["taken.example.com"], "another local node has this name",
+        errors["taken.example.com"], "another node has this name",
         "the other node is not named"
     );
     let names = hosts(&edge);

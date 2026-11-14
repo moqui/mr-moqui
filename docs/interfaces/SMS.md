@@ -64,6 +64,10 @@ with a messaging bridge and no trunk texts.
 - On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own bridges and numbers and
   the local node's share the webhook route; each id and number belongs to one side, and the server refuses one the
   other side has.
+- With several local nodes on one edge node ([Run-Deploy](../Run-Deploy.md#several-local-nodes-on-one-edge-node)) a
+  number belongs to the first local node whose copies have it (another's record for it is kept as a conflict), and
+  bridge ids may be the same on two: a local node whose ids may collide sets `channels_public_url` to one of its
+  terminate host names and gives that address in the portal ([Chat-Bridges](Chat-Bridges.md#administration)).
 
 ## The number pair's room
 

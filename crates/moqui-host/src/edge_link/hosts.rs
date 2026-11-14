@@ -23,13 +23,9 @@ use std::sync::RwLock;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 use moqui_lib::error::Error;
-use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::sync::{read, write};
 
 use super::store;
-
-const HOST: &str = "moqui.edge.EdgeHost";
-const CLIENT: &str = "moqui.edge.EdgeClient";
 
 /// How the edge node handles a host's connections.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,18 +53,129 @@ pub(crate) struct Route {
     pub mode: Mode,
 }
 
-/// The host names by their normal form ([`normalize`]), with the number of the load that wrote them.
+/// The host names by their normal form ([`normalize`]) and what the active pairings' kept setups say, as one load
+/// wrote them (plans/Edge-Node2.md §4.1).
 #[derive(Default)]
 pub(crate) struct Hosts {
-    table: RwLock<(u64, HashMap<String, Route>)>,
+    table: RwLock<Table>,
     loads: AtomicU64,
+}
+
+/// One load of [`Hosts`].
+#[derive(Default)]
+pub(crate) struct Table {
+    /// The number of the load that wrote it.
+    load: u64,
+    routes: HashMap<String, Route>,
+    /// The chat bridge ids each active pairing routes through this node, by node; empty when this node takes no
+    /// webhooks (no `channels` feature, or `channels_webhooks_enabled` not true).
+    chat: HashMap<String, Vec<String>>,
+    /// The PASS sites (lower case) the active pairings' Configures name: the node, or `None` for a site two name.
+    sites: HashMap<String, Option<String>>,
+    /// The active pairings, in id order.
+    active: Vec<String>,
+    /// Each active pairing's XMPP domain (its Configure's `xmppDomain`, lower case), for the XMPP ports of every domain
+    /// (`tunnel::xmpp_route`); empty for one that named none.
+    xmpp: Vec<(String, String)>,
+}
+
+/// Whether this node answers chat webhooks itself, as `crate::channels` adds its routes.
+fn takes_webhooks() -> bool {
+    cfg!(feature = "channels") && moqui_lib::env::get_prop_or_env("channels_webhooks_enabled").trim() == "true"
+}
+
+/// What the active pairings' kept setups say, as a table with no routes: each node's chat bridges, the PASS sites by
+/// node (a site two name is logged and kept as `None`), and the nodes.
+fn setup_maps(setups: Vec<(String, serde_json::Value)>, webhooks: bool) -> Table {
+    let names = moqui_core::edge::hosts::setup_list;
+    let mut chat = HashMap::new();
+    let mut sites: HashMap<String, Option<String>> = HashMap::new();
+    let mut active = Vec::with_capacity(setups.len());
+    let mut xmpp = Vec::with_capacity(setups.len());
+    for (node, setup) in setups {
+        let domain = setup["xmppDomain"]
+            .as_str()
+            .and_then(super::xmpp_domain::host_name)
+            .unwrap_or_default();
+        xmpp.push((node.clone(), domain));
+        if webhooks {
+            chat.insert(node.clone(), names(&setup, "chatBridgeIds"));
+        }
+        for site in names(&setup, "passSites") {
+            let site = site.to_ascii_lowercase();
+            match sites.get(&site) {
+                Some(Some(other)) if *other != node => {
+                    tracing::error!(
+                        "Edge hosts: PASS site {site} is named by both {other} and {node}; its calls are refused until \
+                         one Configures without it"
+                    );
+                    sites.insert(site, None);
+                }
+                Some(_) => {}
+                None => {
+                    sites.insert(site, Some(node.clone()));
+                }
+            }
+        }
+        active.push(node);
+    }
+    Table {
+        chat,
+        sites,
+        active,
+        xmpp,
+        ..Table::default()
+    }
+}
+
+/// The bridge id of a chat path this node answers itself on a pairing's terminate host: `/channels/{id}/webhook` (a
+/// network's webhook, queued for the node) and `/channels/{id}/media/{token}` (a file the node put here).
+fn chat_bridge_of(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/channels/")?;
+    let (id, tail) = rest.split_once('/')?;
+    (!id.is_empty() && (tail == "webhook" || tail.starts_with("media/"))).then_some(id)
 }
 
 impl Hosts {
     /// The route of `name` (a `Host` header or a TLS server name, normalized here).
     pub(crate) fn route(&self, name: &str) -> Option<Route> {
         let name = normalize(name)?;
-        read(&self.table).1.get(&name).cloned()
+        read(&self.table).routes.get(&name).cloned()
+    }
+
+    /// The pairing whose Configure names PASS site `site`: `Ok(None)` when none does, an error when two do.
+    pub(crate) fn site_node(&self, site: &str) -> Result<Option<String>, Error> {
+        match read(&self.table).sites.get(&site.trim().to_ascii_lowercase()) {
+            None => Ok(None),
+            Some(Some(node)) => Ok(Some(node.clone())),
+            Some(None) => Err(Error::new(format!(
+                "PASS site {} is named by more than one paired node, so its authority cannot be told",
+                site.trim()
+            ))),
+        }
+    }
+
+    /// The active pairings, as the last load read them.
+    pub(crate) fn active(&self) -> Vec<String> {
+        read(&self.table).active.clone()
+    }
+
+    /// Each active pairing and its XMPP domain, as the last load read them (E16).
+    pub(crate) fn xmpp_domains(&self) -> Vec<(String, String)> {
+        read(&self.table).xmpp.clone()
+    }
+
+    /// Whether this node answers `path` itself on a terminate host of `node`, rather than sending it down the link: a
+    /// chat bridge's webhook or file, for a bridge `node` routes through this node, so a network's webhook at the
+    /// pairing's own name is queued while the node is away and goes by the bridge id within that name.
+    pub(crate) fn answers_here(&self, node: &str, path: &str) -> bool {
+        let Some(bridge) = chat_bridge_of(path) else {
+            return false;
+        };
+        read(&self.table)
+            .chat
+            .get(node)
+            .is_some_and(|bridges| bridges.iter().any(|id| id == bridge))
     }
 
     /// Replace the table with the rows, unless a load that began later has written it already.
@@ -98,126 +205,36 @@ impl Hosts {
                 ),
             }
         }
-        let count = table.len();
+        let setups = store::setups(factory)?;
+        let mut loaded = setup_maps(setups, takes_webhooks());
+        loaded.load = load;
+        loaded.routes = table;
+        let count = loaded.routes.len();
         let mut current = write(&self.table);
-        if current.0 < load {
-            *current = (load, table);
+        if current.load < load {
+            *current = loaded;
         }
         Ok(count)
     }
 }
 
-/// A host name's normal form: trimmed, lower case, with no port or trailing dot, or `None` when it is not a DNS name
-/// (letters, digits, `-` and `.`, at most 253 bytes; an IP literal in brackets is not one).
-pub(crate) fn normalize(name: &str) -> Option<String> {
-    let name = name.trim();
-    let name = match name.rsplit_once(':') {
-        Some((host, port)) if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) => host,
-        _ => name,
-    };
-    let name = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
-    let valid = !name.is_empty()
-        && name.len() <= 253
-        && !name.starts_with('.')
-        && !name.contains("..")
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.');
-    valid.then_some(name)
-}
+/// A host name's normal form ([`moqui_core::edge::hosts::normalize`]).
+pub(crate) use moqui_core::edge::hosts::normalize;
 
-fn text(value: Option<&Value>) -> String {
-    value.map(to_plain_string).unwrap_or_default()
-}
-
-/// The rows, of one node when `node` is given, by name.
+/// The rows, of one node when `node` is given, by name ([`moqui_core::edge::hosts::list`]).
 pub(crate) fn list(factory: &ExecutionContextFactory, node: Option<&str>) -> Result<Vec<EdgeHostInfo>, Error> {
-    let facade = store::facade(factory)?;
-    store::transaction(&facade, HOST, || {
-        let mut find = facade.find(HOST)?;
-        if let Some(node) = node {
-            find = find.eq("pairedNodeId", Value::string(node));
-        }
-        let rows = find.order_by("hostName", false).list()?;
-        Ok(rows
-            .iter()
-            .map(|row| EdgeHostInfo {
-                host_name: text(row.get("hostName")),
-                paired_node_id: text(row.get("pairedNodeId")),
-                mode_enum_id: text(row.get("modeEnumId")),
-            })
-            .collect())
-    })
+    moqui_core::edge::hosts::list(&store::facade(factory)?, node)
 }
 
-/// Save `host` for its node: a new name, or a new mode for a name the node has. A name of another node, a node that is
-/// not paired or was revoked, and a name that is not a DNS name are refused. It commits in a transaction of its own,
-/// so the table in memory, loaded again after it, never holds a change a caller's transaction rolls back.
+/// Save `host` for its node, committed in a transaction of its own ([`moqui_core::edge::hosts::add`]): the caller
+/// loads the table again after it.
 pub(crate) fn add(factory: &ExecutionContextFactory, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error> {
-    let name = normalize(&host.host_name)
-        .ok_or_else(|| Error::new(format!("{} is not a host name", host.host_name.trim())))?;
-    if Mode::from_enum(&host.mode_enum_id).is_none() {
-        return Err(Error::new(format!(
-            "the mode must be {HOST_PASSTHROUGH} or {HOST_TERMINATE}"
-        )));
-    }
-    let facade = store::facade(factory)?;
-    store::committed(&facade, HOST, || {
-        let node = facade
-            .find(CLIENT)?
-            .eq("pairedNodeId", Value::string(&host.paired_node_id))
-            .one()?;
-        let active = node
-            .as_ref()
-            .is_some_and(|node| text(node.get("statusId")) == store::ACTIVE);
-        if !active {
-            return Err(Error::new(format!(
-                "no local node {} is paired with this edge node, or it was revoked",
-                host.paired_node_id
-            )));
-        }
-        let existing = facade
-            .find(HOST)?
-            .eq("hostName", Value::string(&name))
-            .for_update(true)
-            .one()?;
-        if let Some(existing) = &existing {
-            let owner = text(existing.get("pairedNodeId"));
-            if owner != host.paired_node_id {
-                return Err(Error::new(format!("{name} is a host of local node {owner}")));
-            }
-        }
-        let mut row = facade.make_value(HOST)?;
-        row.set("hostName", Value::string(&name));
-        row.set("pairedNodeId", Value::string(&host.paired_node_id));
-        row.set("modeEnumId", Value::string(&host.mode_enum_id));
-        if existing.is_none() {
-            row.set("createdDate", moqui_core::user::now_value());
-        }
-        row.create_or_update(&facade)?;
-        Ok(EdgeHostInfo {
-            host_name: name.clone(),
-            paired_node_id: host.paired_node_id.clone(),
-            mode_enum_id: host.mode_enum_id.clone(),
-        })
-    })
+    moqui_core::edge::hosts::add(&store::facade(factory)?, host)
 }
 
-/// Remove a name; false when there was none.
+/// Remove a name; false when there was none ([`moqui_core::edge::hosts::remove`]).
 pub(crate) fn remove(factory: &ExecutionContextFactory, host_name: &str) -> Result<bool, Error> {
-    let Some(name) = normalize(host_name) else {
-        return Ok(false);
-    };
-    let facade = store::facade(factory)?;
-    store::committed(&facade, HOST, || {
-        if facade.find(HOST)?.eq("hostName", Value::string(&name)).one()?.is_none() {
-            return Ok(false);
-        }
-        let mut row = facade.make_value(HOST)?;
-        row.set("hostName", Value::string(&name));
-        row.delete(&facade)?;
-        Ok(true)
-    })
+    moqui_core::edge::hosts::remove(&store::facade(factory)?, host_name)
 }
 
 #[cfg(test)]

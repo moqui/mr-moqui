@@ -1200,7 +1200,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     );
     server.command(&json!({"op": "flush_sessions"}));
     let admin = crate::common::sign_in(server.http, "john.doe", "moqui");
-    let page = crate::common::http_request("GET", "/System/EdgeClients", &[("Cookie", &admin)], "");
+    let page = crate::common::http_request("GET", "/System/EdgeClients/Domains", &[("Cookie", &admin)], "");
     let (status, _, page) = crate::common::exchange(server.http, &page);
     assert_eq!(status, 200, "{page}");
     assert!(

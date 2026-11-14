@@ -12,344 +12,52 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Edge Clients (plans/archive/Edge-Node.md §5.7): on an edge node (node_role=edge), the local nodes paired with it and their links
-    (org.moqui.edge.EdgeServices.get#EdgeClients): state, generation, last connect, address and versions. Ping sends a
-    Ping down a node's down connection and shows the round trip; Revoke ends its key and closes its link. Make a pairing
-    code (create#PairingCode) shows the code once, after the redirect, as the Chat apps screen shows a new app password;
-    only its hash is kept. Near the top is this edge node's link key fingerprint (get#LinkStatus linkFingerprint), for the
-    operator to compare with what a local node's Connect step shows. On a node that is not an edge node, and in a build
-    without the edge link or a process where it is not running (no HTTPS listener started it), a notice instead. The menu cannot leave this screen out by node role, so it is listed on
-    every node. Host names (§5.3, get#EdgeHosts, add#EdgeHost, remove#EdgeHost) are the public names this edge node
-    answers for a paired node, each passthrough or terminate. Each node's queue (§5.2, get#QueueStatus) shows the items
-    waiting for it and the failed ones, with the oldest waiting; Replicated sets shows each node's sets as this edge
-    node has applied them. Set up is what the node's last Configure, from its Edge Node wizard (§5.7, E10), set besides
-    its host names: its mail domains, chat bridges and PASS sites. An all-in-one node (node_role=all-in-one, §10), a full
-    server that also takes a local node's link, shows this screen too, with Replica conflicts: the records of a node's sets
-    not applied because each claims an item the server holds (get#ReplicaConflicts), and Check again
-    (recheck#ReplicaConflicts) to apply those the server no longer holds. -->
+<!-- Edge Clients (plans/archive/Edge-Node.md §5.7, plans/Edge-Node2.md §4.10): on a node that takes links (node_role edge,
+    a dedicated edge node, or all-in-one, a full server that also takes links), the local nodes paired with it, one
+    pairing each, in three tabs: Clients (each pairing's link, queue, queue cap and replicated sets; ping, revoke, a
+    pairing code), Domains (what each pairing claims: host names, which are added and removed here, and from its own
+    setup its mail domains, XMPP domain, SIP realm, numbers, chat bridges and PASS sites; the replica conflicts) and
+    Ports (the TCP ports that go to one pairing each, as SSH or XMPP tunnels). The menu shows it only on such a node
+    (default-menu-include reads node_role); elsewhere, and in a build without the edge link, the page is a notice. While
+    the link is not running (no HTTPS listener started it) the tabs show the rows, with a warning: nothing links, and
+    ping cannot reach a node. Every call goes through org.moqui.edge.EdgeServices (get#LinkStatus here). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Edge Clients" default-menu-index="14" default-menu-group="Integration" menu-image="sym_o_lan" menu-image-type="icon">
+        default-menu-title="Edge Clients" default-menu-index="14" default-menu-group="Integration" menu-image="sym_o_lan" menu-image-type="icon"
+        default-menu-include="['edge', 'all-in-one'].includes(String(System.getProperty('node_role') ?? '').trim().toLowerCase())">
+    <subscreens default-item="Clients"/>
 
-    <transition name="makePairingCode">
-        <service-call name="org.moqui.edge.EdgeServices.create#PairingCode" in-map="{validMinutes:validMinutes}" out-map="codeOut"/>
-        <actions><!-- shown once, after the redirect -->
-            <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newEdgePairingCode = codeOut.code ?? ''; ec.web.sessionAttributes.newEdgePairingExpire = codeOut.expireDate ? ec.l10n.format(codeOut.expireDate, '') : '' }</script></actions>
-        <default-response url="."/><error-response url="."/>
-    </transition>
-    <transition name="revokeClient">
-        <service-call name="org.moqui.edge.EdgeServices.revoke#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="revokeOut"/>
-        <actions><if condition="!ec.message.hasError()"><then>
-            <if condition="revokeOut?.revoked"><then><message type="success">Revoked: the node's link is closed</message></then>
-                <else><message type="warning">No such node is paired</message></else></if>
-        </then></if></actions>
-        <default-response url="."/>
-        <error-response url="."/>
-    </transition>
-    <transition name="addHost">
-        <service-call name="org.moqui.edge.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}" out-map="hostOut"/>
-        <actions><if condition="!ec.message.hasError()"><message type="success">${hostOut.hostName} now goes to ${pairedNodeId}</message></if></actions>
-        <default-response url="."/>
-        <error-response url="."/>
-    </transition>
-    <transition name="removeHost">
-        <service-call name="org.moqui.edge.EdgeServices.remove#EdgeHost" in-map="{hostName:hostName}" out-map="removeOut"/>
-        <actions><if condition="!ec.message.hasError()"><then>
-            <if condition="removeOut?.removed"><then><message type="success">Removed ${hostName}</message></then>
-                <else><message type="warning">No such host name</message></else></if>
-        </then></if></actions>
-        <default-response url="."/>
-        <error-response url="."/>
-    </transition>
-    <transition name="recheckConflicts">
-        <service-call name="org.moqui.edge.EdgeServices.recheck#ReplicaConflicts" in-map="{pairedNodeId:pairedNodeId}" out-map="recheckOut"/>
-        <actions><if condition="!ec.message.hasError()"><message type="success">Checked again: ${recheckOut?.applied ?? 0} applied</message></if></actions>
-        <default-response url="."/>
-        <error-response url="."/>
-    </transition>
-    <transition name="pingClient">
-        <service-call name="org.moqui.edge.EdgeServices.ping#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="pingOut"/>
-        <actions><if condition="!ec.message.hasError()"><message type="success">Round trip to ${pairedNodeId}: ${ec.l10n.format(pingOut.rttMs, '#,##0.0')} ms</message></if></actions>
-        <default-response url="."/>
-        <error-response url="."/>
-    </transition>
-
-    <actions><script><![CDATA[
-        const L = (text) => ec.l10n.localize(text)
-        newCode = ec.web.sessionAttributes.remove('newEdgePairingCode') || null
-        newCodeExpire = ec.web.sessionAttributes.remove('newEdgePairingExpire') || ''
+    <!-- always, so a tab rendered alone (its transitions, the terminal's standalone render) knows the node's role -->
+    <always-actions><script><![CDATA[
         const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
-        notStarted = link.state === 'notStarted'
         // a dedicated edge node and an all-in-one node both take links (plans/archive/Edge-Node.md §10)
-        notEdge = !notBuilt && !notStarted && !['edge', 'all-in-one'].includes(link.nodeRole)
-        isEdge = !notBuilt && !notStarted && !notEdge
+        takesLinks = ['edge', 'all-in-one'].includes(link.nodeRole)
+        notEdge = !notBuilt && !takesLinks
+        isEdge = !notBuilt && takesLinks
+        notStarted = isEdge && link.state === 'notStarted'
         allInOne = isEdge && link.nodeRole === 'all-in-one'
-        conflictList = []
-        clientList = []
-        cursorList = []
-        clientsError = ''
-        hostList = []
-        nodeOptions = []
-        // empty when the HTTPS listener is off: the link key is loaded with it
-        linkKey = {linkFingerprint: isEdge ? link.linkFingerprint || '' : ''}
-        if (!isEdge) return
-        // a probe (Practices-App-Dev §4): an edge node whose HTTPS listener is off takes no links, and the page says so
-        let out = {}
-        let hostsOut = {}
-        let queueOut = {}
-        let conflictsOut = {}
-        ec.message.pushErrors()
-        try {
-            out = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeClients').call() || {}
-            if (!ec.message.hasError()) hostsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeHosts').call() || {}
-            if (!ec.message.hasError()) {
-                queueOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#QueueStatus').call() || {}
-            }
-            if (!ec.message.hasError() && allInOne) {
-                conflictsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#ReplicaConflicts').call() || {}
-            }
-            if (ec.message.hasError()) clientsError = ec.message.getErrorsString()
-        } finally {
-            ec.message.clearErrors()
-            ec.message.popErrors()
-        }
-        if (clientsError) return
-        // each node's queue: the items waiting for it (all kinds) and the failed ones, and the oldest waiting
-        const queues = {}
-        for (const kind of Array.from(queueOut.kindList || [])) {
-            if (kind.directionEnumId !== 'EqdToLocal') continue
-            const queue = queues[kind.pairedNodeId] ||
-                (queues[kind.pairedNodeId] = {pending: 0, failed: 0, oldest: null})
-            queue.pending += Number(kind.pending || 0)
-            queue.failed += Number(kind.failed || 0)
-            if (kind.oldestAgeSeconds != null) queue.oldest = Math.max(queue.oldest ?? 0, Number(kind.oldestAgeSeconds))
-        }
-        const age = (seconds) => seconds == null ? '' : seconds < 120 ? seconds + ' s' : seconds < 7200
-            ? Math.round(seconds / 60) + ' min' : Math.round(seconds / 3600) + ' h'
-        cursorList = Array.from(queueOut.cursorList || []).map((cursor) => ({
-            nodeId: cursor.pairedNodeId, setName: cursor.setName,
-            epochText: cursor.epoch ? String(cursor.epoch).slice(0, 8) : '', seqText: String(cursor.sequenceNum ?? 0),
-            valuesText: String(cursor.values ?? 0),
-            appliedText: cursor.appliedDate ? ec.l10n.format(cursor.appliedDate, '') : '',
-            snapshotText: cursor.snapshotDate ? ec.l10n.format(cursor.snapshotDate, '') : L('Not yet')}))
-        clientList = Array.from(out.clientList || []).map((client) => {
-            const revoked = client.statusId === 'EdgeClientRevoked'
-            const [stateLabel, stateColor] = revoked ? [L('Revoked'), 'negative']
-                : client.linked && client.down ? [L('Linked'), 'positive']
-                : client.linked ? [L('Connecting'), 'info'] : [L('Offline'), 'grey']
-            return {pairedNodeId: client.pairedNodeId, stateLabel, stateColor, revoked, linked: !!client.linked && !!client.down,
-                generationText: client.generation ? String(client.generation) : '',
-                lastConnectText: client.lastConnectDate ? ec.l10n.format(client.lastConnectDate, '') : L('Never'),
-                remoteAddress: client.remoteAddress || '',
-                versionText: (client.binaryVersion || '') + (client.linkVersion ? ' · ' + L('link') + ' ' + client.linkVersion : ''),
-                keyFingerprint: client.keyFingerprint || '',
-                keyShort: client.keyFingerprint ? String(client.keyFingerprint).slice(0, 16) + '…' : '',
-                setupText: (() => {
-                    const setup = client.setup
-                    if (!setup) return L('Not yet')
-                    const parts = []
-                    if ((setup.mailDomains || []).length) parts.push(L('mail') + ' ' + Array.from(setup.mailDomains).join(', '))
-                    if ((setup.chatBridgeIds || []).length) parts.push(ec.resource.expand('${n} chat bridges', '', {n: setup.chatBridgeIds.length}))
-                    if ((setup.passSites || []).length) parts.push(L('PASS') + ' ' + Array.from(setup.passSites).join(', '))
-                    const when = client.setupDate ? ' (' + ec.l10n.format(client.setupDate, '') + ')' : ''
-                    return (parts.length ? parts.join('; ') : L('Host names only')) + when
-                })(),
-                queueText: (() => {
-                    const queue = queues[client.pairedNodeId]
-                    if (!queue) return L('Empty')
-                    let text = queue.pending + ' ' + L('waiting')
-                    if (queue.oldest != null) text += ' (' + L('oldest') + ' ' + age(queue.oldest) + ')'
-                    if (queue.failed) text += ', ' + queue.failed + ' ' + L('failed')
-                    return text
-                })()}
-        })
-        conflictList = Array.from(conflictsOut.conflictList || []).map((conflict) => ({
-            nodeId: conflict.pairedNodeId, setName: conflict.setName,
-            itemText: (conflict.claimLabel || '') + ' ' + (conflict.itemKey || ''),
-            ownerText: conflict.ownerText || '',
-            lastText: conflict.lastDate ? ec.l10n.format(conflict.lastDate, '') : ''}))
-        nodeOptions = clientList.filter((client) => !client.revoked).map((client) => ({nodeId: client.pairedNodeId}))
-        hostList = Array.from(hostsOut.hostList || []).map((host) => {
-            const terminate = host.modeEnumId === 'EdgeHostTerminate'
-            return {hostName: host.hostName, nodeId: host.pairedNodeId,
-                modeLabel: terminate ? L('Terminate') : L('Passthrough'), modeColor: terminate ? 'warning' : 'positive'}
-        })
-    ]]></script></actions>
+        // empty while the HTTPS listener is off: the link key is loaded with it
+        linkFingerprint = isEdge ? link.linkFingerprint || '' : ''
+    ]]></script></always-actions>
     <widgets>
         <section name="NotBuilt" condition="notBuilt"><widgets>
             <container-box><box-header title="Edge clients"/><box-body>
                 <label type="p" text="This build has no edge link. The Maximal and Enterprise packages have it." style="q-mb-none"/>
             </box-body></container-box>
         </widgets></section>
-        <section name="NotStarted" condition="notStarted"><widgets>
-            <container-box><box-header title="Edge clients"/><box-body>
-                <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process." style="q-mb-none"/>
-            </box-body></container-box>
-        </widgets></section>
         <section name="NotEdge" condition="notEdge"><widgets>
             <container-box><box-header title="Edge clients"/><box-body>
-                <label type="p" text="This node is not an edge node, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/edge/MoquiEdgeConf.xml), and a full server that also takes a local node's link with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
+                <label type="p" text="This node takes no links, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/edge/MoquiEdgeConf.xml), and a full server that also takes local nodes' links with node_role set to all-in-one (conf/all-in-one/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
                 <link url="../EdgeNode" text="Edge node" icon="sym_o_cloud_sync"/>
             </box-body></container-box>
         </widgets></section>
-
         <section name="EdgeClients" condition="isEdge"><widgets>
-            <container style="row items-center q-mb-sm">
-                <label type="h6" text="Edge clients" style="q-my-none"/>
-                <container style="col"/>
-                <container-dialog id="PairingCodeDialog" button-text="Make a pairing code" icon="sym_o_key" width="480" title="Make a pairing code" type="primary">
-                    <form-single name="PairingCode" transition="makePairingCode">
-                        <field name="validMinutes"><default-field title="Good for"><drop-down no-current-selected-key="60">
-                            <option key="15" text="15 minutes"/>
-                            <option key="60" text="An hour"/>
-                            <option key="240" text="4 hours"/>
-                            <option key="1440" text="A day"/>
-                        </drop-down></default-field></field>
-                        <field name="submitButton"><default-field title="Make the code"><submit/></default-field></field>
-                    </form-single>
-                </container-dialog>
-            </container>
-            <section name="ClientsError" condition="clientsError"><widgets>
-                <container-box type="warning"><box-header title="This edge node takes no links"/><box-body>
-                    <label type="p" text="${clientsError}" style="q-mb-none"/>
+            <section name="NotStarted" condition="notStarted"><widgets>
+                <container-box type="warning"><box-header title="This node takes no links now"/><box-body>
+                    <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process. The pairings and their names are shown as saved; none can link, and pairing codes and revoking wait, until it runs." style="q-mb-none"/>
                 </box-body></container-box>
             </widgets></section>
-            <label type="p" style="m-muted" text="Local nodes paired with this edge node. A local node pairs in its own System, Edge Node, with a pairing code made here."/>
-            <section name="LinkKey" condition="linkKey.linkFingerprint"><widgets>
-                <container-box><box-body>
-                    <form-single name="LinkKey" map="linkKey">
-                        <field name="linkFingerprint"><default-field title="This edge node's link key fingerprint" tooltip="The SHA-256 of this edge node's link key. A local node shows it in its Pair step before it pairs: check that the two match"><display/></default-field></field>
-                    </form-single>
-                </box-body></container-box>
-            </widgets></section>
-
-            <section name="NewCode" condition="newCode"><widgets>
-                <container-box type="success"><box-header title="Pairing code"/><box-body>
-                    <label type="p" text="Enter it on the local node now, with this node's address. It pairs one node, once, until ${newCodeExpire}. It is shown only this once; make another if you lose it."/>
-                    <label type="pre" text="${newCode}" style="text-h6"/>
-                </box-body></container-box>
-            </widgets></section>
-
-            <container-box><box-body-nopad>
-                <form-list name="ClientList" list="clientList" skip-form="true" paginate="false">
-                    <field name="pairedNodeId"><default-field title="Node"><display style="text-weight-medium"/></default-field></field>
-                    <field name="state"><default-field title="State">
-                        <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
-                    </default-field></field>
-                    <field name="generationText"><default-field title="Generation"><display/></default-field></field>
-                    <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
-                    <field name="remoteAddress"><default-field title="Address"><display/></default-field></field>
-                    <field name="versionText"><default-field title="Version"><display/></default-field></field>
-                    <field name="keyShort"><default-field title="Key" tooltip="The start of the SHA-256 of the node's key, pinned at pairing"><display/></default-field></field>
-                    <field name="setupText"><default-field title="Set up"
-                            tooltip="What the node's own setup, from its Edge Node wizard, set besides its host names">
-                        <display/></default-field></field>
-                    <field name="queueText"><default-field title="Queue"
-                            tooltip="Items waiting for the node, sent in order when its link is up; failed ones are kept">
-                        <display/></default-field></field>
-                    <field name="tools" align="right"><default-field title="">
-                        <link url="pingClient" link-type="hidden-form-link" icon="sym_o_network_ping" text="Ping" style="m-btn-flat"
-                                condition="linked" parameter-map="{pairedNodeId:pairedNodeId}"/>
-                        <link url="revokeClient" link-type="hidden-form-link" icon="sym_o_block" text="Revoke" style="m-btn-flat" btn-type="danger"
-                                condition="!revoked" confirmation="Revoke ${pairedNodeId}? Its link closes, and it can link again only by pairing with a new code."
-                                parameter-map="{pairedNodeId:pairedNodeId}"/>
-                    </default-field></field>
-                    <columns type="mobile">
-                        <column><field-ref name="pairedNodeId"/><field-ref name="lastConnectText"/></column>
-                        <column><field-ref name="state"/><field-ref name="tools"/></column>
-                    </columns>
-                </form-list>
-                <section name="NoClients" condition="!clientList.length"><widgets>
-                    <label type="p" text="No local node is paired yet. Make a pairing code, then pair on the local node." style="m-muted q-pa-sm q-mb-none"/>
-                </widgets></section>
-            </box-body-nopad></container-box>
-
-            <container-box><box-header title="Replicated sets"/><box-body-nopad>
-                <label type="p" style="m-muted q-pa-sm q-mb-none"
-                        text="Records each local node copies here, read-only, to answer from while it is away."/>
-                <form-list name="CursorList" list="cursorList" skip-form="true" paginate="false">
-                    <field name="setName"><default-field title="Set">
-                        <display style="text-weight-medium"/></default-field></field>
-                    <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
-                    <field name="valuesText" align="right"><default-field title="Records">
-                        <display/></default-field></field>
-                    <field name="epochText"><default-field title="Epoch"
-                            tooltip="The local node's full send these records follow"><display/></default-field></field>
-                    <field name="seqText" align="right"><default-field title="Last batch">
-                        <display/></default-field></field>
-                    <field name="appliedText"><default-field title="Last applied"><display/></default-field></field>
-                    <field name="snapshotText"><default-field title="Last full send"><display/></default-field></field>
-                    <columns type="mobile">
-                        <column><field-ref name="setName"/><field-ref name="nodeId"/></column>
-                        <column><field-ref name="valuesText"/><field-ref name="appliedText"/></column>
-                    </columns>
-                </form-list>
-                <section name="NoCursors" condition="!cursorList.length"><widgets>
-                    <label type="p" text="No local node has replicated a set here yet."
-                            style="m-muted q-pa-sm q-mb-none"/>
-                </widgets></section>
-            </box-body-nopad></container-box>
-
-            <section name="Conflicts" condition="allInOne"><widgets>
-                <container-box><box-header title="Replica conflicts"/><box-toolbar>
-                    <link url="recheckConflicts" link-type="hidden-form-link" icon="sym_o_refresh" text="Check again" style="m-btn-flat"
-                            condition="conflictList.length"/>
-                </box-toolbar><box-body-nopad>
-                    <label type="p" style="m-muted q-pa-sm q-mb-none"
-                            text="Records a local node replicated that claim an item this server holds itself: a mail address, a chat bridge or a phone number. The server's own item wins, and the record is not applied until the server no longer holds the item; remove it on one side."/>
-                    <form-list name="ConflictList" list="conflictList" skip-form="true" paginate="false">
-                        <field name="itemText"><default-field title="Item"><display style="text-weight-medium"/></default-field></field>
-                        <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
-                        <field name="setName"><default-field title="Set"><display/></default-field></field>
-                        <field name="ownerText"><default-field title="Held by"><display/></default-field></field>
-                        <field name="lastText"><default-field title="Last refused"><display/></default-field></field>
-                        <columns type="mobile">
-                            <column><field-ref name="itemText"/><field-ref name="nodeId"/></column>
-                            <column><field-ref name="ownerText"/><field-ref name="lastText"/></column>
-                        </columns>
-                    </form-list>
-                    <section name="NoConflicts" condition="!conflictList.length"><widgets>
-                        <label type="p" text="No conflicts: no local node's record claims an item of this server's own."
-                                style="m-muted q-pa-sm q-mb-none"/>
-                    </widgets></section>
-                </box-body-nopad></container-box>
-            </widgets></section>
-
-            <container-box><box-header title="Host names"/><box-toolbar>
-                <container-dialog id="AddHostDialog" button-text="Add a host name" icon="sym_o_add" width="560" title="Add a host name" type="default" condition="nodeOptions.length">
-                    <form-single name="AddHost" transition="addHost">
-                        <field name="hostName"><default-field title="Host name" tooltip="A public name whose DNS points at this edge node, such as erp.example.com. A name goes to one local node"><text-line/></default-field></field>
-                        <field name="pairedNodeId"><default-field title="Local node"><drop-down>
-                            <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
-                        </drop-down></default-field></field>
-                        <field name="modeEnumId"><default-field title="Mode" tooltip="Passthrough: the local node ends TLS with its own certificate, and this edge node sees no content; while its link is down the connection is refused. Terminate: this edge node ends TLS with its own certificate and forwards each request; while the link is down it shows an offline page"><drop-down no-current-selected-key="EdgeHostPassthrough">
-                            <option key="EdgeHostPassthrough" text="Passthrough"/>
-                            <option key="EdgeHostTerminate" text="Terminate"/>
-                        </drop-down></default-field></field>
-                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
-                    </form-single>
-                </container-dialog>
-            </box-toolbar><box-body-nopad>
-                <label type="p" style="m-muted q-pa-sm q-mb-none" text="The public names this edge node answers for its local nodes. A passthrough name's TLS goes to the local node unopened; a terminate name's requests are forwarded."/>
-                <form-list name="HostList" list="hostList" skip-form="true" paginate="false">
-                    <field name="hostName"><default-field title="Host name"><display style="text-weight-medium"/></default-field></field>
-                    <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
-                    <field name="mode"><default-field title="Mode">
-                        <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${modeColor}">${modeLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: modeLabel})}]]></text></render-mode>
-                    </default-field></field>
-                    <field name="tools" align="right"><default-field title="">
-                        <link url="removeHost" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger"
-                                confirmation="Remove ${hostName}? This edge node stops answering for it." parameter-map="{hostName:hostName}"/>
-                    </default-field></field>
-                    <columns type="mobile">
-                        <column><field-ref name="hostName"/><field-ref name="nodeId"/></column>
-                        <column><field-ref name="mode"/><field-ref name="tools"/></column>
-                    </columns>
-                </form-list>
-                <section name="NoHosts" condition="!hostList.length"><widgets>
-                    <label type="p" text="No host names yet. Add one for a paired local node, and point its DNS at this edge node." style="m-muted q-pa-sm q-mb-none"/>
-                </widgets></section>
-            </box-body-nopad></container-box>
+            <subscreens-panel id="EdgeClientsPanel" type="tab"/>
         </widgets></section>
     </widgets>
 </screen>

@@ -144,25 +144,23 @@ along with this software (see the LICENSE.md file). If not, see
         mailAvailable = !!mail.available
         chatAvailable = !!chat.webhooks
         passAvailable = !!pass.available
-        // XMPP: the edge node's tunnel ports, to this node's own XMPP server (xmpp_domain)
+        // XMPP: the edge node's tunnel ports, to this node's own XMPP server (xmpp_domain), which Apply names there so the
+        // ports find this node's clients by their domain (E16)
         xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
         const xmppPorts = [xmpp.port ? xmpp.port + ' (STARTTLS)' : '', xmpp.tlsPort ? xmpp.tlsPort + ' (' + L('direct TLS') + ')' : '']
             .filter((text) => text).join(', ')
-        xmppAvailable = !!xmpp.available && !xmpp.otherNode && !xmpp.needsNode
-        xmppOtherNode = !!xmpp.available && !!xmpp.otherNode
+        xmppAvailable = !!xmpp.available
         xmppNeedsNode = !!xmpp.available && !!xmpp.needsNode
         xmppPortsText = xmppPorts
         // calls: the edge node as media node of this node's calls (E7), its media address and TURN
         const calls = offer.calls || {}
         callsAvailable = !!calls.available
-        callsOtherNodes = callsAvailable && !!calls.otherNodes
         callsMediaText = String(calls.mediaAddress || '')
         const turnUrls = Array.from(calls.turnUrls || [])
         // phones: the edge node's SIP engine (E8), with this node's trunks (the replicated set voiceTrunks) and their
         // numbers, which go through it, and the numbers' fallbacks (voiceFallbacks) for while this node is away
         const sip = offer.sip || {}
         sipAvailable = !!sip.available
-        sipOtherNodes = sipAvailable && !!sip.otherNodes
         sipAddressText = [sip.sipAddress ? sip.sipAddress + ' (UDP/TCP)' : '', sip.tlsAddress ? sip.tlsAddress + ' (TLS)' : '']
             .filter((text) => text).join(', ')
         sipList = []
@@ -199,8 +197,7 @@ along with this software (see the LICENSE.md file). If not, see
             chatText: chatAvailable ? (chat.publicUrl || out.edgeUrl || '') : L('No webhooks'),
             passText: passAvailable ? L('mr-pass') : L('No mr-pass'),
             xmppText: xmpp.available ? ec.resource.expand('Tunnel ports ${ports}', '', {ports: xmppPorts}) +
-                (xmpp.otherNode ? ' (' + L('to another local node') + ')' : '') +
-                (xmpp.needsNode ? ' (' + L('to no node: set edge_xmpp_node') + ')' : '') : L('No XMPP tunnel'),
+                (xmpp.needsNode ? ' (' + L('for this node once Apply names its XMPP domain') + ')' : '') : L('No XMPP tunnel'),
             callsText: callsAvailable ? ec.resource.expand('Media node at ${address}', '', {address: callsMediaText}) +
                 ' · ' + (turnUrls.length ? ec.resource.expand('TURN ${urls}', '', {urls: turnUrls.join(', ')}) : L('no TURN'))
                 : L('No media node'),
@@ -335,8 +332,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="xmppOn"><conditional-field condition="xmppAvailable &amp;&amp; xmppDomain" title="XMPP" tooltip="Outside XMPP clients connect to the edge node's ports, and it pipes them to this node's XMPP server, which ends their TLS. Uploads and the WebSocket need the domain on web access">
                             <check><option key="Y" text="XMPP clients of ${xmppDomain} come through the edge node's ports ${xmppPortsText}"/></check></conditional-field>
                         <conditional-field condition="xmppAvailable" title="XMPP"><display text="This node runs no XMPP server: set xmpp_domain"/></conditional-field>
-                        <conditional-field condition="xmppOtherNode" title="XMPP"><display text="The edge node's XMPP tunnels go to another local node (edge_xmpp_node)"/></conditional-field>
-                        <conditional-field condition="xmppNeedsNode" title="XMPP"><display text="Several local nodes are linked to the edge node: set its edge_xmpp_node to this node"/></conditional-field>
+                        <conditional-field condition="xmppNeedsNode" title="XMPP"><display text="Several local nodes are linked to the edge node: set xmpp_domain here, and Apply names it there"/></conditional-field>
                         <default-field title="XMPP"><display text="The edge node has no XMPP tunnel ports"/></default-field></field>
                     <field name="callsOn"><conditional-field condition="callsAvailable" title="Calls" tooltip="New calls have their media on the edge node's media node, and outside browsers relay through its TURN. Calls already going on stay where they are when this changes">
                             <check><option key="Y" text="New calls have their media on the edge node's media node at ${callsMediaText}"/></check></conditional-field>
@@ -357,10 +353,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </field-layout>
                 </form-single>
                 <section name="CallsNote" condition="callsAvailable"><widgets>
-                    <label type="p" text="With calls on, every new call has its media on the edge node, so office users in a call with each other send it to the cloud and back. There is no cascading to a media node of this node's own, and one local node per edge node takes calls." style="m-muted q-mt-md q-mb-none"/>
-                </widgets></section>
-                <section name="CallsOtherNodes" condition="callsOtherNodes"><widgets>
-                    <label type="p" text="Other local nodes are linked to the edge node too, so it takes call messages from none of them until only one is." style="text-warning q-mt-md q-mb-none"/>
+                    <label type="p" text="With calls on, every new call has its media on the edge node, so office users in a call with each other send it to the cloud and back. There is no cascading to a media node of this node's own." style="m-muted q-mt-md q-mb-none"/>
                 </widgets></section>
                 <section name="Phones" condition="sipAvailable"><widgets>
                     <label type="h6" text="Phones through the edge node" style="q-mt-md q-mb-sm"/>
@@ -378,9 +371,6 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="fallbackSummaryText"><default-field title="Voicemail fallback"><display/></default-field></field>
                     </form-single>
                     <label type="p" text="Outside phones register to the edge node's registrar, which asks this node to check each password, so they cannot register while this node is away. While it is away, a call to a number with a fallback rings its outside number or takes a message, following no call-handling rules or schedules; a number with none is refused (480), so the trunk's own failover can act." style="m-muted q-mt-sm q-mb-none"/>
-                </widgets></section>
-                <section name="SipOtherNodes" condition="sipOtherNodes"><widgets>
-                    <label type="p" text="Other local nodes are active on the edge node too, so its SIP engine reads no node's trunks or fallbacks until only one is." style="text-warning q-mt-md q-mb-none"/>
                 </widgets></section>
                 <section name="Merged" condition="mergedText"><widgets>
                     <label type="p" text="Added the names the edge node has for this node now: ${mergedText}. A name taken out of the lists is removed from the edge node when you apply." style="text-warning q-mt-md q-mb-none"/>

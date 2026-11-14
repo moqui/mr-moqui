@@ -23,12 +23,11 @@
     <default-property name="node_role" value="all-in-one"/>
     <default-property name="webapp_web_protection" value="true"/>
 
-    <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10): the server's own XMPP server runs here, for its xmpp_domain, on xmpp_port
-        and xmpp_tls_port as on a normal node. The paired node's domain gets tunnel ports of its own, named in that
-        domain's SRV records, whose TLS the local node ends with its own certificates. The tunnel ports must differ from
-        the server's own (one on the same port is off, logged). Set in .env to take them, for example:
-                                     <default-property name="edge_xmpp_port" value="5242"/>
-                                     <default-property name="edge_xmpp_tls_port" value="5243"/> -->
+    <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10; plans/Edge-Node2.md §4.1): the server's own XMPP server runs here, for
+        its xmpp_domain, on xmpp_port and xmpp_tls_port as on a normal node, and the same ports take the paired nodes'
+        XMPP domains: a connection that names one (the TLS server name, or the stream's to) goes down that node's link,
+        and the node ends its TLS with its own certificates. Tunnel ports of their own (edge_xmpp_port and
+        edge_xmpp_tls_port, other than the server's) are an option, as is a pair of ports per node (EdgePort rows). -->
 
     <!-- Mail (plans/archive/Edge-Node.md §5.4, §10): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet
         itself (internet mode; smtp_listen_port 25 and smtp_listen_host 0.0.0.0, or :: for IPv6 too, in .env), with
@@ -78,7 +77,8 @@
 
     <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
 
-    <!-- How work crosses the link (plans/archive/Edge-Node.md §5.2): as on an edge node. The delegated services, queue kinds and
+    <!-- How work crosses the link (plans/archive/Edge-Node.md §5.2): as on an edge node, the queue's 1 GB cap for each
+        paired node. The delegated services, queue kinds and
         replicated sets are in MoquiDefaultConf.xml, read by both ends; here a listed service is delegated only for the
         paired node's items, and runs on this server for its own. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>

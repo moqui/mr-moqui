@@ -68,3 +68,35 @@ fn a_dedicated_edge_node_s_items_are_its_only_paired_node_s() {
     // a scope still holds
     assert_eq!(with(Owner::Own, || current(ctx.factory()).unwrap()), Owner::Own);
 }
+
+/// E16 (plans/Edge-Node2.md §4.1): with several pairings a dedicated edge node's item has an owner only by its scope;
+/// outside one it cannot be told and is refused, and a queued item that names no node takes the scope's.
+#[test]
+fn several_pairings_need_the_items_scope() {
+    let ctx = node_of(NodeRole::Edge);
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    for node in ["local-a", "local-b"] {
+        let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+        client.set("pairedNodeId", Value::string(node));
+        client.set("keyFingerprint", Value::string("ab"));
+        client.set("statusId", Value::string("EdgeClientActive"));
+        client.create(&facade).unwrap();
+    }
+    let err = current(ctx.factory()).unwrap_err();
+    assert!(
+        err.message().contains("several local nodes are paired"),
+        "{}",
+        err.message()
+    );
+    assert_eq!(
+        with(Owner::paired("local-b"), || current(ctx.factory()).unwrap()),
+        Owner::paired("local-b")
+    );
+    assert!(crate::edge::queue::owner_node(&facade).is_err());
+    assert_eq!(
+        with(Owner::paired("local-a"), || crate::edge::queue::owner_node(&facade)
+            .unwrap()),
+        "local-a"
+    );
+}

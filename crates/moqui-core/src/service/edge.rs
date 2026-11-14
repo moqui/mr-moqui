@@ -39,11 +39,16 @@ pub(in crate::service) fn register(
     rust_service!(map, unpair_edge_node)?;
     rust_service!(map, create_pairing_code)?;
     rust_service!(map, get_edge_clients)?;
+    rust_service!(map, update_edge_client)?;
+    rust_service!(map, get_edge_domains)?;
     rust_service!(map, revoke_edge_client)?;
     rust_service!(map, ping_edge_client)?;
     rust_service!(map, get_edge_hosts)?;
     rust_service!(map, add_edge_host)?;
     rust_service!(map, remove_edge_host)?;
+    rust_service!(map, get_edge_ports)?;
+    rust_service!(map, add_edge_port)?;
+    rust_service!(map, remove_edge_port)?;
     rust_service!(map, enqueue_item)?;
     rust_service!(map, get_queue_status)?;
     rust_service!(map, pause_queue_delivery)?;
@@ -201,16 +206,145 @@ fn client_value(client: &EdgeClientInfo) -> Value {
         },
     );
     row.insert("setupDate".to_string(), millis(client.setup_date));
+    row.insert(
+        "queueMaxMegabytes".to_string(),
+        client.queue_max_megabytes.map_or(Value::Null, Value::I64),
+    );
     Value::Map(row)
 }
 
-/// `get#EdgeClients`: on an edge node, the paired local nodes with their live links.
-fn get_edge_clients(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    let clients = crate::edge::link()?.clients()?;
+/// Refuses on a node that takes no links (`node_role` as it is now, as `get#LinkStatus` says it): the rows of the
+/// System app's Edge Clients screens are only a dedicated edge node's or an all-in-one node's.
+fn takes_links(what: &str) -> Result<(), LibError> {
+    if crate::edge::takes_links() {
+        Ok(())
+    } else {
+        Err(LibError::new(format!(
+            "only a node that takes links (node_role edge or all-in-one) has {what}"
+        )))
+    }
+}
+
+/// The pairings with their live links; on a node that takes links where no link is installed (no listener started
+/// it), their rows alone, so the screens show them. An installed link's own error is the answer.
+fn clients(facade: &EntityFacade) -> Result<Vec<EdgeClientInfo>, LibError> {
+    match crate::edge::link() {
+        Ok(link) => link.clients(),
+        Err(_) if crate::edge::takes_links() => crate::edge::hosts::clients(facade),
+        Err(err) => Err(err),
+    }
+}
+
+/// `get#EdgeClients`: on a node that takes links, the paired local nodes with their live links.
+fn get_edge_clients(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let clients = clients(facade)?;
     Ok(BTreeMap::from([(
         "clientList".to_string(),
         Value::List(clients.iter().map(client_value).collect()),
     )]))
+}
+
+/// `update#EdgeClient`: on a node that takes links, a pairing's own queue cap (`queueMaxMegabytes`, empty for the
+/// conf's).
+fn update_edge_client(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings")?;
+    let node = required(parameters, "pairedNodeId")?;
+    let megabytes = match text(parameters, "queueMaxMegabytes") {
+        None => None,
+        Some(raw) => Some(
+            raw.trim()
+                .parse::<i64>()
+                .map_err(|_| LibError::new(format!("{} is not a whole number of megabytes", raw.trim())))?,
+        ),
+    };
+    crate::edge::hosts::set_queue_cap(facade, &node, megabytes)?;
+    Ok(BTreeMap::from([(
+        "queueMaxMegabytes".to_string(),
+        megabytes.map_or(Value::Null, Value::I64),
+    )]))
+}
+
+/// The most copies [`pairing_numbers`] reads of one set for one pairing.
+const NUMBER_SCAN: usize = 10_000;
+
+/// The phone numbers a pairing's copies have: its numbers' fallbacks (`voiceFallbacks`) and its trunks' numbers
+/// (`voiceTrunks`), sorted, each once, read from the copies' keys alone; and whether a set had more than
+/// [`NUMBER_SCAN`], so the list is cut. A set that cannot be read is logged and left out.
+fn pairing_numbers(facade: &EntityFacade, node: &str) -> (Vec<String>, bool) {
+    let mut numbers = std::collections::BTreeSet::new();
+    let mut cut = false;
+    for (set, entity) in [
+        (crate::edge::claims::FALLBACKS_SET, "moqui.call.PhoneNumberFallback"),
+        ("voiceTrunks", "moqui.call.PhoneNumber"),
+    ] {
+        match crate::edge::replica::list_keys(facade, node, set, entity, NUMBER_SCAN + 1) {
+            Ok(keys) => {
+                cut |= keys.len() > NUMBER_SCAN;
+                numbers.extend(
+                    keys.iter()
+                        .take(NUMBER_SCAN)
+                        .filter_map(|pk| pk["phoneNumber"].as_str().map(str::trim).map(str::to_string))
+                        .filter(|number| !number.is_empty()),
+                );
+            }
+            Err(err) => tracing::error!("Edge domains: the {set} copies of {node} could not be read: {err}"),
+        }
+    }
+    (numbers.into_iter().collect(), cut)
+}
+
+/// `get#EdgeDomains`: on a node that takes links, what each pairing claims (plans/Edge-Node2.md §4.10 Domains): its
+/// host names with their modes, and from its last Configure its mail domains, XMPP domain, SIP realm, chat bridges and
+/// PASS sites, with the phone numbers its replicated copies have. Revoked pairings are left out.
+fn get_edge_domains(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("domains")?;
+    let hosts = crate::edge::hosts::list(facade, None)?;
+    let mut domains = Vec::new();
+    for client in crate::edge::hosts::clients(facade)? {
+        if client.status_id != crate::edge::hosts::ACTIVE {
+            continue;
+        }
+        let node = &client.paired_node_id;
+        let setup: serde_json::Value = if client.setup_json.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&client.setup_json).unwrap_or_else(|err| {
+                tracing::error!("Edge domains: the kept setup of {node} is not JSON: {err}");
+                serde_json::Value::Null
+            })
+        };
+        let names = |field: &str| strings(&crate::edge::hosts::setup_list(&setup, field));
+        let one = |field: &str| {
+            Value::string(
+                crate::edge::hosts::setup_list(&setup, field)
+                    .first()
+                    .map_or("", String::as_str),
+            )
+        };
+        let mut row = indexmap::IndexMap::default();
+        row.insert("pairedNodeId".to_string(), Value::string(node));
+        row.insert(
+            "hostList".to_string(),
+            Value::List(
+                hosts
+                    .iter()
+                    .filter(|host| &host.paired_node_id == node)
+                    .map(host_value)
+                    .collect(),
+            ),
+        );
+        row.insert("mailDomains".to_string(), names("mailDomains"));
+        row.insert("xmppDomain".to_string(), one("xmppDomain"));
+        row.insert("sipDomain".to_string(), one("sipDomain"));
+        row.insert("chatBridgeIds".to_string(), names("chatBridgeIds"));
+        row.insert("passSites".to_string(), names("passSites"));
+        let (numbers, cut) = pairing_numbers(facade, node);
+        row.insert("phoneNumbers".to_string(), strings(&numbers));
+        row.insert("phoneNumbersCut".to_string(), Value::Bool(cut));
+        row.insert("setupDate".to_string(), millis(client.setup_date));
+        domains.push(Value::Map(row));
+    }
+    Ok(BTreeMap::from([("domainList".to_string(), Value::List(domains))]))
 }
 
 /// `revoke#EdgeClient`: on an edge node, revoke a local node's key and close its link.
@@ -235,19 +369,22 @@ fn host_value(host: &EdgeHostInfo) -> Value {
     Value::Map(row)
 }
 
-/// `get#EdgeHosts`: on an edge node, the public host names of the paired nodes (of one with `pairedNodeId`).
-fn get_edge_hosts(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+/// `get#EdgeHosts`: on a node that takes links, the public host names of the paired nodes (of one with
+/// `pairedNodeId`).
+fn get_edge_hosts(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("host names")?;
     let node = text(parameters, "pairedNodeId");
-    let hosts = crate::edge::link()?.hosts(node.as_deref())?;
+    let hosts = crate::edge::hosts::list(facade, node.as_deref())?;
     Ok(BTreeMap::from([(
         "hostList".to_string(),
         Value::List(hosts.iter().map(host_value).collect()),
     )]))
 }
 
-/// `add#EdgeHost`: on an edge node, a public host name for a paired node, passthrough unless `modeEnumId` says
-/// terminate; for a name the node has already, its mode changes.
-fn add_edge_host(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+/// `add#EdgeHost`: on a node that takes links, a public host name for a paired node, passthrough unless `modeEnumId`
+/// says terminate; for a name the node has already, its mode changes. The edge link loads its table again.
+fn add_edge_host(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("host names")?;
     let mode = text(parameters, "modeEnumId").unwrap_or_else(|| HOST_PASSTHROUGH.to_string());
     if mode != HOST_PASSTHROUGH && mode != HOST_TERMINATE {
         return Err(LibError::new(format!(
@@ -259,17 +396,94 @@ fn add_edge_host(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -
         paired_node_id: required(parameters, "pairedNodeId")?,
         mode_enum_id: mode,
     };
-    let saved = crate::edge::link()?.add_host(&host)?;
+    let saved = crate::edge::hosts::add(facade, &host)?;
+    tracing::info!(
+        "Edge node: host {} goes to local node {} ({})",
+        saved.host_name,
+        saved.paired_node_id,
+        saved.mode_enum_id
+    );
+    if let Ok(link) = crate::edge::link() {
+        link.hosts_changed();
+    }
     Ok(BTreeMap::from([
         ("hostName".to_string(), Value::string(&saved.host_name)),
         ("modeEnumId".to_string(), Value::string(&saved.mode_enum_id)),
     ]))
 }
 
-/// `remove#EdgeHost`: on an edge node, remove a public host name.
-fn remove_edge_host(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+/// `remove#EdgeHost`: on a node that takes links, remove a public host name; the edge link loads its table again.
+fn remove_edge_host(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("host names")?;
     let host_name = required(parameters, "hostName")?;
-    let removed = crate::edge::link()?.remove_host(&host_name)?;
+    let removed = crate::edge::hosts::remove(facade, &host_name)?;
+    if removed {
+        tracing::info!("Edge node: host {} removed", host_name.trim());
+        if let Ok(link) = crate::edge::link() {
+            link.hosts_changed();
+        }
+    }
+    Ok(BTreeMap::from([("removed".to_string(), Value::Bool(removed))]))
+}
+
+fn port_value(port: &crate::edge::ports::EdgePort, state: Option<&crate::edge::ports::PortState>) -> Value {
+    let mut row = indexmap::IndexMap::default();
+    row.insert("port".to_string(), Value::I64(i64::from(port.port)));
+    row.insert("pairedNodeId".to_string(), Value::string(&port.paired_node_id));
+    row.insert("tunnelKind".to_string(), Value::string(&port.tunnel_kind));
+    row.insert(
+        "listening".to_string(),
+        Value::Bool(state.is_some_and(|state| state.listening)),
+    );
+    row.insert(
+        "errorText".to_string(),
+        Value::string(state.map(|state| state.error.as_str()).unwrap_or_default()),
+    );
+    Value::Map(row)
+}
+
+/// `get#EdgePorts`: on an edge node, the TCP ports that go to one paired node each (of one with `pairedNodeId`), with
+/// whether each listens now (plans/Edge-Node2.md §4.10 Ports, E16).
+fn get_edge_ports(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("tunnel ports")?;
+    let factory = current_factory()?;
+    let states = crate::edge::ports::states(&factory);
+    let ports = crate::edge::ports::list(facade, text(parameters, "pairedNodeId").as_deref())?;
+    Ok(BTreeMap::from([(
+        "portList".to_string(),
+        Value::List(
+            ports
+                .iter()
+                .map(|port| port_value(port, states.get(&port.port)))
+                .collect(),
+        ),
+    )]))
+}
+
+/// `add#EdgePort`: on an edge node, a TCP port whose connections go down one paired node's link, as an SSH or XMPP
+/// tunnel (`crate::edge::ports::add`); the edge node listens on it within seconds.
+fn add_edge_port(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("tunnel ports")?;
+    let factory = current_factory()?;
+    let port = crate::edge::ports::add(
+        &factory,
+        facade,
+        &required(parameters, "port")?,
+        &required(parameters, "pairedNodeId")?,
+        &required(parameters, "tunnelKind")?,
+    )?;
+    Ok(BTreeMap::from([
+        ("port".to_string(), Value::I64(i64::from(port.port))),
+        ("pairedNodeId".to_string(), Value::string(&port.paired_node_id)),
+        ("tunnelKind".to_string(), Value::string(&port.tunnel_kind)),
+    ]))
+}
+
+/// `remove#EdgePort`: on an edge node, remove a tunnel port; the edge node stops listening on it within seconds.
+fn remove_edge_port(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("tunnel ports")?;
+    let factory = current_factory()?;
+    let removed = crate::edge::ports::remove(&factory, facade, &required(parameters, "port")?)?;
     Ok(BTreeMap::from([("removed".to_string(), Value::Bool(removed))]))
 }
 
@@ -718,19 +932,12 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
             ),
         ));
     }
-    if xmpp.other_node {
-        lines.push(SetupLine::new(
-            "xmpp",
-            false,
-            "The edge node's edge_xmpp_node names another local node, so its XMPP clients do not come here",
-        ));
-    }
     if xmpp.needs_node {
         lines.push(SetupLine::new(
             "xmpp",
             false,
-            "Several local nodes are linked to the edge node and its edge_xmpp_node is empty, so XMPP clients are \
-             refused: set edge_xmpp_node there to this node",
+            "Several local nodes are linked to the edge node and this node named no XMPP domain there, so its ports \
+             cannot find this node's clients: set xmpp_domain here and apply again",
         ));
     }
     // Chat apps (get#ClientSettings) shows this node's own ports: the edge node's should have the same numbers
@@ -875,14 +1082,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     // only when it offered calls); absent leaves edge_calls_enabled as it is. Nothing is sent to the edge node.
     let calls = optional_flag(parameters, "callsOn");
     if let (Some(on), true) = (calls, answer.offer.calls.available) {
-        lines.extend(crate::edge::calls::apply(
-            &factory,
-            facade,
-            &env_file,
-            on,
-            &status.peer,
-            &answer.offer.calls,
-        ));
+        lines.extend(crate::edge::calls::apply(&factory, facade, &env_file, on, &status.peer));
     } else if calls == Some(true) {
         lines.push(SetupLine::new(
             "calls",
@@ -1245,12 +1445,14 @@ fn calls_tests(
             urls.join(", ")
         ),
     ));
+    // over UDP as browsers try first, else over TCP (a TURN with no UDP listener); a TLS-only TURN is not checked
     let Some(url) = urls
         .iter()
         .find(|url| url.starts_with("turn:") && !url.contains("transport=tcp"))
+        .or_else(|| urls.iter().find(|url| url.starts_with("turn:")))
         .cloned()
     else {
-        let message = "Not checked: the edge node's TURN has no UDP listener".to_string();
+        let message = "Not checked: the edge node's TURN has only TLS listeners".to_string();
         lines.push(line("turn", "TURN", None, message));
         return (lines, None);
     };

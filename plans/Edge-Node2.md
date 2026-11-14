@@ -1,6 +1,6 @@
 # Edge Node 2: domains, pools, edge clusters and the front
 
-Status 2026-11-13: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
+Status 2026-11-13: plan; E13 (example confs), E14 (root screens by host name, [§4.2](#42-root-screens-by-host-name)) and E15 (certificates by ACME, [§4.8](#48-certificates-and-acme)) are built ([§5](#5-phases)), and E16's routing by owner for web, mail, chat, PASS, delegate and the queue, with claims and limits between pairings, its comms (TURN, SIP, XMPP and ports per pairing) ([§4.1](#41-domains-on-one-edge-node), As built), and its System screens and `conf/multi-domain` ([§4.10](#410-the-system-app), As built), so E16 is built; the rest is not. It follows [Edge-Node](archive/Edge-Node.md), archived the same day
 with E0–E10 and E12 built: the link, web access, delegate, queue and replicate, mr-pass on gRPC, mail, chat webhooks,
 calls, SIP, the XMPP tunnel, the attach wizard and the all-in-one node. This plan carries what that one left open
 ([§2](#2-open-from-edge-node)) and adds what larger deployments need, from the user's notes and answers of Nov 12,
@@ -75,16 +75,16 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 
 | Item | What is missing | Goes to |
 |---|---|---|
-| Several local nodes on one edge node (decision 1) | The edge node's rows are keyed by node, but several paths still take "the only paired node" ([§4.1](#41-domains-on-one-edge-node)) | E16 |
+| Several local nodes on one edge node (decision 1) | Built (E16): every area by its owner, claims and limits per pairing ([§4.1](#41-domains-on-one-edge-node)), the Clients, Domains and Ports screens ([§4.10](#410-the-system-app)) and `conf/multi-domain` | E16, built |
 | A clustered local node | One member was to hold the link through a lock row; the lock row is not built. The link is matched by key, so members that share a `.env` would replace each other's link (to verify). A call's socket on a member without the link is refused | E17: every member links |
 | A second edge node | A secondary MX, a second webhook URL | E18 |
 | A clustered all-in-one server | Which member holds the edge role | E18: every member takes links |
-| PASS sites for a paired node on an all-in-one node | `pass_backend_url=edge:` means one authority for the whole node | E16: the authority by site |
-| XMPP for two domains on one port | SNI for direct TLS, the stream's `to` for STARTTLS; today a pair of tunnel ports per node | E16 |
-| All-in-one gaps | A voicemail sidecar requeued after a restart goes to the only paired node; a paired number with no fallback row is found only by its trunk | E16 |
-| A TURN secret per pairing | Revoking a node does not end its TURN access: the edge node's one `turn_auth_secret` must be rotated | E16 |
+| PASS sites for a paired node on an all-in-one node | `pass_backend_url=edge:` means one authority for the whole node | E16: the authority by site, built: `edge:` goes to the pairing whose Configure names the call's site. Left: the server's own sites on the same node, which `edge:` sends to the one linked node when no pairing names them |
+| XMPP for two domains on one port | Built (E16 part B): SNI on direct TLS, the stream's `to` on STARTTLS, on the edge node's tunnel ports and an all-in-one node's own ports; a pair of ports per node is `EdgePort` rows | E16, built |
+| All-in-one gaps | Built (E16 part B): a voicemail sidecar names its pairing, so a requeue after a restart goes to it; a paired number with no fallback row is found by its `PhoneNumber` copy (`voiceTrunks`) | E16, built |
+| A TURN secret per pairing | Built (E16 part B): a secret per pairing derived from `turn_auth_secret`, the pairing in the TURN username, refused once the pairing is revoked | E16, built |
 | ACME's other challenges | TLS-ALPN-01 from System › Certificates is built (E15, [§4.8](#48-certificates-and-acme); [Dogfood](Dogfood.md) F10). HTTP-01 where port 80 is open, and DNS-01 for wildcard names, are not | Later |
-| The System menu | It cannot leave a screen out by a condition, so Edge Node and Edge Clients show on every node | Framework, with E16's screens |
+| The System menu | Built (E16): no framework change was needed, as `default-menu-include` already takes an expression (`Tools.xml` hides Load by one); Edge Clients lists itself only where `node_role` is `edge` or `all-in-one`. Edge Node still shows on every node | E16, built |
 | The edge node's backup job | Built (E13): the property `embedded_db_backup_scheduled=true`, which each boot applies, sets the paused seed job `backup_EmbeddedDatabase_daily` running; `conf/edge/MoquiEdgeConf.xml` and `conf/all-in-one/MoquiAllInOneConf.xml` set it | E13, built |
 | Filtering in moqui (E11) | Content and reputation scoring for mail, internal mail, public forms and outside chat, in place of the external Rspamd | E11, after the first release |
 | A PASS read cache on the edge node | Public pages read while the local node is away; writes fail closed | Later |
@@ -99,10 +99,12 @@ checks, done once, as E4's two-runtime check was over REST and direct gRPC.
 
 ### 2.3 Test gaps
 
-- The `_edge_` refusals of `SipDevices.js` while phones are off: the spec engine cannot set a process property.
+- The `_edge_` refusals of `SipDevices.js` while phones are off: the spec engine can set a process property now
+  (`setProperty`, `withProperty`, which `EdgeScreens.spec.js` uses for `node_role`), so this spec is left to write.
 - Mantle's own `handle#Call` through the host: loading mr-mantle in a host test is too slow for a fast test.
-- The TURN check over TCP or TLS only; the same SIP username in both domains and the 409 on the media path of an
-  all-in-one node.
+- The TURN check over TLS only (over TCP is checked since E16 part B, `rtc::turn_probe`); the 409 on the chat media
+  path of an all-in-one node. The same SIP username in two domains is checked since E16 part B (`sip::owners`
+  `phone_key`, by its key; not with two real phones).
 - `edge_link::pairing_links_both_ways_and_unpairing_cuts_the_link` failed once on a port already in use
   ([Remaining-Work](Remaining-Work.md#tests)).
 
@@ -119,7 +121,7 @@ sets it apart ([§4.9](#49-example-confs-for-each-topology)).
 | Dev instances with a group server | A team | `conf/dev-group/` | Built, with its confs (E13) |
 | A local node with an edge node | A server in the office or at home with a public presence; the desktop and mobile apps as its clients | `conf/edge/` | Built, with its confs (E13); the apps' exit checks are open |
 | A local node with an all-in-one node | The same, with a full public server as the edge node | `conf/all-in-one/` | Built, with its confs (E13) |
-| Several local nodes on one edge node | Branch offices, or separate organizations of one group, each with its own domains | `conf/multi-domain/` | E16 |
+| Several local nodes on one edge node | Branch offices, or separate organizations of one group, each with its own domains | `conf/multi-domain/` | Built (E16), with its confs |
 | A local cluster | More capacity, or a member that can fail: pooled and balanced by an edge node, or behind a load balancer of your own | `conf/local-cluster/` | Built behind your own balancer, with its conf (E13); E17 with an edge node |
 | A local node with a standby | A second machine started when the first one dies | `conf/local-failover/` | E17 |
 | An edge cluster | An edge node that can fail, or more capacity at the edge | `conf/edge-cluster/` | E18 |
@@ -153,10 +155,12 @@ only between the server and one node.
   authority behind `pass_backend_url=edge:`;
 - `queue::enqueue` for an item that names no node;
 - the SIP engine's config and fallbacks (`sip/edge.rs` `paired_node`), and a voicemail sidecar requeued after a
-  restart;
-- the SSH tunnel (`edge_ssh_tunnel_node`) and the XMPP tunnels (`edge_xmpp_node`): one node per port;
+  restart (built, E16 part B: every pairing's, by owner);
+- the SSH tunnel (`edge_ssh_tunnel_node`) and the XMPP tunnels (`edge_xmpp_node`): one node per port (built, E16
+  part B: `EdgePort` rows and XMPP by domain);
 - a chat bridge id that two nodes have, which gets 401;
-- the offer's `other_nodes` warnings for calls and phones.
+- the offer's `other_nodes` warnings for calls and phones (E16 part B: no longer read on the local node; the offer
+  still sets them until part A changes `offer.rs`).
 
 **Routing by area.**
 
@@ -177,16 +181,96 @@ only between the server and one node.
 one is refused in Configure, with the generic "another node has this name", and a replicated record that claims it
 is kept as a conflict that Edge Clients shows, as E12 does for the server's own items.
 
+**As built (E16, the routing and claims part).**
+- **The only paired node** is gone from these paths. `queue::enqueue` with no node takes the owner scope's
+  (`queue::owner_node`), else the only paired node, and is refused and logged with several and no scope. A delegated
+  call goes by the owner scope on a dedicated edge node as on an all-in-one node. A call with no owner (a delegated
+  call outside a scope, a PASS call for a site no pairing names) goes to the only active pairing
+  (`EdgeServer::only_pairing_link`), counted by the pairings and not by the links up, so with one pairing away it is
+  refused ("needs its owner") rather than sent to the other.
+- **Web access** needed no change; each pairing's host reaches only its node (tested).
+- **Mail in.** An address two active pairings' copies both have at the same level gets 451, logged (`smtp_queue.rs`,
+  `Lookup::Held`); the most specific match wins (one's `joe+x@` as it is over another's `joe@`).
+  Replication keeps the later copy as a conflict, so this is a race or copies from before. **Mail out** was already
+  signed per pairing (`auth::paired_domains`).
+- **Chat webhooks.** The request's host name picks the pairing: at a pairing's own terminate host only its copy, at
+  the edge node's own names the one pairing with the id (two: 401, logged). So that a pairing's host reaches the
+  handler, the edge node answers `/channels/{id}/webhook` and `/channels/{id}/media/...` itself on a terminate host
+  for the bridges that pairing's Configure lists (`chatBridgeIds`), queued while the node is away, and sends the rest
+  of the host's paths down the link as before (`hosts.rs` `answers_here`; only when this node takes webhooks, the
+  `channels` feature and `channels_webhooks_enabled`). A file is served at a pairing's host only if it is that
+  pairing's. The offer's chat address is still the edge
+  node's own: a pairing whose ids may collide sets `channels_public_url` to one of its terminate hosts.
+- **PASS.** `edge:` goes to the pairing whose Configure names the call's site (`EdgeServer::pass_link`, from a site
+  map the host table keeps and Configure, pairing, revoking and the host services load again); a site no pairing
+  names goes to the only active pairing, and is refused with several. A site two pairings name (concurrent
+  Configures) is logged and refused. The
+  PASS client id per pairing is each local node's own `pass_edge_client`: each authority is its own database, so the
+  ids never meet, and the offer still suggests `edge`.
+- **Claims** (`edge/claims.rs`). `check_setup_claims` takes the pairing and refuses, on any node that takes links, an
+  XMPP or SIP domain or a PASS site (a new `ClaimKind::PassSite`) another active pairing named first, with the generic
+  "another node has this name" (the Configure text for a host name too, which was "another local node has this
+  name"). Replica conflicts (`replica_conflicts.rs`, `Owners`) apply between pairings on a dedicated edge node with
+  more than one: a mail address or number another pairing's copies hold. A chat bridge id is the exception: two
+  pairings may share one, as the plan's chat row says. Mail domains are split by address between pairings, as with
+  the server. The mail addresses of all copies are read once per batch (`claims::MailIndex`, kept by the batch, so a
+  batch rolled back leaves nothing behind). Edge Clients'
+  conflicts service shows them with the holder ("paired node local-a"), and the periodic recheck now runs on a
+  dedicated edge node too.
+- **Limits.** The queue's size cap is per pairing (it was node-wide): `queue-max-megabytes` for each, or
+  `EdgeClient.queueMaxMegabytes` (above 0; 0 or less is unset). The MX delivery reads each active pairing's due rows
+  apart (one that cannot be read is logged and waits) and gives each pairing with rows due an even share of its 8
+  sessions, one held back while more than one pairing is active. A cap on call legs per pairing is not built (the calls' own part).
+- **Tests.** Unit tests in `moqui-core` (claims, conflicts, owner, queue cap, chat host routing), `moqui-host`
+  (`smtp_queue`, `hosts`) and `moqui-mail` (`mx`); `tests/it/edge_domains.rs` serves two local nodes and an edge
+  node: each pairing's web, mail, webhook, PASS site and delegated call reach only it, and a name, site and address
+  both claim stay with the first. Its `#[ignore]` acceptance test adds one node away and then overloaded while the
+  other works.
+
 **Isolation.** Reasonable, not multi-tenant. One operator runs the edge node, and the pairings belong to one
 organization or to related ones, as the organizations inside one Mantle database do. The aim is that a mistake or an
 overload in one domain does not break or leak into another. It is not a defense against a hostile pairing.
 - **Kept apart:** every edge row is keyed by pairing, and no call from one pairing reads another's rows. Each pairing
-  has its own limits: the queue's size cap (to check: it may be node-wide today), streams and tunnels on its links
+  has its own limits: the queue's size cap (node-wide before E16, per pairing now), streams and tunnels on its links
   (built per node), MMS files (built per node), a share of the MX delivery threads, and a cap on call legs.
 - **Shared on purpose:** the edge node's addresses and their mail reputation, the DKIM key and selector (one key,
   published in each domain's DNS), the media and TURN ports, web protection's counts, CPU and bandwidth.
 - **Not provided:** an operator per pairing with its own view of the edge node, billing, or quotas enforced against
   a pairing that attacks.
+
+**As built (E16 part B, the comms, Nov 13, 2026).**
+- **Calls and TURN.** A TURN secret per pairing: `moqui_rtc::turn::pairing_secret` (HMAC-SHA1 of the pairing's id, its key's
+  fingerprint and when it paired, with `turn_auth_secret`, so pairing again under an id gives a new secret), sent in that pairing's Hello answer. The local node names the id it paired as in each username
+  (`<expiry>:<leg>@<pairing>`); the TURN server checks it with that pairing's secret and takes it only while the
+  pairing is active (it reads them every second, `rtc/mod.rs` `pairings_loop`), so a revoke refuses its credentials
+  and closes its relays with no new `turn_auth_secret`. A pairing's leg is never an XMPP user's own. The media driver
+  revokes a paired leg by leg and pairing, and caps one pairing's legs at once (`edge_call_legs_per_pairing`, 200).
+  Recordings and captions already went by the room's owner (E12): checked, unchanged.
+- **SIP.** The engine loads every pairing's trunks (`sip/edge.rs` `engine_config`), each keyed by its node, with the
+  first pairing's policy on a dedicated edge node. A number's owner is the pairing whose copies have it
+  (`moqui_core::edge::sip::number_holders`): `PhoneNumber` now replicates in `voiceTrunks` (its trunk alone), so a
+  number with no fallback row is found; two holders refuse the call (404, logged). A pairing's `sip_domain` is kept
+  from its Configure on a dedicated edge node too; the registrar takes each pairing's domain as a device realm, and
+  its Hello and offer name it (`moqui_core::edge::sip::pairing_realm`); a realm two pairings name is refused, and the
+  edge node's own realm is the one pairing's only while one is paired. Fallbacks are read from the owner's copy, a
+  voicemail sidecar names its pairing, and each offer lists its own trunks. The local side's "other local nodes"
+  refusals for calls and phones are gone; the offer's `other_nodes` fields are no longer read.
+- **XMPP.** `edge_xmpp_port` and `edge_xmpp_tls_port` read each connection's domain first (`edge_link/xmpp_domain.rs`:
+  SNI, or the stream header's `to`, at most 16 KB in 10 s) and send it to the pairing whose Configure named it; with
+  one pairing active what names no one's still goes to it (never to another pairing while one is away). An all-in-one node's own XMPP ports do the same for paired
+  domains. A pair of ports per node is `EdgePort` rows.
+- **Ports.** `moqui.edge.EdgePort` (port, pairedNodeId, tunnelKind `ssh`, `xmpp` or `xmpps`), in place of
+  `edge_ssh_tunnel_node` and `edge_xmpp_node` (removed). `get#EdgePorts`, `add#EdgePort` and `remove#EdgePort` in
+  `EdgeServices.xml` (`moqui_core::edge::ports`); the edge link opens and closes each row's listener within seconds
+  (`tunnel.rs` `watch_rows`). The conf's SSH port goes to the one active pairing. A revoked pairing's rows stay and do not listen; a row may not take this node's own ports, set or default, nor the media ranges.
+- **Claims** are read from the copies and setups here (`number_holders`, `realm_owner`, `tunnel::xmpp_route`); the
+  claims between pairings that Configure and replication refuse are part A's.
+- **Tests.** Regression: `moqui-rtc` `turn::tests` (a pairing's credential, its revoke), `moqui-core`
+  `edge::sip` and `edge::ports`, `moqui-host` `sip::owners` (numbers and realms of two pairings, a number both claim,
+  the same username in two domains), `edge_link::tunnel` and `xmpp_domain`, `rtc::turn_probe` (TCP); served,
+  `it edge_domains_comms` (two pairings' XMPP domains on one pair of ports by SNI and by `to`, a port row to its
+  pairing). Acceptance: `edge_domains_comms::two_local_nodes_comms_stay_apart` (TURN and XMPP of two pairings, one
+  revoked).
 
 ### 4.2 Root screens by host name
 
@@ -633,6 +717,33 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 - **Twins and tests.** Terminal twins, as the edge screens have now; `EdgeScreens.spec.js` grows with them.
 - **Metrics.** `moqui.edgelink.*` gain the pairing and the member: requests, set-asides, takeovers.
 
+**As built (E16, the screens, 2026-11-13).** System › Edge Clients keeps its URL and menu entry and has three tabs
+(`System/EdgeClients/{Clients,Domains,Ports}.xml`):
+- **Clients:** each pairing (one node each until E17) with its state, last connect, address, version, generation, key,
+  queue and queue cap; ping, revoke, a pairing code, the link key fingerprint, and the replicated sets. The queue cap
+  is `update#EdgeClient` (`queueMaxMegabytes` above 0, empty for the conf's).
+- **Domains:** the host names with their mode, added and removed here; what each active pairing claims
+  (`get#EdgeDomains`: from its kept setup the mail domains, XMPP domain, SIP realm, chat bridges and PASS sites, and
+  the numbers of its `voiceFallbacks` and `voiceTrunks` copies); the replica conflicts, now on a dedicated edge node
+  too. The sticky cookie is E17's.
+- **Ports:** 16B's `EdgePort` rows (`get#EdgePorts`, `add#EdgePort`, `remove#EdgePort`), each with whether it
+  listens and why not.
+- **Rows without the link.** The host name rows and the pairings' rows moved to `moqui_core::edge::hosts` (the host's
+  `edge_link/hosts.rs` and `store.rs` call it), so the services work on any node that takes links whether or not its
+  HTTPS listener started the link, and the screens show the rows with a warning while it has not; a host name change
+  tells the link (`EdgeLink::hosts_changed`, in place of `hosts`, `add_host` and `remove_host`). Each refuses on a node
+  that takes no links, by `node_role` as it is now (the ports' services too). A host name another pairing has is
+  refused with "another node has this name", as Configure does (it was "a host of local node X").
+- **The menu.** `default-menu-include` is an expression of `node_role`, so other nodes do not list Edge Clients; the
+  page itself says what the node is. The tabs read the role in the parent's `always-actions`, which a tab rendered
+  alone (the qvt client's load, a transition) runs.
+- **Twins.** None: the XML renders in the terminal as it is, its state and mode chips by `render-mode` tui texts.
+- **Tests.** `framework/test/EdgeScreens.spec.js` (regression, about 0.4 s): the host name rules (first claim,
+  generic refusal, revoked pairing, bad name and mode, remove), the queue cap, the port rules (another row's port,
+  this node's own, a revoked pairing, a bad kind), the refusals on a node that takes no links, an administrator's
+  add and remove through Domains and a user without System refused, and each tab once in qvt and once in tui;
+  `moqui-core` `edge::hosts` unit tests. The it tests that rendered Edge Clients render its Domains tab now.
+
 ### 4.11 Security
 
 - **Admission** is the new trust decision. A pool member holds the pairing's key and is on the member list a linked
@@ -655,7 +766,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 | **E13** | Example confs for the topologies built today, in their directories, with MoquiEdgeConf.xml and MoquiAllInOneConf.xml moved; the conf test; Run-Deploy's sections cut down to them. Each later phase adds its directory. **Built 2026-11-13**: `edge`, `all-in-one`, `pass`, `dev-group` and `local-cluster`, each node started from its conf; the edge node's backup job runs by `embedded_db_backup_scheduled`; the test is `moqui-devkit`'s `runtime_conf_tests` ([§4.9](#49-example-confs-for-each-topology), As built) | Each built topology starts from its directory's files by its README. Run-Deploy names a directory for every topology. The test loads every conf |
 | **E14** | Built 2026-11-13. Root screens by host name: the ten checks of [§4.2](#42-root-screens-by-host-name), what they find fixed, the example conf and the mr-pass per-app hosts (`Pass.xml` as each host's root) | A served instance answers two host names with two root screens: the shell, static files, sign-in, errors and links right on each, each host with its own session. mr-pass serves the Forum and the Shop each at the root of its own host |
 | **E15** | Built Nov 13, 2026. Certificates: the screen and the ACME client ([§4.8](#48-certificates-and-acme)); acceptance test `acme::acceptance_certificates_for_an_edge_node_and_its_local_node` | A node with no certificate for a name serves no HTTPS for it and asks nobody. From the screen an edge node gets a certificate for a terminate host, and a local node one for a passthrough name through the tunnel. Both renew by the job. A file put in `runtime/cert` shows beside them |
-| **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |
+| **E16** | Domains: owner routing on a dedicated edge node, each area by its key, claims between pairings, limits per pairing, a TURN secret per pairing, PASS by site, XMPP by domain on one port; the Clients, Domains and Ports screens. **Built 2026-11-13**, the screens and `conf/multi-domain` last ([§4.10](#410-the-system-app), As built). Routing part: web, mail, chat webhooks, PASS by site, delegate and the queue by owner, claims and conflicts between pairings, the queue cap and MX share per pairing ([§4.1](#41-domains-on-one-edge-node), As built); the acceptance test is `edge_domains::one_node_away_or_overloaded_leaves_the_other_working` (web, mail, chat, PASS, delegate; SIP and XMPP to add) | Two local nodes on separate databases pair with one edge node, each with its own host names, mail domain, bridge, numbers, XMPP domain and PASS site, all at once. Each one's work reaches only it. A name both claim is refused, naming it. One local node away or overloaded leaves the other working |
 | **E17** | The front option set and the `node_role` values (`front`, `front_edge`, `edge`); pools: the member list in memory and its report, admission, balancing by protocol with sticky sessions, health and drain, the outbox and replication from a pool; failover to a standby with its notice and Deliver again since; web protection's rules per domain, shared bans and view; the Balancing screen | Two members of a cluster link and share a host name's requests evenly; a browser session stays on one member, and moves when it stops, still signed in. Clients shows a cluster member that is live but not linked. A node on another database with the same key is refused while a member is linked. With the local node stopped, a standby started by hand takes over its names and gets the queued items once; the first machine, started again, is refused. A drained member finishes its requests and gets no new ones |
 | **E18** | The edge cluster: the list of edge members in Hello, a local node's link to each, the in-memory state made right, calls and SIP on several edge members; the Edge cluster screen | A local node links to both members of an edge cluster. A request to either reaches it. With one edge member stopped, web, mail in and the queue go on through the other, and nothing is delivered twice. A clustered all-in-one server takes links on every member |
 | **E19** | The front node: `node_role=front`, an edge node that dials (`front_edge` behind the front first, then `edge` with a local node's second pairing), TCP ports on the front, the local nodes' links through it; the `front` and `full-stack` confs | A front node balances a local cluster with web protection and no edge node. Visitors reach an mr-pass site through a front node, balanced over two edge cluster members, sticky by session, with a local cluster as their authority. Stopping any one node below the front leaves the site up |

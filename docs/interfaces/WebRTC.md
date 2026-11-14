@@ -290,7 +290,12 @@ the edge node is not a member of the local node's cluster:
   base64) are delegated to the local node, which has the call state and the agent runtime's quota; its recordings are
   queued ([Call-Recording](Call-Recording.md)). With the link down they fail at once as "local node offline", and
   the media goes on.
-- **TURN** runs on the edge node; the local node signs its credentials with the edge node's secret ([TURN](TURN.md)).
+- **TURN** runs on the edge node; the local node signs its credentials with its pairing's secret, which the edge node
+  derives from its own and hands it, and names its pairing in each username, so revoking a pairing ends its TURN
+  access ([TURN](TURN.md#on-an-edge-node)).
+- **Several local nodes** ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16): rooms are keyed by node and call, so
+  each local node's calls keep apart on one media node, and each has its own TURN secret. A local node has at most
+  `edge_call_legs_per_pairing` legs there at once (200; 0 for no cap): a leg past it is refused (`rtcError`).
 - **An all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) registers its own `CallMediaNode` for its
   own calls and is also the local node's media node. Rooms of the local node's calls are keyed by node and call, and
   the link stamps the sending node (`linkNode`) on each message, so the two sides' calls never meet. Recordings and
@@ -302,7 +307,7 @@ the edge node is not a member of the local node's cluster:
   delegated or queued service refuses a call whose media is not on the edge node.
 - **Pinned, alone, not cascaded.** Pairing pins the edge node's instance id (`edge_node_id`); a link naming another,
   this node's own or a cluster member's is refused. A call on the edge node does not cascade (`rtc_cascade_enabled`
-  leaves its legs there), and the edge node takes call messages only while one local node is linked.
+  leaves its legs there).
 - **A clustered local node.** Only the member that holds the link has the route to the edge node. A frame or control
   for the edge node on another member is refused ("the edge link to .. is down"; a browser's frame gets `unavailable`),
   so a call with media on the edge node works only for sockets on the link's member. Put the local node's web access

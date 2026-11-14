@@ -134,6 +134,13 @@ async fn webhook(
             None => headers.push((name, value.to_string())),
         }
     }
+    // over HTTP/2 the host is the URI's authority: kept as `host`, which a webhook through an edge node goes by
+    // (plans/Edge-Node2.md §4.1)
+    if !headers.iter().any(|(name, _)| name == "host") {
+        if let Some(authority) = parts.uri.authority() {
+            headers.push(("host".to_string(), authority.as_str().to_string()));
+        }
+    }
     let request = WebhookRequest {
         method: parts.method.as_str().to_string(),
         headers,
@@ -164,17 +171,29 @@ async fn webhook(
     response_of(answer)
 }
 
-async fn media(State(state): State<Arc<HttpState>>, Path((bridge, token)): Path<(String, String)>) -> Response {
+async fn media(
+    State(state): State<Arc<HttpState>>,
+    Path((bridge, token)): Path<(String, String)>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> Response {
     if !valid_id(&bridge) || token.len() > 200 {
         return plain(404, "not found");
     }
+    // the host name, by which an edge node serves a pairing's files at its own name only (plans/Edge-Node2.md §4.1)
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| uri.authority().map(|authority| authority.as_str().to_string()));
     let factory = Arc::clone(&state.factory);
     let job_factory = Arc::clone(&factory);
     let (done, answer) = tokio::sync::oneshot::channel();
     let submitted = factory.request_pool().try_submit(Arc::clone(&factory), move || {
         let now = jiff::Timestamp::now().as_millisecond();
-        let _ = done.send(moqui_core::service::chat_bridge::media(
+        let _ = done.send(moqui_core::service::chat_bridge::media_at(
             &job_factory,
+            host.as_deref(),
             &bridge,
             &token,
             now,

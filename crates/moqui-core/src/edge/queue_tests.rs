@@ -420,3 +420,80 @@ fn a_kind_with_a_failed_service_is_told_when_its_item_fails_for_good() {
         "{messages:?}"
     );
 }
+
+/// E16 (plans/Edge-Node2.md §4.1): the size cap holds for each pairing alone, so one pairing's backlog fails only its
+/// own oldest items; a pairing's own `queueMaxMegabytes` takes the place of the conf's, and one of 0 or less is unset.
+#[test]
+fn the_size_cap_holds_for_each_pairing_alone() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let settings = EdgeSettings {
+        role: super::super::NodeRole::Edge,
+        max_bytes: 250,
+        ..settings()
+    };
+    ctx.factory().extension(|_| settings.clone());
+    for (node, cap) in [("local-a", None), ("local-b", Some(0)), ("local-c", Some(-1))] {
+        let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+        client.set("pairedNodeId", Value::string(node));
+        client.set("keyFingerprint", Value::string("ab"));
+        client.set("statusId", Value::string("EdgeClientActive"));
+        if let Some(cap) = cap {
+            client.set("queueMaxMegabytes", Value::I64(cap));
+        }
+        client.create(&facade).unwrap();
+    }
+    let hundred = |key: &str| NewItem {
+        payload: Some("x".repeat(100)),
+        ..item(key, "")
+    };
+    for key in ["a-1", "a-2", "a-3"] {
+        enqueue(ctx.factory(), &facade, Some("local-a"), &hundred(key)).unwrap();
+    }
+    enqueue(ctx.factory(), &facade, Some("local-b"), &hundred("b-1")).unwrap();
+    enqueue(ctx.factory(), &facade, Some("local-c"), &hundred("c-1")).unwrap();
+    let cleaned = clean(ctx.factory(), &facade, &settings, now_millis()).unwrap();
+    assert_eq!(cleaned.expired, 1, "a's oldest");
+    let failed: Vec<String> = facade
+        .find(QUEUE_ITEM)
+        .unwrap()
+        .eq("statusEnumId", Value::string(FAILED))
+        .order_by("conversationKey", false)
+        .disable_authz()
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .map(|row| text(row, "conversationKey"))
+        .collect();
+    assert_eq!(
+        failed,
+        ["a-1"],
+        "b's and c's are under the conf's cap, whatever a's backlog"
+    );
+}
+
+/// The cap of a pairing's own row, in megabytes, holds in place of the conf's; it is read for the pairing alone.
+#[test]
+fn a_pairings_own_cap_holds_in_place_of_the_confs() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let settings = EdgeSettings {
+        role: super::super::NodeRole::Edge,
+        max_bytes: 250,
+        ..settings()
+    };
+    for (node, cap) in [("local-a", 2), ("local-b", 0)] {
+        let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+        client.set("pairedNodeId", Value::string(node));
+        client.set("keyFingerprint", Value::string("ab"));
+        client.set("statusId", Value::string("EdgeClientActive"));
+        client.set("queueMaxMegabytes", Value::I64(cap));
+        client.create(&facade).unwrap();
+    }
+    assert_eq!(node_cap(&facade, &settings, "local-a"), 2 * 1024 * 1024);
+    assert_eq!(node_cap(&facade, &settings, "local-b"), 250, "0 is unset");
+    assert_eq!(node_cap(&facade, &settings, "local-z"), 250, "no row");
+}

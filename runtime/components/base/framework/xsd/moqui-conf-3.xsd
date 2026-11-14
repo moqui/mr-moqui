@@ -1886,7 +1886,9 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-megabytes" type="non-neg-int-expandable" default="1024">
-                <xs:annotation><xs:documentation>The waiting items' payloads at most; past it the oldest fail.
+                <xs:annotation><xs:documentation>The waiting items' payloads and content at most, for each paired
+                    node alone (on a node that takes links, a pairing's EdgeClient.queueMaxMegabytes above 0 in place of
+                    it); past it that node's oldest fail.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-attempts" type="non-neg-int-expandable" default="10">

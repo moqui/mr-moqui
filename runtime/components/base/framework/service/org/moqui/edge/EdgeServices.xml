@@ -123,9 +123,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="EdgeClients" type="rust" location="moqui_core::service::edge::get_edge_clients"
             allow-remote="false" transaction="ignore">
-        <description>On an edge node: the paired local nodes (moqui.edge.EdgeClient) with their live links: linked (the up
-            connection is open), down (the down connection too), the generation, the remote address, and the versions of
-            their last Hello.</description>
+        <description>On a node that takes links (an edge node or an all-in-one node): the paired local nodes
+            (moqui.edge.EdgeClient) with their live links: linked (the up connection is open), down (the down connection
+            too), the generation, the remote address, and the versions of their last Hello. While the link is not running
+            (no HTTPS listener started it), the rows alone, none linked.</description>
         <out-parameters>
             <parameter name="clientList" type="List"><parameter name="client" type="Map">
                 <parameter name="pairedNodeId"/><parameter name="keyFingerprint"/><parameter name="statusId"/>
@@ -134,6 +135,40 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="remoteAddress"/><parameter name="binaryVersion"/><parameter name="linkVersion" type="Long"/>
                 <parameter name="setup" type="Map"><description>What the node's last Configure set besides its host
                     names: mailDomains, chatBridgeIds and passSites; empty before one.</description></parameter>
+                <parameter name="setupDate" type="Timestamp"/>
+                <parameter name="queueMaxMegabytes" type="Long"><description>The pairing's own queue cap; empty for the
+                    conf's queue-max-megabytes.</description></parameter>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="update" noun="EdgeClient" type="rust" location="moqui_core::service::edge::update_edge_client"
+            allow-remote="false" transaction="ignore">
+        <description>On a node that takes links: a pairing's own size cap on the items waiting for it
+            (EdgeClient.queueMaxMegabytes, plans/Edge-Node2.md §4.1), in megabytes above 0, in place of the conf's
+            queue-max-megabytes; empty unsets it. The retention pass reads it.</description>
+        <in-parameters>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="queueMaxMegabytes"/>
+        </in-parameters>
+        <out-parameters><parameter name="queueMaxMegabytes" type="Long"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgeDomains" type="rust" location="moqui_core::service::edge::get_edge_domains"
+            allow-remote="false" transaction="ignore">
+        <description>On a node that takes links: what each active pairing claims (plans/Edge-Node2.md §4.10 Domains):
+            its host names (hostList, with modeEnumId), and from its last Configure its mailDomains, xmppDomain,
+            sipDomain (its SIP realm), chatBridgeIds and passSites, with the phoneNumbers its replicated copies have
+            (voiceFallbacks and voiceTrunks). The first claim of each holds; get#ReplicaConflicts has the records
+            refused for it.</description>
+        <out-parameters>
+            <parameter name="domainList" type="List"><parameter name="domain" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="hostList" type="List"/>
+                <parameter name="mailDomains" type="List"/><parameter name="xmppDomain"/><parameter name="sipDomain"/>
+                <parameter name="chatBridgeIds" type="List"/><parameter name="passSites" type="List"/>
+                <parameter name="phoneNumbers" type="List"/>
+                <parameter name="phoneNumbersCut" type="Boolean"><description>A set had more than 10,000 copies, so
+                    phoneNumbers is not all of them.</description></parameter>
                 <parameter name="setupDate" type="Timestamp"/>
             </parameter></parameter>
         </out-parameters>
@@ -157,8 +192,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="EdgeHosts" type="rust" location="moqui_core::service::edge::get_edge_hosts"
             allow-remote="false" transaction="ignore">
-        <description>On an edge node: the public host names of the paired local nodes (moqui.edge.EdgeHost), of one
-            node when pairedNodeId is given.</description>
+        <description>On a node that takes links: the public host names of the paired local nodes
+            (moqui.edge.EdgeHost), of one node when pairedNodeId is given.</description>
         <in-parameters><parameter name="pairedNodeId"/></in-parameters>
         <out-parameters>
             <parameter name="hostList" type="List"><parameter name="host" type="Map">
@@ -169,9 +204,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="add" noun="EdgeHost" type="rust" location="moqui_core::service::edge::add_edge_host"
             allow-remote="false" transaction="ignore">
-        <description>On an edge node: a public host name for a paired local node, EdgeHostPassthrough (the default) or
-            EdgeHostTerminate; for a name the node has already, its mode changes. The name is saved in lower case with no
-            port; a name another node has is refused. The edge node uses it at once.</description>
+        <description>On a node that takes links: a public host name for an active paired local node,
+            EdgeHostPassthrough (the default) or EdgeHostTerminate; for a name the node has already, its mode changes.
+            The name is saved in lower case with no port; a name another pairing has is refused with "another node has
+            this name" (the first claim holds). The edge node uses it at once.</description>
         <in-parameters>
             <parameter name="hostName" required="true"/>
             <parameter name="pairedNodeId" required="true"/>
@@ -182,9 +218,43 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="remove" noun="EdgeHost" type="rust" location="moqui_core::service::edge::remove_edge_host"
             allow-remote="false" transaction="ignore">
-        <description>On an edge node: remove a public host name; the edge node stops answering for it at once. removed
-            is false when there was no such name.</description>
+        <description>On a node that takes links: remove a public host name; the edge node stops answering for it at
+            once. removed is false when there was no such name.</description>
         <in-parameters><parameter name="hostName" required="true"/></in-parameters>
+        <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgePorts" type="rust" location="moqui_core::service::edge::get_edge_ports"
+            allow-remote="false">
+        <description>On an edge node: the TCP ports whose connections go down one paired local node's link each
+            (moqui.edge.EdgePort, plans/Edge-Node2.md §4.10 Ports), of one node with pairedNodeId. Each has port,
+            pairedNodeId, tunnelKind (ssh, xmpp or xmpps), listening, and errorText when it does not listen.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters><parameter name="portList" type="List"/></out-parameters>
+    </service>
+
+    <service verb="add" noun="EdgePort" type="rust" location="moqui_core::service::edge::add_edge_port"
+            allow-remote="false">
+        <description>On an edge node: a TCP port whose connections go down an active paired local node's link, to its
+            SSH server (tunnelKind ssh) or its XMPP server (xmpp for STARTTLS, xmpps for direct TLS). A port of this
+            node's own listeners (its conf's tunnel ports included), and one another row has, are refused; the same
+            row again is no change. The edge node listens on it within seconds (get#EdgePorts tells how it
+            went).</description>
+        <in-parameters>
+            <parameter name="port" required="true"/>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="tunnelKind" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="port" type="Integer"/><parameter name="pairedNodeId"/><parameter name="tunnelKind"/>
+        </out-parameters>
+    </service>
+
+    <service verb="remove" noun="EdgePort" type="rust" location="moqui_core::service::edge::remove_edge_port"
+            allow-remote="false">
+        <description>On an edge node: remove a tunnel port; the edge node stops listening on it within seconds, and its
+            connections open now end. removed is false when there was no such port.</description>
+        <in-parameters><parameter name="port" required="true"/></in-parameters>
         <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
     </service>
 
@@ -306,10 +376,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ReplicaConflicts" type="rust" location="moqui_core::service::edge_claims::get_replica_conflicts"
             allow-remote="false" transaction="ignore">
-        <description>On an all-in-one node: the records of the paired nodes' replicated sets not applied because each
-            claims an item the server holds (moqui.edge.EdgeReplicaConflict), of one node with pairedNodeId: the set,
-            the entity, the item (claimKind, claimLabel, itemKey), the server's holder (ownerText), and when it was
-            first and last refused.</description>
+        <description>On a node that takes links: the records of the paired nodes' replicated sets not applied because
+            each claims an item another owner holds, the server's own on an all-in-one node or another pairing's
+            (plans/Edge-Node2.md §4.1, the first claim holds) (moqui.edge.EdgeReplicaConflict), of one node with
+            pairedNodeId: the set, the entity, the item (claimKind, claimLabel, itemKey), the holder (ownerText: "the
+            server's EmailAccount 100010", "paired node local-a"), and when it was first and last refused.</description>
         <in-parameters><parameter name="pairedNodeId"/></in-parameters>
         <out-parameters>
             <parameter name="conflictList" type="List"><parameter name="conflict" type="Map">
@@ -323,9 +394,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="recheck" noun="ReplicaConflicts" type="rust" location="moqui_core::service::edge_claims::recheck_replica_conflicts"
             allow-remote="false" transaction="ignore">
-        <description>On an all-in-one node: check the replication conflicts (of one node with pairedNodeId) again, and
-            apply each record whose item the server no longer holds. Each batch of a set also does this for the set.
-            applied is how many; 0 on another node.</description>
+        <description>On a node that takes links: check the replication conflicts (of one node with pairedNodeId)
+            again, and apply each record whose item no other owner (the server, another pairing) holds any more. Each
+            batch of a set also does this for the set. applied is how many; 0 on a local node.</description>
         <in-parameters><parameter name="pairedNodeId"/></in-parameters>
         <out-parameters><parameter name="applied" type="Long"/></out-parameters>
     </service>
@@ -338,15 +409,14 @@ along with this software (see the LICENSE.md file). If not, see
         <description>On a paired local node: what its edge node offers it now, asked on the link. offer has publicNames
             and hostModes (web access), mail (available, mta moqui or postfix, listener, mxHost, bounceDomain,
             dkimSelector, dkimRecord), chat (webhooks, publicUrl), pass (available, clientId), xmpp (available, port and
-            tlsPort, the tunnel ports edge_xmpp_port and edge_xmpp_tls_port, 0 while off, otherNode, when
-            edge_xmpp_node names another local node, and needsNode, when it is empty and this node is not the only
-            one linked, so the tunnels go to none), calls (available while its media node runs, mediaAddress, turnUrls,
-            otherNodes when other local nodes are linked too, so it takes call messages from none, and enabled, this
-            node's own edge_calls_enabled), sip (available while its SIP engine runs, sipAddress and tlsAddress, domain,
-            the realm its registrar challenges with, registrar, trunks, the trunks its engine loaded from this node's
-            copy with voiceTrunkId, name, state and error, fallbacks, the numbers with a fallback in its copy,
-            otherNodes when other local nodes are active too, so its engine reads no node's copies, and enabled, this
-            node's own edge_sip_enabled), notAvailable (areas not built yet: none now), addresses (the
+            tlsPort, this node's own tunnel ports or those of every XMPP domain, 0 while off, and needsNode, when this
+            node named no XMPP domain in Configure and is not the only one linked, so the ports of every domain cannot
+            find it), calls (available while its media node runs, mediaAddress, turnUrls, and enabled, this node's own
+            edge_calls_enabled), sip (available while its SIP engine runs, sipAddress and tlsAddress, domain, the realm
+            this node's phones register in there (its Configure's sipDomain when it named one), registrar, trunks, the
+            trunks its engine loaded from this node's copy with voiceTrunkId, name, state and error, fallbacks, the
+            numbers with a fallback in its copy, and enabled, this node's own edge_sip_enabled); otherNode and
+            otherNodes are no longer set, notAvailable (areas not built yet: none now), addresses (the
             edge node's public addresses, when it names them) and nodeHosts (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
         <out-parameters>
             <parameter name="offer" type="Map"/>
@@ -371,8 +441,7 @@ along with this software (see the LICENSE.md file). If not, see
             access off and the name not on the edge node, a failed xmpp line says so and the rest is applied. Refused
             before any change when this node has no xmpp_domain or the edge node no tunnel port. Nothing is written
             locally for XMPP; lines say when this node's xmpp_port or xmpp_tls_port (which Chat apps shows) differ
-            from the edge node's ports, and when the tunnels go to another node or, with several linked and no
-            edge_xmpp_node, to none. Calls (callsOn given, and the edge node's media node offered; left out, nothing
+            from the edge node's ports, and when the edge node's ports cannot find this node's clients. Calls (callsOn given, and the edge node's media node offered; left out, nothing
             changes; nothing is sent to the edge node): edge_calls_enabled true or false in runtime/.env, and the edge
             node's CallMediaNode row written again at once, draining while it is false (the link keeps it so after
             that, and never after unpairing), so new calls have their media on the edge node, or on this node's own

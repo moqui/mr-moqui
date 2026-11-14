@@ -55,6 +55,8 @@ mod devaide;
 mod edge_allinone;
 mod edge_call;
 mod edge_chat;
+mod edge_domains;
+mod edge_domains_comms;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;

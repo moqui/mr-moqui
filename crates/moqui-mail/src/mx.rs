@@ -300,11 +300,22 @@ pub fn wake() {
 struct Started(AtomicBool);
 
 /// The rows being tried now, and their messages: a row is not tried twice at once, nor two rows of one message (so
-/// the last row of a message to finish sees the others finished).
+/// the last row of a message to finish sees the others finished). With the sessions of each pairing, which gets its
+/// share of them ([`node_share`]).
 #[derive(Default)]
 struct Flight {
     rows: HashSet<String>,
     items: HashSet<String>,
+    nodes: HashMap<String, usize>,
+}
+
+/// The sessions one pairing may hold at once while `due` pairings have rows due of `active` pairings
+/// (plans/Edge-Node2.md §4.1): an even share of [`MAX_IN_FLIGHT`], at least one, so one pairing's backlog or slow
+/// domains leave the others theirs. With more than one pairing one session is held back, so another pairing's first
+/// row starts at once rather than behind a full set of slow sessions.
+fn node_share(due: usize, active: usize) -> usize {
+    let reserve = usize::from(active > 1);
+    ((MAX_IN_FLIGHT - reserve) / due.max(1)).max(1)
 }
 
 fn flight() -> &'static Mutex<Flight> {
@@ -402,7 +413,14 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
         }
         Err(err) => tracing::error!("MX delivery could not read its reports: {err}"),
     }
-    let due = match due_rows(&facade, now) {
+    let active = match moqui_core::edge::claims::active_nodes(&facade) {
+        Ok(active) => active,
+        Err(err) => {
+            tracing::error!("MX delivery could not read the paired nodes: {err}");
+            return Some(now + millis(IDLE));
+        }
+    };
+    let due = match due_rows(&facade, &active, now) {
         Ok(due) => due,
         Err(err) => {
             tracing::error!("MX delivery could not read its rows: {err}");
@@ -410,17 +428,30 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
         }
     };
     let mut held_back = false;
+    let share = node_share(
+        due.iter()
+            .map(|row| field_text(row, "pairedNodeId"))
+            .collect::<HashSet<_>>()
+            .len(),
+        active.len(),
+    );
     for row in due {
         let id = field_text(&row, "mailDeliveryId");
         let item = field_text(&row, "queueItemId");
+        let node = field_text(&row, "pairedNodeId");
         {
             let mut flight = lock(flight());
-            if flight.rows.contains(&id) || flight.items.contains(&item) || flight.rows.len() >= MAX_IN_FLIGHT {
+            if flight.rows.contains(&id)
+                || flight.items.contains(&item)
+                || flight.rows.len() >= MAX_IN_FLIGHT
+                || flight.nodes.get(&node).copied().unwrap_or(0) >= share
+            {
                 held_back = true;
                 continue;
             }
             flight.rows.insert(id.clone());
             flight.items.insert(item.clone());
+            *flight.nodes.entry(node.clone()).or_insert(0) += 1;
         }
         let factory = Arc::clone(factory);
         let facade = facade.clone();
@@ -443,6 +474,7 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
                 let mut flight = lock(flight());
                 flight.rows.remove(&field_text(&row, "mailDeliveryId"));
                 flight.items.remove(&field_text(&row, "queueItemId"));
+                release(&mut flight, &field_text(&row, "pairedNodeId"));
                 drop(flight);
                 wake();
             });
@@ -451,6 +483,7 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
             let mut flight = lock(flight());
             flight.rows.remove(&id);
             flight.items.remove(&item);
+            release(&mut flight, &node);
         }
     }
     let next = next_due(&facade).unwrap_or_else(|err| {
@@ -465,16 +498,38 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
     }
 }
 
-fn due_rows(facade: &EntityFacade, now: i64) -> Result<Vec<EntityValue>, LibError> {
-    let rows = facade
-        .find(DELIVERY)?
-        .eq("statusEnumId", Value::string(PENDING))
-        .condition(Condition::less_equal("nextAttemptDate", stamp_value(now)))
-        .order_by("nextAttemptDate", false)
-        .limit(ROUND_ROWS as i64)
-        .disable_authz()
-        .list()?;
-    Ok(rows.values().to_vec())
+/// One session of `node` ended.
+fn release(flight: &mut Flight, node: &str) {
+    if let Some(count) = flight.nodes.get_mut(node) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            flight.nodes.remove(node);
+        }
+    }
+}
+
+/// The rows due now, the oldest first: up to [`ROUND_ROWS`] of each of the `active` pairings, so one pairing's backlog
+/// does not keep another's rows out of the round (plans/Edge-Node2.md §4.1). The rows of a node no longer paired are
+/// failed by [`fail_unpaired`], not tried. A pairing whose rows cannot be read is logged and left for the next round.
+fn due_rows(facade: &EntityFacade, active: &[String], now: i64) -> Result<Vec<EntityValue>, LibError> {
+    let mut rows = Vec::new();
+    for node in active {
+        let page = facade.find(DELIVERY).and_then(|find| {
+            find.eq("statusEnumId", Value::string(PENDING))
+                .eq("pairedNodeId", Value::string(node))
+                .condition(Condition::less_equal("nextAttemptDate", stamp_value(now)))
+                .order_by("nextAttemptDate", false)
+                .limit(ROUND_ROWS as i64)
+                .disable_authz()
+                .list()
+        });
+        match page {
+            Ok(page) => rows.extend(page.values().iter().cloned()),
+            Err(err) => tracing::error!("MX delivery could not read the rows of {node}; they wait: {err}"),
+        }
+    }
+    rows.sort_by_key(|row| row.get("nextAttemptDate").and_then(value_millis).unwrap_or(0));
+    Ok(rows)
 }
 
 /// The rows whose report is not queued yet.
